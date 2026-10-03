@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from npa.orchestration.npa_workflow.sim2real_preflight import (
+    _managed_driver_isaac_nodes,
     _ready_schedulable_cpu_nodes,
     kubernetes_prerequisites,
     static_prerequisites,
@@ -11,26 +14,30 @@ from npa.orchestration.npa_workflow.sim2real_preflight import (
 
 
 def _config(**overrides):
-    digest = f"cr.eu-north1.nebius.cloud/registry/image@sha256:{'a' * 64}"
+    digest = f"registry.example/registry/image@sha256:{'a' * 64}"
     config = {
         "controller_image": digest,
         "transfer_image": digest,
         "envgen_image": digest,
-        "reason_image": digest,
         "isaac_image": digest,
         "viewer_image": digest,
         "isaac_cache_pvc": "npa-isaac-cache",
-        "reason2_model": "nvidia/Cosmos-Reason2-8B",
-        "reason3_model": "nvidia/Cosmos-Reason2-2B",
-        "gpu_queue": "sim2real-gpu",
-        "gpu_priority_class": "sim2real-production",
+        "cosmos3_model": "nvidia/Cosmos3-Super-Reasoner",
+        "env_count": "10000",
+        "train_fraction": "0.8",
+        "rollout_count": "64",
+        "validation_count": "64",
+        "gold_count": "64",
     }
     config.update(overrides)
     return config
 
 
-def test_static_preflight_checks_all_three_gated_models_and_secret_forwarding():
+def test_static_preflight_checks_hf_models_and_hosted_model_before_submission():
+    from npa.workbench.model_access import gated_hf_repos
+
     checked = []
+    hosted = []
 
     def validate(_token, repo):
         checked.append(repo)
@@ -38,20 +45,93 @@ def test_static_preflight_checks_all_three_gated_models_and_secret_forwarding():
 
     issues = static_prerequisites(
         _config(),
-        requested_secret_envs=["HF_TOKEN"],
-        secret_values={"HF_TOKEN": "redacted"},
+        requested_secret_envs=["HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"],
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=validate,
+        token_factory_validator=lambda _key, model: (
+            hosted.append(model) or SimpleNamespace(ok=True)
+        ),
     )
 
-    assert checked == [
-        "nvidia/Cosmos-Transfer2.5-2B",
-        "nvidia/Cosmos-Reason2-8B",
-        "nvidia/Cosmos-Reason2-2B",
-    ]
+    # The gate mirrors the sim2real capability's single source of truth rather
+    # than a hardcoded repo, so the pinned Predict2.5 tokenizer and Cosmos
+    # Guardrail dependencies of Stage 3 are verified before launch.
+    expected = list(dict.fromkeys(gated_hf_repos(("sim2real",))))
+    assert checked == expected
+    assert "nvidia/Cosmos-Transfer2.5-2B" in checked
+    assert "nvidia/Cosmos-Predict2.5-2B" in checked
+    assert "nvidia/Cosmos-Guardrail1" in checked
+    assert "nvidia/Cosmos-Reason2-8B" not in checked
+    assert hosted == ["nvidia/Cosmos3-Super-Reasoner"]
     rendered = "\n".join(item for item, _ in issues)
     assert "Cosmos-Transfer2.5-2B" in rendered
     assert "AWS_ACCESS_KEY_ID" in rendered
     assert "AWS_SECRET_ACCESS_KEY" in rendered
+
+
+def test_static_preflight_surfaces_unaccepted_transfer_dependencies():
+    # Regression: an operator with Cosmos-Transfer2.5-2B accepted but the pinned
+    # Predict2.5 tokenizer (or Cosmos Guardrail) unaccepted previously passed
+    # this preflight and only failed inside Stage 3. The gate must report those
+    # repos before any GPU work.
+    denied_repo = "nvidia/Cosmos-Predict2.5-2B"
+
+    def validate(_token, repo):
+        return SimpleNamespace(ok=repo != denied_repo, error="403 gated")
+
+    issues = static_prerequisites(
+        _config(),
+        requested_secret_envs=["HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"],
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
+        hf_validator=validate,
+        token_factory_validator=lambda _key, _model: SimpleNamespace(ok=True),
+    )
+
+    rendered = "\n".join(item for item, _ in issues)
+    assert denied_repo in rendered
+    assert "Hugging Face access failed" in rendered
+
+
+def test_archived_reason3_config_key_does_not_change_canonical_hosted_probe():
+    checked = []
+    config = _config()
+    config.pop("cosmos3_model")
+    config["reason3_model"] = "nvidia/Cosmos-Reason2-2B"
+
+    static_prerequisites(
+        config,
+        requested_secret_envs=[
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ],
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
+        hf_validator=lambda _token, repo: (
+            checked.append(repo) or SimpleNamespace(ok=True)
+        ),
+        token_factory_validator=lambda _key, model: (
+            checked.append(model) or SimpleNamespace(ok=True)
+        ),
+    )
+
+    assert "MiniMaxAI/MiniMax-M3" in checked
+    assert "nvidia/Cosmos-Reason2-2B" not in checked
+
+
+def test_unsupported_hosted_family_fails_before_model_probe():
+    issues = static_prerequisites(
+        _config(cosmos3_model="nvidia/Cosmos-Reason2-8B"),
+        requested_secret_envs=["NEBIUS_TOKEN_FACTORY_KEY"],
+        secret_values={"NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
+        hf_validator=lambda *_args: SimpleNamespace(ok=True),
+        token_factory_validator=lambda *_args: pytest.fail(
+            "unsupported model was probed"
+        ),
+    )
+    assert any(
+        "unsupported hosted rollout evaluator" in message for message, _ in issues
+    )
 
 
 def test_static_preflight_rejects_mutable_images_without_manual_eula_inputs():
@@ -61,14 +141,143 @@ def test_static_preflight_rejects_mutable_images_without_manual_eula_inputs():
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
             "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
         ],
-        secret_values={"HF_TOKEN": "redacted"},
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
+        token_factory_validator=lambda _key, model: SimpleNamespace(
+            ok=True, model=model
+        ),
     )
 
     rendered = "\n".join(item for item, _ in issues)
     assert "controller_image" in rendered
     assert "accept_eula" not in rendered.lower()
+
+
+def test_static_preflight_rejects_unresolved_token_factory_key():
+    issues = static_prerequisites(
+        _config(),
+        requested_secret_envs=[
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ],
+        secret_values={"HF_TOKEN": "redacted"},
+        hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
+        token_factory_validator=lambda *_args: pytest.fail(
+            "missing key must not be probed"
+        ),
+    )
+    assert "could not be resolved" in "\n".join(item for item, _ in issues)
+
+
+@pytest.mark.parametrize(
+    ("env_count", "train_fraction", "rollout_count", "validation_count", "gold_count"),
+    [
+        ("64", "0.8", "64", "6", "7"),
+        ("80", "nan", "64", "8", "8"),
+        ("80", "inf", "64", "8", "8"),
+        ("640", "1e308", "64", "64", "64"),
+        ("640", "-1e308", "64", "64", "64"),
+        ("80", "1.0", "64", "3", "3"),
+        ("80", "0.8", "0", "8", "8"),
+        ("80", "0.8", "64", "9", "8"),
+        ("80", "0.8", "64", "8", "9"),
+        ("9", "0.8", "4", "3", "3"),
+        ("24", "0.8", "19", "3", "3"),
+        ("8", "0.8", "2", "3", "3"),
+    ],
+)
+def test_static_preflight_rejects_counts_larger_than_sealed_splits(
+    env_count, train_fraction, rollout_count, validation_count, gold_count
+):
+    issues = static_prerequisites(
+        _config(
+            env_count=env_count,
+            train_fraction=train_fraction,
+            rollout_count=rollout_count,
+            validation_count=validation_count,
+            gold_count=gold_count,
+        ),
+        requested_secret_envs=[
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ],
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
+        hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
+        token_factory_validator=lambda _key, model: SimpleNamespace(
+            ok=True, model=model
+        ),
+    )
+
+    rendered = "\n".join(item for item, _ in issues)
+    assert "train/validation/gold" in rendered
+    assert "env_count=640" in "\n".join(fix for _, fix in issues)
+
+
+@pytest.mark.parametrize(
+    ("env_count", "train_fraction", "rollout_count", "validation_count", "gold_count"),
+    [
+        ("640", "0.8", "64", "64", "64"),
+        ("80", "0.8", "64", "8", "8"),
+        ("64", "0.8", "51", "6", "7"),
+        ("9", "0.8", "3", "3", "3"),
+        ("24", "0.8", "18", "3", "3"),
+        ("24", "0.01", "3", "10", "11"),
+    ],
+)
+def test_static_preflight_accepts_counts_that_fit_all_sealed_splits(
+    env_count, train_fraction, rollout_count, validation_count, gold_count
+):
+    issues = static_prerequisites(
+        _config(
+            env_count=env_count,
+            train_fraction=train_fraction,
+            rollout_count=rollout_count,
+            validation_count=validation_count,
+            gold_count=gold_count,
+        ),
+        requested_secret_envs=[
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ],
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
+        hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
+        token_factory_validator=lambda _key, model: SimpleNamespace(
+            ok=True, model=model
+        ),
+    )
+
+    assert not any("train/validation/gold" in item for item, _ in issues)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["env_count", "train_fraction", "rollout_count", "validation_count", "gold_count"],
+)
+@pytest.mark.parametrize("invalid_value", [None, "invalid"])
+def test_static_preflight_rejects_unparseable_split_inputs(key, invalid_value):
+    config = _config()
+    if invalid_value is None:
+        config.pop(key)
+    else:
+        config[key] = invalid_value
+
+    issues = static_prerequisites(
+        config,
+        requested_secret_envs=[],
+        secret_values={},
+        hf_validator=lambda *_args: pytest.fail("no token supplied"),
+        token_factory_validator=lambda *_args: pytest.fail("no key supplied"),
+    )
+
+    assert any("split inputs are missing or not numeric" in item for item, _ in issues)
 
 
 def _nodes(*, cpu="10", memory="40Gi", gpu="0", taints=None):
@@ -97,12 +306,15 @@ def test_cpu_node_parser_requires_the_real_schedulable_profile():
     assert _ready_schedulable_cpu_nodes(_nodes(gpu="8")) == ["cpu-0"]
     assert _ready_schedulable_cpu_nodes(_nodes(cpu="9500m")) == []
     assert _ready_schedulable_cpu_nodes(_nodes(memory="39Gi")) == []
-    assert _ready_schedulable_cpu_nodes(
-        _nodes(taints=[{"key": "dedicated", "effect": "NoSchedule"}])
-    ) == []
+    assert (
+        _ready_schedulable_cpu_nodes(
+            _nodes(taints=[{"key": "dedicated", "effect": "NoSchedule"}])
+        )
+        == []
+    )
 
 
-def test_kubernetes_preflight_parses_nodes_pvc_queue_and_priority_class():
+def test_kubernetes_preflight_parses_nodes_and_pvc():
     calls = []
 
     def run(args):
@@ -126,8 +338,6 @@ def test_kubernetes_preflight_parses_nodes_pvc_queue_and_priority_class():
     assert [call[:2] for call in calls] == [
         ["get", "nodes"],
         ["get", "pvc"],
-        ["get", "localqueue.kueue.x-k8s.io"],
-        ["get", "priorityclass.scheduling.k8s.io"],
     ]
 
 
@@ -141,5 +351,128 @@ def test_kubernetes_preflight_reports_every_missing_cluster_object_together():
     rendered = "\n".join(item for item, _ in issues)
     assert "no Ready" in rendered
     assert "Isaac cache PVC" in rendered
-    assert "LocalQueue" in rendered
-    assert "PriorityClass" in rendered
+
+
+def _rtx_nodes(**labels):
+    payload = json.loads(_nodes())
+    payload["items"].append(
+        {
+            "metadata": {
+                "name": "gpu-0",
+                "labels": {"kubernetes.io/os": "linux", **labels},
+            },
+            "spec": {"taints": []},
+            "status": {
+                "allocatable": {"cpu": "24", "memory": "218Gi", "nvidia.com/gpu": "1"},
+                "conditions": [{"type": "Ready", "status": "True"}],
+            },
+        }
+    )
+    return json.dumps(payload)
+
+
+_MANAGED_RTX_LABELS = {
+    "nvidia.com/gpu.product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "nebius.com/gpu-name": "RTX6000",
+    "nebius.com/driverful": "true",
+    "nebius.com/drivers-preset": "cuda13.0",
+    "nvidia.com/gpu.deploy.operands": "false",
+}
+
+
+def test_managed_driver_rtx_nodes_are_rejected_before_isaac_spends_gpu_time():
+    # Managed drivers satisfy pure-compute CUDA, so Transfer/EnvGen pass and the
+    # mismatch would otherwise only surface as a Warp illegal-memory-access in Stage 7.
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**_MANAGED_RTX_LABELS)) == ["gpu-0"]
+
+
+def test_operator_mounted_rtx_drivers_are_accepted():
+    operator = {**_MANAGED_RTX_LABELS, "nvidia.com/gpu.deploy.operands": "true"}
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**operator)) == []
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        {},
+        {"nvidia.com/gpu.product": "NVIDIA-L40S", "nebius.com/driverful": "true"},
+        {"nvidia.com/gpu.product": "NVIDIA-H100", "nebius.com/driverful": "true"},
+    ],
+)
+def test_non_rtx_and_unlabelled_nodes_are_not_flagged(labels):
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == []
+
+
+def test_unparseable_node_payload_cannot_claim_verified_driver_placement():
+    with pytest.raises(ValueError):
+        _managed_driver_isaac_nodes("not-json")
+    issues = kubernetes_prerequisites(
+        {}, runner=lambda _: SimpleNamespace(returncode=0, stdout="not-json")
+    )
+    assert any("placement could not be verified" in issue for issue, _ in issues)
+
+
+def test_kubernetes_preflight_surfaces_managed_driver_isaac_nodes():
+    def run(args):
+        if args[:2] == ["get", "nodes"]:
+            return SimpleNamespace(
+                returncode=0, stdout=_rtx_nodes(**_MANAGED_RTX_LABELS), stderr=""
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "spec": {"accessModes": ["ReadWriteMany"]},
+                    "status": {"phase": "Bound"},
+                }
+            ),
+            stderr="",
+        )
+
+    issues = kubernetes_prerequisites(_config(), runner=run)
+    rendered = "\n".join(item for item, _ in issues)
+    remediation = "\n".join(fix for _, fix in issues)
+    assert "gpu-0" in rendered
+    assert "managed-driver" in rendered
+    assert "--gpu-workload-profile rtx-rendering" in remediation
+
+
+@pytest.mark.parametrize("missing", ["conditions", "allocatable"])
+def test_kubernetes_preflight_blocks_unknown_managed_node_placement(missing):
+    payload = json.loads(_rtx_nodes(**_MANAGED_RTX_LABELS))
+    del payload["items"][-1]["status"][missing]
+
+    def run(args):
+        assert args == ["get", "nodes", "-o", "json"]
+        return SimpleNamespace(returncode=0, stdout=json.dumps(payload))
+
+    issues = kubernetes_prerequisites({}, runner=run)
+    assert any("placement could not be verified" in issue for issue, _ in issues)
+
+
+def test_managed_driver_detection_uses_the_scheduler_gpu_label_aliases():
+    labels = {
+        key: value
+        for key, value in _MANAGED_RTX_LABELS.items()
+        if key not in {"nvidia.com/gpu.product", "nebius.com/gpu-name"}
+    }
+    labels["skypilot.co/accelerator"] = "rtxpro6000"
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == ["gpu-0"]
+    labels["skypilot.co/accelerator"] = "rtxpro6000-unreviewed-variant"
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == []
+
+
+@pytest.mark.parametrize("broken", ["metadata", "labels", "name"])
+def test_malformed_node_identity_is_reported_without_traceback(broken):
+    payload = json.loads(_rtx_nodes(**_MANAGED_RTX_LABELS))
+    node = payload["items"][-1]
+    if broken == "metadata":
+        node["metadata"] = "invalid"
+    elif broken == "labels":
+        node["metadata"]["labels"] = ["invalid"]
+    else:
+        del node["metadata"]["name"]
+    issues = kubernetes_prerequisites(
+        {}, runner=lambda _: SimpleNamespace(returncode=0, stdout=json.dumps(payload))
+    )
+    assert any("placement could not be verified" in issue for issue, _ in issues)

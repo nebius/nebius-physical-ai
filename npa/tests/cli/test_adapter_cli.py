@@ -18,9 +18,7 @@ def test_adapter_convert_help() -> None:
     assert "Convert Genesis/sim demo numpy arrays" in result.output
 
 
-def test_adapter_convert_dispatches_to_adapter(
-    tmp_path: Path, mocker
-) -> None:
+def test_adapter_convert_dispatches_to_adapter(tmp_path: Path, mocker) -> None:
     input_dir = tmp_path / "demos"
     output_dir = tmp_path / "dataset"
     input_dir.mkdir()
@@ -53,12 +51,11 @@ def test_adapter_convert_dispatches_to_adapter(
         fps=30,
         robot_type="testbot",
         task="test task",
+        task_from_metadata=False,
     )
 
 
-def test_adapter_convert_accepts_standard_path_aliases(
-    tmp_path: Path, mocker
-) -> None:
+def test_adapter_convert_accepts_standard_path_aliases(tmp_path: Path, mocker) -> None:
     input_dir = tmp_path / "demos"
     output_dir = tmp_path / "dataset"
     input_dir.mkdir()

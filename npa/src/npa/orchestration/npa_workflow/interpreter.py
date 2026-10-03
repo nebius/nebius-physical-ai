@@ -7,8 +7,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from npa.orchestration.npa_workflow.artifacts import require_input_artifacts
-from npa.orchestration.npa_workflow.catalog import argv_for_tool
+from npa.orchestration.npa_workflow.catalog import (
+    argv_for_tool,
+    drop_empty_optional_flags,
+)
 from npa.orchestration.npa_workflow.decisions import (
+    load_decision,
     normalize_decision,
     refresh_context_decision,
 )
@@ -132,6 +136,69 @@ def build_plan(
     return plan
 
 
+def build_reachability_plan(
+    spec: NpaWorkflowSpec,
+    *,
+    run_id: str = "preflight-run",
+    assume_decision: str = "",
+) -> ExecutionPlan:
+    """Conservatively materialize every control-flow-reachable executable state."""
+
+    decisions = [str(assume_decision or "").strip()]
+    decisions.extend(
+        str(transition.when).strip()
+        for state in spec.states.values()
+        for transition in state.transitions
+        if transition.when
+    )
+    selected_decisions = list(dict.fromkeys(item for item in decisions if item)) or [""]
+    combined = ExecutionPlan(
+        workflow=spec.name,
+        api_version=spec.api_version,
+        initial=spec.initial,
+        assume_decision=str(assume_decision or "").strip(),
+    )
+    covered_states: set[str] = set()
+    for decision in selected_decisions:
+        candidate = build_plan(spec, run_id=run_id, assume_decision=decision)
+        combined.steps.extend(candidate.steps)
+        covered_states.update(step.state for step in candidate.steps)
+
+    reachable: list[str] = []
+    pending = [spec.initial]
+    while pending:
+        state_name = pending.pop()
+        if state_name in reachable:
+            continue
+        state = spec.states[state_name]
+        reachable.append(state_name)
+        if state.terminal:
+            continue
+        pending.extend(reversed(state.parallel))
+        pending.extend(reversed(state.sequence))
+        if state.next:
+            pending.append(state.next)
+        pending.extend(
+            transition.goto
+            for transition in reversed(state.transitions)
+            if not transition.if_config
+            or config_truthy(transition.if_config, spec.config)
+        )
+
+    context = _make_context(spec, run_id=run_id)
+    for state_name in reachable:
+        state = spec.states[state_name]
+        if state_name in covered_states or state.parallel or state.sequence:
+            continue
+        iteration = 1 if state.loop else None
+        if state.loop:
+            context.inner_iteration = 1
+            context.loop_iterations[state.name] = 1
+        combined.steps.append(build_step(spec, state, context, iteration=iteration))
+        covered_states.add(state_name)
+    return combined
+
+
 def run_workflow(
     spec: NpaWorkflowSpec,
     *,
@@ -250,7 +317,15 @@ def run_workflow(
 def _make_context(spec: NpaWorkflowSpec, *, run_id: str) -> RunContext:
     run = {"id": run_id, "prefix": f"{spec.name}/{run_id}", **dict(spec.run_defaults)}
     run["id"] = run_id
-    config = _resolve_config_strings(dict(spec.config), run=run)
+    config_with_tool_defaults = dict(spec.config)
+    from npa.orchestration.npa_workflow.catalog import config_defaults_for_tool
+
+    for state in spec.states.values():
+        if not state.tool_ref:
+            continue
+        for key, value in config_defaults_for_tool(state.tool_ref).items():
+            config_with_tool_defaults.setdefault(key, value)
+    config = _resolve_config_strings(config_with_tool_defaults, run=run)
     if config.get("prefix"):
         run["prefix"] = resolve_tokens(str(config["prefix"]), config=config, run=run)
     return RunContext(config=config, run=run)
@@ -440,12 +515,14 @@ def _guard_execution_depth(spec: NpaWorkflowSpec, depth: int) -> None:
         )
 
 
-def _sequence_refreshes_decision(spec: NpaWorkflowSpec, state: StateSpec) -> bool:
-    return any(
-        spec.states[child].writes_decision
-        for child in state.sequence
-        if child in spec.states
-    )
+def _sequence_decision_writer(
+    spec: NpaWorkflowSpec, state: StateSpec
+) -> StateSpec | None:
+    for child in reversed(state.sequence):
+        candidate = spec.states.get(child)
+        if candidate is not None and candidate.writes_decision:
+            return candidate
+    return None
 
 
 def _append_state_step(
@@ -494,6 +571,7 @@ def build_step(
                 loop_iterations=ctx.loop_iterations,
             ),
             "schema": artifact.schema,
+            **({"kind": artifact.kind} if artifact.kind else {}),
         }
         for artifact in state.outputs
         if artifact.uri
@@ -574,13 +652,48 @@ def _record_state_outputs(state: StateSpec, ctx: RunContext, step: PlanStep) -> 
 def _refresh_decision(
     ctx: RunContext,
     *,
+    state: StateSpec | None = None,
     reader: Any | None = None,
     read_s3: bool = False,
 ) -> None:
     if read_s3:
-        ctx.last_decision = refresh_context_decision(
-            ctx.as_predicate_context(), reader=reader
-        )
+        uri = _resolved_state_decision_uri(state, ctx) if state is not None else ""
+        if uri:
+            ctx.last_decision = load_decision(uri, reader=reader)
+        else:
+            ctx.last_decision = refresh_context_decision(
+                ctx.as_predicate_context(), reader=reader
+            )
+
+
+def _resolved_state_decision_uri(state: StateSpec, ctx: RunContext) -> str:
+    """Return the exact decision artifact resolved for one executed state.
+
+    A dynamic loop may override ``decision_uri`` with ``{{loop.*}}`` in the
+    decision writer's params. Reading only the workflow-wide config after the
+    state completes silently points at a legacy or previous-iteration object.
+    Prefer the already-resolved declared decision output, including when it is
+    not the state's first output, then fall back to the state-scoped config.
+    """
+
+    outputs = ctx.state_outputs.get(state.name) or {}
+    for index, artifact in enumerate(state.outputs, start=1):
+        if "decision" not in str(artifact.schema).lower():
+            continue
+        uri = str(outputs.get(f"output_{index}") or "").strip()
+        if uri:
+            return uri
+    config = state_config(state, ctx)
+    raw = str(config.get("decision_uri") or "").strip()
+    if not raw:
+        return ""
+    return resolve_tokens(
+        raw,
+        config=config,
+        run=ctx.run,
+        state_outputs=ctx.state_outputs,
+        loop_iterations=ctx.loop_iterations,
+    )
 
 
 def _execute_state_machine(
@@ -666,10 +779,12 @@ def _execute_state_machine(
                         depth=depth + 1,
                     )
                 if not ctx.last_decision:
+                    decision_writer = _sequence_decision_writer(spec, state)
                     _refresh_decision(
                         ctx,
+                        state=decision_writer,
                         reader=decision_reader,
-                        read_s3=_sequence_refreshes_decision(spec, state),
+                        read_s3=decision_writer is not None,
                     )
                 if not ctx.last_decision:
                     ctx.last_decision = assume_decision
@@ -792,7 +907,7 @@ def _execute_state_machine(
     if state.terminal:
         return results
     if state.transitions:
-        _refresh_decision(ctx, reader=decision_reader, read_s3=True)
+        _refresh_decision(ctx, state=state, reader=decision_reader, read_s3=True)
         if not ctx.last_decision:
             ctx.last_decision = assume_decision
     next_name = ""
@@ -1004,7 +1119,7 @@ def _resolved_run(state: StateSpec, ctx: RunContext) -> tuple[list[str], str, st
             )
             for token in argv_for_tool(state.tool_ref)
         ]
-        return argv, "", state.tool_ref
+        return drop_empty_optional_flags(state.tool_ref, argv), "", state.tool_ref
     if state.run is None:
         return [], "", ""
     shell = resolve_tokens(

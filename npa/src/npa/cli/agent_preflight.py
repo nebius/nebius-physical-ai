@@ -83,6 +83,9 @@ def _render_agent_cloud_init(ssh_user: str, public_key: str) -> str:
     rendered = template.split(_AGENT_CLOUD_INIT_BRANCH, 1)[0]
     rendered = rendered.replace("${jsonencode(ssh_user)}", json.dumps(ssh_user))
     rendered = rendered.replace("${jsonencode(ssh_public_key)}", json.dumps(public_key))
+    # Preflight validates YAML before a deployment exists. The provisioner later
+    # persists the actual fresh challenge; use its validated shape in this preview.
+    rendered = rendered.replace("${ssh_host_key_nonce}", "0" * 64)
     if "${" in rendered or "%{" in rendered:
         raise ValueError("agent cloud-init template contains unresolved interpolation")
     parsed = yaml.safe_load(rendered)

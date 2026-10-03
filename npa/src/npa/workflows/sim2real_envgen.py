@@ -157,12 +157,13 @@ def scene_spec_from_uri(uri: str) -> SceneSpec:
     ref = str(uri or "").strip()
     if not ref:
         return build_scene_spec()
-    local_path = Path("/tmp/npa-scene-spec.json")
     if ref.startswith("s3://"):
-        StorageClient.from_environment().download_path(ref, str(local_path))
+        with tempfile.TemporaryDirectory(prefix="npa-scene-spec-") as directory:
+            local_path = Path(directory) / "scene-spec.json"
+            StorageClient.from_environment().download_path(ref, str(local_path))
+            payload = json.loads(local_path.read_text(encoding="utf-8"))
     else:
-        local_path = Path(ref)
-    payload = json.loads(local_path.read_text(encoding="utf-8"))
+        payload = json.loads(Path(ref).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise Sim2RealEnvGenError(f"scene spec must be a JSON object: {ref}")
     task_contract = dict(payload.get("task_contract") or {})

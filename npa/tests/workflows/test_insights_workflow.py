@@ -6,7 +6,7 @@ from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG, argv_for_tool
 
 ROOT = Path(__file__).resolve().parents[3]
-NPA_WORKFLOWS = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+NPA_WORKFLOWS = ROOT / "workflows" / "testing"
 HARDENING = NPA_WORKFLOWS / "hardening-with-insights.yaml"
 SMOKE = NPA_WORKFLOWS / "insights-smoke.yaml"
 AGGREGATE = NPA_WORKFLOWS / "insights-aggregate.yaml"
@@ -18,10 +18,27 @@ def test_hardening_with_insights_validates_and_appends_insights_stages() -> None
     assert spec.name == "hardening-with-insights"
     assert spec.initial == "generate"
 
-    promote = [step.state for step in build_plan(spec, run_id="t", assume_decision="promote_checkpoint").steps]
-    assert promote == ["generate", "rank", "retrain", "evaluate", "decide", "publish", "aggregate", "dashboard"]
+    promote = [
+        step.state
+        for step in build_plan(
+            spec, run_id="t", assume_decision="promote_checkpoint"
+        ).steps
+    ]
+    assert promote == [
+        "generate",
+        "rank",
+        "retrain",
+        "evaluate",
+        "decide",
+        "publish",
+        "aggregate",
+        "dashboard",
+    ]
 
-    loop = [step.state for step in build_plan(spec, run_id="t", assume_decision="loop_back").steps]
+    loop = [
+        step.state
+        for step in build_plan(spec, run_id="t", assume_decision="loop_back").steps
+    ]
     assert loop[:2] == ["generate", "rank"]
     assert loop.count("retrain") == 3
     assert loop[-2:] == ["aggregate", "dashboard"]
@@ -44,6 +61,18 @@ def test_insights_smoke_validates_and_is_cpu_only() -> None:
     assert states == ["ingest", "compare", "dashboard"]
     for state in spec.states.values():
         assert state.resources == "cpu"
+
+
+def test_insights_smoke_declares_the_append_only_store_prefix() -> None:
+    spec = load_spec(SMOKE)
+    plan = build_plan(spec, run_id="sharded-proof")
+    steps = {step.state: step for step in plan.steps}
+    store = "s3://example-bucket/insights-smoke/sharded-proof/store/"
+    expected = [{"uri": store, "schema": "npa.insights.store.v1"}]
+
+    assert steps["ingest"].outputs == expected
+    assert steps["compare"].inputs == expected
+    assert steps["dashboard"].inputs == expected
 
 
 def test_new_insights_toolrefs_render() -> None:

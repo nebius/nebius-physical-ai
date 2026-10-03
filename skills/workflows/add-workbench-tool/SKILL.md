@@ -99,7 +99,7 @@ accessors, follow `skills/atomic/npa-cli-conventions/SKILL.md`.
    and then dies in the pod.
 7. Add a row per toolRef to `docs/workbench/npa-workflow-tool-catalog.md`.
 8. Create at least one reference spec under
-   `npa/workflows/workbench/npa-workflows/`. Every catalog entry must be
+   `workflows/testing/`. Every catalog entry must be
    reachable from a shipped spec unless it is deliberately listed in
    `PUBLIC_REUSABLE_TOOLREFS` in `catalog.py`.
 9. GPU or containerized stages only: map the toolRef prefix to its image in
@@ -144,6 +144,12 @@ scope. Live coverage is not optional for workflow-facing changes — see
 19. Write `skills/tools/<tool>/SKILL.md` and register it in `skills/index.yaml`
     with at least one smoke. Update `AGENTS.md` and `CLAUDE.md` only if the root
     index lists the skill.
+20. For a containerized tool, load
+    `skills/atomic/audit-container-docs/SKILL.md` and reconcile
+    `docs/workbench/container-image-catalog.md` after the image pin and
+    redistribution/publication classification are final. Public-plan images
+    must have their exact resolved pin in the table; restricted, internal, or
+    unpublished images must not be represented as publicly available.
 
 ## Phase F — Optional Integrations
 

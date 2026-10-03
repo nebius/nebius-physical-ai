@@ -11,6 +11,7 @@ from npa.clients.nebius import NebiusError
 
 
 runner = CliRunner()
+NARROW_SOURCE = "192.0.2.0/24"
 
 
 def _instance(
@@ -57,7 +58,7 @@ def _ingress_rule(
     rule_id: str = "rule-existing",
     name: str = "allow-existing",
     ports: list[int],
-    source: str = "0.0.0.0/0",
+    source: str = NARROW_SOURCE,
     protocol: str = "TCP",
     access: str = "ALLOW",
 ) -> dict[str, Any]:
@@ -129,6 +130,8 @@ def test_network_ensure_ingress_success_with_vm(mocker) -> None:
         [
             "network",
             "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
             "--vm",
             "computeinstance-test",
             "--ports",
@@ -152,6 +155,8 @@ def test_network_ensure_ingress_success_with_ip_project(mocker) -> None:
         [
             "network",
             "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
             "--ip",
             "203.0.113.10",
             "--project",
@@ -183,6 +188,8 @@ def test_network_ensure_ingress_matching_spec_is_noop(mocker) -> None:
         [
             "network",
             "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
             "--vm",
             "computeinstance-test",
             "--ports",
@@ -206,6 +213,8 @@ def test_network_empty_destination_ports_authoritatively_covers_all_ports(
         [
             "network",
             "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
             "--vm",
             "computeinstance-test",
             "--ports",
@@ -234,6 +243,8 @@ def test_network_ensure_ingress_same_name_different_spec_warns(mocker) -> None:
         [
             "network",
             "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
             "--vm",
             "computeinstance-test",
             "--ports",
@@ -263,6 +274,8 @@ def test_network_ensure_ingress_partial_coverage_creates_missing_ports(mocker) -
         [
             "network",
             "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
             "--vm",
             "computeinstance-test",
             "--ports",
@@ -332,6 +345,8 @@ def test_network_ensure_ingress_permission_failure_is_clean(mocker) -> None:
         [
             "network",
             "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
             "--vm",
             "computeinstance-test",
             "--ports",
@@ -349,7 +364,16 @@ def test_network_ensure_ingress_missing_instance_is_clean(mocker) -> None:
 
     result = runner.invoke(
         app,
-        ["network", "ensure-ingress", "--vm", "missing-vm", "--ports", "8081"],
+        [
+            "network",
+            "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
+            "--vm",
+            "missing-vm",
+            "--ports",
+            "8081",
+        ],
     )
 
     assert result.exit_code == 1
@@ -365,6 +389,8 @@ def test_network_ensure_ingress_missing_security_group_is_clean(mocker) -> None:
         [
             "network",
             "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
             "--vm",
             "computeinstance-test",
             "--ports",
@@ -386,6 +412,8 @@ def test_network_ensure_ingress_multiple_ports_collapsed_into_single_rule(
         [
             "network",
             "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
             "--vm",
             "computeinstance-test",
             "--ports",
@@ -428,6 +456,8 @@ def test_network_ensure_ingress_multi_sg_coverage_in_second_group_is_noop(
         [
             "network",
             "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
             "--vm",
             "computeinstance-test",
             "--ports",
@@ -454,6 +484,8 @@ def test_network_ensure_ingress_multi_sg_missing_ports_create_on_first_group_onl
         [
             "network",
             "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
             "--vm",
             "computeinstance-test",
             "--ports",
@@ -473,6 +505,8 @@ def test_network_ensure_ingress_rejects_vm_and_ip_combination() -> None:
         [
             "network",
             "ensure-ingress",
+            "--source",
+            NARROW_SOURCE,
             "--vm",
             "computeinstance-test",
             "--ip",
@@ -489,10 +523,50 @@ def test_network_ensure_ingress_rejects_vm_and_ip_combination() -> None:
 
 
 def test_network_ensure_ingress_rejects_missing_target() -> None:
-    result = runner.invoke(app, ["network", "ensure-ingress", "--ports", "8081"])
+    result = runner.invoke(
+        app, ["network", "ensure-ingress", "--source", NARROW_SOURCE, "--ports", "8081"]
+    )
 
     assert result.exit_code != 0
     assert "pass exactly one of --vm or (--ip and --project)" in result.output
+
+
+def test_network_world_open_ingress_requires_explicit_acknowledgement(mocker) -> None:
+    calls = _mock_nebius(mocker)
+
+    denied = runner.invoke(
+        app,
+        [
+            "network",
+            "ensure-ingress",
+            "--source",
+            "0.0.0.0/0",
+            "--vm",
+            "computeinstance-test",
+            "--ports",
+            "8081",
+        ],
+    )
+    assert denied.exit_code == 1
+    assert "acknowledgement" in denied.output
+    assert _create_calls(calls) == []
+
+    allowed = runner.invoke(
+        app,
+        [
+            "network",
+            "ensure-ingress",
+            "--source",
+            "0.0.0.0/0",
+            "--allow-world-open",
+            "--vm",
+            "computeinstance-test",
+            "--ports",
+            "8081",
+        ],
+    )
+    assert allowed.exit_code == 0
+    assert len(_create_calls(calls)) == 1
 
 
 def test_remove_npa_ingress_rules_deletes_allow_npa_rules(mocker) -> None:

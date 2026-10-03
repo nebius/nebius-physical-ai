@@ -56,13 +56,17 @@ def test_image_files_exist() -> None:
 def test_dockerfile_pins_match_python_constants() -> None:
     text = _dockerfile()
     assert _arg_default(text, "FOXGLOVE_EMBED_VERSION") == FOXGLOVE_EMBED_SDK_VERSION
-    assert _arg_default(text, "FOXGLOVE_EMBED_INTEGRITY") == FOXGLOVE_EMBED_SDK_INTEGRITY
+    assert (
+        _arg_default(text, "FOXGLOVE_EMBED_INTEGRITY") == FOXGLOVE_EMBED_SDK_INTEGRITY
+    )
 
 
 def test_install_script_defaults_match_python_constants() -> None:
     text = INSTALL_SCRIPT.read_text(encoding="utf-8")
     assert re.search(rf'(?m)^VERSION="{re.escape(FOXGLOVE_EMBED_SDK_VERSION)}"$', text)
-    assert re.search(rf'(?m)^INTEGRITY="{re.escape(FOXGLOVE_EMBED_SDK_INTEGRITY)}"$', text)
+    assert re.search(
+        rf'(?m)^INTEGRITY="{re.escape(FOXGLOVE_EMBED_SDK_INTEGRITY)}"$', text
+    )
     # The script must verify, not merely download.
     assert "openssl dgst -sha512" in text
     assert "integrity mismatch" in text
@@ -77,16 +81,18 @@ def test_install_script_is_used_by_the_dockerfile() -> None:
 def test_supported_tool_version_tracks_the_sdk() -> None:
     assert CONTAINER_IMAGE_NAMES["foxglove-embed"] == "npa-foxglove-embed"
     assert SUPPORTED_TOOL_VERSIONS["foxglove-embed"] == FOXGLOVE_EMBED_SDK_VERSION
-    pyproject = tomllib.loads((REPO_ROOT / "npa" / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "npa" / "pyproject.toml").read_text(encoding="utf-8")
+    )
     supported = pyproject["tool"]["npa"]["supported-tools"]
     assert supported["foxglove-embed"] == FOXGLOVE_EMBED_SDK_VERSION
 
 
 def test_packaging_contract_entry() -> None:
     contract = yaml.safe_load(
-        (REPO_ROOT / "npa" / "docker" / "workbench" / "packaging-contract.yaml").read_text(
-            encoding="utf-8"
-        )
+        (
+            REPO_ROOT / "npa" / "docker" / "workbench" / "packaging-contract.yaml"
+        ).read_text(encoding="utf-8")
     )
     entry = contract["images"]["foxglove-embed"]
     assert entry["tier"] == "service"

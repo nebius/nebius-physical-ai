@@ -1,5 +1,7 @@
 # LTX-2.5 Workbench support
 
+[Workbench docs](README.md)
+
 NPA packages Lightricks' LTX-2.5 video/audio model as a BYOF solution whose
 image contains **no LTX-2.5 bytes at all** — no `ltx-core`, no `ltx-pipelines`,
 no weights, no CUDA wheels. On first use the container fetches upstream's pinned
@@ -10,15 +12,12 @@ repository.
 LTX-2.5 is a generative video model. This integration does not represent it as
 an action-conditioned robotics simulator or an action-prediction model.
 
-> **Status: built and byte-scanned; not yet generated on a GPU.** The image has
-> been built and pushed on the dev VM, the payload scan passes against the
-> pushed digest, and the refusal has been re-proved against those exact bytes
-> pulled back from the registry (see "Validated on the dev VM" below). What has
-> *not* happened is a generation run: that needs an operator's own entitlement
-> on the gated `Lightricks/LTX-2.5` repository, which nobody can hold on their
-> behalf. `ltx2` therefore stays in `UNVALIDATED_PUBLICATION_TOOLS` —
-> publication needs the GPU capability evidence as well as the byte evidence,
-> and only one of the two exists.
+> **Status: exact public digest accepted after zero-payload and real GPU gates.**
+> The immutable development digest recorded in
+> `npa/src/npa/deploy/ltx2_image_manifest.json` passed every pre-publication
+> check, then generated and independently decoded a real clip on one RTX PRO
+> 6000 under the operator's own entitlement. The supported release tag is
+> `2.5-rtfetch-20260817`; source and weights remain runtime-only.
 
 ## Why this image ships nothing
 
@@ -143,25 +142,22 @@ Validate and plan the checked-in spec:
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-ltx2.yaml
+  workflows/testing/byof-ltx2.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-ltx2.yaml --run-id ltx2-plan
+  workflows/testing/byof-ltx2.yaml --run-id ltx2-plan
 ```
 
 ## Dev VM runbook
 
-Steps 1-3 have been executed; see "Validated on the dev VM" below for what they
-produced. Steps 4-6 have not: they need an operator's own entitlement on the
-gated repository, which nobody can hold on their behalf. Each step produces the
-evidence the next one depends on, and the tree records no accepted digest until
-they have all run.
+All six steps were executed for the accepted digest. Repeat them for any future
+candidate; an older proof never transfers to new image bytes.
 
 **1. Build.** Requires Docker and a registry you control. The build itself
 proves the refusal works and that proving it downloaded nothing; it fails if any
 LTX, weight, or CUDA payload appears in any layer.
 
 ```bash
-npa/docker/workbench/ltx2/build.sh --registry <your-registry> --push
+npa/docker/workbench/ltx2/build.sh --registry "<your-registry>" --push
 ```
 
 **2. Scan the pushed bytes, not the Dockerfile.** The claim is about bytes in
@@ -170,18 +166,16 @@ directions by `npa/tests/docker/test_ltx_image_payload_scan.py`.
 
 ```bash
 npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
-  <your-registry>/npa-ltx2:2.5-rtfetch-unbuilt
+  "<your-registry>/npa-ltx2:dev-<full-git-sha>"
 ```
 
-The tag comes from `supported_tool_version("ltx2")` and carries `-unbuilt`
-deliberately, so a tag that has never been produced cannot be mistaken for one
-that has. Renaming it is part of step 6, not step 1.
+Only the immutable public development tag is tested before release promotion.
 
 **3. Re-prove the refusal against the pushed image.** This is the same mode the
 build ran, now against the artifact anyone would pull.
 
 ```bash
-docker run --rm <your-registry>/npa-ltx2@sha256:<digest> ltx-runtime assert-refusal
+docker run --rm "<your-registry>/npa-ltx2@sha256:<digest>" ltx-runtime assert-refusal
 ```
 
 It must print `NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK`. Confirm the
@@ -189,7 +183,7 @@ unentitled refusal separately, and that it names the token rather than one of
 the gates behind it:
 
 ```bash
-docker run --rm <your-registry>/npa-ltx2@sha256:<digest> ltx-runtime ensure
+docker run --rm "<your-registry>/npa-ltx2@sha256:<digest>" ltx-runtime ensure
 # exits 78, names HF_TOKEN and the gated repository, downloads nothing
 ```
 
@@ -206,7 +200,7 @@ the generation, which is a much less obvious failure).
 
 ```bash
 export NPA_INTEGRATION_E2E=1 NPA_LTX2_LIVE_GPU=1
-export NPA_LTX2_REUSE_IMAGE=<your-registry>/npa-ltx2@sha256:<digest>
+export NPA_LTX2_REUSE_IMAGE="<your-registry>/npa-ltx2@sha256:<digest>"
 npa/.venv/bin/python -m pytest npa/tests/e2e/test_ltx2_live_e2e.py -q
 ```
 
@@ -217,26 +211,26 @@ behalf. Forwarding to a submitted workflow goes through the secret channel —
 `--secret-env HF_TOKEN` and `--secret-env NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS` —
 never through a spec or rendered YAML.
 
-**6. Record what the run proved.** Add the accepted digest and the scan and GPU
-evidence, and remove `ltx2` from `UNVALIDATED_PUBLICATION_TOOLS` in the same
-change. Not before: publishing an image whose payload scan has never run hands
+**6. Record what the run proved.** Replace the accepted manifest's digest and
+scan/GPU evidence in one change. Never carry the current proof to a future
+digest: publishing bytes whose payload scan and GPU workflow have not run hands
 out a claim we have not earned.
 
-## Validated on the dev VM
+## Accepted validation record
 
-Steps 1-3 of the runbook have been executed, and re-executed after the licensing
-declaration was removed. The image was built with `build.sh --push` and scanned
-by immutable digest
-`sha256:a9d6c63eeea890c577ed38f5e3b47ae84a0db663920ce9de7c097dfaf541b3fa`:
+The accepted manifest binds all checks to immutable digest
+`sha256:c04b5b4e4c7f1c26e21671b3826ce8da75755c98bab2c54cd46137c609c2410b`:
 
 | Check | Result |
 | --- | --- |
-| `build.sh --push` | succeeded, including every in-build proof: `health`, `assert-refusal`, no files written under `/workspace`, the moving/flat/still validator triple, and the no-`ltx_core`/no-`*.safetensors`/no-`nvidia` layer checks |
-| `scan_image_ltx_payload.py <digest>` | `pass` — 16 archives scanned, zero findings |
+| Public development build | all packaging, licensing, secret, payload, base-pin, SBOM, vulnerability, provenance, source-revision, non-root, and bootstrap gates passed before/after push |
+| `scan_image_ltx_payload.py <digest>` | `pass` — zero LTX source, weights, credentials, acceptance, gated assets, customer data, or live infrastructure data |
 | `docker run <digest> ltx-runtime assert-refusal` | printed `NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_ENTITLEMENT_OK`, exit 0 |
 | `docker run <digest> ensure` without a token | exit 78, and the refusal names `HF_TOKEN` — the source fetch is entitlement-gated now, not just the weights |
 | `docker run <digest> fetch-weights` without a token | exit 78 |
 | `docker run <digest> status` | `source: absent`, `weights: absent`, `weights_revision: unknown` |
+| Real GPU workflow | one RTX PRO 6000; 1536×1024 H.264, 121 decoded frames, 1,994,625 bytes; both required capabilities passed with no deferred work |
+| Independent operator decode | matched MP4 SHA-256 `8899f722b746da93bf79a5fd3bf81d1fdb8b64ea70c5ae3b9fa97a8aac779724` |
 
 | `/opt/npa/ltx2/smoke.sh` in-image | `OK (refusals enforced, no LTX payload present)` |
 

@@ -25,13 +25,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 
-SPECS = (
-    Path(__file__).resolve().parents[4]
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-)
+SPECS = Path(__file__).resolve().parents[4] / "workflows" / "testing"
 
 
 def test_requirements_resolve_by_exact_ref_and_by_prefix() -> None:
@@ -143,6 +137,18 @@ def test_groot_finetune_installs_python310_tomli_into_the_recorded_environment()
     assert "uv pip install -q --python \"$npa_req_python\" 'tomli>=2.0.0'" in setup
 
 
+def test_groot_mcap_stage_installs_and_probes_native_writer_dependency() -> None:
+    requirements = tool_pip_requirements("workflow.groot.emit_learning_mcap")
+    assert requirements == (
+        ("python:av", "av>=12,<17"),
+        ("python:mcap", "mcap>=1.3,<2"),
+    )
+    setup = render_pip_requirements_setup(requirements)
+    assert "\"$npa_req_python\" -c 'import mcap'" in setup
+    assert "-m pip install -q 'mcap>=1.3,<2'" in setup
+    assert "uv pip install -q --python \"$npa_req_python\" 'mcap>=1.3,<2'" in setup
+
+
 def test_executable_and_module_probes_can_coexist() -> None:
     setup = render_pip_requirements_setup(
         (("huggingface-cli", "huggingface_hub[cli]"), ("python:numpy", "numpy>=1.24"))
@@ -181,7 +187,9 @@ def test_vendor_interpreter_resolves_by_prefix() -> None:
     assert tool_vendor_interpreters("workbench.lerobot.policy_train") == (
         "/opt/lerobot/venv/bin/python",
     )
-    assert tool_vendor_interpreters("workbench.mjlab.eval") == ()
+    assert tool_vendor_interpreters("workbench.mjlab.eval") == (
+        "/usr/local/bin/python",
+    )
     # OpenPI's GPU stage commands name /opt/venv/bin/python explicitly. Its
     # prepare-data and service-control stages run in the normal Sky image, so a
     # prefix-wide vendor override would select an interpreter that is absent there.
@@ -338,7 +346,13 @@ def test_the_npa_console_script_is_shimmed_to_the_recorded_interpreter(
     # so the recorded source goes in front of it.
     assert 'export PYTHONPATH="$npa_src_path:$PYTHONPATH"' in run_script
     assert "${" not in run_script, "the placeholder guard rejects braced expansions"
-    assert "from npa.cli.main import app_entry" in run_script
+    # npa has no top-level __main__; the generated shim must call the same
+    # supported entry function as the installed console script.  An explicit
+    # call also works with older images whose entry module lacks a __main__
+    # guard and would otherwise silently no-op under ``python -m``.
+    assert 'exec "%s" -c "from npa.cli.entry import main; main()" "$@"' in run_script
+    assert 'exec "%s" -m npa.cli.entry "$@"' not in run_script
+    assert 'exec "%s" -m npa "$@"' not in run_script
     # Both shims come from the same recorded interpreter.
     assert run_script.count('"$npa_python"') >= 2
 
@@ -356,11 +370,12 @@ def test_the_source_overlay_installs_dependencies_when_the_cli_will_not_load() -
 
     setup = default_npa_setup()
 
+    probe = setup.index("\"$npa_setup_python\" -c 'import npa.cli.main'")
     first = setup.index("npa_pip_install -e /tmp/npa-src-overlay --no-deps")
-    guard = setup.index("import npa.cli.main")
+    guard = setup.index("\"$npa_setup_python\" -c 'import npa.cli.main'", first)
     second = setup.index("npa_pip_install -e /tmp/npa-src-overlay\n")
-    assert first < guard < second, (
-        "the with-deps attempt must be guarded and come second"
+    assert probe < first < guard < second, (
+        "the baked probe must precede the no-deps and guarded with-deps attempts"
     )
     # `import npa` is not the right probe: it succeeded in job 309. The command tree is.
-    assert "python3 -c 'import npa.cli.main'" in setup
+    assert "\"$npa_setup_python\" -c 'import npa.cli.main'" in setup

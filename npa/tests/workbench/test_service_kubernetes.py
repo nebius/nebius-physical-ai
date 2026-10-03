@@ -23,7 +23,7 @@ def _manifests(**overrides):
         "port": 8686,
         "image": "registry.example/npa-lancedb:1.2.3",
         "storage_path": "s3://bucket/lancedb/",
-        "service_env": {"LANCEDB_STORAGE_PATH": "s3://bucket/lancedb/"},
+        "service_env": {"LANCEDB_PORT": "8686"},
         "secret_name": "npa-lancedb-storage",
         "storage_endpoint_url": "https://storage.example.com",
     }
@@ -57,8 +57,59 @@ def test_credentials_come_from_a_secret_not_the_manifest() -> None:
     by_name = {entry["name"]: entry for entry in env}
 
     for key in k8s.STORAGE_SECRET_ENVS:
-        assert "value" not in by_name[key], f"{key} must not be a literal in the manifest"
-        assert by_name[key]["valueFrom"]["secretKeyRef"]["name"] == "npa-lancedb-storage"
+        assert "value" not in by_name[key], (
+            f"{key} must not be a literal in the manifest"
+        )
+        assert (
+            by_name[key]["valueFrom"]["secretKeyRef"]["name"] == "npa-lancedb-storage"
+        )
+
+
+def test_storage_path_matching_service_env_is_rendered_once() -> None:
+    storage_path = "s3://bucket/lancedb/"
+    deployment, _ = _manifests(
+        service_env={"LANCEDB_STORAGE_PATH": storage_path, "LANCEDB_PORT": "8686"}
+    )
+    env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+    storage_entries = [
+        entry for entry in env if entry["name"] == "LANCEDB_STORAGE_PATH"
+    ]
+
+    assert storage_entries == [{"name": "LANCEDB_STORAGE_PATH", "value": storage_path}]
+
+
+def test_storage_path_is_injected_when_service_env_omits_it() -> None:
+    deployment, _ = _manifests(service_env={"LANCEDB_PORT": "8686"})
+    env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+
+    assert {entry["name"]: entry.get("value") for entry in env}[
+        "LANCEDB_STORAGE_PATH"
+    ] == "s3://bucket/lancedb/"
+
+
+def test_conflicting_storage_path_is_rejected() -> None:
+    with pytest.raises(k8s.ServiceKubernetesError, match="conflicts with storage_path"):
+        _manifests(
+            service_env={"LANCEDB_STORAGE_PATH": "s3://different-bucket/lancedb/"}
+        )
+
+
+@pytest.mark.parametrize("storage_path", ["", "   "])
+def test_empty_storage_path_is_rejected(storage_path: str) -> None:
+    with pytest.raises(k8s.ServiceKubernetesError, match="storage path is required"):
+        _manifests(storage_path=storage_path)
+
+
+def test_storage_credentials_are_never_serialized_as_values() -> None:
+    credentials = {
+        "AWS_ACCESS_KEY_ID": "literal-access-key",
+        "AWS_SECRET_ACCESS_KEY": "literal-secret-key",
+    }
+    deployment, _ = _manifests(service_env=credentials)
+    manifest = json.dumps(deployment)
+
+    assert "literal-access-key" not in manifest
+    assert "literal-secret-key" not in manifest
 
 
 def test_no_secret_env_when_storage_is_local() -> None:
@@ -74,8 +125,8 @@ def test_readiness_gates_the_service_endpoints() -> None:
     deployment, _ = _manifests()
     container = deployment["spec"]["template"]["spec"]["containers"][0]
 
-    assert container["readinessProbe"]["httpGet"]["path"] == "/health"
-    assert container["livenessProbe"]["httpGet"]["path"] == "/health"
+    assert container["readinessProbe"]["httpGet"]["path"] == "/readyz"
+    assert container["livenessProbe"]["httpGet"]["path"] == "/readyz"
     assert container["readinessProbe"]["httpGet"]["port"] == 8686
 
 
@@ -86,18 +137,22 @@ def test_everything_created_is_labelled_so_destroy_can_find_only_its_own() -> No
 
 
 def test_image_pull_secrets_are_wired_when_given() -> None:
-    deployment, _ = _manifests(image_pull_secrets=("npa-nebius-registry",))
+    deployment, _ = _manifests(image_pull_secrets=("private-ghcr",))
 
     assert deployment["spec"]["template"]["spec"]["imagePullSecrets"] == [
-        {"name": "npa-nebius-registry"}
+        {"name": "private-ghcr"}
     ]
 
 
-def test_build_rejects_a_missing_image_or_storage_path() -> None:
+def test_build_rejects_a_missing_image() -> None:
     with pytest.raises(k8s.ServiceKubernetesError, match="image reference"):
-        k8s.build_manifests(name="x", port=1, image="", service_env={})
+        k8s.build_manifests(
+            name="x", port=1, image="", storage_path="/data", service_env={}
+        )
     with pytest.raises(k8s.ServiceKubernetesError, match="image reference"):
-        k8s.build_manifests(name="x", port=1, image="   ", service_env={})
+        k8s.build_manifests(
+            name="x", port=1, image="   ", storage_path="/data", service_env={}
+        )
 
 
 def test_apply_sends_one_list_document_and_surfaces_failure() -> None:
@@ -167,42 +222,21 @@ def test_the_storage_secret_refuses_to_be_created_empty() -> None:
             "npa-lancedb-storage",
             "default",
             {"AWS_ACCESS_KEY_ID": "key"},
-            runner=lambda *a, **k: subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            runner=lambda *a, **k: subprocess.CompletedProcess(
+                [], 0, stdout="", stderr=""
+            ),
         )
 
 
 def test_registry_host_is_detected_for_a_private_image() -> None:
-    assert k8s.registry_host("cr.us-central1.nebius.cloud/ns/npa-lancedb:1") == "cr.us-central1.nebius.cloud"
+    assert (
+        k8s.registry_host("registry-us.example/ns/npa-lancedb:1")
+        == "registry-us.example"
+    )
     assert k8s.registry_host("localhost:5000/npa-lancedb:1") == "localhost:5000"
     # A bare name is Docker Hub, which needs no pull secret here.
     assert k8s.registry_host("npa-lancedb:1") == ""
     assert k8s.registry_host("library/npa-lancedb:1") == ""
-
-
-def test_the_registry_secret_is_minted_not_borrowed(monkeypatch) -> None:
-    """Live: the first deploy sat in ImagePullBackOff with 401 against a tag that exists.
-
-    A long-lived Deployment cannot borrow SkyPilot's per-submit credentials — the kubelet pulls
-    again whenever it restarts a pod — so reusing a shared secret makes the service depend on
-    somebody else's refresh cron.
-    """
-
-    import npa.workflows.sim2real.registry_auth as registry_auth
-
-    monkeypatch.setattr(registry_auth, "mint_nebius_registry_token", lambda: "fresh-token")
-    calls: list[list[str]] = []
-
-    def ok(args, stdin=None, timeout=300):
-        calls.append(args)
-        return subprocess.CompletedProcess(args, 0, stdout="{}", stderr="")
-
-    k8s.ensure_registry_secret("npa-lancedb-registry", "default", "cr.example.com", runner=ok)
-
-    create = calls[0]
-    assert "docker-registry" in create
-    assert "--docker-server=cr.example.com" in create
-    assert "--docker-password=fresh-token" in create
-    assert calls[1][:3] == ["apply", "-f", "-"]
 
 
 def test_auto_auth_is_none_when_no_token_is_configured(monkeypatch) -> None:

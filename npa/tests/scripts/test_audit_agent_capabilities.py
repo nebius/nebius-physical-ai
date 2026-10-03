@@ -1,0 +1,286 @@
+"""The agent capability audit must keep working, and its verdict must stay green.
+
+Nothing else runs ``audit_agent_capabilities.py``, and it couples to internals
+that move: the private ``_bootstrap_agent_stack`` keyword signature, the
+``backend.py`` heredoc shape in the generated setup script, and
+``agent_chat``'s ``match_chat_intent`` / ``build_grounded_reply``. Without this
+test the script rots silently and the next person to reach for it finds a
+traceback instead of an answer.
+
+Running its offline tier here also makes it a whole-surface regression gate:
+a route that stops being registered, a route that starts 5xx-ing, an intent
+that stops matching, or a duplicate registration that shadows a live handler
+all fail here rather than on someone's VM.
+
+Offline and free -- no cluster, no VM, no Token Factory call, no port bound.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCRIPT = REPO_ROOT / "npa" / "scripts" / "audit_agent_capabilities.py"
+
+# The script execs the rendered backend into this module name.
+_RENDERED_MODULE = "npa_audit_backend"
+
+
+def _load():
+    spec = importlib.util.spec_from_file_location("audit_agent_capabilities", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    # @dataclass resolves annotations through sys.modules, so register before exec.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_live_audit_declares_its_selected_websocket_runtime() -> None:
+    project = tomllib.loads((REPO_ROOT / "npa/pyproject.toml").read_text())
+    optional_dev = project["project"]["optional-dependencies"]["dev"]
+    grouped_dev = project["dependency-groups"]["dev"]
+
+    for dependencies in (optional_dev, grouped_dev):
+        assert any(item.startswith("websockets>=") for item in dependencies)
+
+
+@pytest.fixture
+def audit(tmp_path):
+    """Load the script and undo the import-state it mutates."""
+    original_path = list(sys.path)
+    module = _load()
+    try:
+        yield module
+    finally:
+        sys.modules.pop("audit_agent_capabilities", None)
+        sys.modules.pop(_RENDERED_MODULE, None)
+        sys.path[:] = original_path
+
+
+def _stage_audit_credential_context(
+    monkeypatch, tmp_path, backend_globals
+) -> list[list[str]]:
+    """Stage metadata provenance and stub providers without an operator identity."""
+    from npa.cli import agent_resources
+
+    config = tmp_path / "nebius" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("profiles: {}\n", encoding="utf-8")
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
+    monkeypatch.setenv("NPA_NEBIUS_CONFIG", str(config))
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "audit-fixture")
+    provider_calls: list[list[str]] = []
+
+    def fake_provider_command(command, *_args, **_kwargs):
+        provider_calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, '{"items":[]}', "")
+
+    monkeypatch.setitem(
+        backend_globals, "run_bounded_agent_command", fake_provider_command
+    )
+    # Resource-discovery helpers are imported functions: their globals belong to
+    # npa.cli.agent_resources, not to the rendered backend module.
+    monkeypatch.setattr(
+        agent_resources, "run_bounded_agent_command", fake_provider_command
+    )
+    return provider_calls
+
+
+def test_audit_script_renders_and_reports_a_healthy_surface(
+    audit, tmp_path, monkeypatch
+) -> None:
+    from fastapi.testclient import TestClient
+
+    body = audit.render_backend_body()
+    assert body.strip(), "bootstrap emitted no backend.py body"
+    assert "__NPA_AGENT_" not in body, (
+        "rendered backend still contains an unsubstituted embed placeholder"
+    )
+
+    app, _globals = audit.load_backend_app(body, tmp_path)
+    _stage_audit_credential_context(monkeypatch, tmp_path, _globals)
+    routes = audit.iter_routes(app)
+    # Guards against a vacuous pass: an empty routing table has no bad routes
+    # and no duplicates, so every assertion below would hold for the wrong
+    # reason. The floor is deliberately loose -- this is a smoke bound, not a
+    # count to bump on every new route.
+    assert len(routes) > 80, f"suspiciously few routes enumerated: {len(routes)}"
+    assert ("GET", "/health") in routes
+
+    assert audit.shadowed_routes(app) == [], (
+        "a method+path is registered more than once; Starlette serves the first "
+        "and every later registration is unreachable"
+    )
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        probes = audit.probe_routes(client, routes)
+        capabilities = audit.probe_capabilities(client)
+
+    assert probes, "no routes were probed"
+    broken = [
+        f"{p['method']} {p['path']} -> {p.get('status')} {p.get('error') or p.get('detail') or ''}"
+        for p in probes
+        if audit.classify_outcome(p) == "error"
+    ]
+    # `needs_arguments`, `gated`, and `absent_in_sandbox` are correct outcomes
+    # for a sandbox with no bucket, no TLS ingress, and no staged recording.
+    # `error` means a 5xx or an unhandled exception, which never is.
+    assert not broken, "routes failed rather than declining:\n" + "\n".join(broken)
+
+    not_working = [
+        f"{c['capability']}: {c.get('status')} {c.get('detail')}"
+        for c in capabilities
+        if not c.get("works")
+    ]
+    assert not not_working, "advertised capabilities did not work:\n" + "\n".join(
+        not_working
+    )
+
+
+def test_audit_credential_fixture_patches_imported_provider_runner(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.cli import agent_resources
+
+    calls = _stage_audit_credential_context(monkeypatch, tmp_path, {})
+    result = agent_resources.discover_mk8s_clusters("project-fixture", dict(os.environ))
+
+    assert result == {"status": "available", "items": []}
+    assert len(calls) == 1
+    assert calls[0][1:5] == [
+        "--config",
+        "/root/.nebius/config.yaml",
+        "--profile",
+        "cursor-sa",
+    ]
+    assert "audit-fixture" not in calls[0]
+
+
+@pytest.mark.parametrize(
+    "credential_source", ["", "unsupported-fixture", "configured_profile"]
+)
+def test_unconfigured_audit_keeps_credential_refusals_visible(
+    audit, tmp_path, monkeypatch, credential_source: str
+) -> None:
+    from fastapi.testclient import TestClient
+
+    app, backend_globals = audit.load_backend_app(audit.render_backend_body(), tmp_path)
+    provider_calls = _stage_audit_credential_context(
+        monkeypatch, tmp_path, backend_globals
+    )
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", credential_source)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        access = client.get("/access")
+        artifact = client.get("/artifacts/content")
+
+    assert access.status_code == 503
+    assert access.json() == {
+        "ok": False,
+        "error": "Agent access discovery is unavailable.",
+    }
+    assert artifact.status_code == 502
+    assert audit.classify_outcome({"status": access.status_code}) == "error"
+    assert audit.classify_outcome({"status": artifact.status_code}) == "error"
+    assert str(tmp_path) not in access.text + artifact.text
+    assert "unsupported-fixture" not in access.text + artifact.text
+    assert not provider_calls, "unsupported provenance must refuse before discovery"
+
+
+def test_rendered_openapi_media_operation_ids_are_unique(audit, tmp_path) -> None:
+    """Keep the generated media API usable by OpenAPI clients."""
+    body = audit.render_backend_body()
+    app, _globals = audit.load_backend_app(body, tmp_path)
+    operations = {
+        operation["operationId"]: f"{method.upper()} {path}"
+        for path, path_item in app.openapi()["paths"].items()
+        for method, operation in path_item.items()
+        if isinstance(operation, dict) and operation.get("operationId")
+    }
+    expected = {
+        "artifacts_content_get": "GET /artifacts/content",
+        "artifacts_content_head": "HEAD /artifacts/content",
+        "artifact_file_get": "GET /artifacts/file/{filename}",
+        "artifact_file_head": "HEAD /artifacts/file/{filename}",
+        "artifacts_download_get": "GET /artifacts/download",
+        "artifacts_download_head": "HEAD /artifacts/download",
+        "sim_viz_rrd_blob_get": "GET /sim-viz/rrd-blob",
+        "sim_viz_rrd_blob_head": "HEAD /sim-viz/rrd-blob",
+    }
+    assert expected.items() <= operations.items()
+    assert len(operations) == sum(
+        1
+        for path_item in app.openapi()["paths"].values()
+        for operation in path_item.values()
+        if isinstance(operation, dict) and operation.get("operationId")
+    )
+
+
+def test_audit_script_confirms_every_chat_intent_still_routes(audit) -> None:
+    probes = audit.probe_chat_router()
+    assert len(probes) > 30, f"intent probe list shrank unexpectedly: {len(probes)}"
+
+    unmatched = [
+        f"{p['expected_intent']}: {p['prompt']!r} matched {p.get('matched_intent')!r}"
+        for p in probes
+        if not p.get("intent_ok")
+    ]
+    assert not unmatched, (
+        "these prompts stopped reaching their grounded intent, so each now costs "
+        "a paid model call for an answer the zero-token layer has:\n"
+        + "\n".join(unmatched)
+    )
+
+    silent = [
+        f"{p['expected_intent']}: {p.get('error', 'empty reply')}"
+        for p in probes
+        if not p.get("reply_ok")
+    ]
+    assert not silent, "these intents matched but produced no reply:\n" + "\n".join(
+        silent
+    )
+
+
+def test_audit_render_drift_diff_ignores_notation_not_real_drift(audit) -> None:
+    """The drift check must not report path-converter spelling as drift.
+
+    Starlette keeps the converter in ``route.path`` while OpenAPI emits the bare
+    name, and FastAPI never lists its own doc routes in the document it serves.
+    Reporting those made the deployed-tier diff 18 entries of noise, which is
+    how a drift check becomes something people ignore.
+    """
+    assert audit.comparable_route("GET", "/artifacts/run/{run_id:path}") == (
+        "GET",
+        "/artifacts/run/{run_id}",
+    )
+    assert audit.comparable_route("GET", "/health") == ("GET", "/health")
+    for path in ("/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"):
+        assert path in audit._OPENAPI_UNLISTED_PATHS
+
+
+def test_audit_shadowed_route_detector_can_go_red(audit) -> None:
+    """A duplicate detector that cannot fire proves nothing about the backend."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+
+    @app.get("/solo")
+    def solo():  # pragma: no cover - registration is the subject
+        return {}
+
+    assert audit.shadowed_routes(app) == []
+
+    app.add_api_route("/solo", lambda: {}, methods=["GET"])
+    assert audit.shadowed_routes(app) == ["GET /solo (x2)"]

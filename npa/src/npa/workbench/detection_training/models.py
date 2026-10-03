@@ -20,7 +20,9 @@ def build_fasterrcnn_resnet50_fpn_v2(
         from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2
         from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
     except ImportError as exc:  # pragma: no cover - covered with dependency-free tests.
-        raise DetectionTrainingDependencyError("torchvision is required for detector construction") from exc
+        raise DetectionTrainingDependencyError(
+            "torchvision is required for detector construction"
+        ) from exc
 
     resolved_weights = None
     if weights:
@@ -32,4 +34,3 @@ def build_fasterrcnn_resnet50_fpn_v2(
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
     return model
-

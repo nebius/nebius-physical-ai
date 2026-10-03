@@ -87,7 +87,8 @@ def test_boot_page_warms_before_mount() -> None:
     assert "refreshLeIsaacCapability().catch(() => null)" in boot
     assert "refreshLeIsaacCapability(activeRunId).catch(() => null)" not in boot
     assert "leisaacPromise" not in boot
-    assert "await ensureFrankaRerunLoaded()" in boot
+    assert "await ensureFrankaRerunLoaded(lastSimVizStatus)" in boot
+    assert "refresh({ session: restoredSession })" in boot
     # A restored run can require an expensive exact lookup across tenant S3.
     # Desktop first paint stays independent of that background discovery.
     assert 'const artifactsPromise = refreshArtifactRuns("", {' in boot
@@ -100,7 +101,7 @@ def test_boot_page_warms_before_mount() -> None:
     # already ready and optional data discovery continues in the background.
     assert "await warmPromise" in boot
     assert boot.index("await warmPromise") < boot.index(
-        "await ensureFrankaRerunLoaded()"
+        "await ensureFrankaRerunLoaded(lastSimVizStatus)"
     )
     # Must not race mount with warm anymore.
     assert (

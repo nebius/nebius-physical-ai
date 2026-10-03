@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
+import threading
+import time
 
 import pytest
 
 from npa.cluster_backends.process import (
     BackendCommandError,
+    isolate_terraform_providers,
     require_bin,
     run_capture,
     run_stream,
+    terraform_plugin_cache_lock,
     terraform_env,
 )
 
@@ -96,11 +101,84 @@ def test_cancellable_default_stream_is_also_redacted(capsys) -> None:
     assert "<redacted-private-key>" in emitted
 
 
+def test_cancellable_failed_stream_retains_redacted_diagnostic() -> None:
+    env = {**os.environ, "TF_VAR_iam_token": "cancellable-failure-secret"}
+    with pytest.raises(BackendCommandError) as raised:
+        run_stream(
+            [
+                "/bin/sh",
+                "-c",
+                "printf '%s: provider rejected request\\n' \"$TF_VAR_iam_token\" >&2; exit 7",
+            ],
+            env=env,
+            cancel=lambda: None,
+            capture_output=True,
+        )
+
+    message = str(raised.value)
+    assert "cancellable-failure-secret" not in message
+    assert "<redacted>" in message
+    assert "provider rejected request" in message
+
+
 def test_capture_normalizes_launch_and_timeout_errors(tmp_path: Path) -> None:
     with pytest.raises(BackendCommandError, match="Could not start executable"):
         run_capture([str(tmp_path / "absent")])
     with pytest.raises(BackendCommandError, match="timed out"):
         run_capture(["/bin/sh", "-c", "sleep 2"], timeout=0.01)
+
+
+def test_stream_timeout_stops_descendant_process_group(tmp_path: Path) -> None:
+    pid_path = tmp_path / "child.pid"
+    with pytest.raises(BackendCommandError, match="timed out"):
+        run_stream(
+            [
+                "/bin/sh",
+                "-c",
+                f"sleep 30 & echo $! > {pid_path}; wait",
+            ],
+            timeout=0.2,
+        )
+    child_pid = int(pid_path.read_text())
+    for _ in range(50):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        stat_path = Path(f"/proc/{child_pid}/stat")
+        try:
+            state = stat_path.read_text().split()[2]
+        except (FileNotFoundError, ProcessLookupError):
+            # The descendant exited between kill(0) and procfs inspection.
+            break
+        if state == "Z":
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("stream timeout left a descendant process running")
+
+
+def test_default_stream_interrupt_stops_process_group(monkeypatch) -> None:
+    from io import StringIO
+
+    import npa.cluster_backends.process as process_module
+
+    class InterruptedProcess:
+        pid = 123
+        stdout = StringIO("")
+        stderr = StringIO("")
+
+        def wait(self, **_kwargs):  # noqa: ANN001
+            raise KeyboardInterrupt
+
+    process = InterruptedProcess()
+    stopped = []
+    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_k: process)
+    monkeypatch.setattr(process_module, "_stop_process", stopped.append)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_stream(["terraform", "apply"])
+    assert stopped == [process]
 
 
 def test_explicit_executable_path_wins_over_path_lookup(tmp_path: Path) -> None:
@@ -123,3 +201,121 @@ def test_failed_nebius_token_exchange_is_redacted(tmp_path: Path) -> None:
         terraform_env(str(nebius))
     assert "provider-secret" not in str(raised.value)
     assert "<redacted>" in str(raised.value)
+
+
+def test_terraform_plugin_cache_lock_serializes_threads(tmp_path: Path) -> None:
+    env = {"TF_PLUGIN_CACHE_DIR": str(tmp_path / ".providers")}
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+
+    def first() -> None:
+        with terraform_plugin_cache_lock(env):
+            first_entered.set()
+            assert release_first.wait(timeout=2)
+
+    def second() -> None:
+        assert first_entered.wait(timeout=2)
+        with terraform_plugin_cache_lock(env):
+            second_entered.set()
+
+    first_thread = threading.Thread(target=first)
+    second_thread = threading.Thread(target=second)
+    first_thread.start()
+    second_thread.start()
+    assert first_entered.wait(timeout=2)
+    assert not second_entered.wait(timeout=0.05)
+    release_first.set()
+    first_thread.join(timeout=2)
+    second_thread.join(timeout=2)
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert second_entered.is_set()
+    assert (tmp_path / ".providers.npa-init.lock").stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("data_dir", [".terraform", "custom-data", "absolute"])
+def test_provider_snapshot_survives_later_cache_rewrite(
+    tmp_path: Path, data_dir: str
+) -> None:
+    cache = tmp_path / "cache" / "package"
+    cache.mkdir(parents=True)
+    binary = cache / "terraform-provider-example"
+    binary.write_bytes(b"verified provider bytes")
+    binary.chmod(0o755)
+    workdir = tmp_path / "cluster"
+    configured = str(tmp_path / "absolute-data") if data_dir == "absolute" else data_dir
+    data = Path(configured) if Path(configured).is_absolute() else workdir / configured
+    providers = data / "providers"
+    package = (
+        providers
+        / "registry.example.test"
+        / "example"
+        / "provider"
+        / "1.0"
+        / "linux_amd64"
+    )
+    package.parent.mkdir(parents=True)
+    package.symlink_to(cache, target_is_directory=True)
+    env = {"TF_PLUGIN_CACHE_DIR": str(cache.parent), "TF_DATA_DIR": configured}
+    with terraform_plugin_cache_lock(env):
+        isolate_terraform_providers(workdir, env)
+    # A different cluster's init may now replace or truncate the shared file.
+    binary.write_bytes(b"being downloaded again")
+    assert (package / binary.name).read_bytes() == b"verified provider bytes"
+    assert (package / binary.name).stat().st_mode & 0o777 == 0o755
+    assert not any(path.is_symlink() for path in providers.rglob("*"))
+    isolate_terraform_providers(workdir, env)
+    assert (package / binary.name).read_bytes() == b"verified provider bytes"
+    assert not list(data.glob(".npa-providers-*"))
+
+
+def test_provider_snapshot_copy_failure_preserves_initialized_tree(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from npa.cluster_backends import process
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "provider").write_text("original")
+    providers = tmp_path / ".terraform" / "providers"
+    providers.mkdir(parents=True)
+    (providers / "package").symlink_to(cache, target_is_directory=True)
+
+    def failed_copy(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(process.shutil, "copytree", failed_copy)
+    with pytest.raises(OSError, match="disk full"):
+        isolate_terraform_providers(tmp_path, {})
+    assert (providers / "package" / "provider").read_text() == "original"
+    assert (providers / "package").is_symlink()
+    assert not list(providers.parent.glob(".npa-providers-*"))
+
+
+def test_provider_snapshot_publish_failure_restores_initialized_tree(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "provider").write_text("original")
+    providers = tmp_path / ".terraform" / "providers"
+    providers.mkdir(parents=True)
+    (providers / "package").symlink_to(cache, target_is_directory=True)
+    original_rename = Path.rename
+
+    def rename(path, target):
+        if path.name == "snapshot":
+            raise OSError("publish failed")
+        return original_rename(path, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    with pytest.raises(OSError, match="publish failed"):
+        isolate_terraform_providers(tmp_path, {})
+    assert (providers / "package" / "provider").read_text() == "original"
+    assert not list(providers.parent.glob(".npa-providers-*"))
+
+
+def test_provider_snapshot_without_initialized_packages_is_noop(tmp_path: Path) -> None:
+    isolate_terraform_providers(tmp_path, {})
+    assert not (tmp_path / ".terraform").exists()

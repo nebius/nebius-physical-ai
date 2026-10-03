@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import glob
 import hashlib
+import json
 import logging
 import os
 import re
 import secrets
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +52,11 @@ CONTROL_PROMPT_MODALITIES = ("seg",)
 # Each modality is a separate ControlNet checkpoint, so a seg/depth run downloads
 # weights an edge run never touches. Named here for the operator-facing error.
 DISABLE_CONTENT_GUARDRAILS_ENV = "NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS"
+GUARDRAIL_REPO = "nvidia/Cosmos-Guardrail1"
+GUARDRAIL_REVISION = "d6d4bfa899a71454a700907664f3e88f503950cf"
+GUARDRAIL_NLTK_MATERIALIZED_DIR = "npa-guardrail-nltk-data"
+GUARDRAIL_NLTK_READY_MARKER = ".npa-materialization.json"
+GUARDRAIL_NLTK_MANIFEST_SCHEMA = "npa.cosmos.guardrail_nltk.v1"
 # Live job 339 reported SUCCEEDED while the spec promised ``manifest.json`` and
 # the then-reference-only tool wrote ``index.json`` with a different schema.
 # Keep these two artifact contracts named and distinct: the real publisher now
@@ -111,7 +118,9 @@ def resolve_control_modality(control: str) -> str:
         checkpoint, _weight = validate_control_request(
             modality=control or DEFAULT_INPUT_CONTROL,
             weight=1.0,
-            control_asset="precomputed" if str(control or "").strip().lower() == "depth" else "",
+            control_asset="precomputed"
+            if str(control or "").strip().lower() == "depth"
+            else "",
         )
     except ControlContractError as exc:
         raise ControlModalityError(str(exc)) from exc
@@ -135,6 +144,284 @@ def resolve_control_weight(control_weight: float | str) -> float:
     return weight
 
 
+class ProtectedChromaError(RuntimeError):
+    """Raised when configured protected-region color preservation cannot complete."""
+
+
+def _parse_protected_regions(value: str) -> list[tuple[float, float, float, float]]:
+    """Parse normalized protected rectangles for source-chroma restoration."""
+
+    try:
+        raw = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ProtectedChromaError("protected regions must be valid JSON") from exc
+    if not isinstance(raw, list) or not raw:
+        raise ProtectedChromaError("source-chroma mode requires protected regions")
+    regions: list[tuple[float, float, float, float]] = []
+    for index, item in enumerate(raw):
+        bounds: Any = item.get("bounds") if isinstance(item, dict) else item
+        if not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
+            raise ProtectedChromaError(
+                f"protected region {index} must have four normalized bounds"
+            )
+        try:
+            x0, y0, x1, y1 = (float(part) for part in bounds)
+        except (TypeError, ValueError) as exc:
+            raise ProtectedChromaError(
+                f"protected region {index} has non-numeric bounds"
+            ) from exc
+        if not (0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0):
+            raise ProtectedChromaError(
+                f"protected region {index} bounds must satisfy "
+                "0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1"
+            )
+        regions.append((x0, y0, x1, y1))
+    return regions
+
+
+def preserve_source_chroma(
+    transfer: dict[str, Any],
+    *,
+    source_video: str,
+    regions_json: str = "",
+    masks_dir: str = "",
+    segmentation: dict[str, Any] | None = None,
+    feather_pixels: int = 12,
+    luma_max_delta: int = 32,
+) -> dict[str, Any]:
+    """Restore source chroma in protected regions while retaining generated light.
+
+    Cosmos still generates every frame. This optional deterministic post-process
+    restores source Cb/Cr per pixel inside feathered normalized rectangles or
+    frame-aligned SAM2 masks;
+    generated luma is retained within a bounded per-pixel distance from source,
+    so mild illumination/exposure augmentation remains visible while extreme
+    darkening or brightening fails to alter protected identity colors. Exact
+    frame-count and geometry alignment are required to avoid color ghosts across
+    moving boundaries.
+    Frame-count or decode mismatches fail closed instead of publishing partially
+    corrected output.
+    """
+
+    if bool(regions_json) == bool(masks_dir):
+        raise ProtectedChromaError(
+            "protected chroma requires exactly one of regions_json or masks_dir"
+        )
+    regions = _parse_protected_regions(regions_json) if regions_json else []
+    mask_root = Path(masks_dir) if masks_dir else None
+    if mask_root is not None and not mask_root.is_dir():
+        raise ProtectedChromaError("protected SAM2 mask directory is missing")
+    if feather_pixels < 1:
+        raise ProtectedChromaError("protected chroma feather must be positive")
+    if not 0 <= luma_max_delta <= 255:
+        raise ProtectedChromaError("protected luma max delta must be within 0..255")
+    source = Path(source_video)
+    augmented = Path(str(transfer.get("video_path") or ""))
+    if not source.is_file() or not augmented.is_file():
+        raise ProtectedChromaError(
+            "protected chroma needs readable source and augmented videos"
+        )
+    output = augmented.with_name(f"{augmented.stem}-source-chroma.mp4")
+    script = r"""
+import av, json, numpy as np, sys
+from pathlib import Path
+source_path, augmented_path, frames_dir_text, regions_text, masks_dir_text, feather_text, luma_delta_text = sys.argv[1:]
+frames_dir = Path(frames_dir_text)
+regions = json.loads(regions_text) if regions_text else []
+regions = [r.get("bounds") if isinstance(r, dict) else r for r in regions]
+masks_dir = Path(masks_dir_text) if masks_dir_text else None
+feather = int(feather_text)
+luma_delta = int(luma_delta_text)
+src_container = av.open(source_path)
+aug_container = av.open(augmented_path)
+aug_stream = aug_container.streams.video[0]
+rate = aug_stream.average_rate or aug_stream.base_rate or 30
+width, height = int(aug_stream.width), int(aug_stream.height)
+masks = []
+for bounds in regions:
+    x0 = max(0, min(width - 1, int(round(float(bounds[0]) * width))))
+    y0 = max(0, min(height - 1, int(round(float(bounds[1]) * height))))
+    x1 = max(x0 + 1, min(width, int(round(float(bounds[2]) * width))))
+    y1 = max(y0 + 1, min(height, int(round(float(bounds[3]) * height))))
+    yy, xx = np.ogrid[y0:y1, x0:x1]
+    distance = np.minimum(
+        np.minimum(xx - x0, x1 - 1 - xx),
+        np.minimum(yy - y0, y1 - 1 - yy),
+    ).astype(np.float32)
+    alpha = np.clip((distance + 1.0) / float(feather), 0.0, 1.0)
+    mask = np.zeros((height, width), dtype=np.float32)
+    mask[y0:y1, x0:x1] = alpha
+    masks.append(mask)
+rect_alpha = np.maximum.reduce(masks) if masks else None
+src_frames = iter(src_container.decode(video=0))
+aug_frames = iter(aug_container.decode(video=0))
+count = 0
+for aug_frame in aug_frames:
+    try:
+        src_frame = next(src_frames)
+    except StopIteration as exc:
+        raise RuntimeError("source has fewer frames than augmented clip") from exc
+    src = src_frame.reformat(width=width, height=height, format="rgb24").to_ndarray()
+    aug = aug_frame.reformat(width=width, height=height, format="rgb24").to_ndarray()
+    srcf, augf = src.astype(np.float32), aug.astype(np.float32)
+    src_cb = 128.0 - 0.114572 * srcf[..., 0] - 0.385428 * srcf[..., 1] + 0.5 * srcf[..., 2]
+    src_cr = 128.0 + 0.5 * srcf[..., 0] - 0.454153 * srcf[..., 1] - 0.045847 * srcf[..., 2]
+    src_y = 0.2126 * srcf[..., 0] + 0.7152 * srcf[..., 1] + 0.0722 * srcf[..., 2]
+    y = 0.2126 * augf[..., 0] + 0.7152 * augf[..., 1] + 0.0722 * augf[..., 2]
+    aug_cb = 128.0 - 0.114572 * augf[..., 0] - 0.385428 * augf[..., 1] + 0.5 * augf[..., 2]
+    aug_cr = 128.0 + 0.5 * augf[..., 0] - 0.454153 * augf[..., 1] - 0.045847 * augf[..., 2]
+    if masks_dir is not None:
+        from PIL import Image, ImageFilter
+        mask_path = masks_dir / f"mask-{count:06d}.png"
+        if not mask_path.is_file():
+            raise RuntimeError(f"missing frame-aligned protected mask {mask_path.name}")
+        with Image.open(mask_path) as opened_mask:
+            mask_image = opened_mask.convert("L").resize((width, height), Image.Resampling.NEAREST)
+        binary_mask = np.asarray(mask_image, dtype=np.float32) / 255.0
+        if feather > 1:
+            mask_image = mask_image.filter(ImageFilter.GaussianBlur(radius=max(0.5, feather / 2.0)))
+            # Feather inward only. Multiplying by the original binary mask keeps
+            # source chroma from bleeding into unprotected augmentation pixels.
+            alpha = (np.asarray(mask_image, dtype=np.float32) / 255.0) * binary_mask
+        else:
+            alpha = binary_mask
+    else:
+        if rect_alpha is None:
+            raise RuntimeError("protected region mask is missing")
+        alpha = rect_alpha
+    bounded_y = np.clip(y, src_y - float(luma_delta), src_y + float(luma_delta))
+    y = y * (1.0 - alpha) + bounded_y * alpha
+    cb = aug_cb * (1.0 - alpha) + src_cb * alpha
+    cr = aug_cr * (1.0 - alpha) + src_cr * alpha
+    rgb = np.stack((
+        y + 1.5748 * (cr - 128.0),
+        y - 0.187324 * (cb - 128.0) - 0.468124 * (cr - 128.0),
+        y + 1.8556 * (cb - 128.0),
+    ), axis=-1)
+    frame = av.VideoFrame.from_ndarray(np.clip(rgb, 0, 255).astype(np.uint8), format="rgb24")
+    frame.to_image().save(frames_dir / f"frame-{count:06d}.png")
+    count += 1
+try:
+    next(src_frames)
+except StopIteration:
+    pass
+else:
+    raise RuntimeError("source has more frames than augmented clip")
+aug_container.close(); src_container.close()
+if count == 0:
+    raise RuntimeError("no frames decoded")
+if masks_dir is not None:
+    mask_files = sorted(masks_dir.glob("mask-*.png"))
+    if len(mask_files) != count:
+        raise RuntimeError("protected SAM2 mask count differs from video frame count")
+print(json.dumps({"frames": count, "fps": float(rate)}))
+"""
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="npa-protected-chroma-", dir=str(augmented.parent)
+        ) as frames_dir:
+            completed = subprocess.run(
+                [
+                    str(_venv_python(cosmos_transfer_repo())),
+                    "-c",
+                    script,
+                    str(source),
+                    str(augmented),
+                    frames_dir,
+                    regions_json,
+                    str(mask_root or ""),
+                    str(feather_pixels),
+                    str(luma_max_delta),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            try:
+                decoded = json.loads(str(completed.stdout).strip().splitlines()[-1])
+                frame_count = int(decoded["frames"])
+                fps = float(decoded["fps"])
+            except (
+                IndexError,
+                KeyError,
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
+            ) as exc:
+                raise ProtectedChromaError(
+                    "protected source-chroma decoder returned invalid metadata"
+                ) from exc
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-framerate",
+                    str(fps),
+                    "-i",
+                    str(Path(frames_dir) / "frame-%06d.png"),
+                    "-an",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-color_range",
+                    "tv",
+                    "-colorspace",
+                    "bt709",
+                    "-color_primaries",
+                    "bt709",
+                    "-color_trc",
+                    "bt709",
+                    "-crf",
+                    "18",
+                    "-movflags",
+                    "+faststart",
+                    str(output),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+    except ProtectedChromaError:
+        raise
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = str(getattr(exc, "stderr", "") or exc).strip()
+        raise ProtectedChromaError(
+            f"protected source-chroma restoration failed: {detail}"[:300]
+        ) from exc
+    if not output.is_file() or output.stat().st_size <= 0:
+        raise ProtectedChromaError("protected source-chroma restoration wrote no video")
+    result = dict(transfer)
+    result["video_path"] = str(output)
+    result["video_bytes"] = output.stat().st_size
+    result["protected_chroma"] = {
+        "mode": "source-chroma",
+        "method": (
+            "sam2-mask-feathered-per-pixel-source-chroma"
+            if mask_root is not None
+            else "feathered-per-pixel-source-chroma"
+        ),
+        "region_count": len(regions),
+        "feather_pixels": feather_pixels,
+        "luma_max_delta": luma_max_delta,
+        "frame_count": frame_count,
+        "output_color": {
+            "range": "tv",
+            "space": "bt709",
+            "primaries": "bt709",
+            "transfer": "bt709",
+        },
+    }
+    if mask_root is not None:
+        result["protected_chroma"]["segmentation"] = segmentation or {
+            "engine": "meta-sam2-upstream"
+        }
+    return result
+
+
 def _spec_for_input_video(
     repo: Path,
     *,
@@ -144,6 +431,8 @@ def _spec_for_input_video(
     control_weight: float,
     guidance: float,
     name: str,
+    negative_prompt: str = "",
+    seed: int | None = None,
     control_asset: str = "",
     control_prompt: str = "",
     mask_asset: str = "",
@@ -176,9 +465,7 @@ def _spec_for_input_video(
     except ControlContractError as exc:
         raise ControlModalityError(str(exc)) from exc
     modality = checkpoint.modality
-    control_config: dict[str, Any] = {
-        "control_weight": normalized_weight
-    }
+    control_config: dict[str, Any] = {"control_weight": normalized_weight}
     if control_asset:
         control_config["control_path"] = str(Path(control_asset).resolve())
     if control_prompt:
@@ -195,7 +482,13 @@ def _spec_for_input_video(
         "guidance": guidance,
         modality: control_config,
     }
-    safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(name or "input"))
+    if str(negative_prompt or "").strip():
+        spec["negative_prompt"] = str(negative_prompt).strip()
+    if seed is not None:
+        spec["seed"] = int(seed)
+    safe = "".join(
+        c if (c.isalnum() or c in "-_") else "_" for c in str(name or "input")
+    )
     spec_path = repo / f"_npa_input_spec_{safe}.json"
     spec_path.write_text(_json.dumps(spec, indent=2), encoding="utf-8")
     return str(spec_path.relative_to(repo)), modality
@@ -321,7 +614,333 @@ def _require_runtime_hf_token() -> None:
         )
 
 
-def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> str:
+class GuardrailNLTKDataError(RuntimeError):
+    """Typed failure to prepare the pinned Cosmos guardrail NLTK payload."""
+
+    def __init__(self, category: str, message: str) -> None:
+        self.category = category
+        super().__init__(message)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _guardrail_nltk_inventory(root: Path) -> dict[str, dict[str, Any]]:
+    """Return a content inventory, rejecting links and non-regular payloads."""
+
+    files: dict[str, dict[str, Any]] = {}
+    for entry in sorted(root.rglob("*")):
+        relative = entry.relative_to(root)
+        if relative.as_posix() == GUARDRAIL_NLTK_READY_MARKER:
+            continue
+        if entry.is_symlink():
+            raise GuardrailNLTKDataError(
+                "content_invalid",
+                f"Cosmos guardrail NLTK materialization contains a link: {relative}; "
+                "remove the revision-scoped cache and retry the pinned fetch",
+            )
+        if entry.is_dir():
+            continue
+        if not entry.is_file():
+            raise GuardrailNLTKDataError(
+                "content_invalid",
+                f"Cosmos guardrail NLTK materialization contains a non-regular file: "
+                f"{relative}; remove the revision-scoped cache and retry",
+            )
+        files[relative.as_posix()] = {
+            "sha256": _sha256_file(entry),
+            "size": entry.stat().st_size,
+        }
+    if not files:
+        raise GuardrailNLTKDataError(
+            "content_invalid",
+            "Pinned Cosmos guardrail NLTK materialization is empty; verify the exact "
+            "upstream revision and subtree before retrying",
+        )
+    return files
+
+
+def _guardrail_nltk_tree_sha256(files: dict[str, dict[str, Any]]) -> str:
+    encoded = json.dumps(files, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _write_guardrail_nltk_ready_marker(
+    root: Path,
+    *,
+    repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION,
+) -> None:
+    files = _guardrail_nltk_inventory(root)
+    payload = {
+        "schema": GUARDRAIL_NLTK_MANIFEST_SCHEMA,
+        "repo_id": repository,
+        "revision": revision,
+        "file_count": len(files),
+        "files": files,
+        "tree_sha256": _guardrail_nltk_tree_sha256(files),
+    }
+    marker = root / GUARDRAIL_NLTK_READY_MARKER
+    marker.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(marker, 0o444)
+
+
+def _verify_guardrail_nltk_materialization(
+    destination: Path,
+    *,
+    repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION,
+) -> int:
+    """Verify exact revision identity and every copied byte before cache reuse."""
+
+    marker = destination / GUARDRAIL_NLTK_READY_MARKER
+    if destination.is_symlink() or not destination.is_dir() or marker.is_symlink():
+        raise GuardrailNLTKDataError(
+            "cache_invalid",
+            "Cosmos guardrail NLTK cache is not a verified regular-file directory; "
+            "remove only its revision-scoped path and retry",
+        )
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise GuardrailNLTKDataError(
+            "cache_invalid",
+            "Cosmos guardrail NLTK cache has no readable completion manifest; "
+            "remove only its revision-scoped path and retry",
+        ) from exc
+    expected_identity = (
+        payload.get("schema") == GUARDRAIL_NLTK_MANIFEST_SCHEMA
+        and payload.get("repo_id") == repository
+        and payload.get("revision") == revision
+    )
+    if not expected_identity or not isinstance(payload.get("files"), dict):
+        raise GuardrailNLTKDataError(
+            "cache_invalid",
+            "Cosmos guardrail NLTK cache identity does not match the exact pinned "
+            "repository revision; do not reuse it",
+        )
+    files = _guardrail_nltk_inventory(destination)
+    if (
+        payload["files"] != files
+        or payload.get("file_count") != len(files)
+        or payload.get("tree_sha256") != _guardrail_nltk_tree_sha256(files)
+    ):
+        raise GuardrailNLTKDataError(
+            "cache_invalid",
+            "Cosmos guardrail NLTK cache content does not match its verified manifest; "
+            "remove only its revision-scoped path and retry the pinned fetch",
+        )
+    return len(files)
+
+
+def _guardrail_nltk_download_error(
+    exc: Exception, *, revision: str = GUARDRAIL_REVISION
+) -> GuardrailNLTKDataError:
+    name = type(exc).__name__.lower()
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if status == 429 or "ratelimit" in name or "rate_limit" in name:
+        return GuardrailNLTKDataError(
+            "rate_limited",
+            "Hugging Face rate-limited the pinned Cosmos guardrail NLTK fetch; "
+            "reuse a verified cache or retry later",
+        )
+    if "revisionnotfound" in name or "revision_not_found" in name:
+        return GuardrailNLTKDataError(
+            "revision_unavailable",
+            f"Pinned Cosmos guardrail revision {revision} is unavailable; "
+            "do not substitute another revision without a reviewed source update",
+        )
+    if status in {401, 403} or "gatedrepo" in name or "repositorynotfound" in name:
+        return GuardrailNLTKDataError(
+            "access_denied",
+            "Hugging Face denied the pinned Cosmos guardrail NLTK payload fetch; "
+            "verify the operator token has exact upstream repository access",
+        )
+    return GuardrailNLTKDataError(
+        "network_unavailable",
+        "Unable to fetch the pinned Cosmos guardrail NLTK payload from Hugging Face; "
+        "restore network access or prewarm a verified revision-scoped cache",
+    )
+
+
+def prepare_guardrail_nltk_data(
+    *,
+    hf_home: str | None = None,
+    repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION,
+    snapshot_path: Path | None = None,
+) -> int:
+    """Download and safely materialize the pinned guardrail tokenizer data.
+
+    Hugging Face snapshots represent files as symlinks into their local blob
+    store. NLTK 3.10.3 deliberately refuses to follow those links when opening
+    tokenizer data. Download only the pinned guardrail subtree, prove every file
+    resolves inside the same cache, and copy it into a revision-scoped regular-file
+    tree outside the snapshot. Upstream may refresh its snapshot after this step;
+    the separate ``NLTK_DATA`` tree therefore remains safe and stable. This
+    preserves the path-security fix without disabling Cosmos guardrails or
+    trusting an unpinned snapshot.
+    """
+
+    home = Path(hf_home or os.environ.get("HF_HOME", "/opt/cosmos-data/hf_cache"))
+    if not re.fullmatch(
+        r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", repository
+    ) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise GuardrailNLTKDataError(
+            "content_invalid",
+            "Guardrail repository and revision must be exact reviewed identities",
+        )
+    destination = _guardrail_nltk_data_path(
+        str(home), repository=repository, revision=revision
+    )
+    ancestor = destination.parent
+    while True:
+        if ancestor.is_symlink():
+            raise GuardrailNLTKDataError(
+                "cache_invalid",
+                "Cosmos guardrail NLTK cache contains an unsafe ancestor link",
+            )
+        if ancestor == home:
+            break
+        ancestor = ancestor.parent
+    if destination.exists() or destination.is_symlink():
+        return _verify_guardrail_nltk_materialization(
+            destination, repository=repository, revision=revision
+        )
+
+    hub = (home / "hub").resolve()
+    if snapshot_path is None:
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError as exc:
+            raise GuardrailNLTKDataError(
+                "runtime_invalid",
+                "The audited Cosmos Transfer runtime is missing huggingface_hub; "
+                "rebuild the pinned image before fetching guardrail data",
+            ) from exc
+        try:
+            downloaded = snapshot_download(
+                repo_id=repository,
+                revision=revision,
+                allow_patterns=["blocklist/nltk_data/**"],
+                cache_dir=hub,
+                token=os.environ.get("HF_TOKEN"),
+            )
+        except Exception as exc:
+            raise _guardrail_nltk_download_error(exc, revision=revision) from exc
+    else:
+        downloaded = snapshot_path
+        expected = (
+            hub / ("models--" + repository.replace("/", "--")) / "snapshots" / revision
+        )
+        if snapshot_path.is_symlink() or snapshot_path.resolve() != expected:
+            raise GuardrailNLTKDataError(
+                "content_invalid",
+                "Staged guardrail snapshot differs from the exact repository revision",
+            )
+    snapshot = Path(downloaded).resolve()
+    nltk_data = (snapshot / "blocklist" / "nltk_data").resolve()
+    if (
+        not nltk_data.is_dir()
+        or not snapshot.is_relative_to(hub)
+        or not nltk_data.is_relative_to(snapshot)
+    ):
+        raise GuardrailNLTKDataError(
+            "content_invalid",
+            "Pinned Cosmos guardrail NLTK subtree is missing or outside the exact "
+            "Hugging Face cache snapshot",
+        )
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{revision}.", dir=destination.parent))
+    materialized = 0
+    try:
+        for entry in sorted(nltk_data.rglob("*")):
+            relative = entry.relative_to(nltk_data)
+            output = staging / relative
+            if entry.is_dir():
+                if entry.is_symlink():
+                    raise GuardrailNLTKDataError(
+                        "content_invalid",
+                        f"Unsafe Cosmos guardrail cache directory link: {relative}",
+                    )
+                output.mkdir(parents=True, exist_ok=True)
+                continue
+            target = entry.resolve(strict=True)
+            if not target.is_file() or not target.is_relative_to(hub):
+                raise RuntimeError(f"unsafe Cosmos guardrail cache file: {entry}")
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("rb") as source, output.open("wb") as copied:
+                shutil.copyfileobj(source, copied)
+            os.chmod(output, 0o444)
+            materialized += 1
+        if materialized == 0:
+            raise GuardrailNLTKDataError(
+                "content_invalid", "Pinned Cosmos guardrail NLTK subtree is empty"
+            )
+        _write_guardrail_nltk_ready_marker(
+            staging, repository=repository, revision=revision
+        )
+        try:
+            os.replace(staging, destination)
+        except OSError:
+            if not destination.exists():
+                raise
+            winner_count = _verify_guardrail_nltk_materialization(
+                destination, repository=repository, revision=revision
+            )
+            shutil.rmtree(staging)
+            return winner_count
+    except GuardrailNLTKDataError:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise GuardrailNLTKDataError(
+            "materialization_failed",
+            "Could not atomically materialize the pinned Cosmos guardrail NLTK "
+            "payload; no partial cache was published, so retry after checking the "
+            "revision-scoped cache filesystem",
+        ) from exc
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return _verify_guardrail_nltk_materialization(
+        destination, repository=repository, revision=revision
+    )
+
+
+def _guardrail_nltk_data_path(
+    hf_home: str,
+    *,
+    repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION,
+) -> Path:
+    """Return the regular-file NLTK tree created for the pinned guardrail."""
+
+    root = Path(hf_home) / GUARDRAIL_NLTK_MATERIALIZED_DIR
+    if repository != GUARDRAIL_REPO:
+        root /= "models--" + repository.replace("/", "--")
+    return root / revision
+
+
+def _spec_with_prompt(
+    repo: Path,
+    spec: str,
+    prompt: str,
+    *,
+    negative_prompt: str = "",
+    tag: str = "",
+) -> str:
     """Write a copy of ``spec`` with its text prompt overridden; return its path.
 
     Cosmos controlnet specs carry the text prompt that steers appearance. Patching
@@ -339,7 +958,10 @@ def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> s
         data = _json.loads(spec_path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return spec
-        data["prompt"] = prompt
+        if prompt:
+            data["prompt"] = prompt
+        if str(negative_prompt or "").strip():
+            data["negative_prompt"] = str(negative_prompt).strip()
         safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(tag or ""))
         prefix = f"_npa_prompted_{safe}_" if safe else "_npa_prompted_"
         patched = spec_path.with_name(prefix + spec_path.name)
@@ -349,11 +971,52 @@ def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> s
         return spec
 
 
+# Known, path/prompt-free vendor failure signatures worth naming exactly.
+# Order matters: the first matching pattern wins.
+_VENDOR_FAILURE_SIGNATURES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"Access denied\.\s*This repository requires approval", re.I),
+        "gated Hugging Face repository access denied",
+    ),
+    (
+        re.compile(r"401 Client Error|Repository Not Found|GatedRepoError", re.I),
+        "Hugging Face authentication/authorization failed",
+    ),
+    (
+        re.compile(r"CUDA out of memory|OutOfMemoryError", re.I),
+        "CUDA out of memory",
+    ),
+    (
+        re.compile(r"No space left on device", re.I),
+        "no space left on device",
+    ),
+    (
+        re.compile(r"CUDA error|CUDA driver version|no CUDA-capable device", re.I),
+        "CUDA/GPU error",
+    ),
+)
+
+
+def _classify_vendor_failure(vendor_tail: str) -> str:
+    """Name a known upstream failure signature without echoing prompt/path text.
+
+    ``vendor_tail`` may contain the effective prompt and local input path, which
+    must not be surfaced. Only a short, fixed, human-authored description is
+    returned; the caller never gets the raw vendor text back.
+    """
+
+    for pattern, description in _VENDOR_FAILURE_SIGNATURES:
+        if pattern.search(vendor_tail):
+            return description
+    return "unrecognized vendor failure; inspect GPU/model access and retry"
+
+
 def run_cosmos_transfer(
     *,
     run_id: str = "",
     spec: str | None = None,
     prompt: str | None = None,
+    negative_prompt: str | None = None,
     out_subdir: str | None = None,
     hf_home: str | None = None,
     input_video: str | None = None,
@@ -364,6 +1027,7 @@ def run_cosmos_transfer(
     mask_asset: str = "",
     mask_prompt: str = "",
     guidance: float = 3.0,
+    seed: int | None = None,
     cuda_visible_devices: str | None = None,
     variant_tag: str = "",
     disable_content_guardrails: bool | None = None,
@@ -374,6 +1038,8 @@ def run_cosmos_transfer(
     ``COSMOS_TRANSFER_SPEC`` environment override). No upstream fixture is baked.
     ``prompt`` (or ``COSMOS_TRANSFER_PROMPT``), when set, overrides the spec's text
     prompt so the sampled appearance actually conditions the augmentation.
+    ``negative_prompt`` (or ``COSMOS_TRANSFER_NEGATIVE_PROMPT``) is rendered into
+    that same effective spec and retained in the published evidence.
 
     When ``input_video`` is provided the transfer is CONDITIONED ON THAT CLIP: a
     controlnet spec is built with ``video_path`` = the input and the ``control``
@@ -394,14 +1060,19 @@ def run_cosmos_transfer(
     tag = str(variant_tag or run_id or "input")
     conditioned_control = ""
     if input_video:
+        effective_negative_prompt = negative_prompt or os.environ.get(
+            "COSMOS_TRANSFER_NEGATIVE_PROMPT", ""
+        )
         spec, conditioned_control = _spec_for_input_video(
             repo,
             input_video=input_video,
             prompt=prompt or os.environ.get("COSMOS_TRANSFER_PROMPT", ""),
+            negative_prompt=effective_negative_prompt,
             control=control,
             control_weight=control_weight,
             guidance=guidance,
             name=tag,
+            seed=seed,
             control_asset=control_asset,
             control_prompt=control_prompt,
             mask_asset=mask_asset,
@@ -415,8 +1086,17 @@ def run_cosmos_transfer(
                 "COSMOS_TRANSFER_SPEC; no upstream media is bundled"
             )
         prompt = prompt or os.environ.get("COSMOS_TRANSFER_PROMPT", "")
-        if prompt:
-            spec = _spec_with_prompt(repo, spec, prompt, tag=tag)
+        effective_negative_prompt = negative_prompt or os.environ.get(
+            "COSMOS_TRANSFER_NEGATIVE_PROMPT", ""
+        )
+        if prompt or effective_negative_prompt:
+            spec = _spec_with_prompt(
+                repo,
+                spec,
+                prompt,
+                negative_prompt=effective_negative_prompt,
+                tag=tag,
+            )
     out = out_subdir or f"outputs/{run_id or 'transfer'}"
     out_abs = repo / out
     if out_abs.exists():
@@ -425,6 +1105,11 @@ def run_cosmos_transfer(
     env = dict(os.environ)
     env["HF_HOME"] = hf_home or os.environ.get("HF_HOME", "/opt/cosmos-data/hf_cache")
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
+    prepare_guardrail_nltk_data(hf_home=env["HF_HOME"])
+    safe_nltk_data = str(_guardrail_nltk_data_path(env["HF_HOME"]))
+    env["NLTK_DATA"] = os.pathsep.join(
+        part for part in (safe_nltk_data, env.get("NLTK_DATA", "")) if part
+    )
     if cuda_visible_devices is not None and str(cuda_visible_devices).strip() != "":
         env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices).strip()
     # Only the specs WE synthesized this call are ephemeral; never delete a
@@ -432,7 +1117,11 @@ def run_cosmos_transfer(
     # from clobbering each other, so removing exactly our file is fan-out safe.
     # Capture its content first so callers can still inspect the effective spec
     # after the file is gone (nothing depends on the ephemeral file persisting).
-    temp_spec = repo / spec if Path(spec).name.startswith(("_npa_input_spec_", "_npa_prompted_")) else None
+    temp_spec = (
+        repo / spec
+        if Path(spec).name.startswith(("_npa_input_spec_", "_npa_prompted_"))
+        else None
+    )
     spec_json: dict[str, Any] | None = None
     if temp_spec is not None:
         try:
@@ -452,12 +1141,34 @@ def run_cosmos_transfer(
         # set. Keep the NPA default fail-closed; operators must opt out per run.
         argv.append("--disable-guardrails")
     try:
-        subprocess.run(
-            argv,
-            cwd=repo,
-            env=env,
-            check=True,
-        )
+        # Upstream progress output includes the effective prompt and local input
+        # path. Keep it in an unnamed, process-local file that is destroyed at
+        # completion; the retained task log reports only aggregate NPA evidence.
+        # On failure, classify a few known, path/prompt-free vendor signatures
+        # (gated-model denial, CUDA OOM, disk-full) so the raised message names
+        # the real cause instead of forcing a live re-run to find it.
+        with tempfile.TemporaryFile() as vendor_log:
+            try:
+                subprocess.run(
+                    argv,
+                    cwd=repo,
+                    env=env,
+                    check=True,
+                    stdout=vendor_log,
+                    stderr=subprocess.STDOUT,
+                )
+            except subprocess.CalledProcessError as exc:
+                vendor_log.seek(0)
+                tail = vendor_log.read().decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    "Cosmos Transfer inference failed "
+                    f"(exit {exc.returncode}): "
+                    f"{_classify_vendor_failure(tail)}"
+                ) from None
+    except OSError as exc:
+        raise RuntimeError(
+            "Cosmos Transfer inference failed; inspect GPU/model access and retry"
+        ) from exc
     finally:
         if temp_spec is not None:
             try:
@@ -486,9 +1197,11 @@ def run_cosmos_transfer(
         "mask_videos": mask_videos,
         "control_weight": float(control_weight),
         "control_prompt": control_prompt,
+        "negative_prompt": str(effective_negative_prompt or ""),
         "mask_prompt": mask_prompt,
         "control_asset": control_asset,
         "mask_asset": mask_asset,
+        "inference_seed": seed,
         "out_dir": str(out_abs),
         "spec": spec,
         "spec_json": spec_json,
@@ -500,7 +1213,9 @@ def run_cosmos_transfer(
     }
 
 
-def extract_frames(video_path: str, dest_dir: Path, *, max_frames: int = 8) -> list[Path]:
+def extract_frames(
+    video_path: str, dest_dir: Path, *, max_frames: int = 8
+) -> list[Path]:
     """Extract up to ``max_frames`` evenly-spaced PNG frames from ``video_path``.
 
     Runs in the transfer venv (which ships PyAV). A successful decode with no
@@ -541,6 +1256,15 @@ def extract_frames(video_path: str, dest_dir: Path, *, max_frames: int = 8) -> l
             f"could not start frame extraction for {video_path!r}: {exc}"
         ) from exc
     return sorted(dest_dir.glob("frame-*.png"))
+
+
+def _provenance_boolean(record: dict[str, Any], field: str, *, default: bool) -> bool:
+    """Return an exact boolean provenance field, preserving its default."""
+
+    value = record.get(field, default)
+    if type(value) is not bool:
+        raise ValueError(f"{field} must be a boolean")
+    return value
 
 
 def publish_transfer_clip(
@@ -587,6 +1311,12 @@ def publish_transfer_clip(
 
     if not output_uri.startswith("s3://"):
         raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    input_conditioned = _provenance_boolean(
+        transfer, "input_conditioned", default=False
+    )
+    content_guardrails_enabled = _provenance_boolean(
+        transfer, "content_guardrails_enabled", default=True
+    )
     from npa.clients.storage import StorageClient
     import tempfile as _tempfile
 
@@ -606,13 +1336,15 @@ def publish_transfer_clip(
     # classifier in data_factory_provenance.py). When the transfer was
     # conditioned on the caller's input clip, record that provenance so the run
     # view can show the augmentation is genuinely derived from real input.
-    input_conditioned = bool(transfer.get("input_conditioned"))
     conditioned_input = Path(str(transfer.get("input_video") or "")).name
     conditioned_control = str(transfer.get("control") or "")
-    content_guardrails_enabled = bool(
-        transfer.get("content_guardrails_enabled", True)
-    )
+    protected_chroma = transfer.get("protected_chroma") or {"mode": "off"}
+    refinement = transfer.get("refinement") or {}
+    effective_control_weight = transfer.get("effective_control_weight")
+    effective_guidance = transfer.get("effective_guidance")
+    inference_seed = transfer.get("inference_seed")
     conditioning_clip_uri = str(transfer.get("conditioning_clip_uri") or "")
+    negative_prompt = str(transfer.get("negative_prompt") or "")
 
     control_uris: dict[str, str] = {}
     control_frames: dict[str, list[str]] = {}
@@ -621,7 +1353,9 @@ def publish_transfer_clip(
     }
     frame_index: list[dict[str, str]] = []
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-pub-") as tmp:
-        frames = extract_frames(transfer["video_path"], Path(tmp) / "frames", max_frames=max_frames)
+        frames = extract_frames(
+            transfer["video_path"], Path(tmp) / "frames", max_frames=max_frames
+        )
         if require_frames and not frames:
             raise RuntimeError(
                 "Cosmos Transfer completed but no frames could be extracted from "
@@ -634,7 +1368,9 @@ def publish_transfer_clip(
         for i, frame_path in enumerate(frames):
             key = f"frame-{i:05d}.png"
             client.upload_file(str(frame_path), f"{frames_base}{key}")
-            frame_index.append({"frame_id": f"frame-{i:05d}", "uri": f"{frames_base}{key}"})
+            frame_index.append(
+                {"frame_id": f"frame-{i:05d}", "uri": f"{frames_base}{key}"}
+            )
 
         clip_meta: dict[str, Any] = {
             "schema": TRANSFER_MANIFEST_SCHEMA,
@@ -646,6 +1382,7 @@ def publish_transfer_clip(
             "variant_index": int(variant_index),
             "variables": variables or {},
             "prompt": str((variables or {}).get("prompt") or ""),
+            "negative_prompt": negative_prompt,
             "control_spec": transfer.get("spec", ""),
             "input_conditioned": input_conditioned,
             "conditioned_input": conditioned_input,
@@ -657,6 +1394,11 @@ def publish_transfer_clip(
             "control_uris": control_uris,
             "control_evidence": control_evidence,
             "content_guardrails_enabled": content_guardrails_enabled,
+            "protected_chroma": protected_chroma,
+            "refinement": refinement,
+            "effective_control_weight": effective_control_weight,
+            "effective_guidance": effective_guidance,
+            "inference_seed": inference_seed,
         }
         cm = Path(tmp) / "metadata.json"
 
@@ -723,11 +1465,17 @@ def publish_transfer_clip(
         "control": conditioned_control,
         "control_weight": float(transfer.get("control_weight", 0.0) or 0.0),
         "control_prompt": str(transfer.get("control_prompt") or ""),
+        "negative_prompt": negative_prompt,
         "mask_prompt": str(transfer.get("mask_prompt") or ""),
         "control_uris": control_uris,
         "control_frames": control_frames,
         "control_evidence": control_evidence,
         "content_guardrails_enabled": content_guardrails_enabled,
+        "protected_chroma": protected_chroma,
+        "refinement": refinement,
+        "effective_control_weight": effective_control_weight,
+        "effective_guidance": effective_guidance,
+        "inference_seed": inference_seed,
         "variables": variables or {},
     }
 
@@ -753,7 +1501,11 @@ def _publish_control_signal(
         raise ValueError(
             f"control_output_uri must be an s3:// prefix, got: {control_output_uri!r}"
         )
-    base = control_output_uri if control_output_uri.endswith("/") else control_output_uri + "/"
+    base = (
+        control_output_uri
+        if control_output_uri.endswith("/")
+        else control_output_uri + "/"
+    )
     clip_base = f"{base}{clip}/"
     signals: list[tuple[str, str]] = [
         (f"control_{modality}", path)
@@ -800,6 +1552,45 @@ def _upload_json(client: Any, document: dict[str, Any], uri: str) -> str:
         return client.upload_file(str(local), uri)
 
 
+def publish_transfer_failure(
+    failure: dict[str, Any],
+    output_uri: str,
+    *,
+    storage_client: Any = None,
+) -> dict[str, Any]:
+    """Persist one failed variant attempt without hiding successful siblings.
+
+    The document deliberately stores a sanitized failure category/type rather
+    than vendor stderr, which can contain the effective prompt or local input
+    path. ``output_uri`` may already be scheduler-attempt scoped; callers pass
+    the same prefix used for successful clip publication so every attempt stays
+    additive and attributable.
+    """
+
+    if not output_uri.startswith("s3://"):
+        raise ValueError(f"output_uri must be an s3:// prefix, got: {output_uri!r}")
+    from npa.clients.storage import StorageClient
+
+    index = int(failure.get("variant_index", -1))
+    if index < 0:
+        raise ValueError("variant failure requires a non-negative variant_index")
+    document = dict(failure)
+    document.update(
+        {
+            "schema": "npa.cosmos2.transfer.variant-failure/v1",
+            "status": "failed",
+            "variant_index": index,
+            "promotion_eligible": False,
+        }
+    )
+    failure_uri = f"{output_uri.rstrip('/')}/_failures/variant-{index:05d}.json"
+    _upload_json(
+        storage_client or StorageClient.from_environment(), document, failure_uri
+    )
+    document["failure_uri"] = failure_uri
+    return document
+
+
 def _json_bytes(document: dict[str, Any]) -> bytes:
     import json as _json
 
@@ -819,8 +1610,7 @@ def attempt_output_uri_for(output_uri: str, attempt_id: str) -> str:
     """Return the private object prefix for one gang recovery generation."""
 
     return (
-        f"{output_uri.rstrip('/')}/{ATTEMPT_PREFIX}/"
-        f"{_validated_attempt_id(attempt_id)}"
+        f"{output_uri.rstrip('/')}/{ATTEMPT_PREFIX}/{_validated_attempt_id(attempt_id)}"
     )
 
 
@@ -861,11 +1651,39 @@ def validate_committed_run_manifest(
         variants
     ):
         raise ValueError("canonical Cosmos augment manifest has inconsistent variants")
+    failed_variants = document.get("failed_variants", [])
+    if not isinstance(failed_variants, list):
+        raise ValueError(
+            "canonical Cosmos augment manifest has inconsistent failed variants"
+        )
+    try:
+        failed_variant_count = int(
+            document.get("failed_variant_count", len(failed_variants))
+        )
+        attempted_variant_count = int(
+            document.get(
+                "attempted_variant_count", len(variants) + len(failed_variants)
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "canonical Cosmos augment manifest has inconsistent attempt counts"
+        ) from exc
+    if (
+        failed_variant_count != len(failed_variants)
+        or attempted_variant_count != len(variants) + len(failed_variants)
+        or attempted_variant_count < 0
+    ):
+        raise ValueError(
+            "canonical Cosmos augment manifest has inconsistent attempt counts"
+        )
     attempt_id = str(document.get("attempt_id") or "").strip()
     try:
         node_count = int(document.get("node_count", 1) or 1)
     except (TypeError, ValueError) as exc:
-        raise ValueError("canonical Cosmos augment manifest has invalid node_count") from exc
+        raise ValueError(
+            "canonical Cosmos augment manifest has invalid node_count"
+        ) from exc
     if node_count < 1:
         raise ValueError("canonical Cosmos augment manifest has invalid node_count")
     scheduler_owned = node_count > 1 or any(
@@ -882,9 +1700,7 @@ def validate_committed_run_manifest(
                 int(document.get("scheduler_fence_sequence", 0)),
                 int(document.get("scheduler_fence_attempt", 0)),
             )
-            publication_generation = int(
-                document.get(PUBLICATION_GENERATION_FIELD, 0)
-            )
+            publication_generation = int(document.get(PUBLICATION_GENERATION_FIELD, 0))
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 "scheduler-fenced Cosmos augment manifest has invalid publication identity"
@@ -917,11 +1733,11 @@ def validate_committed_run_manifest(
             if marker in first_video:
                 root = first_video.split(marker, 1)[0] + marker
     if not root:
-        raise ValueError("canonical Cosmos augment manifest output root is indeterminate")
+        raise ValueError(
+            "canonical Cosmos augment manifest output root is indeterminate"
+        )
     expected_prefix = (
-        f"{root.rstrip('/')}/{ATTEMPT_PREFIX}/{attempt_id}/"
-        if attempt_id
-        else root
+        f"{root.rstrip('/')}/{ATTEMPT_PREFIX}/{attempt_id}/" if attempt_id else root
     )
     seen_clips: set[str] = set()
     seen_indices: set[int] = set()
@@ -942,12 +1758,16 @@ def validate_committed_run_manifest(
                 "its declared publication prefix"
             )
         if variant_index in seen_indices:
-            raise ValueError("canonical Cosmos augment manifest duplicates a variant index")
+            raise ValueError(
+                "canonical Cosmos augment manifest duplicates a variant index"
+            )
         seen_clips.add(clip)
         seen_indices.add(variant_index)
         control_uris = variant.get("control_uris") or {}
         if not isinstance(control_uris, dict):
-            raise ValueError("canonical Cosmos augment manifest control_uris is invalid")
+            raise ValueError(
+                "canonical Cosmos augment manifest control_uris is invalid"
+            )
         if attempt_id and any(
             f"/{ATTEMPT_PREFIX}/{attempt_id}/" not in str(uri or "")
             for uri in control_uris.values()
@@ -956,8 +1776,34 @@ def validate_committed_run_manifest(
                 "canonical Cosmos augment manifest references control evidence from "
                 "another attempt"
             )
-    if seen_indices != set(range(len(variants))):
-        raise ValueError("canonical Cosmos augment manifest has incomplete variant indices")
+    for failure in failed_variants:
+        if not isinstance(failure, dict):
+            raise ValueError(
+                "canonical Cosmos augment manifest has an invalid failed variant"
+            )
+        try:
+            variant_index = int(failure.get("variant_index", -1))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "canonical Cosmos augment manifest has an invalid failed variant index"
+            ) from exc
+        failure_uri = str(failure.get("failure_uri") or "").strip()
+        if (
+            variant_index < 0
+            or variant_index in seen_indices
+            or failure.get("status") != "failed"
+            or failure.get("promotion_eligible") is not False
+            or not failure_uri.startswith(expected_prefix)
+            or "/_failures/" not in failure_uri
+        ):
+            raise ValueError(
+                "canonical Cosmos augment manifest has invalid failed variant provenance"
+            )
+        seen_indices.add(variant_index)
+    if seen_indices != set(range(attempted_variant_count)):
+        raise ValueError(
+            "canonical Cosmos augment manifest has incomplete variant indices"
+        )
     return variants
 
 
@@ -1038,8 +1884,7 @@ def claim_run_publication(
             prior_generation = int(document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
             prior_node_count = int(document.get("node_count", 1) or 1)
             scheduler_owned = prior_node_count > 1 or any(
-                field in document
-                for field in SCHEDULER_PUBLICATION_IDENTITY_FIELDS
+                field in document for field in SCHEDULER_PUBLICATION_IDENTITY_FIELDS
             )
             if scheduler_owned:
                 _validated_attempt_id(str(document.get("attempt_id") or ""))
@@ -1126,6 +1971,7 @@ def build_run_manifest(
     node_count: int = 1,
     shards: list[dict[str, Any]] | None = None,
     attempt_id: str = "",
+    failures: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return the run-level transfer manifest for ``clips`` (no I/O).
 
@@ -1135,6 +1981,26 @@ def build_run_manifest(
     """
 
     first = clips[0] if clips else {}
+    # Validate every variant before aggregation: all() must not hide a malformed
+    # later value after an earlier false value short-circuits the summary.
+    provenance = [
+        {
+            "input_conditioned": _provenance_boolean(
+                clip, "input_conditioned", default=False
+            ),
+            "content_guardrails_enabled": _provenance_boolean(
+                clip, "content_guardrails_enabled", default=True
+            ),
+        }
+        for clip in clips
+    ]
+    input_conditioned = bool(provenance) and all(
+        item["input_conditioned"] for item in provenance
+    )
+    content_guardrails_enabled = bool(provenance) and all(
+        item["content_guardrails_enabled"] for item in provenance
+    )
+    variant_failures = list(failures or [])
     frames = [f for c in clips for f in c.get("frames", [])]
     manifest = {
         "schema": TRANSFER_MANIFEST_SCHEMA,
@@ -1143,6 +2009,9 @@ def build_run_manifest(
         "run_id": run_id,
         "clips": [c.get("clip", "") for c in clips],
         "variant_count": len(clips),
+        "attempted_variant_count": len(clips) + len(variant_failures),
+        "failed_variant_count": len(variant_failures),
+        "failed_variants": variant_failures,
         # "multiply": one Cosmos Transfer 2.5 inference per sampled appearance
         # combo. >1 clips means the run genuinely amplified across scenarios.
         "multiply_mode": "multi-variant" if len(clips) > 1 else "single-variant",
@@ -1158,7 +2027,7 @@ def build_run_manifest(
         "augmented_frames_uri": first.get("frames_uri", ""),
         "control_spec": first.get("control_spec", ""),
         "video_bytes": sum(int(c.get("video_bytes", 0) or 0) for c in clips),
-        "input_conditioned": bool(first.get("input_conditioned")),
+        "input_conditioned": input_conditioned,
         "conditioned_input": first.get("conditioned_input", ""),
         "conditioning_clip_uri": first.get("conditioning_clip_uri", ""),
         "control": first.get("control", ""),
@@ -1168,20 +2037,31 @@ def build_run_manifest(
         # segmentation, and the region mask that limited where it applied.
         "control_weight": float(first.get("control_weight", 0.0) or 0.0),
         "control_prompt": str(first.get("control_prompt") or ""),
+        "negative_prompt": str(first.get("negative_prompt") or ""),
         "mask_prompt": str(first.get("mask_prompt") or ""),
         "control_uris": first.get("control_uris", {}),
-        "content_guardrails_enabled": bool(
-            first.get("content_guardrails_enabled", True)
-        ),
+        "content_guardrails_enabled": content_guardrails_enabled,
+        "protected_chroma": first.get("protected_chroma", {"mode": "off"}),
+        "refinement": first.get("refinement", {}),
+        "effective_control_weight": first.get("effective_control_weight"),
+        "effective_guidance": first.get("effective_guidance"),
+        "inference_seed": first.get("inference_seed"),
         "variants": [
             {
+                **provenance[index],
                 "clip": c.get("clip", ""),
                 "variant_index": int(c.get("variant_index", index) or 0),
                 "variables": c.get("variables", {}),
                 "prompt": str((c.get("variables") or {}).get("prompt") or ""),
+                "negative_prompt": str(c.get("negative_prompt") or ""),
                 "frame_count": int(c.get("frame_count", 0) or 0),
                 "augmented_video_uri": c.get("augmented_video_uri", ""),
                 "control_uris": c.get("control_uris", {}),
+                "protected_chroma": c.get("protected_chroma", {"mode": "off"}),
+                "refinement": c.get("refinement", {}),
+                "effective_control_weight": c.get("effective_control_weight"),
+                "effective_guidance": c.get("effective_guidance"),
+                "inference_seed": c.get("inference_seed"),
             }
             for index, c in enumerate(clips)
         ],
@@ -1205,6 +2085,7 @@ def write_run_manifest(
     attempt_id: str = "",
     publication_claim_etag: str = "",
     publication_generation: int = 0,
+    failures: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Write the run-level ``cosmos_augmented/manifest.json`` listing every clip
     produced by the (possibly multi-variant) augment stage; return the manifest.
@@ -1241,6 +2122,7 @@ def write_run_manifest(
         node_count=node_count,
         shards=shards,
         attempt_id=attempt_id,
+        failures=failures,
     )
     if publication_claim_etag:
         if not attempt_id or int(publication_generation) < 1:
@@ -1269,8 +2151,7 @@ def write_run_manifest(
             and current_document.get("status") == PUBLICATION_CLAIM_STATUS
             and str(current_document.get("attempt_id") or "") == str(attempt_id)
             and str(current_document.get("run_id") or "") == str(run_id or "")
-            and int(current_document.get("node_count", 0) or 0)
-            == int(node_count)
+            and int(current_document.get("node_count", 0) or 0) == int(node_count)
             and int(current_document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
             == int(publication_generation)
         ):
@@ -1332,6 +2213,7 @@ def write_shard_manifest(
     logical_wave_id: str,
     publication_generation: int,
     storage_client: Any = None,
+    failures: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Publish ONE node's share of a multi-node augment as a shard manifest.
 
@@ -1363,6 +2245,7 @@ def write_shard_manifest(
             "multi-node shard descriptors must point inside their attempt-scoped "
             "output prefix"
         )
+    variant_failures = list(failures or [])
     shard = {
         "schema": SHARD_MANIFEST_SCHEMA,
         "mode": TRANSFER_MANIFEST_MODE,
@@ -1379,6 +2262,9 @@ def write_shard_manifest(
         "variant_parallelism": max(1, int(variant_parallelism or 1)),
         "variant_total": max(0, int(variant_total or 0)),
         "variant_count": len(clips),
+        "attempted_variant_count": len(clips) + len(variant_failures),
+        "failed_variant_count": len(variant_failures),
+        "failed_variants": variant_failures,
         "clips": [c.get("clip", "") for c in clips],
         "clip_descriptors": clips,
     }
@@ -1462,8 +2348,7 @@ def merge_shard_manifests(
             and claim_document.get("mode") == TRANSFER_MANIFEST_MODE
             and claim_document.get("status") == PUBLICATION_CLAIM_STATUS
             and str(claim_document.get("run_id") or "") == str(run_id or "")
-            and str(claim_document.get("attempt_id") or "")
-            == normalized_attempt_id
+            and str(claim_document.get("attempt_id") or "") == normalized_attempt_id
             and int(claim_document.get("node_count", 0) or 0) == expected
             and int(claim_document.get(PUBLICATION_GENERATION_FIELD, 0) or 0)
             == int(publication_generation)
@@ -1492,7 +2377,9 @@ def merge_shard_manifests(
         or int(expected_shard_identity["scheduler_fence_sequence"]) < 1
         or int(expected_shard_identity["scheduler_fence_attempt"]) < 1
     ):
-        raise RuntimeError("multi-node publication claim has an incomplete scheduler fence")
+        raise RuntimeError(
+            "multi-node publication claim has an incomplete scheduler fence"
+        )
     waiter = sleep or _time.sleep
     clock = monotonic or _time.monotonic
     reporter = progress or (
@@ -1507,9 +2394,7 @@ def merge_shard_manifests(
             raise ValueError(
                 "NPA_COSMOS_SHARD_JOIN_TIMEOUT_S must be a non-negative number"
             ) from exc
-    if limit is not None and (
-        not _math.isfinite(float(limit)) or float(limit) < 0
-    ):
+    if limit is not None and (not _math.isfinite(float(limit)) or float(limit) < 0):
         raise ValueError("shard join timeout must be finite and non-negative")
     started = clock()
     deadline = None if limit is None else started + float(limit)
@@ -1522,9 +2407,8 @@ def merge_shard_manifests(
         if not isinstance(document, dict):
             return False
         descriptors = document.get("clip_descriptors")
-        attempt_prefix = (
-            attempt_output_uri_for(output_uri, normalized_attempt_id) + "/"
-        )
+        failures = document.get("failed_variants", [])
+        attempt_prefix = attempt_output_uri_for(output_uri, normalized_attempt_id) + "/"
         return bool(
             document.get("schema") == SHARD_MANIFEST_SCHEMA
             and document.get("mode") == TRANSFER_MANIFEST_MODE
@@ -1538,13 +2422,23 @@ def merge_shard_manifests(
                 for field, value in expected_shard_identity.items()
             )
             and isinstance(descriptors, list)
+            and isinstance(failures, list)
             and int(document.get("variant_count", -1)) == len(descriptors)
+            and int(document.get("failed_variant_count", -1)) == len(failures)
+            and int(document.get("attempted_variant_count", -1))
+            == len(descriptors) + len(failures)
             and all(
                 isinstance(item, dict)
                 and str(item.get("augmented_video_uri") or "").startswith(
                     attempt_prefix
                 )
                 for item in descriptors
+            )
+            and all(
+                isinstance(item, dict)
+                and int(item.get("variant_index", -1)) >= 0
+                and str(item.get("failure_uri") or "").startswith(attempt_prefix)
+                for item in failures
             )
         )
 
@@ -1588,9 +2482,8 @@ def merge_shard_manifests(
             break
         now = clock()
         missing = [r for r in range(expected) if r not in shards]
-        if (
-            last_progress is None
-            or now - last_progress >= max(0.0, float(progress_interval_s))
+        if last_progress is None or now - last_progress >= max(
+            0.0, float(progress_interval_s)
         ):
             reporter(
                 "multi-node augment shard join waiting: "
@@ -1618,14 +2511,34 @@ def merge_shard_manifests(
         )
     variant_total = next(iter(totals))
     ordered = sorted(
-        (clip for shard in shards.values() for clip in shard.get("clip_descriptors", [])),
+        (
+            clip
+            for shard in shards.values()
+            for clip in shard.get("clip_descriptors", [])
+        ),
         key=lambda c: int(c.get("variant_index", 0) or 0),
     )
-    indices = [int(clip.get("variant_index", -1)) for clip in ordered]
+    ordered_failures = sorted(
+        (
+            failure
+            for shard in shards.values()
+            for failure in shard.get("failed_variants", [])
+        ),
+        key=lambda failure: int(failure.get("variant_index", -1)),
+    )
+    indices = sorted(
+        [int(clip.get("variant_index", -1)) for clip in ordered]
+        + [int(failure.get("variant_index", -1)) for failure in ordered_failures]
+    )
     if indices != list(range(variant_total)):
         raise RuntimeError(
             "multi-node augment: shard manifests do not cover every variant exactly "
             f"once for run {run_id!r}; expected 0..{variant_total - 1}, got {indices}"
+        )
+    if not ordered:
+        raise RuntimeError(
+            "multi-node augment: every variant failed independently; failure "
+            "shards were preserved and no empty run manifest was published"
         )
     return write_run_manifest(
         ordered,
@@ -1635,7 +2548,7 @@ def merge_shard_manifests(
         variant_parallelism=sum(
             max(1, int(shard.get("variant_parallelism", 1) or 1))
             for shard in shards.values()
-            if int(shard.get("variant_count", 0) or 0) > 0
+            if int(shard.get("attempted_variant_count", 0) or 0) > 0
         )
         or 1,
         node_count=expected,
@@ -1643,7 +2556,13 @@ def merge_shard_manifests(
             {
                 "rank": int(shard.get("rank", rank) or 0),
                 "variant_count": int(shard.get("variant_count", 0) or 0),
-                "variant_parallelism": max(1, int(shard.get("variant_parallelism", 1) or 1)),
+                "attempted_variant_count": int(
+                    shard.get("attempted_variant_count", 0) or 0
+                ),
+                "failed_variant_count": int(shard.get("failed_variant_count", 0) or 0),
+                "variant_parallelism": max(
+                    1, int(shard.get("variant_parallelism", 1) or 1)
+                ),
                 "clips": list(shard.get("clips", [])),
                 "attempt_id": str(shard.get("attempt_id") or ""),
             }
@@ -1652,6 +2571,7 @@ def merge_shard_manifests(
         attempt_id=normalized_attempt_id,
         publication_claim_etag=publication_claim_etag,
         publication_generation=publication_generation,
+        failures=ordered_failures,
     )
 
 
@@ -1687,7 +2607,9 @@ def publish_transfer_to_s3(
         require_frames=require_frames,
         storage_client=storage_client,
     )
-    return write_run_manifest([clip], output_uri, run_id=run_id, storage_client=storage_client)
+    return write_run_manifest(
+        [clip], output_uri, run_id=run_id, storage_client=storage_client
+    )
 
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".ppm", ".webp"}
@@ -1869,6 +2791,7 @@ __all__ = [
     "FrameExtractionError",
     "INPUT_AUTO_CONTROLS",
     "INPUT_CONTROLS",
+    "ProtectedChromaError",
     "REFERENCE_AUGMENT_MODE",
     "REFERENCE_AUGMENT_STATUS",
     "PUBLICATION_CLAIM_STATUS",
@@ -1878,6 +2801,7 @@ __all__ = [
     "TRANSFER_MANIFEST_FILENAME",
     "TRANSFER_MANIFEST_MODE",
     "TRANSFER_MANIFEST_SCHEMA",
+    "preserve_source_chroma",
     "TRANSFER_MANIFEST_STATUS",
     "augmented_frames_index_uri_for",
     "attempt_output_uri_for",
@@ -1889,6 +2813,7 @@ __all__ = [
     "extract_frames",
     "merge_shard_manifests",
     "publish_transfer_clip",
+    "publish_transfer_failure",
     "publish_transfer_to_s3",
     "reference_augment_frames",
     "resolve_control_modality",

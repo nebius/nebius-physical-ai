@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import functools
 import inspect
+import logging
 import sys
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -13,14 +14,16 @@ from typing import Any, Iterator
 from urllib.parse import urlparse
 
 from npa.clients import config as config_module
-from npa.clients.config import ConfigError, EnvironmentConfig, StorageConfig
+from npa.clients.config import EnvironmentConfig, StorageConfig
 from npa.cluster.gpu_driver import DEFAULT_MANAGED_DRIVER_PRESET
 from npa.cluster.gpu_health import (
     DEFAULT_CUDA_SMOKE_IMAGE,
     DEFAULT_STABILIZATION_SECONDS,
 )
+from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
 from npa.cluster.state import kubeconfig_file, load_cluster_state
 from npa.provisioning_journal import (
+    OperationIdentityError,
     ProvisioningOperation,
     current_operation,
     emit_recovery_summary,
@@ -101,8 +104,10 @@ def _provision_recovery_argv(
         ("gpu_platform", "--gpu-platform"),
         ("gpu_preset", "--gpu-preset"),
         ("gpu_driver_mode", "--gpu-driver-mode"),
+        ("gpu_workload_profile", "--gpu-workload-profile"),
         ("managed_driver_preset", "--managed-driver-preset"),
         ("gpu_cuda_smoke_image", "--gpu-cuda-smoke-image"),
+        ("capacity_block_group", "--capacity-block-group"),
         ("accelerator", "--accelerator"),
         ("sky_bin", "--sky-bin"),
     ):
@@ -169,6 +174,7 @@ def _transactional_provision(function):
             cpu_preset=str(bound.arguments.get("cpu_preset") or ""),
             gpu_platform=str(bound.arguments.get("gpu_platform") or ""),
             gpu_preset=str(bound.arguments.get("gpu_preset") or ""),
+            capacity_block_group=str(bound.arguments.get("capacity_block_group") or ""),
             preemptible=bound.arguments.get("preemptible"),
         )
         kwargs["_resolved_plan"] = plan
@@ -179,8 +185,11 @@ def _transactional_provision(function):
         requested_name = (
             _bucket_name(storage.checkpoint_bucket) if skip_k8s else cluster_name
         )
+        recovery_arguments = dict(bound.arguments)
+        recovery_arguments["capacity_block_group"] = plan.topology.capacity_block_group
+        recovery_arguments["preemptible"] = plan.topology.gpu_preemptible
         resume_argv = _provision_recovery_argv(
-            dict(bound.arguments),
+            recovery_arguments,
             alias=alias,
             cluster_name=cluster_name,
             context=context,
@@ -204,7 +213,7 @@ def _transactional_provision(function):
             if not skip_k8s
             else []
         )
-        operation = ProvisioningOperation.prepare(
+        operation_kwargs = dict(
             command="npa provision-if-absent",
             project_alias=alias,
             project_id=str(getattr(environment, "project_id", "") or ""),
@@ -223,7 +232,34 @@ def _transactional_provision(function):
             resume_argv=resume_argv,
             destroy_argv=destroy_argv,
         )
-        operation.record_preflight_plan(plan.to_dict())
+        operation = ProvisioningOperation.prepare(**operation_kwargs)
+        try:
+            operation.record_preflight_plan(plan.to_dict())
+        except OperationIdentityError:
+            # A retry with a different topology must never overwrite an
+            # incomplete operation's immutable plan. When no cloud resource,
+            # local Terraform state, or config mutation was recorded, however,
+            # the old operation is safely empty: terminalize that evidence and
+            # start a new deterministic generation for the new requested shape.
+            prior = operation.read()
+            if any(
+                prior.get(key)
+                for key in ("resources", "local_state_copies", "config_mutations")
+            ):
+                raise
+            operation.record_rollback(
+                attempted=False,
+                completed=True,
+                removed=[],
+                preserved=[],
+                error="superseded empty operation after requested topology changed",
+            )
+            operation.transition(
+                "rolled-back",
+                error="superseded empty operation after requested topology changed",
+            )
+            operation = ProvisioningOperation.prepare(**operation_kwargs)
+            operation.record_preflight_plan(plan.to_dict())
         with operation_context(operation):
             sys.stderr.write(
                 f"Provisioning operation {operation.operation_id}: preflight complete; beginning mutation\n"
@@ -303,6 +339,7 @@ def provision_if_absent(
     gpu_platform: str = "",
     gpu_preset: str = "",
     gpu_driver_mode: str = "",
+    gpu_workload_profile: str = "",
     managed_driver_preset: str = "",
     allow_unsafe_nvswitch_operator: bool | None = None,
     gpu_health_stabilization_seconds: int = DEFAULT_STABILIZATION_SECONDS,
@@ -313,6 +350,7 @@ def provision_if_absent(
     mig_strategy: str = "mixed",
     mig_config: str = "all-balanced",
     capacity_block_group: str = "",
+    infiniband_fabric: str = "",
     preemptible: bool | None = None,
     accelerator: str = "",
     gpu_readiness_timeout: float = 600.0,
@@ -327,6 +365,17 @@ def provision_if_absent(
 
     forbid_destructive_provisioning("provision_if_absent")
     alias, environment, storage, registry = _resolve_project_runtime(project)
+    workload = resolve_gpu_workload_profile(
+        profile=gpu_workload_profile,
+        gpu_nodes=gpu_nodes,
+        gpu_platform=gpu_platform,
+        gpu_preset=gpu_preset,
+        gpu_driver_mode=gpu_driver_mode,
+    )
+    gpu_nodes = workload.gpu_nodes
+    gpu_platform = workload.gpu_platform
+    gpu_preset = workload.gpu_preset
+    gpu_driver_mode = workload.gpu_driver_mode
     context = context_name.strip() or cluster_name
     kubeconfig_path = kubeconfig or kubeconfig_file(context)
     actions: list[str] = []
@@ -348,6 +397,7 @@ def provision_if_absent(
         cpu_preset=cpu_preset,
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
+        capacity_block_group=capacity_block_group,
         preemptible=preemptible,
         agent_exists=agent_exists,
     )
@@ -358,6 +408,7 @@ def provision_if_absent(
     cpu_preset = topology.cpu_preset
     gpu_platform = topology.gpu_platform
     gpu_preset = topology.gpu_preset
+    capacity_block_group = topology.capacity_block_group
     preemptible = topology.gpu_preemptible
     actions.extend(_preflight_actions(plan))
 
@@ -509,8 +560,11 @@ def provision_if_absent(
                     gpu_health_stabilization_seconds=(gpu_health_stabilization_seconds),
                     gpu_cuda_smoke=gpu_cuda_smoke,
                     gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+                    gpu_graphics_smoke=workload.graphics_smoke,
                 )
                 actions.append("k8s:validated stable GPU health and CUDA vectorAdd")
+                if workload.graphics_smoke:
+                    actions.append("k8s:validated RTX GLX/EGL/Vulkan readiness")
         k8s_ready = True
     elif not dry_run and (not environment.project_id or not environment.tenant_id):
         warnings.append("project_id and tenant_id are required to ensure Kubernetes")
@@ -532,6 +586,7 @@ def provision_if_absent(
                     count=desired_cpu_count,
                     platform=cpu_platform,
                     preset=cpu_preset,
+                    disk_size_gib=topology.cpu_disk_gib,
                 )
                 if desired_cpu_count
                 else None
@@ -541,7 +596,7 @@ def provision_if_absent(
                     count=desired_gpu_count,
                     platform=gpu_platform,
                     preset=gpu_preset,
-                    disk_size_gib=128 if mig_enabled else 0,
+                    disk_size_gib=(128 if mig_enabled else topology.gpu_disk_gib),
                     capacity_block_group=capacity_block_group,
                     preemptible=bool(preemptible),
                 )
@@ -557,6 +612,8 @@ def provision_if_absent(
             gpu_health_timeout_minutes=gpu_health_timeout_minutes,
             gpu_cuda_smoke=gpu_cuda_smoke,
             gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            gpu_workload_profile=workload.profile,
+            infiniband_fabric=infiniband_fabric,
             mig=(
                 MigSpec(enabled=True, strategy=mig_strategy, config=mig_config)
                 if mig_enabled
@@ -592,6 +649,7 @@ def provision_if_absent(
                     ("gpu_platform", gpu_platform),
                     ("gpu_preset", gpu_preset),
                     ("gpu_driver_mode", gpu_driver_mode),
+                    ("gpu_workload_profile", workload.profile),
                     ("managed_driver_preset", managed_driver_preset),
                 )
                 if value.strip()
@@ -627,6 +685,7 @@ def provision_if_absent(
                 sky_gpus="",
                 sky_bin=sky_bin,
                 capacity_block_group=capacity_block_group,
+                infiniband_fabric=infiniband_fabric,
                 gpu_nodes=gpu_nodes,
                 cpu_nodes=cpu_nodes,
                 cpu_platform=cpu_platform,
@@ -634,6 +693,7 @@ def provision_if_absent(
                 gpu_platform=gpu_platform,
                 gpu_preset=gpu_preset,
                 gpu_driver_mode=gpu_driver_mode,
+                gpu_workload_profile=workload.profile,
                 managed_driver_preset=managed_driver_preset,
                 allow_unsafe_nvswitch_operator=allow_unsafe_nvswitch_operator,
                 gpu_health_stabilization_seconds=(gpu_health_stabilization_seconds),
@@ -653,7 +713,11 @@ def provision_if_absent(
     needs_gpu_setup = bool(requested_accelerator or sky_smoke)
     if needs_gpu_setup and k8s_ready and not skip_k8s and not dry_run:
         from npa.controller_ownership import ensure_controller_owner
-        from npa.cli.cluster.terraform_lifecycle import _run_skypilot_smoke
+        from npa.cli.cluster.terraform_lifecycle import (
+            _check_skypilot_kubernetes,
+            _recover_skypilot_smoke,
+            _run_skypilot_smoke,
+        )
         from npa.orchestration.skypilot.k8s_gpu_catalog import (
             wait_for_kubernetes_accelerators,
         )
@@ -664,33 +728,53 @@ def provision_if_absent(
                 f"controller:bound {owner.project_alias}/{owner.context}/{owner.cluster_id}"
             )
 
-            def report_gpu_status(message: str) -> None:
-                actions.append(f"gpu:{message}")
-                sys.stderr.write(message.rstrip() + "\n")
-                sys.stderr.flush()
-                operation = current_operation()
-                if operation is not None:
-                    operation.heartbeat(details={"gpu_readiness": message})
-
-            wait_for_kubernetes_accelerators(
-                [requested_accelerator] if requested_accelerator else [],
-                context=context,
-                kubeconfig=kubeconfig_path,
-                sky_bin=sky_bin or None,
-                label_known_gpus=True,
-                timeout=gpu_readiness_timeout,
-                poll_interval=gpu_readiness_poll_interval,
-                on_status=report_gpu_status,
+            from npa.orchestration.skypilot.cluster_validation import (
+                cluster_validation_session,
             )
-            if sky_smoke:
-                _run_skypilot_smoke(
+
+            with cluster_validation_session(Path(kubeconfig_path), context):
+                _check_skypilot_kubernetes(
                     Path(kubeconfig_path),
                     context,
-                    cluster_name,
-                    requested_accelerator,
                     sky_bin=sky_bin,
                 )
-                actions.append("sky-smoke:passed")
+                actions.append("skypilot:kubernetes-enabled")
+                if sky_smoke:
+                    _recover_skypilot_smoke(
+                        Path(kubeconfig_path), context, cluster_name, sky_bin=sky_bin
+                    )
+
+                def report_gpu_status(message: str) -> None:
+                    actions.append(f"gpu:{message}")
+                    sys.stderr.write(message.rstrip() + "\n")
+                    sys.stderr.flush()
+                    operation = current_operation()
+                    if operation is not None:
+                        operation.heartbeat(details={"gpu_readiness": message})
+
+                resolutions = wait_for_kubernetes_accelerators(
+                    [requested_accelerator] if requested_accelerator else [],
+                    context=context,
+                    kubeconfig=kubeconfig_path,
+                    sky_bin=sky_bin or None,
+                    label_known_gpus=True,
+                    timeout=gpu_readiness_timeout,
+                    poll_interval=gpu_readiness_poll_interval,
+                    on_status=report_gpu_status,
+                )
+                if sky_smoke:
+                    smoke_accelerator = requested_accelerator
+                    if requested_accelerator and requested_accelerator in resolutions:
+                        smoke_accelerator = resolutions[requested_accelerator].resolved
+                    _run_skypilot_smoke(
+                        Path(kubeconfig_path),
+                        context,
+                        cluster_name,
+                        smoke_accelerator,
+                        sky_bin=sky_bin,
+                        credentials_checked=True,
+                    )
+                    actions.append("sky-smoke:passed")
         except Exception as exc:  # noqa: BLE001 - return a resumable partial result
             gpu_readiness = (
                 "timeout" if str(exc).startswith("Timed out after ") else "failed"
@@ -759,6 +843,7 @@ def _build_provision_plan(
     cpu_preset: str,
     gpu_platform: str,
     gpu_preset: str,
+    capacity_block_group: str,
     preemptible: bool | None,
     agent_exists: bool = False,
 ):
@@ -769,6 +854,8 @@ def _build_provision_plan(
     )
 
     cluster_exists = skip_k8s or _has_cached_kubeconfig(context, kubeconfig)
+    cpu_disk_gib = _terraform_disk_size_gib("TF_VAR_cpu_disk_size", 128)
+    gpu_disk_gib = _terraform_disk_size_gib("TF_VAR_gpu_disk_size", 1023)
     requested = resolve_topology(
         cluster_name=cluster_name,
         accelerator=accelerator,
@@ -779,7 +866,10 @@ def _build_provision_plan(
         cpu_preset=cpu_preset,
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
+        capacity_block_group=capacity_block_group,
         preemptible=preemptible,
+        cpu_disk_gib=cpu_disk_gib,
+        gpu_disk_gib=gpu_disk_gib,
     )
     checks = []
     if skip_k8s:
@@ -824,17 +914,106 @@ def _build_provision_plan(
         cpu_preset=requested.cpu_preset,
         gpu_platform=requested.gpu_platform,
         gpu_preset=requested.gpu_preset,
+        capacity_block_group=requested.capacity_block_group,
         preemptible=requested.gpu_preemptible,
+        cpu_disk_gib=requested.cpu_disk_gib,
+        gpu_disk_gib=requested.gpu_disk_gib,
     )
+    quota_reader = None
+    quota_names = tuple(topology.quota_requirements())
+
+    def fixed_quota_reader(observations):
+        def read_quota_snapshot(_tenant, _region, _names):
+            return observations
+
+        return read_quota_snapshot
+
+    try:
+        from npa.provisioning_preflight import read_provider_quotas
+
+        tenant_observations = read_provider_quotas(
+            str(getattr(environment, "tenant_id", "") or ""),
+            str(getattr(environment, "region", "") or ""),
+            quota_names,
+        )
+    except Exception as tenant_exc:  # noqa: BLE001 - a project fallback is narrowly typed
+        from npa.clients.nebius import is_permission_denied
+
+        project_id = str(getattr(environment, "project_id", "") or "")
+        if project_id and is_permission_denied(str(tenant_exc)):
+            try:
+                from npa.provisioning_preflight import (
+                    PROJECT_QUOTA_RBAC_FALLBACK_REASON,
+                    PreflightCheck,
+                    read_project_quota_observations,
+                )
+
+                project_observations = read_project_quota_observations(
+                    project_id,
+                    str(getattr(environment, "region", "") or ""),
+                    quota_names,
+                )
+            except Exception as project_exc:  # noqa: BLE001 - preserve fail-closed quota evidence
+                # Keep the ordinary planner's fail-closed unknown evidence when
+                # the exact-project view is unavailable or malformed too.
+                logging.getLogger(__name__).debug(
+                    "project-scoped quota fallback was unavailable",
+                    exc_info=project_exc,
+                )
+            else:
+                quota_reader = fixed_quota_reader(project_observations)
+                evidence_complete = all(
+                    observation.state in {"known", "unbounded"}
+                    for observation in project_observations.values()
+                )
+                checks.append(
+                    PreflightCheck(
+                        name="quota_evidence_scope",
+                        status="ready" if evidence_complete else "unknown",
+                        reason=(
+                            PROJECT_QUOTA_RBAC_FALLBACK_REASON
+                            if evidence_complete
+                            else (
+                                "tenant-wide quota query unavailable due to RBAC; "
+                                "project-scoped quota response did not verify every "
+                                "requested allowance"
+                            )
+                        ),
+                    )
+                )
+    else:
+        quota_reader = fixed_quota_reader(tenant_observations)
     return build_whole_path_plan(
         project_alias=alias,
         project_id=str(getattr(environment, "project_id", "") or ""),
         tenant_id=str(getattr(environment, "tenant_id", "") or ""),
         region=str(getattr(environment, "region", "") or ""),
         topology=topology,
+        quota_reader=quota_reader,
         checks=checks,
         mutation=not dry_run,
     )
+
+
+def _terraform_disk_size_gib(name: str, default: int) -> int:
+    """Resolve the Terraform worker-disk override used by ``cluster up``.
+
+    ``provision-if-absent`` delegates the real apply to ``cluster up``, which
+    already honors ``TF_VAR_cpu_disk_size`` and ``TF_VAR_gpu_disk_size``. The
+    immutable outer preflight must account for those same values or it can
+    reject an otherwise valid topology before Terraform sees it.
+    """
+
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer GiB value") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer GiB value")
+    return value
 
 
 def resolve_provision_plan(
@@ -851,6 +1030,7 @@ def resolve_provision_plan(
     cpu_preset: str = "",
     gpu_platform: str = "",
     gpu_preset: str = "",
+    capacity_block_group: str = "",
     preemptible: bool | None = None,
     mutation: bool = False,
 ):
@@ -874,6 +1054,7 @@ def resolve_provision_plan(
         cpu_preset=cpu_preset,
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
+        capacity_block_group=capacity_block_group,
         preemptible=preemptible,
     )
 
@@ -1073,21 +1254,11 @@ def _runtime_env(
     storage: StorageConfig,
     registry: str,
 ) -> Iterator[None]:
-    yml = config_module._load_yaml()
-    registry_id = ""
-    try:
-        proj = config_module._resolve_project_section(yml, alias)
-        if isinstance(proj, dict):
-            registry_id = str(proj.get("registry_id", "") or "")
-    except ConfigError:
-        pass
-
     values = {
         "NPA_PROJECT_ID": environment.project_id,
         "NPA_TENANT_ID": environment.tenant_id,
         "NPA_REGION": environment.region,
         "NPA_REGISTRY": registry,
-        "NPA_REGISTRY_ID": registry_id,
         # Consumers of NPA_S3_BUCKET pass it as the provider Bucket argument;
         # keep URI/prefix forms in checkpoint_bucket only.
         "NPA_S3_BUCKET": _bucket_name(storage.checkpoint_bucket),

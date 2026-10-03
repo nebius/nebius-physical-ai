@@ -18,8 +18,9 @@ granted by Lightricks after that operator accepted the terms on the gated
 repository page, and it is what both fetches require — so a run without one
 refuses in the pod exactly as it does here.
 
-Status: no live run has happened. The image has not been built. See
-``docs/workbench/ltx2.md`` for the runbook that produces the evidence.
+The accepted release proof is recorded by immutable digest. This test remains
+the mandatory acceptance path for every future candidate; prior evidence never
+transfers to different bytes.
 """
 
 from __future__ import annotations
@@ -50,9 +51,7 @@ from .npa_workflow_live_helpers import live_bucket
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
-LTX_SPEC = (
-    REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "byof-ltx2.yaml"
-)
+LTX_SPEC = REPO_ROOT / "workflows" / "testing" / "byof-ltx2.yaml"
 PROFILE_DIR = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles"
 EXPECTED_CAPABILITIES = {
     "ltx2_5_text_to_video",

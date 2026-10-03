@@ -47,6 +47,9 @@ import pathlib
 import sys
 
 import boto3
+
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]).resolve() / "src"))
+from npa.orchestration.npa_workflow.src_staging import staged_source_files
 from botocore.client import Config
 
 src = pathlib.Path(sys.argv[1]).resolve()
@@ -67,10 +70,7 @@ if endpoint:
 s3 = boto3.client("s3", **kwargs)
 
 uploaded = 0
-for path in src.rglob("*"):
-    if not path.is_file():
-        continue
-    rel = path.relative_to(src)
+for rel, path in staged_source_files(src).items():
     if any(part in skip_anywhere for part in rel.parts):
         continue
     if rel.parts and rel.parts[0] in skip_top_level:

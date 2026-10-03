@@ -38,9 +38,7 @@ def test_openpi_container_closes_real_antioch_feedback_loop() -> None:
             policy_host=_required_env("NPA_OPENPI_ANTIOCH_POLICY_HOST"),
             host_port=host_port,
             policy_port=int(policy_port_text) if policy_port_text else None,
-            scenario=os.environ.get(
-                "NPA_OPENPI_ANTIOCH_SCENARIO", "pi05_droid_loop"
-            ),
+            scenario=os.environ.get("NPA_OPENPI_ANTIOCH_SCENARIO", "pi05_droid_loop"),
             chunks=int(os.environ.get("NPA_OPENPI_ANTIOCH_CHUNKS", "3")),
             docker_bin=os.environ.get("NPA_OPENPI_ANTIOCH_DOCKER", "docker"),
             antioch_bin=os.environ.get("NPA_OPENPI_ANTIOCH_BIN", "antioch"),

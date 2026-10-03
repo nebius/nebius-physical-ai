@@ -235,7 +235,13 @@ variable "filestore_mount_path" {
 variable "filesystem_csi_chart_version" {
   description = "Nebius Shared Filesystem CSI Helm chart version."
   type        = string
-  default     = "0.1.5"
+  default     = "0.1.6"
+}
+
+variable "filesystem_csi_chart_repository" {
+  description = "Operator-supplied Helm repository for Shared Filesystem CSI. Required when filestore is enabled; NPA has no provider-private default."
+  type        = string
+  default     = ""
 }
 
 variable "previous_default_storage_class_name" {
@@ -248,4 +254,10 @@ variable "k8s_version" {
   description = "Kubernetes major.minor version. Null lets the Nebius backend choose its default."
   type        = string
   default     = null
+}
+
+variable "mk8s_cluster_public_endpoint" {
+  description = "Expose the managed Kubernetes API endpoint publicly. Default true matches the FTUE shape (kubectl works without VPN/bastion). Set to false for production clusters to keep the control plane off the public internet."
+  type        = bool
+  default     = true
 }

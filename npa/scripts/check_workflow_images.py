@@ -19,14 +19,18 @@ from npa.guardrails.skypilot import (
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[2])
-    parser.add_argument("--registry-id", default=os.environ.get("NPA_REGISTRY_ID", ""))
+    parser.add_argument(
+        "--repo-root", type=Path, default=Path(__file__).resolve().parents[2]
+    )
+    parser.add_argument("--registry", default=os.environ.get("NPA_REGISTRY", ""))
     parser.add_argument("--strict-placeholders", action="store_true")
     args = parser.parse_args(argv)
 
     workflow_dir = args.repo_root / "npa" / "src" / "npa" / "workflows" / "skypilot"
     images = image_refs_for_workflows(sorted(workflow_dir.glob("*.yaml")))
-    unresolved = sorted({image for image in images if unresolved_image_placeholders(image)})
+    unresolved = sorted(
+        {image for image in images if unresolved_image_placeholders(image)}
+    )
     if unresolved and not args.strict_placeholders:
         print(
             json.dumps(
@@ -41,12 +45,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
-    if not args.registry_id:
+    if not args.registry:
         print(
             json.dumps(
                 {
                     "status": "SEAM",
-                    "reason": "NPA_REGISTRY_ID is required for live registry inspection",
+                    "reason": "NPA_REGISTRY is required for operator-placeholder inspection",
                     "checked_count": 0,
                 },
                 indent=2,
@@ -58,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     missing: list[str] = []
     checked: list[str] = []
     for image in images:
-        resolved = resolve_workflow_image(image, registry_id=args.registry_id)
+        resolved = resolve_workflow_image(image, registry=args.registry)
         if unresolved_image_placeholders(resolved):
             missing.append(resolved)
             continue
@@ -67,7 +71,11 @@ def main(argv: list[str] | None = None) -> int:
         except RuntimeError as exc:
             print(
                 json.dumps(
-                    {"status": "SEAM", "reason": str(exc), "checked_count": len(checked)},
+                    {
+                        "status": "SEAM",
+                        "reason": str(exc),
+                        "checked_count": len(checked),
+                    },
                     indent=2,
                     sort_keys=True,
                 )

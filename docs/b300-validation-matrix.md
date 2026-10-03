@@ -1,4 +1,14 @@
-# B300 Validation Matrix
+# Historical B300 validation matrix
+
+[Docs](README.md)
+
+> **Historical record from May 2026.** The findings below describe the images
+> and workloads tested then. Use the current
+> [image and GPU compatibility matrix](workbench/image-gpu-compatibility-matrix.md)
+> for hardware selection. Its August 3 Genesis record reports B300 kernel and
+> physics tests passing; that supersedes the upstream-blocked status below for
+> the tested image and scope. It does not establish every training or rendering
+> workload on B300.
 
 B300 is validated for the `cuda13-b300` base image and the LeRobot ACT smoke-training workload listed below. SONIC is not yet validated on B300 because its current Isaac Sim / Isaac Lab dependency path does not preserve the CUDA 13 / PyTorch 2.9 x86_64 base contract. Cosmos, GR00T, and Isaac Lab remain vendor-paced, while Genesis remains upstream-blocked on Taichi Blackwell support.
 
@@ -29,8 +39,8 @@ Unblocking signal: NVIDIA publishing CUDA 13 install paths for `Linux (x86_64)` 
 
 | Tool | Image | Validation | B300 result | Baseline comparison | Date |
 |---|---|---|---|---|---|
-| Base CUDA 13 B300 | `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-base:<cuda13-b300-tag>` | PyTorch 2.9.0+cu130 import, device capability `(10, 3)`, flash-attn-4 forward pass, NCCL init | PASS on 8x B300, driver 580.126.09 | No H200/H100 comparison; functional base smoke | 2026-05-14 |
-| LeRobot | `cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lerobot:<cuda13-b300-tag>` | ACT, `lerobot/pusht_image`, batch size 8, 100 steps | PASS; 71 s wall time, 39 s training loop, 2.51 step/s end-to-end progress line, 27.19 step/s warm step-100 sample | No exact H200 wall-clock baseline found. Reference H200 profiler run used LeRobot v0.5.1 on `lerobot/pusht` at 34.56 step/s, so it is not a like-for-like speedup claim. | 2026-05-14 |
+| Base CUDA 13 B300 | `<your-registry>/<namespace>/npa-base:<cuda13-b300-tag>` | PyTorch 2.9.0+cu130 import, device capability `(10, 3)`, flash-attn-4 forward pass, NCCL init | PASS on 8x B300, driver 580.126.09 | No H200/H100 comparison; functional base smoke | 2026-05-14 |
+| LeRobot | `<your-registry>/<namespace>/npa-lerobot:<cuda13-b300-tag>` | ACT, `lerobot/pusht_image`, batch size 8, 100 steps | PASS; 71 s wall time, 39 s training loop, 2.51 step/s end-to-end progress line, 27.19 step/s warm step-100 sample | No exact H200 wall-clock baseline found. Reference H200 profiler run used LeRobot v0.5.1 on `lerobot/pusht` at 34.56 step/s, so it is not a like-for-like speedup claim. | 2026-05-14 |
 
 ## Tier 1 Not Yet Validated
 
@@ -65,20 +75,20 @@ Unblocking signal: NVIDIA publishing CUDA 13 install paths for `Linux (x86_64)` 
 Pull and smoke the base image on a B300 host with NVIDIA driver 580 or newer:
 
 ```bash
-docker pull cr.eu-north1.nebius.cloud/<your-registry-id>/npa-base:<cuda13-b300-tag>
+docker pull "<your-registry>/<namespace>/npa-base:<cuda13-b300-tag>"
 docker run --gpus all --rm \
-  cr.eu-north1.nebius.cloud/<your-registry-id>/npa-base:<cuda13-b300-tag> \
+  "<your-registry>/<namespace>/npa-base:<cuda13-b300-tag>" \
   python -c "import torch; print(torch.cuda.get_device_capability(0)); import flash_attn; print(flash_attn.__version__)"
 ```
 
 Run the validated LeRobot workload:
 
 ```bash
-docker pull cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lerobot:<cuda13-b300-tag>
+docker pull "<your-registry>/<namespace>/npa-lerobot:<cuda13-b300-tag>"
 docker run --gpus all --rm \
   -e WANDB_MODE=disabled \
   -v /tmp/lerobot-b300:/output \
-  cr.eu-north1.nebius.cloud/<your-registry-id>/npa-lerobot:<cuda13-b300-tag> \
+  "<your-registry>/<namespace>/npa-lerobot:<cuda13-b300-tag>" \
   lerobot-train \
     --policy.type=act \
     --policy.push_to_hub=false \
@@ -97,7 +107,7 @@ docker run --gpus all --rm \
 
 - CUDA 13 Blackwell support: <https://developer.nvidia.com/blog/whats-new-and-important-in-cuda-toolkit-13-0/>
 - TensorRT-LLM release notes: <https://nvidia.github.io/TensorRT-LLM/release-notes.html>
-- Cosmos prerequisites: <https://docs.nvidia.com/cosmos/latest/latest/prerequisites.html>
+- Cosmos prerequisites: <https://docs.nvidia.com/cosmos/latest/prerequisites.html>
 - Cosmos Reason2: <https://github.com/nvidia-cosmos/cosmos-reason2>
 - Cosmos Predict2.5: <https://github.com/nvidia-cosmos/cosmos-predict2.5>
 - Cosmos Transfer2.5: <https://github.com/nvidia-cosmos/cosmos-transfer2.5>

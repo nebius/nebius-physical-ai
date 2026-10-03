@@ -1,5 +1,7 @@
 # Sim-to-Real — Data types & artifact contracts
 
+[Guides](README.md)
+
 **Canonical reference** for formats, schemas, and S3 layout in the 14-stage sim-to-real
 loop. Other guides link here instead of duplicating tables.
 
@@ -12,6 +14,7 @@ loop. Other guides link here instead of duplicating tables.
 | **[sim2real-workflow.md](./sim2real-workflow.md)** | Run the loop: quickstart, CLI, local smoke |
 | **This file** | What each artifact *is* (LeRobot vs NPA JSON vs media) |
 | **[sim2real-customer-assets.md](./sim2real-customer-assets.md)** | What the customer uploads (robot, scene, trigger) |
+| **[sim2real-robot-spec.md](./sim2real-robot-spec.md)** | Canonical RobotSpec contract, runnable URDF example, and proof artifacts |
 | **[sim2real-architecture.md](./sim2real-architecture.md)** | Standard-runtime control flow, parallel waves, loops, and resume |
 | **[sim2real-demo-script-10min.md](./sim2real-demo-script-10min.md)** | Presentation walkthrough |
 
@@ -45,10 +48,10 @@ policy rollouts.
 | --- | --- | --- | --- |
 | `NPA_SIM2REAL_TRIGGER_DATASET_URI` | Customer/operator | Task-aligned Isaac seed dataset plus `task-dataset-manifest.json`; PushT is incompatible with the default Franka lift task | 1 |
 | `ASSETS_URI`, `SCENE_SPEC_URI` | Customer (optional) | Meshes + optional `npa.sim2real.scene_spec.v1` | 2 |
-| `ROBOT_SPEC_URI`, `ROBOT_PRESET` | Customer (optional) | `npa.sim2real.robot_spec.v1` or preset name | 2 |
+| `config.robot_spec_uri` | Customer (optional) | Exact S3 object containing `npa.sim2real.robot_spec.v1`; empty is stock Franka | 2 |
 | `train_envs_uri` / `validation_envs_uri` / `gold_heldout_envs_uri` | **Workflow** | Curated, disjoint, stratified NPA scenario JSONL with task/config digests | 4–6 |
 | `actions/train/…` | Workflow / policy job | Rollout dirs + `npa.sim2real.action_rollout.v1` | 7 |
-| `vlm_eval/…` | Workflow / VLM job | `npa.sim2real.vlm_eval.v1` | 8 |
+| `vlm_eval/…` | Workflow / configured hosted evaluator | `npa.sim2real.vlm_eval.v5` | 8 |
 | `training_signal/…` | Workflow | `npa.sim2real.rl_signal.v1` | 9 |
 | `eval/validation/outer-XX/iter-YY/report.json` | Workflow / eval job | Validation-only checkpoint comparison | 9 |
 | `eval/gold-heldout/outer-XX/report.json` | Workflow / eval job | Final untouched gold evaluation, `npa.sim2real.heldout_eval.v1` | 10 |
@@ -79,7 +82,7 @@ Every JSON artifact should include a top-level `"schema"` string. Constants live
 | `npa.sim2real.trigger.v1` | `stage_01_trigger/trigger.json` | 1 | Points at the task-aligned trigger URI and its verified seed provenance |
 | `npa.sim2real.task_contract.v1` | `stage_02_assets/task-contract.json` | 2 | Normalized task/data/embodiment/physics/camera/success contract and digest |
 | `npa.sim2real.consumed_scene_spec.v1` | `stage_02_assets/consumed_scene_spec.json` | 2 | Stock or BYO scene after materialization |
-| `npa.sim2real.consumed_robot_spec.v1` | `stage_02_assets/consumed_robot_spec.json` | 2 | Stock Franka or BYO / preset metadata |
+| `npa.sim2real.robot_contract.v1` | `stage_02_assets/consumed_robot_spec.json` | 2 | Stock marker or immutable BYO contract with embodiment/content digests and resolved-USD target |
 | `npa.sim2real.stock_scene_spec.v1` | (embedded in consumed scene) | 2 | Stock-only wrapper |
 | `npa.sim2real.stock_robot_spec.v1` | (embedded in consumed robot) | 2 | Stock-only wrapper |
 | `npa.sim2real.scene_spec.v1` | envgen / BYO input | 2–6 | Scene composition for envgen |
@@ -107,9 +110,61 @@ Every JSON artifact should include a top-level `"schema"` string. Constants live
 | `npa.sim2real.reference_actions.v1` | policy job output | 7 | Reference policy contract |
 | `npa.sim2real.actions_summary.v1` | policy job summary | 7 | |
 | `npa.sim2real.policy_image_contract.v1` | policy job metadata | 7 | |
-| `npa.sim2real.vlm_eval.v1` | `vlm_eval/…/*.json` | 8 | Per-rollout VLM critique |
+| `npa.sim2real.vlm_eval.v5` | `vlm_eval/…/*.json` | 8 | Per-rollout hosted critique with exact action/frame time and simulator-episode bindings, selected primary-frame metadata, provider/backend, request IDs, tokens, latency, retries, and authoritative response cost or explicit null; older schemas remain available only to archived/legacy readers |
 | `npa.sim2real.rl_signal.v1` | `training_signal/…/*.json` | 9 | Converted RL training signal |
 | `npa.sim2real.inner_loop_evidence.v1` | `inner_loop/outer-XX/evidence.json` | 9 | Reward trend, trainer deltas |
+
+Hosted v5 evaluations retain `selected_frame_metadata` and a `visual_grounding`
+record for every action. The binding joins the action and primary frame by exact
+recorded `sim_step`; frame list positions and nearby timestamps are insufficient.
+An unsampled action has `camera_observation: null`, `confidence: 0`, `error_tags:
+["ok"]`, and an explicit insufficient-evidence critique. Its simulator state
+still contributes grounded reward, while visual auxiliary reward, corrective
+actions, and PPO tag counts are disabled. A final frame can inform the rollout
+score without being assigned to the final action. Stage 9 validates the bindings
+again before training. Old or misassociated evaluator outputs require a fresh
+run and must not be relabeled in place.
+
+Each native action also contains an `episode_boundary` record with schema
+`npa.sim2real.episode_boundary.v1`. `simulator_episode_id` identifies the returned
+state's physical episode, starting at zero after the rollout's initial reset;
+`action_episode_id` identifies the episode in which the action was submitted.
+Camera metadata retains the logical rollout's `episode_id` and separately records
+`simulator_episode_id`. On a reset step this camera ID is null: Isaac may retain
+pixels from before its automatic reset, so the rendered episode is unproven.
+The final context image retains that null when the last step reset. These
+identifiers and reset markers are included in the
+hosted prompt; simulator measurements and success labels remain excluded.
+
+`reset_events` retains every termination or truncation since the previous sampled
+action, including its simulator step and consecutive old/new episode IDs. It is
+updated on every environment step, so sparse sampling cannot discard a timeout.
+`reset_on_current_step` distinguishes an immediate autoreset: its returned state
+cannot establish that action's terminal outcome, and `action_outcome_valid` is
+false. `temporal_credit_valid` is false for the entire first sampled interval
+after any reset. Its row and raw measurements remain archived, but reward,
+advantage, visual shaping, and action credit are zero. The interval is excluded
+from reward fallback, advantage baselines, and Isaac trainer statistics. Distance
+and lift baselines and stability counters restart independently for each
+environment. A later valid action in the new episode can receive its own grounded
+and single-frame visual credit; motion across episode IDs cannot justify credit.
+
+Stage 8 and Stage 9 reject missing, contradictory, repeated, or out-of-interval
+reset evidence. This contract requires a new run and new source-attested images;
+existing v4 evaluations cannot be upgraded by filling in unknown reset events.
+
+The hosted response schema encodes each input action at its own `per_step`
+array position using JSON Schema `prefixItems`. Its action index and camera
+reference are fixed to the recorded binding; unsampled actions also have fixed
+neutral confidence, tags, and critique text. The array requires every action
+exactly once and allows no trailing entries. This constrains generation before
+the unchanged strict parser checks the returned events. Hosted endpoints must
+honor this schema; schema rejection or invalid output is not silently repaired.
+
+Temporal support establishes that an action has an exactly timed selected
+primary image; it does not establish that the object or contact is visible.
+Inspect the selected primary frames before hosted evaluation. Secondary camera
+images remain review context and are not inputs to this single-view evaluator.
 
 Rollout **frames** (not JSON): `camera-NNN.ppm` (or paths listed in manifest).
 
@@ -134,9 +189,15 @@ Rollout **frames** (not JSON): `camera-NNN.ppm` (or paths listed in manifest).
 When `BYO_*_COMMAND` is set, commands read/write paths from env vars and must emit
 schemas above on stdout files:
 
+Commands are split into argv with POSIX quoting and executed directly with
+no shell: pipes, redirects, `&&` chains, and `$(...)` are passed as literal
+argument text, not interpreted. A leading `VAR=value` prefix (as in
+`VAR=x command args`) is honored by injecting the variables into the
+component's environment.
+
 | Hook | Reads | Writes |
 | --- | --- | --- |
-| `BYO_VLM_COMMAND` | Rollout dir + manifest | `npa.sim2real.vlm_eval.v1` |
+| `BYO_VLM_COMMAND` | Rollout dir + manifest | `npa.sim2real.vlm_eval.v2` |
 | `BYO_SIGNAL_CONVERTER` | VLM eval JSON | `npa.sim2real.rl_signal.v1` |
 | `BYO_TRAINER_COMMAND` | Signal batch JSON | Trainer update JSON (see policy_container) |
 | `BYO_EVAL_COMMAND` | Held-out env list | `npa.sim2real.heldout_eval.v1` |
@@ -149,6 +210,7 @@ schemas above on stdout files:
 ```text
 # INPUT (customer)
 s3://<bucket>/sim2real-triggers/<run-id>/<task>/           # task-aligned seed dataset + manifest
+# explicit public preset: <task> = public-franka-lift; staged at runtime, never vendored
 
 # OPTIONAL BYO (customer)
 s3://<bucket>/sim2real-assets/<task>/                       # meshes, scene-spec.json, robot-spec.json

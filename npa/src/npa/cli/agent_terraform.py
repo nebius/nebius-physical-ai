@@ -22,6 +22,32 @@ from npa.deploy.provisioner import ProvisionerError
 from npa.provisioning_journal import current_operation, list_operations
 
 
+def _record_configured_backend(
+    operation, *, project_alias: str, project_id: str, bucket: str, endpoint: str
+) -> None:
+    """Record selected storage without claiming ownership of an external bucket."""
+    from npa.clients.terraform_storage import verify_external_backend
+
+    external = verify_external_backend(
+        project_alias=project_alias,
+        project_id=project_id,
+        bucket_name=bucket,
+        endpoint=endpoint,
+    )
+    operation.record_resource(
+        resource_type="storage_bucket",
+        requested_name=bucket,
+        provider_id=external["bucket_id"] if external else "",
+        ownership="pre_existing" if external else "adopted",
+        ownership_source=(
+            "explicit-external-backend-provider-readback"
+            if external
+            else "configured-project-storage-write-probe"
+        ),
+        project_id=external["owner_project_id"] if external else project_id,
+    )
+
+
 def _ensure_terraform_state_bucket(
     *,
     project_id: str,
@@ -40,9 +66,16 @@ def _ensure_terraform_state_bucket(
     if not project or not bucket:
         return
     from npa.clients.nebius import NebiusError, bucket_exists
+    from npa.clients.terraform_storage import verify_external_backend
 
     try:
-        exists = bucket_exists(project, bucket)
+        external = verify_external_backend(
+            project_alias=project_alias,
+            project_id=project,
+            bucket_name=bucket,
+            endpoint=endpoint,
+        )
+        exists = external is not None or bucket_exists(project, bucket)
     except NebiusError as exc:
         raise NebiusError(
             f"Terraform backend inventory check failed before apply: {exc}"
@@ -83,6 +116,7 @@ def _ensure_terraform_state_bucket(
                     "state_key": backend_key,
                     "addressing_style": "path",
                     "credential_source": "project_resolver",
+                    **(external or {}),
                     "config_fingerprint": terraform_backend_fingerprint(
                         bucket=bucket,
                         state_key=backend_key,
@@ -132,6 +166,22 @@ def _persist_agent_project_config(
     }
     from npa.clients.project_credential_store import write_project_credentials
 
+    previous = resolve_terraform_state(project)
+    if getattr(previous, "owner_project_id", "") or getattr(previous, "bucket_id", ""):
+        if (
+            previous.bucket != terraform_state["bucket"]
+            or previous.endpoint != terraform_state["endpoint"]
+        ):
+            from npa.clients.nebius import NebiusError
+
+            raise NebiusError(
+                "Refusing to replace an explicitly bound Terraform bucket"
+            )
+        terraform_state.update(
+            owner_project_id=previous.owner_project_id,
+            bucket_id=previous.bucket_id,
+        )
+
     write_project_credentials(
         project_id,
         {"terraform_state": terraform_state},
@@ -150,6 +200,11 @@ def _persist_agent_project_config(
                         "region": region,
                         "addressing_style": "path",
                         "credential_source": "project_credentials_v2",
+                        **{
+                            key: terraform_state[key]
+                            for key in ("owner_project_id", "bucket_id")
+                            if key in terraform_state
+                        },
                     },
                 }
             }

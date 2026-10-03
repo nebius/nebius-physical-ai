@@ -27,6 +27,13 @@ fixture_json="$("${PY}" "${GENERATOR}" "${FIXTURE_DIR}" --num-steps 4)"
 SPEC="${FIXTURE_DIR}/npa-procedural-edge-spec.json"
 [[ -s "${SPEC}" ]] || { echo "ERROR: procedural spec was not generated" >&2; exit 1; }
 
+# NLTK's path-security boundary rejects the symlink representation used by the
+# Hugging Face cache. Materialize the pinned guardrail tokenizer subtree outside
+# that mutable snapshot before upstream imports NLTK; guardrails remain enabled.
+"${PY}" -c \
+  'from npa.workbench.cosmos.transfer import prepare_guardrail_nltk_data; prepare_guardrail_nltk_data()'
+export NLTK_DATA="${HF_HOME:-/opt/cosmos-data/hf_cache}/npa-guardrail-nltk-data/d6d4bfa899a71454a700907664f3e88f503950cf${NLTK_DATA:+:${NLTK_DATA}}"
+
 GPU_SAMPLES="${WORKDIR}/gpu-memory-mib.txt"
 monitor_pid=""
 if command -v nvidia-smi >/dev/null 2>&1; then

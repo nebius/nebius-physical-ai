@@ -86,13 +86,17 @@ def materialize_lerobot_dataset(
     if not source_uri:
         source_uri = default_public_dataset_uri()
 
-    if source_uri.startswith(DATASET_SOURCE_HF_PREFIX) or _looks_like_hf_repo_id(source_uri):
+    if source_uri.startswith(DATASET_SOURCE_HF_PREFIX) or _looks_like_hf_repo_id(
+        source_uri
+    ):
         resolved_repo = (
             source_uri[len(DATASET_SOURCE_HF_PREFIX) :]
             if source_uri.startswith(DATASET_SOURCE_HF_PREFIX)
             else source_uri
         )
-        return download_public_lerobot_dataset(local_dir, repo_id=resolved_repo, revision=revision)
+        return download_public_lerobot_dataset(
+            local_dir, repo_id=resolved_repo, revision=revision
+        )
 
     if _is_s3_uri(source_uri):
         access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
@@ -108,7 +112,9 @@ def materialize_lerobot_dataset(
             aws_secret_access_key=secret_key,
         ).download_directory(source_uri, str(target))
         if not (target / "meta" / "info.json").exists():
-            raise LeRobotDatasetError(f"Downloaded S3 dataset is missing meta/info.json: {source_uri}")
+            raise LeRobotDatasetError(
+                f"Downloaded S3 dataset is missing meta/info.json: {source_uri}"
+            )
         return target
 
     path = Path(source_uri)
@@ -130,7 +136,9 @@ def download_public_lerobot_dataset(
     try:
         from huggingface_hub import snapshot_download
     except ImportError as exc:
-        raise LeRobotDatasetError("huggingface_hub is required to download the example dataset") from exc
+        raise LeRobotDatasetError(
+            "huggingface_hub is required to download the example dataset"
+        ) from exc
 
     snapshot = snapshot_download(
         repo_id=repo_id,
@@ -155,11 +163,15 @@ def summarize_lerobot_dataset(
     dataset_path = Path(dataset_path)
     info_path = dataset_path / "meta" / "info.json"
     if not info_path.exists():
-        raise LeRobotDatasetError(f"LeRobotDataset meta/info.json is missing: {info_path}")
+        raise LeRobotDatasetError(
+            f"LeRobotDataset meta/info.json is missing: {info_path}"
+        )
     info = json.loads(info_path.read_text(encoding="utf-8"))
     features = info.get("features") or {}
     feature_keys = sorted(str(key) for key in features)
-    camera_keys = _feature_keys(features, dtypes={"image", "video"}, prefixes=("observation.",))
+    camera_keys = _feature_keys(
+        features, dtypes={"image", "video"}, prefixes=("observation.",)
+    )
     state_keys = _feature_keys(features, prefixes=("observation.state",))
     action_keys = _feature_keys(features, prefixes=("action",))
     missing = []
@@ -212,17 +224,25 @@ def seeded_episode_split(
     """Return a deterministic full-coverage split over real episode IDs."""
 
     if not 0.0 < train_fraction < 1.0:
-        raise LeRobotDatasetError(f"train_fraction must be in (0, 1), got {train_fraction}")
+        raise LeRobotDatasetError(
+            f"train_fraction must be in (0, 1), got {train_fraction}"
+        )
     if len(episode_indices) < 2:
-        raise LeRobotDatasetError("at least two real episodes are required for train/held-out split")
+        raise LeRobotDatasetError(
+            "at least two real episodes are required for train/held-out split"
+        )
     ordered = sorted({int(index) for index in episode_indices})
     shuffled = list(ordered)
     random.Random(seed).shuffle(shuffled)
-    train_size = max(1, min(len(ordered) - 1, int(round(len(ordered) * train_fraction))))
+    train_size = max(
+        1, min(len(ordered) - 1, int(round(len(ordered) * train_fraction)))
+    )
     train = sorted(shuffled[:train_size])
     heldout = sorted(shuffled[train_size:])
     if sorted(train + heldout) != ordered:
-        raise LeRobotDatasetError("episode split does not cover every input episode exactly once")
+        raise LeRobotDatasetError(
+            "episode split does not cover every input episode exactly once"
+        )
     return train, heldout
 
 
@@ -287,7 +307,9 @@ def stage_dataset_to_s3(
 
 def _read_episode_indices(dataset_path: Path) -> tuple[list[int], int]:
     data_dir = dataset_path / "data"
-    parquet_paths = sorted(path for path in data_dir.rglob("*.parquet") if not path.name.startswith("._"))
+    parquet_paths = sorted(
+        path for path in data_dir.rglob("*.parquet") if not path.name.startswith("._")
+    )
     if not parquet_paths:
         raise LeRobotDatasetError(f"No LeRobot parquet files found under {data_dir}")
     episodes: set[int] = set()
@@ -315,15 +337,27 @@ def _try_lerobot_dataset_load(
         return False, f"LeRobotDataset import unavailable: {exc}"
 
     attempts = [
-        {"repo_id": repo_id, "root": dataset_path, "episodes": episodes, "revision": revision},
-        {"repo_id": repo_id, "root": dataset_path.parent, "episodes": episodes, "revision": revision},
+        {
+            "repo_id": repo_id,
+            "root": dataset_path,
+            "episodes": episodes,
+            "revision": revision,
+        },
+        {
+            "repo_id": repo_id,
+            "root": dataset_path.parent,
+            "episodes": episodes,
+            "revision": revision,
+        },
     ]
     errors: list[str] = []
     for kwargs in attempts:
         try:
             dataset = LeRobotDataset(**kwargs)
             if len(dataset) <= 0:
-                raise LeRobotDatasetError("LeRobotDataset loaded but returned zero frames")
+                raise LeRobotDatasetError(
+                    "LeRobotDataset loaded but returned zero frames"
+                )
             _ = dataset[0]
             return True, ""
         except Exception as exc:
@@ -354,7 +388,12 @@ def _repo_dir_name(repo_id: str) -> str:
 
 
 def _looks_like_hf_repo_id(value: str) -> bool:
-    return not _is_s3_uri(value) and "/" in value and "://" not in value and not Path(value).exists()
+    return (
+        not _is_s3_uri(value)
+        and "/" in value
+        and "://" not in value
+        and not Path(value).exists()
+    )
 
 
 def _is_s3_uri(value: str) -> bool:

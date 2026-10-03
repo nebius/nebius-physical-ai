@@ -1,0 +1,35 @@
+{
+  "title": "Your film",
+  "duration": 60,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "brief": {
+    "prompt": "Explain a workflow using your own verified media.",
+    "audience": "Your intended viewers",
+    "goal": "Explain the workflow and its observed result",
+    "tone": "Clear and concise",
+    "call_to_action": "Choose your next step",
+    "duration_seconds": 60
+  },
+  "scenes": [
+    {
+      "id": "opening",
+      "duration": 60,
+      "layout": "film",
+      "title": [
+        "Your workflow"
+      ],
+      "subtitle": "",
+      "eyebrow": "",
+      "assets": [
+        "source"
+      ],
+      "labels": [
+        ""
+      ],
+      "narration": "Describe your workflow and the result you want to show.",
+      "transition": "cut"
+    }
+  ]
+}

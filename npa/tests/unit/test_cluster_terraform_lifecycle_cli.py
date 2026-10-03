@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from npa.cli.cluster import app
@@ -28,8 +29,32 @@ def test_cluster_terraform_defaults_all_gpu_pools_to_managed_driver_image() -> N
     assert "gpu_nodes_driverfull_image      = false" not in main_tf
 
 
+def test_cluster_terraform_wires_operator_filesystem_csi_repository() -> None:
+    cluster_dir = Path(__file__).resolve().parents[3] / "deploy" / "cluster"
+
+    assert (
+        "chart_repository                    = var.filesystem_csi_chart_repository"
+        in (cluster_dir / "main.tf").read_text()
+    )
+    assert (
+        'variable "filesystem_csi_chart_repository"'
+        in (cluster_dir / "variables.tf").read_text()
+    )
+
+
 runner = CliRunner()
 _REAL_WHOLE_PATH_PREFLIGHT = tf_mod._preflight_whole_path_capacity
+
+
+@pytest.fixture(autouse=True)
+def _owned_api_process_boundary(monkeypatch):
+    from npa.orchestration.skypilot import local_api
+
+    # These CLI tests exercise argv/state; owned process verification has its
+    # own Linux tests and must not start an API on the test runner.
+    monkeypatch.setattr(local_api, "_require_linux_host", lambda: None)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
+    monkeypatch.setattr(local_api, "stop_isolated_api", lambda _scope: None)
 
 
 def _completed(
@@ -38,6 +63,32 @@ def _completed(
     return subprocess.CompletedProcess(
         args=[], returncode=returncode, stdout=stdout, stderr=""
     )
+
+
+def test_cluster_name_collision_is_classified_without_provider_details() -> None:
+    error = RuntimeError("service create RPC AlreadyExists: provider-specific-detail")
+
+    assert tf_mod._is_cluster_name_collision(error) is True
+    assert tf_mod._is_cluster_name_collision(RuntimeError("quota exhausted")) is False
+
+
+def test_terraform_collision_runner_retains_output_for_classification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_runner(args: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        observed.update(args=args, capture_output=kwargs.get("capture_output"))
+        return _completed()
+
+    monkeypatch.setattr(tf_mod, "_run_stream", fake_runner)
+
+    tf_mod._run_stream_with_captured_output(
+        ["terraform", "apply"], cwd=tmp_path, env={}, timeout=60
+    )
+
+    assert observed["args"] == ["terraform", "apply"]
+    assert observed["capture_output"] is True
 
 
 @pytest.fixture(autouse=True)
@@ -101,16 +152,78 @@ def test_cluster_failure_message_redacts_provider_secret() -> None:
     assert "<redacted>" in message
 
 
+@pytest.mark.parametrize(
+    ("stdout", "stderr", "code"),
+    [
+        ("[]", "", 1),
+        ("[]", "Permission denied", 0),
+        ("HTTP request failed", "", 0),
+        ('{"clusters": []}', "", 0),
+        ('[]\n{"error": "unavailable"}', "", 0),
+        ("[null]", "", 0),
+        ('[{"name": "other"}]', "", 0),
+        ('[{"name": "other", "status": []}]', "", 0),
+        ('[{"name": "other", "status": "UNKNOWN"}]', "", 0),
+        (
+            '[{"name": "other", "status": "UP"}, {"name": "other", "status": "UP"}]',
+            "",
+            0,
+        ),
+    ],
+)
+def test_sky_cleanup_does_not_certify_failed_or_malformed_status(
+    monkeypatch,
+    stdout: str,
+    stderr: str,
+    code: int,
+) -> None:
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], code, stdout, stderr),
+    )
+    monkeypatch.setattr(
+        tf_mod.time,
+        "sleep",
+        lambda *_args: pytest.fail("unverified status must fail immediately"),
+    )
+    with pytest.raises(typer.BadParameter, match="SkyPilot cleanup"):
+        tf_mod._wait_for_sky_down("/opt/npa/sky", "validation", {})
+
+
+def test_sky_cleanup_requires_exact_structured_absence(monkeypatch) -> None:
+    rows = iter(
+        [
+            '[{"name": "validation", "status": "STOPPED"}]',
+            '[{"name": "validation-other", "status": "UP"}]',
+        ]
+    )
+    calls = []
+    pauses = []
+
+    def capture(command, **kwargs):
+        calls.append((command, kwargs))
+        return _completed(next(rows))
+
+    monkeypatch.setattr(tf_mod, "_run_capture", capture)
+    monkeypatch.setattr(tf_mod.time, "sleep", pauses.append)
+    tf_mod._wait_for_sky_down("/opt/npa/sky", "validation", {"KUBECONFIG": "selected"})
+    assert len(calls) == 2
+    assert pauses == [10]
+    assert all(command[-2:] == ["--output", "json"] for command, _kwargs in calls)
+    assert all(kwargs["env"]["KUBECONFIG"] == "selected" for _command, kwargs in calls)
+
+
 def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     kubeconfig = tmp_path / "kubeconfig"
     kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
-    streams: list[tuple[list[str], dict[str, str]]] = []
+    streams: list[tuple[list[str], dict[str, str], Path]] = []
     monkeypatch.setattr(tf_mod, "_require_bin", lambda value: value)
 
     def stream(cmd, **kwargs):  # noqa: ANN001
-        streams.append((cmd, kwargs["env"]))
+        streams.append((cmd, kwargs["env"], kwargs["cwd"]))
         output = "Kubernetes: enabled [compute]\n" if cmd[1] == "check" else ""
         return _completed(output)
 
@@ -133,27 +246,38 @@ def test_skypilot_smoke_scopes_check_and_uses_explicit_binary(
         "kubernetes",
     ]
     assert streams[0][1]["KUBECONFIG"] == str(kubeconfig)
+    scope = Path(streams[0][1]["NPA_SKYPILOT_ISOLATED_API_DIR"])
+    assert streams[0][2] == scope
     launch = streams[1][0]
     assert launch[0:2] == ["/opt/npa/sky", "launch"]
     assert launch[launch.index("--config") + 1] == (
         'kubernetes.allowed_contexts=["fleet-exact"]'
     )
     assert launch[launch.index("--gpus") + 1] == "RTXPRO6000:1"
+    assert streams[1][2] == scope
     down = streams[2][0]
     assert down[0:2] == ["/opt/npa/sky", "down"]
     assert down[down.index("--config") + 1] == (
         'kubernetes.allowed_contexts=["fleet-exact"]'
     )
+    assert streams[2][2] == scope
 
 
+@pytest.mark.parametrize(
+    "gpu", ["RTXPRO-6000-BLACKWELL-SERVER-EDITION", "B200", "H200"]
+)
 def test_skypilot_auto_detection_uses_exact_context_config(
     monkeypatch: pytest.MonkeyPatch,
+    gpu: str,
 ) -> None:
-    seen: list[list[str]] = []
+    seen: list[tuple[list[str], Path | None]] = []
 
-    def capture(cmd, **_kwargs):  # noqa: ANN001
-        seen.append(cmd)
-        return _completed("RTXPRO-6000-BLACKWELL-SERVER-EDITION  1  1 of 1 free\n")
+    def capture(cmd, **kwargs):  # noqa: ANN001
+        seen.append((cmd, kwargs.get("cwd")))
+        return _completed(
+            "Context: other-cluster\nGPU  REQUESTABLE_QTY_PER_NODE\nOTHER-GPU  1\n\n"
+            f"Context: fleet-exact\nGPU  REQUESTABLE_QTY_PER_NODE\n{gpu}  1, 2, 4\n"
+        )
 
     monkeypatch.setattr(tf_mod, "_run_capture", capture)
     accelerator = tf_mod._detect_skypilot_gpu(
@@ -161,20 +285,151 @@ def test_skypilot_auto_detection_uses_exact_context_config(
         "k8s/fleet-exact",
         {},
         config_override='kubernetes.allowed_contexts=["fleet-exact"]',
+        cwd=Path("/durable/sky"),
     )
 
-    assert accelerator == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    assert accelerator == f"{gpu}:1"
     assert seen == [
-        [
-            "/opt/npa/sky",
-            "show-gpus",
-            "--config",
-            'kubernetes.allowed_contexts=["fleet-exact"]',
-            "--infra",
-            "k8s/fleet-exact",
-            "--all",
-        ]
+        (
+            [
+                "/opt/npa/sky",
+                "show-gpus",
+                "--config",
+                'kubernetes.allowed_contexts=["fleet-exact"]',
+                "--infra",
+                "k8s/fleet-exact",
+            ],
+            Path("/durable/sky"),
+        )
     ]
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "",
+        "B200  1  1 of 1 free\n",
+        "GPU  REQUESTABLE_QTY_PER_NODE\nB200  1\n",
+        "Context: other-cluster\nGPU  REQUESTABLE_QTY_PER_NODE\nB200  1\n",
+        "Context: fleet-exact\nGPU  REQUESTABLE_QTY_PER_NODE\nB200  0\n",
+        "Context: fleet-exact\nGPU  REQUESTABLE_QTY_PER_NODE\nB200  2, 4\n",
+    ],
+)
+def test_skypilot_auto_detection_requires_exact_requestable_inventory(
+    monkeypatch, output
+):
+    monkeypatch.setattr(
+        tf_mod, "_run_capture", lambda *_args, **_kwargs: _completed(output)
+    )
+    with pytest.raises(typer.BadParameter, match="Unable to auto-detect"):
+        tf_mod._detect_skypilot_gpu("sky", "k8s/fleet-exact", {})
+
+
+def test_skypilot_auto_detection_requires_explicit_context(monkeypatch):
+    monkeypatch.setattr(
+        tf_mod, "_run_capture", lambda *_args, **_kwargs: pytest.fail("ambient lookup")
+    )
+    with pytest.raises(typer.BadParameter, match="exact Kubernetes context"):
+        tf_mod._detect_skypilot_gpu("sky", "k8s", {})
+
+
+def test_cluster_validation_uses_owned_api_and_selected_kubeconfig(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot import k8s_gpu_catalog, local_api
+
+    selected = tmp_path / "selected-kubeconfig"
+    selected.write_text("apiVersion: v1\ncontexts: []\n")
+    ambient = tmp_path / "ambient-kubeconfig"
+    ambient.write_text("apiVersion: v1\ncontexts: []\n")
+    isolated = tmp_path / "isolated"
+    monkeypatch.setenv("KUBECONFIG", str(ambient))
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated))
+    monkeypatch.delenv("SKYPILOT_API_SERVER_ENDPOINT", raising=False)
+    monkeypatch.delenv("SKYPILOT_GLOBAL_CONFIG", raising=False)
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda value: value)
+    monkeypatch.setattr(k8s_gpu_catalog, "resolve_sky_bin", lambda value: Path(value))
+    starts = []
+    streams = []
+    monkeypatch.setattr(
+        local_api, "ensure_isolated_api", lambda **kwargs: starts.append(kwargs)
+    )
+
+    def stream(cmd, **kwargs):
+        streams.append((cmd, kwargs["env"]))
+        if cmd[1] == "show-gpus":
+            return _completed(
+                "Context: selected-context\nGPU  REQUESTABLE_QTY_PER_NODE\nRTXPRO6000  1\n"
+            )
+        return _completed(
+            "Kubernetes: enabled [compute]\n" if cmd[1] == "check" else ""
+        )
+
+    monkeypatch.setattr(tf_mod, "_run_stream", stream)
+    monkeypatch.setattr(tf_mod, "_wait_for_sky_down", lambda *_args, **_kwargs: None)
+    from npa.orchestration.skypilot.cluster_validation import cluster_validation_session
+
+    with cluster_validation_session(selected, "selected-context"):
+        tf_mod._run_skypilot_smoke(
+            selected,
+            "selected-context",
+            "validation",
+            "RTXPRO6000:1",
+            sky_bin="/opt/npa/sky",
+        )
+        catalog = k8s_gpu_catalog.discover_kubernetes_gpu_catalog(
+            context="selected-context",
+            kubeconfig=selected,
+            sky_bin="/opt/npa/sky",
+            runner=stream,
+        )
+    assert catalog.max_per_node("RTXPRO6000") == 1
+
+    assert len(starts) == 2
+    assert starts[0]["isolated_dir"] == starts[1]["isolated_dir"]
+    owned = starts[0]
+    assert isolated in owned["isolated_dir"].parents
+    assert owned["environment"]["KUBECONFIG"] == str(selected)
+    assert (Path(owned["environment"]["HOME"]) / ".kube/config").resolve() == selected
+    config = Path(owned["environment"]["SKYPILOT_GLOBAL_CONFIG"])
+    assert config.stat().st_mode & 0o777 == 0o600
+    assert "selected-context" in config.read_text()
+    endpoint = owned["environment"]["SKYPILOT_API_SERVER_ENDPOINT"]
+    assert endpoint.startswith("http://127.0.0.1:")
+    assert [cmd[1] for cmd, _env in streams] == ["check", "launch", "down", "show-gpus"]
+    assert all(env["SKYPILOT_API_SERVER_ENDPOINT"] == endpoint for _cmd, env in streams)
+    assert all(env["KUBECONFIG"] == str(selected) for _cmd, env in streams)
+
+
+def test_cluster_validation_refuses_ambient_api_before_any_sky_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot import local_api
+
+    selected = tmp_path / "kubeconfig"
+    selected.write_text("apiVersion: v1\ncontexts: []\n")
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(tmp_path / "isolated"))
+    monkeypatch.setenv("SKYPILOT_API_SERVER_ENDPOINT", "http://127.0.0.1:46580")
+    monkeypatch.delenv("SKYPILOT_GLOBAL_CONFIG", raising=False)
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda value: value)
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_stream",
+        lambda *_args, **_kwargs: pytest.fail("shared API command"),
+    )
+    monkeypatch.setattr(
+        local_api,
+        "ensure_isolated_api",
+        lambda **_kwargs: pytest.fail("shared API startup"),
+    )
+    with pytest.raises(
+        local_api.IsolatedApiError, match="different configured API endpoint"
+    ):
+        tf_mod._check_skypilot_kubernetes(
+            selected, "selected-context", sky_bin="/opt/npa/sky"
+        )
 
 
 def test_explicit_context_is_the_terraform_resource_name() -> None:
@@ -242,6 +497,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                 "gpu_nodes_count = 2",
                 'gpu_nodes_preset = "8gpu-192vcpu-1744gb"',
                 "enable_filestore = true",
+                'filesystem_csi_chart_repository = "oci://charts.example.invalid/nebius"',
                 'subnet_id = "subnet-a"',
             ]
         )
@@ -358,6 +614,28 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                     }
                 )
             )
+        if args[:4] == ["nebius", "capacity", "capacity-block-group", "get"]:
+            # STRICT reservation validation: active, right tenant/region/platform,
+            # with enough free GPUs for the 2x8gpu request (16).
+            return _completed(
+                json.dumps(
+                    {
+                        "metadata": {
+                            "id": "capacityblockgroup-test",
+                            "parent_id": "tenant-a",
+                        },
+                        "status": {
+                            "region": "region-a",
+                            "state": "STATE_ACTIVE",
+                            "current_limit": "48",
+                            "usage": "12",
+                            "resource_affinity": {
+                                "compute_v1": {"platform": "gpu-rtx6000"}
+                            },
+                        },
+                    }
+                )
+            )
         raise AssertionError(args)
 
     saved = []
@@ -449,6 +727,7 @@ def test_inherited_topology_overrides_every_effective_terraform_input() -> None:
         "gpu_nodes_count": 99,
         "cpu_nodes_platform": "wrong-cpu",
         "cpu_nodes_preset": "wrong-cpu-preset",
+        "cpu_disk_size": 128,
         "gpu_nodes_platform": "wrong-gpu",
         "gpu_nodes_preset": "wrong-gpu-preset",
         "gpu_nodes_preemptible": False,
@@ -464,6 +743,7 @@ def test_inherited_topology_overrides_every_effective_terraform_input() -> None:
             gpu_nodes=2,
             cpu_platform="cpu-d3",
             cpu_preset="8vcpu-32gb",
+            cpu_disk_gib=512,
             gpu_platform="gpu-rtx6000",
             gpu_preset="1gpu-24vcpu-218gb",
             preemptible=True,
@@ -482,6 +762,7 @@ def test_inherited_topology_overrides_every_effective_terraform_input() -> None:
         "gpu_nodes_count": 2,
         "cpu_nodes_platform": "cpu-d3",
         "cpu_nodes_preset": "8vcpu-32gb",
+        "cpu_disk_size": 512,
         "gpu_nodes_platform": "gpu-rtx6000",
         "gpu_nodes_preset": "1gpu-24vcpu-218gb",
         "gpu_nodes_preemptible": True,
@@ -794,6 +1075,7 @@ def test_up_allows_duplicate_managed_by_terraform_state(
                 'region = "region-a"',
                 'cluster_name = "cluster-a"',
                 'existing_filestore = "computefilesystem-a"',
+                'filesystem_csi_chart_repository = "oci://charts.example.invalid/nebius"',
             ]
         )
         + "\n"
@@ -871,6 +1153,7 @@ def test_up_stops_when_filestore_quota_is_too_small(
                 'region = "region-a"',
                 'cluster_name = "cluster-a"',
                 "enable_filestore = true",
+                'filesystem_csi_chart_repository = "oci://charts.example.invalid/nebius"',
                 "filestore_disk_size_gibibytes = 1024",
             ]
         )
@@ -903,6 +1186,23 @@ def test_up_stops_when_filestore_quota_is_too_small(
     assert result.exit_code != 0
     assert "Shared filesystem quota is insufficient" in result.output
     assert _find_call(stream_calls, "terraform", "apply", "-auto-approve") is None
+
+
+@pytest.mark.parametrize(
+    "tfvars",
+    [
+        {"enable_filestore": True},
+        {"existing_filestore": "filesystem-a"},
+    ],
+)
+def test_filestore_preflight_requires_csi_repository(
+    tfvars: dict[str, object],
+) -> None:
+    with pytest.raises(
+        tf_mod.typer.BadParameter,
+        match="filesystem_csi_chart_repository",
+    ):
+        tf_mod._preflight_filestore_quota("nebius", tfvars, {})
 
 
 def test_up_skips_filestore_quota_when_disabled_by_default(
@@ -2557,6 +2857,41 @@ def test_up_pins_an_existing_ssh_public_key(monkeypatch, tmp_path: Path) -> None
     assert f'ssh_public_key={{path="{key}"}}' in apply_call
 
 
+def test_resolve_shared_ssh_public_key_accepts_json_path_from_older_agent(
+    tmp_path: Path,
+) -> None:
+    """Preserve provisioning compatibility with agents deployed before HCL output."""
+    key = tmp_path / "id_ed25519.pub"
+    key.write_text("ssh-ed25519 AAAAC3Nz older-agent@example\n", encoding="utf-8")
+
+    resolved = tf_mod._resolve_shared_ssh_public_key(
+        {}, {"TF_VAR_ssh_public_key": json.dumps({"path": str(key)})}
+    )
+
+    assert resolved == "ssh-ed25519 AAAAC3Nz older-agent@example"
+
+
+def test_shared_ssh_key_uses_first_authorized_keys_entry(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A service account can reuse its login key without a separate .pub file."""
+    authorized_keys = tmp_path / "authorized_keys"
+    authorized_keys.write_text(
+        "# managed by cloud-init\nssh-ed25519 AAAAC3Nz agent@example\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NPA_SSH_PUBLIC_KEY", str(authorized_keys))
+
+    assert (
+        tf_mod._resolve_shared_ssh_public_key({}, {})
+        == "ssh-ed25519 AAAAC3Nz agent@example"
+    )
+    assert tf_mod._ssh_public_key_var_args({}, {}) == [
+        "-var",
+        'ssh_public_key={key="ssh-ed25519 AAAAC3Nz agent@example"}',
+    ]
+
+
 def test_up_keeps_an_explicit_ssh_public_key_from_tfvars(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -2743,10 +3078,15 @@ def test_terraform_env_mints_when_no_token_present(monkeypatch) -> None:
     assert env["TF_VAR_iam_token"] == "minted-token"
 
 
+@pytest.mark.parametrize(
+    ("configured_disk", "environment_disk", "expected_disk"),
+    [(None, None, 128), (None, "512", 512), ("384", "512", 384)],
+)
 def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, configured_disk, environment_disk, expected_disk
 ) -> None:
     from npa.cluster_backends.base import MaterializedPlan
+    from npa.cluster_backends.mk8s_render import render_tfvars
     from npa.fleet import lifecycle
 
     tf_dir = tmp_path / "deploy" / "cluster"
@@ -2763,6 +3103,7 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
                 'cluster_name = "fresh"',
                 "cpu_nodes_count = 1",
                 "gpu_nodes_count = 0",
+                f'cpu_disk_size = "{configured_disk}"' if configured_disk else "",
             ]
         )
     )
@@ -2804,6 +3145,11 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
             "TF_VAR_tenant_id": "tenant-test",
             "TF_VAR_parent_id": "project-test",
             "TF_VAR_region": "region-test",
+            "TF_VAR_enable_filestore": "true",
+            "TF_VAR_filesystem_csi_chart_repository": (
+                "oci://charts.example.invalid/nebius"
+            ),
+            **({"TF_VAR_cpu_disk_size": environment_disk} if environment_disk else {}),
         },
     )
 
@@ -2820,7 +3166,12 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
     )
 
     assert result.exit_code == 0, result.output
+    assert applied["desired"].cpu_nodes.disk_size_gib == expected_disk
+    assert f'cpu_disk_size = "{expected_disk}"' in render_tfvars(applied["desired"])
     assert applied["desired"].subnet_id == "subnet-created"
+    assert applied["desired"].filesystem_csi_chart_repository == (
+        "oci://charts.example.invalid/nebius"
+    )
     assert applied["request"].subnet_id == "subnet-created"
     assert applied["request"].project.name == ""
     assert applied["request"].project.project_id == "project-test"
@@ -2828,6 +3179,42 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
     assert preflight_requests[0].provider_preflight is True
     assert network_calls[0]["network_state_path"].name == ".npa-fleet-network.json"
     assert events == ["preflight", "ensure-subnet", "apply"]
+
+    # provision-if-absent has already supplied an immutable, mutation-ready
+    # whole-path plan. Re-querying tenant-wide quotas here would make a
+    # project-scoped service account fail after that authoritative gate passed.
+    from npa.provisioning_preflight import (
+        WholePathPreflightPlan,
+        resolve_topology,
+        resolved_plan_context,
+    )
+
+    inherited = WholePathPreflightPlan(
+        project_alias="project-alias",
+        project_id="project-test",
+        tenant_id="tenant-test",
+        region="region-test",
+        topology=resolve_topology(
+            cluster_name="fresh",
+            cpu_nodes=1,
+            cpu_platform="cpu-d3",
+            cpu_preset="8vcpu-32gb",
+            cpu_disk_gib=640,
+            gpu_nodes=0,
+            gpu_platform="gpu-rtx6000",
+            gpu_preset="1gpu-24vcpu-218gb",
+        ),
+        decision="ready",
+    )
+    with resolved_plan_context(inherited):
+        inherited_result = runner.invoke(
+            app,
+            ["up", "--terraform-dir", str(tf_dir), "--skip-sky-smoke"],
+        )
+
+    assert inherited_result.exit_code == 0, inherited_result.output
+    assert preflight_requests[-1].provider_preflight is False
+    assert 'cpu_disk_size = "640"' in render_tfvars(applied["desired"])
 
     skipped = runner.invoke(
         app,
@@ -2903,3 +3290,168 @@ def test_fresh_shared_up_does_not_create_network_when_capacity_preflight_fails(
 
     assert result.exit_code != 0
     assert "quota blocked" in result.output
+
+
+# -----------------------------------------------------------------------------
+# STRICT reservation preflight: MIG + non-MIG reservations use the reservation
+# (never the ordinary on-demand GPU quota); plain on-demand still uses quota.
+# All mocked at the call site -- no live infrastructure.
+# -----------------------------------------------------------------------------
+
+
+def _cp(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=stdout, stderr=""
+    )
+
+
+def _block_payload(tenant: str = "tenant-a") -> str:
+    return json.dumps(
+        {
+            "metadata": {"id": "cg-1", "parent_id": tenant},
+            "status": {
+                "region": "region-a",
+                "state": "STATE_ACTIVE",
+                "current_limit": "48",
+                "usage": "12",
+                "resource_affinity": {"compute_v1": {"platform": "gpu-rtx6000"}},
+            },
+        }
+    )
+
+
+def _quota_payload(limit: str = "100", usage: str = "0") -> str:
+    return json.dumps(
+        {
+            "spec": {"limit": limit},
+            "status": {"usage": usage},
+        }
+    )
+
+
+def _strict_preflight_tfvars(*, mig: bool, block: bool, gpu_nodes: int = 2) -> dict:
+    tfvars = {
+        "gpu_nodes_count": gpu_nodes,
+        "gpu_nodes_platform": "gpu-rtx6000",
+        "gpu_nodes_preset": "8gpu-96vcpu-872gb",
+        "gpu_nodes_preemptible": False,
+        "tenant_id": "tenant-a",
+        "region": "region-a",
+        "mig_enabled": mig,
+        "capacity_block_group": "cg-1" if block else "",
+    }
+    return tfvars
+
+
+def test_preflight_non_mig_strict_reservation_skips_quota_and_validates_block(
+    monkeypatch,
+) -> None:
+    """A non-MIG STRICT pool draws on the reservation, not ordinary on-demand quota."""
+    seen = []
+
+    def fake_run_capture(args, **kwargs):
+        seen.append(args)
+        if args[0] == "nebius" and "capacity-block-group" in args:
+            return _cp(_block_payload())
+        raise AssertionError(f"ordinary quota must not be consulted for STRICT: {args}")
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_run_capture)
+    tfvars = _strict_preflight_tfvars(mig=False, block=True)
+    tf_mod._preflight_gpu_capacity("nebius", tfvars, {})
+    assert any("capacity-block-group" in a for a in seen)
+    assert not any("quota-allowance" in a for a in seen)
+
+
+def test_preflight_non_mig_strict_reservation_insufficient_fails(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda args, **kwargs: _cp(
+            _block_payload().replace('"current_limit": "48"', '"current_limit": "8"')
+        ),
+    )
+    with pytest.raises(typer.BadParameter, match="cannot satisfy"):
+        tf_mod._preflight_gpu_capacity(
+            "nebius", _strict_preflight_tfvars(mig=False, block=True), {}
+        )
+
+
+def test_preflight_mig_strict_reservation_valid(monkeypatch) -> None:
+    """MIG STRICT still validates the reservation and skips ordinary quota."""
+    seen = []
+
+    def fake_run_capture(args, **kwargs):
+        seen.append(args)
+        if args[0] == "nebius" and "capacity-block-group" in args:
+            return _cp(_block_payload())
+        raise AssertionError(
+            f"ordinary quota must not be consulted for MIG STRICT: {args}"
+        )
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_run_capture)
+    tf_mod._preflight_gpu_capacity(
+        "nebius", _strict_preflight_tfvars(mig=True, block=True), {}
+    )
+    assert any("capacity-block-group" in a for a in seen)
+    assert not any("quota-allowance" in a for a in seen)
+
+
+def test_preflight_ordinary_on_demand_uses_quota_when_insufficient(monkeypatch) -> None:
+    """Plain on-demand (no reservation) still gates on the ordinary GPU quota."""
+    quota = json.dumps({"spec": {"limit": "4"}, "status": {"usage": "0"}})
+    advice = json.dumps(
+        {
+            "items": [
+                {
+                    "spec": {
+                        "region": "region-a",
+                        "compute_instance": {
+                            "platform": "gpu-rtx6000",
+                            "preset": {
+                                "name": "8gpu-96vcpu-872gb",
+                                "resources": {"gpu_count": 8},
+                            },
+                        },
+                    },
+                    "status": {
+                        "on_demand": {
+                            "availability_level": "AVAILABILITY_LEVEL_AVAILABLE",
+                            "limit": "100",
+                        }
+                    },
+                }
+            ]
+        }
+    )
+
+    def fake_run_capture(args, **kwargs):
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
+            return _cp(quota)
+        if args[:4] == ["nebius", "capacity", "resource-advice", "list"]:
+            return _cp(advice)
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_run_capture)
+    # 2 nodes x 8gpu preset = 16 required, but quota allows only 4.
+    with pytest.raises(typer.BadParameter, match="GPU quota is insufficient"):
+        tf_mod._preflight_gpu_capacity(
+            "nebius", _strict_preflight_tfvars(mig=False, block=False), {}
+        )
+
+
+def test_preflight_ordinary_on_demand_sufficient_passes(monkeypatch) -> None:
+    seen = []
+
+    def fake_run_capture(args, **kwargs):
+        seen.append(args)
+        if args[2] == "get-by-name":
+            return _cp(_quota_payload(limit="100", usage="0"))
+        return _cp("[]")
+
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_run_capture)
+    tf_mod._preflight_gpu_capacity(
+        "nebius", _strict_preflight_tfvars(mig=False, block=False), {}
+    )
+    assert any("quota-allowance" in a for a in seen)

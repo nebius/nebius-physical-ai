@@ -13,7 +13,7 @@ Usage: build.sh [--registry REGISTRY] [--push]
 
 Builds the LanceDB Workbench image as npa-lancedb:<version>.
 When --registry is provided, also tags REGISTRY/npa-lancedb:<version>.
-Use --registry cr.eu-north1.nebius.cloud/<your-registry-id> --push to publish.
+Use --registry <your-registry>/<namespace> --push to publish.
 EOF
 }
 

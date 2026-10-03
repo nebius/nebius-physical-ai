@@ -137,9 +137,11 @@ def test_paidf_quickstart_documents_failure_recovery() -> None:
 def test_canonical_deploy_guide_documents_the_ordered_green_path() -> None:
     readme = README.read_text(encoding="utf-8")
     assert "docs/workbench/guides/physical-ai-data-factory-deploy.md" in readme
-    text = PAIDF_DEPLOY.read_text(encoding="utf-8").split(
-        "## Quick start (copy-paste)", 1
-    )[1].split("\n## ", 1)[0]
+    text = (
+        PAIDF_DEPLOY.read_text(encoding="utf-8")
+        .split("## Quick start (copy-paste)", 1)[1]
+        .split("\n## ", 1)[0]
+    )
     ordered = [
         "npa configure",
         "npa workbench health preflight",
@@ -151,7 +153,9 @@ def test_canonical_deploy_guide_documents_the_ordered_green_path() -> None:
     positions = []
     for command in ordered:
         index = text.find(command)
-        assert index != -1, f"PAIDF deployment quickstart no longer mentions `{command}`"
+        assert index != -1, (
+            f"PAIDF deployment quickstart no longer mentions `{command}`"
+        )
         positions.append(index)
     assert positions == sorted(positions), (
         "the PAIDF deployment green-path commands are no longer in runnable order: "
@@ -178,11 +182,8 @@ def test_paidf_whole_path_stages_source_once_and_orders_registry_override() -> N
     assert "--auto-load" in submit
     assert "npa agent setup" not in section
     assert "npa agent preflight" not in section
-    configure_eval = section.index('eval "$(npa configure --show --env)"')
-    public_override = section.index(
-        "export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai"
-    )
-    assert public_override > configure_eval
+    assert "--registry" not in submit
+    assert "export NPA_REGISTRY=" not in section
 
 
 def test_paidf_noninteractive_configure_uses_ids_not_secrets() -> None:

@@ -3,19 +3,30 @@
 from __future__ import annotations
 
 __all__ = [
+    "alpamayo2_super",
+    "antioch",
     "cosmos",
+    "curobo",
     "data",
     "dataset",
     "detection_training",
+    "encord",
     "fiftyone",
+    "flex_pi",
     "genesis",
     "groot",
     "insights",
     "isaac_lab",
+    "isaac_arena",
     "lancedb",
     "lerobot",
     "mjlab",
+    "open3d",
+    "molmoact",
+    "openvla",
+    "newton",
     "retargeting",
+    "robocasa",
     "scenario_gen",
     "sonic",
     "training_config",
@@ -37,4 +48,4 @@ def __getattr__(name: str):
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(__all__))
+    return list(__all__)

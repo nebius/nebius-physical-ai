@@ -11,7 +11,7 @@
 # license acceptance, and we ship no weight bytes. npa.workbench.cosmos.generate
 # (require_model_access) refuses to run without those credentials, and the build
 # asserts below that no checkpoint file landed in a layer.
-ARG BASE_IMAGE=nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04
+ARG BASE_IMAGE=nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01
 FROM ${BASE_IMAGE}
 
 # cosmos-framework release that COSMOS3_REF points at.
@@ -21,7 +21,7 @@ ARG COSMOS3_SOURCE_REPO=https://github.com/NVIDIA/cosmos-framework.git
 # Pinned so a build is reproducible and the golden eval means something; bumping
 # this is a deliberate, tested change (upstream main moves and re-locks deps).
 ARG COSMOS3_REF=5e67049cd94acb667786f1e6dd0dab821cb90c97
-# cu130 matches the CUDA 13 base and is the wheel set upstream pins for it.
+# The supported Torch 2.13 group matches the CUDA 13 base and its NATTEN ABI.
 # Generation needs the `guardrail` extra (guardrails are on by default). Upstream's
 # own Dockerfile takes `--all-extras`, which drags in the whole `train` closure
 # (433 vs 149 resolved packages: megatron-core, torchtitan, DALI, jupyterlab...).
@@ -29,7 +29,7 @@ ARG COSMOS3_REF=5e67049cd94acb667786f1e6dd0dab821cb90c97
 # lock-pinned `train` members the generate path actually imports, and runs
 # verify_env.py at build time so a framework bump that needs more fails the build
 # instead of the first GPU run.
-ARG COSMOS3_UV_GROUP=cu130
+ARG COSMOS3_UV_GROUP=cu130-torch213
 ARG COSMOS3_UV_EXTRA=guardrail
 ARG COSMOS3_INFERENCE_DEPS="qwen-vl-utils==0.0.14 boto3==1.40.61"
 
@@ -56,6 +56,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     COSMOS_TRAINING=0 \
     HF_HOME=/tmp/hf_home \
     COSMOS_DOWNLOAD_CACHE_DIR=/tmp/hf_home/cosmos-downloads \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas \
     PATH=/opt/npa/.venv/bin:${PATH}
 
@@ -64,7 +65,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # the pod user. Without them a workbench image cannot host a SkyPilot k8s task
 # (it dies with `sudo: command not found`), which is why the cosmos3-generate
 # workflow needs them. The final user stays non-root; the sudoers grant below is
-# scoped to that bootstrap.
+# scoped to that bootstrap. The CUDA devel base's Nsight EFA metrics helper is
+# unused by generation and contains a vulnerable Go TLS stdlib; remove the
+# executable instead of exempting the scanner finding. Reinstalling
+# linux-libc-dev from the refreshed Ubuntu index updates the stale copy inherited
+# from the CUDA devel base; inference/JIT compatibility keeps those headers in
+# place, so removing the package is not an equivalent fix.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -72,13 +78,19 @@ RUN apt-get update \
         ffmpeg \
         git \
         git-lfs \
+        linux-libc-dev \
         openssh-server \
         rsync \
         sudo \
         wget \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -f /etc/ssh/ssh_host_* \
+    && rm -rf /var/lib/apt/lists/* \
+    && find /opt/nvidia/nsight-compute -type f \
+         -path '*/plugins/efa_metrics/nic_sampler' -delete \
+    && test -z "$(find /opt/nvidia/nsight-compute -type f \
+         -path '*/plugins/efa_metrics/nic_sampler' -print -quit)"
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016687b5a170c1a6b88465ec14aefec90aa /uv /uvx /usr/local/bin/
 
 # The runtime user owns its trees BEFORE the heavy layers, and every later layer
 # runs as that user. A trailing `chown -R` would instead rewrite the whole 9.3 GB
@@ -103,17 +115,31 @@ RUN git clone --filter=blob:none "${COSMOS3_SOURCE_REPO}" "${COSMOS3_REPO}" \
     && rm -rf "${COSMOS3_REPO}/.git"
 
 # The real inference environment, in the framework's own venv (torch cu130 +
-# flash-attn + guardrail deps). verify_env.py then walks the inference graph for
+# NATTEN + guardrail deps). verify_env.py then walks the inference graph for
 # every advertised generation mode, so the trimmed dependency set is proven at
 # build time rather than assumed.
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3/verify_env.py /opt/cosmos3/verify_env.py
+COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3/security-upgrades-requirements.txt /tmp/cosmos3-security-upgrades.txt
+COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/common/install_hardened_nltk.sh /opt/npa/install_hardened_nltk.sh
+COPY --chown=ubuntu:ubuntu docker/workbench/common/verify_hardened_nltk.py /opt/npa/verify_hardened_nltk.py
+COPY --chown=ubuntu:ubuntu docker/workbench/sonic/packaging-requirements.txt /tmp/cosmos3-packaging-requirements.txt
 RUN cd "${COSMOS3_REPO}" \
     && UV_CACHE_DIR=/tmp/uv-cache uv python install \
     && chmod -R a+rX /opt/uv \
     && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen \
        --extra "${COSMOS3_UV_EXTRA}" --group "${COSMOS3_UV_GROUP}" \
+    && uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install --python .venv/bin/python \
        ${COSMOS3_INFERENCE_DEPS} \
+    && UV_CACHE_DIR=/tmp/uv-cache uv pip install --python .venv/bin/python \
+       --no-deps --require-hashes -r /tmp/cosmos3-security-upgrades.txt \
+    && /opt/npa/install_hardened_nltk.sh .venv/bin/python \
+    && uv pip check --python .venv/bin/python \
+    && rm -f /tmp/cosmos3-security-upgrades.txt \
+    && find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test "$(.venv/bin/python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" = /usr/bin/ffmpeg \
+    && test -z "$(find .venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && .venv/bin/python /opt/npa/verify_hardened_nltk.py \
     && COSMOS_DEVICE=cpu .venv/bin/python /opt/cosmos3/verify_env.py \
     && rm -rf /tmp/uv-cache
 
@@ -126,11 +152,15 @@ RUN UV_CACHE_DIR=/tmp/uv-cache uv venv --python 3.12 /opt/npa/.venv \
     && UV_CACHE_DIR=/tmp/uv-cache uv pip install \
        --python /opt/npa/.venv/bin/python -e /opt/npa \
     && /opt/npa/.venv/bin/npa workbench cosmos3 generate --help >/dev/null \
+    && PYTHONPATH=/opt/npa/src "${COSMOS3_REPO}/.venv/bin/python" -c \
+       'from npa.workbench.cosmos.guarded_inference import GUARDRAIL_STATE_SCHEMA; assert GUARDRAIL_STATE_SCHEMA == "npa.cosmos3.guardrail-state.v1"' \
+    && /opt/npa/.venv/bin/python -c 'from pathlib import Path; import subprocess; interpreters=sorted({p.resolve() for p in Path("/opt/uv/python").glob("*/bin/python3")}); assert interpreters; [subprocess.run(["uv","pip","install","--break-system-packages","--python",str(p),"--no-deps","--require-hashes","-r","/tmp/cosmos3-packaging-requirements.txt"],check=True) for p in interpreters]' \
+    && rm -f /tmp/cosmos3-packaging-requirements.txt \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && rm -rf /tmp/uv-cache
 
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/smoke_functional.sh /opt/cosmos3/smoke_functional.sh
-COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/entrypoint.sh /usr/local/bin/npa-cosmos3-entrypoint
+COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Distribution guard: fail the build if any model weight was baked into a layer.
 RUN baked="$(find /opt/cosmos3 /opt/npa /tmp/hf_home -type f \
@@ -144,5 +174,5 @@ RUN baked="$(find /opt/cosmos3 /opt/npa /tmp/hf_home -type f \
 
 WORKDIR /workspace
 
-ENTRYPOINT ["/usr/local/bin/npa-cosmos3-entrypoint"]
-CMD ["generate", "--help"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["sleep", "infinity"]

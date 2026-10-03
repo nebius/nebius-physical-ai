@@ -33,6 +33,11 @@ def download_plan(
 
     outer = f"outer-{outer_iteration:02d}"
     entries: list[tuple[str, str, bool]] = [
+        (
+            f"{root}/stage_02_assets/consumed_robot_spec.json",
+            "stage_02_assets/consumed_robot_spec.json",
+            False,
+        ),
         (f"{root}/augment/manifest.json", "augment/manifest.json", False),
         (f"{root}/augment/frames/", "augment/frames", True),
         (f"{root}/tokens/manifest.json", "tokens/manifest.json", False),
@@ -78,7 +83,7 @@ def download_plan(
                 ),
                 (
                     str(item.get("vlm_eval_uri") or ""),
-                    f"vlm_eval/train/{outer}/{inner}/merged",
+                    f"vlm_eval/train/{outer}/{inner}/evaluations",
                     True,
                 ),
                 (
@@ -161,7 +166,7 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
             / "train"
             / f"outer-{args.outer_iteration:02d}"
             / f"iter-{inner:02d}"
-            / "merged"
+            / "evaluations"
         )
         item["signal_dir"] = str(
             local
@@ -171,7 +176,6 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
             / f"iter-{inner:02d}"
             / "signals"
         )
-        item["validation_report"] = evidence.get("selected_validation_report") or {}
     gold["local_renders_dir"] = str(
         local / str((gold.get("render_lineage") or {}).get("local_relative_dir") or "")
     )
@@ -202,6 +206,9 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
             "ComponentRecord tiers violate the 13 WORKS + Stage 12 SEAM contract"
         )
     decision = json.loads((local / "outer_loop" / "decision.json").read_text())
+    robot_contract = json.loads(
+        (local / "stage_02_assets" / "consumed_robot_spec.json").read_text()
+    )
     report = {
         "schema": "npa.sim2real.e2e_report.v1",
         "run_id": args.run_id,
@@ -211,8 +218,13 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
         "component_records": components,
         "outer_loop": {"decision": decision, "latest_heldout_report": gold},
         "checkpoint_selection": evidence.get("checkpoint_selection"),
+        "stage8_evaluator_usage": [
+            item.get("evaluator_usage") for item in evidence.get("iterations") or []
+        ],
         "strict_gold_success_rate": float(gold.get("success_rate") or 0.0),
         "policy_quality_is_pipeline_gate": False,
+        "robot_contract": robot_contract,
+        "embodiment": gold.get("embodiment", {}),
         "rrd_uri": rrd_uri,
         "mcap_uri": mcap_uri,
     }
@@ -232,6 +244,7 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
             "policy_checkpoint_size_bytes", 0
         ),
         "rrd_s3_uri": rrd_uri,
+        "embodiment": gold.get("embodiment", {}),
     }
     rrd = emit_sim2real_rerun(
         local_dir=local,

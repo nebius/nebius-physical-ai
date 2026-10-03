@@ -1,0 +1,33 @@
+# Serving closure matched to vLLM-Omni 0.28.0 at
+# eb11446b7f2e30ca582f8aff3afe12e9a2e66f6c; source is installed separately.
+# PyTorch 2.13 fixes the torch.jit.script memory corruption advisory.
+vllm==0.28.0
+transformers >= 5.10.1, < 5.15
+av>=14.0.0
+omegaconf>=2.3.0
+diffusers==0.40.0
+kernels==0.14.1
+safetensors>=0.8.0
+accelerate==1.12.0
+soundfile>=0.13.1
+cache-dit==1.5.0
+tqdm>=4.66.0
+torchsde>=0.2.6
+openai-whisper>=20250625
+imageio[ffmpeg]>=2.37.2
+x-transformers>=2.12.2
+einops>=0.8.1
+prettytable>=3.8.0
+aenum==3.1.16
+pyzmq>=25.0.0
+janus>=1.0.0
+msgpack>=1.0.0
+pydantic>=2.1.0
+pydantic-settings>=2.0.0
+gguf>=0.10.0
+cosmos-guardrail>=0.3.1
+onnxruntime>=1.23.2
+fa3-fwd==0.0.3
+setuptools==80.10.2
+setuptools-scm==10.2.3
+wheel==0.48.0

@@ -20,6 +20,12 @@ def agent_record(project_alias: str, name: str) -> dict[str, Any]:
     return record if isinstance(record, dict) else {}
 
 
+def leisaac_ui_enabled(record: object) -> bool:
+    """Require an explicit YAML boolean in the selected agent's UI settings."""
+    ui = record.get("ui") if isinstance(record, dict) else None
+    return isinstance(ui, dict) and ui.get("leisaac_enabled") is True
+
+
 def store_agent_record(project_alias: str, name: str, payload: dict[str, Any]) -> None:
     write_config({"projects": {project_alias: {"agents": {name: payload}}}})
 
@@ -50,6 +56,7 @@ def remove_agent_record(project_alias: str, name: str) -> None:
 
 __all__ = [
     "agent_record",
+    "leisaac_ui_enabled",
     "remove_agent_record",
     "resolve_project_agents",
     "store_agent_record",

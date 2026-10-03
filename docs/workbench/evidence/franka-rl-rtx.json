@@ -1,0 +1,368 @@
+{
+  "artifact_audit": {
+    "all_checks_passed": true,
+    "completed_ppo_updates": 1500,
+    "decoded_videos": [
+      {
+        "height": 480,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-000.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "062f3e9304a6e93cafa5fb64c78cdf4faa5e0557f156cbf01371c5ae1239d00d",
+        "width": 640
+      },
+      {
+        "height": 480,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-001.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "78f985808574d744c2c8f8ea8d55016adbe2a08ce94684f716e8e6bf5d1f2c2a",
+        "width": 640
+      },
+      {
+        "height": 480,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-002.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "ea3e4ce5620572d0ce77c7ae651dedc2339b30945f39d78803ceba76b709aa49",
+        "width": 640
+      },
+      {
+        "height": 480,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-003.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "a318ab0a66ff8fc1d55bbb8415a62603d35861ec4713e58b336dee779ceb157e",
+        "width": 640
+      }
+    ],
+    "lerobot_rows": 1000,
+    "paired_test_trials": 1024,
+    "physical_robot_tested": false,
+    "rerun_dynamic_entities": 72,
+    "rerun_recording_id_matches_run": true,
+    "rerun_timelines_match_frame_and_time": true,
+    "selected_checkpoint_sha256": "c83c34a7d20bb2b39325bc9ad448e1f56d47194079fe8c434c094cbb1e432ba1",
+    "verified_stage_files": {
+      "evaluation": 35,
+      "prepared": 1,
+      "reports": 15,
+      "training": 10
+    }
+  },
+  "artifact_sha256": {
+    "evaluation/evaluation.json": "3dc19b078ad80def792ad314bd50ae23da927487d23853c1dbf0bbb6474e3a7a",
+    "reports/franka.rrd": "2c18c35c6de7fe10a9b8be53b894f84882109a6f73a2c45a74ce9665cd1b1809",
+    "reports/report.json": "13a5d00e243b0b4ec3b38f6ffef596a19794a7364e860682b613ce5185272888",
+    "training/training.json": "7ea613c2e94d042546ff8b99123c844adae2c135df68ac6e53070d363df24d5f"
+  },
+  "capture": {
+    "action_names": [
+      "panda_joint1_normalized_target",
+      "panda_joint2_normalized_target",
+      "panda_joint3_normalized_target",
+      "panda_joint4_normalized_target",
+      "panda_joint5_normalized_target",
+      "panda_joint6_normalized_target",
+      "panda_joint7_normalized_target",
+      "gripper_open_close"
+    ],
+    "action_semantics": "Isaac joint position: default offset + 0.5 * arm action; binary gripper",
+    "checkpoint_sha256": "c83c34a7d20bb2b39325bc9ad448e1f56d47194079fe8c434c094cbb1e432ba1",
+    "episode_lengths": [
+      250,
+      250,
+      250,
+      250
+    ],
+    "episode_results": [
+      {
+        "closest_distance_m": 0.007064349018037319,
+        "length": 250,
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "rgb_frame_count": 250,
+        "success": false
+      },
+      {
+        "closest_distance_m": 0.027758188545703888,
+        "length": 250,
+        "lifted": true,
+        "longest_stable_steps": 19,
+        "rgb_frame_count": 250,
+        "success": false
+      },
+      {
+        "closest_distance_m": 0.022203698754310608,
+        "length": 250,
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "rgb_frame_count": 250,
+        "success": false
+      },
+      {
+        "closest_distance_m": 0.011931220069527626,
+        "length": 250,
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "rgb_frame_count": 250,
+        "success": false
+      }
+    ],
+    "fps": 50.0,
+    "num_episodes": 4,
+    "state_names": [
+      "panda_joint1",
+      "panda_joint2",
+      "panda_joint3",
+      "panda_joint4",
+      "panda_joint5",
+      "panda_joint6",
+      "panda_joint7",
+      "panda_finger_joint1",
+      "panda_finger_joint2"
+    ],
+    "total_frames": 1000
+  },
+  "checkpoint_decode_validation": {
+    "actor_tensor_count": 9,
+    "final_native_counter": 1499,
+    "safe_cpu_checkpoint_decode": true,
+    "selected_and_final_actor_tensors_identical": true,
+    "selected_native_counter": 1499
+  },
+  "container_images": {
+    "cpu": "ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643",
+    "isaac": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46"
+  },
+  "lift_counts": {
+    "initial": {
+      "delay": 0,
+      "heavy": 0,
+      "nominal": 0,
+      "slippery": 0
+    },
+    "trained": {
+      "delay": 119,
+      "heavy": 128,
+      "nominal": 128,
+      "slippery": 128
+    }
+  },
+  "limitations": [
+    "Privileged simulator-state policy; physical perception and control remain unvalidated.",
+    "One training seed; uncertainty covers reset variability only.",
+    "Task is lift and hold at a commanded goal, not released placement.",
+    "A matched PPO ablation is needed to attribute gains specifically to physics randomization.",
+    "Review exports contain RGB, joint positions, and applied actions; student training needs an observable-goal and input-feature contract.",
+    "The beta simulator emitted its TGS potentially noisy-velocity warning; this run does not establish whether it affected stable-hold scores."
+  ],
+  "paired_delta_95ci": [
+    0.013671875,
+    0.056640625
+  ],
+  "physical_robot_tested": false,
+  "preview": {
+    "episode_index": 1,
+    "frame_index": 100,
+    "image": "franka-rl-rtx-preview.png",
+    "image_sha256": "52e25a480f7aa6e39b7dd8d9b09e1060dc141245a752f5bd5fe56d8cf20b04e0",
+    "source_video_sha256": "78f985808574d744c2c8f8ea8d55016adbe2a08ce94684f716e8e6bf5d1f2c2a",
+    "timestamp_seconds": 2.0
+  },
+  "ready_for_robot_deployment": false,
+  "recipe": {
+    "capture_episodes": 4,
+    "capture_seed": 300000,
+    "checkpoint_interval": 500,
+    "conditions": {
+      "delay": {
+        "action_delay": 1,
+        "friction": 1.0,
+        "mass_scale": 1.0
+      },
+      "heavy": {
+        "action_delay": 0,
+        "friction": 1.0,
+        "mass_scale": 2.0
+      },
+      "nominal": {
+        "action_delay": 0,
+        "friction": 1.0,
+        "mass_scale": 1.0
+      },
+      "slippery": {
+        "action_delay": 0,
+        "friction": 0.25,
+        "mass_scale": 1.0
+      }
+    },
+    "episode_steps": 250,
+    "eval_episodes": 128,
+    "iterations": 1500,
+    "maximum_object_speed_m_s": 0.03,
+    "minimum_object_height_m": 0.1,
+    "minimum_success": 0.7,
+    "num_envs": 4096,
+    "physical_robot_tested": false,
+    "reference_workflow": "workflows/main/sim2real.yaml",
+    "schema": "npa.franka-rl.recipe.v1",
+    "seed": 42,
+    "stable_steps": 20,
+    "steps_per_env": 24,
+    "success_distance_m": 0.05,
+    "task": "Isaac-Lift-Cube-Franka-v0",
+    "test_seed": 200000,
+    "train_friction_range": [
+      0.5,
+      1.5
+    ],
+    "train_mass_range": [
+      0.7,
+      1.3
+    ],
+    "validation_seed": 100000
+  },
+  "reevaluation_verification": {
+    "earlier_sha256": "3dc19b078ad80def792ad314bd50ae23da927487d23853c1dbf0bbb6474e3a7a",
+    "evaluation_bytes_identical": true,
+    "final_sha256": "3dc19b078ad80def792ad314bd50ae23da927487d23853c1dbf0bbb6474e3a7a",
+    "held_out_trials_identical": true,
+    "selection_identical": true,
+    "validation_trials_identical": true
+  },
+  "reference_workflow": "workflows/main/sim2real.yaml",
+  "runtime": {
+    "compute_capability": [
+      12,
+      0
+    ],
+    "cuda": "12.8",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "isaaclab": "3.0.0b2.post1",
+    "rsl_rl": "5.0.1",
+    "torch": "2.11.0+cu128"
+  },
+  "schema": "npa.franka-rl.evidence.v1",
+  "selection": {
+    "iteration": 1499,
+    "selected_checkpoint_sha256": "c83c34a7d20bb2b39325bc9ad448e1f56d47194079fe8c434c094cbb1e432ba1",
+    "selection_rule": "validation success, then closest distance, then earlier iteration",
+    "test_data_used": false
+  },
+  "simulation_qualified": false,
+  "source_verification": {
+    "evaluation": {
+      "all_executed_modules_match_checkout": true,
+      "commit": "fb52ab05d0c48d8e0104ef68ea95a3f5d7e47b8c",
+      "module_sha256": {
+        "franka_rl.py": "596875cfcf27af3fb9c5cec9ef5ddc2798167cff1a204ce2cb96c8348c40379a",
+        "franka_rl_capture.py": "fd147448e37ebcc11db8f5a37b2efe1c96c47f0f0b156d1dc6a517b5f8d5dbaf",
+        "franka_rl_environment.py": "af5e720614ae36f8bcff85560282a7b7cc2b27689ce7adcc66f8752a6373ef2f",
+        "franka_rl_eval.py": "e38c931fd227dc127cac2ea76d21ff7b57f6eb9a2186a0f17a5b4e38565dfd68",
+        "franka_rl_metrics.py": "4571d1fe503e93fd95c29692b57bf4d746ee8632b29c32c35eb2b9f4126da13f",
+        "franka_rl_recording.py": "54501330daa762b1b4940a94697dc708937db8428cefdb5c560cb28b7498d8f6",
+        "franka_rl_report.py": "94fd041ca537f0c7213088bcb9aa26b5a690dfca5b941791b83b79b64b4f277e",
+        "franka_rl_runtime.py": "8ac998ab5668ecf8eab3b984d9424d00e20ef35f3b8f1b91baa28c3d20d69742"
+      }
+    },
+    "report": {
+      "all_executed_modules_match_checkout": true,
+      "commit": "fb52ab05d0c48d8e0104ef68ea95a3f5d7e47b8c",
+      "module_sha256": {
+        "src/npa/adapter/isaac_lab_lerobot.py": "50dfb32a06377e14397da57ca72016b285016c16ee0dfe720c5e6d2f6ee525c5",
+        "src/npa/viz/adapters/lerobot_to_rerun.py": "41fbf06502f7db8253371516729d0e18bd7bb8350bb51da107427b7be8712a5d",
+        "src/npa/workflows/franka_rl_recording.py": "54501330daa762b1b4940a94697dc708937db8428cefdb5c560cb28b7498d8f6",
+        "src/npa/workflows/franka_rl_report.py": "94fd041ca537f0c7213088bcb9aa26b5a690dfca5b941791b83b79b64b4f277e"
+      },
+      "source_fingerprint": "f2749801826ad091c0d19e6e3f6d85a746c43d48c3c6b372a396aa627f039ef7",
+      "verification_scope": "Staged module hashes verified; native execution log confirms overlay from the same immutable source snapshot."
+    },
+    "training": {
+      "all_executed_modules_match_checkout": true,
+      "commit": "f5f8c37c2c87d8df2836b2fc5623050453de285e",
+      "module_sha256": {
+        "franka_rl.py": "2e63c140af8248f877040b7467935d4cb105078cf05391fd5f0db57459264bd2",
+        "franka_rl_capture.py": "76d58f3d9d8cb65314aee7809c751aed8c8968ce2476c36fb8ee7eb57bc27da0",
+        "franka_rl_environment.py": "af5e720614ae36f8bcff85560282a7b7cc2b27689ce7adcc66f8752a6373ef2f",
+        "franka_rl_eval.py": "3a988dfb36096bd925aedc521457ff5947b5b818900aa2fced7f534fd1ac8a13",
+        "franka_rl_metrics.py": "4571d1fe503e93fd95c29692b57bf4d746ee8632b29c32c35eb2b9f4126da13f",
+        "franka_rl_recording.py": "54501330daa762b1b4940a94697dc708937db8428cefdb5c560cb28b7498d8f6",
+        "franka_rl_report.py": "94fd041ca537f0c7213088bcb9aa26b5a690dfca5b941791b83b79b64b4f277e",
+        "franka_rl_runtime.py": "65b130a96e67d3108c64c9c4132478bcaf370020101bbf4e97d0bf7c5d503e70"
+      }
+    }
+  },
+  "success_counts": {
+    "initial": {
+      "delay": 0,
+      "heavy": 0,
+      "nominal": 0,
+      "slippery": 0
+    },
+    "trained": {
+      "delay": 0,
+      "heavy": 3,
+      "nominal": 10,
+      "slippery": 4
+    }
+  },
+  "success_rates": {
+    "initial": {
+      "delay": 0.0,
+      "heavy": 0.0,
+      "nominal": 0.0,
+      "slippery": 0.0
+    },
+    "trained": {
+      "delay": 0.0,
+      "heavy": 0.0234375,
+      "nominal": 0.078125,
+      "slippery": 0.03125
+    }
+  },
+  "test_episodes": 1024,
+  "tests_passed": {
+    "franka": 40,
+    "full_suite": 21359,
+    "security": 736
+  },
+  "training": {
+    "checkpoints": {
+      "checkpoints/model_0.pt": "14e7d1b28d5b9a554de763ee75dcb63bfe284f4a68fbcfac99a93708f5689651",
+      "checkpoints/model_1000.pt": "c558665d19d4d68c400854ba64e40aa81cc97538ca983b27ee3ad9b2b7e90e15",
+      "checkpoints/model_1499.pt": "c83c34a7d20bb2b39325bc9ad448e1f56d47194079fe8c434c094cbb1e432ba1",
+      "checkpoints/model_1500.pt": "38a9d1278d98ac7f531a22ce6f8c693d34522058719c4f809156c056780fca99",
+      "checkpoints/model_500.pt": "63c2abf876dd9f2c45eb6a93c40534d4cca1c2aedfb36dcca72b5c87c7c86027",
+      "initial.pt": "075d487e455321d074661e5b8703bd01be33bafa413ef5da9880285aade5c2a7"
+    },
+    "duration_seconds": 1324.1550000750003,
+    "physics": {
+      "dynamic_friction": {
+        "max": 1.455479621887207,
+        "min": 0.55937260389328
+      },
+      "mass_kg": {
+        "max": 0.2807645797729492,
+        "min": 0.15124812722206116
+      },
+      "restitution": {
+        "max": 0.0,
+        "min": 0.0
+      },
+      "startup_terms": [
+        "npa_object_mass",
+        "npa_object_material"
+      ],
+      "static_friction": {
+        "max": 1.4811253547668457,
+        "min": 0.5162026882171631
+      }
+    },
+    "policy_parameter_delta_l2": 32.665348052978516,
+    "transitions": 147456000
+  },
+  "training_duration_scope": "Native PPO learning and final checkpoint export; excludes worker and renderer startup.",
+  "validation_episodes": 640,
+  "workflow": "workflows/testing/franka-rl-transfer.yaml"
+}

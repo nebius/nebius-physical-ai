@@ -15,8 +15,10 @@ object-storage buckets and provision access keys in the target project.
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import boto3
@@ -106,7 +108,9 @@ def _s3_client_from_creds(creds: dict[str, Any], region: str):
     )
 
 
-def _purge_bucket_objects(creds: dict[str, Any], *, bucket_name: str, region: str) -> None:
+def _purge_bucket_objects(
+    creds: dict[str, Any], *, bucket_name: str, region: str
+) -> None:
     client = _s3_client_from_creds(creds, region)
     paginator = client.get_paginator("list_object_versions")
     for page in paginator.paginate(Bucket=bucket_name):
@@ -127,9 +131,55 @@ def _cleanup_bucket(
     *,
     creds: dict[str, Any] | None = None,
 ) -> None:
-    if creds:
-        _purge_bucket_objects(creds, bucket_name=bucket_name, region=env.region)
-    _delete_bucket_by_name(env.project_id, bucket_name)
+    errors: list[str] = []
+    if bucket_name:
+        try:
+            if creds:
+                _purge_bucket_objects(creds, bucket_name=bucket_name, region=env.region)
+            _delete_bucket_by_name(env.project_id, bucket_name)
+            if nebius.get_bucket_by_name(env.project_id, bucket_name) is not None:
+                errors.append("exact bucket remained provider-visible after delete")
+        except Exception as exc:  # noqa: BLE001 - continue exact owned-key cleanup
+            errors.append(f"bucket cleanup failed ({type(exc).__name__})")
+
+    setup = creds.get("storage_setup", {}) if isinstance(creds, dict) else {}
+    projects = setup.get("projects", {}) if isinstance(setup, dict) else {}
+    record = projects.get(env.project_id, {}) if isinstance(projects, dict) else {}
+    resources = record.get("resources", {}) if isinstance(record, dict) else {}
+    access_keys = (
+        resources.get("access_keys", {}) if isinstance(resources, dict) else {}
+    )
+    for key_id, metadata in (
+        access_keys.items() if isinstance(access_keys, dict) else []
+    ):
+        if not isinstance(metadata, dict):
+            continue
+        if (
+            metadata.get("created_by") != "npa"
+            or metadata.get("project_id") != env.project_id
+        ):
+            continue
+        service_account_id = str(metadata.get("service_account_id") or "")
+        try:
+            nebius.delete_access_key(str(key_id))
+            remaining = nebius.list_access_keys_for_service_account(
+                env.project_id,
+                service_account_id,
+                strict=True,
+            )
+            if str(key_id) in {str(item.get("id") or "") for item in remaining}:
+                errors.append("exact configure-created access key remained active")
+        except Exception as exc:  # noqa: BLE001 - report every cleanup failure together
+            errors.append(f"access-key cleanup failed ({type(exc).__name__})")
+    if errors:
+        raise AssertionError("; ".join(errors))
+
+
+def _load_credentials_if_present(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    loaded = yaml.safe_load(path.read_text())
+    return loaded if isinstance(loaded, dict) else None
 
 
 def _ensure_bucket_absent(env: LiveConfigureEnv, bucket_name: str) -> None:
@@ -181,7 +231,6 @@ def _interactive_configure_answers(
         env.tenant_id,
         env.project_id,
         env.region,
-        "",  # container registry (default)
         bucket_name,
     ]
     if new_bucket:
@@ -195,7 +244,9 @@ def _run_configure(input_text: str):
     return runner.invoke(app, ["configure", "--interactive"], input=input_text)
 
 
-def _load_written_files(creds_path, config_path) -> tuple[dict[str, Any], dict[str, Any]]:
+def _load_written_files(
+    creds_path, config_path
+) -> tuple[dict[str, Any], dict[str, Any]]:
     creds = yaml.safe_load(creds_path.read_text())
     config = yaml.safe_load(config_path.read_text())
     return creds, config
@@ -259,7 +310,7 @@ def _assert_dotfiles(
     assert project["project_id"] == env.project_id
     assert project["tenant_id"] == env.tenant_id
     assert project["region"] == env.region
-    assert project["container_registry"]
+    assert "container_registry" not in project
     assert config["default_project"] == env.region
     return creds
 
@@ -270,25 +321,33 @@ class TestConfigureInteractiveLive:
         live_configure_env: LiveConfigureEnv,
         configure_paths,
     ) -> None:
-        """Enter at bucket/class/size prompts -> npa-bucket + standard + 50 GB."""
+        """Bare Enter creates a fresh collision-safe bucket with standard + 50 GB."""
 
         env = live_configure_env
         creds_path, config_path = configure_paths
-        bucket_name = nebius.bucket_name_for(env.tenant_id, env.project_id)
+        bucket_name = ""
         size_bytes = 50 * GB
         creds = None
-
-        _ensure_bucket_absent(env, bucket_name)
-        assert nebius.bucket_exists(env.project_id, bucket_name) is False
 
         try:
             result = _run_configure(_interactive_configure_answers(env))
             assert result.exit_code == 0, result.output
             assert "No bucket name provided" in result.output
             assert "Using standard storage (default)." in result.output
-            assert "Provisioned bucket" in result.output
+            assert "Created object-storage bucket" in result.output
 
-            creds = _assert_dotfiles(creds_path, config_path, env, bucket_name=bucket_name)
+            written_creds, _config = _load_written_files(creds_path, config_path)
+            bucket_name = (
+                str(written_creds["storage"]["bucket"]).removeprefix("s3://").strip("/")
+            )
+            assert re.fullmatch(
+                r"npa-bucket-\d{8}t\d{6}z-[0-9a-f]{6}-[0-9a-f]{8}",
+                bucket_name,
+            )
+
+            creds = _assert_dotfiles(
+                creds_path, config_path, env, bucket_name=bucket_name
+            )
             _assert_bucket_spec(
                 env.project_id,
                 bucket_name,
@@ -302,7 +361,11 @@ class TestConfigureInteractiveLive:
                 object_key="configure-e2e/default-npa-bucket",
             )
         finally:
-            _cleanup_bucket(env, bucket_name, creds=creds)
+            _cleanup_bucket(
+                env,
+                bucket_name,
+                creds=creds or _load_credentials_if_present(creds_path),
+            )
 
     def test_explicit_bucket_standard_custom_size(
         self,
@@ -333,7 +396,9 @@ class TestConfigureInteractiveLive:
             assert "Using standard storage (default)." in result.output
             assert "100 GB cap" in result.output
 
-            creds = _assert_dotfiles(creds_path, config_path, env, bucket_name=bucket_name)
+            creds = _assert_dotfiles(
+                creds_path, config_path, env, bucket_name=bucket_name
+            )
             _assert_bucket_spec(
                 env.project_id,
                 bucket_name,
@@ -347,7 +412,11 @@ class TestConfigureInteractiveLive:
                 object_key="configure-e2e/explicit-standard-100gb",
             )
         finally:
-            _cleanup_bucket(env, bucket_name, creds=creds)
+            _cleanup_bucket(
+                env,
+                bucket_name,
+                creds=creds or _load_credentials_if_present(creds_path),
+            )
 
     def test_explicit_bucket_enhanced_storage_default_size(
         self,
@@ -378,7 +447,9 @@ class TestConfigureInteractiveLive:
             assert "enhanced_throughput" in result.output
             assert "Using standard storage (default)." not in result.output
 
-            creds = _assert_dotfiles(creds_path, config_path, env, bucket_name=bucket_name)
+            creds = _assert_dotfiles(
+                creds_path, config_path, env, bucket_name=bucket_name
+            )
             _assert_bucket_spec(
                 env.project_id,
                 bucket_name,
@@ -392,7 +463,11 @@ class TestConfigureInteractiveLive:
                 object_key="configure-e2e/enhanced-throughput",
             )
         finally:
-            _cleanup_bucket(env, bucket_name, creds=creds)
+            _cleanup_bucket(
+                env,
+                bucket_name,
+                creds=creds or _load_credentials_if_present(creds_path),
+            )
 
     def test_reuses_existing_bucket_without_recreating(
         self,
@@ -434,14 +509,18 @@ class TestConfigureInteractiveLive:
             assert "New bucket storage class" not in result.output
             assert "Using standard storage (default)." not in result.output
 
-            creds = _assert_dotfiles(creds_path, config_path, env, bucket_name=bucket_name)
+            creds = _assert_dotfiles(
+                creds_path, config_path, env, bucket_name=bucket_name
+            )
             after = _assert_bucket_spec(
                 env.project_id,
                 bucket_name,
                 storage_class="standard",
                 size_bytes=size_bytes,
             )
-            assert after.get("metadata", {}).get("id") == before.get("metadata", {}).get("id")
+            assert after.get("metadata", {}).get("id") == before.get(
+                "metadata", {}
+            ).get("id")
             _assert_s3_credentials_work(
                 creds,
                 bucket_name=bucket_name,
@@ -449,7 +528,11 @@ class TestConfigureInteractiveLive:
                 object_key="configure-e2e/reuse-existing",
             )
         finally:
-            _cleanup_bucket(env, bucket_name, creds=creds)
+            _cleanup_bucket(
+                env,
+                bucket_name,
+                creds=creds or _load_credentials_if_present(creds_path),
+            )
 
     def test_optional_tokens_persist_when_provided(
         self,
@@ -485,7 +568,10 @@ class TestConfigureInteractiveLive:
                 bucket_name=bucket_name,
                 expect_hf_token="hf_provided_live_e2e",
             )
-            assert creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "v1.tokenfactory.live.e2e"
+            assert (
+                creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"]
+                == "v1.tokenfactory.live.e2e"
+            )
             assert creds["ngc"]["api_key"] == "nvapi_provided_live_e2e"
             _assert_s3_credentials_work(
                 creds,
@@ -494,4 +580,8 @@ class TestConfigureInteractiveLive:
                 object_key="configure-e2e/tokens",
             )
         finally:
-            _cleanup_bucket(env, bucket_name, creds=creds)
+            _cleanup_bucket(
+                env,
+                bucket_name,
+                creds=creds or _load_credentials_if_present(creds_path),
+            )

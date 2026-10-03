@@ -11,7 +11,7 @@
 # npa[sonic] (npa base + torch + onnx toolchain) is baked so the image is
 # self-contained; the workflow still overlays fresher npa source at runtime via
 # NPA_SRC_S3_URI. Build context is the repo root.
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -26,11 +26,12 @@ RUN apt-get update \
 # torch as the CUDA workbench images for parity/reproducibility; pre-installing
 # the CPU wheel means the subsequent npa[sonic] install treats torch as
 # satisfied instead of pulling the multi-GB CUDA build.
-RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.12.1"
+RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.13.0"
 
 COPY npa/pyproject.toml /opt/npa/pyproject.toml
 COPY npa/src /opt/npa/src
 COPY npa/workflows /opt/npa/workflows
+COPY workflows /opt/workflows
 # Installs npa's base deps (pyarrow, boto3, ...) plus the [sonic] onnx toolchain.
 RUN pip install "/opt/npa[sonic]"
 

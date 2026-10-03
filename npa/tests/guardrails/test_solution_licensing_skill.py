@@ -51,11 +51,42 @@ def test_skill_keeps_gated_weights_and_acceptance_out_of_image_access() -> None:
         "never bake gated or redistribution-restricted weights",
         "exact immutable revision",
         "do not require a token for genuinely public",
-        "token proves authorization to fetch; it is not eula acceptance",
-        "does not change redistribution rights",
+        "token presence alone proves neither access nor acceptance",
+        "operationally sufficient for npa to fetch that exact artifact",
+        "not legal acceptance, proof of compliance, or permission to redistribute",
     )
     for phrase in required:
         assert phrase in text, phrase
+
+
+def test_default_policy_reuses_scope_and_separates_access_from_publication() -> None:
+    text = _normalized_skill_text()
+    for phrase in (
+        "### default operator-responsibility policy",
+        "operator initiates runtime fetch with their own credential",
+        "exact operator statement once",
+        "one bounded manager task/run id",
+        "record exactly `noncommercial`",
+        "without another per-image question",
+        "never global or permanent",
+        "keep entitlement provider- and artifact-scoped",
+        "classify the public image from its built bytes",
+        "every baked byte has verified redistribution rights",
+        "all `secure-image-build` publication gates pass",
+        "ready` grants no redistribution rights",
+        "do not invent output or service restrictions",
+    ):
+        assert phrase in text, phrase
+
+    for unsafe in (
+        "the token accepts terms",
+        "token proves compliance",
+        "noncommercial clears every license",
+        "runtime fetch makes use legal",
+        "ready permits redistribution",
+        "one declaration applies globally",
+    ):
+        assert unsafe not in text, unsafe
 
 
 def test_skill_distinguishes_cache_tiers_and_durable_population_contract() -> None:

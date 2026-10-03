@@ -1,0 +1,156 @@
+{
+  "cases": [
+    {
+      "expected": [
+        0,
+        8,
+        16,
+        32,
+        40,
+        48,
+        56,
+        72,
+        80,
+        88
+      ],
+      "function": "_sample_frame_ids",
+      "inputs": {
+        "end_frame": 92,
+        "max_frames": 10,
+        "sampling_fps": 3.0,
+        "source_fps": 24.0,
+        "start_frame": 0
+      }
+    },
+    {
+      "expected": [
+        0,
+        8
+      ],
+      "function": "_sample_frame_ids",
+      "inputs": {
+        "end_frame": 15,
+        "max_frames": 10,
+        "sampling_fps": 3.0,
+        "source_fps": 24.0,
+        "start_frame": 0
+      }
+    },
+    {
+      "expected": [
+        0,
+        88,
+        176,
+        264,
+        352,
+        448,
+        536,
+        624,
+        712,
+        800
+      ],
+      "function": "_sample_frame_ids",
+      "inputs": {
+        "end_frame": 800,
+        "max_frames": 10,
+        "sampling_fps": 3.0,
+        "source_fps": 24.0,
+        "start_frame": 0
+      }
+    },
+    {
+      "expected": [
+        0
+      ],
+      "function": "_sample_even",
+      "inputs": {
+        "candidate_count": 1,
+        "max_crops": 10
+      }
+    },
+    {
+      "expected": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "function": "_sample_even",
+      "inputs": {
+        "candidate_count": 9,
+        "max_crops": 10
+      }
+    },
+    {
+      "expected": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "function": "_sample_even",
+      "inputs": {
+        "candidate_count": 10,
+        "max_crops": 10
+      }
+    },
+    {
+      "expected": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "function": "_sample_even",
+      "inputs": {
+        "candidate_count": 11,
+        "max_crops": 10
+      }
+    },
+    {
+      "expected": [
+        0,
+        2,
+        3,
+        5,
+        7,
+        8,
+        10,
+        12,
+        13,
+        15
+      ],
+      "function": "_sample_even",
+      "inputs": {
+        "candidate_count": 16,
+        "max_crops": 10
+      }
+    }
+  ],
+  "hosted_max_images": 10,
+  "proof": "Expected indices computed by the exact two published functions; no live inference claim.",
+  "source": {
+    "license": "Apache-2.0",
+    "path": "packages/tasks/visual_qa/src/visual_qa/media.py",
+    "repository": "https://github.com/NVIDIA/paidf-auto-labeling",
+    "revision": "36dc1114dea00d9986df97325a664520993964de",
+    "sha256": "85f09956d93a39a8e0d92be6774efaf2baaadc02072fea2e682939b4f0ea3c75"
+  }
+}

@@ -8,8 +8,8 @@ description: Use when packaging, running, reviewing, or extending the Alibaba Wa
 Use this skill for the public Wan 2.2 registry candidate and its verified video
 evidence. Read these files before changing behavior:
 
-- `npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml`
-- `npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml`
+- `workflows/testing/byof-wan2.2.yaml`
+- `workflows/testing/byof-wan2.2-multigpu.yaml`
 - `npa/src/npa/workflows/wan_rerun.py`
 - `docs/workbench/wan2.2.md`
 
@@ -25,11 +25,11 @@ Also load `byof-onboard`, `oss-solution-registry-onboard`,
 - Official model: `Wan-AI/Wan2.2-TI2V-5B`, pinned to
   `921dbaf3f1674a56f47e83fb80a34bac8a8f203e`.
 - TI2V-5B is a stock generative-video model supporting text and image inputs.
-- A historical private validation record accepted the real single-GPU
+- A historical operator-only validation record accepted the real single-GPU
   text-to-video path on RTX PRO 6000 Blackwell (`sm_120`) from immutable image
   digest `sha256:1baa4e2e89999ea26df81891ac786fa99c7498cbf173e5c5abad54c6f1dd1d13`,
   including exact MP4/RRD byte identity.
-- A historical private validation record accepted one shared official
+- A historical operator-only validation record accepted one shared official
   generation from that same observed image digest on four B200s (`sm_100`) with
   world size 4, NCCL, T5 and DiT FULL_SHARD FSDP, Ulysses size 4, and exact
   MP4/RRD byte identity.
@@ -49,6 +49,13 @@ Use `workbench.byof.repo`; do not add a fake Wan toolRef. Keep the repo and all
 model inputs immutable. The image may contain pinned source and dependencies but
 no checkpoint weights, credentials, private code, or user data. The runtime
 must remain non-root, with `/opt/byof` and its venv readable and executable.
+
+Both workflows pin `config.base_image` to the accepted public digest recorded in
+`npa/src/npa/deploy/wan2_2_image_manifest.json`. Keep the resource image and BYOF
+verification argument on that same immutable reference. A mirror override must
+include the accepted digest; changing only the allocated image fails the worker
+identity check before generation. Update the spec readiness hashes when the
+accepted default changes.
 
 The single-GPU baseline requests one RTX PRO 6000 Blackwell (`sm_120`), uses the
 security-fixed PyTorch 2.13.0 CUDA 13.0 wheel line, and binds pinned Wan
@@ -118,11 +125,11 @@ verified manifest may name `wan2.2_verified_rerun_recording`.
 
 | Capability | Status |
 | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted historical evidence; current runtime needs a fresh RTX PRO run |
-| `wan2.2_decoded_mp4_validation` | accepted historical evidence; 17 decoded 1280×704 frames at 24 fps |
+| `wan2.2_ti2v_5b_text_to_video` | accepted current evidence; exact public-dev digest ran the Torch 2.13.0/CUDA 13.0 closure on RTX PRO 6000 |
+| `wan2.2_decoded_mp4_validation` | accepted current evidence; 17 decoded 1280×704 frames at 24 fps |
 | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted historical evidence; current runtime needs a fresh 4×B200 official run |
 | `wan2.2_distributed_rank_topology_validation` | accepted historical evidence; four unique ranks/devices and collective/barrier evidence |
-| `wan2.2_verified_rerun_recording` | accepted historical evidence only for the prior runtime; current acceptance still requires an uploaded verified RRD manifest |
+| `wan2.2_verified_rerun_recording` | accepted current single-GPU evidence; exact MP4 identity and uploaded RRD were independently re-verified |
 | `wan2.2_ti2v_5b_image_to_video` | deferred |
 | A14B / S2V / Animate | deferred |
 | official TI2V fine-tuning | deferred; no pinned-source entrypoint |
@@ -148,13 +155,13 @@ Use the repository venv, never bare Python:
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml
+  workflows/testing/byof-wan2.2.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml --run-id wan22-plan
+  workflows/testing/byof-wan2.2.yaml --run-id wan22-plan
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml
+  workflows/testing/byof-wan2.2-multigpu.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml \
+  workflows/testing/byof-wan2.2-multigpu.yaml \
   --run-id wan22-multigpu-plan
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_wan_rerun.py -q
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py -q
@@ -165,3 +172,11 @@ npa/.venv/bin/python -m pytest npa/tests/smoke/test_all_workflow_yamls.py -q
 The gated live tests are `npa/tests/e2e/test_byof_wan22_live_e2e.py` and
 `npa/tests/e2e/test_byof_wan22_multigpu_live_e2e.py`. Future compatibility
 changes require fresh live evidence rather than inference from an older run.
+
+
+For an already completed standard-workflow run, use the read-only
+`npa/tests/e2e/test_byof_wan22_workflow_worker_live_e2e.py` gate documented in
+`docs/workbench/wan2.2.md`. It requires an explicit project, run ID, artifact
+prefix and expected generation controls, then verifies worker execution identity,
+source hashes, the full Wan output contract and exact embedded MP4 bytes in the
+existing published RRD. It submits no new GPU work and creates no S3 artifacts.

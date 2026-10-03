@@ -29,7 +29,7 @@ set -euo pipefail
 IMAGE=""
 URI=""
 NAMESPACE="${NPA_BUILD_NAMESPACE:-default}"
-PULL_SECRET="${NPA_BUILD_PULL_SECRET:-npa-nebius-registry}"
+PULL_SECRET="${NPA_BUILD_PULL_SECRET:-}"
 POD_NAME="${NPA_SONIC_FIXTURE_POD:-npa-sonic-fixture}"
 TIMEOUT_SECONDS="${NPA_SONIC_FIXTURE_TIMEOUT:-1800}"
 OBS_DIM="${NPA_SONIC_FIXTURE_OBS_DIM:-48}"
@@ -82,6 +82,11 @@ kubectl -n "$NAMESPACE" create secret generic "$SECRET" \
 
 echo "building SONIC checkpoint fixture in-cluster (pod=$POD_NAME ns=$NAMESPACE)" >&2
 
+PULL_SECRET_YAML=""
+if [[ -n "$PULL_SECRET" ]]; then
+  printf -v PULL_SECRET_YAML '  imagePullSecrets:\n    - name: %s' "$PULL_SECRET"
+fi
+
 kubectl -n "$NAMESPACE" apply -f - >/dev/null <<YAML
 apiVersion: v1
 kind: Pod
@@ -89,8 +94,7 @@ metadata:
   name: ${POD_NAME}
 spec:
   restartPolicy: Never
-  imagePullSecrets:
-    - name: ${PULL_SECRET}
+${PULL_SECRET_YAML}
   volumes:
     - name: src
       configMap:

@@ -11,13 +11,17 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
 from npa.workflows.sim2real.stage14_finalize import (
     download_plan as _stage14_download_plan,  # noqa: F401 - compatibility import
     finalize_in_work as _stage14_in_work,
 )
+from npa.workflows.sim2real.stage9_evaluator import (
+    validate_hosted_evaluator,
+    validate_stage7_cosmos3_coverage as _validate_stage7_cosmos3_coverage,  # noqa: F401 - compatibility import
+)
 from npa.workflows.sim2real.stage9_replay import (
     existing_replay as _stage9_existing_replay,
-    publish_stage8_join as _publish_stage8_join,
 )
 from npa.workflows.sim2real.workflow_io import (
     aggregate_parallel_provenance,
@@ -75,13 +79,19 @@ def _stage1(args: argparse.Namespace) -> None:
     objects = list_prefix(args.trigger_uri.rstrip("/") + "/")
     if not objects:
         raise RuntimeError("Stage 1 trigger prefix is empty")
+    trigger_bucket = urlparse(args.trigger_uri).netloc
+    objects_with_bucket = [dict(item, Bucket=trigger_bucket) for item in objects]
     contract = build_task_contract(
         task_id=args.task_id,
         dataset_id=args.dataset_id,
         dataset_uri=args.trigger_uri,
     )
     seed = read_json(args.seed_manifest_uri, directory=work)
-    seed_proof = validate_seed_dataset_manifest(seed, contract=contract)
+    seed_proof = validate_seed_dataset_manifest(
+        seed,
+        contract=contract,
+        trigger_objects=objects_with_bucket,
+    )
     payload = {
         "schema": "npa.sim2real.trigger.v1",
         "stage": 1,
@@ -110,6 +120,11 @@ def _stage1(args: argparse.Namespace) -> None:
 
 
 def _stage2(args: argparse.Namespace) -> None:
+    from npa.workflows.sim2real.robot_contract import (
+        materialize_robot_contract,
+        stock_robot_contract,
+    )
+
     root, work = _root(args), _work(2)
     trigger = read_json(f"{root}/stage_01_trigger/trigger.json", directory=work)
     contract = dict(trigger["task_contract"])
@@ -132,15 +147,34 @@ def _stage2(args: argparse.Namespace) -> None:
             raise RuntimeError(f"Stage 2 configured asset is inaccessible: {uri}")
     contract_uri = f"{root}/stage_02_assets/task-contract.json"
     scene_uri = f"{root}/stage_02_assets/consumed_scene_spec.json"
+    robot_uri = f"{root}/stage_02_assets/consumed_robot_spec.json"
+    if args.robot_spec_uri:
+        robot = materialize_robot_contract(
+            robot_spec_uri=args.robot_spec_uri,
+            root_uri=root,
+            work_dir=work / "robot",
+            client=storage(),
+        )
+        scene["robot_spec_uri"] = robot_uri
+        scene["robot"] = robot["embodiment"]
+        scene["embodiment_digest"] = robot["embodiment_digest"]
+    else:
+        robot = stock_robot_contract()
     write_json(contract_uri, contract, directory=work)
     write_json(scene_uri, scene, directory=work)
+    write_json(robot_uri, robot, directory=work)
     publish_component_record(
         root_uri=root,
         stage=2,
         name="stage_02_assets",
         tier="WORKS",
         evidence="Consumed the normalized Isaac task, asset, robot, camera, and strict-success contract.",
-        artifacts={"task_contract": contract_uri, "scene": scene_uri},
+        artifacts={
+            "task_contract": contract_uri,
+            "scene": scene_uri,
+            "robot_contract": robot_uri,
+            "embodiment_digest": robot.get("embodiment_digest", "stock_franka"),
+        },
     )
 
 
@@ -389,40 +423,18 @@ def _stage6(args: argparse.Namespace) -> None:
     )
 
 
-def _root_parts(root_uri: str, run_id: str) -> tuple[str, str]:
-    parsed = urlparse(root_uri)
-    path = parsed.path.lstrip("/").rstrip("/")
-    suffix = "/" + run_id
-    if not path.endswith(suffix):
-        raise ValueError("run root must end with the exact workflow run ID")
-    return parsed.netloc, path[: -len(suffix)]
-
-
 def _common_isaac_env(args: argparse.Namespace, *, split_uri: str) -> dict[str, Any]:
-    root = _root(args)
-    bucket, base_prefix = _root_parts(root, args.run_id)
-    contract = read_json(
-        f"{root}/stage_02_assets/task-contract.json", directory=_work(0)
-    )
-    return {
-        "NPA_SIM2REAL_INLINE_TASK": "1",
-        "NPA_SIM2REAL_RUN_ID": args.run_id,
-        "NPA_SIM2REAL_BUCKET": bucket,
-        "NPA_SIM2REAL_S3_BUCKET": bucket,
-        "NPA_SIM2REAL_PREFIX": base_prefix,
-        "NPA_SIM2REAL_ISAAC_IMAGE": os.environ["NPA_TASK_IMAGE"],
-        "ISAAC_IMAGE": os.environ["NPA_TASK_IMAGE"],
-        "NPA_SIM2REAL_SOURCE_SHA": source_sha(),
-        "NPA_SIM2REAL_ISAAC_TASK": args.task_id,
-        "NPA_BYO_ISAAC_TASK": args.task_id,
-        "NPA_SIM2REAL_TASK_CONTRACT_DIGEST": contract["task_contract_digest"],
-        "NPA_SIM2REAL_TRAIN_ENVS_URI": split_uri,
-        "NPA_SIM2REAL_CAMERA_VIEWS": "primary,side,overhead",
-        "NPA_SIM2REAL_CAPTURE_FPS": args.capture_fps,
-        "NPA_SIM2REAL_CAPTURE_WIDTH": args.capture_width,
-        "NPA_SIM2REAL_CAPTURE_HEIGHT": args.capture_height,
-        "NPA_SIM2REAL_PNG_COMPRESS_LEVEL": args.png_compress_level,
-    }
+    from npa.workflows.sim2real.isaac_stage_contract import common_environment
+
+    return common_environment(args, split_uri=split_uri)
+
+
+def _assert_embodiment_evidence(
+    *, root: str, payload: dict[str, Any], stage: str
+) -> dict[str, Any]:
+    from npa.workflows.sim2real.isaac_stage_contract import verify_evidence
+
+    return verify_evidence(root=root, payload=payload, stage=stage)
 
 
 def _stage7(args: argparse.Namespace) -> None:
@@ -452,6 +464,9 @@ def _stage7(args: argparse.Namespace) -> None:
     if byo_isaac_policy_rollout.main() != 0:
         raise RuntimeError("Stage 7 Isaac rollout adapter failed")
     payload = json.loads(payload_path.read_text())
+    embodiment = _assert_embodiment_evidence(
+        root=root, payload=payload, stage="Stage 7 rollout"
+    )
     inv = dict(payload.get("component_invocation") or {})
     if inv.get("mode") != "npa_workflow_skypilot_task":
         raise RuntimeError("Stage 7 did not execute in its workflow-owned Isaac task")
@@ -479,72 +494,16 @@ def _stage7(args: argparse.Namespace) -> None:
             "component_invocation": inv,
             "outer_iteration": args.outer_iteration,
             "inner_iteration": args.inner_iteration,
+            "embodiment": embodiment,
         },
         require_gpu=True,
     )
 
 
 def _stage8(args: argparse.Namespace) -> None:
-    from npa.workbench.cosmos.reason import (
-        run_cosmos_reason_vlm,
-        task_description_from_manifest,
-    )
-    from npa.workflows.sim2real.workflow_io import image_provenance
+    from npa.workflows.sim2real.stage8_cosmos3 import run
 
-    root, work = _root(args), _work(8)
-    source = (
-        f"{root}/actions/train/outer-{args.outer_iteration:02d}/"
-        f"iter-{args.inner_iteration:02d}/"
-    )
-    actions = work / "actions"
-    storage().download_directory(source, str(actions))
-    results: list[dict[str, Any]] = []
-    for manifest_path in sorted(actions.glob("rollout-*/manifest.json")):
-        manifest = json.loads(manifest_path.read_text())
-        observations = list(manifest.get("camera_observations") or [])
-        frames = [manifest_path.parent / str(name) for name in observations]
-        frames = [path for path in frames if path.is_file()]
-        if not frames:
-            frames = sorted(manifest_path.parent.glob("camera-*.png"))
-        evaluation = run_cosmos_reason_vlm(
-            model_id=args.reason_model,
-            image_paths=frames,
-            actions=list(manifest.get("actions") or []),
-            task_description=task_description_from_manifest(manifest),
-            rollout_id=str(manifest.get("rollout_id") or manifest_path.parent.name),
-            threshold=args.threshold,
-        )
-        results.append(evaluation)
-    if not results:
-        raise RuntimeError("Stage 8 found no real Stage 7 rollouts")
-    payload = {
-        "schema": "npa.sim2real.cosmos_reason_lane.v1",
-        "lane": args.reason_lane,
-        "model": args.reason_model,
-        "evaluations": results,
-        "provenance": image_provenance(require_gpu=True),
-    }
-    output_uri = (
-        f"{root}/vlm_eval/train/outer-{args.outer_iteration:02d}/"
-        f"iter-{args.inner_iteration:02d}/{args.reason_lane}.json"
-    )
-    write_loop_output(
-        output_uri, payload, work / "out", args.outer_iteration, args.inner_iteration
-    )
-    publish_component_lane_record(
-        root_uri=root,
-        stage=8,
-        lane=f"{args.reason_lane}-o{args.outer_iteration}-i{args.inner_iteration}",
-        evidence="This standard-workflow leaf ran one declared Cosmos Reason evaluation lane.",
-        artifacts={
-            "result": output_uri,
-            "model": args.reason_model,
-            "rollout_count": len(results),
-            "outer_iteration": args.outer_iteration,
-            "inner_iteration": args.inner_iteration,
-        },
-        execution_provenance=payload["provenance"],
-    )
+    run(args)
 
 
 def _run_eval(
@@ -586,43 +545,55 @@ def _run_eval(
 
 
 def _stage9(args: argparse.Namespace) -> None:
-    from npa.workbench.cosmos.reason import merge_dual_reason_evaluations
     from npa.workflows.sim2real import byo_isaac_trainer
     from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
     from npa.workflows.sim2real.temporal_credit import convert_evaluation
 
     root, work = _root(args), _work(9)
+    expected_model = args.reason_model
     lane_base = (
         f"{root}/vlm_eval/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/"
     )
-    reason2 = read_json(lane_base + "reason2.json", directory=work / "r2")
-    reason3 = read_json(lane_base + "reason3.json", directory=work / "r3")
-    left = {item["rollout_id"]: item for item in reason2["evaluations"]}
-    right = {item["rollout_id"]: item for item in reason3["evaluations"]}
-    if set(left) != set(right) or not left:
-        raise RuntimeError("Stage 8 Reason lanes do not cover the same rollouts")
-    merged_dir, signal_dir = work / "merged", work / "signals"
-    merged_dir.mkdir()
-    signal_dir.mkdir()
-    merged: list[dict[str, Any]] = []
-    signals: list[dict[str, Any]] = []
-    for rollout_id in sorted(left):
-        evaluation = merge_dual_reason_evaluations(
-            left[rollout_id], right[rollout_id], threshold=args.threshold
-        )
-        signal = convert_evaluation(evaluation)
-        (merged_dir / f"{rollout_id}.json").write_text(json.dumps(evaluation, indent=2))
-        (signal_dir / f"{rollout_id}.json").write_text(json.dumps(signal, indent=2))
-        merged.append(evaluation)
-        signals.append(signal)
-    evidence_uri = f"{root}/inner_loop/outer-{args.outer_iteration:02d}/evidence.json"
-    merged_uri = lane_base + "merged/"
-    signal_uri = lane_base + "signals/"
+    cosmos3 = read_json(lane_base + "cosmos3.json", directory=work / "cosmos3")
     actions_uri = (
         f"{root}/actions/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/"
     )
+    stage7 = read_json(
+        actions_uri + "rollouts-result.json", directory=work / "stage7-rollouts"
+    )
+    stage8_record = read_json(
+        f"{root}/components/stage_08.json", directory=work / "stage8-record"
+    )
+    right = validate_hosted_evaluator(
+        stage7=stage7,
+        evaluator=cosmos3,
+        stage8_record=stage8_record,
+        expected_model=expected_model,
+        expected_source_sha=source_sha(),
+        evaluator_uri=lane_base + "cosmos3.json",
+        outer_iteration=args.outer_iteration,
+        inner_iteration=args.inner_iteration,
+    )
+    evaluation_dir, signal_dir = work / "evaluations", work / "signals"
+    evaluation_dir.mkdir()
+    signal_dir.mkdir()
+    evaluations: list[dict[str, Any]] = []
+    signals: list[dict[str, Any]] = []
+    for rollout_id in sorted(right):
+        evaluation = dict(right[rollout_id])
+        evaluation["threshold"] = args.threshold
+        signal = convert_evaluation(evaluation)
+        (evaluation_dir / f"{rollout_id}.json").write_text(
+            json.dumps(evaluation, indent=2)
+        )
+        (signal_dir / f"{rollout_id}.json").write_text(json.dumps(signal, indent=2))
+        evaluations.append(evaluation)
+        signals.append(signal)
+    evidence_uri = f"{root}/inner_loop/outer-{args.outer_iteration:02d}/evidence.json"
+    evaluation_uri = lane_base + "evaluations/"
+    signal_uri = lane_base + "signals/"
     prior: dict[str, Any] = {}
     if list_prefix(evidence_uri):
         prior = read_json(evidence_uri, directory=work / "prior-evidence")
@@ -631,25 +602,14 @@ def _stage9(args: argparse.Namespace) -> None:
         outer_iteration=args.outer_iteration,
         inner_iteration=args.inner_iteration,
         actions_uri=actions_uri,
-        merged_uri=merged_uri,
+        evaluation_uri=evaluation_uri,
         signal_uri=signal_uri,
-        sample_vlm_eval=merged[0],
+        sample_vlm_eval=evaluations[0],
         sample_signal=signals[0],
     )
     if replay is not None:
         candidate, selection, update = replay
         write_loop_output(evidence_uri, prior, work / "evidence", args.outer_iteration)
-        _publish_stage8_join(
-            root=root,
-            work=work,
-            lane_base=lane_base,
-            reason2=reason2,
-            reason3=reason3,
-            merged_uri=merged_uri,
-            rollout_count=len(merged),
-            outer_iteration=args.outer_iteration,
-            inner_iteration=args.inner_iteration,
-        )
         publish_component_record(
             root_uri=root,
             stage=9,
@@ -689,6 +649,9 @@ def _stage9(args: argparse.Namespace) -> None:
     if byo_isaac_trainer.main() != 0:
         raise RuntimeError("Stage 9 genuine BYO Isaac PPO failed")
     update = json.loads(training_output.read_text())
+    training_embodiment = _assert_embodiment_evidence(
+        root=root, payload=update, stage="Stage 9 PPO"
+    )
     if (
         update.get("component_invocation", {}).get("mode")
         != "npa_workflow_skypilot_task"
@@ -712,6 +675,11 @@ def _stage9(args: argparse.Namespace) -> None:
         output_path=validation_path,
         tag=f"validation-o{args.outer_iteration:02d}-i{args.inner_iteration:02d}",
     )
+    validation_embodiment = _assert_embodiment_evidence(
+        root=root, payload=validation, stage="Stage 9 validation"
+    )
+    if training_embodiment != validation_embodiment:
+        raise RuntimeError("Stage 9 train/validation embodiment evidence differs")
     validation_uri = (
         f"{root}/eval/validation/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/report.json"
@@ -726,6 +694,7 @@ def _stage9(args: argparse.Namespace) -> None:
         "checkpoint_sha256": validation.get("policy_checkpoint_sha256", ""),
         "validation_report_uri": validation_uri,
         "validation_report": validation,
+        "embodiment": training_embodiment,
     }
     prior_iterations = list(prior.get("iterations") or [])
     candidates = list(prior.get("checkpoint_candidates") or []) + [candidate]
@@ -739,12 +708,14 @@ def _stage9(args: argparse.Namespace) -> None:
             {
                 "iteration": args.inner_iteration,
                 "actions_uri": actions_uri,
-                "vlm_eval_uri": merged_uri,
+                "vlm_eval_uri": evaluation_uri,
                 "signal_uri": signal_uri,
                 "trainer_component_invocation": update.get("component_invocation"),
                 "update": update,
-                "sample_vlm_eval": merged[0],
+                "embodiment": training_embodiment,
+                "sample_vlm_eval": evaluations[0],
                 "sample_signal": signals[0],
+                "evaluator_usage": cosmos3.get("evaluator_usage"),
             }
         ],
         "checkpoint_candidates": candidates,
@@ -756,24 +727,13 @@ def _stage9(args: argparse.Namespace) -> None:
             selected_validation.get("success_rate") or 0.0
         ),
     }
-    storage().upload_directory(str(merged_dir), merged_uri)
+    storage().upload_directory(str(evaluation_dir), evaluation_uri)
     storage().upload_directory(str(signal_dir), signal_uri)
     write_json(
         lane_base + "signal-batch.json", {"signals": signals}, directory=work / "batch"
     )
     write_json(lane_base + "training-update.json", update, directory=work / "training")
     write_loop_output(evidence_uri, evidence, work / "evidence", args.outer_iteration)
-    _publish_stage8_join(
-        root=root,
-        work=work,
-        lane_base=lane_base,
-        reason2=reason2,
-        reason3=reason3,
-        merged_uri=merged_uri,
-        rollout_count=len(merged),
-        outer_iteration=args.outer_iteration,
-        inner_iteration=args.inner_iteration,
-    )
     publish_component_record(
         root_uri=root,
         stage=9,
@@ -787,6 +747,7 @@ def _stage9(args: argparse.Namespace) -> None:
             "validation_report": selection["validation_report_uri"],
             "ppo_iterations": args.ppo_iterations,
             "component_invocation": update.get("component_invocation"),
+            "embodiment": training_embodiment,
         },
         require_gpu=True,
     )
@@ -806,6 +767,28 @@ def _stage10(args: argparse.Namespace) -> None:
         output_path=report_path,
         tag=f"gold-o{args.outer_iteration:02d}",
     )
+    gold_embodiment = _assert_embodiment_evidence(
+        root=root, payload=report, stage="Stage 10 gold evaluation"
+    )
+    if gold_embodiment:
+        selected_uri = str(evidence.get("selected_checkpoint_uri") or "")
+        selected_candidate = next(
+            (
+                dict(item)
+                for item in evidence.get("checkpoint_candidates") or []
+                if str(item.get("checkpoint_uri") or "") == selected_uri
+            ),
+            {},
+        )
+        selected_embodiment = dict(selected_candidate.get("embodiment") or {})
+        if not selected_embodiment:
+            raise RuntimeError(
+                "Stage 10 selected checkpoint has no recorded training embodiment"
+            )
+        if gold_embodiment != selected_embodiment:
+            raise RuntimeError(
+                "Stage 10 checkpoint train/eval embodiment parity mismatch"
+            )
     render_manifest = dict(report.get("render_manifest") or {})
     render_prefix = str(render_manifest.get("renders_s3_uri") or "")
     canonical_renders = f"eval/gold-heldout/outer-{args.outer_iteration:02d}/renders"
@@ -842,6 +825,7 @@ def _stage10(args: argparse.Namespace) -> None:
             "renders": canonical_render_uri,
             "render_lineage": report["render_lineage"],
             "component_invocation": report.get("component_invocation"),
+            "embodiment": gold_embodiment,
         },
         require_gpu=True,
     )
@@ -968,6 +952,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-id", default="Isaac-Lift-Cube-Franka-v0")
     parser.add_argument("--assets-uri", default="")
     parser.add_argument("--scene-spec-uri", default="")
+    parser.add_argument("--robot-spec-uri", default="")
     parser.add_argument("--env-count", type=int, default=12)
     parser.add_argument("--train-fraction", type=float, default=0.5)
     parser.add_argument("--shard-index", type=int, default=0)
@@ -978,10 +963,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inner-iteration", type=int, default=1)
     parser.add_argument("--rollout-count", type=int, default=1)
     parser.add_argument("--steps-per-rollout", type=int, default=32)
-    parser.add_argument(
-        "--reason-lane", choices=("reason2", "reason3"), default="reason2"
-    )
-    parser.add_argument("--reason-model", default="nvidia/Cosmos-Reason2-8B")
+    parser.add_argument("--reason-model", default=DEFAULT_COSMOS3_MODEL)
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--ppo-num-envs", type=int, default=64)
     parser.add_argument("--ppo-iterations", type=int, default=10)

@@ -21,7 +21,7 @@ ARG LTX_SOURCE_URL=https://github.com/Lightricks/LTX-2.git
 ARG LTX_SOURCE_REF=fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca
 ARG NPA_SOURCE_COMMIT=unknown
 ARG NPA_RUNTIME_USER=ubuntu
-ARG UV_VERSION=0.9.8
+ARG UV_VERSION=0.11.15
 
 LABEL npa.tool="ltx2" \
       npa.version="2.5-rtfetch" \
@@ -78,6 +78,16 @@ COPY --chmod=0444 docker/workbench/ltx2/THIRD_PARTY_NOTICES.md /usr/share/doc/np
 
 RUN install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
       /workspace /workspace/.cache/npa/ltx2/runtime /workspace/model-cache/ltx-2.5 \
+      /opt/byof \
+    # The prebuilt BYOF runner needs provenance metadata, not the licensed
+    # source tree. This NPA-owned JSON identifies what ltx-runtime will fetch
+    # after the task receives the operator's entitlement.
+    && printf '{"source":"operator-runtime-fetch","repo":"%s","ref":"%s"}\n' \
+         "${LTX_SOURCE_URL}" "${LTX_SOURCE_REF}" \
+         > /opt/byof/npa_source_metadata.json \
+    && chown "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" \
+         /opt/byof/npa_source_metadata.json \
+    && chmod 0444 /opt/byof/npa_source_metadata.json \
     # BuildKit applies `COPY --chmod` to the parent directories it creates on the
     # way, so the 0444 file modes above also landed on /opt/npa/ltx2 and
     # /usr/share/doc/npa-ltx2 — directories with no execute bit, which the

@@ -10,7 +10,10 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 import textwrap
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -25,6 +28,7 @@ from npa.fleet.spec import (
     FleetSpec,
     FleetSpecError,
     NodePoolSpec,
+    ObjectStorageSpec,
     ProjectSpec,
     load_spec,
 )
@@ -142,6 +146,173 @@ def test_single_gpu_preset_auto_disables_gpu_cluster() -> None:
     assert cluster.resolved_enable_gpu_cluster() is False
 
 
+@pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None, [], {}])
+@pytest.mark.parametrize(
+    "field_path",
+    [
+        ("defaults", "cpu_nodes", "preemptible"),
+        ("defaults", "gpu_nodes", "preemptible"),
+        ("defaults", "enable_gpu_cluster"),
+        ("defaults", "enable_filestore"),
+        ("defaults", "allow_unsafe_nvswitch_operator"),
+        ("defaults", "gpu_cuda_smoke"),
+        ("projects", 0, "clusters", 0, "cpu_nodes", "preemptible"),
+        ("projects", 0, "clusters", 0, "gpu_nodes", "preemptible"),
+        ("projects", 0, "clusters", 0, "enable_gpu_cluster"),
+        ("projects", 0, "clusters", 0, "enable_filestore"),
+        ("projects", 0, "clusters", 0, "allow_unsafe_nvswitch_operator"),
+        ("projects", 0, "clusters", 0, "gpu_cuda_smoke"),
+        ("projects", 0, "object_storage", "enabled"),
+    ],
+)
+def test_fleet_boolean_fields_validate_declared_types(
+    field_path: tuple[str | int, ...], invalid_value: object
+) -> None:
+    data = _base_mapping()
+    data["projects"][0]["object_storage"] = {"size_gibibytes": 1}
+    data["projects"][0]["clusters"] = [{"cpu_nodes": {}, "gpu_nodes": {}}]
+    target = data
+    for key in field_path[:-1]:
+        target = target[key]
+    target[field_path[-1]] = invalid_value
+
+    if invalid_value is None and field_path[-1] == "enable_gpu_cluster":
+        cluster = spec_from_mapping(data).projects[0].clusters[0]
+        assert cluster.enable_gpu_cluster is None
+        return
+    with pytest.raises(FleetSpecError, match="must be a boolean"):
+        spec_from_mapping(data)
+
+
+@pytest.mark.parametrize(
+    "inherited,platform,preset,expected",
+    [
+        (True, "gpu-rtx6000", "1gpu-24vcpu-218gb", False),
+        (False, "gpu-h200-sxm", "8gpu-128vcpu-1600gb", True),
+    ],
+)
+@pytest.mark.parametrize("null_location", ["defaults", "cluster"])
+def test_fleet_plan_preserves_null_gpu_cluster_auto_selection(
+    tmp_path: Path,
+    inherited: bool,
+    platform: str,
+    preset: str,
+    expected: bool,
+    null_location: str,
+) -> None:
+    data = _base_mapping()
+    data["defaults"].update(
+        enable_gpu_cluster=inherited,
+        gpu_nodes={"count": 1, "platform": platform, "preset": preset},
+        infiniband_fabric="fabric-a",
+    )
+    data["projects"] = [{"name": "a", "clusters": [{"name": "automatic"}]}]
+    target = data["defaults"]
+    if null_location == "cluster":
+        target = data["projects"][0]["clusters"][0]
+    target["enable_gpu_cluster"] = None
+    path = tmp_path / "fleet.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = runner.invoke(
+        app, ["fleet", "plan", "--spec", str(path), "--output", "json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert (
+        json.loads(result.output)["projects"][0]["clusters"][0]["enable_gpu_cluster"]
+        is expected
+    )
+    cluster = load_spec(path).projects[0].clusters[0]
+    assert cluster.enable_gpu_cluster is None
+    assert f"enable_gpu_cluster = {str(expected).lower()}" in render_tfvars(cluster)
+
+
+def test_fleet_boolean_fields_preserve_merged_boolean_values() -> None:
+    data = _base_mapping()
+    data["defaults"].update(
+        {
+            "cpu_nodes": {**data["defaults"]["cpu_nodes"], "preemptible": True},
+            "gpu_nodes": {
+                **data["defaults"]["gpu_nodes"],
+                "platform": "gpu-h200-sxm",
+                "preset": "8gpu-128vcpu-1600gb",
+                "preemptible": False,
+            },
+            "enable_gpu_cluster": True,
+            "infiniband_fabric": "fabric-a",
+            "enable_filestore": True,
+            "allow_unsafe_nvswitch_operator": True,
+            "gpu_cuda_smoke": False,
+        }
+    )
+    data["projects"] = [
+        {
+            "name": "a",
+            "object_storage": {"enabled": False},
+            "clusters": [
+                {"name": "default"},
+                {
+                    "name": "overridden",
+                    "cpu_nodes": {"preemptible": False},
+                    "gpu_nodes": {"preemptible": True},
+                    "enable_gpu_cluster": False,
+                    "enable_filestore": False,
+                    "allow_unsafe_nvswitch_operator": False,
+                    "gpu_cuda_smoke": True,
+                },
+            ],
+        }
+    ]
+
+    spec = spec_from_mapping(data)
+    spec.validate()
+    inherited, overridden = spec.projects[0].clusters
+    assert inherited.cpu_nodes.preemptible is True
+    assert inherited.gpu_nodes.preemptible is False
+    assert inherited.enable_gpu_cluster is True
+    assert inherited.enable_filestore is True
+    assert inherited.allow_unsafe_nvswitch_operator is True
+    assert inherited.gpu_cuda_smoke is False
+    assert overridden.cpu_nodes.preemptible is False
+    assert overridden.gpu_nodes.preemptible is True
+    assert overridden.enable_gpu_cluster is False
+    assert overridden.enable_filestore is False
+    assert overridden.allow_unsafe_nvswitch_operator is False
+    assert overridden.gpu_cuda_smoke is True
+    assert spec.projects[0].object_storage.enabled is False
+
+
+def test_rtx_8gpu_preset_auto_disables_gpu_cluster() -> None:
+    cluster = ClusterSpec(
+        name="rtx",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+        ),
+    )
+    cluster.validate()
+
+    assert cluster.resolved_enable_gpu_cluster() is False
+    assert "enable_gpu_cluster = false" in render_tfvars(cluster)
+
+
+def test_rtx_8gpu_preset_rejects_explicit_gpu_cluster() -> None:
+    cluster = ClusterSpec(
+        name="rtx",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+        ),
+        enable_gpu_cluster=True,
+        infiniband_fabric="fabric-a",
+    )
+
+    with pytest.raises(FleetSpecError, match="fabric-capable 8-GPU SXM/NVL"):
+        cluster.validate()
+
+
 def test_enable_gpu_cluster_requires_8gpu_preset_and_fabric() -> None:
     cluster = ClusterSpec(
         name="c",
@@ -150,7 +321,7 @@ def test_enable_gpu_cluster_requires_8gpu_preset_and_fabric() -> None:
         ),
         enable_gpu_cluster=True,
     )
-    with pytest.raises(FleetSpecError, match="8-GPU preset"):
+    with pytest.raises(FleetSpecError, match="fabric-capable 8-GPU SXM/NVL"):
         cluster.validate()
 
 
@@ -188,6 +359,295 @@ def test_filestore_mount_contract_parses_and_validates() -> None:
     cluster.filestore_mount_tag = "bad tag"
     with pytest.raises(FleetSpecError, match="without whitespace or commas"):
         cluster.validate()
+
+
+def test_project_object_storage_is_separate_and_exact() -> None:
+    data = _base_mapping()
+    data["projects"] = [
+        {
+            "name": "a",
+            "object_storage": {
+                "storage_class": "enhanced",
+                "size_gibibytes": 6 * 1024,
+            },
+        }
+    ]
+
+    spec = spec_from_mapping(data)
+    project = spec.projects[0]
+    assert project.object_storage is not None
+    assert project.object_storage.enabled is True
+    assert project.object_storage.normalized_storage_class() == "enhanced_throughput"
+    assert project.object_storage.size_gibibytes == 6144
+    assert project.clusters[0].filestore_disk_size_gibibytes == 1024
+
+    from npa.fleet.lifecycle import plan_fleet
+
+    storage_plan = plan_fleet(spec)["projects"][0]["object_storage"]
+    assert storage_plan == {
+        "enabled": True,
+        "storage_class": "enhanced",
+        "size_gibibytes": 6144,
+        "bucket_name_source": "generated",
+        "retained_on_destroy": True,
+    }
+    assert "bucket_name" not in storage_plan
+
+
+@pytest.mark.parametrize(
+    ("storage", "message"),
+    [
+        (ObjectStorageSpec(enabled=True, size_gibibytes=0), "must be positive"),
+        (
+            ObjectStorageSpec(
+                enabled=True, storage_class="archive", size_gibibytes=1024
+            ),
+            "standard, enhanced, or intelligent",
+        ),
+        (
+            ObjectStorageSpec(enabled=False, size_gibibytes=1024),
+            "must be enabled",
+        ),
+    ],
+)
+def test_project_object_storage_rejects_invalid_contract(
+    storage: ObjectStorageSpec, message: str
+) -> None:
+    with pytest.raises(FleetSpecError, match=message):
+        storage.validate()
+
+
+@pytest.mark.parametrize(
+    ("bucket_name", "accepted"),
+    [
+        ("", True),  # Empty selects Fleet's generated bucket name.
+        ("a", True),
+        ("0", True),
+        ("a-0", True),
+        ("a" * 63, True),
+        ("a" * 31 + "-" + "0" * 31, True),
+        ("é", True),  # Preserve the existing Unicode alphanumeric contract.
+        ("a" * 64, False),
+        ("-", False),
+        ("-a", False),
+        ("a-", False),
+        ("a--b", False),
+        ("A", False),
+        (" a", False),
+        ("a ", False),
+        ("a_b", False),
+        ("a.b", False),
+        ("a\nb", False),
+    ],
+)
+def test_object_storage_bucket_name_preserves_dns_helper_boundaries(
+    bucket_name: str, accepted: bool
+) -> None:
+    from npa.fleet.spec import _is_dns_name
+
+    storage = ObjectStorageSpec(enabled=True, size_gibibytes=1, bucket_name=bucket_name)
+    assert _is_dns_name(bucket_name) is (accepted and bool(bucket_name))
+    if accepted:
+        storage.validate()
+    else:
+        with pytest.raises(FleetSpecError, match="lowercase DNS-style bucket name"):
+            storage.validate()
+
+
+def test_object_storage_provider_readback_requires_exact_shape() -> None:
+    from npa.fleet.lifecycle import _verify_object_storage_shape
+
+    storage = ObjectStorageSpec(
+        enabled=True, storage_class="enhanced", size_gibibytes=3 * 1024
+    )
+    item = {
+        "spec": {
+            "default_storage_class": "enhanced_throughput",
+            "max_size_bytes": str(3 * 1024**4),
+        }
+    }
+    _verify_object_storage_shape(item, storage)
+
+    item["spec"]["max_size_bytes"] = str(3 * 1024**4 - 1)
+    with pytest.raises(RuntimeError, match="exact capacity"):
+        _verify_object_storage_shape(item, storage)
+
+
+@pytest.mark.parametrize("fallback", [None, "yes", "0"])
+def test_fleet_storage_scope_restores_ambient_fallback_after_error(
+    monkeypatch: pytest.MonkeyPatch, fallback: str | None
+) -> None:
+    from npa.fleet.lifecycle import _storage_profile_scope
+
+    key = "NPA_ALLOW_EDITORS_STORAGE_FALLBACK"
+    if fallback is None:
+        monkeypatch.delenv(key, raising=False)
+    else:
+        monkeypatch.setenv(key, fallback)
+    with pytest.raises(RuntimeError, match="bootstrap failed"):
+        with _storage_profile_scope(""):
+            assert os.environ[key] == "0"
+            raise RuntimeError("bootstrap failed")
+    assert os.environ.get(key) == fallback
+
+
+@pytest.mark.parametrize("cleanup_ok", [True, False])
+@pytest.mark.parametrize("bucket_exists", [True, False])
+def test_project_object_storage_reconciles_and_persists_private_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cleanup_ok: bool,
+    bucket_exists: bool,
+) -> None:
+    from inspect import signature
+
+    from npa.clients import nebius as nebius_client
+    from npa.clients import storage_setup
+    from npa.clients.storage_validation import StorageProbeResult
+    from npa.fleet.lifecycle import _ensure_project_object_storage
+
+    storage = ObjectStorageSpec(
+        enabled=True, storage_class="enhanced", size_gibibytes=2 * 1024
+    )
+    project = ProjectSpec(
+        name="a",
+        clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))],
+        object_storage=storage,
+    )
+    spec = FleetSpec(name="f", project_prefix="f-", projects=[project])
+    provider_item = {
+        "metadata": {
+            "id": "storagebucket-test",
+            "name": "test-bucket",
+            "parent_id": "project-test",
+        },
+        "status": {
+            "state": "ACTIVE",
+            "suspension_state": "NOT_SUSPENDED",
+            "region": "test-region",
+        },
+        "spec": {
+            "default_storage_class": "enhanced_throughput",
+            "max_size_bytes": str(2 * 1024**4),
+        },
+    }
+    storage.bucket_name = "test-bucket"
+    lookups = iter([provider_item if bucket_exists else None, provider_item])
+    monkeypatch.setattr(
+        nebius_client,
+        "get_bucket_by_name",
+        lambda _project_id, _bucket_name: next(lookups),
+    )
+    calls: list[dict] = []
+    provision_storage = storage_setup.provision_storage
+    provision_parameters = signature(provision_storage).parameters
+    monkeypatch.setenv("NPA_ALLOW_EDITORS_STORAGE_FALLBACK", "yes")
+
+    def fake_bootstrap(*args, allow_editors_fallback=False, **kwargs):
+        assert args == ("project-test", "tenant-test", "test-region")
+        assert allow_editors_fallback is False
+        assert kwargs["service_account_name"] == "npa-fleet-storage"
+        assert kwargs["access_key_name"] == "npa-fleet-access-key"
+        return {
+            "service_account_id": "serviceaccount-test",
+            "nebius_api_key": "NPA_ACCESS_CANARY",
+            "nebius_secret_key": "NPA_SECRET_CANARY",
+            "s3_bucket": "test-bucket",
+            "s3_endpoint": "https://storage.example",
+        }
+
+    monkeypatch.setattr(nebius_client, "bootstrap_environment", fake_bootstrap)
+    monkeypatch.setattr(
+        storage_setup,
+        "probe_storage_write",
+        lambda **kwargs: StorageProbeResult(
+            True,
+            "ok",
+            "verified",
+            cleanup_attempted=True,
+            cleanup_succeeded=cleanup_ok,
+            retained_object=not cleanup_ok,
+        ),
+    )
+
+    def fake_provision_storage(**kwargs):
+        # Fleet must explicitly select its own stable identity for both create
+        # and reuse, keeping LeRobot's bootstrap identity independent.
+        assert kwargs["service_account_name"] == "npa-fleet-storage"
+        assert kwargs["access_key_name"] == "npa-fleet-access-key"
+        for name in ("service_account_name", "access_key_name"):
+            assert kwargs[name] != provision_parameters[name].default
+        assert kwargs["allow_editors_fallback"] is False
+        assert kwargs["project_id"] == "project-test"
+        assert kwargs["tenant_id"] == "tenant-test"
+        assert kwargs["bucket_name"] == "test-bucket"
+        calls.append(kwargs)
+        return provision_storage(**kwargs)
+
+    monkeypatch.setattr(storage_setup, "provision_storage", fake_provision_storage)
+
+    kwargs = dict(
+        spec=spec,
+        project=project,
+        project_id="project-test",
+        tenant_id="tenant-test",
+        region="test-region",
+        profile="test-profile",
+        fleet_root=tmp_path,
+        prefix="f-",
+        on_status=None,
+    )
+
+    if not cleanup_ok:
+        with pytest.raises(RuntimeError, match="write/read/delete probe"):
+            _ensure_project_object_storage(**kwargs)
+        assert os.environ["NPA_ALLOW_EDITORS_STORAGE_FALLBACK"] == "yes"
+        assert not (tmp_path / "a" / ".npa-fleet-object-storage.json").exists()
+        return
+
+    result = _ensure_project_object_storage(**kwargs)
+
+    assert os.environ["NPA_ALLOW_EDITORS_STORAGE_FALLBACK"] == "yes"
+    assert result["status"] == "ready"
+    assert result["writable"] is True
+    assert calls[0]["bucket_storage_class"] == "enhanced_throughput"
+    assert calls[0]["bucket_max_size_bytes"] == 2 * 1024**4
+    assert calls[0]["project_alias"] == "f-a"
+    state = json.loads((tmp_path / "a" / ".npa-fleet-object-storage.json").read_text())
+    assert state["project_id"] == "project-test"
+    assert state["storage_class"] == "enhanced_throughput"
+    assert state["size_gibibytes"] == 2048
+
+
+@pytest.mark.parametrize(
+    "storage_class", [None, "", "unknown", "STORAGE_CLASS_UNSPECIFIED"]
+)
+def test_object_storage_unknown_provider_class_cannot_default_to_standard(
+    storage_class,
+) -> None:
+    from npa.fleet.lifecycle import _verify_object_storage_shape
+
+    with pytest.raises(RuntimeError, match="storage class and exact capacity"):
+        _verify_object_storage_shape(
+            {
+                "spec": {
+                    "default_storage_class": storage_class,
+                    "max_size_bytes": 1024**3,
+                }
+            },
+            ObjectStorageSpec(enabled=True, size_gibibytes=1),
+        )
+
+
+@pytest.mark.parametrize("capacity", [None, True, float(1024**3), -1, "1.5", {}])
+def test_object_storage_malformed_provider_capacity_fails_closed(capacity) -> None:
+    from npa.fleet.lifecycle import _verify_object_storage_shape
+
+    with pytest.raises(RuntimeError, match="invalid capacity cap"):
+        _verify_object_storage_shape(
+            {"spec": {"default_storage_class": "STANDARD", "max_size_bytes": capacity}},
+            ObjectStorageSpec(enabled=True, size_gibibytes=1),
+        )
 
 
 def test_cluster_needs_at_least_one_node() -> None:
@@ -250,6 +710,22 @@ def test_render_tfvars_rtx_single_gpu() -> None:
     assert "loki = { enabled = false" in tf
     assert "enable_grafana           = false" in tf
     assert 'ssh_public_key = { key = "ssh-ed25519 AAAA me" }' in tf
+
+
+def test_render_tfvars_uses_operator_filesystem_csi_repository() -> None:
+    cluster = ClusterSpec(
+        name="storage",
+        cpu_nodes=NodePoolSpec(count=1),
+        enable_filestore=True,
+        filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
+    )
+
+    tf = render_tfvars(cluster, ssh_public_key="ssh-ed25519 test")
+
+    assert (
+        "filesystem_csi = { chart_repository = "
+        '"oci://charts.example.invalid/nebius", chart_version = "0.1.6"' in tf
+    )
 
 
 def test_render_tfvars_8gpu_cluster_emits_fabric() -> None:
@@ -328,6 +804,39 @@ def test_render_tfvars_capacity_block_is_strict() -> None:
         'gpu_nodes_reservation_policy = { policy = "STRICT", '
         'reservation_ids = ["capacityblockgroup-test"] }' in tf
     )
+
+
+def test_render_tfvars_splits_independent_strict_reserved_workers() -> None:
+    cluster = ClusterSpec(
+        name="reserved",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_gpu_cluster=False,
+    )
+    tf = render_tfvars(cluster)
+    assert "gpu_nodes_fixed_count_per_group = 1" in tf
+    assert "gpu_node_groups = 2" in tf
+
+
+def test_render_tfvars_keeps_fabric_gpu_cluster_in_one_group() -> None:
+    cluster = ClusterSpec(
+        name="reserved-fabric",
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-h200-sxm",
+            preset="8gpu-128vcpu-1600gb",
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_gpu_cluster=True,
+        infiniband_fabric="us-central1-a",
+    )
+    tf = render_tfvars(cluster)
+    assert "gpu_nodes_fixed_count_per_group = 2" in tf
+    assert "gpu_node_groups = 1" in tf
 
 
 def test_render_tfvars_gpu_defaults_managed_and_operator_is_explicit() -> None:
@@ -440,6 +949,9 @@ def test_plan_reports_strict_reservation_without_echoing_capacity_block_id() -> 
     data["defaults"]["gpu_nodes"]["capacity_block_group"] = (
         "capacityblockgroup-runtime-only"
     )
+    data["defaults"]["filesystem_csi_chart_repository"] = (
+        "oci://private.example.invalid/operator-only"
+    )
     plan = plan_fleet(spec_from_mapping(data))
     cluster_plan = plan["projects"][0]["clusters"][0]
     assert cluster_plan["gpu_reservation"] == "strict"
@@ -447,7 +959,9 @@ def test_plan_reports_strict_reservation_without_echoing_capacity_block_id() -> 
     assert cluster_plan["filestore_disk_size_gibibytes"] == 1024
     assert cluster_plan["filestore_mount_path"] == "/mnt/data"
     assert cluster_plan["filestore_mount_tag"] == "data"
+    assert cluster_plan["filesystem_csi_enabled"] is True
     assert "capacityblockgroup-runtime-only" not in json.dumps(plan)
+    assert "private.example.invalid" not in json.dumps(plan)
 
 
 def test_load_spec_from_yaml(tmp_path) -> None:
@@ -473,18 +987,41 @@ def test_load_spec_from_yaml(tmp_path) -> None:
 # --------------------------------------------------------------------------- #
 # lifecycle helpers (mocked, no infra)
 # --------------------------------------------------------------------------- #
-def test_resolve_project_id_existing_by_id() -> None:
+def test_resolve_project_id_existing_by_id(monkeypatch) -> None:
     from npa.fleet import lifecycle
 
+    calls = []
+
+    def get_project(binary, project_id, env, profile):
+        calls.append((binary, project_id, env, profile))
+        return {
+            "metadata": {
+                "id": "project-abc",
+                "parent_id": "tenant-x",
+                "name": "private-name",
+            },
+            "status": {"container_state": "ACTIVE", "region": "us-central1"},
+        }
+
+    monkeypatch.setattr(lifecycle, "_get_project", get_project)
     project = ProjectSpec(
+        name="local-role",
         project_id="project-abc",
         clusters=[ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1))],
     )
     pid, created = lifecycle.resolve_project_id(
-        "nebius", "tenant-x", project, prefix="fleet1-test-", create=True, env={}
+        "nebius",
+        "tenant-x",
+        project,
+        prefix="fleet1-test-",
+        create=False,
+        env={},
+        region="us-central1",
+        profile="selected-profile",
     )
     assert pid == "project-abc"
     assert created is False
+    assert calls == [("nebius", "project-abc", {}, "selected-profile")]
 
 
 def test_resolve_project_id_creates_when_absent(monkeypatch, tmp_path: Path) -> None:
@@ -521,6 +1058,41 @@ def test_resolve_project_id_creates_when_absent(monkeypatch, tmp_path: Path) -> 
     assert resource["labels"] == {"tenant_id": "tenant-x", "region": "us-central1"}
 
 
+@pytest.mark.parametrize(
+    "section,field,value,reason",
+    [
+        ("metadata", "id", "project-other", "provider id"),
+        ("metadata", "parent_id", "tenant-other", "another tenant"),
+        ("status", "region", "eu-north1", "region"),
+        ("status", "container_state", "DELETING", "active"),
+        ("status", "container_state", None, "active"),
+        ("status", "suspension_state", "SUSPENDED", "suspended"),
+        ("metadata", "deleted_at", "2026-01-01T00:00:00Z", "deleted"),
+    ],
+)
+def test_explicit_project_id_rejects_unusable_provider_identity(
+    monkeypatch, section, field, value, reason
+) -> None:
+    from npa.fleet import lifecycle
+
+    payload = {
+        "metadata": {"id": "project-exact", "parent_id": "tenant-x"},
+        "status": {"container_state": "ACTIVE", "region": "us-central1"},
+    }
+    payload[section][field] = value
+    monkeypatch.setattr(lifecycle, "_get_project", lambda *a, **k: payload)
+    with pytest.raises(ValueError, match=reason):
+        lifecycle.resolve_project_id(
+            "nebius",
+            "tenant-x",
+            ProjectSpec(project_id="project-exact"),
+            prefix="",
+            create=False,
+            env={},
+            region="us-central1",
+        )
+
+
 def test_resolve_project_id_reuses_existing_by_name(monkeypatch) -> None:
     from npa.fleet import lifecycle
 
@@ -541,6 +1113,7 @@ def test_resolve_project_id_reuses_existing_by_name(monkeypatch) -> None:
                 "parentId": "tenant-x",
             },
             "spec": {"region": "us-central1"},
+            "status": {"container_state": "ACTIVE"},
         },
     )
     project = ProjectSpec(
@@ -578,7 +1151,7 @@ def test_resolve_project_id_rejects_same_name_in_wrong_region(monkeypatch) -> No
                 "id": "project-found",
                 "parent_id": "tenant-x",
             },
-            "status": {"region": "eu-north1"},
+            "status": {"region": "eu-north1", "container_state": "ACTIVE"},
         },
     )
     project = ProjectSpec(
@@ -710,6 +1283,21 @@ def test_deploy_yes_flag_skips_prompt_and_runs(tmp_path, monkeypatch) -> None:
     )
     assert result.exit_code == 0, result.output
     assert "2 deployed" in result.output
+    assert captured["repair_stopped_placeholder"] is False
+
+    result = runner.invoke(
+        app,
+        [
+            "fleet",
+            "deploy",
+            "--spec",
+            str(_spec_file(tmp_path)),
+            "--yes",
+            "--repair-stopped-placeholder",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["repair_stopped_placeholder"] is True
 
 
 def test_destroy_aborts_on_declined_confirmation(tmp_path, monkeypatch) -> None:
@@ -956,6 +1544,80 @@ def test_prepare_install_dir_patches_eu_domain(tmp_path) -> None:
     assert not any("not patched" in m for m in msgs)
 
 
+def test_prepare_install_dir_supports_explicit_region_without_changing_source(
+    tmp_path,
+) -> None:
+    from npa.fleet import lifecycle as L
+    from npa.cluster_backends.mk8s_render import patch_explicit_region_defaults
+
+    root = _fake_recipe(tmp_path, 'provider "nebius" {}\n')
+    fields = (
+        "cpu_nodes_platform",
+        "cpu_nodes_preset",
+        "gpu_nodes_platform",
+        "gpu_nodes_preset",
+        "infiniband_fabric",
+    )
+    original = (
+        'locals {\n  regions_default = { known = { cpu_nodes_platform = "cpu-d3" } }\n'
+        "  current_region_defaults = local.regions_default[var.region]\n"
+        + "".join(
+            f"  {field} = coalesce(var.{field}, local.current_region_defaults.{field})\n"
+            for field in fields
+        )
+        + "}\n"
+    )
+    source = root / "k8s-training" / "locals.tf"
+    source.write_text(original)
+    (root / "k8s-training" / "helm.tf").write_text('module "gpu-operator" {}\n')
+    # This test exercises region compatibility with the real RTX selector
+    # contract, so materialize the same Operator wiring as the shipped recipe.
+    shipped = L._find_vendored_recipe_root()
+    assert shipped is not None
+    import shutil
+
+    for filename in ("variables.tf", "helm.tf"):
+        shutil.copy2(
+            shipped / "k8s-training" / filename, root / "k8s-training" / filename
+        )
+    shutil.copytree(
+        shipped / "modules" / "gpu-operator", root / "modules" / "gpu-operator"
+    )
+    workdir = L._prepare_install_dir(
+        tmp_path / "installation",
+        recipe_root=root,
+        region="uk-south2",
+        cluster=ClusterSpec(
+            name="render",
+            gpu_workload_profile="rtx-rendering",
+            gpu_nodes=NodePoolSpec(
+                count=1,
+                platform="gpu-rtx6000-a",
+                preset="8gpu-192vcpu-1744gb",
+            ),
+            cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="48vcpu-192gb"),
+        ),
+        ssh_public_key="ssh-test",
+    )
+    patched = (workdir / "locals.tf").read_text()
+    assert source.read_text() == original
+    assert 'known = { cpu_nodes_platform = "cpu-d3" }' in patched
+    assert "try(local.regions_default[var.region], {})" in patched
+    for field in fields:
+        assert f"try(local.current_region_defaults.{field}, null)" in patched
+    assert patch_explicit_region_defaults(patched) == patched
+    tfvars = (workdir / "terraform.tfvars").read_text()
+    assert '"gpu-rtx6000-a"' in tfvars and '"8gpu-192vcpu-1744gb"' in tfvars
+    assert "uk-south2" not in patched  # no invented per-region defaults
+
+
+def test_region_compatibility_patch_preserves_custom_recipe_expressions() -> None:
+    from npa.cluster_backends.mk8s_render import patch_explicit_region_defaults
+
+    custom = "locals { current_region_defaults = var.operator_defaults }\n"
+    assert patch_explicit_region_defaults(custom) == custom
+
+
 def test_prepare_install_dir_warns_when_provider_domain_not_matched(tmp_path) -> None:
     from npa.fleet import lifecycle as L
 
@@ -995,6 +1657,63 @@ def _add_quiet_filesystem_verifier(recipe_root: Path) -> Path:
     return verifier
 
 
+def _add_attach_racy_filesystem_verifier(recipe_root: Path) -> Path:
+    verifier = (
+        recipe_root
+        / "k8s-training"
+        / "filesystem-csi-validation"
+        / "01-verify-node-filesystem-mounts.sh"
+    )
+    verifier.parent.mkdir(parents=True, exist_ok=True)
+    verifier.write_text(
+        "#!/usr/bin/env bash\n"
+        'MOUNT_TAG="${MOUNT_TAG:-data}"\n'
+        'if kubectl debug "${node}" 2>&1 | tee "${output_file}"; then\n'
+        "    if ! grep -Fq \\\n"
+        '      "[result] PASS: shared filesystem host mount is writable '
+        'virtiofs with reboot-safe nofail at ${MOUNT_POINT} on this node" \\\n'
+        '      "${output_file}"; then\n'
+        "      FAILED=1\n"
+        "    fi\n"
+        "fi\n"
+    )
+    return verifier
+
+
+def _add_filesystem_validation_common(recipe_root: Path) -> Path:
+    common = recipe_root / "k8s-training" / "filesystem-csi-validation" / "common.sh"
+    common.parent.mkdir(parents=True, exist_ok=True)
+    common.write_text(
+        'MOUNT_POINT="${MOUNT_POINT:-$(default_mount_point)}"\n'
+        'MOUNT_POINT="${MOUNT_POINT:-/mnt/data}"\n'
+    )
+    return common
+
+
+def _add_classless_filesystem_smoke_manifest(recipe_root: Path) -> Path:
+    manifest = (
+        recipe_root
+        / "k8s-training"
+        / "filesystem-csi-validation"
+        / "manifests"
+        / "01-csi-smoke-test.yaml"
+    )
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        "apiVersion: v1\n"
+        "kind: PersistentVolumeClaim\n"
+        "spec:\n"
+        "  accessModes:\n"
+        "    - ReadWriteMany\n"
+        "---\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "spec:\n"
+        "  containers: []\n"
+    )
+    return manifest
+
+
 def test_prepare_install_dir_patches_external_recipe_debug_quiet(tmp_path) -> None:
     from npa.fleet import lifecycle as L
 
@@ -1016,6 +1735,112 @@ def test_prepare_install_dir_patches_external_recipe_debug_quiet(tmp_path) -> No
     )
     assert "--quiet" in source.read_text()
     assert "--quiet" not in installed.read_text()
+
+
+def test_prepare_install_dir_binds_filesystem_verifier_mount_path(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    source = _add_filesystem_validation_common(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(
+            name="c",
+            cpu_nodes=NodePoolSpec(count=1),
+            filestore_mount_path="/mnt/shared data",
+        ),
+        ssh_public_key="k",
+    )
+
+    installed = (workdir / "filesystem-csi-validation" / "common.sh").read_text()
+    assert "$(default_mount_point)" in source.read_text()
+    assert "$(default_mount_point)" not in installed
+    assert 'if [[ -z "${MOUNT_POINT:-}" ]]; then' in installed
+    assert "MOUNT_POINT='/mnt/shared data'" in installed
+    assert 'MOUNT_POINT="${MOUNT_POINT:-/mnt/data}"' in installed
+
+
+def test_prepare_install_dir_pins_filesystem_smoke_storage_class(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    source = _add_classless_filesystem_smoke_manifest(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        ssh_public_key="k",
+    )
+
+    installed = (
+        workdir / "filesystem-csi-validation" / "manifests" / "01-csi-smoke-test.yaml"
+    ).read_text()
+    assert "storageClassName:" not in source.read_text()
+    assert installed.count("storageClassName: csi-mounted-fs-path-sc") == 1
+    assert installed.index("storageClassName:") < installed.index("accessModes:")
+    assert installed.index("storageClassName:") < installed.index("kind: Pod")
+
+
+def test_prepare_install_dir_recovers_kubectl_debug_attach_race(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    source = _add_attach_racy_filesystem_verifier(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        ssh_public_key="k",
+    )
+
+    installed = (
+        workdir / "filesystem-csi-validation" / "01-verify-node-filesystem-mounts.sh"
+    ).read_text()
+    assert "waiting for detached debugger evidence" not in source.read_text()
+    assert "waiting for detached debugger evidence" in installed
+    assert 'MOUNT_TAG="${MOUNT_TAG:-data}"' not in installed
+    assert 'if [[ -z "${MOUNT_TAG:-}" ]]; then' in installed
+    assert "MOUNT_TAG=data" in installed
+    assert "--for=jsonpath='{.status.phase}'=Succeeded" in installed
+    assert 'kubectl logs -n "${TEST_NAMESPACE}" "${debug_pod_name}"' in installed
+    assert installed.index("waiting for detached debugger evidence") < installed.index(
+        "    if ! grep -Fq \\\n"
+    )
+
+
+def test_prepare_install_dir_binds_custom_filesystem_mount_tag(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    _add_attach_racy_filesystem_verifier(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(
+            name="c",
+            cpu_nodes=NodePoolSpec(count=1),
+            filestore_mount_tag="shared storage",
+        ),
+        ssh_public_key="k",
+    )
+
+    installed = (
+        workdir / "filesystem-csi-validation" / "01-verify-node-filesystem-mounts.sh"
+    ).read_text()
+    assert "MOUNT_TAG='shared storage'" in installed
 
 
 def test_prepare_install_dir_patches_fetched_recipe_debug_quiet(
@@ -1059,10 +1884,13 @@ def _mock_deploy_boundary(monkeypatch, *, apply_fails: bool = False):
     from npa.fleet import lifecycle as L
 
     def fake_prepare(install_dir, **k):
-        install_dir.mkdir(parents=True, exist_ok=True)
-        return install_dir / "k8s-training"
+        workdir = install_dir / "k8s-training"
+        workdir.mkdir(parents=True, exist_ok=True)
+        (workdir / "provider.tf").write_text('provider "nebius" {}\n')
+        return workdir
 
     monkeypatch.setattr(L, "_prepare_install_dir", fake_prepare)
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 0))
     monkeypatch.setattr(L, "_cluster_tf_env", lambda *a, **k: {})
 
     def fake_stream(*a, **k):
@@ -1108,6 +1936,28 @@ def _run_one_cluster(L, tmp_path, *, profile: str = "", cluster=None):
         timeout_minutes=1,
         on_status=None,
     )
+
+
+def test_apply_provider_defaults_use_same_budget_as_outer_deadline(
+    tmp_path, monkeypatch
+):
+    L = _mock_deploy_boundary(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        L, "_run_stream", lambda args, **kwargs: calls.append((args, kwargs))
+    )
+    result = _run_one_cluster(L, tmp_path)
+    assert result["status"] == "deployed"
+    apply = [kwargs for args, kwargs in calls if "apply" in args]
+    assert len(apply) == 1
+    assert apply[0]["timeout"] == 60
+    sidecar = json.loads((tmp_path / "a/c" / L._ENV_SIDECAR).read_text())
+    assert sidecar["provider_rpc_deadlines"]["apply_timeout_minutes"] == 1
+    assert sidecar["provider_rpc_deadlines"]["inserted_defaults"] == {
+        "timeout": "1m",
+        "per_retry_timeout": "1m",
+        "auth_timeout": "1m",
+    }
 
 
 def test_deploy_one_cluster_success_promotes_sidecar(tmp_path, monkeypatch) -> None:
@@ -1419,6 +2269,928 @@ def test_node_group_match_accepts_camel_case_with_explicit_on_demand_evidence() 
     assert L._provider_node_group_matches_pool(payload, pool) is True
 
 
+def _tainted_gpu_reconciliation_fixture(
+    *, preemptible: bool = False
+) -> tuple[dict, dict, ClusterSpec]:
+    template = {
+        "resources": {
+            "platform": "gpu-rtx6000",
+            "preset": "8gpu-192vcpu-1744gb",
+        },
+        "boot_disk": {"type": "network_ssd", "size_gibibytes": 256},
+        "reservation_policy": {}
+        if preemptible
+        else {
+            "policy": "STRICT",
+            "reservation_ids": ["capacityblockgroup-test"],
+        },
+        "preemptible": {} if preemptible else None,
+        "network_interfaces": [{"subnet_id": "vpcsubnet-test"}],
+        "filesystems": [
+            {
+                "existing_filesystem": "computefilesystem-test",
+                "mount_tag": "npa-shared-fs",
+                "attach_mode": "READ_WRITE",
+            }
+        ],
+        "gpu_cluster": None,
+        "gpu_settings": {"drivers_preset": "cuda13.0"},
+    }
+    attributes = {
+        "id": "mk8snodegroup-test",
+        "name": "cluster-test-gpu",
+        "fixed_node_count": 2,
+        "template": template,
+    }
+    state = {
+        "resources": [
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_cluster",
+                "name": "k8s-cluster",
+                "instances": [{"attributes": {"id": "mk8scluster-test"}}],
+            },
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_node_group",
+                "name": "gpu",
+                "instances": [
+                    {
+                        "index_key": 0,
+                        "status": "tainted",
+                        "attributes": attributes,
+                    }
+                ],
+            },
+        ]
+    }
+    provider = {
+        "metadata": {
+            "id": "mk8snodegroup-test",
+            "name": "cluster-test-gpu",
+            "parent_id": "mk8scluster-test",
+        },
+        "spec": {"fixed_node_count": 2, "template": deepcopy(template)},
+        "status": {
+            "state": "PROVISIONING",
+            "target_node_count": 2,
+            "ready_node_count": 1,
+        },
+    }
+    if preemptible:
+        provider["spec"]["template"]["preemptible"] = {}
+    else:
+        provider["spec"]["template"].pop("preemptible")
+    cluster = ClusterSpec(
+        name="cluster-test",
+        cpu_nodes=NodePoolSpec(count=0),
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+            disk_size_gib=256,
+            capacity_block_group="" if preemptible else "capacityblockgroup-test",
+            preemptible=preemptible,
+        ),
+        enable_filestore=True,
+        filestore_mount_tag="npa-shared-fs",
+    )
+    return state, provider, cluster
+
+
+def _enable_gpu_cluster_for_tainted_fixture(state: dict, provider: dict) -> ClusterSpec:
+    state_template = state["resources"][1]["instances"][0]["attributes"]["template"]
+    provider_template = provider["spec"]["template"]
+    for template in (state_template, provider_template):
+        template["resources"] = {
+            "platform": "gpu-h200-sxm",
+            "preset": "8gpu-128vcpu-1600gb",
+        }
+        template["gpu_cluster"] = {"id": "computegpucluster-test"}
+    return ClusterSpec(
+        name="cluster-test",
+        cpu_nodes=NodePoolSpec(count=0),
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-h200-sxm",
+            preset="8gpu-128vcpu-1600gb",
+            disk_size_gib=256,
+            capacity_block_group="capacityblockgroup-test",
+        ),
+        enable_gpu_cluster=True,
+        infiniband_fabric="us-central1-a",
+        enable_filestore=True,
+        filestore_mount_tag="npa-shared-fs",
+    )
+
+
+@pytest.mark.parametrize(
+    ("preemptible", "state_format"),
+    [
+        (False, "v1"),
+        (False, "boolean"),
+        (False, "omitted"),
+        (True, "v1"),
+        (True, "boolean"),
+    ],
+)
+@pytest.mark.parametrize("wire_format", ["v1", "boolean"])
+def test_tainted_exact_node_group_is_safely_adopted(
+    monkeypatch, tmp_path, preemptible: bool, state_format: str, wire_format: str
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture(
+        preemptible=preemptible
+    )
+    if wire_format == "boolean":
+        provider["spec"]["template"]["preemptible"] = preemptible
+    state_template = state["resources"][1]["instances"][0]["attributes"]["template"]
+    if state_format == "boolean":
+        state_template["preemptible"] = preemptible
+    elif state_format == "omitted":
+        state_template.pop("preemptible")
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        if args[1:2] == ["untaint"]:
+            return _Cap("", 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    result = execution._reconcile_tainted_node_groups(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    )
+
+    assert result == {
+        "cluster_id": "mk8scluster-test",
+        "node_group_ids": ["mk8snodegroup-test"],
+    }
+    assert calls[-1] == [
+        "terraform",
+        "untaint",
+        "nebius_mk8s_v1_node_group.gpu[0]",
+    ]
+
+
+def test_tainted_exact_gpu_cluster_id_is_safely_adopted(monkeypatch, tmp_path) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    cluster = _enable_gpu_cluster_for_tainted_fixture(state, provider)
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        if args[1:2] == ["untaint"]:
+            return _Cap("", 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    result = execution._reconcile_tainted_node_groups(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    )
+
+    assert result["node_group_ids"] == ["mk8snodegroup-test"]
+    assert calls[-1][1:2] == ["untaint"]
+
+
+def _camel_case_node_group_fixture(value):
+    if isinstance(value, list):
+        return [_camel_case_node_group_fixture(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {}
+    for key, item in value.items():
+        first, *rest = key.split("_")
+        result[first + "".join(part.title() for part in rest)] = (
+            _camel_case_node_group_fixture(item)
+        )
+    return result
+
+
+@pytest.mark.parametrize("duplicate_spellings", [False, True])
+def test_tainted_gpu_attachment_accepts_camel_case_provider_fields(
+    duplicate_spellings: bool,
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    cluster = _enable_gpu_cluster_for_tainted_fixture(state, provider)
+    attributes = state["resources"][1]["instances"][0]["attributes"]
+    camel = _camel_case_node_group_fixture(provider)
+    if duplicate_spellings:
+        camel["spec"].update(provider["spec"])
+        camel["spec"]["template"].update(
+            _camel_case_node_group_fixture(provider["spec"]["template"])
+        )
+    desired = as_mk8s_desired(cluster)
+    camel["metadata"]["labels"] = {"gpuCluster": "one", "gpu_cluster": "two"}
+    camel["metadata"]["annotations"] = {"fixedNodeCount": 1, "fixed_node_count": 2}
+    original = deepcopy(camel)
+    assert execution._tainted_node_group_matches_desired(
+        provider_payload=execution._decode_v1_node_group_preemptibility(camel),
+        state_attributes=attributes,
+        pool=desired.gpu_nodes,
+        cluster=desired,
+        cluster_id="mk8scluster-test",
+        subnet_id="vpcsubnet-test",
+    )
+    assert camel == original
+
+
+@pytest.mark.parametrize(
+    ("path", "alias", "conflict"),
+    [
+        (("spec",), "fixedNodeCount", 3),
+        (("spec",), "fixedNodeCount", True),
+        (("metadata",), "parentId", "other-cluster"),
+        (("spec", "template"), "gpuCluster", None),
+        (("spec", "template"), "reservationPolicy", {}),
+        (("spec", "template"), "bootDisk", {}),
+        (("spec", "template"), "gpuSettings", {}),
+        (("spec", "template"), "networkInterfaces", []),
+        (("spec", "template", "boot_disk"), "sizeGibibytes", True),
+        (("spec", "template", "reservation_policy"), "reservationIds", []),
+        (("spec", "template", "network_interfaces", 0), "subnetId", None),
+        (("spec", "template", "filesystems", 0), "mountTag", None),
+        (("spec", "template", "filesystems", 0), "attachMode", None),
+        (("spec", "template", "filesystems", 0), "existingFilesystem", None),
+    ],
+)
+def test_tainted_node_group_refuses_conflicting_provider_aliases(
+    monkeypatch, tmp_path, path: tuple, alias: str, conflict: object
+) -> None:
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    cluster = _enable_gpu_cluster_for_tainted_fixture(state, provider)
+    target = provider
+    for part in path:
+        target = target[part]
+    target[alias] = conflict
+    _assert_tainted_reconciliation_refused(
+        monkeypatch, tmp_path, state, provider, cluster
+    )
+
+
+@pytest.mark.parametrize("value", [True, False, 2.5, "2.0", " 2", None])
+def test_tainted_node_group_rejects_coerced_node_counts(
+    monkeypatch, tmp_path, value: object
+) -> None:
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    provider["spec"]["fixed_node_count"] = value
+    _assert_tainted_reconciliation_refused(
+        monkeypatch, tmp_path, state, provider, cluster
+    )
+
+
+def _assert_tainted_reconciliation_refused(
+    monkeypatch, tmp_path, state: dict, provider: dict, cluster: ClusterSpec
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    with pytest.raises(RuntimeError, match="live identity or desired topology"):
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+    assert all("untaint" not in call for call in calls)
+
+
+@pytest.mark.parametrize(
+    ("evidence", "malformed"),
+    [
+        ("provider", "true"),
+        ("provider", 1),
+        ("provider", None),
+        ("provider", {"unexpected": True}),
+        ("state", 1),
+        ("state", {"unexpected": True}),
+        ("state", None),
+        ("state", "missing"),
+    ],
+)
+def test_tainted_node_group_rejects_malformed_or_mismatched_preemptibility(
+    monkeypatch, tmp_path, evidence: str, malformed: object
+) -> None:
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    state_template = state["resources"][1]["instances"][0]["attributes"]["template"]
+    provider_template = provider["spec"]["template"]
+    for template in (state_template, provider_template):
+        template["preemptible"] = True
+        template["reservation_policy"] = {}
+    malformed_template, valid_template = (
+        (provider_template, state_template)
+        if evidence == "provider"
+        else (state_template, provider_template)
+    )
+    if malformed == "missing":
+        malformed_template.pop("preemptible")
+    else:
+        malformed_template["preemptible"] = malformed
+    assert valid_template["preemptible"] is True
+    cluster = ClusterSpec(
+        name="cluster-test",
+        cpu_nodes=NodePoolSpec(count=0),
+        gpu_nodes=NodePoolSpec(
+            count=2,
+            platform="gpu-rtx6000",
+            preset="8gpu-192vcpu-1744gb",
+            disk_size_gib=256,
+            preemptible=True,
+        ),
+        enable_gpu_cluster=False,
+        enable_filestore=True,
+        filestore_mount_tag="npa-shared-fs",
+    )
+
+    _assert_tainted_reconciliation_refused(
+        monkeypatch, tmp_path, state, provider, cluster
+    )
+
+
+@pytest.mark.parametrize("evidence", ["provider", "state"])
+@pytest.mark.parametrize("malformed", ["false", 0, [], {"unexpected": True}])
+def test_tainted_on_demand_group_rejects_false_like_preemptibility(
+    monkeypatch, tmp_path, evidence: str, malformed: object
+) -> None:
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    template = (
+        provider["spec"]["template"]
+        if evidence == "provider"
+        else state["resources"][1]["instances"][0]["attributes"]["template"]
+    )
+    template["preemptible"] = malformed
+
+    _assert_tainted_reconciliation_refused(
+        monkeypatch, tmp_path, state, provider, cluster
+    )
+
+
+@pytest.mark.parametrize(
+    ("evidence", "malformed"),
+    [
+        ("provider", {"unexpected": True}),
+        ("state", "enabled"),
+        ("provider", {"id": "computegpucluster-other"}),
+        ("state", {"id": "computegpucluster-other"}),
+    ],
+)
+def test_tainted_node_group_requires_matching_gpu_cluster_identity(
+    monkeypatch, tmp_path, evidence: str, malformed: object
+) -> None:
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    cluster = _enable_gpu_cluster_for_tainted_fixture(state, provider)
+    state_template = state["resources"][1]["instances"][0]["attributes"]["template"]
+    provider_template = provider["spec"]["template"]
+    malformed_template, valid_template = (
+        (provider_template, state_template)
+        if evidence == "provider"
+        else (state_template, provider_template)
+    )
+    malformed_template["gpu_cluster"] = malformed
+    assert valid_template["gpu_cluster"] == {"id": "computegpucluster-test"}
+
+    _assert_tainted_reconciliation_refused(
+        monkeypatch, tmp_path, state, provider, cluster
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {},
+        {"id": ""},
+        {"id": " "},
+        {"id": None},
+        {"id": 1},
+        {"id": "computegpucluster-test", "unexpected": True},
+    ],
+)
+def test_tainted_node_group_rejects_matching_but_invalid_gpu_cluster_ids(
+    monkeypatch, tmp_path, value: object
+) -> None:
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    cluster = _enable_gpu_cluster_for_tainted_fixture(state, provider)
+    state["resources"][1]["instances"][0]["attributes"]["template"]["gpu_cluster"] = (
+        value
+    )
+    provider["spec"]["template"]["gpu_cluster"] = deepcopy(value)
+
+    _assert_tainted_reconciliation_refused(
+        monkeypatch, tmp_path, state, provider, cluster
+    )
+
+
+@pytest.mark.parametrize("attached", [False, True])
+def test_tainted_cpu_pool_requires_no_gpu_cluster_attachment(attached: bool) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    cluster = _enable_gpu_cluster_for_tainted_fixture(state, provider)
+    cpu = NodePoolSpec(count=2, platform="cpu-d3", preset="8vcpu-32gb")
+    desired = as_mk8s_desired(replace(cluster, cpu_nodes=cpu))
+    attributes = state["resources"][1]["instances"][0]["attributes"]
+    for template in (attributes["template"], provider["spec"]["template"]):
+        template["resources"] = {"platform": cpu.platform, "preset": cpu.preset}
+        template["boot_disk"]["size_gibibytes"] = 128
+        template["reservation_policy"] = {}
+        template["gpu_settings"] = {}
+        if not attached:
+            template["gpu_cluster"] = None
+
+    assert execution._tainted_node_group_matches_desired(
+        provider_payload=execution._decode_v1_node_group_preemptibility(provider),
+        state_attributes=attributes,
+        pool=desired.cpu_nodes,
+        cluster=desired,
+        cluster_id="mk8scluster-test",
+        subnet_id="vpcsubnet-test",
+    ) is (not attached)
+
+
+def test_tainted_node_group_mismatch_refuses_before_untaint(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    provider["spec"]["template"]["reservation_policy"]["reservation_ids"] = [
+        "capacityblockgroup-other"
+    ]
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    with pytest.raises(RuntimeError, match="live identity or desired topology"):
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+
+    assert all("untaint" not in call for call in calls)
+
+
+def test_failed_split_one_node_group_retains_taint_for_exact_replacement(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    first = state["resources"][1]["instances"][0]
+    first.pop("status")
+    first["attributes"]["fixed_node_count"] = 1
+    failed = deepcopy(first)
+    failed["index_key"] = 1
+    failed["status"] = "tainted"
+    failed["attributes"]["id"] = "mk8snodegroup-failed"
+    failed["attributes"]["name"] = "cluster-test-gpu-1"
+    state["resources"][1]["instances"].append(failed)
+    provider["metadata"]["id"] = "mk8snodegroup-failed"
+    provider["metadata"]["name"] = "cluster-test-gpu-1"
+    provider["spec"]["fixed_node_count"] = 1
+    provider["status"] = {"state": "PROVISIONING", "target_node_count": 1}
+    stopped = {
+        "metadata": {
+            "id": "computeinstance-failed",
+            "parent_id": "project-test",
+            "labels": {"mk8s-node-group-id": "mk8snodegroup-failed"},
+        },
+        "status": {"state": "STOPPED"},
+    }
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        if "compute" in args and "list" in args:
+            return _Cap(json.dumps({"items": [stopped]}), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    assert (
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            project_id="project-test",
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+        == {}
+    )
+    assert all("untaint" not in call for call in calls)
+
+
+def test_provider_absent_exact_split_group_retains_taint_for_recreation(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, _provider, cluster = _tainted_gpu_reconciliation_fixture()
+    first = state["resources"][1]["instances"][0]
+    first.pop("status")
+    first["attributes"]["fixed_node_count"] = 1
+    absent = deepcopy(first)
+    absent["index_key"] = 1
+    absent["status"] = "tainted"
+    absent["attributes"]["id"] = "mk8snodegroup-absent"
+    absent["attributes"]["name"] = "cluster-test-gpu-1"
+    state["resources"][1]["instances"].append(absent)
+    calls: list[list[str]] = []
+
+    class NotFound(_Cap):
+        stderr = "rpc error: code = NotFound desc = requested resource not found"
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return NotFound("", 13)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    assert (
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            project_id="project-test",
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+        == {}
+    )
+    assert all("untaint" not in call for call in calls)
+
+
+def test_provider_get_error_does_not_retain_tainted_group(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, _provider, cluster = _tainted_gpu_reconciliation_fixture()
+
+    class PermissionDenied(_Cap):
+        stderr = "rpc error: code = PermissionDenied desc = access denied"
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "get" in args:
+            return PermissionDenied("", 7)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    with pytest.raises(RuntimeError, match="live identity or desired topology"):
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+
+
+def _stopped_placeholder_workers(provider: dict) -> tuple[dict, dict]:
+    template = provider["spec"]["template"]
+
+    def worker(worker_id: str, state: str) -> dict:
+        boot = template["boot_disk"]
+        return {
+            "metadata": {
+                "id": worker_id,
+                "parent_id": "project-test",
+                "labels": {
+                    "mk8s-cluster-id": "mk8scluster-test",
+                    "mk8s-node-group-id": "mk8snodegroup-test",
+                },
+            },
+            "spec": {
+                "resources": template["resources"],
+                "boot_disk": {
+                    "managed_disk": {
+                        "spec": {
+                            "type": boot["type"],
+                            "size_gibibytes": boot["size_gibibytes"],
+                        }
+                    }
+                },
+                "reservation_policy": template["reservation_policy"],
+                "network_interfaces": template["network_interfaces"],
+                "filesystems": template["filesystems"],
+                "gpu_cluster": {},
+            },
+            "status": {"state": state},
+        }
+
+    running = worker("computeinstance-running", "RUNNING")
+    running["status"].update(
+        {"reservation_id": "reservation-test", "disk_attachments": [{}]}
+    )
+    return running, worker("computeinstance-stopped", "STOPPED")
+
+
+def test_explicit_stopped_placeholder_repair_is_exact_and_cas_guarded(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    state["resources"][1]["instances"][0].pop("status")
+    provider["metadata"]["resource_version"] = 10
+    running, stopped = _stopped_placeholder_workers(provider)
+    calls: list[list[str]] = []
+    inventory_reads = 0
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        nonlocal inventory_reads
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "operation" in args and "list" in args:
+            return _Cap(json.dumps({"items": []}), 0)
+        if (
+            "compute" in args
+            and ["compute", "instance", "list"] == args[args.index("compute") :][:3]
+        ):
+            inventory_reads += 1
+            items = [running, stopped] if inventory_reads == 1 else [running]
+            return _Cap(json.dumps({"items": items}), 0)
+        if (
+            "compute" in args
+            and ["compute", "instance", "get"] == args[args.index("compute") :][:3]
+        ):
+            return _Cap(json.dumps(stopped), 0)
+        if (
+            "compute" in args
+            and ["compute", "instance", "delete"] == args[args.index("compute") :][:3]
+        ):
+            return _Cap("{}", 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        if "node-group" in args and "update" in args:
+            count = args[args.index("--fixed-node-count") + 1]
+            revision = 11 if count == "1" else 12
+            return _Cap(json.dumps({"metadata": {"resource_version": revision}}), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    result = execution._repair_exact_stopped_placeholder(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        project_id="project-test",
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    )
+
+    assert result == {"status": "reconciled"}
+    deletes = [call for call in calls if "delete" in call]
+    assert deletes == [
+        [
+            "nebius",
+            "--profile",
+            "tenant-profile",
+            "compute",
+            "instance",
+            "delete",
+            "--id",
+            "computeinstance-stopped",
+            "--format",
+            "json",
+        ]
+    ]
+    updates = [call for call in calls if "update" in call]
+    assert [call[call.index("--fixed-node-count") + 1] for call in updates] == [
+        "1",
+        "2",
+    ]
+    assert updates[0][updates[0].index("--resource-version") + 1] == "10"
+    assert updates[1][updates[1].index("--resource-version") + 1] == "11"
+    assert "--async" not in updates[0]
+    assert "--async" in updates[1]
+
+
+def test_stopped_placeholder_with_disk_fails_before_delete(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    state["resources"][1]["instances"][0].pop("status")
+    running, stopped = _stopped_placeholder_workers(provider)
+    stopped["status"]["disk_attachments"] = [{}]
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "operation" in args:
+            return _Cap(json.dumps({"items": []}), 0)
+        if args[1:4] == ["compute", "instance", "list"]:
+            return _Cap(json.dumps({"items": [running, stopped]}), 0)
+        if "node-group" in args and "get" in args:
+            return _Cap(json.dumps(provider), 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    with pytest.raises(RuntimeError, match="reservation or disk evidence is unsafe"):
+        execution._repair_exact_stopped_placeholder(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            project_id="project-test",
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="",
+            on_status=None,
+        )
+    assert all("delete" not in call for call in calls)
+
+
+def test_explicit_repair_removes_exact_failed_split_group_orphan(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    state_group = state["resources"][1]["instances"][0]
+    state_group.pop("status")
+    state_group["attributes"]["fixed_node_count"] = 1
+    orphan = deepcopy(provider)
+    orphan["metadata"]["id"] = "mk8snodegroup-orphan"
+    orphan["metadata"]["name"] = "cluster-test-ng-gpu-1"
+    orphan["spec"]["fixed_node_count"] = 1
+    orphan["status"] = {"state": "PROVISIONING", "target_node_count": 1}
+    _running, stopped = _stopped_placeholder_workers(provider)
+    stopped["metadata"]["labels"]["mk8s-node-group-id"] = "mk8snodegroup-orphan"
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):  # noqa: ANN001
+        calls.append(args)
+        if args[1:3] == ["state", "pull"]:
+            return _Cap(json.dumps(state), 0)
+        if "node-group" in args and "list" in args and "operation" not in args:
+            return _Cap(json.dumps({"items": [provider, orphan]}), 0)
+        if "operation" in args:
+            return _Cap(json.dumps({"items": []}), 0)
+        if "compute" in args and "list" in args:
+            return _Cap(json.dumps({"items": [stopped]}), 0)
+        if "node-group" in args and "delete" in args:
+            return _Cap("{}", 0)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(execution, "_run_capture", run)
+    assert execution._repair_exact_stopped_placeholder(
+        terraform_bin="terraform",
+        workdir=tmp_path,
+        env={},
+        cluster=as_mk8s_desired(cluster),
+        project_id="project-test",
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="tenant-profile",
+        on_status=None,
+    ) == {"status": "split-orphan-removed"}
+    deletes = [call for call in calls if "delete" in call]
+    assert len(deletes) == 1
+    assert deletes[0][deletes[0].index("--id") + 1] == "mk8snodegroup-orphan"
+
+
+def test_existing_terraform_state_audit_failure_refuses_apply(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    _state, _provider, cluster = _tainted_gpu_reconciliation_fixture()
+    (tmp_path / "terraform.tfstate").write_text("{}\n")
+    monkeypatch.setattr(execution, "_run_capture", lambda *_a, **_k: _Cap("", 1))
+
+    with pytest.raises(RuntimeError, match="could not be audited"):
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+
+
+def test_absent_terraform_state_is_a_clean_reconciliation_noop(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    _state, _provider, cluster = _tainted_gpu_reconciliation_fixture()
+
+    class NoState(_Cap):
+        stderr = "No state file was found!"
+
+    monkeypatch.setattr(execution, "_run_capture", lambda *_a, **_k: NoState("", 1))
+
+    assert (
+        execution._reconcile_tainted_node_groups(
+            terraform_bin="terraform",
+            workdir=tmp_path,
+            env={},
+            cluster=as_mk8s_desired(cluster),
+            subnet_id="vpcsubnet-test",
+            nebius_bin="nebius",
+            profile="tenant-profile",
+            on_status=None,
+        )
+        == {}
+    )
+
+
 def test_deploy_one_cluster_failure_leaves_sidecar_provisioning(
     tmp_path, monkeypatch
 ) -> None:
@@ -1660,9 +3432,41 @@ def _destroy_one_with_mocked_terraform(tmp_path, monkeypatch, *, destroy_fails: 
         },
     )
     calls: list[list[str]] = []
+    lock_active = False
+    cached_package = tmp_path / "cached-package"
+    cached_package.mkdir()
+    cached_binary = cached_package / "provider"
+    cached_binary.write_text("verified provider")
+    installed_package = (
+        install / L._K8S_TRAINING_SUBDIR / ".terraform/providers/package"
+    )
+
+    class CacheLock:
+        def __enter__(self):
+            nonlocal lock_active
+            assert lock_active is False
+            lock_active = True
+
+        def __exit__(self, *_args):
+            nonlocal lock_active
+            lock_active = False
+            cached_binary.write_text("a later init rewrote the cache")
+
+    monkeypatch.setattr(
+        L._mk8s_execution,
+        "terraform_plugin_cache_lock",
+        lambda _env: CacheLock(),
+    )
 
     def fake_tf_run(args, **kwargs):
         calls.append(args)
+        if "init" in args:
+            assert lock_active is True
+            installed_package.parent.mkdir(parents=True)
+            installed_package.symlink_to(cached_package, target_is_directory=True)
+        if "destroy" in args:
+            assert lock_active is False
+            assert (installed_package / "provider").read_text() == "verified provider"
         if destroy_fails and "destroy" in args:
             raise RuntimeError("terraform destroy failed")
 
@@ -2218,10 +4022,11 @@ def _patch_infra_free_subprocess_boundaries(tmp_path: Path, monkeypatch):
     recipe = tmp_path / "recipe"
     (recipe / "k8s-training").mkdir(parents=True)
     (recipe / "modules").mkdir()
+    (recipe / "k8s-training/provider.tf").write_text('provider "nebius" {}\n')
     work_root = tmp_path / "work"
 
     monkeypatch.setenv("NPA_TERRAFORM_BIN", str(terraform))
-    monkeypatch.setenv("NPA_NEBIUS_BIN", "/bin/true")
+    monkeypatch.setenv("NPA_NEBIUS_BIN", sys.executable)
     monkeypatch.setattr(L, "_default_work_root", lambda: work_root)
     monkeypatch.setattr(L, "_resolve_tenant_id", lambda *a, **k: "tenant-test")
     monkeypatch.setattr(L, "_resolve_region", lambda *a, **k: "us-central1")
@@ -3190,6 +4995,254 @@ def _preflight_boundary(monkeypatch, tmp_path, allowances_json: str, *, rc: int 
     return L, deployed
 
 
+def test_object_storage_quotas_budget_each_class_separately_from_filesystems() -> None:
+    from npa.fleet.quotas import required_quotas
+
+    spec = load_spec(
+        Path(__file__).parents[2] / "examples/fleet/rtxpro-8gpu-five-cluster.yaml"
+    )
+    needed = required_quotas(
+        [c for p, c in spec.cluster_targets()],
+        object_storage=[p.object_storage for p in spec.projects],
+    )
+    assert needed["storage.bucket.count"] == 5
+    assert needed["storage.bucket.size.enhanced-throughput"] == 16 * 1024**4
+    assert needed["compute.filesystem.size.network-ssd"] == 24 * 1024**4
+    assert "storage.bucket.size.standard" not in needed
+    assert required_quotas([], object_storage=[ObjectStorageSpec()]) == {}
+
+
+@pytest.mark.parametrize(
+    ("storage_class", "quota_name"),
+    [
+        ("standard", "standard"),
+        ("enhanced", "enhanced-throughput"),
+        ("intelligent", "intelligent"),
+    ],
+)
+def test_object_storage_preflight_uses_byte_units(storage_class, quota_name) -> None:
+    from npa.fleet.quotas import preflight_region
+
+    def invoke(unit):
+        return preflight_region(
+            nebius_bin="nebius",
+            tenant_id="tenant-test",
+            region="test-region",
+            clusters=[],
+            env={},
+            run_capture=lambda *a, **k: _Cap(
+                json.dumps(
+                    {
+                        "items": [
+                            _allowance("storage.bucket.count", "test-region", 1),
+                            _allowance(
+                                f"storage.bucket.size.{quota_name}",
+                                "test-region",
+                                1024**3,
+                                unit,
+                            ),
+                        ]
+                    }
+                )
+            ),
+            nebius_argv=lambda binary, profile: [binary],
+            object_storage=[
+                ObjectStorageSpec(
+                    enabled=True, storage_class=storage_class, size_gibibytes=1
+                )
+            ],
+        )
+
+    assert invoke("byte") == []
+    with pytest.raises(ValueError, match="unit"):
+        invoke("count")
+
+
+@pytest.mark.parametrize("failure", ["count", "bytes", "missing"])
+def test_storage_quota_shortfall_blocks_every_project_and_cluster_mutation(
+    monkeypatch,
+    tmp_path,
+    failure,
+) -> None:
+    allowances = [
+        _allowance(
+            "storage.bucket.count", "us-central1", 1 if failure == "count" else 2
+        )
+    ]
+    if failure != "missing":
+        allowances.append(
+            _allowance(
+                "storage.bucket.size.enhanced-throughput",
+                "us-central1",
+                2 * 1024**3 - (1 if failure == "bytes" else 0),
+                "byte",
+            )
+        )
+    L, deployed = _preflight_boundary(
+        monkeypatch, tmp_path, json.dumps({"items": allowances})
+    )
+    spec = _rtx_cluster_spec()
+    spec.projects.append(ProjectSpec(name="b", clusters=spec.projects[0].clusters))
+    for p in spec.projects:
+        p.object_storage = ObjectStorageSpec(
+            enabled=True, storage_class="enhanced", size_gibibytes=1
+        )
+    mutations = []
+    monkeypatch.setattr(
+        L, "resolve_project_id", lambda *a, **k: mutations.append("project")
+    )
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: mutations.append("subnet"))
+    monkeypatch.setattr(
+        L, "_ensure_project_object_storage", lambda **k: mutations.append("storage")
+    )
+
+    with pytest.raises(ValueError, match="storage.bucket"):
+        L.deploy_fleet(spec, work_root=tmp_path)
+    assert mutations == deployed == []
+
+
+def _storage_provider_bucket() -> dict:
+    return {
+        "metadata": {
+            "id": "storagebucket-test",
+            "parent_id": "project-existing",
+            "name": "test-bucket",
+        },
+        "spec": {
+            "default_storage_class": "ENHANCED_THROUGHPUT",
+            "max_size_bytes": str(1024**3),
+        },
+        "status": {
+            "state": "ACTIVE",
+            "region": "us-central1",
+            "suspension_state": "NOT_SUSPENDED",
+        },
+    }
+
+
+@pytest.mark.parametrize("unchanged", [False, True])
+def test_storage_preflight_checks_new_declaration_even_when_cluster_is_unchanged(
+    monkeypatch,
+    tmp_path,
+    unchanged,
+) -> None:
+    from npa.clients import nebius as nebius_client
+
+    spec = _rtx_cluster_spec()
+    spec.projects[0].object_storage = ObjectStorageSpec(
+        enabled=True,
+        storage_class="enhanced",
+        size_gibibytes=1,
+        bucket_name="test-bucket",
+    )
+    L, _lists, _quotas, _resolved, _deployed = _project_quota_accounting_boundary(
+        monkeypatch,
+        tmp_path,
+        [{"metadata": {"id": "project-existing", "name": "a"}}],
+    )
+    monkeypatch.setattr(L, "_is_verified_unchanged_target", lambda **k: unchanged)
+    monkeypatch.setattr(nebius_client, "get_bucket_by_name", lambda *a: None)
+    monkeypatch.setattr(
+        L, "_ensure_project_object_storage", lambda **k: {"enabled": True}
+    )
+    preflights = []
+    monkeypatch.setattr(L, "_preflight_quotas", lambda *a, **k: preflights.append(k))
+
+    L.deploy_fleet(spec, work_root=tmp_path)
+    assert len(preflights) == 1
+    assert preflights[0]["object_storage_by_region"] == {
+        "us-central1": [spec.projects[0].object_storage]
+    }
+    assert bool(preflights[0]["by_region"]) is not unchanged
+
+
+def test_existing_exact_bucket_is_not_counted_twice_on_retry(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import nebius as nebius_client
+    from npa.fleet import lifecycle as L
+
+    spec = _rtx_cluster_spec()
+    project = spec.projects[0]
+    project.object_storage = ObjectStorageSpec(
+        enabled=True,
+        storage_class="enhanced",
+        size_gibibytes=1,
+        bucket_name="test-bucket",
+    )
+
+    def get_bucket(project_id, bucket_name):
+        assert project_id == "project-existing" and bucket_name == "test-bucket"
+        assert os.environ["NEBIUS_PROFILE"] == "storage-profile"
+        return _storage_provider_bucket()
+
+    monkeypatch.setattr(nebius_client, "get_bucket_by_name", get_bucket)
+    monkeypatch.setenv("NEBIUS_PROFILE", "original-profile")
+    assert (
+        L._pending_project_object_storage(
+            spec=spec,
+            projects=[(project, "us-central1")],
+            project_ids={"a": "project-existing"},
+            tenant_id="t",
+            profile="storage-profile",
+            fleet_root=tmp_path,
+        )
+        == {}
+    )
+    assert os.environ["NEBIUS_PROFILE"] == "original-profile"
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("metadata", "parent_id", "project-other"),
+        ("metadata", "name", "different-bucket"),
+        ("metadata", "id", ""),
+        ("status", "region", "wrong-region"),
+        ("status", "state", "SCHEDULED_FOR_DELETION"),
+        ("status", "suspension_state", "SUSPENDED"),
+        ("status", "suspension_state", None),
+        ("status", "deleted_at", "2026-01-01T00:00:00Z"),
+        ("status", "purge_at", "2026-01-01T00:00:00Z"),
+        ("spec", "max_size_bytes", str(1024**3 - 1)),
+    ],
+)
+def test_invalid_later_bucket_blocks_all_fleet_mutation(
+    monkeypatch,
+    tmp_path,
+    section,
+    field,
+    value,
+) -> None:
+    from npa.clients import nebius as nebius_client
+
+    spec = _rtx_cluster_spec()
+    spec.projects.append(ProjectSpec(name="b", clusters=spec.projects[0].clusters))
+    for p in spec.projects:
+        p.object_storage = ObjectStorageSpec(
+            enabled=True,
+            storage_class="enhanced",
+            size_gibibytes=1,
+            bucket_name="test-bucket",
+        )
+    L, _lists, quotas, resolved, deployed = _project_quota_accounting_boundary(
+        monkeypatch,
+        tmp_path,
+        [{"metadata": {"id": "project-existing", "name": "b"}}],
+    )
+    bucket = _storage_provider_bucket()
+    bucket[section][field] = value
+    monkeypatch.setattr(nebius_client, "get_bucket_by_name", lambda *a: bucket)
+    mutations = []
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: mutations.append("subnet"))
+    monkeypatch.setattr(
+        L, "_ensure_project_object_storage", lambda **k: mutations.append("storage")
+    )
+    with pytest.raises(RuntimeError, match="object-storage bucket"):
+        L.deploy_fleet(spec, work_root=tmp_path)
+    assert quotas == resolved == deployed == mutations == []
+
+
 def _rtx_cluster_spec() -> FleetSpec:
     return FleetSpec(
         name="f",
@@ -3474,6 +5527,22 @@ def _project_quota_accounting_boundary(monkeypatch, tmp_path, projects):
         return projects
 
     monkeypatch.setattr(L, "_list_projects", list_projects)
+
+    def get_project(_binary, project_id, _env, _profile):
+        name = next(
+            (
+                item["metadata"]["name"]
+                for item in projects
+                if item["metadata"]["id"] == project_id
+            ),
+            "private-name",
+        )
+        return {
+            "metadata": {"id": project_id, "parent_id": "t", "name": name},
+            "status": {"container_state": "ACTIVE", "region": "us-central1"},
+        }
+
+    monkeypatch.setattr(L, "_get_project", get_project)
     monkeypatch.setattr(
         L,
         "_preflight_quotas",
@@ -3566,7 +5635,7 @@ def test_preflight_project_accounting_explicit_id_and_mixed_projects(
     L.deploy_fleet(mixed, work_root=tmp_path / "mixed")
     assert list_calls == ["list"]
     assert preflight_calls == [{"eu-north1": 1}]
-    assert resolve_calls == ["new", "project-explicit"]
+    assert resolve_calls == ["new"]
     assert sorted(deployed) == ["existing", "new", "project-explicit"]
 
 
@@ -3583,6 +5652,69 @@ def test_preflight_project_lookup_failure_cannot_undercount(
     assert preflight_calls == []
     assert resolve_calls == []
     assert deployed == []
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_project_preflight_verifies_every_existing_target_before_any_mutation(
+    monkeypatch, tmp_path, explicit
+) -> None:
+    spec = _rtx_cluster_spec()
+    spec.projects.append(ProjectSpec(name="b", clusters=spec.projects[0].clusters))
+    if explicit:
+        for project in spec.projects:
+            project.project_id = f"project-{project.name}"
+    inventory = [
+        {"metadata": {"id": f"project-{p.name}", "name": p.name}} for p in spec.projects
+    ]
+    L, _lists, quota_calls, resolved, deployed = _project_quota_accounting_boundary(
+        monkeypatch, tmp_path, inventory
+    )
+    verified = []
+
+    def get_project(_binary, project_id, _env, _profile):
+        verified.append(project_id)
+        return {
+            "metadata": {"id": project_id, "parent_id": "t", "name": project_id[-1]},
+            "status": {
+                "container_state": "ACTIVE"
+                if project_id == "project-a"
+                else "DELETING",
+                "region": "us-central1",
+            },
+        }
+
+    monkeypatch.setattr(L, "_get_project", get_project)
+    mutations = []
+    monkeypatch.setattr(
+        L, "_ensure_project_object_storage", lambda **k: mutations.append("storage")
+    )
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: mutations.append("subnet"))
+    with pytest.raises(ValueError, match="not authoritatively active"):
+        L.deploy_fleet(spec, work_root=tmp_path, create_projects=False)
+    assert verified == ["project-a", "project-b"]
+    assert quota_calls == resolved == deployed == mutations == []
+
+
+def test_no_create_projects_missing_later_target_blocks_all_mutation(
+    monkeypatch, tmp_path
+) -> None:
+    spec = _rtx_cluster_spec()
+    spec.projects.append(
+        ProjectSpec(name="missing", clusters=spec.projects[0].clusters)
+    )
+    L, _lists, quotas, resolved, deployed = _project_quota_accounting_boundary(
+        monkeypatch,
+        tmp_path,
+        [{"metadata": {"id": "project-existing", "name": "a"}}],
+    )
+    mutations = []
+    monkeypatch.setattr(
+        L, "_ensure_project_object_storage", lambda **k: mutations.append("storage")
+    )
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: mutations.append("subnet"))
+    with pytest.raises(ValueError, match="creation is disabled"):
+        L.deploy_fleet(spec, work_root=tmp_path, create_projects=False)
+    assert quotas == resolved == deployed == mutations == []
 
 
 def test_plan_resolves_tenant_from_named_profile(monkeypatch) -> None:
@@ -4054,3 +6186,111 @@ def test_spec_rejects_quota_inputs_that_cannot_be_counted() -> None:
         ClusterSpec(
             name="c", gpu_nodes=NodePoolSpec(count=1, platform="gpu-h200", preset="bad")
         ).validate()
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("deployed", {"deployed": 1, "unresolved": 0, "failed": 0}),
+        ("running", {"deployed": 1, "unresolved": 0, "failed": 0}),
+        ("provisioning", {"deployed": 0, "unresolved": 1, "failed": 0}),
+        ("reconciling", {"deployed": 0, "unresolved": 1, "failed": 0}),
+        ("destroyed", {"deployed": 0, "unresolved": 0, "failed": 0}),
+        ("absent", {"deployed": 0, "unresolved": 0, "failed": 0}),
+        ("error", {"deployed": 0, "unresolved": 0, "failed": 1}),
+        ("status-error", {"deployed": 0, "unresolved": 0, "failed": 1}),
+        ("unexpected", {"deployed": 0, "unresolved": 0, "failed": 1}),
+        (None, {"deployed": 0, "unresolved": 0, "failed": 1}),
+    ],
+)
+def test_fleet_recount_distinguishes_transitional_status(status, expected) -> None:
+    from npa.fleet.lifecycle import _recount
+
+    assert _recount([{"status": status}]) == expected
+
+
+def test_deploy_unresolved_status_remains_nonzero(tmp_path, monkeypatch) -> None:
+    import npa.fleet.lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "deploy_fleet",
+        lambda spec, **kwargs: {
+            "name": spec.name,
+            "region": spec.region,
+            "tenant_id": spec.tenant_id,
+            "deployed": 0,
+            "unresolved": 1,
+            "failed": 0,
+            "clusters": [
+                {
+                    "project_key": "a",
+                    "cluster_name": "cluster",
+                    "status": "provisioning",
+                }
+            ],
+        },
+    )
+
+    result = runner.invoke(
+        app, ["fleet", "deploy", "--spec", str(_spec_file(tmp_path)), "--yes"]
+    )
+
+    assert result.exit_code == 1
+    assert "0 deployed, 1 unresolved, 0 failed" in result.output
+    assert "[wait]" in result.output
+
+
+def test_destroy_unresolved_status_remains_nonzero(tmp_path, monkeypatch) -> None:
+    import npa.fleet.lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "destroy_fleet",
+        lambda spec, **kwargs: {
+            "name": spec.name,
+            "unresolved": 1,
+            "failed": 0,
+            "clusters": [
+                {
+                    "project_key": "a",
+                    "cluster_name": "cluster",
+                    "status": "reconciling",
+                }
+            ],
+            "networks": [],
+        },
+    )
+
+    result = runner.invoke(
+        app, ["fleet", "destroy", "--spec", str(_spec_file(tmp_path)), "--yes"]
+    )
+
+    assert result.exit_code == 1
+    assert "teardown is incomplete" in result.output
+
+
+def test_provider_advisory_is_saved_and_original_apply_still_runs(
+    tmp_path, monkeypatch
+):
+    L = _mock_deploy_boundary(monkeypatch)
+    prepare = L._prepare_install_dir
+
+    def unsupported(*args, **kwargs):
+        workdir = prepare(*args, **kwargs)
+        (workdir / "provider.tf").write_text(
+            'provider /* upstream comment */ "nebius" {}'
+        )
+        return workdir
+
+    monkeypatch.setattr(L, "_prepare_install_dir", unsupported)
+    calls = []
+    monkeypatch.setattr(L, "_run_stream", lambda args, **kwargs: calls.append(args))
+    assert _run_one_cluster(L, tmp_path)["status"] == "deployed"
+    assert len([args for args in calls if "apply" in args]) == 1
+    saved = json.loads((tmp_path / "a/c" / L._ENV_SIDECAR).read_text())
+    assert saved["provider_rpc_deadlines"]["status"] == "advisory"
+    assert saved["provider_rpc_deadlines"]["reason_code"] == "unsupported_recipe_shape"
+    assert (
+        tmp_path / "a/c/k8s-training/provider.tf"
+    ).read_text() == 'provider /* upstream comment */ "nebius" {}'

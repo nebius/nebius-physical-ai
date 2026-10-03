@@ -1,16 +1,10 @@
-"""Durable replay and fan-in helpers for compositional Sim2Real Stage 9."""
+"""Durable replay helper for compositional Sim2Real Stage 9."""
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
-from npa.workflows.sim2real.workflow_io import (
-    aggregate_parallel_provenance,
-    publish_component_record,
-    read_json,
-)
 
 
 def existing_replay(
@@ -19,7 +13,7 @@ def existing_replay(
     outer_iteration: int,
     inner_iteration: int,
     actions_uri: str,
-    merged_uri: str,
+    evaluation_uri: str,
     signal_uri: str,
     sample_vlm_eval: dict[str, Any],
     sample_signal: dict[str, Any],
@@ -66,7 +60,7 @@ def existing_replay(
     expected = {
         "iteration": inner_iteration,
         "actions_uri": actions_uri,
-        "vlm_eval_uri": merged_uri,
+        "vlm_eval_uri": evaluation_uri,
         "signal_uri": signal_uri,
         "sample_vlm_eval": sample_vlm_eval,
         "sample_signal": sample_signal,
@@ -89,58 +83,3 @@ def existing_replay(
     ):
         raise RuntimeError("Stage 9 replay selection conflicts with its candidates")
     return candidate, selection, update
-
-
-def publish_stage8_join(
-    *,
-    root: str,
-    work: Path,
-    lane_base: str,
-    reason2: dict[str, Any],
-    reason3: dict[str, Any],
-    merged_uri: str,
-    rollout_count: int,
-    outer_iteration: int,
-    inner_iteration: int,
-) -> None:
-    """Publish the canonical Stage 8 record after validating both lane records."""
-
-    lane_records = [
-        read_json(
-            f"{root}/components/lanes/stage_08/"
-            f"{lane}-o{outer_iteration}-i{inner_iteration}.json",
-            directory=work / f"lane-{lane}",
-        )
-        for lane in ("reason2", "reason3")
-    ]
-    expected_lanes = [
-        f"{lane}-o{outer_iteration}-i{inner_iteration}"
-        for lane in ("reason2", "reason3")
-    ]
-    if [item.get("lane") for item in lane_records] != expected_lanes or any(
-        item.get("artifacts", {}).get("result") != lane_base + f"{lane}.json"
-        for item, lane in zip(lane_records, ("reason2", "reason3"), strict=True)
-    ):
-        raise RuntimeError(
-            "Stage 8 lane records do not match the declared Reason fan-out"
-        )
-    provenance = aggregate_parallel_provenance(
-        [reason2["provenance"], reason3["provenance"]], stage=8
-    )
-    publish_component_record(
-        root_uri=root,
-        stage=8,
-        name="stage_08_vlm_eval_train",
-        tier="WORKS",
-        evidence="Two parallel real Cosmos Reason lanes evaluated event-local Isaac observations and were deterministically merged.",
-        artifacts={
-            "reason2": lane_base + "reason2.json",
-            "reason3": lane_base + "reason3.json",
-            "merged": merged_uri,
-            "rollout_count": rollout_count,
-            "reason_lane_provenance": [reason2["provenance"], reason3["provenance"]],
-            "lane_records": lane_records,
-        },
-        require_gpu=True,
-        execution_provenance=provenance,
-    )

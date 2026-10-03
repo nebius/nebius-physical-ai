@@ -77,6 +77,11 @@ def _build_allowlist() -> dict[str, ToolSpec]:
             summary="Backend health + tool_refs count.",
         ),
         ToolSpec(
+            "tools_catalog",
+            read_only=True,
+            summary="List registered workbench toolRefs from the live /tools catalog; no execution.",
+        ),
+        ToolSpec(
             "sim_viz_status",
             read_only=True,
             summary="Live sim-viz/status: run_id, stage, rerun_ready, rrd_uri.",
@@ -211,7 +216,9 @@ STOP_ERROR = "error"
 STOP_NO_PLAN = "no_plan"
 
 
-def allowlist_specs(allowlist: Mapping[str, ToolSpec] | None = None) -> list[dict[str, Any]]:
+def allowlist_specs(
+    allowlist: Mapping[str, ToolSpec] | None = None,
+) -> list[dict[str, Any]]:
     """Return the allowlist as JSON-serializable specs (for prompts/inspection)."""
     resolved = allowlist if allowlist is not None else TOOL_ALLOWLIST
     return [spec.to_dict() for spec in resolved.values()]
@@ -222,7 +229,9 @@ def is_allowed(tool: str, allowlist: Mapping[str, ToolSpec] | None = None) -> bo
     return str(tool or "") in resolved
 
 
-def requires_confirmation(tool: str, allowlist: Mapping[str, ToolSpec] | None = None) -> bool:
+def requires_confirmation(
+    tool: str, allowlist: Mapping[str, ToolSpec] | None = None
+) -> bool:
     resolved = allowlist if allowlist is not None else TOOL_ALLOWLIST
     spec = resolved.get(str(tool or ""))
     return bool(spec and spec.requires_confirmation)
@@ -438,9 +447,9 @@ def _planner_messages(
         "You are the NPA workbench action planner. Pick ONE next tool call to make "
         "progress on the operator goal, or finish.\n"
         "Respond with a SINGLE JSON object and nothing else. To call a tool:\n"
-        '{\"thought\": \"...\", \"tool\": \"<name>\", \"args\": {...}}\n'
+        '{"thought": "...", "tool": "<name>", "args": {...}}\n'
         "To finish with the answer:\n"
-        '{\"thought\": \"...\", \"final\": \"<markdown answer grounded in observations>\"}\n'
+        '{"thought": "...", "final": "<markdown answer grounded in observations>"}\n'
         "Rules: only call tools from the catalog; prefer read-only tools first; "
         "never claim a run/stage is complete unless an observation confirms it; "
         "state-changing tools will require operator confirmation.\n"
@@ -474,19 +483,31 @@ def _planner_messages(
             f"Still required: {pending}. Do not repeat a successfully completed tool; "
             "finish as soon as all named tools have useful observations."
         )
-    if any(obs.get("replan_required") for obs in observations):
-        system += (
-            "\n\nReplanning is required because the previous tool call failed or "
-            "returned no usable observation. Choose a changed strategy: adjust "
-            "the tool arguments, call a different tool, or finish by asking for a "
-            "specific clarifying sub-goal. Do not repeat the same tool with the "
-            "same arguments."
-        )
+    if observations and observations[-1].get("replan_required"):
+        if observations[-1].get("replan_reason") == "already_completed":
+            system += (
+                "\n\nThe repeated action was rejected because it already completed "
+                "successfully. Its earlier observation remains available. Use that "
+                "evidence; do not repeat the action. If more facts are needed for "
+                "the operator goal, choose a different useful action. Otherwise "
+                "finish with an answer grounded in the observations."
+            )
+        else:
+            system += (
+                "\n\nThe previous proposal did not advance the goal. Review its "
+                "rejection or failure and the observations already gathered. "
+                "Choose a changed strategy, or finish with an evidence-grounded "
+                "answer that identifies any unresolved facts. Do not repeat the "
+                "same failed tool with the same arguments."
+            )
     lines = [f"Operator goal: {goal}"]
     if observations:
         lines.append("\nObservations so far:")
         for obs in observations:
-            lines.append(json.dumps(obs, sort_keys=True)[:1200])
+            # _observe already bounds tool results while retaining useful fields.
+            # Cutting the serialized envelope again produces invalid JSON and can
+            # hide complete observations the planner needs in order to finish.
+            lines.append(json.dumps(obs, sort_keys=True))
     else:
         lines.append("\nNo observations yet.")
     return [
@@ -540,7 +561,9 @@ def summarize_observations(observations: Sequence[Mapping[str, Any]]) -> str:
                     if run_id and run_id not in run_ids:
                         run_ids.append(run_id)
             if not count:
-                lines.append(f"- `{tool}`: no runs found (0 matching records in the store).")
+                lines.append(
+                    f"- `{tool}`: no runs found (0 matching records in the store)."
+                )
             else:
                 detail = f" across runs: {', '.join(run_ids[:10])}" if run_ids else ""
                 lines.append(f"- `{tool}`: {count} matching record(s){detail}.")
@@ -551,7 +574,9 @@ def summarize_observations(observations: Sequence[Mapping[str, Any]]) -> str:
             if not total:
                 lines.append(f"- `{tool}`: store is empty (0 records) — no runs found.")
             else:
-                detail = f"; runs: {', '.join(str(r) for r in runs[:10])}" if runs else ""
+                detail = (
+                    f"; runs: {', '.join(str(r) for r in runs[:10])}" if runs else ""
+                )
                 lines.append(f"- `{tool}`: {total} record(s) in the store{detail}.")
             continue
         try:
@@ -585,7 +610,9 @@ _RECORD_SUMMARY_FIELDS = (
 _RECORD_IDENTITY_FIELDS = ("run_id", "metric_name", "value")
 
 
-def _summarize_records(observation: Mapping[str, Any], *, limit: int) -> dict[str, Any] | None:
+def _summarize_records(
+    observation: Mapping[str, Any], *, limit: int
+) -> dict[str, Any] | None:
     """Shrink a record-bearing observation while keeping its structure intact.
 
     Dropping to a flat text preview is what breaks the planner: it can no longer
@@ -629,6 +656,17 @@ def _summarize_records(observation: Mapping[str, Any], *, limit: int) -> dict[st
 
 def _observe(observation: Any, *, limit: int = 4000) -> Any:
     """Bound the size of a tool observation fed back into the planner."""
+    # ``tools_catalog`` is a controlled, factual observation whose entire value
+    # is the registered toolRef list. Truncating it removes real capabilities and
+    # can make the planner assert that a valid tool does not exist. Preserve only
+    # this exact shape; arbitrary mappings remain subject to the normal budget.
+    if (
+        isinstance(observation, Mapping)
+        and set(observation) == {"tool_refs"}
+        and isinstance(observation["tool_refs"], list)
+        and all(isinstance(item, str) for item in observation["tool_refs"])
+    ):
+        return observation
     try:
         text = json.dumps(observation, sort_keys=True)
     except (TypeError, ValueError):
@@ -676,55 +714,126 @@ def _replan_reason(observation: Any, *, raised: bool = False) -> str:
     return ""
 
 
-_TERMINAL_EMPTY_TOOLS = frozenset(
-    {"artifacts_runs", "artifacts_run", "insights_query", "insights_lineage"}
-)
-_EMPTY_DOWNSTREAM_RE = re.compile(
-    r"\b(?:compare|comparison|dashboard|lineage|then|next|after(?:wards)?|"
-    r"recover|retry|broaden|alternate|alternative)\b|"
-    r"\b(?:or|and)\s+(?:summari[sz]e|show|find|try)\b",
+# Automatic completion is a shortcut for a small, unambiguous lookup grammar.
+# Unrecognized prose goes back to the planner; it is not evidence of completion.
+_EMPTY_LOOKUP_SUBJECT_RE = re.compile(
+    r"(?:please\s+)?(?:(?:can|could)\s+you\s+)?"
+    r"(?:which|what|list|find|show|query|search\s+for)\s+"
+    r"(?:(?:the|all|any|my|available|recorded|saved|recent|latest|"
+    r"completed|failed|successful|pending|\d+)\s+)*"
+    r"(?P<subject>runs?|artifacts?|metrics?|records?)(?P<qualifier>.*)",
     re.IGNORECASE,
 )
-_EMPTY_LOOKUP_GOAL_RE = re.compile(
-    r"\b(?:which|what|list|find|show|query|search|match|matching|runs?|records?|"
-    r"artifacts?|metrics?|lineage)\b",
+_EMPTY_LOOKUP_SUBJECTS = {
+    "artifacts_runs": frozenset({"run", "runs"}),
+    "artifacts_run": frozenset({"artifact", "artifacts"}),
+    "insights_query": frozenset(
+        {"run", "runs", "metric", "metrics", "record", "records"}
+    ),
+}
+# Values are single identifiers or explicitly quoted filter literals, not free
+# prose. Conjunctions join filters here, never independent operator requests.
+_EMPTY_FILTER_VALUE = r"""(?:[\w./:@+-]+|"[^"\n]+"|'[^'\n]+')"""
+_EMPTY_FILTER = (
+    r"(?:workflow|run|status|stage|tool|label|prefix|metric|accelerator)\s+"
+    r"(?:is\s+|=\s*)?" + _EMPTY_FILTER_VALUE
+)
+_EMPTY_LOOKUP_QUALIFIER_RE = re.compile(
+    r"(?:"
+    r"(?:exist|are\s+(?:available|recorded|saved))|"
+    r"(?:for|from|in|with|where|match|matching)\s+(?:the\s+)?"
+    + _EMPTY_FILTER
+    + r"(?:\s+(?:and|or)\s+"
+    + _EMPTY_FILTER
+    + r")*|"
+    r"(?:used|using|with)\s+(?:(?:at\s+least|at\s+most)\s+)?\d+\s+gpus?|"
+    r"(?:since|after|before)\s+(?:\d{4}-\d{2}-\d{2}|today|yesterday)"
+    r")",
     re.IGNORECASE,
 )
+
+
+def _complete_empty_lookup(tool: str, observation: Any) -> bool:
+    """Require an actual empty collection without contrary/completeness evidence."""
+    if not isinstance(observation, Mapping):
+        return False
+    collection = {
+        "artifacts_runs": "runs",
+        "artifacts_run": "artifacts",
+        "insights_query": "records",
+    }.get(tool)
+    if collection is None or observation.get(collection) != []:
+        return False
+    if observation.get("error") or observation.get("ok") is False:
+        return False
+    if any(
+        observation.get(key)
+        for key in ("partial", "truncated", "has_more", "next_cursor", "source_errors")
+    ):
+        return False
+    if any(
+        observation.get(key) is False
+        for key in (
+            "complete",
+            "query_complete",
+            "pagination_complete",
+            "discovery_complete",
+        )
+    ):
+        return False
+    if any(observation.get(key) for key in ("records", "runs", "items", "artifacts")):
+        return False
+    for key in ("count", "total_records", "total_runs", "observed_match_count"):
+        if key in observation and (
+            type(observation[key]) is not int or observation[key] != 0
+        ):
+            return False
+    return True
 
 
 def _empty_result_is_terminal(
     goal: str,
     tool: str,
+    observation: Any,
     *,
     required_tools: Sequence[str] = (),
     completed_tools: Sequence[str] = (),
 ) -> bool:
-    """Whether an empty read is itself the honest answer to this goal.
+    """Finish only a standalone lookup answered by a complete empty collection.
 
-    Discovery that feeds a later comparison/dashboard remains an intermediate
-    failure and must trigger a changed strategy. A standalone lookup is already
-    complete when it truthfully finds zero matches, so it must not spend another
-    planner step or blacklist the correct query merely for returning no rows.
+    Generic words such as "list" do not identify the requested subject. Unknown
+    qualifiers and composite requests need the planner to interpret the remaining
+    goal, even when an intermediate lookup happens to return no rows.
     """
-    if tool not in _TERMINAL_EMPTY_TOOLS:
+    if not _complete_empty_lookup(tool, observation):
         return False
-    pending_other_tools = [
-        name
-        for name in required_tools
-        if name != tool and name not in completed_tools
-    ]
-    if pending_other_tools:
+    if any(name != tool and name not in completed_tools for name in required_tools):
         return False
-    goal_text = str(goal or "")
-    return bool(_EMPTY_LOOKUP_GOAL_RE.search(goal_text)) and not _EMPTY_DOWNSTREAM_RE.search(
-        goal_text
-    )
+    match = _EMPTY_LOOKUP_SUBJECT_RE.fullmatch(str(goal or "").strip().rstrip(".?!"))
+    if match is None or match["subject"].lower() not in _EMPTY_LOOKUP_SUBJECTS.get(
+        tool, ()
+    ):
+        return False
+    qualifier = match["qualifier"].strip()
+    return not qualifier or _EMPTY_LOOKUP_QUALIFIER_RE.fullmatch(qualifier) is not None
 
 
-def _terminal_empty_reply(tool: str, observation: Any) -> str:
-    """Return a concise, deterministic answer for a terminal empty lookup."""
+def _terminal_empty_reply(tool: str, observation: Any, *, goal: str = "") -> str:
+    """Report the recognized lookup subject rather than mislabelling it as runs."""
+    if tool == "artifacts_run":
+        return "No artifacts found for the requested run."
+    subject = _EMPTY_LOOKUP_SUBJECT_RE.fullmatch(str(goal or "").strip().rstrip(".?!"))
+    if tool == "insights_query" and subject is not None:
+        if subject["subject"].lower() in {"metric", "metrics"}:
+            return "No matching metrics found (0 matching records in the store)."
+        if subject["subject"].lower() in {"record", "records"}:
+            return "No matching records found."
     if isinstance(observation, Mapping):
-        if observation.get("count") == 0 or "records" in observation or "runs" in observation:
+        if (
+            observation.get("count") == 0
+            or "records" in observation
+            or "runs" in observation
+        ):
             return "No runs found (0 matching records in the store)."
         if observation.get("total_records") == 0:
             return "No runs found (the store contains 0 records)."
@@ -924,10 +1033,13 @@ def run_action_loop(
             break
 
         if plan.get("final") is not None and not plan.get("tool"):
-            pending_tools = [name for name in required_tools if name not in completed_tools]
+            pending_tools = [
+                name for name in required_tools if name not in completed_tools
+            ]
             if pending_tools:
                 observation = {
-                    "error": "explicitly requested tools remain: " + ", ".join(pending_tools)
+                    "error": "explicitly requested tools remain: "
+                    + ", ".join(pending_tools)
                 }
                 steps.append(
                     {
@@ -1063,7 +1175,10 @@ def run_action_loop(
         if requires_confirmation(tool, resolved_allow):
             proposed = {"tool": tool, "args": args}
             digest = action_digest(proposed)
-            token_ok = confirmation_ok(confirm_token, session_token) and not confirmation_consumed
+            token_ok = (
+                confirmation_ok(confirm_token, session_token)
+                and not confirmation_consumed
+            )
             # The token is bound to a specific action digest; a token issued for
             # one action can never authorize a different (or repeated) one.
             digest_ok = (not confirm_digest) or confirm_digest == digest
@@ -1132,13 +1247,22 @@ def run_action_loop(
         terminal_empty = empty_result and _empty_result_is_terminal(
             goal_text,
             tool,
+            observation,
             required_tools=required_tools,
             completed_tools=completed_tools,
         )
         if terminal_empty:
             replan_reason = ""
-        status = "error" if replan_reason == "tool_error" else "empty" if empty_result else "ok"
-        observed = _observe(observation)
+        status = (
+            "error"
+            if replan_reason == "tool_error"
+            else "empty"
+            if empty_result
+            else "ok"
+        )
+        # The trusted local catalog is the complete routing inventory. A text
+        # prefix hides registered capabilities from the next planning step.
+        observed = observation if tool == "tools_catalog" else _observe(observation)
         steps.append(
             {
                 "step": step_index + 1,
@@ -1167,7 +1291,7 @@ def run_action_loop(
                 completed_tools.append(tool)
         observations.append(observation_entry)
         if terminal_empty:
-            reply = _terminal_empty_reply(tool, observation)
+            reply = _terminal_empty_reply(tool, observation, goal=goal_text)
             stopped_reason = STOP_DONE
             break
     else:

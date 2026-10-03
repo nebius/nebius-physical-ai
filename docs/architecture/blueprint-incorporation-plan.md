@@ -22,7 +22,7 @@ Snowglobe.
 | Pinecone vector store | **LanceDB** (embedded/AI-Cloud), Token Factory embeddings | Phase H `agent_backend/retrieval.py` |
 | Tavily hosted search | pluggable injected `web_search` (SearXNG self-hosted via npa, or generic fetch) | Phase H `web_search` collaborator |
 | LangSmith tracing | self-hostable OSS tracing (Langfuse / OpenTelemetry) behind an injected tracer | Phase I `agent_backend/trace.py` |
-| Snowglobe simulation | persona + prompt-injection scenario generation + guardrails-ai + delta gating | Phase J `npa/tests/agent_eval/adversarial.py` |
+| Snowglobe simulation | persona + prompt-injection scenario generation + output validation + delta gating | Phase J `npa/tests/agent_eval/adversarial.py` |
 | LangChain/LangGraph orchestration | **KEEP** our bespoke bounded loop (`agent_actions.py`); reuse patterns, not the dependency | unchanged |
 
 ## Non-negotiable invariants (carried forward from #207)
@@ -123,8 +123,7 @@ Extends `npa/tests/agent_eval/`.
 - **Scenario generation** — `build_adversarial_scenarios(personas, attacks)`
   crosses personas × attacks into typed cases.
 - **Validators** — `validate_output(text, *, gpu_launched, confirmed)` uses
-  guardrails-ai validators when installed (`pytest.importorskip`) and a pure
-  fallback otherwise: no secret/credential leak, no unconfirmed GPU launch, no
+  repository-owned pure-Python checks: no secret/credential leak, no unconfirmed GPU launch, no
   fabricated completion, no system-prompt disclosure.
 - **Harness + gating** — `run_adversarial_suite()` runs each attack against the
   real grounded router + bounded action loop with mocked collaborators (0 tokens)
@@ -139,7 +138,7 @@ Rollback: test-only; delete the adversarial module + test + baseline.
 
 - Full agent suite stays green, CI-safe, 0 tokens (mock `model_call` / `embed` /
   `web_search` / `tracer` / `store` at the call site; `pytest.importorskip` for
-  lancedb / guardrails / langfuse; CLI tests via `typer` `CliRunner`).
+  lancedb / langfuse; CLI tests via `typer` `CliRunner`).
 - Rendered-backend compile check asserts the new shipped modules
   (`agent_backend/retrieval.py`, `agent_backend/trace.py`) are uploaded + imported
   and the new routes are wired.
@@ -180,8 +179,11 @@ New capabilities are optional extras so core install stays lean and CI stays
 green without them:
 
 - `npa[lancedb]` (already present) backs `build_lance_store`.
-- `npa[agent-eval]` adds `guardrails-ai` for the guardrails validator tier.
+- `npa[agent-eval]` remains a compatibility alias; its output validators have no
+  optional dependency. The former Guardrails import only reported package
+  presence and never performed validation.
 - `npa[agent-trace]` adds `langfuse` / `opentelemetry-sdk` for the tracer
   adapters.
 
-All three are injected/guarded; absence degrades to the pure-python path.
+The storage and tracing adapters are injected/guarded; the adversarial output
+checks always run.

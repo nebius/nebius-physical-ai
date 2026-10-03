@@ -65,7 +65,7 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
     mp4_run_id = ""
     mp4_run_ref = ""
     mp4_key = ""
-    mp4_uri = ""
+    mp4_source: dict[str, object] = {}
     for entry in run_list[:20]:
         # Incomplete summaries are intentionally non-authoritative: the secure
         # loader refuses them until the operator selects an exact, fully
@@ -75,13 +75,18 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
         run_id = str((entry or {}).get("run_id") or "").strip()
         if not run_id:
             continue
+        run_ref = str((entry or {}).get("run_ref") or "").strip()
+        project_id = str((entry or {}).get("project_id") or "").strip()
+        resource_bucket = str((entry or {}).get("bucket") or "").strip()
+        resolved_prefix = str((entry or {}).get("resolved_prefix") or "").strip()
+        if not run_ref or not project_id or not resource_bucket:
+            continue
         source_params = {
-            "resource_bucket": str((entry or {}).get("bucket") or ""),
-            "project_id": str((entry or {}).get("project_id") or ""),
-            "resolved_prefix": str((entry or {}).get("resolved_prefix") or ""),
+            "resource_bucket": resource_bucket,
+            "project_id": project_id,
+            "resolved_prefix": resolved_prefix,
             "source_selected": "1",
         }
-        source_params = {key: value for key, value in source_params.items() if value}
         source_query = str(httpx.QueryParams(source_params))
         listed = ctx.get(
             f"/api/artifacts/run/{run_id}"
@@ -94,9 +99,13 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
             render = str((art or {}).get("render") or "")
             if render == "video" or key.lower().endswith(".mp4"):
                 mp4_run_id = run_id
-                mp4_run_ref = str((entry or {}).get("run_ref") or "").strip()
+                mp4_run_ref = run_ref
                 mp4_key = key
-                mp4_uri = str((art or {}).get("s3_uri") or "")
+                mp4_source = {
+                    "project_id": project_id,
+                    "resource_bucket": resource_bucket,
+                    "resolved_prefix": resolved_prefix,
+                }
                 break
         if mp4_key:
             break
@@ -107,7 +116,9 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
             json={
                 "run_id": mp4_run_id,
                 "run_ref": mp4_run_ref,
-                "s3_uri": mp4_uri,
+                "key": mp4_key,
+                **mp4_source,
+                "source_selected": True,
             },
             timeout=None,
         )
@@ -555,13 +566,21 @@ def test_agent_chat_grounded_field(ctx: AgentLiveContext) -> None:
     assert isinstance(apis_used, list) and apis_used
 
 
+def _agent_has_kubernetes_backend(ctx: AgentLiveContext) -> bool:
+    """Report whether the deployment has a Kubernetes backend configured."""
+    response = ctx.get("/api/infra/backends")
+    response.raise_for_status()
+    return bool((response.json() or {}).get("has_infra"))
+
+
 @pytest.mark.parametrize(
-    ("prompt", "expected_template", "expected_config"),
+    ("prompt", "expected_template", "expected_config", "needs_kubernetes"),
     [
         (
             "create PAIDF YAML: fan out 4 robot clip variants on 4 GPUs with grade threshold 70%",
             "physical-ai-data-factory",
             {"n_augmentations": "4", "grade_threshold": "0.7"},
+            False,
         ),
         (
             "create sim-to-real YAML for Franka on Isaac with 5000 environments, "
@@ -569,6 +588,7 @@ def test_agent_chat_grounded_field(ctx: AgentLiveContext) -> None:
             "and 1 GPU",
             "sim2real",
             {"env_count": "5000", "inner_iterations": "3", "threshold": "0.8"},
+            True,
         ),
     ],
 )
@@ -577,6 +597,7 @@ def test_agent_chat_generates_grounded_parameterized_workflow_yaml(
     prompt: str,
     expected_template: str,
     expected_config: dict[str, str],
+    needs_kubernetes: bool,
 ) -> None:
     chat = ctx.post(
         "/api/chat",
@@ -588,6 +609,20 @@ def test_agent_chat_generates_grounded_parameterized_workflow_yaml(
     assert payload.get("ok") is True
     assert payload.get("grounded") is True
     workflow_yaml = str(payload.get("workflow_yaml") or "")
+    if not workflow_yaml and needs_kubernetes:
+        # Chat returns YAML only after validate *and* plan succeed, and the
+        # Sim2Real template cannot plan a submit without a Kubernetes backend.
+        # An `--agent-only` deployment has none, so declining is correct there
+        # and this assertion has no subject. Skip only on that exact pairing:
+        # the agent must name the backend as the reason *and* report no
+        # configured backend, so an empty YAML for any other cause still fails.
+        reason = str(payload.get("reply") or "")
+        declined_for_backend = "kubernetes backend is required" in reason.lower()
+        if declined_for_backend and not _agent_has_kubernetes_backend(ctx):
+            pytest.skip(
+                f"{expected_template} needs a Kubernetes backend to plan a submit; "
+                "this deployment reports none (agent-only)"
+            )
     assert workflow_yaml
     spec = yaml.safe_load(workflow_yaml)
     assert spec["apiVersion"] == "npa.workflow/v0.0.1"

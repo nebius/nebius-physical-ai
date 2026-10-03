@@ -14,6 +14,7 @@ from npa.workbench.cosmos.reason import (
     cosmos_reason_k8s_shell_preamble,
     vlm_k8s_component,
 )
+from npa.workbench.model_cache import MODEL_CACHE_ENV_NAMES
 from npa.workflows.sim2real.constants import DEFAULT_SIM_BACKEND, SIM_BACKEND_ISAAC
 from npa.workflows.sim2real.models import Sim2RealLoopConfig, Sim2RealLoopError
 from npa.workflows.sim2real.utils import _split_csv
@@ -86,7 +87,9 @@ def _component_job_manifest(
     env_values = _kubernetes_component_env(
         env,
         config,
-        isaac_backed=(component == "heldout_eval" and config.sim_backend == SIM_BACKEND_ISAAC),
+        isaac_backed=(
+            component == "heldout_eval" and config.sim_backend == SIM_BACKEND_ISAAC
+        ),
     )
     # Each sibling attests its own immutable image, not the controller image.
     env_values["NPA_SIM2REAL_RUNTIME_IMAGE"] = image.removeprefix("docker:")
@@ -158,7 +161,7 @@ def _component_job_manifest(
 def _component_job_script(
     component: str, *, sim_backend: str = DEFAULT_SIM_BACKEND
 ) -> str:
-    if component in {"vlm_eval", "vlm_eval_reason2", "vlm_eval_reason3"}:
+    if component in {"vlm_eval", "vlm_eval_reason2", "vlm_eval_cosmos3"}:
         subcommand = (
             "component-vlm-eval "
             '--input-uri "${NPA_SIM2REAL_ROLLOUT_URI}" '
@@ -273,6 +276,8 @@ def _kubernetes_component_env(
         if (
             key.startswith("NPA_SIM2REAL")
             or key.startswith("NPA_COSMOS_")
+            or key.startswith("NPA_MODEL_CACHE")
+            or key in MODEL_CACHE_ENV_NAMES
             or key
             in {
                 "HF_HOME",

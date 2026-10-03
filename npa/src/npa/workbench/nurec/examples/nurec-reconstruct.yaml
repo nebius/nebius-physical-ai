@@ -52,7 +52,7 @@ config:
     provision_timeout: 2400
     pod_config:
       spec:
-        # Appended to the cluster-wide list, so the Nebius registry secret stays.
+        # Appended to any cluster-wide operator-managed pull-secret list.
         imagePullSecrets:
           - name: ngc-nvcr-imagepullsecret
         initContainers:

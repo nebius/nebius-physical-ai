@@ -1,0 +1,4 @@
+# Patch build tools in both the public base interpreter and evaluator venv.
+pip==26.2.1
+setuptools==84.0.0
+wheel==0.47.0

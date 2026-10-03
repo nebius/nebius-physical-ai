@@ -111,11 +111,11 @@ SkyPilot stays the execution engine, but the shown catalog is npa.workflow-only
 `npa.workflow/v0.0.1` specs, CPU-only and `cloud: kubernetes`:
 
 - Aggregate a run (ingest-run -> dashboard):
-  `npa/workflows/workbench/npa-workflows/insights-aggregate.yaml`
+  `workflows/testing/insights-aggregate.yaml`
 - Hardening with insights (hardening stages -> ingest-run -> dashboard):
-  `npa/workflows/workbench/npa-workflows/hardening-with-insights.yaml`
+  `workflows/testing/hardening-with-insights.yaml`
 - CPU-only smoke (ingest fixture -> compare -> dashboard):
-  `npa/workflows/workbench/npa-workflows/insights-smoke.yaml`
+  `workflows/testing/insights-smoke.yaml`
 
 toolRefs: `workbench.insights.record`, `workbench.insights.ingest_run`,
 `workbench.insights.compare`, `workbench.insights.dashboard`.
@@ -143,3 +143,9 @@ toolRefs: `workbench.insights.record`, `workbench.insights.ingest_run`,
   a step whose `resources_profile.accelerators` parses to >= 1, and manifests with
   status `planned` are skipped. CPU-only and never-executed runs therefore report
   no GPU count at all rather than a fabricated zero.
+- The service defaults to token authentication and an empty request storage
+  scope. Set `INSIGHTS_TOKEN`, plus the narrow `INSIGHTS_ALLOWED_S3_ROOTS` and/or
+  `INSIGHTS_ALLOWED_LOCAL_ROOTS` boundary. These allowlists apply to deployed
+  FastAPI requests, not default embedded CLI, SDK, or workflow toolRef
+  execution. `INSIGHTS_AUTH_MODE=none` is an explicit local/test service opt-in
+  only; see `docs/security/workbench-service-boundaries.md`.

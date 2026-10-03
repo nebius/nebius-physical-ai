@@ -42,7 +42,9 @@ def test_classify_tier_vision_when_image_content_present() -> None:
 
 
 def test_has_image_content_detects_inline_data_uri_and_parts() -> None:
-    assert r.has_image_content([{"role": "user", "content": "see data:image/png;base64,AAA"}])
+    assert r.has_image_content(
+        [{"role": "user", "content": "see data:image/png;base64,AAA"}]
+    )
     assert r.has_image_content([{"role": "user", "content": [{"type": "image"}]}])
     assert not r.has_image_content([{"role": "user", "content": "plain text"}])
     assert not r.has_image_content(None)
@@ -51,11 +53,9 @@ def test_has_image_content_detects_inline_data_uri_and_parts() -> None:
 # ── flavor selection ─────────────────────────────────────────────────────────
 
 
-def test_flavor_variants_interactive_prefers_fast_then_base() -> None:
-    assert r.flavor_variants(r.CHEAP_MODEL, interactive=True) == [
-        f"{r.CHEAP_MODEL}-fast",
-        r.CHEAP_MODEL,
-    ]
+def test_public_replacements_do_not_invent_fast_variants() -> None:
+    for model in (r.CHEAP_MODEL, r.REASONING_MODEL):
+        assert r.flavor_variants(model, interactive=True) == [model]
 
 
 def test_flavor_variants_non_interactive_uses_base_only() -> None:
@@ -81,11 +81,7 @@ def test_build_model_ladder_cheap_tier_orders_cheapest_first() -> None:
         [r.CHEAP_MODEL, r.STANDARD_MODEL, r.REASONING_MODEL],
         interactive=True,
     )
-    # Cheap model (fast then base) leads; reasoner is a late fallback.
-    assert ladder[0] == f"{r.CHEAP_MODEL}-fast"
-    assert ladder[1] == r.CHEAP_MODEL
-    assert ladder.index(r.CHEAP_MODEL) < ladder.index(r.STANDARD_MODEL)
-    assert ladder.index(r.STANDARD_MODEL) < ladder.index(r.REASONING_MODEL)
+    assert ladder == [r.CHEAP_MODEL, r.REASONING_MODEL]
 
 
 def test_build_model_ladder_reasoning_tier_leads_with_reasoner() -> None:
@@ -105,19 +101,21 @@ def test_build_model_ladder_requested_model_wins() -> None:
 
 def test_build_model_ladder_respects_explicit_allowlist() -> None:
     # allow_tier_defaults False => only configured models, tier-preferred first.
-    configured = [r.STANDARD_MODEL]
+    configured = ["dedicated/legacy-model"]
     ladder = r.build_model_ladder(
         r.TIER_CHEAP,
         configured,
         interactive=False,
         allow_tier_defaults=False,
     )
-    assert ladder == [r.STANDARD_MODEL]
+    assert ladder == configured
     assert r.CHEAP_MODEL not in ladder
 
 
 def test_build_model_ladder_never_empty() -> None:
-    assert r.build_model_ladder(r.TIER_CHEAP, [], interactive=False, allow_tier_defaults=False)
+    assert r.build_model_ladder(
+        r.TIER_CHEAP, [], interactive=False, allow_tier_defaults=False
+    )
 
 
 def test_build_model_ladder_deduplicates() -> None:
@@ -129,13 +127,27 @@ def test_build_model_ladder_deduplicates() -> None:
     assert len(ladder) == len(set(ladder))
 
 
+def test_vision_default_never_falls_through_to_text_only_model() -> None:
+    ladder = r.build_model_ladder(
+        r.TIER_VISION, [r.CHEAP_MODEL, r.REASONING_MODEL], interactive=True
+    )
+    assert ladder == [r.VISION_MODEL]
+
+
+def test_explicit_legacy_model_is_preserved() -> None:
+    model = "Qwen/Qwen2.5-VL-72B-Instruct"
+    assert r.build_model_ladder(
+        r.TIER_VISION, [model], allow_tier_defaults=False, requested_model=model
+    ) == [model]
+
+
 # ── availability filtering ───────────────────────────────────────────────────
 
 
 def test_filter_available_drops_unavailable_fast_variants() -> None:
-    ladder = [f"{r.CHEAP_MODEL}-fast", r.CHEAP_MODEL, f"{r.STANDARD_MODEL}-fast", r.STANDARD_MODEL]
-    available = {r.CHEAP_MODEL, r.STANDARD_MODEL}  # no -fast in this key's catalog
-    assert r.filter_available(ladder, available) == [r.CHEAP_MODEL, r.STANDARD_MODEL]
+    ladder = [f"{r.CHEAP_MODEL}-fast", r.CHEAP_MODEL, r.REASONING_MODEL]
+    available = {r.CHEAP_MODEL, r.REASONING_MODEL}
+    assert r.filter_available(ladder, available) == [r.CHEAP_MODEL, r.REASONING_MODEL]
 
 
 def test_filter_available_unchanged_when_availability_unknown() -> None:
@@ -160,10 +172,20 @@ def test_thinking_only_enabled_for_reasoning_tier() -> None:
     assert r.thinking_enabled(r.TIER_VISION) is False
 
 
-def test_chat_extra_disables_thinking_off_reasoning_tier() -> None:
-    assert r.chat_extra(r.TIER_CHEAP) == {"chat_template_kwargs": {"thinking": False}}
-    assert r.chat_extra(r.TIER_STANDARD) == {"chat_template_kwargs": {"thinking": False}}
-    assert r.chat_extra(r.TIER_REASONING) == {}
+def test_chat_extra_uses_each_replacements_supported_thinking_switch() -> None:
+    for tier in (r.TIER_CHEAP, r.TIER_STANDARD, r.TIER_VISION):
+        assert r.chat_extra(tier, r.CHEAP_MODEL) == {
+            "chat_template_kwargs": {"enable_thinking": False}
+        }
+        assert r.chat_extra(tier, r.REASONING_MODEL) == {
+            "chat_template_kwargs": {"thinking_mode": "disabled"}
+        }
+    for model in (r.CHEAP_MODEL, r.REASONING_MODEL):
+        assert r.chat_extra(r.TIER_REASONING, model) == {}
+
+
+def test_chat_extra_does_not_guess_custom_provider_parameters() -> None:
+    assert r.chat_extra(r.TIER_CHEAP, "custom/model") == {}
 
 
 # ── input budget guardrail ───────────────────────────────────────────────────

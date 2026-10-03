@@ -336,6 +336,57 @@ def test_non_isaac_gpu_job_never_receives_isaac_cache(
     )
 
 
+def test_gpu_jobs_mount_the_durable_weight_cache_read_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Cosmos siblings run an image forbidden from baking gated weights, so without
+    # a volume that outlives the pod every Job re-downloads them on a billing GPU.
+    monkeypatch.delenv("NPA_SIM2REAL_ISAAC_IMAGE", raising=False)
+    monkeypatch.setenv("NPA_MODEL_CACHE_PVC", "npa-model-cache")
+
+    configured = configure_gpu_job(
+        _manifest(RTX, "cosmos"),
+        image=IMAGE,
+        product=RTX,
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+    )
+
+    pod = configured["spec"]["template"]["spec"]
+    assert pod["volumes"] == [
+        {
+            "name": "npa-model-cache",
+            "persistentVolumeClaim": {"claimName": "npa-model-cache"},
+        }
+    ]
+    assert pod["containers"][0]["volumeMounts"] == [
+        {"name": "npa-model-cache", "mountPath": "/opt/npa-model-cache"}
+    ]
+    assert (
+        configured["metadata"]["annotations"]["sim2real.npa.dev/model-cache"]
+        == "npa-model-cache"
+    )
+
+
+def test_gpu_jobs_are_untouched_when_no_weight_cache_is_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NPA_SIM2REAL_ISAAC_IMAGE", raising=False)
+    monkeypatch.delenv("NPA_MODEL_CACHE_PVC", raising=False)
+    monkeypatch.delenv("NPA_MODEL_CACHE_HOST_PATH", raising=False)
+    monkeypatch.delenv("NPA_MODEL_CACHE_DIR", raising=False)
+
+    configured = configure_gpu_job(
+        _manifest(RTX, "cosmos"),
+        image=IMAGE,
+        product=RTX,
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+    )
+
+    assert "volumes" not in configured["spec"]["template"]["spec"]
+
+
 def test_kueue_queue_covers_every_production_job_request() -> None:
     manifests = kueue_queue_manifests(
         namespace="default",

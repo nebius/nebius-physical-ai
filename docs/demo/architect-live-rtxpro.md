@@ -1,5 +1,7 @@
 # Live Workbench Demo (Architect Pack)
 
+[Docs](../README.md)
+
 Operator runbook for reproducing the multi-tool Physical AI demo on live Nebius
 infrastructure for project alias `rtxpro`.
 

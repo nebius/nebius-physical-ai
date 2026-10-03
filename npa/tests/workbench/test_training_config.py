@@ -7,6 +7,7 @@ from npa.workbench.training_config import (
     TrainingConfigError,
     build_training_config,
     overrides_to_mapping,
+    training_config_from_mapping,
 )
 
 
@@ -37,8 +38,46 @@ def test_training_config_rejects_invalid_override() -> None:
         build_training_config(overrides=["learning_rate"])
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_training_config_from_mapping_preserves_wandb_boolean(enabled: bool) -> None:
+    config = training_config_from_mapping({"wandb": {"enabled": enabled}})
+
+    assert config.wandb.enabled is enabled
+    assert config.env()["NPA_TRAINING_WANDB_ENABLED"] == ("1" if enabled else "0")
+
+
+@pytest.mark.parametrize("enabled", ["false", "true", "", 0, 1, 0.0, None, [], {}])
+def test_training_config_from_mapping_rejects_non_boolean_wandb_enabled(
+    enabled: object,
+) -> None:
+    with pytest.raises(TrainingConfigError, match="wandb.enabled must be a boolean"):
+        training_config_from_mapping({"wandb": {"enabled": enabled}})
+
+
+@pytest.mark.parametrize("values", [None, {}, {"wandb": None}, {"wandb": {}}])
+def test_training_config_from_mapping_defaults_to_disabled(values: object) -> None:
+    config = training_config_from_mapping(values)
+
+    assert config.wandb.enabled is False
+    assert config.env()["WANDB_MODE"] == "disabled"
+
+
+def test_training_config_missing_enablement_preserves_nested_settings() -> None:
+    config = training_config_from_mapping(
+        {"wandb": {"project": "training", "run_name": "run", "mode": "online"}}
+    )
+
+    assert config.wandb.enabled is False
+    assert config.wandb.project == "training"
+    assert config.wandb.run_name == "run"
+    assert config.wandb.mode == "online"
+    assert config.env()["WANDB_MODE"] == "disabled"
+
+
 def test_overrides_to_mapping_parses_typed_values() -> None:
-    parsed = overrides_to_mapping(["learning_rate=0.001", "domain_randomize=true", "+env.max_steps=12"])
+    parsed = overrides_to_mapping(
+        ["learning_rate=0.001", "domain_randomize=true", "+env.max_steps=12"]
+    )
 
     assert parsed == {
         "learning_rate": 0.001,
@@ -54,8 +93,16 @@ def test_detection_request_applies_canonical_fields_and_supported_overrides() ->
         output_uri="s3://bucket/output/",
         data_path="s3://bucket/custom-lancedb/",
         overrides=["train.epochs=1", "optimizer.learning_rate=0.0003"],
-        checkpoint_s3={"uri": "s3://bucket/checkpoints/", "endpoint_url": "https://storage.example"},
-        wandb={"enabled": True, "project": "npa-public", "run_name": "short-run", "mode": "offline"},
+        checkpoint_s3={
+            "uri": "s3://bucket/checkpoints/",
+            "endpoint_url": "https://storage.example",
+        },
+        wandb={
+            "enabled": True,
+            "project": "npa-public",
+            "run_name": "short-run",
+            "mode": "offline",
+        },
     )
 
     assert request.lance_uri == "s3://bucket/custom-lancedb/"

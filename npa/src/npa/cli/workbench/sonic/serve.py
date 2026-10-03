@@ -19,18 +19,34 @@ import typer
 
 
 def serve_cmd(
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.container, "--runtime", help="Runtime."),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.container, "--runtime", help="Runtime."
+    ),
     mode: ServeMode = typer.Option(ServeMode.sim, "--mode", help="Serve mode."),
-    input_type: InputType = typer.Option(InputType.keyboard, "--input-type", help="Input source."),
-    model_repo: str = typer.Option(DEFAULT_MODEL_REPO, "--model-repo", help="Hugging Face model repo."),
+    input_type: InputType = typer.Option(
+        InputType.keyboard, "--input-type", help="Input source."
+    ),
+    model_repo: str = typer.Option(
+        DEFAULT_MODEL_REPO, "--model-repo", help="Hugging Face model repo."
+    ),
     zmq_host: str = typer.Option("127.0.0.1", "--zmq-host", help="ZMQ source host."),
     zmq_port: int = typer.Option(5556, "--zmq-port", help="ZMQ source port."),
     zmq_topic: str = typer.Option("pose", "--zmq-topic", help="ZMQ topic."),
-    realtime_debug_port: int = typer.Option(5557, "--realtime-debug-port", help="Realtime debug port."),
-    headless: bool = typer.Option(True, "--headless/--no-headless", help="Run without an interactive viewer."),
-    smoke: bool = typer.Option(False, "--smoke", help="Run the minimal smoke path and exit."),
-    output_path: str = typer.Option("", "--output-path", help="S3 output URI for serverless serve smoke."),
-    confirm_real: bool = typer.Option(False, "--confirm-real", help="Required to acknowledge real robot mode."),
+    realtime_debug_port: int = typer.Option(
+        5557, "--realtime-debug-port", help="Realtime debug port."
+    ),
+    headless: bool = typer.Option(
+        True, "--headless/--no-headless", help="Run without an interactive viewer."
+    ),
+    smoke: bool = typer.Option(
+        False, "--smoke", help="Run the minimal smoke path and exit."
+    ),
+    output_path: str = typer.Option(
+        "", "--output-path", help="S3 output URI for serverless serve smoke."
+    ),
+    confirm_real: bool = typer.Option(
+        False, "--confirm-real", help="Required to acknowledge real robot mode."
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", "--output", help="Output format."
     ),

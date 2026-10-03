@@ -15,12 +15,12 @@ usage() {
 Usage: build.sh [--registry REGISTRY] [--push] [--variant baked|k8s|mujoco] [--tag TAG] [--base-image IMAGE]
 
 Builds the SONIC runtime image as npa-sonic:<version> for --variant baked, or
-npa-sonic:<version>-k8s-runtime for --variant k8s. The mujoco variant builds the
-additive npa-sonic-mujoco:<tag> image from an existing SONIC base image.
+npa-sonic:<version>-k8s-runtime for --variant k8s. The mujoco variant independently
+builds npa-sonic-mujoco:<tag> on a digest-pinned public Python base.
 When --tag is provided, it overrides the final image tag.
 When --base-image is provided, it overrides the variant default base image.
 When --registry is provided, also tags REGISTRY/<image-name>:<tag>.
-Use --registry cr.eu-north1.nebius.cloud/<your-registry-id> --push to publish.
+Use --registry <your-registry>/<namespace> --push to publish.
 EOF
 }
 
@@ -84,15 +84,16 @@ case "$VARIANT" in
     TAG_SUFFIX=""
     # Docker Hub CUDA, digest-pinned and freely redistributable. Was
     # nvcr.io/nvidia/isaac-lab, which baked Omniverse Kit and needed an NGC login.
-    BASE_IMAGE_DEFAULT="nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85"
+    BASE_IMAGE_DEFAULT="nvidia/cuda:13.0.2-cudnn-devel-ubuntu22.04@sha256:36c66a3ad4608580cf937f7ec3add9323a610956cfe8c9e2f99ef2ea0c896f01"
     ISAAC_LAB_PYTHON="/isaac-sim/python.sh"
     NPA_ISAAC_VENV="/opt/npa/sim/venv"
     NPA_ISAAC_SKIP_TORCH=0
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
     REQUIRE_TORCH_SM120=1
     # The container runtime injects the host driver + Vulkan ICD given
     # NVIDIA_DRIVER_CAPABILITIES=all; nothing driver-related is baked any more.
     NPA_DRIVER_PROVISIONING="host-mounted"
-    NPA_CUDA_ARCHITECTURES="sm80,sm90,sm120"
+    NPA_CUDA_ARCHITECTURES="sm80,sm90,sm100,sm103,sm120"
     NPA_ISAAC_LAB_INSTALL_MODE="runtime-fetch-isaac-sim"
     NPA_RUNTIME_USER="ubuntu"
     ;;
@@ -109,6 +110,7 @@ case "$VARIANT" in
     ISAAC_LAB_PYTHON="/isaac-sim/python.sh"
     NPA_ISAAC_VENV="/opt/npa/venv"
     NPA_ISAAC_SKIP_TORCH=1
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu130"
     REQUIRE_TORCH_SM120=1
     NPA_DRIVER_PROVISIONING="host-mounted"
     NPA_CUDA_ARCHITECTURES="sm80,sm90,sm100,sm103,sm120"
@@ -120,23 +122,24 @@ case "$VARIANT" in
     ;;
   mujoco)
     TAG_SUFFIX=""
-    BASE_IMAGE_DEFAULT=""
+    BASE_IMAGE_DEFAULT="python:3.11.14-slim-bookworm@sha256:65a93d69fa75478d554f4ad27c85c1e69fa184956261b4301ebaf6dbb0a3543d"
     ISAAC_LAB_PYTHON="/isaac-sim/python.sh"
     # The mujoco layer must pip-install with the IMAGE's python, never with
     # ISAAC_LAB_PYTHON: that is now a bootstrap shim, so using it here would download
     # 4.5 GB of Isaac Sim during the BUILD and bake it into a layer -- exactly what this
     # whole change exists to prevent.
-    NPA_IMAGE_PYTHON_DEFAULT="/opt/npa/sim/venv/bin/python"
-    NPA_ISAAC_VENV="/opt/npa/sim/venv"
+    NPA_IMAGE_PYTHON_DEFAULT="/opt/npa/venv/bin/python"
+    NPA_ISAAC_VENV="/opt/npa/venv"
     NPA_ISAAC_SKIP_TORCH=1
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"
     REQUIRE_TORCH_SM120=0
-    NPA_DRIVER_PROVISIONING="inherited"
-    NPA_CUDA_ARCHITECTURES="inherited"
-    NPA_ISAAC_LAB_INSTALL_MODE="inherited"
+    NPA_DRIVER_PROVISIONING="host-mounted"
+    NPA_CUDA_ARCHITECTURES="sm80,sm90,sm100,sm120"
+    NPA_ISAAC_LAB_INSTALL_MODE="runtime-fetch-refusal-only"
     NPA_RUNTIME_USER="ubuntu"
     IMAGE_NAME="npa-sonic-mujoco"
     DOCKERFILE="$SCRIPT_DIR/Dockerfile.mujoco"
-    DEFAULT_IMAGE_TAG="${NPA_SONIC_MUJOCO_TAG:-0.1.3-mvp}"
+    DEFAULT_IMAGE_TAG="${NPA_SONIC_MUJOCO_TAG:-0.2.0-runtime}"
     ;;
   *)
     echo "ERROR: --variant must be baked, k8s, or mujoco, got: $VARIANT" >&2
@@ -212,14 +215,7 @@ if [ -z "${DEFAULT_IMAGE_TAG:-}" ]; then
 fi
 
 if [ "$VARIANT" = "mujoco" ]; then
-  BASE_IMAGE="${BASE_IMAGE_OVERRIDE:-${NPA_SONIC_MUJOCO_BASE_IMAGE:-}}"
-  if [ -z "$BASE_IMAGE" ]; then
-    if [ -n "$REGISTRY" ]; then
-      BASE_IMAGE="${REGISTRY}/npa-sonic:${VERSION}"
-    else
-      BASE_IMAGE="npa-sonic:${VERSION}"
-    fi
-  fi
+  BASE_IMAGE="${BASE_IMAGE_OVERRIDE:-${NPA_SONIC_MUJOCO_BASE_IMAGE:-$BASE_IMAGE_DEFAULT}}"
 else
   BASE_IMAGE="${BASE_IMAGE_OVERRIDE:-$BASE_IMAGE_DEFAULT}"
 fi
@@ -237,6 +233,7 @@ BUILD_ARGS=(
   --build-arg "ISAAC_LAB_SRC_COMMIT=${ISAAC_LAB_SRC_COMMIT}"
   --build-arg "NPA_ISAAC_VENV=${NPA_ISAAC_VENV}"
   --build-arg "NPA_ISAAC_SKIP_TORCH=${NPA_ISAAC_SKIP_TORCH}"
+  --build-arg "TORCH_INDEX_URL=${TORCH_INDEX_URL}"
   --build-arg "REQUIRE_TORCH_SM120=${REQUIRE_TORCH_SM120}"
   --build-arg "NPA_DRIVER_PROVISIONING=${NPA_DRIVER_PROVISIONING}"
   --build-arg "NPA_CUDA_ARCHITECTURES=${NPA_CUDA_ARCHITECTURES}"

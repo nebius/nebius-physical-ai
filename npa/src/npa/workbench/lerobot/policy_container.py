@@ -85,6 +85,13 @@ class PolicyContainerError(Exception):
     """Raised when policy-container inference or feedback training fails."""
 
 
+def _boolean_field(payload: dict[str, Any], field_name: str, *, default: bool) -> bool:
+    value = payload.get(field_name, default)
+    if type(value) is not bool:
+        raise PolicyContainerError(f"{field_name} must be a boolean")
+    return value
+
+
 @dataclass(frozen=True)
 class FeedbackItem:
     """Existing vlm_eval-compatible feedback item."""
@@ -187,6 +194,7 @@ class VlmSignalUpdateResult:
             raise PolicyContainerError(
                 "VlmSignalUpdateResult.from_dict requires a JSON object payload"
             )
+        control = _boolean_field(payload, "control", default=False)
         for required in ("reward_head_after", "policy_output_after", "policy_delta_l2"):
             if required not in payload:
                 raise PolicyContainerError(
@@ -222,7 +230,7 @@ class VlmSignalUpdateResult:
             resume_checkpoint_uri=str(payload.get("resume_checkpoint_uri", "")),
             resume_checkpoint_sha256=str(payload.get("resume_checkpoint_sha256", "")),
             signal_count=int(payload.get("signal_count", 0)),
-            control=bool(payload.get("control", False)),
+            control=control,
             loss_integration_point=str(
                 payload.get("loss_integration_point", "byo_trainer_command")
             ),
@@ -374,6 +382,7 @@ def build_lerobot_train_command(
     resume: bool = False,
     extra_args: list[str] | None = None,
     training_config: TrainingConfig | None = None,
+    lerobot_version: str | None = None,
 ) -> list[str]:
     """Build a real `lerobot-train` command for a local LeRobotDataset."""
 
@@ -400,7 +409,7 @@ def build_lerobot_train_command(
         f"--output_dir={output_dir}",
         f"--steps={steps}",
         f"--save_freq={save_freq}",
-        train_env_eval_arg(eval_freq),
+        train_env_eval_arg(eval_freq, version=lerobot_version),
         f"--log_freq={log_freq}",
         f"--batch_size={batch_size}",
         f"--num_workers={num_workers}",
@@ -643,7 +652,7 @@ def validate_lerobot_checkpoint(
             raise PolicyContainerError(
                 "torch is required to validate pytorch_model.bin"
             ) from exc
-        payload = torch.load(str(weight_file), map_location="cpu")
+        payload = torch.load(str(weight_file), map_location="cpu", weights_only=True)
         tensors = payload if isinstance(payload, dict) else {}
     tensor_count = 0
     parameter_count = 0
@@ -1153,6 +1162,11 @@ def create_app() -> Any:
             payload.get("schema", "")
         ).startswith("npa.sim2real.rl_signal.")
         try:
+            control = (
+                _boolean_field(payload, "control", default=False)
+                if is_signal
+                else False
+            )
             output_dir = jail_output_dir(
                 payload.get("output_dir"),
                 default_name="vlm-signal" if is_signal else "feedback",
@@ -1163,7 +1177,7 @@ def create_app() -> Any:
                     output_dir=output_dir,
                     learning_rate=float(payload.get("learning_rate") or 0.05),
                     signal_loss_weight=float(payload.get("signal_loss_weight") or 1.0),
-                    control=bool(payload.get("control", False)),
+                    control=control,
                 )
                 return signal_update.to_dict()
             feedback = parse_feedback_batch(payload)

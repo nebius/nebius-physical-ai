@@ -163,7 +163,9 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _validate_container_image(summary: dict[str, Any]) -> dict[str, str]:
+def _validate_container_image(
+    summary: dict[str, Any], *, acceptance_candidate_image: str = ""
+) -> dict[str, str]:
     """Bind run/RRD evidence to the repository's accepted immutable image."""
 
     reference = str(summary.get("image") or "").strip()
@@ -182,14 +184,30 @@ def _validate_container_image(summary: dict[str, Any]) -> dict[str, str]:
         bool(re.fullmatch(r"sha256:[0-9a-f]{64}", accepted_digest)),
         "accepted Wan image digest is invalid",
     )
+    live_candidate = (
+        bool(acceptance_candidate_image)
+        and reference == str(acceptance_candidate_image).strip()
+    )
+    if live_candidate:
+        _require(
+            re.fullmatch(
+                r"ghcr\.io/nebius/nebius-physical-ai/"
+                r"npa-wan2-2@sha256:[0-9a-f]{64}",
+                reference,
+            )
+            is not None,
+            "Wan acceptance candidate is not an official immutable digest",
+        )
     _require(
-        match.group(2) == accepted_digest, "BYOF summary image digest is not accepted"
+        match.group(2) == accepted_digest or live_candidate,
+        "BYOF summary image digest is not accepted",
     )
     _require(bool(accepted_tag), "accepted Wan image tag is invalid")
     return {
         "reference": reference,
-        "oci_digest": accepted_digest,
-        "accepted_tag": accepted_tag,
+        "oci_digest": match.group(2),
+        "accepted_tag": accepted_tag if not live_candidate else "",
+        "validation_state": "candidate" if live_candidate else "accepted",
     }
 
 
@@ -284,9 +302,43 @@ def _decode_video_metrics(video_path: Path) -> dict[str, Any]:
     }
 
 
+def _generation_integer(value: Any, name: str, minimum: int) -> int:
+    _require(
+        type(value) is int and value >= minimum,
+        f"requested {name} must be an integer at least {minimum}",
+    )
+    return value
+
+
+def _requested_frame_count(primary: dict[str, Any], layout: WanRunLayout) -> int:
+    distributed = layout is MULTI_GPU_LAYOUT
+    generation = _require_mapping(
+        primary.get("generation" if distributed else "requested"),
+        "requested generation object is absent",
+    )
+    frames = _generation_integer(
+        generation.get("frames" if distributed else "frame_count"), "frames", 5
+    )
+    _require((frames - 1) % 4 == 0, "requested frames must be 4n+1")
+    _generation_integer(
+        generation.get("steps" if distributed else "inference_steps"), "steps", 1
+    )
+    _generation_integer(
+        generation.get("seed") if distributed else primary.get("seed"), "seed", 0
+    )
+    _require(
+        generation.get("width") == 1280
+        and generation.get("height") == 704
+        and generation.get("fps") == 24.0,
+        "requested video must use the supported 1280x704/24-fps contract",
+    )
+    return frames
+
+
 def _validate_output(
     primary: dict[str, Any], video_path: Path, layout: WanRunLayout
 ) -> dict[str, Any]:
+    requested_frames = _requested_frame_count(primary, layout)
     _require(video_path.is_file(), f"missing generated MP4: {video_path.name}")
     video_size = video_path.stat().st_size
     video_sha256 = _sha256_file(video_path)
@@ -325,9 +377,10 @@ def _validate_output(
     _require(
         decoded["width"] == 1280
         and decoded["height"] == 704
-        and decoded["frame_count"] == 17
+        and decoded["frame_count"] == requested_frames
         and abs(float(decoded["fps"]) - 24.0) <= 0.01,
-        "downloaded MP4 violates the accepted 1280x704/17-frame/24-fps contract",
+        "downloaded MP4 violates the requested "
+        f"1280x704/{requested_frames}-frame/24-fps contract",
     )
     for key in ("width", "height", "frame_count", "pixel_range"):
         _require(
@@ -717,11 +770,18 @@ def _validate_single_gpu(
     return {"distributed": None, "topology": topology, "ranks": []}
 
 
-def validate_wan_run(run_dir: Path, layout: WanRunLayout) -> dict[str, Any]:
+def validate_wan_run(
+    run_dir: Path,
+    layout: WanRunLayout,
+    *,
+    acceptance_candidate_image: str = "",
+) -> dict[str, Any]:
     """Validate immutable Wan output artifacts and return sanitized evidence."""
 
     summary = _load_json(run_dir / "npa_byof_summary.json")
-    container_image = _validate_container_image(summary)
+    container_image = _validate_container_image(
+        summary, acceptance_candidate_image=acceptance_candidate_image
+    )
     primary_path = _primary_path(run_dir, layout, summary)
     primary = _load_json(primary_path)
     inventory = _load_json(run_dir / layout.inventory_filename)
@@ -847,12 +907,10 @@ def validate_wan_run(run_dir: Path, layout: WanRunLayout) -> dict[str, Any]:
             "multi-GPU package-version inventory is absent",
         )
         _require(
-            _public_version(package_versions.get("torch"))
-            == ACCEPTED_TORCH_VERSION
+            _public_version(package_versions.get("torch")) == ACCEPTED_TORCH_VERSION
             and _public_version(package_versions.get("torchvision"))
             == ACCEPTED_TORCHVISION_VERSION
-            and package_versions.get("nvidia-nccl-cu13")
-            == ACCEPTED_NCCL_VERSION,
+            and package_versions.get("nvidia-nccl-cu13") == ACCEPTED_NCCL_VERSION,
             "multi-GPU package-version inventory is not the accepted runtime closure",
         )
     else:
@@ -1265,7 +1323,7 @@ def verify_wan_rrd(
     """Parse an RRD, verify entity rows, and hash its embedded MP4 bytes."""
 
     try:
-        from rerun.recording import load_recording
+        from npa.viz.recordings import load_recording
     except ImportError as exc:  # pragma: no cover - exercised by runtime failure path
         raise WanRrdError("Wan RRD verification requires the npa[viz] extra") from exc
 
@@ -1358,11 +1416,19 @@ def verify_wan_rrd(
 
 
 def build_wan_rrd(
-    run_dir: Path, output_path: Path, *, layout: WanRunLayout
+    run_dir: Path,
+    output_path: Path,
+    *,
+    layout: WanRunLayout,
+    acceptance_candidate_image: str = "",
 ) -> dict[str, Any]:
     """Build and fully verify a local RRD from a materialized Wan run directory."""
 
-    evidence = validate_wan_run(run_dir, layout)
+    evidence = validate_wan_run(
+        run_dir,
+        layout,
+        acceptance_candidate_image=acceptance_candidate_image,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _log_recording(output_path, evidence)
     verification = verify_wan_rrd(
@@ -1507,6 +1573,7 @@ def publish_wan_rrd_from_s3(
     variant: str,
     project: str | None = None,
     s3_client: Any | None = None,
+    acceptance_candidate_image: str = "",
 ) -> dict[str, Any]:
     """Materialize, verify, upload, download, and re-verify a Wan RRD + manifest."""
 
@@ -1556,7 +1623,12 @@ def publish_wan_rrd_from_s3(
             source_objects.append(source_object)
 
         local_rrd = Path(tmp) / layout.rrd_filename
-        build = build_wan_rrd(run_dir, local_rrd, layout=layout)
+        build = build_wan_rrd(
+            run_dir,
+            local_rrd,
+            layout=layout,
+            acceptance_candidate_image=acceptance_candidate_image,
+        )
         rrd_key = prefix + layout.rrd_filename
         rrd_uri = normalized_prefix + layout.rrd_filename
         rrd_bytes = local_rrd.read_bytes()

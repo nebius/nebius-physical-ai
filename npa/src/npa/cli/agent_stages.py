@@ -14,16 +14,41 @@ import re
 from typing import Any
 
 
-_SUCCEEDED = {"succeeded", "success", "successful", "ok", "done", "complete", "completed", "passed"}
+_SUCCEEDED = {
+    "succeeded",
+    "success",
+    "successful",
+    "ok",
+    "done",
+    "complete",
+    "completed",
+    "passed",
+}
 _FAILED = {"failed", "failure", "error", "errored", "blocked", "cancelled", "canceled"}
 _RUNNING = {"running", "active", "in_progress", "in-progress", "executing"}
 _SKIPPED = {"skipped", "skip"}
-_NOT_RUN = {"not_run", "not-run", "not run", "not_launched", "not-launched", "not launched"}
+_NOT_RUN = {
+    "not_run",
+    "not-run",
+    "not run",
+    "not_launched",
+    "not-launched",
+    "not launched",
+}
 _PENDING = {"pending", "planned", "queued", "submitted", "created", "waiting"}
-_AUTHORITATIVE_STATUSES = {"succeeded", "failed", "running", "skipped", "not_run", "pending"}
+_AUTHORITATIVE_STATUSES = {
+    "succeeded",
+    "failed",
+    "running",
+    "skipped",
+    "not_run",
+    "pending",
+}
 
 
-def normalize_explicit_stage_status(value: Any, *, returncode: Any = None) -> tuple[str, str]:
+def normalize_explicit_stage_status(
+    value: Any, *, returncode: Any = None
+) -> tuple[str, str]:
     """Normalize an explicit workflow/status value without guessing from artifacts."""
     raw = str(value or "").strip().lower()
     if raw in _SUCCEEDED:
@@ -40,7 +65,11 @@ def normalize_explicit_stage_status(value: Any, *, returncode: Any = None) -> tu
         return "pending", raw.replace("_", " ").replace("-", " ").title()
     if returncode not in (None, ""):
         try:
-            return ("succeeded", "Succeeded") if int(returncode) == 0 else ("failed", "Failed")
+            return (
+                ("succeeded", "Succeeded")
+                if int(returncode) == 0
+                else ("failed", "Failed")
+            )
         except (TypeError, ValueError):
             pass
     return "status_unavailable", "Status unavailable"
@@ -100,10 +129,19 @@ def stage_evidence_record(
 def summarize_stage_evidence(stages: list[dict[str, Any]]) -> dict[str, Any]:
     """Return counts/text that cannot imply unsupported execution outcomes."""
     rows = [item for item in stages if isinstance(item, dict)]
-    counts = {name: 0 for name in (
-        "succeeded", "failed", "running", "skipped", "not_run", "pending",
-        "observed_output", "status_unavailable",
-    )}
+    counts = {
+        name: 0
+        for name in (
+            "succeeded",
+            "failed",
+            "running",
+            "skipped",
+            "not_run",
+            "pending",
+            "observed_output",
+            "status_unavailable",
+        )
+    }
     for item in rows:
         status = str(item.get("status") or "status_unavailable")
         counts[status if status in counts else "status_unavailable"] += 1
@@ -111,7 +149,9 @@ def summarize_stage_evidence(stages: list[dict[str, Any]]) -> dict[str, Any]:
     authoritative_count = sum(
         1
         for item in rows
-        if str(item.get("authority") or (item.get("evidence") or {}).get("authority") or "")
+        if str(
+            item.get("authority") or (item.get("evidence") or {}).get("authority") or ""
+        )
         == "authoritative"
     )
     outcome_count = sum(counts[name] for name in _AUTHORITATIVE_STATUSES)
@@ -169,7 +209,9 @@ def merge_stage_evidence(
             _slug(str(incoming.get("id") or ""), fallback=""),
             _slug(str(incoming.get("stage_key") or ""), fallback=""),
         ]
-        index = next((positions[key] for key in candidates if key and key in positions), None)
+        index = next(
+            (positions[key] for key in candidates if key and key in positions), None
+        )
         if index is None:
             merged.append(incoming)
             new_index = len(merged) - 1
@@ -178,24 +220,42 @@ def merge_stage_evidence(
                     positions[key] = new_index
             continue
         current = merged[index]
-        current_authority = str(current.get("authority") or (current.get("evidence") or {}).get("authority") or "")
-        incoming_authority = str(incoming.get("authority") or (incoming.get("evidence") or {}).get("authority") or "")
-        if incoming_authority == "authoritative" and current_authority != "authoritative":
+        current_authority = str(
+            current.get("authority")
+            or (current.get("evidence") or {}).get("authority")
+            or ""
+        )
+        incoming_authority = str(
+            incoming.get("authority")
+            or (incoming.get("evidence") or {}).get("authority")
+            or ""
+        )
+        if (
+            incoming_authority == "authoritative"
+            and current_authority != "authoritative"
+        ):
             replacement = dict(incoming)
             replacement["artifact_count"] = max(
-                int(current.get("artifact_count") or 0), int(incoming.get("artifact_count") or 0)
+                int(current.get("artifact_count") or 0),
+                int(incoming.get("artifact_count") or 0),
             )
             merged[index] = replacement
             continue
         current["artifact_count"] = max(
-            int(current.get("artifact_count") or 0), int(incoming.get("artifact_count") or 0)
+            int(current.get("artifact_count") or 0),
+            int(incoming.get("artifact_count") or 0),
         )
         observations = list(current.get("observations") or [])
         incoming_evidence = incoming.get("evidence")
-        if isinstance(incoming_evidence, dict) and incoming_evidence.get("type") == "artifact_observation":
+        if (
+            isinstance(incoming_evidence, dict)
+            and incoming_evidence.get("type") == "artifact_observation"
+        ):
             observations.append(dict(incoming_evidence))
         observations.extend(
-            dict(item) for item in incoming.get("observations") or [] if isinstance(item, dict)
+            dict(item)
+            for item in incoming.get("observations") or []
+            if isinstance(item, dict)
         )
         if observations:
             current["observations"] = observations
@@ -244,13 +304,19 @@ def coerce_authoritative_stage_evidence(
     return upgraded
 
 
-def resolve_run_source(payload: dict[str, Any], existing: dict[str, Any], run_id: str) -> tuple[str, str]:
+def resolve_run_source(
+    payload: dict[str, Any], existing: dict[str, Any], run_id: str
+) -> tuple[str, str]:
     """Resolve stable provenance for a viewer-history entry."""
-    source_type = str(payload.get("source_type") or existing.get("source_type") or "").strip()
+    source_type = str(
+        payload.get("source_type") or existing.get("source_type") or ""
+    ).strip()
     if not source_type:
         if run_id == "franka-demo":
             source_type = "local_demo"
-        elif str(payload.get("artifact_uri") or existing.get("artifact_uri") or "").startswith("s3://"):
+        elif str(
+            payload.get("artifact_uri") or existing.get("artifact_uri") or ""
+        ).startswith("s3://"):
             source_type = "artifact_storage"
         else:
             source_type = "workflow_history"
@@ -293,7 +359,10 @@ def local_demo_run_details(
     state: dict[str, Any], run_id: str, recorded: dict[str, Any], now_iso: str
 ) -> dict[str, Any] | None:
     """Return deterministic local-demo stage details, or ``None`` for real runs."""
-    if str(recorded.get("source_type") or "") != "local_demo" and run_id != "franka-demo":
+    if (
+        str(recorded.get("source_type") or "") != "local_demo"
+        and run_id != "franka-demo"
+    ):
         return None
     updated_at = str(recorded.get("rrd_updated_at") or now_iso)
     ready = bool(recorded.get("rerun_ready"))
@@ -322,7 +391,9 @@ def local_demo_run_details(
         "status": "completed",
         "result": "rerun_ready" if ready else "recording_unavailable",
         "updated_at": updated_at,
-        "selection": state.get("selection") if isinstance(state.get("selection"), dict) else {},
+        "selection": state.get("selection")
+        if isinstance(state.get("selection"), dict)
+        else {},
         "stages": [stage],
         "stage_summary": summarize_stage_evidence([stage]),
         "logs": [
@@ -357,7 +428,10 @@ def run_owns_workflow_stage_overlay(state: dict[str, Any], run_id: str) -> bool:
     details_map = state.get("sim2real_runs")
     if isinstance(details_map, dict):
         existing = details_map.get(rid)
-        if isinstance(existing, dict) and str(existing.get("submitted_at") or "").strip():
+        if (
+            isinstance(existing, dict)
+            and str(existing.get("submitted_at") or "").strip()
+        ):
             return True
     draft = state.get("workflow_draft")
     if not isinstance(draft, dict):
@@ -365,7 +439,10 @@ def run_owns_workflow_stage_overlay(state: dict[str, Any], run_id: str) -> bool:
     plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {}
     if str(plan.get("run_id") or "").strip() == rid:
         return True
-    if str(draft.get("name") or "").strip() and str(draft.get("run_id") or "").strip() == rid:
+    if (
+        str(draft.get("name") or "").strip()
+        and str(draft.get("run_id") or "").strip() == rid
+    ):
         return True
     return False
 
@@ -504,9 +581,24 @@ def _explicit_stage_record(
         authority="authoritative",
         confidence="high" if explicit else "medium",
         reason=reason,
-        started_at=str(payload.get("start_time") or payload.get("start") or payload.get("started_at") or ""),
-        finished_at=str(payload.get("end_time") or payload.get("end") or payload.get("finished_at") or ""),
-        observed_at=str(payload.get("updated_at") or payload.get("end_time") or payload.get("end") or ""),
+        started_at=str(
+            payload.get("start_time")
+            or payload.get("start")
+            or payload.get("started_at")
+            or ""
+        ),
+        finished_at=str(
+            payload.get("end_time")
+            or payload.get("end")
+            or payload.get("finished_at")
+            or ""
+        ),
+        observed_at=str(
+            payload.get("updated_at")
+            or payload.get("end_time")
+            or payload.get("end")
+            or ""
+        ),
         summary=str(payload.get("summary") or payload.get("error_summary") or reason),
     )
     for key in ("job_id", "job_name", "sky_status", "wave_key"):
@@ -557,22 +649,35 @@ def parse_stage_evidence_documents(documents: list[dict[str, Any]]) -> dict[str,
         if not isinstance(payload, dict):
             continue
         source_lower = source.lower()
-        schema = str(payload.get("schema_version") or payload.get("apiVersion") or "").lower()
-        is_npa_manifest = source_lower.endswith("/npa-workflow/manifest.json") or schema == "npa.workflow.run.v1"
+        schema = str(
+            payload.get("schema_version") or payload.get("apiVersion") or ""
+        ).lower()
+        is_npa_manifest = (
+            source_lower.endswith("/npa-workflow/manifest.json")
+            or schema == "npa.workflow.run.v1"
+        )
         is_durable_manifest = bool(
             source_lower.endswith("/manifest.json")
             and isinstance(payload.get("stages"), dict)
             and (payload.get("workflow_name") or payload.get("run_prefix_uri"))
         )
         is_status_doc = source_lower.endswith("/status.json")
-        is_report_doc = source_lower.endswith("report.json") or "/reports/" in source_lower
-        recognized = is_npa_manifest or is_durable_manifest or is_status_doc or is_report_doc
+        is_report_doc = (
+            source_lower.endswith("report.json") or "/reports/" in source_lower
+        )
+        recognized = (
+            is_npa_manifest or is_durable_manifest or is_status_doc or is_report_doc
+        )
         consumed = is_npa_manifest or is_durable_manifest
 
-        candidate_workflow = str(payload.get("workflow") or payload.get("workflow_name") or "").strip()
+        candidate_workflow = str(
+            payload.get("workflow") or payload.get("workflow_name") or ""
+        ).strip()
         if candidate_workflow and recognized:
             workflow_name = candidate_workflow
-        candidate_updated = str(payload.get("updated_at") or payload.get("end_time") or "").strip()
+        candidate_updated = str(
+            payload.get("updated_at") or payload.get("end_time") or ""
+        ).strip()
         if candidate_updated > updated_at:
             updated_at = candidate_updated
 
@@ -580,8 +685,14 @@ def parse_stage_evidence_documents(documents: list[dict[str, Any]]) -> dict[str,
         if top_status and (is_npa_manifest or is_status_doc or is_durable_manifest):
             consumed = True
             normalized, label = normalize_explicit_stage_status(top_status)
-            run_status = normalized if normalized != "status_unavailable" else top_status.lower()
-            run_status_label = label if normalized != "status_unavailable" else top_status.replace("_", " ").title()
+            run_status = (
+                normalized if normalized != "status_unavailable" else top_status.lower()
+            )
+            run_status_label = (
+                label
+                if normalized != "status_unavailable"
+                else top_status.replace("_", " ").title()
+            )
             run_status_source = source
 
         steps = payload.get("steps")
@@ -590,7 +701,9 @@ def parse_stage_evidence_documents(documents: list[dict[str, Any]]) -> dict[str,
             for step in steps:
                 if not isinstance(step, dict):
                     continue
-                stage_id = str(step.get("state") or step.get("stage") or step.get("id") or "").strip()
+                stage_id = str(
+                    step.get("state") or step.get("stage") or step.get("id") or ""
+                ).strip()
                 if not stage_id:
                     continue
                 raw = str(step.get("status") or "").strip()
@@ -610,8 +723,14 @@ def parse_stage_evidence_documents(documents: list[dict[str, Any]]) -> dict[str,
         if isinstance(declared, dict) and (is_durable_manifest or is_report_doc):
             graph_source = graph_source or source
             for stage_id, raw_info in declared.items():
-                info = dict(raw_info) if isinstance(raw_info, dict) else {"name": str(stage_id)}
-                raw = str(info.get("state") or info.get("status") or info.get("outcome") or "").strip()
+                info = (
+                    dict(raw_info)
+                    if isinstance(raw_info, dict)
+                    else {"name": str(stage_id)}
+                )
+                raw = str(
+                    info.get("state") or info.get("status") or info.get("outcome") or ""
+                ).strip()
                 if is_report_doc and not raw:
                     continue
                 consumed = True
@@ -620,7 +739,9 @@ def parse_stage_evidence_documents(documents: list[dict[str, Any]]) -> dict[str,
                         str(stage_id),
                         info,
                         source=source,
-                        evidence_type="manifest_status" if is_durable_manifest else "report_status",
+                        evidence_type="manifest_status"
+                        if is_durable_manifest
+                        else "report_status",
                         graph_only=is_durable_manifest,
                     ),
                     45 if raw else 20,
@@ -629,8 +750,12 @@ def parse_stage_evidence_documents(documents: list[dict[str, Any]]) -> dict[str,
             for item in declared:
                 if not isinstance(item, dict):
                     continue
-                stage_id = str(item.get("stage") or item.get("id") or item.get("name") or "").strip()
-                raw = str(item.get("state") or item.get("status") or item.get("outcome") or "").strip()
+                stage_id = str(
+                    item.get("stage") or item.get("id") or item.get("name") or ""
+                ).strip()
+                raw = str(
+                    item.get("state") or item.get("status") or item.get("outcome") or ""
+                ).strip()
                 if stage_id and raw:
                     consumed = True
                     upsert(
@@ -644,10 +769,17 @@ def parse_stage_evidence_documents(documents: list[dict[str, Any]]) -> dict[str,
         if isinstance(outcomes, dict) and (is_report_doc or is_status_doc):
             consumed = bool(outcomes) or consumed
             for stage_id, raw_info in outcomes.items():
-                info = dict(raw_info) if isinstance(raw_info, dict) else {"status": raw_info}
+                info = (
+                    dict(raw_info)
+                    if isinstance(raw_info, dict)
+                    else {"status": raw_info}
+                )
                 upsert(
                     _explicit_stage_record(
-                        str(stage_id), info, source=source, evidence_type="report_status"
+                        str(stage_id),
+                        info,
+                        source=source,
+                        evidence_type="report_status",
                     ),
                     45,
                 )
@@ -655,7 +787,9 @@ def parse_stage_evidence_documents(documents: list[dict[str, Any]]) -> dict[str,
             for item in outcomes:
                 if not isinstance(item, dict):
                     continue
-                stage_id = str(item.get("stage") or item.get("id") or item.get("name") or "").strip()
+                stage_id = str(
+                    item.get("stage") or item.get("id") or item.get("name") or ""
+                ).strip()
                 if stage_id:
                     consumed = True
                     upsert(
@@ -672,7 +806,10 @@ def parse_stage_evidence_documents(documents: list[dict[str, Any]]) -> dict[str,
             consumed = True
             upsert(
                 _explicit_stage_record(
-                    status_stage, payload, source=source, evidence_type="workflow_status"
+                    status_stage,
+                    payload,
+                    source=source,
+                    evidence_type="workflow_status",
                 ),
                 60,
             )
@@ -716,19 +853,29 @@ def build_artifact_backed_stages(
     # <run>/<workflow-name>/<stage>/... expose their real pipeline stages instead
     # of collapsing into a single wrapper row.
     wrapper = run_stage_wrapper(artifact_keys, run_id, prefix)
-    authoritative = [item for item in (authoritative_stages or []) if isinstance(item, dict)]
+    authoritative = [
+        item for item in (authoritative_stages or []) if isinstance(item, dict)
+    ]
     if authoritative:
         for source_stage in authoritative:
             stage = dict(source_stage)
             stage_id = str(stage.get("id") or stage.get("stage_key") or "").strip()
-            patterns = [stage_id, stage_id.replace("_", "-"), stage_id.replace("-", "_")]
+            patterns = [
+                stage_id,
+                stage_id.replace("_", "-"),
+                stage_id.replace("-", "_"),
+            ]
             matched = [
-                key for key in artifact_keys if any(pattern and pattern in key for pattern in patterns)
+                key
+                for key in artifact_keys
+                if any(pattern and pattern in key for pattern in patterns)
             ]
             used_keys.update(matched)
             stage["artifact_count"] = len(matched)
             if matched and not str(stage.get("stage_key") or "").strip():
-                stage["stage_key"] = artifact_stage_key(matched[0], run_id, prefix, wrapper)
+                stage["stage_key"] = artifact_stage_key(
+                    matched[0], run_id, prefix, wrapper
+                )
             if matched:
                 observation = {
                     "type": "artifact_observation",
@@ -750,7 +897,9 @@ def build_artifact_backed_stages(
                     stage["authority"] = observation["authority"]
                     stage["confidence"] = observation["confidence"]
                     stage["diagnostic_reason"] = observation["reason"]
-                    stage["summary"] = observation["reason"] + " Execution status is unavailable."
+                    stage["summary"] = (
+                        observation["reason"] + " Execution status is unavailable."
+                    )
             stages.append(stage)
         # Once a durable workflow manifest supplies the execution graph, keep
         # the timeline one-to-one with that graph. Unmatched top-level artifact
@@ -761,7 +910,9 @@ def build_artifact_backed_stages(
     elif workflow_stage_defs:
         for stage_id, label, patterns in workflow_stage_defs:
             matched = [
-                key for key in artifact_keys if any(pattern and pattern in key for pattern in patterns)
+                key
+                for key in artifact_keys
+                if any(pattern and pattern in key for pattern in patterns)
             ]
             used_keys.update(matched)
             count = len(matched)
@@ -769,7 +920,11 @@ def build_artifact_backed_stages(
                 continue
             # stage_key: the artifact stage of a matched key so the UI timeline row
             # is clickable and scopes the artifact browser to it (empty when unmatched).
-            stage_key = artifact_stage_key(matched[0], run_id, prefix, wrapper) if matched else ""
+            stage_key = (
+                artifact_stage_key(matched[0], run_id, prefix, wrapper)
+                if matched
+                else ""
+            )
             stages.append(
                 stage_evidence_record(
                     stage_id=stage_id,
@@ -778,7 +933,9 @@ def build_artifact_backed_stages(
                     status="observed_output" if count else "status_unavailable",
                     status_label="Observed output" if count else "Status unavailable",
                     evidence_type="artifact_observation" if count else "workflow_graph",
-                    evidence_source="artifact_listing" if count else "active_workflow_plan",
+                    evidence_source="artifact_listing"
+                    if count
+                    else "active_workflow_plan",
                     authority="observed" if count else "authoritative",
                     confidence="high" if count else "medium",
                     reason=(

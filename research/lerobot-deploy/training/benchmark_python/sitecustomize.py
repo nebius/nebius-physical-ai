@@ -24,7 +24,9 @@ def _write_payload(payload: dict[str, object]) -> None:
         return
     target = output_dir / f"{os.getpid()}.json"
     temp = target.with_suffix(".tmp")
-    temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temp.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     temp.replace(target)
 
 

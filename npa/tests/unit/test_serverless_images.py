@@ -12,15 +12,15 @@ _mod = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_mod)
 
 
-def test_resolve_image_rewrites_placeholder_registry(monkeypatch) -> None:
-    monkeypatch.setenv("NPA_REGISTRY", "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw")
+def test_resolve_image_ignores_generic_registry(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", "registry.invalid/operator/private")
     monkeypatch.delenv("NPA_E2E_REGISTRY", raising=False)
     assert (
         _mod.resolve_image(
-            "cr.eu-north1.nebius.cloud/your-registry-id/"
+            "ghcr.io/nebius/nebius-physical-ai/"
             "npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z"
         )
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
+        == "ghcr.io/nebius/nebius-physical-ai/"
         "npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z"
     )
 

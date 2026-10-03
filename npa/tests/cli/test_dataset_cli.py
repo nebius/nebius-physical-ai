@@ -18,8 +18,20 @@ def _raw(tmp_path: Path) -> str:
         json.dumps(
             {
                 "records": [
-                    {"record_id": "r1", "modality": "camera", "uri": "s3://b/r1", "event": "cut_in", "quality": {"corruption": 0.0}},
-                    {"record_id": "r2", "modality": "camera", "uri": "s3://b/r2", "event": "jaywalk", "quality": {"corruption": 0.0}},
+                    {
+                        "record_id": "r1",
+                        "modality": "camera",
+                        "uri": "s3://b/r1",
+                        "event": "cut_in",
+                        "quality": {"corruption": 0.0},
+                    },
+                    {
+                        "record_id": "r2",
+                        "modality": "camera",
+                        "uri": "s3://b/r2",
+                        "event": "jaywalk",
+                        "quality": {"corruption": 0.0},
+                    },
                 ]
             }
         )
@@ -68,7 +80,15 @@ def test_dataset_ingest_writes_versioned_manifest(tmp_path: Path) -> None:
 def test_dataset_ingest_requires_dataset_id(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
-        ["workbench", "dataset", "ingest", "--input-path", _raw(tmp_path), "--output-path", str(tmp_path / "ds")],
+        [
+            "workbench",
+            "dataset",
+            "ingest",
+            "--input-path",
+            _raw(tmp_path),
+            "--output-path",
+            str(tmp_path / "ds"),
+        ],
     )
     assert result.exit_code != 0
 
@@ -76,12 +96,34 @@ def test_dataset_ingest_requires_dataset_id(tmp_path: Path) -> None:
 def test_dataset_curate_zero_match_fails(tmp_path: Path) -> None:
     ingest = runner.invoke(
         app,
-        ["workbench", "dataset", "ingest", "--input-path", _raw(tmp_path), "--output-path", str(tmp_path / "ds"), "--dataset-id", "fleet", "--output", "json"],
+        [
+            "workbench",
+            "dataset",
+            "ingest",
+            "--input-path",
+            _raw(tmp_path),
+            "--output-path",
+            str(tmp_path / "ds"),
+            "--dataset-id",
+            "fleet",
+            "--output",
+            "json",
+        ],
     )
     manifest_uri = json.loads(ingest.output)["manifest_uri"]
     result = runner.invoke(
         app,
-        ["workbench", "dataset", "curate", "--input-path", manifest_uri, "--output-path", str(tmp_path / "cur"), "--event", "nope"],
+        [
+            "workbench",
+            "dataset",
+            "curate",
+            "--input-path",
+            manifest_uri,
+            "--output-path",
+            str(tmp_path / "cur"),
+            "--event",
+            "nope",
+        ],
     )
     assert result.exit_code != 0
 
@@ -90,10 +132,14 @@ def test_dataset_service_mode_parity(monkeypatch: Any, tmp_path: Path) -> None:
     import npa.cli.workbench.dataset as cli_module
     from npa.workbench.dataset.service import create_app
 
-    client = TestClient(create_app(auth_mode="none"))
+    client = TestClient(create_app(auth_mode="none", allowed_local_roots=[tmp_path]))
 
-    def fake_request(method: str, endpoint: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        response = client.request(method, path, json=kwargs.get("payload"), params=kwargs.get("params"))
+    def fake_request(
+        method: str, endpoint: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        response = client.request(
+            method, path, json=kwargs.get("payload"), params=kwargs.get("params")
+        )
         assert response.status_code == 200, response.text
         return response.json()
 
@@ -120,3 +166,41 @@ def test_dataset_service_mode_parity(monkeypatch: Any, tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["record_count"] == 2
+
+
+def test_dataset_service_storage_denial_is_a_command_error(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    import npa.cli.workbench.dataset as cli_module
+    from npa.workbench.dataset.service import create_app
+
+    client = TestClient(create_app(auth_mode="none"))
+
+    def fake_request(method: str, url: str, **kwargs: Any):
+        return client.request(
+            method,
+            url.removeprefix("http://dataset.example"),
+            json=kwargs.get("json"),
+            params=kwargs.get("params"),
+        )
+
+    monkeypatch.setattr(cli_module.httpx, "request", fake_request)
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "dataset",
+            "ingest",
+            "--service",
+            "--endpoint",
+            "http://dataset.example",
+            "--input-path",
+            _raw(tmp_path),
+            "--output-path",
+            str(tmp_path / "store"),
+            "--dataset-id",
+            "scoped",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Dataset request failed (403)" in result.output

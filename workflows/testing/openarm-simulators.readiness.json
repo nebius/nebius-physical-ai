@@ -1,0 +1,61 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "228f3d15f3a5925ccc404f2d13b3c4b7ac26f39998d98b7c2c64d0e3400aaf42",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec resolved all four OpenArm stages successfully.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/openarm-simulators.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/openarm-simulators.yaml --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Resolved commands invoke the real MuJoCo rollout, Isaac Lab environment rollout, upstream RSL-RL trainer, and fail-closed artifact qualification.",
+      "evidence": [
+        "docs/workbench/openarm.md",
+        "npa/tests/workbench/test_openarm.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The selected project-scoped store passed read/write scope preflight and retained all four workflow outputs for an independent read-after-run check.",
+      "evidence": [
+        "private access-controlled validation record"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Both workloads use only exact-pinned upstream OpenArm source and repository assets; no external model or dataset is required.",
+      "evidence": [
+        "npa/docker/workbench/openarm/components.json"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Nebius compute and exact project-scoped storage credentials passed the required health preflights before GPU submission.",
+      "evidence": [
+        "private access-controlled validation record"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The exact development digest was built by the trusted publisher and independently passed anonymous pull, full-layer payload/history, critical-CVE, secret, license, SBOM, and provenance checks.",
+      "evidence": [
+        "npa-openarm dev-01fbf3a554cb7b15066283fd171c5b81f6207eda",
+        "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "The exact digest completed a 500-step MuJoCo rollout with rendered video, a 64-environment 100-step Isaac reach rollout on CUDA, one iteration of upstream RSL-RL training with a real checkpoint, and fail-closed artifact qualification on an RT-capable GPU.",
+      "evidence": [
+        "private access-controlled validation record",
+        "independent finite-array, full-video-decode, checkpoint-archive, and artifact-hash verification"
+      ]
+    }
+  }
+}

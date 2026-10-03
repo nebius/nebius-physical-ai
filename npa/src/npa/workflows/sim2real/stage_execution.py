@@ -90,12 +90,12 @@ def run_inner_loop(
             "task_contract_digest": getattr(config, "task_contract_digest", ""),
             "rollout_count": config.rollout_count,
             "steps_per_rollout": config.steps_per_rollout,
-            "vlm_models": [config.vlm_reason2_model, config.vlm_reason3_model],
+            "vlm_models": [config.vlm_reason2_model, config.vlm_cosmos3_model],
             "runtime_images": {
                 "policy": config.policy_image,
                 "trainer": config.trainer_image,
                 "vlm_reason2": config.vlm_reason2_image or config.vlm_image,
-                "vlm_reason3": config.vlm_reason3_image or config.vlm_image,
+                "vlm_cosmos3": config.vlm_cosmos3_image or config.vlm_image,
                 "evaluation": config.eval_image,
                 "isaac": config.isaac_image,
             },
@@ -165,7 +165,7 @@ def run_inner_loop(
             vlm_k8s_parallel = not config.byo_vlm_command.strip() and bool(
                 config.s3_bucket.strip()
             )
-            jobs_per_rollout = 2 if vlm_k8s_parallel and config.vlm_dual_reason else 1
+            jobs_per_rollout = 2 if vlm_k8s_parallel and config.vlm_two_evaluator else 1
             if vlm_k8s_parallel and len(rollouts) > 1:
                 max_workers = min(
                     len(rollouts),

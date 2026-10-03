@@ -45,9 +45,13 @@ def _compare_versions(tool: str, expected: str, actual: str) -> CheckResult:
     expected_major = _major(expected)
     actual_major = _major(actual)
     if expected_major is None:
-        return CheckResult(f"{tool} version", False, f"could not parse expected version: {expected}")
+        return CheckResult(
+            f"{tool} version", False, f"could not parse expected version: {expected}"
+        )
     if actual_major is None:
-        return CheckResult(f"{tool} version", False, f"could not parse installed version: {actual}")
+        return CheckResult(
+            f"{tool} version", False, f"could not parse installed version: {actual}"
+        )
     if actual_major != expected_major:
         return CheckResult(
             f"{tool} version",

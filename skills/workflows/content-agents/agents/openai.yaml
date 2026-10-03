@@ -1,0 +1,4 @@
+interface:
+  display_name: "Content Agents"
+  short_description: "Build simulation-ready USD assets on RTX"
+  default_prompt: "Use $content-agents to package and run the NVIDIA Content Agents asset-enrichment workflow."

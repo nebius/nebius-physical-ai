@@ -61,6 +61,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_official_build_helper_only_pushes_full_sha_development_tags() -> None:
+    build = (DOCKER_DIR / "build.sh").read_text(encoding="utf-8")
+    assert '"${REGISTRY%/}" == "ghcr.io/nebius/nebius-physical-ai"' in build
+    assert '"$TAG" == "dev-${SOURCE_COMMIT}"' in build
+    assert "promote releases by digest" in build
+
+
 @pytest.fixture
 def image(tmp_path: Path) -> Path:
     """Reproduce the parts of the image layout the script actually depends on."""
@@ -118,6 +125,18 @@ def nothing_was_fetched(image: Path) -> bool:
     return True
 
 
+def test_runtime_sync_uses_the_final_checkout_path() -> None:
+    """Editable package paths must survive publication of the runtime tree."""
+
+    script = (DOCKER_DIR / "ltx_runtime.sh").read_text(encoding="utf-8")
+    move = script.index('mv "$tmp" "$tree"')
+    sync = script.index('( cd "$tree" && uv sync --extra "$UV_EXTRA" )')
+    marker = script.index(': > "$tree/.complete"')
+
+    assert move < sync < marker
+    assert '( cd "$tmp" && uv sync' not in script
+
+
 class TestTheBuildTimeRefusalProof:
     def test_assert_refusal_passes_exactly_as_the_dockerfile_runs_it(
         self, image: Path
@@ -144,6 +163,57 @@ class TestTheBuildTimeRefusalProof:
         assert result.returncode == 0, result.stderr
         assert MARKER in result.stdout
         assert nothing_was_fetched(image)
+
+    def test_it_passes_against_a_cache_an_earlier_run_already_filled(
+        self, image: Path
+    ) -> None:
+        """The invariant is "the refusal downloaded nothing", not "the cache is empty".
+
+        Pointing `NPA_LTX_MODEL_CACHE` at the operator's durable weight cache
+        (docs/workbench/model-weight-cache.md) is what makes the second run of
+        this image a cache hit rather than another 22B download. An emptiness
+        assertion against the shared cache fails every run after the first, so the
+        gates are exercised against private directories instead.
+        """
+
+        weights = image.parent / "model-cache" / "vae"
+        weights.mkdir(parents=True)
+        preexisting = weights / "ltx-2.5-video-vae-bf16.safetensors"
+        preexisting.write_bytes(b"fetched by an earlier run")
+
+        result = run(image, "assert-refusal")
+
+        assert result.returncode == 0, result.stderr
+        assert MARKER in result.stdout
+        assert preexisting.read_bytes() == b"fetched by an earlier run"
+
+    def test_it_ignores_another_stage_writing_to_the_shared_cache(
+        self, image: Path
+    ) -> None:
+        """A durable cache is shared, so writes to it are not attributable to us.
+
+        Two LTX stages can run at once against one claim, and the other one
+        fetching weights while this proof runs must not read as this proof's gate
+        leaking. Simulated deterministically by writing to the shared cache from
+        inside the proof, between the gates and the assertion.
+        """
+
+        script = image / "usr" / "local" / "bin" / "ltx-runtime"
+        text = script.read_text(encoding="utf-8")
+        anchor = '  [[ -z "$(find "$PROBE_RUNTIME_CACHE"'
+        assert anchor in text, "assert_refusal no longer checks a private tree"
+        concurrent = (
+            '  touch "$MODEL_CACHE/another-stage-fetched-this.safetensors"\n'
+            '  touch "$CACHE_ROOT/another-stage-built-this"\n'
+        )
+        script.write_text(
+            text.replace(anchor, concurrent + anchor, 1), encoding="utf-8"
+        )
+
+        result = run(image, "assert-refusal")
+
+        assert result.returncode == 0, result.stderr
+        assert MARKER in result.stdout
 
 
 class TestTheProofItselfIsMutationTested:
@@ -213,14 +283,7 @@ class TestTheProofItselfIsMutationTested:
         assert MARKER not in result.stdout
         assert "'ensure' refused, but not on HF_TOKEN" in result.stderr
 
-    def test_fetching_before_the_gates_run_is_caught(self, image: Path) -> None:
-        """The ordering property, mutated rather than merely implied.
-
-        Both gates must close before `fetch_source` reaches the network. Move
-        the guard calls after the clone begins and the proof should notice — via
-        the cache the aborted clone leaves behind, not via the exit code.
-        """
-
+    def _fetch_before_the_gates(self, image: Path) -> None:
         script = image / "usr" / "local" / "bin" / "ltx-runtime"
         text = script.read_text(encoding="utf-8")
         guards = "  require_hf_token\n  require_nvidia_acceptance\n"
@@ -230,6 +293,16 @@ class TestTheProofItselfIsMutationTested:
         )
         script.write_text(moved, encoding="utf-8")
 
+    def test_fetching_before_the_gates_run_is_caught(self, image: Path) -> None:
+        """The ordering property, mutated rather than merely implied.
+
+        Both gates must close before `fetch_source` reaches the network. Move
+        the guard calls after the clone begins and the proof should notice — via
+        the cache the aborted clone leaves behind, not via the exit code.
+        """
+
+        self._fetch_before_the_gates(image)
+
         result = run(
             image,
             "assert-refusal",
@@ -238,6 +311,30 @@ class TestTheProofItselfIsMutationTested:
 
         assert result.returncode == EX_SOFTWARE
         assert MARKER not in result.stdout
+
+    def test_that_ordering_check_still_bites_on_a_warm_cache(self, image: Path) -> None:
+        """Tolerating an already-filled cache must not tolerate a leaking gate.
+
+        The proof no longer demands the shared caches be empty, so this is the
+        case that says it still detects the thing it exists to detect: a run whose
+        cache is already populated by an earlier run must still catch a fetch that
+        beat the gates.
+        """
+
+        seeded = image.parent / "cache" / "src" / "from-an-earlier-run"
+        seeded.mkdir(parents=True)
+        (seeded / ".complete").write_text("", encoding="utf-8")
+        self._fetch_before_the_gates(image)
+
+        result = run(
+            image,
+            "assert-refusal",
+            env={"NPA_LTX_SOURCE_REPO": str(image.parent / "no-such-repo")},
+        )
+
+        assert result.returncode == EX_SOFTWARE
+        assert MARKER not in result.stdout
+        assert "refusal wrote to" in result.stderr, result.stderr
 
     def test_failing_to_scrub_the_builders_environment_is_caught(
         self, image: Path
@@ -255,7 +352,16 @@ class TestTheProofItselfIsMutationTested:
         assert 'args+=(-u "$name")' in text
         script.write_text(text.replace('args+=(-u "$name")', "args+=()", 1), "utf-8")
 
-        result = run(image, "assert-refusal", env=ENTITLED | {NVIDIA_ACCEPT_ENV: "YES"})
+        # The mutation can reach fetch; keep that failure independent of the network.
+        result = run(
+            image,
+            "assert-refusal",
+            env=ENTITLED
+            | {
+                NVIDIA_ACCEPT_ENV: "YES",
+                "NPA_LTX_SOURCE_REPO": str(image.parent / "no-such-repo"),
+            },
+        )
 
         assert result.returncode == EX_SOFTWARE
         assert MARKER not in result.stdout
@@ -335,12 +441,10 @@ class TestTheNvidiaGateIsSeparate:
 class TestTheEntrypointDispatch:
     """`docker run <image> ltx-runtime <mode>` must reach <mode>.
 
-    The entrypoint funnels every invocation through ``ltx-runtime`` so the
-    entitlement checks cannot be sidestepped, which means its argv handling is
-    load-bearing: the runbook, the golden eval, and the live re-proof of the
-    refusal all invoke it in exactly that form. A first build of the image showed
-    the ``ltx-runtime`` arm forwarding the literal word as the mode, so every one
-    of those commands died as "unknown mode" instead of running.
+    Explicit LTX modes go through ``ltx-runtime``. Other argv must remain
+    available to the container orchestrator before task secrets are injected;
+    that cannot expose LTX bytes because the image carries none. The runbook,
+    golden eval, and live refusal proof invoke the explicit form.
     """
 
     @pytest.fixture
@@ -390,14 +494,18 @@ class TestTheEntrypointDispatch:
     def test_a_bare_mode_still_dispatches(self, entrypoint: Path, mode: str) -> None:
         assert self._dispatch(entrypoint, mode) == f"MODE:{mode}"
 
-    def test_an_arbitrary_command_is_funnelled_through_the_fetch_path(
+    def test_an_infrastructure_bootstrap_command_runs_without_a_fetch(
         self, entrypoint: Path
     ) -> None:
-        """Anything else runs under `exec`, which fetches only when entitled."""
+        """SkyPilot bootstrap runs before its task-level secrets are present."""
 
-        assert self._dispatch(entrypoint, "python", "-c", "pass") == (
-            "MODE:exec python -c pass"
-        )
+        assert self._dispatch(entrypoint, "printf", "BOOTSTRAP_OK") == "BOOTSTRAP_OK"
+
+
+def test_prebuilt_image_carries_only_runtime_fetch_metadata() -> None:
+    dockerfile = (DOCKER_DIR / "Dockerfile").read_text(encoding="utf-8")
+    assert '"source":"operator-runtime-fetch"' in dockerfile
+    assert "> /opt/byof/npa_source_metadata.json" in dockerfile
 
 
 class TestTheRunbookCommandsReachTheModeTheyClaim:

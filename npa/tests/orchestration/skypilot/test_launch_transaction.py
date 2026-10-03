@@ -72,6 +72,293 @@ def _transient(exc: BaseException) -> tuple[EvidenceState, FailureCategory]:
     return classify_failure(phase="launch", exception=exc)
 
 
+@pytest.mark.parametrize(
+    "observed", ("existing", "lost", "failed", "foreign", "incomplete")
+)
+def test_native_transaction_never_adopts_or_retries_uncertain_identity(
+    tmp_path, observed
+):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    launches = []
+    records = []
+
+    def launch():
+        launches.append(True)
+        if observed in {"lost", "failed"}:
+            raise RuntimeError("synthetic transport or allocation-before-error")
+        return NativeLaunchResult(
+            "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+        )
+
+    def reconcile():
+        if observed == "existing" or launches:
+            return ReconciliationEvidence(
+                ReconciliationState.AMBIGUOUS
+                if observed == "incomplete"
+                else ReconciliationState.FOUND,
+                job_id="42",
+                status="RUNNING",
+                workload_observable=True,
+            )
+        return ReconciliationEvidence(ReconciliationState.ABSENT)
+
+    with pytest.raises(LaunchTransactionError):
+        run_launch_transaction(
+            logical_id="synthetic",
+            readiness=_stable,
+            launch=launch,
+            reconcile=reconcile,
+            classify_launch_error=_transient,
+            require_native_result=True,
+            lock_root=tmp_path,
+            record=records.append,
+        )
+    assert len(launches) == (0 if observed == "existing" else 1)
+    assert all(record["state"] not in {"adopted", "submitted"} for record in records)
+
+
+@pytest.mark.parametrize("status", ("RUNNING", "SUCCEEDED"))
+def test_native_transaction_distinguishes_success_from_reconciliation(tmp_path, status):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    result = NativeLaunchResult(
+        "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+    )
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                job_id="41",
+                status=status,
+                workload_observable=True,
+                observed_task_ids=(0, 1),
+            ),
+        ]
+    )
+    transaction = run_launch_transaction(
+        logical_id="synthetic",
+        readiness=_stable,
+        launch=lambda: result,
+        reconcile=lambda: next(observations),
+        classify_launch_error=_transient,
+        require_native_result=True,
+        lock_root=tmp_path,
+    )
+    assert transaction.state is LaunchState.SUBMITTED
+    assert transaction.launch_result is result
+    assert transaction.identity_source == "native_request_result"
+    assert (
+        "request" not in transaction.to_dict()
+        and "context" not in transaction.to_dict()
+    )
+    assert transaction.reconciliations[-1]["status"] == status
+
+
+def test_native_finalizer_canonicalizes_terminal_status_before_classification(tmp_path):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    native = NativeLaunchResult(
+        "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+    )
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                job_id="41",
+                status=" FAILED_RUNTIME ",
+                workload_observable=True,
+                observed_task_ids=(0, 1),
+            ),
+        ]
+    )
+    with pytest.raises(
+        LaunchTransactionError, match="terminally failed or cancelled"
+    ) as caught:
+        run_launch_transaction(
+            logical_id="native-whitespace-status",
+            readiness=_stable,
+            launch=lambda: native,
+            reconcile=lambda: next(observations),
+            classify_launch_error=_transient,
+            require_native_result=True,
+            lock_root=tmp_path,
+        )
+    assert caught.value.result.state is LaunchState.TERMINAL_FAILURE
+    assert caught.value.result.job_id == native.job_id
+
+
+def test_native_finalizer_rejects_unrecognized_failed_prefix(tmp_path):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    native = NativeLaunchResult(
+        "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+    )
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                job_id="41",
+                status="FAILED_UNKNOWN",
+                workload_observable=True,
+                observed_task_ids=(0, 1),
+            ),
+        ]
+    )
+    with pytest.raises(LaunchTransactionError) as caught:
+        run_launch_transaction(
+            logical_id="native-unknown-failed-prefix",
+            readiness=_stable,
+            launch=lambda: native,
+            reconcile=lambda: next(observations),
+            classify_launch_error=_transient,
+            require_native_result=True,
+            lock_root=tmp_path,
+        )
+    assert caught.value.result.state is LaunchState.INDETERMINATE
+    assert caught.value.result.job_id == ""
+    assert caught.value.result.launch_result is None
+
+
+@pytest.mark.parametrize(
+    "status",
+    (
+        "FAILED",
+        "CANCELLED",
+        "FAILED_SETUP",
+        "FAILED_PRECHECKS",
+        "FAILED_CONTROLLER",
+        "CANCELED",
+        "STOPPED",
+        "failed_runtime",
+    ),
+)
+def test_native_terminal_failure_retains_identity_without_retry(tmp_path, status):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    native = NativeLaunchResult(
+        "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+    )
+    launches, records = [], []
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                job_id="41",
+                status=status,
+                workload_observable=True,
+                observed_task_ids=(0, 1),
+            ),
+        ]
+    )
+
+    def launch():
+        launches.append(native)
+        return native
+
+    with pytest.raises(
+        LaunchTransactionError, match="terminally failed or cancelled"
+    ) as caught:
+        run_launch_transaction(
+            logical_id="synthetic",
+            readiness=_stable,
+            launch=launch,
+            reconcile=lambda: next(observations),
+            classify_launch_error=_transient,
+            require_native_result=True,
+            lock_root=tmp_path,
+            record=records.append,
+            sleeper=lambda _delay: pytest.fail("failed native job must not retry"),
+        )
+    transaction = caught.value.result
+    assert transaction.state is LaunchState.TERMINAL_FAILURE and not transaction.ok
+    assert transaction.category is FailureCategory.WORKLOAD
+    assert transaction.launch_result is native and transaction.job_id == native.job_id
+    assert transaction.identity_source == "native_request_result"
+    assert transaction.existence == "found" and transaction.launch_sequence == 1
+    assert launches == [native]
+    assert all(record["state"] not in {"submitted", "adopted"} for record in records)
+    assert records[-1]["recovery_decision"] == "retain_native_terminal_failure_no_retry"
+    assert native.request_id not in str(records) and native.context not in str(records)
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    (
+        ReconciliationEvidence(
+            ReconciliationState.FOUND,
+            job_id="41",
+            status="RUNNING",
+            workload_observable=False,
+            observed_task_ids=(0, 1),
+        ),
+        ReconciliationEvidence(
+            ReconciliationState.FOUND,
+            job_id="41",
+            status="",
+            workload_observable=True,
+            observed_task_ids=(0, 1),
+        ),
+        ReconciliationEvidence(
+            ReconciliationState.FOUND,
+            job_id="41",
+            status="NOT_A_STATUS",
+            workload_observable=True,
+            observed_task_ids=(0, 1),
+        ),
+        ReconciliationEvidence(
+            ReconciliationState.FOUND,
+            job_id="41",
+            status="RUNNING",
+            workload_observable=True,
+            observed_task_ids=(0,),
+        ),
+    ),
+)
+def test_native_finalizer_rejects_incomplete_controller_evidence(tmp_path, evidence):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    native = NativeLaunchResult(
+        "attempt",
+        "00000000-0000-4000-8000-000000000001",
+        "41",
+        (0, 1),
+        "c" * 64,
+    )
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            evidence,
+        ]
+    )
+
+    with pytest.raises(
+        LaunchTransactionError,
+        match="native result and complete current job evidence disagree",
+    ) as caught:
+        run_launch_transaction(
+            logical_id="native-evidence-boundary",
+            readiness=_stable,
+            launch=lambda: native,
+            reconcile=lambda: next(observations),
+            classify_launch_error=_transient,
+            require_native_result=True,
+            lock_root=tmp_path,
+        )
+
+    result = caught.value.result
+    assert result.state is LaunchState.INDETERMINATE
+    assert result.job_id == ""
+    assert result.launch_result is None
+    assert result.recovery_decision == "retain_native_identity_conflict_no_retry"
+    assert result.existence == "indeterminate"
+    assert "Do not retry" in result.operator_remedy
+
+
 def test_consecutive_readiness_requires_count_and_full_window() -> None:
     clock = FakeClock()
     probe = SequenceProbe(clock, [EvidenceState.READY])
@@ -154,6 +441,57 @@ def test_terminal_readiness_fails_immediately_without_sleep() -> None:
     assert clock.sleeps == []
 
 
+def test_ambiguous_readiness_retries_until_ready() -> None:
+    # A one-off ambiguous observation (e.g. a cold exec-credential token mint or
+    # a kubectl message the pattern lists do not enumerate) on an idempotent
+    # pre-launch read must reset the streak and keep probing, not fail the wait.
+    clock = FakeClock()
+    probe = SequenceProbe(
+        clock,
+        [
+            EvidenceState.AMBIGUOUS,
+            EvidenceState.READY,
+            EvidenceState.READY,
+            EvidenceState.READY,
+        ],
+    )
+    result = wait_for_api_stability(
+        probe,
+        policy=StabilityPolicy(3, 4, 2, 30),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+    assert result.ready
+    assert result.consecutive_successes == 3
+    assert len(result.samples) == 4
+
+
+def test_ambiguous_readiness_exhausts_deadline_as_retryable_transient() -> None:
+    # Sustained ambiguity must surface as a retryable transient outcome ("resume
+    # the same run"), never as an indeterminate/unknown terminal launch failure.
+    clock = FakeClock()
+
+    def probe() -> ProbeObservation:
+        now = clock.now
+        return ProbeObservation(
+            EvidenceState.AMBIGUOUS,
+            FailureCategory.UNKNOWN,
+            f"t{now:g}",
+            now,
+            "Kubernetes API /readyz did not provide ready evidence",
+        )
+
+    result = wait_for_api_stability(
+        probe,
+        policy=StabilityPolicy(3, 2, 1, 3),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+    assert result.state is EvidenceState.TRANSIENT_UNAVAILABLE
+    assert clock.now == 3
+    assert "within 3s" in result.error
+
+
 def test_readiness_interruption_is_prompt_and_typed() -> None:
     clock = FakeClock()
 
@@ -173,15 +511,60 @@ def test_readiness_interruption_is_prompt_and_typed() -> None:
 @pytest.mark.parametrize(
     ("phase", "detail", "state", "category"),
     [
-        ("launch", "connect: connection refused", EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_TRANSPORT),
-        ("launch", "HTTP 429 Too Many Requests", EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_RATE_LIMIT),
-        ("launch", "503 Service Unavailable", EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_SERVER),
-        ("launch", "TLS handshake timeout", EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_TRANSPORT),
-        ("launch", "forbidden: cannot list pods", EvidenceState.TERMINAL, FailureCategory.RBAC),
-        ("launch", "x509: certificate expired", EvidenceState.TERMINAL, FailureCategory.CERTIFICATE),
-        ("launch", "context not found", EvidenceState.TERMINAL, FailureCategory.CONTEXT),
-        ("launch", "task timed out running user code", EvidenceState.AMBIGUOUS, FailureCategory.UNKNOWN),
-        ("workload", "connection refused", EvidenceState.AMBIGUOUS, FailureCategory.UNKNOWN),
+        (
+            "launch",
+            "connect: connection refused",
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            FailureCategory.KUBERNETES_TRANSPORT,
+        ),
+        (
+            "launch",
+            "HTTP 429 Too Many Requests",
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            FailureCategory.KUBERNETES_RATE_LIMIT,
+        ),
+        (
+            "launch",
+            "503 Service Unavailable",
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            FailureCategory.KUBERNETES_SERVER,
+        ),
+        (
+            "launch",
+            "TLS handshake timeout",
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            FailureCategory.KUBERNETES_TRANSPORT,
+        ),
+        (
+            "launch",
+            "forbidden: cannot list pods",
+            EvidenceState.TERMINAL,
+            FailureCategory.RBAC,
+        ),
+        (
+            "launch",
+            "x509: certificate expired",
+            EvidenceState.TERMINAL,
+            FailureCategory.CERTIFICATE,
+        ),
+        (
+            "launch",
+            "context not found",
+            EvidenceState.TERMINAL,
+            FailureCategory.CONTEXT,
+        ),
+        (
+            "launch",
+            "task timed out running user code",
+            EvidenceState.AMBIGUOUS,
+            FailureCategory.UNKNOWN,
+        ),
+        (
+            "workload",
+            "connection refused",
+            EvidenceState.AMBIGUOUS,
+            FailureCategory.UNKNOWN,
+        ),
     ],
 )
 def test_failure_taxonomy_is_phase_aware(
@@ -248,16 +631,129 @@ def test_launch_accepted_but_client_failed_is_adopted() -> None:
         logical_id="accepted",
         readiness=_stable,
         launch=launch,
-        reconcile=lambda: ReconciliationEvidence(
-            ReconciliationState.FOUND, "41", "PENDING"
-        )
-        if exists
-        else ReconciliationEvidence(ReconciliationState.ABSENT),
+        reconcile=lambda: (
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                "41",
+                "PENDING",
+                workload_observable=True,
+                workload_evidence="scheduler_state",
+            )
+            if exists
+            else ReconciliationEvidence(ReconciliationState.ABSENT)
+        ),
         classify_launch_error=_transient,
     )
     assert result.state is LaunchState.ADOPTED
     assert result.job_id == "41"
     assert result.launch_sequence == 1
+    assert result.reconciliations[-1]["workload_observable"] is True
+
+
+def test_getcwd_rsync_failure_rejects_phantom_pending_queue_record() -> None:
+    """A row allocated before controller file sync is not a submitted workload."""
+
+    exists = False
+
+    def launch() -> None:
+        nonlocal exists
+        exists = True
+        raise RuntimeError(
+            "getcwd() failed: No such file or directory; "
+            "rsync failed with return code 3"
+        )
+
+    with pytest.raises(LaunchTransactionError) as caught:
+        run_launch_transaction(
+            logical_id="getcwd-rsync-phantom",
+            readiness=_stable,
+            launch=launch,
+            reconcile=lambda: (
+                ReconciliationEvidence(
+                    ReconciliationState.FOUND,
+                    "125",
+                    "PENDING",
+                    workload_observable=False,
+                    workload_evidence="",
+                )
+                if exists
+                else ReconciliationEvidence(ReconciliationState.ABSENT)
+            ),
+            classify_launch_error=_transient,
+        )
+
+    result = caught.value.result
+    assert result.state is LaunchState.TERMINAL_FAILURE
+    assert result.category is FailureCategory.CONFIG
+    assert (
+        result.recovery_decision
+        == "reject_unobservable_queue_record_after_launch_failure"
+    )
+    assert result.job_id == "125"
+    assert result.reconciliations[-1] == {
+        "state": "found",
+        "job_id": "125",
+        "status": "PENDING",
+        "workload_observable": False,
+        "workload_evidence": "",
+        "error": "",
+        "observed_task_ids": [],
+    }
+
+
+def test_resume_rejects_existing_unobservable_phantom_record() -> None:
+    with pytest.raises(LaunchTransactionError) as caught:
+        run_launch_transaction(
+            logical_id="resume-phantom",
+            readiness=_stable,
+            launch=lambda: pytest.fail("phantom record must block relaunch"),
+            reconcile=lambda: ReconciliationEvidence(
+                ReconciliationState.FOUND, "125", "PENDING"
+            ),
+            classify_launch_error=_transient,
+        )
+
+    assert caught.value.result.state is LaunchState.INDETERMINATE
+    assert caught.value.result.recovery_decision == "block_unobservable_existing_record"
+
+
+def test_resume_relaunches_instead_of_adopting_cancelled_job() -> None:
+    reconciliations = iter(
+        [
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                "125",
+                "CANCELLED",
+                workload_observable=True,
+                workload_evidence="scheduler_state",
+            ),
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                "126",
+                "PENDING",
+                workload_observable=True,
+                workload_evidence="scheduler_state",
+            ),
+        ]
+    )
+    launches = 0
+
+    def launch() -> None:
+        nonlocal launches
+        launches += 1
+
+    result = run_launch_transaction(
+        logical_id="resume-after-cancel",
+        readiness=_stable,
+        launch=launch,
+        reconcile=lambda: next(reconciliations),
+        classify_launch_error=_transient,
+    )
+
+    assert launches == 1
+    assert result.state is LaunchState.SUBMITTED
+    assert result.job_id == "126"
+    assert result.recovery_decision == "submitted_and_reconciled"
 
 
 def test_authoritative_absence_allows_one_safe_retry() -> None:
@@ -277,11 +773,11 @@ def test_authoritative_absence_allows_one_safe_retry() -> None:
         logical_id="safe-retry",
         readiness=_stable,
         launch=launch,
-        reconcile=lambda: ReconciliationEvidence(
-            ReconciliationState.FOUND, "9", "PENDING"
-        )
-        if exists
-        else ReconciliationEvidence(ReconciliationState.ABSENT),
+        reconcile=lambda: (
+            ReconciliationEvidence(ReconciliationState.FOUND, "9", "PENDING")
+            if exists
+            else ReconciliationEvidence(ReconciliationState.ABSENT)
+        ),
         classify_launch_error=_transient,
         recovery_policy=RecoveryPolicy(30, 1, 1, 2, 0),
         clock=clock,
@@ -315,7 +811,10 @@ def test_repeated_transient_failure_stops_at_recovery_deadline() -> None:
             sleeper=clock.sleep,
             random_source=lambda: 0.5,
         )
-    assert caught.value.result.recovery_decision == "recovery_deadline_exhausted_verified_absent"
+    assert (
+        caught.value.result.recovery_decision
+        == "recovery_deadline_exhausted_verified_absent"
+    )
     assert caught.value.result.state is LaunchState.TRANSIENT_API_FAILURE
     assert caught.value.result.existence == "absent"
     assert launches == 2
@@ -364,6 +863,101 @@ def test_indeterminate_reconciliation_never_launches_or_retries() -> None:
     assert caught.value.result.state is LaunchState.INDETERMINATE
 
 
+def test_async_launch_waits_for_exact_job_observability_without_relaunch() -> None:
+    clock = FakeClock()
+    launches = 0
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.FOUND, "88", "PENDING"),
+        ]
+    )
+
+    def launch() -> object:
+        nonlocal launches
+        launches += 1
+        return object()
+
+    result = run_launch_transaction(
+        logical_id="async-observability",
+        readiness=_stable,
+        launch=launch,
+        reconcile=lambda: next(observations),
+        classify_launch_error=_transient,
+        recovery_policy=RecoveryPolicy(30, 1, 1, 2, 0),
+        clock=clock,
+        sleeper=clock.sleep,
+        random_source=lambda: 0.5,
+    )
+
+    assert result.state is LaunchState.SUBMITTED
+    assert result.job_id == "88"
+    assert launches == 1
+    assert len(result.reconciliations) == 4
+
+
+def test_async_launch_ignores_stale_terminal_row_until_replacement_is_visible() -> None:
+    clock = FakeClock()
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.FOUND, "7", "CANCELLED"),
+            ReconciliationEvidence(ReconciliationState.FOUND, "8", "RUNNING"),
+        ]
+    )
+
+    result = run_launch_transaction(
+        logical_id="replace-terminal-row",
+        readiness=_stable,
+        launch=lambda: object(),
+        reconcile=lambda: next(observations),
+        classify_launch_error=_transient,
+        recovery_policy=RecoveryPolicy(30, 1, 1, 2, 0),
+        clock=clock,
+        sleeper=clock.sleep,
+        random_source=lambda: 0.5,
+    )
+
+    assert result.state is LaunchState.SUBMITTED
+    assert result.job_id == "8"
+    assert len(result.reconciliations) == 3
+
+
+def test_async_launch_never_adopts_stale_terminal_row_at_deadline() -> None:
+    clock = FakeClock()
+    observations = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(ReconciliationState.FOUND, "7", "CANCELLED"),
+            ReconciliationEvidence(ReconciliationState.FOUND, "7", "CANCELLED"),
+            ReconciliationEvidence(ReconciliationState.FOUND, "7", "CANCELLED"),
+        ]
+    )
+
+    with pytest.raises(LaunchTransactionError) as caught:
+        run_launch_transaction(
+            logical_id="terminal-row-never-replaced",
+            readiness=_stable,
+            launch=lambda: object(),
+            reconcile=lambda: next(observations),
+            classify_launch_error=_transient,
+            recovery_policy=RecoveryPolicy(2, 1, 1, 2, 0),
+            clock=clock,
+            sleeper=clock.sleep,
+            random_source=lambda: 0.5,
+        )
+
+    result = caught.value.result
+    assert result.state is LaunchState.INDETERMINATE
+    assert result.state is not LaunchState.SUBMITTED
+    assert result.job_id == ""
+    assert result.existence == "indeterminate"
+    assert result.recovery_decision == "block_after_uncertain_success"
+    assert result.reconciliations[-1]["status"] == "CANCELLED"
+
+
 def test_two_local_callers_produce_at_most_one_launch_and_second_adopts(
     tmp_path: Path,
 ) -> None:
@@ -377,7 +971,13 @@ def test_two_local_callers_produce_at_most_one_launch_and_second_adopts(
     def reconcile() -> ReconciliationEvidence:
         with guard:
             return (
-                ReconciliationEvidence(ReconciliationState.FOUND, job_id, "PENDING")
+                ReconciliationEvidence(
+                    ReconciliationState.FOUND,
+                    job_id,
+                    "PENDING",
+                    workload_observable=True,
+                    workload_evidence="scheduler_state",
+                )
                 if job_id
                 else ReconciliationEvidence(ReconciliationState.ABSENT)
             )
@@ -452,11 +1052,11 @@ def test_hermetic_incident_boundary_recovers_without_cancellation() -> None:
         logical_id=logical_launch_identity("project", "paidf-run", "wave-001", "1"),
         readiness=readiness,
         launch=launch,
-        reconcile=lambda: ReconciliationEvidence(
-            ReconciliationState.FOUND, exact_job, "PENDING"
-        )
-        if exact_job
-        else ReconciliationEvidence(ReconciliationState.ABSENT),
+        reconcile=lambda: (
+            ReconciliationEvidence(ReconciliationState.FOUND, exact_job, "PENDING")
+            if exact_job
+            else ReconciliationEvidence(ReconciliationState.ABSENT)
+        ),
         classify_launch_error=_transient,
         recovery_policy=RecoveryPolicy(30, 1, 1, 2, 0),
         clock=clock,
@@ -468,3 +1068,148 @@ def test_hermetic_incident_boundary_recovers_without_cancellation() -> None:
     assert launches == 2
     assert cancellations == []
     assert result.recovery_decision == "submitted_and_reconciled"
+
+
+_CREDENTIAL_RPC_TRANSPORT = (
+    "Error: rpc error: code = Internal desc = server closed the stream without sending trailers\n"
+    "Unable to connect to the server: getting credentials: exec: executable nebius failed with exit code 5"
+)
+
+
+def test_credential_exec_internal_stream_close_is_typed_transport() -> None:
+    assert classify_failure(phase="launch", stderr=_CREDENTIAL_RPC_TRANSPORT) == (
+        EvidenceState.TRANSIENT_UNAVAILABLE,
+        FailureCategory.KUBERNETES_TRANSPORT,
+    )
+    assert classify_failure(phase="workload", stderr=_CREDENTIAL_RPC_TRANSPORT) == (
+        EvidenceState.AMBIGUOUS,
+        FailureCategory.UNKNOWN,
+    )
+
+
+@pytest.mark.parametrize(
+    "denial,category",
+    [
+        ("Unauthorized", FailureCategory.AUTH),
+        ("credentials expired", FailureCategory.AUTH),
+        ("exec plugin authentication failed", FailureCategory.AUTH),
+        ("Forbidden", FailureCategory.RBAC),
+        ("Invalid pod_config", FailureCategory.SCHEMA),
+        (
+            "credential configuration changed after verification",
+            FailureCategory.IDENTITY,
+        ),
+    ],
+)
+def test_real_denial_precedes_credential_transport(denial, category) -> None:
+    state, actual = classify_failure(
+        phase="launch", stderr=_CREDENTIAL_RPC_TRANSPORT + "\n" + denial
+    )
+    assert state is EvidenceState.TERMINAL and actual is category
+
+
+def test_typed_transport_still_refuses_unobservable_reserved_row(
+    tmp_path: Path,
+) -> None:
+    launches = []
+    evidence = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                job_id="41",
+                status="PENDING",
+                workload_observable=False,
+            ),
+        ]
+    )
+
+    def launch():
+        launches.append(True)
+        raise RuntimeError(_CREDENTIAL_RPC_TRANSPORT)
+
+    with pytest.raises(LaunchTransactionError) as caught:
+        run_launch_transaction(
+            logical_id="partial-transport",
+            readiness=_stable,
+            launch=launch,
+            reconcile=lambda: next(evidence),
+            classify_launch_error=_transient,
+            lock_root=tmp_path,
+        )
+    result = caught.value.result
+    assert (
+        result.category is FailureCategory.KUBERNETES_TRANSPORT
+        and result.job_id == "41"
+    )
+    assert (
+        result.recovery_decision
+        == "reject_unobservable_queue_record_after_launch_failure"
+    )
+    assert len(launches) == 1
+
+
+def test_non_idempotent_intent_is_durable_before_provider_post(tmp_path: Path) -> None:
+    sequence = []
+    evidence = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(
+                ReconciliationState.FOUND, job_id="42", status="PENDING"
+            ),
+        ]
+    )
+
+    def launch():
+        assert sequence[-1] == 1
+        return "accepted"
+
+    run_launch_transaction(
+        logical_id="durable-intent",
+        readiness=_stable,
+        launch=launch,
+        reconcile=lambda: next(evidence),
+        classify_launch_error=_transient,
+        lock_root=tmp_path,
+        record=lambda payload: sequence.append(payload["launch_sequence"]),
+    )
+    assert sequence[-1] == 1
+
+
+def test_failed_non_idempotent_intent_write_prevents_post(tmp_path: Path) -> None:
+    posts = []
+
+    def launch():
+        posts.append(True)
+        raise RuntimeError("synthetic provider result unknown")
+
+    def record(payload):
+        if payload["launch_sequence"]:
+            raise OSError("durable store unavailable")
+
+    with pytest.raises(OSError, match="durable store unavailable"):
+        run_launch_transaction(
+            logical_id="intent-write-failure",
+            readiness=_stable,
+            launch=launch,
+            reconcile=lambda: ReconciliationEvidence(ReconciliationState.ABSENT),
+            classify_launch_error=_transient,
+            lock_root=tmp_path,
+            record=record,
+        )
+    assert posts == []
+
+
+def test_submit_diagnostic_does_not_mislabel_credential_transport_as_auth() -> None:
+    from npa.orchestration.skypilot.workflow import _format_submit_error
+
+    result = subprocess.CompletedProcess(
+        ["sky", "jobs", "launch"], 1, "", _CREDENTIAL_RPC_TRANSPORT
+    )
+    assert _format_submit_error(result.args, result).startswith(
+        "SkyPilot transport failure"
+    )
+    denied = subprocess.CompletedProcess(
+        result.args, 1, "", _CREDENTIAL_RPC_TRANSPORT + "\nUnauthorized"
+    )
+    assert _format_submit_error(denied.args, denied).startswith("SkyPilot auth failure")

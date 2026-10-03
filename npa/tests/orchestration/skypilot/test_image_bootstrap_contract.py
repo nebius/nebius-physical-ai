@@ -1,24 +1,29 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import threading
+from functools import partial
 
 import pytest
 
 from npa.orchestration.skypilot.image_bootstrap_contract import (
     ATTESTATION_LABEL,
     CONTRACT_VERSION,
+    DEFAULT_PROBE_TIMEOUT_SECONDS,
     ImageBootstrapContractError,
     ImageContractEvidence,
+    PROBE_TIMEOUT_SECONDS,
     cache_key,
     immutable_image_reference,
     is_trusted_npa_image,
     _observe_terminal_phase,
+    _runtime_bootstrap_script,
     load_cached_evidence,
     parse_oci_reference,
-    probe_image_capabilities,
+    probe_image_capabilities as _probe_image_capabilities,
     store_cached_evidence,
     verify_attestation,
 )
@@ -26,6 +31,22 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
 
 DIGEST = "sha256:" + "a" * 64
 IMAGE = "registry.example/npa-fiftyone:validation"
+probe_image_capabilities = partial(
+    _probe_image_capabilities, namespace="target-namespace"
+)
+
+
+def _verb(argv: list[str]) -> str:
+    return next(item for item in ("run", "get", "delete") if item in argv)
+
+
+def _pod_name_from_command(argv: list[str]) -> str:
+    action = _verb(argv)
+    if action == "run":
+        return argv[argv.index("run") + 1]
+    if action == "get":
+        return argv[argv.index("pod") + 1]
+    return argv[argv.index("--raw") + 1].rsplit("/", 1)[-1]
 
 
 def _pod_payload(
@@ -47,7 +68,11 @@ def _pod_payload(
                     "npa.nebius.com/probe-id": probe_id,
                 },
             },
-            "spec": {"containers": [{"image": image or f"registry.example/npa-fiftyone@{DIGEST}"}]},
+            "spec": {
+                "containers": [
+                    {"image": image or f"registry.example/npa-fiftyone@{DIGEST}"}
+                ]
+            },
             "status": (
                 {
                     "phase": "Failed",
@@ -73,20 +98,32 @@ def _pod_payload(
     )
 
 
-def _successful_runner(calls: list[list[str]], *, wait_error: str = "", delete_error: str = ""):
+def _successful_runner(
+    calls: list[list[str]], *, wait_error: str = "", delete_error: str = ""
+):
+    deleted_names: set[str] = set()
+
     def runner(argv, _env):
         calls.append(argv)
-        action = argv[3]
-        if action == "run":
+        if "run" in argv:
             return subprocess.CompletedProcess(argv, 0, "", "")
-        if action == "get":
-            name = argv[5]
+        if "get" in argv:
+            name = argv[argv.index("pod") + 1]
+            if name in deleted_names and "--ignore-not-found=true" in argv:
+                return subprocess.CompletedProcess(argv, 0, "", "")
             probe_id = name.rsplit("-", 1)[-1]
             return subprocess.CompletedProcess(
                 argv, 0, _pod_payload(name, probe_id, failed=wait_error), ""
             )
-        if action == "delete":
-            return subprocess.CompletedProcess(argv, int(bool(delete_error)), "", delete_error)
+        if "delete" in argv:
+            options_path = Path(argv[argv.index("-f") + 1])
+            options = json.loads(options_path.read_text())
+            assert options["preconditions"]["uid"] == "uid-owned"
+            if not delete_error:
+                deleted_names.add(_pod_name_from_command(argv))
+            return subprocess.CompletedProcess(
+                argv, int(bool(delete_error)), "", delete_error
+            )
         raise AssertionError(argv)
 
     return runner
@@ -148,13 +185,173 @@ def test_root_and_compliant_non_root_probe_share_exact_contract() -> None:
     assert "command -v service" in calls[0][-1]
     assert "test -w /tmp" in calls[0][-1]
     assert "--command" not in calls[0]  # entrypoint must forward pod args
-    assert calls[-1][-5:] == [
-        "delete",
-        "pod",
-        calls[0][4],
-        "--ignore-not-found=true",
-        "--wait=true",
+    assert calls[0][:5] == [
+        "kubectl",
+        "--context",
+        "ctx-exact",
+        "--namespace",
+        "target-namespace",
     ]
+    delete = next(command for command in calls if _verb(command) == "delete")
+    assert _pod_name_from_command(delete) == _pod_name_from_command(calls[0])
+
+
+def test_probe_allows_cold_workbench_image_pull_to_finish() -> None:
+    calls: list[list[str]] = []
+    observed: list[list[str]] = []
+
+    def observe(argv, _env):
+        observed.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "Succeeded", "")
+
+    evidence = probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx-exact",
+        runner=_successful_runner(calls),
+        terminal_observer=observe,
+        nonce_factory=lambda: "a" * 16,
+    )
+
+    assert evidence.ok
+    assert "--request-timeout=1800s" in observed[0]
+
+
+def test_vendor_probe_overrides_application_entrypoint_and_is_not_cached(
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+    evidence = probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx-exact",
+        runtime_bootstrap=True,
+        runner=_successful_runner(calls),
+        terminal_observer=_terminal_observer(),
+        nonce_factory=lambda: "b" * 16,
+    )
+
+    command = calls[0]
+    assert command.index("--command") < command.index("--")
+    assert command[command.index("--") + 1] == "/bin/bash"
+    assert evidence.ok and evidence.cleanup == "verified"
+    assert evidence.source == "ephemeral_runtime_bootstrap_probe"
+    assert "kubernetes_command_override" in evidence.checks
+    cache = tmp_path / "cache.json"
+    store_cached_evidence(cache, evidence)
+    assert not cache.exists()
+
+
+def _bootstrap_environment(tmp_path: Path, *, uid: str = "0", apt_exit: int = 0):
+    directory = tmp_path / "bin"
+    directory.mkdir()
+    (directory / "env").symlink_to("/usr/bin/env")
+    scripts = {
+        "id": f"printf '%s\\n' {uid}\n",
+        "sudo": "exit 1\n",
+        "apt-get": (f'printf "%s\\n" "$*" >> "$PROBE_APT_LOG"\nexit {apt_exit}\n'),
+    }
+    for name, script in scripts.items():
+        path = directory / name
+        path.write_text("#!/bin/sh\n" + script)
+        path.chmod(0o755)
+    return {
+        **os.environ,
+        "PATH": str(directory),
+        "PROBE_APT_LOG": str(tmp_path / "apt.log"),
+    }
+
+
+@pytest.mark.parametrize("uid,apt_exit", [("1000", 0), ("0", 23)])
+def test_vendor_bootstrap_refuses_privilege_or_package_failures(
+    tmp_path: Path, uid: str, apt_exit: int
+) -> None:
+    environment = _bootstrap_environment(tmp_path, uid=uid, apt_exit=apt_exit)
+    result = subprocess.run(
+        ["/bin/sh", "-c", _runtime_bootstrap_script()],
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    if uid != "0":
+        assert not (tmp_path / "apt.log").exists()
+    else:
+        assert (tmp_path / "apt.log").read_text().splitlines() == ["update"]
+
+
+def test_vendor_bootstrap_still_requires_installed_capabilities(tmp_path: Path) -> None:
+    environment = _bootstrap_environment(tmp_path)
+    calls: list[list[str]] = []
+    probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx-exact",
+        runtime_bootstrap=True,
+        runner=_successful_runner(calls),
+        terminal_observer=_terminal_observer(),
+    )
+    result = subprocess.run(
+        ["/bin/sh", "-c", calls[0][-1]],
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "install -y" in (tmp_path / "apt.log").read_text()
+
+
+def test_probe_observation_timeout_is_configurable_and_zero_means_no_deadline() -> None:
+    observed: list[list[str]] = []
+
+    def observe(argv, _env):
+        observed.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "Succeeded", "")
+
+    evidence = probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx-exact",
+        observation_timeout_seconds=0,
+        runner=_successful_runner([]),
+        terminal_observer=observe,
+        nonce_factory=lambda: "0" * 16,
+    )
+
+    assert evidence.ok
+    assert "--request-timeout=0s" in observed[0]
+
+
+def test_legacy_probe_timeout_constant_remains_a_compatibility_alias() -> None:
+    assert PROBE_TIMEOUT_SECONDS == DEFAULT_PROBE_TIMEOUT_SECONDS
+
+
+def test_probe_rejects_negative_observation_timeout_before_creation() -> None:
+    with pytest.raises(ImageBootstrapContractError, match="zero or greater"):
+        probe_image_capabilities(
+            image=IMAGE,
+            digest=DIGEST,
+            context="ctx-exact",
+            observation_timeout_seconds=-1,
+        )
+
+
+def test_probe_rejects_empty_namespace_before_creation() -> None:
+    with pytest.raises(
+        ImageBootstrapContractError,
+        match="an exact valid Kubernetes namespace is required",
+    ):
+        _probe_image_capabilities(
+            image=IMAGE,
+            digest=DIGEST,
+            context="ctx-exact",
+            namespace="",
+            runner=lambda *args, **kwargs: pytest.fail(
+                "invalid target must fail before creation"
+            ),
+        )
 
 
 def test_probe_attaches_declared_image_pull_secrets() -> None:
@@ -164,7 +361,12 @@ def test_probe_attaches_declared_image_pull_secrets() -> None:
         image=IMAGE,
         digest=DIGEST,
         context="ctx-exact",
-        image_pull_secrets=("npa-nebius-registry", "npa-nebius-registry"),
+        image_pull_secrets=("operator-registry-secret", "operator-registry-secret"),
+        service_account_name="exact-service-account",
+        pod_placement={
+            "nodeSelector": {"nebius.com/node-group": "gpu-a"},
+            "runtimeClassName": "nvidia",
+        },
         runner=_successful_runner(calls),
         terminal_observer=_terminal_observer(),
         nonce_factory=lambda: "c" * 16,
@@ -176,9 +378,11 @@ def test_probe_attaches_declared_image_pull_secrets() -> None:
         for item in calls[0]
         if item.startswith("--overrides=")
     )
-    assert json.loads(raw_overrides)["spec"]["imagePullSecrets"] == [
-        {"name": "npa-nebius-registry"}
-    ]
+    override_spec = json.loads(raw_overrides)["spec"]
+    assert override_spec["imagePullSecrets"] == [{"name": "operator-registry-secret"}]
+    assert override_spec["serviceAccountName"] == "exact-service-account"
+    assert override_spec["nodeSelector"] == {"nebius.com/node-group": "gpu-a"}
+    assert override_spec["runtimeClassName"] == "nvidia"
 
 
 def test_probe_rejects_invalid_image_pull_secret_name_before_creation() -> None:
@@ -200,6 +404,7 @@ def test_probe_rejects_invalid_image_pull_secret_name_before_creation() -> None:
         "rsync: not found",
         "service: not found",
         "entrypoint rejected arguments",
+        "Authorization: Bearer synthetic-bootstrap-secret",
     ],
 )
 def test_missing_capability_or_bad_entrypoint_fails_closed(failure: str) -> None:
@@ -214,7 +419,8 @@ def test_missing_capability_or_bad_entrypoint_fails_closed(failure: str) -> None
     )
     assert evidence.state == "incompatible"
     assert evidence.cleanup == "verified"
-    assert failure in evidence.detail
+    assert failure not in evidence.detail
+    assert "reason=Error" in evidence.detail
     assert "exitCode=17" in evidence.detail
 
 
@@ -225,14 +431,17 @@ def test_terminal_timeout_is_indeterminate_and_still_cleans_up() -> None:
         digest=DIGEST,
         context="ctx-exact",
         runner=_successful_runner(calls),
-        terminal_observer=_terminal_observer("", "timed out waiting for terminal phase"),
+        terminal_observer=_terminal_observer(
+            "", "timed out waiting for terminal phase"
+        ),
         nonce_factory=lambda: "f" * 16,
     )
 
     assert evidence.state == "indeterminate"
-    assert "timed out" in evidence.detail
+    assert "without a terminal pod phase" in evidence.detail
+    assert "timed out" not in evidence.detail
     assert evidence.cleanup == "verified"
-    assert any(argv[3] == "delete" for argv in calls)
+    assert any(_verb(argv) == "delete" for argv in calls)
 
 
 def test_probe_transport_and_cleanup_failures_are_indeterminate() -> None:
@@ -246,6 +455,7 @@ def test_probe_transport_and_cleanup_failures_are_indeterminate() -> None:
         nonce_factory=lambda: "c" * 16,
     )
     assert create_failure.state == "indeterminate"
+    assert "connection refused" not in create_failure.detail
 
     calls: list[list[str]] = []
     cleanup_failure = probe_image_capabilities(
@@ -301,17 +511,27 @@ def test_cache_isolated_by_digest_and_contract_version(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("reference", "expected"),
     [
-        ("registry.example:5000/team/npa-tool:tag", "registry.example:5000/team/npa-tool"),
+        (
+            "registry.example:5000/team/npa-tool:tag",
+            "registry.example:5000/team/npa-tool",
+        ),
         ("[2001:db8::1]:5000/team/npa-tool:tag", "[2001:db8::1]:5000/team/npa-tool"),
-        (f"registry.example:5000/team/npa-tool:tag@{DIGEST}", "registry.example:5000/team/npa-tool"),
+        (
+            f"registry.example:5000/team/npa-tool:tag@{DIGEST}",
+            "registry.example:5000/team/npa-tool",
+        ),
         ("registry.example:5000/team/npa-tool", "registry.example:5000/team/npa-tool"),
     ],
 )
-def test_shared_oci_parser_handles_registry_ports_and_tags(reference: str, expected: str) -> None:
+def test_shared_oci_parser_handles_registry_ports_and_tags(
+    reference: str, expected: str
+) -> None:
     parsed = parse_oci_reference(reference)
     assert parsed.name == expected
     assert immutable_image_reference(reference, DIGEST) == f"{expected}@{DIGEST}"
-    assert is_trusted_npa_image(reference, allowed_registries=[expected.rsplit("/", 1)[0]])
+    assert is_trusted_npa_image(
+        reference, allowed_registries=[expected.rsplit("/", 1)[0]]
+    )
 
 
 @pytest.mark.parametrize(
@@ -321,8 +541,16 @@ def test_shared_oci_parser_handles_registry_ports_and_tags(reference: str, expec
         (f"ghcr.io/nebius/nebius-physical-ai/npa-tool@{DIGEST}", (), True),
         ("evil.example/nebius/nebius-physical-ai/npa-tool:tag", (), False),
         ("ghcr.io/foreign/npa-tool:tag", (), False),
-        ("registry.example:5000/team/npa-tool:tag", ("registry.example:5000/team",), True),
-        ("registry.example:5000/other/npa-tool:tag", ("registry.example:5000/team",), False),
+        (
+            "registry.example:5000/team/npa-tool:tag",
+            ("registry.example:5000/team",),
+            True,
+        ),
+        (
+            "registry.example:5000/other/npa-tool:tag",
+            ("registry.example:5000/team",),
+            False,
+        ),
         ("registry.example:5000/team/tool:tag", ("registry.example:5000/team",), False),
     ],
 )
@@ -361,10 +589,11 @@ def test_embedded_digest_must_match_resolved_digest() -> None:
 def test_same_digest_concurrent_probes_have_unique_owned_pods() -> None:
     calls: list[list[str]] = []
     lock = threading.Lock()
+    base_runner = _successful_runner(calls)
 
     def runner(argv, env):
         with lock:
-            return _successful_runner(calls)(argv, env)
+            return base_runner(argv, env)
 
     results = []
 
@@ -390,8 +619,10 @@ def test_same_digest_concurrent_probes_have_unique_owned_pods() -> None:
         thread.join()
 
     assert len(results) == 2 and all(item.ok for item in results)
-    created = {argv[4] for argv in calls if argv[3] == "run"}
-    deleted = {argv[5] for argv in calls if argv[3] == "delete"}
+    created = {_pod_name_from_command(argv) for argv in calls if _verb(argv) == "run"}
+    deleted = {
+        _pod_name_from_command(argv) for argv in calls if _verb(argv) == "delete"
+    }
     assert len(created) == 2
     assert deleted == created
 
@@ -399,12 +630,15 @@ def test_same_digest_concurrent_probes_have_unique_owned_pods() -> None:
 def test_probe_retries_already_exists_with_a_new_nonce() -> None:
     calls: list[list[str]] = []
     nonces = iter(("3" * 16, "4" * 16))
+    base_runner = _successful_runner(calls)
 
     def runner(argv, env):
-        if argv[3] == "run" and argv[4].endswith("3" * 16):
+        if _verb(argv) == "run" and _pod_name_from_command(argv).endswith("3" * 16):
             calls.append(argv)
-            return subprocess.CompletedProcess(argv, 1, "", "Error from server (AlreadyExists)")
-        return _successful_runner(calls)(argv, env)
+            return subprocess.CompletedProcess(
+                argv, 1, "", "Error from server (AlreadyExists)"
+            )
+        return base_runner(argv, env)
 
     evidence = probe_image_capabilities(
         image=IMAGE,
@@ -415,7 +649,7 @@ def test_probe_retries_already_exists_with_a_new_nonce() -> None:
         nonce_factory=lambda: next(nonces),
     )
     assert evidence.ok
-    assert len([argv for argv in calls if argv[3] == "run"]) == 2
+    assert len([argv for argv in calls if _verb(argv) == "run"]) == 2
 
 
 def test_replacement_identity_is_refused_and_never_deleted() -> None:
@@ -425,11 +659,11 @@ def test_replacement_identity_is_refused_and_never_deleted() -> None:
     def runner(argv, env):
         nonlocal reads
         calls.append(argv)
-        if argv[3] == "run" or argv[3] == "wait":
+        if _verb(argv) == "run":
             return subprocess.CompletedProcess(argv, 0, "", "")
-        if argv[3] == "get":
+        if _verb(argv) == "get":
             reads += 1
-            name = argv[5]
+            name = _pod_name_from_command(argv)
             probe_id = name.rsplit("-", 1)[-1]
             return subprocess.CompletedProcess(
                 argv, 0, _pod_payload(name, probe_id, uid=f"uid-{reads}"), ""
@@ -446,14 +680,15 @@ def test_replacement_identity_is_refused_and_never_deleted() -> None:
     )
     assert evidence.state == "indeterminate"
     assert evidence.cleanup == "refused_identity_mismatch"
-    assert not any(argv[3] == "delete" for argv in calls)
+    assert not any(_verb(argv) == "delete" for argv in calls)
 
 
 def test_operator_interruption_cleans_only_the_owned_probe() -> None:
     calls: list[list[str]] = []
+    base_runner = _successful_runner(calls)
 
     def runner(argv, env):
-        return _successful_runner(calls)(argv, env)
+        return base_runner(argv, env)
 
     def interrupt(argv, _env):
         calls.append(argv)
@@ -468,9 +703,9 @@ def test_operator_interruption_cleans_only_the_owned_probe() -> None:
             terminal_observer=interrupt,
             nonce_factory=lambda: "6" * 16,
         )
-    deletes = [argv for argv in calls if argv[3] == "delete"]
+    deletes = [argv for argv in calls if _verb(argv) == "delete"]
     assert len(deletes) == 1
-    assert deletes[0][5].endswith("6" * 16)
+    assert _pod_name_from_command(deletes[0]).endswith("6" * 16)
 
 
 def test_operator_interruption_preserves_primary_when_cleanup_fails() -> None:
@@ -494,4 +729,173 @@ def test_operator_interruption_preserves_primary_when_cleanup_fails() -> None:
         )
     notes = getattr(caught.value, "__notes__", [])
     fallback = getattr(caught.value, "__npa_cleanup_note__", "")
-    assert "cleanup denied" in " ".join([*notes, fallback])
+    detail = " ".join([*notes, fallback])
+    assert "cleanup denied" not in detail
+    assert "probe deletion was rejected (exit 1)" in detail
+
+
+def test_interruption_during_cleanup_identity_read_retries_exact_cleanup() -> None:
+    calls: list[list[str]] = []
+    reads = 0
+    deleted = False
+
+    def runner(argv, _env):
+        nonlocal deleted, reads
+        calls.append(argv)
+        action = _verb(argv)
+        if action == "run":
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if action == "get":
+            reads += 1
+            if reads == 2:
+                raise KeyboardInterrupt
+            if deleted and "--ignore-not-found=true" in argv:
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            name = _pod_name_from_command(argv)
+            probe_id = name.rsplit("-", 1)[-1]
+            return subprocess.CompletedProcess(
+                argv, 0, _pod_payload(name, probe_id), ""
+            )
+        if action == "delete":
+            deleted = True
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise AssertionError(argv)
+
+    with pytest.raises(KeyboardInterrupt):
+        probe_image_capabilities(
+            image=IMAGE,
+            digest=DIGEST,
+            context="ctx",
+            runner=runner,
+            terminal_observer=_terminal_observer(),
+            nonce_factory=lambda: "8" * 16,
+        )
+
+    assert reads == 4
+    assert len([argv for argv in calls if _verb(argv) == "delete"]) == 1
+
+
+def test_cleanup_retries_transient_identity_read_failure() -> None:
+    calls: list[list[str]] = []
+    reads = 0
+    deleted = False
+
+    def runner(argv, _env):
+        nonlocal deleted, reads
+        calls.append(argv)
+        action = _verb(argv)
+        if action == "run":
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if action == "get":
+            reads += 1
+            if reads == 2:
+                raise subprocess.TimeoutExpired(argv, 30)
+            if deleted and "--ignore-not-found=true" in argv:
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            name = _pod_name_from_command(argv)
+            probe_id = name.rsplit("-", 1)[-1]
+            return subprocess.CompletedProcess(
+                argv, 0, _pod_payload(name, probe_id), ""
+            )
+        if action == "delete":
+            deleted = True
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise AssertionError(argv)
+
+    evidence = probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx",
+        runner=runner,
+        terminal_observer=_terminal_observer(),
+        nonce_factory=lambda: "9" * 16,
+    )
+
+    assert evidence.ok
+    assert evidence.cleanup == "verified"
+    assert reads == 4
+    assert len([argv for argv in calls if _verb(argv) == "delete"]) == 1
+
+
+def test_initial_transient_identity_read_still_cleans_owned_probe() -> None:
+    calls: list[list[str]] = []
+    reads = 0
+    deleted = False
+
+    def runner(argv, _env):
+        nonlocal deleted, reads
+        calls.append(argv)
+        action = _verb(argv)
+        if action == "run":
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if action == "get":
+            reads += 1
+            if reads == 1:
+                raise subprocess.TimeoutExpired(argv, 30)
+            if deleted and "--ignore-not-found=true" in argv:
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            name = _pod_name_from_command(argv)
+            probe_id = name.rsplit("-", 1)[-1]
+            return subprocess.CompletedProcess(
+                argv, 0, _pod_payload(name, probe_id), ""
+            )
+        if action == "delete":
+            deleted = True
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise AssertionError(argv)
+
+    evidence = probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx",
+        runner=runner,
+        terminal_observer=lambda *args, **kwargs: pytest.fail(
+            "indeterminate identity must not start observation"
+        ),
+        nonce_factory=lambda: "a" * 16,
+    )
+
+    assert evidence.state == "indeterminate"
+    assert evidence.cleanup == "verified"
+    assert len([argv for argv in calls if _verb(argv) == "delete"]) == 1
+
+
+def test_uncertain_create_cleanup_interrupt_retries_before_propagation() -> None:
+    calls: list[list[str]] = []
+    reads = 0
+    deleted = False
+
+    def runner(argv, _env):
+        nonlocal deleted, reads
+        calls.append(argv)
+        action = _verb(argv)
+        if action == "run":
+            raise OSError("indeterminate create")
+        if action == "get":
+            reads += 1
+            if reads == 1:
+                raise KeyboardInterrupt
+            if deleted and "--ignore-not-found=true" in argv:
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            name = _pod_name_from_command(argv)
+            probe_id = name.rsplit("-", 1)[-1]
+            return subprocess.CompletedProcess(
+                argv, 0, _pod_payload(name, probe_id), ""
+            )
+        if action == "delete":
+            deleted = True
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise AssertionError(argv)
+
+    with pytest.raises(KeyboardInterrupt):
+        probe_image_capabilities(
+            image=IMAGE,
+            digest=DIGEST,
+            context="ctx",
+            runner=runner,
+            terminal_observer=_terminal_observer(),
+            nonce_factory=lambda: "b" * 16,
+        )
+
+    assert len([argv for argv in calls if _verb(argv) == "delete"]) == 1
+    assert reads == 4

@@ -22,11 +22,21 @@ _TEMPLATES = (
     "loop-gate",
     "vlm-rl-loop",
     "token-factory-gate",
+    "token-factory-deployment-review",
     "byof",
     "rl-policy-success",
     "physical-ai-data-factory",
+    "paidf-defect-image-generation",
+    "paidf-image-attribute-augmentation",
+    "paidf-event-video-generation",
     "sim2real-staged",
 )
+
+_STATIC_WORKFLOW_TEMPLATES = {
+    "paidf-defect-image-generation": "paidf-defect-image-generation.yaml",
+    "paidf-image-attribute-augmentation": "paidf-image-attribute-augmentation.yaml",
+    "paidf-event-video-generation": "paidf-event-video-generation.yaml",
+}
 
 
 class _FoldedStr(str):
@@ -79,6 +89,9 @@ _TEMPLATE_ALIASES: dict[str, str] = {
     "token_factory_gate": "token-factory-gate",
     "gate": "token-factory-gate",
     "tokenfactory": "token-factory-gate",
+    "deployment_review": "token-factory-deployment-review",
+    "deployment-readiness": "token-factory-deployment-review",
+    "deployment-review": "token-factory-deployment-review",
     "loop_gate": "loop-gate",
     "loop": "loop-gate",
     "isaac_byof": "byof",
@@ -104,6 +117,15 @@ _TEMPLATE_ALIASES: dict[str, str] = {
     "augment_multiply": "physical-ai-data-factory",
     "multiply": "physical-ai-data-factory",
     "fanout-augment": "physical-ai-data-factory",
+    "dig": "paidf-defect-image-generation",
+    "defect-image-generation": "paidf-defect-image-generation",
+    "defect_image_generation": "paidf-defect-image-generation",
+    "iaa": "paidf-image-attribute-augmentation",
+    "image-attribute-augmentation": "paidf-image-attribute-augmentation",
+    "image_attribute_augmentation": "paidf-image-attribute-augmentation",
+    "evg": "paidf-event-video-generation",
+    "event-video-generation": "paidf-event-video-generation",
+    "event_video_generation": "paidf-event-video-generation",
     "sim2real-staged": "sim2real-staged",
     "sim-to-real": "sim2real-staged",
     "staged-sim2real": "sim2real-staged",
@@ -142,6 +164,14 @@ _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "quality gate",
         "cosmos gate",
     ),
+    "token-factory-deployment-review": (
+        "deployment readiness",
+        "deployment review",
+        "infrastructure review",
+        "kubernetes review",
+        "delivery review",
+        "readiness review",
+    ),
     "vlm-rl-loop": (
         "vlm",
         "rl",
@@ -174,6 +204,21 @@ _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "scenario variants",
         "cosmos transfer",
         "amplify",
+    ),
+    "paidf-defect-image-generation": (
+        "defect image generation",
+        "anomalygen",
+        "manual roi",
+        "manual-roi",
+    ),
+    "paidf-image-attribute-augmentation": (
+        "image attribute augmentation",
+        "clothing attribute augmentation",
+    ),
+    "paidf-event-video-generation": (
+        "event video generation",
+        "safety event video",
+        "anomaly video generation",
     ),
     "sim2real-staged": (
         "sim2real",
@@ -300,6 +345,8 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 {
                     "repo_url": "<repo-url>",
                     "repo_ref": "<repo-ref>",
+                    "repo_auth": "none",
+                    "repo_token_env": "GH_TOKEN",
                     "base_profile": "ubuntu",
                     "base_image": "",
                     "build_command": "",
@@ -883,165 +930,117 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 }
             ),
         },
-        "gpu-cross-region": {
-            "name": "sim2real-gpu-cross-region",
+        "token-factory-deployment-review": {
+            "name": "token-factory-deployment-review",
             "description": (
-                "Tenant-scoped GPU workflow that runs stages across primary and "
-                "secondary project/region targets with containerized glue transforms."
+                "Generate infrastructure delivery recommendations, then have a second "
+                "hosted model triage the generated artifact into an actionable review."
             ),
             "config_runtime": OrderedDict(
                 {
-                    "prefix": "sim2real-cross-region/{{run.id}}",
-                    "tenant_id": "tenant-example",
-                    "project_primary": "project-primary",
-                    "project_secondary": "project-secondary",
-                    "region_primary": "us-central1",
-                    "region_secondary": "eu-north1",
-                    "improvement_local_path": "/tmp/{{run.id}}-improvement.json",
+                    "prefix": "token-factory-deployment-review/{{run.id}}",
+                    "workflow_name": "token-factory-deployment-review",
+                    "generate_model": "nvidia/Nemotron-3_5-Lightning",
+                    "max_tokens": "900",
+                    "triage_job_name": "token-factory-deployment-review",
+                    "triage_model": "nvidia/Nemotron-3_5-Lightning",
+                    "triage_max_tokens": "900",
                 }
             ),
             "config_uri": OrderedDict(
                 {
-                    "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/rollouts/primary/",
-                    "normalized_rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/rollouts/normalized/",
-                    "heldout_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/eval/secondary/report.json",
-                    "improvement_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/improvement.json",
-                    "finalize_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json",
+                    "prompts_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/prompts.jsonl",
+                    "generations_uri": "s3://{{config.bucket}}/{{config.prefix}}/generated/generations.jsonl",
+                    "artifacts_uri": "s3://{{config.bucket}}/{{config.prefix}}/",
+                    "triage_uri": "s3://{{config.bucket}}/{{config.prefix}}/review/",
                 }
             ),
             "resources": OrderedDict(
                 {
-                    "gpu-primary": OrderedDict(
-                        {
-                            "cloud": "kubernetes",
-                            "accelerators": "RTXPRO6000:1",
-                            "project_alias": "{{config.project_primary}}",
-                            "region": "{{config.region_primary}}",
-                        }
-                    ),
-                    "gpu-secondary": OrderedDict(
-                        {
-                            "cloud": "kubernetes",
-                            "accelerators": "RTXPRO6000:1",
-                            "project_alias": "{{config.project_secondary}}",
-                            "region": "{{config.region_secondary}}",
-                        }
-                    ),
-                    "container-glue": OrderedDict(
-                        {
-                            "cloud": "kubernetes",
-                            "cpus": 4,
-                            "memory": "16Gi",
-                            "image": "python:3.11-slim",
-                            "project_alias": "{{config.project_secondary}}",
-                            "region": "{{config.region_secondary}}",
-                        }
+                    "cpu": OrderedDict(
+                        {"cloud": "kubernetes", "cpus": 1, "memory": "4Gi"}
                     ),
                 }
             ),
-            "initial": "primary-rollout",
+            "initial": "prepare-prompts",
             "states": OrderedDict(
                 {
-                    "primary-rollout": OrderedDict(
+                    "prepare-prompts": OrderedDict(
                         {
-                            "description": "Run primary GPU rollout workload.",
-                            "run": OrderedDict(
-                                {"shell": "false # retired stub template"}
+                            "description": (
+                                "Create the concrete, run-scoped prompt JSONL that the "
+                                "hosted recommendation stage consumes."
                             ),
-                            "resources": "gpu-primary",
+                            "run": OrderedDict(
+                                {
+                                    "shell": (
+                                        "python3 -m npa.workflows.token_factory_deployment_input "
+                                        "--output-uri '{{config.prompts_uri}}'"
+                                    )
+                                }
+                            ),
+                            "resources": "cpu",
                             "outputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.rollouts_uri}}manifest.json",
-                                        "schema": "npa.sim2real.action_rollout.v1",
+                                        "uri": "{{config.prompts_uri}}",
+                                        "schema": "npa.token_factory.prompts.v1",
                                     }
                                 )
                             ],
-                            "next": "transform-rollouts",
+                            "next": "generate-recommendations",
                         }
                     ),
-                    "transform-rollouts": OrderedDict(
+                    "generate-recommendations": OrderedDict(
                         {
                             "description": (
-                                "Contract adapter/validator stage that normalizes rollout artifacts "
-                                "across project/region boundaries."
+                                "Generate concrete delivery recommendations from the "
+                                "run-scoped infrastructure prompts."
                             ),
-                            "resources": "container-glue",
-                            "toolRef": "workbench.data_transform.rollout_contract",
+                            "toolRef": "workbench.token_factory.generate",
+                            "needs": ["prepare-prompts"],
+                            "resources": "cpu",
                             "inputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.rollouts_uri}}manifest.json",
-                                        "schema": "npa.sim2real.action_rollout.v1",
+                                        "uri": "{{config.prompts_uri}}",
+                                        "schema": "npa.token_factory.prompts.v1",
                                     }
                                 )
                             ],
                             "outputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.normalized_rollouts_uri}}manifest.json",
-                                        "schema": "npa.sim2real.rollout_manifest.v1",
+                                        "uri": "{{config.generations_uri}}",
+                                        "schema": "npa.token_factory.generations.v1",
                                     }
                                 )
                             ],
-                            "next": "secondary-eval",
+                            "next": "triage-recommendations",
                         }
                     ),
-                    "secondary-eval": OrderedDict(
+                    "triage-recommendations": OrderedDict(
                         {
-                            "description": "Run secondary GPU held-out evaluation workload.",
-                            "run": OrderedDict(
-                                {"shell": "false # retired stub template"}
+                            "description": (
+                                "Read the generated recommendations and write a separate "
+                                "risk, dependency, and next-action review."
                             ),
-                            "resources": "gpu-secondary",
+                            "needs": ["generate-recommendations"],
+                            "toolRef": "workbench.token_factory.triage",
+                            "resources": "cpu",
                             "inputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.normalized_rollouts_uri}}manifest.json",
-                                        "schema": "npa.sim2real.rollout_manifest.v1",
+                                        "uri": "{{config.artifacts_uri}}",
+                                        "schema": "npa.token_factory.generations.v1",
                                     }
                                 )
                             ],
                             "outputs": [
                                 OrderedDict(
                                     {
-                                        "uri": "{{config.heldout_report_uri}}",
-                                        "schema": "npa.sim2real.heldout_eval.v1",
-                                    }
-                                )
-                            ],
-                            "next": "summarize-improvement",
-                        }
-                    ),
-                    "summarize-improvement": OrderedDict(
-                        {
-                            "description": (
-                                "Compute and validate cross-region improvement contract payload "
-                                "for downstream reporting."
-                            ),
-                            "resources": "container-glue",
-                            "toolRef": "workbench.data_transform.improvement_summary",
-                            "outputs": [
-                                OrderedDict(
-                                    {
-                                        "uri": "{{config.improvement_report_uri}}",
-                                        "schema": "npa.sim2real.improvement_report.v1",
-                                    }
-                                )
-                            ],
-                            "next": "finalize",
-                        }
-                    ),
-                    "finalize": OrderedDict(
-                        {
-                            "description": "Finalize tenant-scoped cross-region run report.",
-                            "run": _real_finalize_run(),
-                            "resources": "gpu-secondary",
-                            "outputs": [
-                                OrderedDict(
-                                    {
-                                        "uri": "{{config.finalize_report_uri}}",
-                                        "schema": "npa.sim2real.e2e_report.v1",
+                                        "uri": "{{config.triage_uri}}generations.jsonl",
+                                        "schema": "npa.token_factory.generations.v1",
                                     }
                                 )
                             ],
@@ -1298,6 +1297,7 @@ def _data_factory_spec() -> dict[str, Any]:
         "config_runtime": OrderedDict(
             {
                 "prefix": "physical-ai-data-factory/{{run.id}}",
+                "plan_assume_decision": "promote_checkpoint",
                 "seed_fixture": "false",
                 "seed_default_input": "false",
                 # What to augment: a free-form hint surfaced as the augment prompt /
@@ -1313,12 +1313,34 @@ def _data_factory_spec() -> dict[str, Any]:
                 # The mask keys restrict the control to one segmented region.
                 "augment_control": "edge",
                 "augment_control_weight": "1.0",
+                "augment_guidance": "3.0",
                 "augment_control_prompt": "",
                 "augment_control_asset_uri": "",
                 "augment_mask_prompt": "",
                 "augment_mask_asset_uri": "",
                 "refinement_iterations": "2",
                 "grade_threshold": "0.75",
+                "adaptive_refinement_enabled": "true",
+                "refinement_control_weight_step": "0.25",
+                "refinement_max_control_weight": "1.0",
+                "refinement_guidance_step": "1.0",
+                "refinement_min_guidance": "1.0",
+                "protected_chroma_mode": "off",
+                "protected_chroma_regions_json": "",
+                "protected_luma_max_delta": "32",
+                "protected_feather_pixels": "12",
+                "segmentation_mode": "off",
+                "augmentation_seed": "",
+                "quality_anchor_uri": "",
+                "attribute_sample_policy": "ranking",
+                "sam2_model": "facebook/sam2.1-hiera-tiny",
+                "sam2_model_revision": "de431c4043854a71d8101e17995dfe596bf101a5",
+                "sam2_points_per_side": "16",
+                "sam2_predicted_iou_threshold": "0.86",
+                "sam2_stability_threshold": "0.92",
+                "sam2_min_area_fraction": "0.002",
+                "sam2_max_area_fraction": "0.65",
+                "sam2_max_objects": "6",
                 "default_decision": "loop_back",
                 "temporal_consistency_mode": "advisory",
                 "temporal_consistency_threshold": "0.8",
@@ -1334,7 +1356,7 @@ def _data_factory_spec() -> dict[str, Any]:
                 "appearance_blur_ksize": "7",
                 "appearance_max_dimension": "256",
                 "appearance_regions_json": "",
-                "caption_model": "Qwen/Qwen2.5-VL-72B-Instruct",
+                "caption_model": "MiniMaxAI/MiniMax-M3",
                 "vlm_backend": "api",
                 "max_images": "8",
                 "max_tokens": "512",
@@ -1360,7 +1382,10 @@ def _data_factory_spec() -> dict[str, Any]:
                 "augment_control_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_control/",
                 "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "scores_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/",
+                "selection_uri": "s3://{{config.bucket}}/{{config.prefix}}/selection/",
                 "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json",
+                "refinement_uri": "s3://{{config.bucket}}/{{config.prefix}}/configs/refinement.json",
+                "segmentation_uri": "s3://{{config.bucket}}/{{config.prefix}}/segmentation/",
                 "quality_disposition_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/quality_disposition.json",
                 "augmented_frames_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "labeled_augmented_uri": "s3://{{config.bucket}}/{{config.prefix}}/labeled_augmented/",
@@ -1368,6 +1393,10 @@ def _data_factory_spec() -> dict[str, Any]:
                 "curated_clips_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator/",
                 "curator_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator.json",
                 "curation_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json",
+                "terminal_review_dataset_uri": "s3://{{config.bucket}}/{{config.prefix}}/review/fiftyone-dataset/",
+                "terminal_review_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/review/fiftyone-review.json",
+                "terminal_review_decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/review/decision.json",
+                "terminal_review_dataset_name": "paidf-review-{{run.id}}",
                 "run_root_uri": "s3://{{config.bucket}}/{{config.prefix}}/",
                 "rrd_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd",
                 "finalize_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json",
@@ -1381,6 +1410,26 @@ def _data_factory_spec() -> dict[str, Any]:
                         "accelerators": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:4",
                         "cpus": 16,
                         "memory": "128Gi",
+                        "kubernetes": OrderedDict(
+                            {
+                                "pod_config": OrderedDict(
+                                    {
+                                        "spec": OrderedDict(
+                                            {
+                                                "containers": [
+                                                    OrderedDict(
+                                                        {
+                                                            "name": "ray-node",
+                                                            "imagePullPolicy": "IfNotPresent",
+                                                        }
+                                                    )
+                                                ]
+                                            }
+                                        )
+                                    }
+                                )
+                            }
+                        ),
                     }
                 ),
                 "cpu": OrderedDict(
@@ -1415,6 +1464,8 @@ def _data_factory_spec() -> dict[str, Any]:
                                     "{{config.seed_default_input}}",
                                     "{{config.seed_fixture}}",
                                     "{{config.augment_subject}}",
+                                    "{{config.augmentation_seed}}",
+                                    "{{config.quality_anchor_uri}}",
                                 ]
                             }
                         ),
@@ -1457,6 +1508,50 @@ def _data_factory_spec() -> dict[str, Any]:
                         "next": "grade",
                     }
                 ),
+                "prepare-refinement": OrderedDict(
+                    {
+                        "description": (
+                            "Prepare an auditable adaptive Cosmos policy. Failed retries "
+                            "must change guidance and/or edge-control within declared bounds."
+                        ),
+                        "needs": ["annotate-original"],
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import prepare_refinement; "
+                                        "prepare_refinement(*sys.argv[1:])"
+                                    ),
+                                    "{{config.scores_uri}}",
+                                    "{{config.refinement_uri}}",
+                                    "{{config.adaptive_refinement_enabled}}",
+                                    "{{config.augment_control_weight}}",
+                                    "{{config.augment_guidance}}",
+                                    "{{config.refinement_control_weight_step}}",
+                                    "{{config.refinement_max_control_weight}}",
+                                    "{{config.refinement_guidance_step}}",
+                                    "{{config.refinement_min_guidance}}",
+                                    "{{config.decision_uri}}",
+                                    "{{config.grade_threshold}}",
+                                    "{{loop.grade}}",
+                                    "{{config.quality_anchor_uri}}",
+                                ]
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.refinement_uri}}",
+                                    "schema": "npa.data_factory.refinement.v1",
+                                }
+                            )
+                        ],
+                    }
+                ),
                 "augment": OrderedDict(
                     {
                         "description": (
@@ -1467,7 +1562,7 @@ def _data_factory_spec() -> dict[str, Any]:
                             "A supported video under config.trigger_uri is mandatory. Member of the "
                             "grade refinement loop, so loop_back genuinely re-renders."
                         ),
-                        "needs": ["annotate-original"],
+                        "needs": ["prepare-refinement"],
                         "toolRef": "workbench.cosmos2.transfer_execute",
                         "resources": "gpu",
                         "inputs": [
@@ -1502,7 +1597,14 @@ def _data_factory_spec() -> dict[str, Any]:
                                 "until": "promote_checkpoint",
                             }
                         ),
-                        "sequence": ["augment", "evaluate", "quality-gate"],
+                        "sequence": [
+                            "prepare-refinement",
+                            "augment",
+                            "evaluate",
+                            "select-candidates",
+                            "evaluate-selected",
+                            "quality-gate",
+                        ],
                         "next": "quality-disposition",
                     }
                 ),
@@ -1516,6 +1618,98 @@ def _data_factory_spec() -> dict[str, Any]:
                         ),
                         "toolRef": "workbench.cosmos_evaluator.evaluate",
                         "resources": "cpu",
+                        "params": OrderedDict(
+                            {
+                                "rollouts_uri": "{{config.augment_uri}}iteration-{{loop.grade}}/",
+                                "scores_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/ranking/",
+                                "attribute_sample_policy": "ranking",
+                            }
+                        ),
+                        "inputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.rollouts_uri}}",
+                                    "schema": "npa.cosmos2.transfer.v1",
+                                }
+                            )
+                        ],
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.scores_uri}}cosmos_evaluator.json",
+                                    "schema": "npa.cosmos_evaluator.report.v1",
+                                }
+                            )
+                        ],
+                    }
+                ),
+                "select-candidates": OrderedDict(
+                    {
+                        "description": (
+                            "Select only independently hard-passing candidates for a "
+                            "separate final-validation batch while preserving the complete "
+                            "ranking pool unchanged."
+                        ),
+                        "needs": ["evaluate"],
+                        "params": OrderedDict(
+                            {
+                                "augment_uri": "{{config.augment_uri}}iteration-{{loop.grade}}/",
+                                "ranking_scores_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/ranking/",
+                                "selected_uri": "{{config.selection_uri}}iteration-{{loop.grade}}/",
+                                "selection_report_uri": "{{config.selection_uri}}iteration-{{loop.grade}}/selection.json",
+                            }
+                        ),
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import select_hard_passing_candidates; "
+                                        "select_hard_passing_candidates(*sys.argv[1:])"
+                                    ),
+                                    "{{config.augment_uri}}",
+                                    "{{config.ranking_scores_uri}}",
+                                    "{{config.selected_uri}}",
+                                    "{{config.selection_report_uri}}",
+                                    "{{config.grade_threshold}}",
+                                ]
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.selected_uri}}manifest.json",
+                                    "schema": "npa.cosmos2.transfer.v1",
+                                }
+                            ),
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.selection_report_uri}}",
+                                    "schema": "npa.paidf.candidate-selection/v1",
+                                }
+                            ),
+                        ],
+                    }
+                ),
+                "evaluate-selected": OrderedDict(
+                    {
+                        "description": (
+                            "Fail-closed final re-evaluation of the hard-passing selection "
+                            "using deterministic holdout frames disjoint from ranking."
+                        ),
+                        "needs": ["select-candidates"],
+                        "toolRef": "workbench.cosmos_evaluator.evaluate",
+                        "resources": "cpu",
+                        "params": OrderedDict(
+                            {
+                                "rollouts_uri": "{{config.selection_uri}}iteration-{{loop.grade}}/",
+                                "scores_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/",
+                                "attribute_sample_policy": "holdout",
+                            }
+                        ),
                         "inputs": [
                             OrderedDict(
                                 {
@@ -1541,14 +1735,21 @@ def _data_factory_spec() -> dict[str, Any]:
                             "loop_back decision that drives the grade loop."
                         ),
                         "writesDecision": True,
-                        "needs": ["evaluate"],
+                        "needs": ["evaluate-selected"],
+                        "params": OrderedDict(
+                            {
+                                "scores_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/",
+                                "decision_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/decision.json",
+                            }
+                        ),
                         "resources": "cpu",
                         "run": OrderedDict(
                             {
                                 "shell": (
                                     'python3 -c "from npa.workflows.data_factory_stages import '
                                     "grade_gate; grade_gate('{{config.scores_uri}}', "
-                                    "'{{config.decision_uri}}', '{{config.grade_threshold}}')\""
+                                    "'{{config.decision_uri}}', '{{config.grade_threshold}}', "
+                                    "'{{config.refinement_uri}}')\""
                                 )
                             }
                         ),
@@ -1566,10 +1767,147 @@ def _data_factory_spec() -> dict[str, Any]:
                     {
                         "description": (
                             "Fail closed after the refinement loop: persist an auditable "
-                            "accepted/rejected disposition before rejecting a degraded, "
-                            "below-threshold, or hard-check-failing batch."
+                            "accepted/rejected disposition and route rejected runs through "
+                            "evidence-only Rerun visualization before failing."
                         ),
+                        "writesDecision": True,
                         "needs": ["grade"],
+                        "params": OrderedDict(
+                            {
+                                "scores_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/",
+                                "decision_uri": "{{config.scores_uri}}iteration-{{loop.grade}}/decision.json",
+                            }
+                        ),
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import write_quality_disposition; "
+                                        "write_quality_disposition(*sys.argv[1:])"
+                                    ),
+                                    "{{config.scores_uri}}",
+                                    "{{config.quality_disposition_uri}}",
+                                    "{{config.decision_uri}}",
+                                    "{{config.grade_threshold}}",
+                                ]
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.quality_disposition_uri}}",
+                                    "schema": "npa.data_factory.quality_disposition.v1",
+                                }
+                            ),
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.decision_uri}}",
+                                    "schema": "npa.sim2real.threshold_decision.v1",
+                                }
+                            ),
+                        ],
+                        "transitions": [
+                            OrderedDict(
+                                {
+                                    "when": "promote_checkpoint",
+                                    "goto": "review-terminal-candidates",
+                                }
+                            ),
+                            OrderedDict(
+                                {
+                                    "when": "loop_back",
+                                    "goto": "review-terminal-candidates",
+                                }
+                            ),
+                        ],
+                    }
+                ),
+                "review-terminal-candidates": OrderedDict(
+                    {
+                        "description": (
+                            "Export every evaluated terminal candidate through real FiftyOne "
+                            "as a portable review dataset. Rejected samples remain explicitly "
+                            "non-promoting and accepted-only curation stays downstream."
+                        ),
+                        "needs": ["quality-disposition"],
+                        "toolRef": "workbench.fiftyone.review_augmented",
+                        "resources": "cpu",
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.terminal_review_report_uri}}",
+                                    "schema": "npa.paidf.fiftyone-terminal-review/v1",
+                                }
+                            ),
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.terminal_review_dataset_uri}}",
+                                    "schema": "fiftyone.types.FiftyOneDataset",
+                                }
+                            ),
+                        ],
+                        "next": "route-terminal-quality",
+                    }
+                ),
+                "route-terminal-quality": OrderedDict(
+                    {
+                        "description": (
+                            "Re-read the durable terminal disposition after common review "
+                            "without overwriting the canonical quality decision."
+                        ),
+                        "writesDecision": True,
+                        "needs": ["review-terminal-candidates"],
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import route_terminal_quality; "
+                                        "route_terminal_quality(*sys.argv[1:])"
+                                    ),
+                                    "{{config.quality_disposition_uri}}",
+                                    "{{config.terminal_review_decision_uri}}",
+                                ]
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.terminal_review_decision_uri}}",
+                                    "schema": "npa.sim2real.threshold_decision.v1",
+                                }
+                            )
+                        ],
+                        "transitions": [
+                            OrderedDict(
+                                {
+                                    "when": "promote_checkpoint",
+                                    "goto": "require-accepted-quality",
+                                }
+                            ),
+                            OrderedDict(
+                                {
+                                    "when": "loop_back",
+                                    "goto": "visualize-rejected",
+                                }
+                            ),
+                        ],
+                    }
+                ),
+                "require-accepted-quality": OrderedDict(
+                    {
+                        "description": (
+                            "Re-check the durable accepted disposition before any "
+                            "accepted-only stage, including one-shot static plans."
+                        ),
+                        "needs": ["quality-disposition"],
                         "resources": "cpu",
                         "run": OrderedDict(
                             {
@@ -1587,15 +1925,55 @@ def _data_factory_spec() -> dict[str, Any]:
                                 ]
                             }
                         ),
+                        "next": "annotate-augmented",
+                    }
+                ),
+                "visualize-rejected": OrderedDict(
+                    {
+                        "description": (
+                            "Build reports/sim2real.rrd for a rejected run from the available "
+                            "input, augmented frames, evaluator report, gate decision, and "
+                            "quality disposition. Missing downstream artifacts are skipped."
+                        ),
+                        "needs": ["quality-disposition"],
+                        "resources": "cpu",
+                        "toolRef": "workbench.nurec.visualize",
                         "outputs": [
                             OrderedDict(
                                 {
-                                    "uri": "{{config.quality_disposition_uri}}",
-                                    "schema": "npa.data_factory.quality_disposition.v1",
+                                    "uri": "{{config.rrd_uri}}",
+                                    "schema": "npa.sim2real.rerun.v1",
                                 }
                             )
                         ],
-                        "next": "annotate-augmented",
+                        "next": "reject-quality",
+                    }
+                ),
+                "reject-quality": OrderedDict(
+                    {
+                        "description": (
+                            "Fail only after the rejected run's disposition and Rerun evidence "
+                            "are durable, preserving fail-closed promotion semantics."
+                        ),
+                        "needs": ["visualize-rejected"],
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import enforce_quality_disposition; "
+                                        "enforce_quality_disposition(*sys.argv[1:])"
+                                    ),
+                                    "{{config.scores_uri}}",
+                                    "{{config.quality_disposition_uri}}",
+                                    "{{config.grade_threshold}}",
+                                ]
+                            }
+                        ),
+                        "terminal": True,
                     }
                 ),
                 "annotate-augmented": OrderedDict(
@@ -1604,7 +1982,7 @@ def _data_factory_spec() -> dict[str, Any]:
                             "Stage 3 - Pseudo-Label Augmented. Re-caption the promoted augmented "
                             "clips with the same hosted VLM so the amplified set ships labeled."
                         ),
-                        "needs": ["quality-disposition"],
+                        "needs": ["require-accepted-quality"],
                         "resources": "cpu",
                         "run": OrderedDict(
                             {
@@ -1791,6 +2169,21 @@ def choose_workflow_template(
         scores["byof"] += 10
     if "outer loop" in text and "inner loop" in text:
         scores["vlm-rl-loop"] += 5
+    if any(
+        phrase in text
+        for phrase in (
+            "deployment readiness",
+            "deployment review",
+            "infrastructure review",
+            "kubernetes review",
+            "delivery review",
+            "readiness review",
+        )
+    ):
+        # A deployment review is a self-contained text-artifact workflow, not
+        # the GPU Cosmos quality-gate template that happens to share Token
+        # Factory vocabulary. Give the explicit operator goal precedence.
+        scores["token-factory-deployment-review"] += 6
     data_factory_explicit = any(
         token in text
         for token in (
@@ -1802,6 +2195,26 @@ def choose_workflow_template(
     )
     if data_factory_explicit:
         scores["physical-ai-data-factory"] += 10
+    paidf_specific = {
+        "paidf-defect-image-generation": (
+            "defect image generation",
+            "anomalygen",
+            "manual roi",
+            "manual-roi",
+        ),
+        "paidf-image-attribute-augmentation": (
+            "image attribute augmentation",
+            "clothing attribute augmentation",
+        ),
+        "paidf-event-video-generation": (
+            "event video generation",
+            "safety event video",
+            "anomaly video generation",
+        ),
+    }
+    for template, phrases in paidf_specific.items():
+        if any(phrase in text for phrase in phrases):
+            scores[template] += 20
     if ("augment" in text or "cosmos transfer" in text) and any(
         token in text
         for token in (
@@ -2282,6 +2695,13 @@ def resolve_workflow_infrastructure(
                 if entry
                 else "no configured, local, or cloud Kubernetes backend is available"
             )
+            if (
+                not entry
+                and (payload.get("cloud_discovery") or {}).get("status")
+                == "unavailable"
+            ):
+                source = "unavailable"
+                reason = "cloud discovery is unavailable; Kubernetes backend absence is unverified"
     raw_value = entry.get("raw")
     raw: dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
     available_raw = raw.get("available_accelerators")
@@ -2312,6 +2732,12 @@ def resolve_workflow_infrastructure(
         "kubeconfig": str(entry.get("kubeconfig") or "").strip(),
         "accelerator": accelerator,
         "available_accelerators": available,
+        "accelerator_discovery_status": (raw.get("accelerator_discovery") or {}).get(
+            "status", "unverified"
+        ),
+        "cloud_discovery_status": (payload.get("cloud_discovery") or {}).get(
+            "status", "unverified"
+        ),
         "gpu_profile": profile,
         "source": source,
         "selection_reason": reason,
@@ -2382,6 +2808,20 @@ def _apply_workflow_infrastructure(
     infrastructure: dict[str, Any] | None,
 ) -> dict[str, str]:
     resolved = resolve_workflow_infrastructure(infrastructure)
+    context = str(resolved.get("context") or "").strip()
+    # An authored workflow must carry its selected Kubernetes context. Runtime
+    # preflight deliberately rejects an ambient current-context because it is
+    # not execution evidence. Apply the discovered context to every Kubernetes
+    # resource, including CPU-only Token Factory workflows.
+    if context:
+        for resource in resources.values():
+            if not isinstance(resource, dict):
+                continue
+            if str(resource.get("cloud") or "").strip().lower() in {
+                "k8s",
+                "kubernetes",
+            }:
+                resource["infra"] = f"k8s/{context}"
     gpu = resources.get("gpu")
     if not isinstance(gpu, dict):
         return resolved
@@ -2408,7 +2848,6 @@ def _apply_workflow_infrastructure(
         )
         gpu["accelerators"] = f"{placeholder}:{count}"
     cluster_name = str(resolved.get("cluster_name") or "").strip()
-    context = str(resolved.get("context") or "").strip()
     project = str(resolved.get("project") or "").strip()
     if cluster_name or context:
         directive: OrderedDict[str, Any] = OrderedDict()
@@ -2431,6 +2870,24 @@ def _build_spec(
     infrastructure: dict[str, Any] | None = None,
 ) -> OrderedDict[str, Any]:
     normalized = _normalize_template(template)
+    if normalized in _STATIC_WORKFLOW_TEMPLATES:
+        from npa.orchestration.npa_workflow.blueprints import (
+            resolve_npa_workflow_spec,
+        )
+
+        path = resolve_npa_workflow_spec(_STATIC_WORKFLOW_TEMPLATES[normalized])
+        if path is None:
+            raise ValueError(f"shipped workflow template is missing: {normalized}")
+        root = yaml.safe_load(path.read_text(encoding="utf-8"))
+        root["metadata"]["name"] = str(name or root["metadata"]["name"])
+        root["config"]["bucket"] = str(bucket)
+        _apply_workflow_infrastructure(
+            root["resources"],
+            template=normalized,
+            params=params or {},
+            infrastructure=infrastructure,
+        )
+        return root
     if normalized in {"vlm-rl-loop", "sim2real-staged"}:
         canonical = _canonical_sim2real_spec(bucket=bucket, name=name)
         if params:
@@ -2521,22 +2978,9 @@ def _canonical_sim2real_spec(*, bucket: str, name: str | None) -> OrderedDict[st
     if _EMBEDDED_CANONICAL_SIM2REAL_YAML:
         payload = yaml.safe_load(_EMBEDDED_CANONICAL_SIM2REAL_YAML)
     else:
-        here = Path(__file__).resolve()
-        candidates = (
-            here.parents[3]
-            / "workflows"
-            / "workbench"
-            / "npa-workflows"
-            / "sim2real.yaml",
-            here.parents[1]
-            / "workflows"
-            / "workbench"
-            / "npa-workflows"
-            / "sim2real.yaml",
-        )
-        path = next(
-            (candidate for candidate in candidates if candidate.is_file()), None
-        )
+        from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
+
+        path = resolve_npa_workflow_spec("sim2real.yaml")
         if path is None:
             raise FileNotFoundError("canonical packaged sim2real.yaml is missing")
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -2629,17 +3073,28 @@ def generate_workflow_draft(
         )
     requested_accel = str((params or {}).get("accelerator") or "").strip()
     configured_accel = str(resolved_infra.get("accelerator") or "").strip()
+    accelerator_unavailable = (
+        resolved_infra.get("accelerator_discovery_status") == "unavailable"
+    )
+    if accelerator_unavailable:
+        context_errors.append(
+            "accelerator availability on the selected backend is unverified because "
+            "node-group discovery is unavailable; retry discovery before submit"
+        )
     available_accels = {
         _accelerator_family(str(value))
         for value in (resolved_infra.get("available_accelerators") or [])
         if str(value).strip()
     }
-    if requested_accel and available_accels:
+    if requested_accel and (
+        available_accels
+        or resolved_infra.get("accelerator_discovery_status") == "available"
+    ):
         requested_base = _accelerator_family(requested_accel)
         if requested_base not in available_accels:
             context_errors.append(
                 f"requested accelerator {requested_base} is unavailable on the selected "
-                f"backend (available: {', '.join(sorted(available_accels))})"
+                f"backend (available: {', '.join(sorted(available_accels)) or 'none'})"
             )
     if requested_accel and configured_accel:
         requested_base = _accelerator_family(requested_accel)
@@ -2661,7 +3116,14 @@ def generate_workflow_draft(
             )
     if infrastructure is not None and not bool((infrastructure or {}).get("has_infra")):
         warnings.append(
-            "No Kubernetes backend is currently configured; provision or select one before submit."
+            "Cloud inventory is unavailable; backend absence is unverified. Retry discovery before provisioning."
+            if resolved_infra.get("cloud_discovery_status") == "unavailable"
+            else "No Kubernetes backend is currently configured; provision or select one before submit."
+        )
+    elif accelerator_unavailable:
+        warnings.append(
+            "Accelerator availability is unverified; failed node-group discovery "
+            "does not establish which accelerators the backend provides."
         )
     elif infrastructure is not None and not configured_accel and not requested_accel:
         warnings.append(
@@ -2673,7 +3135,9 @@ def generate_workflow_draft(
             context_errors.append(
                 "a configured Kubernetes backend is required before Sim2Real submit"
             )
-        elif not configured_accel and not requested_accel:
+        elif (
+            not accelerator_unavailable and not configured_accel and not requested_accel
+        ):
             context_errors.append(
                 "the selected Kubernetes backend must declare an RT-core accelerator"
             )
@@ -3576,6 +4040,55 @@ def plan_workflow_yaml_text(
         return _plan_lightweight(text, run_id=run_id, tool_refs=tool_refs)
 
 
+def evaluate_workflow_chat_request(
+    user_text: str,
+    draft: dict[str, Any],
+    *,
+    intent: str,
+    tool_refs: frozenset[str],
+) -> dict[str, Any]:
+    """Validate or plan the supplied/saved spec without regenerating or executing it."""
+    fenced = re.search(
+        r"```(?:yaml|yml)\s*\n(.*?)```", user_text, re.DOTALL | re.IGNORECASE
+    )
+    spec = fenced.group(1) if fenced else str(draft.get("yaml") or "")
+    if not spec.strip():
+        return {"ok": False, "reply": "Paste a YAML specification or draft one first."}
+    validation = validate_workflow_yaml_text(spec, tool_refs=tool_refs)
+    if not validation.get("ok"):
+        return {
+            "ok": False,
+            "validation": validation,
+            "reply": "**Workflow validation failed:** "
+            + str(validation.get("error") or "invalid specification"),
+        }
+    name = str(validation.get("name") or "unnamed")
+    reply = f"**Workflow validation:** `valid`\n- **name**: `{name}`\n- **schema**: `{API_VERSION}`"
+    result: dict[str, Any] = {"ok": True, "validation": validation}
+    if intent == "plan_workflow":
+        plan = plan_workflow_yaml_text(
+            spec, run_id="agent-chat-plan", tool_refs=tool_refs
+        )
+        result["plan"] = plan
+        result["ok"] = bool(plan.get("ok"))
+        if plan.get("ok"):
+            steps = plan.get("steps") or []
+            reply += f"\n\n**Execution plan:** {len(steps)} step(s)\n"
+            reply += "\n".join(
+                f"{i}. `{step.get('state')}` — `{step.get('tool_ref') or step.get('toolRef') or 'run'}`"
+                for i, step in enumerate(steps, 1)
+            )
+            reply += "\n\nPlanning only; no workload was submitted or executed."
+        else:
+            reply += "\n\n**Planning failed:** " + str(
+                plan.get("error") or "no executable plan"
+            )
+    else:
+        reply += "\n\nThe supplied specification was validated without changing the saved draft or executing a workload."
+    result["reply"] = reply
+    return result
+
+
 def format_workflow_chat_reply(
     yaml_text: str,
     validation: dict[str, Any],
@@ -3641,9 +4154,9 @@ def format_workflow_chat_reply(
         f"- **plan steps**: `{plan_step_count}`",
         f"- **states**: `{state_label or 'n/a'}`",
         "",
-        "Edit in the **Workflow YAML** panel, then **Validate**, **Plan**, or **Submit**.",
-        "- **Submit** on the agent = scheduler **plan-only** (does not execute tool steps on K8s).",
-        "- Real execute: `npa workbench workflow run-spec <spec.yaml> --execute` on the operator machine.",
+        "Edit in the **Workflow YAML** panel, then **Validate**, **Plan**, or **Prepare run**.",
+        "- **Prepare run** validates and plans first; the separate confirmation button is required before Kubernetes execution starts.",
+        "- Direct operator execution: `npa workbench workflow submit <spec.yaml> --runtime`.",
         "",
         "```yaml",
         yaml_text.rstrip(),

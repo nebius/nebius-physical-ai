@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+import fcntl
 import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Callable, TextIO
@@ -22,6 +27,77 @@ class BackendCommandError(RuntimeError):
         self.stdout = _redact(stdout)
         self.stderr = _redact(stderr)
         super().__init__(message)
+
+
+@contextmanager
+def terraform_plugin_cache_lock(env: dict[str, str]) -> Iterator[None]:
+    """Serialize Terraform init operations which share a provider cache.
+
+    Terraform's plugin cache is not concurrency safe. Even after a cache has
+    been pre-warmed, ``terraform init`` may rewrite a cached package while
+    computing its dependency-lock checksum. A second concurrent init can then
+    record a checksum for the transient package and fail at apply time. Use a
+    sibling lock file so Terraform never sees it as cache content, and use an
+    OS lock so separate NPA processes are serialized as well as local threads.
+    """
+
+    configured = env.get("TF_PLUGIN_CACHE_DIR", "").strip()
+    if not configured:
+        yield
+        return
+    cache_dir = Path(configured).expanduser()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    lock_name = cache_dir.name
+    if not lock_name.startswith("."):
+        lock_name = f".{lock_name}"
+    lock_path = cache_dir.parent / f"{lock_name}.npa-init.lock"
+    flags = os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
+    descriptor = os.open(lock_path, flags, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise BackendCommandError(
+                f"Unsafe Terraform plugin cache lock target: {lock_path}"
+            )
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
+def isolate_terraform_providers(workdir: Path, env: dict[str, str]) -> None:
+    """Detach initialized providers from a mutable shared download cache.
+
+    Call while holding ``terraform_plugin_cache_lock``, after successful init.
+    Terraform symlinks cached packages into its data directory. Serializing init
+    alone therefore still lets the next init rewrite binaries used by an active
+    apply or destroy. Copy the selected packages before releasing the lock;
+    Terraform continues to verify their dependency-lock checksums normally.
+    """
+
+    data_dir = Path(env.get("TF_DATA_DIR") or ".terraform").expanduser()
+    if not data_dir.is_absolute():
+        data_dir = workdir / data_dir
+    providers = data_dir / "providers"
+    if not providers.is_dir() or not any(p.is_symlink() for p in providers.rglob("*")):
+        return
+    with tempfile.TemporaryDirectory(
+        prefix=".npa-providers-", dir=data_dir
+    ) as temporary:
+        staging = Path(temporary)
+        snapshot = staging / "snapshot"
+        shutil.copytree(providers, snapshot, symlinks=False)
+        previous = staging / "previous"
+        providers.rename(previous)
+        try:
+            snapshot.rename(providers)
+        except BaseException:
+            previous.rename(providers)
+            raise
 
 
 def _sensitive_values(env: dict[str, str] | None) -> tuple[str, ...]:
@@ -144,23 +220,36 @@ def run_capture(
 
 
 def _stop_process(process: subprocess.Popen[str]) -> None:
+    def group_exists() -> bool:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
     for signal_name, grace in (("interrupt", 30.0), ("terminate", 10.0)):
-        if process.poll() is not None:
+        if not group_exists():
             return
         try:
             if signal_name == "interrupt":
-                process.send_signal(signal.SIGINT)
+                os.killpg(process.pid, signal.SIGINT)
             else:
-                process.terminate()
+                os.killpg(process.pid, signal.SIGTERM)
         except OSError:
             return
         try:
             process.wait(timeout=grace)
-            return
         except subprocess.TimeoutExpired:
-            continue
-    if process.poll() is None:
-        process.kill()
+            pass
+        if not group_exists():
+            return
+    if group_exists():
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def run_stream(
@@ -184,6 +273,7 @@ def run_stream(
                 bufsize=1,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                start_new_session=True,
             )
         except OSError as exc:
             raise BackendCommandError(
@@ -228,6 +318,9 @@ def run_stream(
             raise BackendCommandError(
                 f"Command timed out after {timeout} seconds: {_command_text(args)}"
             ) from exc
+        except KeyboardInterrupt:
+            _stop_process(process)
+            raise
         finally:
             for reader in readers:
                 reader.join(timeout=5)
@@ -256,6 +349,7 @@ def run_stream(
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            start_new_session=True,
         )
     except OSError as exc:
         raise BackendCommandError(
@@ -315,8 +409,19 @@ def run_stream(
         raise BackendCommandError(f"Cancelled `{' '.join(args[:2])}`: {reason}")
     returncode = process.returncode or 0
     if returncode != 0:
+        # The cancellable path is used for Terraform applies watched by the
+        # provider node-group observer.  Its captured output has already been
+        # line-redacted, so retain the bounded tail just like the ordinary
+        # streaming path; otherwise a provider rejection degrades into a
+        # content-free exit code and cannot be classified or repaired.
+        detail = "\n".join(
+            part
+            for part in ("".join(captured_stderr), "".join(captured_stdout))
+            if part
+        ).strip()
+        suffix = f": {detail[-3000:]}" if detail else ""
         raise BackendCommandError(
-            f"Command failed ({returncode}): {_command_text(args)}"
+            f"Command failed ({returncode}): {_command_text(args)}{suffix}"
         )
     return subprocess.CompletedProcess(
         args,
@@ -344,6 +449,7 @@ def terraform_env(
         return env
     env.pop("TF_VAR_iam_token", None)
     env.pop("NEBIUS_IAM_TOKEN", None)
+    env.pop("NPA_NEBIUS_IAM_TOKEN", None)
     argv = [nebius_bin, *(["--profile", profile] if profile else [])]
     capture_kwargs: dict[str, object] = {"env": env}
     if timeout is not None:

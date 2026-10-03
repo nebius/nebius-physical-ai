@@ -1,0 +1,154 @@
+# Durable storage for the model weights the workbench images are not allowed to bake.
+#
+# WHY YOU WANT THIS
+#   Every gated NVIDIA checkpoint the workbench uses is downloaded at run time,
+#   because packaging-contract.yaml forbids baking it into a redistributable image
+#   (Cosmos-Transfer2.5, Cosmos-Guardrail1, the Cosmos Reason family, Cosmos3,
+#   GR00T, the curator towers, Wan 2.2, LTX). Without a volume that outlives the
+#   pod, each of those downloads happens again on every run, on an already-billing
+#   GPU. Cosmos-Transfer2.5 plus its guardrails is tens of gigabytes; the second
+#   run of the same image should be reading local bytes, not re-downloading them.
+#
+#   This is the weights counterpart of warm-isaac-cache.yaml. The difference is
+#   how it fills: the Isaac closure is warmed once by a CPU Job and consumed
+#   read-only, while weights arrive lazily from whichever stage needs them first,
+#   so this volume is mounted read-write and simply accumulates.
+#
+# USAGE
+#   1. kubectl apply -f model-weight-cache.yaml
+#   2. Point NPA at the claim before you submit:
+#        export NPA_MODEL_CACHE_PVC=npa-model-cache
+#      Every runtime then redirects its whole cache family (HF_HOME, HF_HUB_CACHE,
+#      TORCH_HOME, NPA_COSMOS3_CACHE, ...) into /opt/npa-model-cache. See
+#      docs/workbench/model-weight-cache.md for the full list and for the
+#      VM/Docker equivalent (NPA_MODEL_CACHE_HOST_PATH).
+#
+#   Nothing else changes: with the variable unset every runtime keeps the
+#   ephemeral defaults it has always used.
+#
+# STORAGE CLASS — CHECK THIS FIRST
+#   ReadWriteMany matters. Stages of one workflow land on different nodes and
+#   parallel waves run at the same time, so a ReadWriteOnce volume would serialise
+#   them or fail to attach. On Nebius mk8s that is `csi-mounted-fs-path-sc`, the
+#   same shared-filesystem class the Isaac cache uses.
+#
+#   It is not present on every cluster, and -- this is the part that misleads --
+#   its presence proves nothing. Check that the driver is REGISTERED ON A NODE:
+#
+#     kubectl get csinode -o custom-columns=NODE:.metadata.name,DRIVERS:.spec.drivers[*].name
+#
+#   `mounted-fs-path.csi.nebius.ai` must appear there. Two ways it does not:
+#
+#   * The class does not exist (a cluster with only `compute.csi.nebius.com`).
+#     The claim sits Pending on `storageclass.storage.k8s.io "..." not found`.
+#   * The class exists, is even the cluster default, and the node plugin is
+#     installed but refuses to start, because the node group has no Nebius shared
+#     filesystem attached. The plugin says so in its own log and is right to:
+#       Failed to initialize driver: mounted on ext4 fs, data loss may occur, aborting
+#     (`kubectl -n kube-system logs -l app=csi-mounted-fs-path-plugin
+#       -c mounted-fs-path-provisioner`). The claim then sits Pending on the far
+#     less pointed `Waiting for a volume to be created either by the external
+#     provisioner ... or manually by the system administrator`, and pods that want
+#     it stay ContainerCreating -- which reads like a scheduling problem.
+#
+#   Fix it by attaching a shared filesystem to the node group, or fall back to
+#   ReadWriteOnce: set `accessModes: [ReadWriteOnce]` and `storageClassName:
+#   compute-csi-default-sc`. Then pin the init Job below to the node the consumers
+#   will run on (`nodeSelector: {kubernetes.io/hostname: <node>}`), because a
+#   ReadWriteOnce volume binds to whichever node touches it first and every later
+#   consumer must land there too. That fits a single-GPU-node cluster and not a
+#   parallel workflow.
+#
+# SIZING
+#   40 Gi holds the Cosmos Transfer + guardrail set with room for one more model
+#   family. Budget ~100 Gi if you run Cosmos3, the Reason family, and the curator
+#   towers against the same claim. The cache is append-only from NPA's side:
+#   nothing here evicts, so delete the PVC to reclaim the space.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: npa-model-cache
+  labels:
+    app.kubernetes.io/name: npa-model-cache
+    app.kubernetes.io/managed-by: npa
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: csi-mounted-fs-path-sc
+  resources:
+    requests:
+      storage: 40Gi
+---
+# Make the volume writable by the unprivileged users the workbench images run as.
+#
+# A freshly provisioned volume is owned by root, and NPA never runs a workload
+# container as UID 0 (the SkyPilot bootstrap contract forbids the override). Pods
+# would then fail their first mkdir instead of caching anything. This one-shot Job
+# opens the tree once; the CSI driver's fsGroup handles the rest.
+#
+# The mode is 3777: world-writable, sticky (so one tool cannot delete another's
+# blobs), and setgid so directories created under it inherit the volume's group
+# rather than the creating pod's primary group. That covers today's images, which
+# all run as uid 1000. It does not make the cache safe to share between images
+# built with *different* runtime users: subdirectories are created with the
+# creator's umask, so a second uid would be refused inside them. If you rebuild an
+# image with a custom NPA_RUNTIME_USER, run its consumers with the same fsGroup.
+#
+# THIS JOB NEEDS TO RUN AS ROOT, which a `restricted` PodSecurity namespace does
+# not allow: chmod on a freshly provisioned volume root is the one privileged act
+# in the whole design, and there is no unprivileged spelling of it. Two ways out,
+# both fine:
+#   * apply it in a namespace at `baseline`, since it touches nothing but this
+#     volume and exits, or
+#   * skip the Job entirely and let `fsGroup` do it. Most CSI drivers apply the
+#     pod's fsGroup ownership to the volume root on first mount, which is enough
+#     when every consumer sets the same fsGroup: 1000. Check with
+#     `kubectl exec <pod> -- ls -ld /opt/npa-model-cache` before relying on it;
+#     the workload's own first write is otherwise where you find out.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: npa-init-model-cache
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: npa-init-model-cache
+    spec:
+      restartPolicy: Never
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: init
+          # Any image with a shell works; this Job writes nothing but directories.
+          image: busybox:1.37
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              mkdir -p /opt/npa-model-cache
+              chmod 3777 /opt/npa-model-cache
+              echo "npa model cache ready at /opt/npa-model-cache"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /opt/npa-model-cache
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 64Mi
+            limits:
+              cpu: "500m"
+              memory: 256Mi
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: npa-model-cache

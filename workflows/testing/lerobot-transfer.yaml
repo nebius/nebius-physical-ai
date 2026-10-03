@@ -1,0 +1,127 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: lerobot-transfer
+  description: >-
+    Four-phase data-first transfer experiment: seal LeRobot demonstrations,
+    train matched ACT policies, stress-test exact checkpoints, and turn
+    validation failures into the next expert demonstration requests.
+    Native PushT success, paired test uncertainty, real videos, and factual RRD.
+
+config:
+  bucket: example-bucket
+  prefix: "lerobot-transfer/{{run.id}}"
+  seed: "42"
+  train_steps: "20000"
+  batch_size: "64"
+  validation_episodes: "32"
+  test_episodes: "64"
+  eval_batch_size: "8"
+  minimum_success: "0.7"
+  arm: baseline
+
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  baseline_uri: "s3://{{config.bucket}}/{{config.prefix}}/baseline/"
+  robust_uri: "s3://{{config.bucket}}/{{config.prefix}}/robust/"
+  training_uri: "{{config.baseline_uri}}"
+  evaluation_uri: "s3://{{config.bucket}}/{{config.prefix}}/evaluation/"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
+    kubernetes:
+      pod_config:
+        spec:
+          nodeSelector:
+            nebius.com/gpu-name: B200
+  gpu:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 16
+    memory: 64Gi
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
+
+initial: prepare
+
+states:
+  prepare:
+    description: Audit pinned demonstrations and seal episode split, statistics, and experiment settings.
+    toolRef: workbench.lerobot.transfer_prepare
+    resources: cpu
+    outputs:
+      - uri: "{{config.prepared_uri}}recipe.json"
+        schema: npa.lerobot-transfer.recipe.v1
+      - uri: "{{config.prepared_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    next: train
+
+  train:
+    description: Train the baseline and augmentation candidate with identical data and optimizer settings.
+    parallel: [train-baseline, train-robust]
+    maxConcurrency: 2
+    next: evaluate
+
+  train-baseline:
+    description: Train ACT using the original demonstrations.
+    toolRef: workbench.lerobot.transfer_train
+    resources: gpu
+    inputs:
+      - uri: "{{config.prepared_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.baseline_uri}}training.json"
+        schema: npa.lerobot-transfer.training.v1
+      - uri: "{{config.baseline_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+
+  train-robust:
+    description: Train ACT with photometric augmentation that preserves absolute action labels.
+    toolRef: workbench.lerobot.transfer_train
+    resources: gpu
+    params:
+      arm: robust
+      training_uri: "{{config.robust_uri}}"
+    inputs:
+      - uri: "{{config.prepared_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.robust_uri}}training.json"
+        schema: npa.lerobot-transfer.training.v1
+      - uri: "{{config.robust_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+
+  evaluate:
+    description: Run paired clean, dim, warm, and one-control-step delay evaluations on both checkpoints.
+    toolRef: workbench.lerobot.transfer_evaluate
+    resources: gpu
+    inputs:
+      - uri: "{{config.baseline_uri}}checksums.json"
+      - uri: "{{config.robust_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.evaluation_uri}}evaluation.json"
+        schema: npa.lerobot-transfer.evaluation.v1
+      - uri: "{{config.evaluation_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    next: report
+
+  report:
+    description: Report uncertainty, request expert demonstrations for validation failures, and visualize measured trials.
+    toolRef: workbench.lerobot.transfer_report
+    resources: cpu
+    inputs:
+      - uri: "{{config.evaluation_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.report_uri}}report.json"
+        schema: npa.lerobot-transfer.report.v1
+      - uri: "{{config.report_uri}}next-demonstrations.json"
+        schema: npa.lerobot-transfer.collection.v1
+      - uri: "{{config.report_uri}}success.png"
+        schema: image/png
+      - uri: "{{config.report_uri}}transfer.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.report_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    terminal: true

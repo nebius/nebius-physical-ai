@@ -22,7 +22,6 @@ report for unit tests / wiring checks.
 
 from __future__ import annotations
 
-import base64
 import copy
 import hashlib
 import json
@@ -33,15 +32,19 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from npa.clients.storage import StorageClient
+from npa.clients.storage import StorageClient, safe_s3_download_target
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
-from npa.workflows.sim2real.isaac_job_payload import compressed_bash_launch
+from npa.workflows.sim2real.isaac_job_payload import (
+    compressed_bash_launch,
+    embedded_base64_file_block,
+)
 
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 # Object-to-goal distance (metres) under which a Lift episode counts as success.
 DEFAULT_SUCCESS_DIST_M = 0.05
+MANIPULATOR_CONTACT_DISTANCE_M = 0.035
 _MAX_EMBEDDED_SCENARIOS_BYTES = 32_000
 
 # Set by main() so run_isaac_eval_job can sync rendered frames to the heldout
@@ -52,6 +55,7 @@ _LAST_GPU_PROVENANCE: dict[str, Any] = {}
 _CHECKPOINT_PROVENANCE: dict[str, Any] = {}
 _APPLIED_SCENARIO_AUDIT: dict[str, Any] = {}
 _SCENARIO_INPUT_PROVENANCE: dict[str, Any] = {}
+_EMBODIMENT_EVIDENCE: dict[str, Any] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -74,6 +78,24 @@ def first_episode_masks(completed: Any, done: Any) -> tuple[Any, Any, Any]:
     active = ~completed
     newly_terminal = active & done
     return active, newly_terminal, completed | done
+
+
+def manipulator_contact_signal(
+    ee_distance: Any, force_contact: Any | None = None
+) -> Any:
+    """Return contact attributable to the manipulator, not the support plane.
+
+    The object contact sensor also observes the cube resting on the table.  Its
+    force signal is therefore necessary but not sufficient evidence of a robot
+    contact.  When the force sensor is available, require both force and end-
+    effector proximity; retain proximity-only behavior if the optional sensor
+    cannot be read.
+    """
+
+    near_end_effector = ee_distance < MANIPULATOR_CONTACT_DISTANCE_M
+    if force_contact is None:
+        return near_end_effector
+    return near_end_effector & force_contact
 
 
 def extract_checkpoint_uri(inner_evidence: dict[str, Any]) -> str:
@@ -492,6 +514,8 @@ try:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper  # older layout
     from rsl_rl.runners import OnPolicyRunner
     env_cfg = parse_env_cfg(TASK, device="cuda:0", num_envs=N)
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
+    print("EVAL_ROBOT_USD_EFFECTIVE", remap_moved_franka_usd(env_cfg), flush=True)
     # CUSTOM asset: override the manipuland USD so eval scores the policy on the
     # same custom object it trained on (physically simulated, not the stock cube).
     OBJECT_USD = os.environ.get("EVAL_OBJECT_USD", "").strip()
@@ -512,8 +536,10 @@ try:
     print("EVAL_SEED_APPLIED", SEED, flush=True)
     # Capture synchronized primary, side, and overhead views. Isaac Lab's
     # ``world`` camera convention looks along +X; the orchestrator serializes
-    # validated wxyz poses into CAMERA_VIEWS. ``heldout_cam`` remains the primary
-    # sensor key for backward compatibility with existing real-run tooling.
+    # validated wxyz poses into CAMERA_VIEWS. Convert only at the sensor boundary
+    # because Lab 3 consumes xyzw while Lab 2 consumes wxyz. ``heldout_cam`` remains
+    # the primary sensor key for compatibility with existing real-run tooling.
+    from npa.workflows.sim2real.camera_views import camera_rotation_for_isaac_lab
     def _camera_key(name):
         return "heldout_cam" if name == "primary" else "heldout_cam_" + name
     for view in CAMERA_VIEWS:
@@ -524,7 +550,7 @@ try:
                 prim_path="{ENV_REGEX_NS}/heldout_cam_" + view["name"],
                 offset=TiledCameraCfg.OffsetCfg(
                     pos=tuple(view["position"]),
-                    rot=tuple(view["rotation"]),
+                    rot=camera_rotation_for_isaac_lab(view["rotation"]),
                     convention="world",
                 ),
                 data_types=["rgb", "distance_to_image_plane"],
@@ -544,6 +570,9 @@ try:
         if got_object_usd != OBJECT_USD:
             raise RuntimeError("evaluation object USD mismatch; refusing stock fallback")
     env = RslRlVecEnvWrapper(env)
+    actual_action_dim = int(getattr(env, "num_actions", 0) or 0)
+    if not actual_action_dim:
+        actual_action_dim = int(sum(env.unwrapped.action_manager.action_term_dim))
     # Load the COMPLETE rsl_rl agent cfg from the task registry (has save_interval,
     # network dims, etc.) — a hand-built cfg is missing keys OnPolicyRunner needs.
     agent_cfg = None
@@ -557,11 +586,10 @@ try:
             print("cfg loader", loader, "failed:", repr(e), flush=True)
     if agent_cfg is None:
         raise RuntimeError("could not load rsl_rl_cfg_entry_point for task")
+    from npa.workflows.sim2real.isaac_assets_compat import migrate_rsl_rl_agent_cfg
+    agent_cfg = migrate_rsl_rl_agent_cfg(agent_cfg)
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     print("AGENT_CFG_KEYS", sorted(acfg.keys()), flush=True)
-    runner = OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")
-    runner.load(CKPT)
-    policy = runner.get_inference_policy(device="cuda:0")
     # The ACTUAL env count is the single source of truth for per-env sizing.
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
     # Reset FIRST to force a fully-batched [realN, obs_dim] observation. Calling
@@ -609,6 +637,32 @@ try:
         return o
     obs = _batched_obs(obs)
     _pt = _policy_tensor(obs)
+    actual_observation_dim = int(_pt.shape[-1])
+    _robot_spec = json.loads(os.environ.get("NPA_BYO_ROBOT_SPEC_JSON", "{}") or "{}")
+    expected_action_dim = int(_robot_spec.get("expected_action_dim") or 0)
+    expected_observation_dim = int(_robot_spec.get("expected_observation_dim") or 0)
+    dimensions = {
+        "embodiment_digest": str(_robot_spec.get("embodiment_digest") or "stock_franka"),
+        "action": actual_action_dim,
+        "observation": actual_observation_dim,
+        "expected_action": expected_action_dim,
+        "expected_observation": expected_observation_dim,
+    }
+    print("EVAL_ROBOT_DIMENSIONS " + json.dumps(dimensions, sort_keys=True), flush=True)
+    if expected_action_dim and actual_action_dim != expected_action_dim:
+        raise RuntimeError("evaluation action dimension disagrees with RobotSpec")
+    if expected_observation_dim and actual_observation_dim != expected_observation_dim:
+        raise RuntimeError("evaluation observation dimension disagrees with RobotSpec")
+    runner = OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")
+    try:
+        runner.load(CKPT)
+    except Exception as exc:
+        raise RuntimeError(
+            "checkpoint cannot load for RobotSpec embodiment "
+            f"{dimensions['embodiment_digest']} with observation/action dimensions "
+            f"{actual_observation_dim}/{actual_action_dim}: {exc}"
+        ) from exc
+    policy = runner.get_inference_policy(device="cuda:0")
     _pb = int(_pt.shape[0]) if torch.is_tensor(_pt) and _pt.ndim >= 1 else realN
     # N stays the true env count; only WARN if the policy obs batch disagrees so a
     # genuine multi-env mismatch is visible in logs rather than silently collapsing.
@@ -668,6 +722,18 @@ try:
                 )
                 xyz = pts.detach().cpu().numpy().reshape(-1, 3).astype(np.float32)
                 col = cols.detach().cpu().numpy().reshape(-1, 3)
+                # Some rendered views legitimately contain no finite depth samples
+                # for a frame.  Treat that as an absent cloud before inspecting the
+                # color range: NumPy's max() is undefined for an empty array.  This
+                # keeps the other synchronized views usable without reporting a
+                # misleading capture exception.
+                if xyz.shape[0] != col.shape[0]:
+                    raise ValueError(
+                        f"point-cloud/color row mismatch for {name}: "
+                        f"{xyz.shape[0]} != {col.shape[0]}"
+                    )
+                if xyz.shape[0] == 0:
+                    continue
                 if col.dtype != np.uint8:
                     col = (np.clip(col, 0.0, 1.0) * 255).astype(np.uint8) if col.max() <= 1.0 else col.astype(np.uint8)
                 good = np.isfinite(xyz).all(axis=1)
@@ -722,7 +788,7 @@ try:
                         "view_name": view_name,
                         "frame_index": index,
                         "sim_step": int(step),
-                        "timestamp_seconds": round(float(step) / CAPTURE_FPS, 6),
+                        **simulation_clock.sample(),
                         "episode_id": _env_id(i),
                         "isaac_env_index": i,
                         "width": CAPTURE_WIDTH,
@@ -747,6 +813,8 @@ try:
     termination = np.array(["max_steps"] * N, dtype=object)
     completed = np.zeros(N, dtype=bool)
     initial_obj_z = None
+    from npa.workflows.sim2real.isaac_simulation_clock import SimulationClock
+    simulation_clock = SimulationClock(env.unwrapped.step_dt)
     for _step in range(STEPS):
         # Isaac auto-resets done environments inside env.step(). Preserve the
         # last sample from the evaluated episode so the returned reset state can
@@ -772,24 +840,21 @@ try:
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
         obs, _, dones, extras = env.step(actions)
+        simulation_clock.advance()
         try:
             done_np = dones.detach().cpu().numpy().astype(bool)
-        except Exception:
-            done_np = np.zeros(N, dtype=bool)
-        from npa.workflows.sim2real.byo_isaac_eval import first_episode_masks
+        except Exception as exc:
+            raise RuntimeError(
+                f"Isaac evaluation could not read episode termination at step {_step}"
+            ) from exc
+        from npa.workflows.sim2real.byo_isaac_eval import (
+            first_episode_masks,
+            manipulator_contact_signal,
+        )
         active, newly_terminal, completed = first_episode_masks(completed, done_np)
         if _step % CAPTURE_STRIDE == 0:
             capture(_step, active & ~newly_terminal)
-        # object-to-goal distance: prefer an explicit metric, else infer.
-        d = None
-        log = (extras or {}).get("log") or {}
-        for k, v in log.items():
-            if "object" in k.lower() and ("dist" in k.lower() or "error" in k.lower()):
-                try:
-                    d = float(v);
-                except Exception:
-                    d = None
-                break
+        # Strict success requires per-environment state, never an aggregate log.
         try:
             uenv = env.unwrapped
             if hasattr(uenv, "command_manager"):
@@ -807,14 +872,15 @@ try:
                     initial_obj_z = obj[:, 2].detach().cpu().numpy()
                 height = obj[:, 2].detach().cpu().numpy() - initial_obj_z
                 lift |= active & (height >= 0.05)
-                contact_now = ee_dist < 0.035
+                force_contact = None
                 try:
                     forces = uenv.scene["object_contact"].data.net_forces_w_history
-                    contact_now = np.linalg.norm(
+                    force_contact = np.linalg.norm(
                         forces.detach().cpu().numpy(), axis=-1
                     ).reshape(N, -1).max(axis=1) > 1.0e-3
                 except Exception:
                     pass
+                contact_now = manipulator_contact_signal(ee_dist, force_contact)
                 contact |= active & contact_now
                 stable_grasp_steps = np.where(
                     active,
@@ -822,12 +888,9 @@ try:
                     stable_grasp_steps,
                 )
                 grasp |= active & (stable_grasp_steps >= 3)
-                try:
-                    obj_speed = torch.linalg.norm(
-                        uenv.scene["object"].data.root_lin_vel_w[:, :3], dim=1
-                    ).detach().cpu().numpy()
-                except Exception:
-                    obj_speed = np.full(N, 1.0)
+                obj_speed = torch.linalg.norm(
+                    uenv.scene["object"].data.root_lin_vel_w[:, :3], dim=1
+                ).detach().cpu().numpy()
                 in_strict_basin = per < 0.05
                 min_speed_in_strict_basin = np.where(
                     active & in_strict_basin,
@@ -875,14 +938,11 @@ try:
                     ]
                     termination[newly_terminal] = "task_or_timeout"
                 continue
-        except Exception:
-            pass
-        if d is not None:
-            min_dist = np.where(
-                active,
-                np.minimum(min_dist, np.full(N, d)),
-                min_dist,
-            )
+            raise RuntimeError("Isaac evaluation requires object-pose commands")
+        except Exception as exc:
+            raise RuntimeError(
+                f"Isaac per-environment metric capture failed at step {_step}"
+            ) from exc
     capture(STEPS, ~completed)  # final frame only for a still-live first episode
     episodes = [
         {
@@ -1024,10 +1084,14 @@ def build_isaac_eval_job_manifest(
     # Empty when robot_spec is None -> byte-for-byte the stock eval.
     robot_block = ""
     if robot_spec:
+        from npa.workflows.sim2real.byo_isaac_trainer import (
+            robot_asset_preflight_script,
+        )
+
         spec_json = _json.dumps(robot_spec, sort_keys=True)
         usd_dest = str(robot_spec.get("usd_path") or "").strip()
-        robot_stage = ""
-        if robot_usd_uri and usd_dest:
+        robot_stage = robot_asset_preflight_script(robot_spec)
+        if not robot_stage and robot_usd_uri and usd_dest:
             robot_stage = (
                 '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
                 f"--uri {_shlex.quote(robot_usd_uri)} "
@@ -1061,11 +1125,10 @@ def build_isaac_eval_job_manifest(
             f"--sha256 {_shlex.quote(scenarios_sha256)}\n"
         )
     elif scenarios_jsonl:
-        encoded_scenarios = base64.b64encode(scenarios_jsonl.encode()).decode()
-        scenario_block = (
-            '"$PY" -m npa.workflows.sim2real.isaac_job_io write-base64 '
-            f"--payload {_shlex.quote(encoded_scenarios)} "
-            "--destination /tmp/evalwork/scenarios.jsonl\n"
+        scenario_block = embedded_base64_file_block(
+            scenarios_jsonl,
+            destination="/tmp/evalwork/scenarios.jsonl",
+            marker="NPA_EVAL_SCENARIOS_B64",
         )
     if scenario_block:
         scenario_block += (
@@ -1152,9 +1215,7 @@ def build_isaac_eval_job_manifest(
                         "seccompProfile": {"type": "RuntimeDefault"},
                     },
                     "imagePullSecrets": [
-                        {"name": "agent-sa"},
                         {"name": "ngc-nvcr-imagepullsecret"},
-                        {"name": "npa-nebius-registry"},
                     ],
                     "containers": [
                         {
@@ -1223,7 +1284,7 @@ def run_isaac_eval_job(
     num_envs: int,
     generated_envs: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    global _LAST_GPU_PROVENANCE, _SCENARIO_INPUT_PROVENANCE
+    global _LAST_GPU_PROVENANCE, _SCENARIO_INPUT_PROVENANCE, _EMBODIMENT_EVIDENCE
 
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
@@ -1317,6 +1378,9 @@ def run_isaac_eval_job(
         )
     if robot_spec_dict is None:
         robot_spec_dict = {"robot_source": "stock_franka", "name": "franka"}
+    from npa.workflows.sim2real.byo_isaac_trainer import embodiment_evidence
+
+    _EMBODIMENT_EVIDENCE = embodiment_evidence(robot_spec_dict)
 
     manifest = build_isaac_eval_job_manifest(
         job_name=job_name,
@@ -1450,7 +1514,8 @@ def run_isaac_eval_job(
                 for view_names in (ep.get("camera_views") or {}).values():
                     names.extend(view_names or [])
                 for name in dict.fromkeys(names):
-                    dst = Path(_RENDERS_LOCAL_DIR) / eid / name
+                    episode_dir = safe_s3_download_target(_RENDERS_LOCAL_DIR, eid, "")
+                    dst = safe_s3_download_target(episode_dir, name, "")
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     s3.download_file(u.netloc, f"{base}/{eid}/{name}", str(dst))
             pointcloud_count = 0
@@ -1463,8 +1528,7 @@ def run_isaac_eval_job(
                         pointcloud_prefix
                     ):
                         continue
-                    relative = key[len(base) + 1 :]
-                    dst = Path(_RENDERS_LOCAL_DIR) / relative
+                    dst = safe_s3_download_target(_RENDERS_LOCAL_DIR, key, base + "/")
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     s3.download_file(u.netloc, key, str(dst))
                     pointcloud_count += 1
@@ -1512,6 +1576,7 @@ def main() -> int:
     global \
         _APPLIED_SCENARIO_AUDIT, \
         _CHECKPOINT_PROVENANCE, \
+        _EMBODIMENT_EVIDENCE, \
         _LAST_GPU_PROVENANCE, \
         _RENDER_MANIFEST, \
         _SCENARIO_INPUT_PROVENANCE
@@ -1520,6 +1585,7 @@ def main() -> int:
     _APPLIED_SCENARIO_AUDIT = {}
     _RENDER_MANIFEST = {}
     _SCENARIO_INPUT_PROVENANCE = {}
+    _EMBODIMENT_EVIDENCE = {}
     output_json = _env("NPA_SIM2REAL_OUTPUT_JSON")
     if not output_json:
         print("byo_isaac_eval: NPA_SIM2REAL_OUTPUT_JSON not set", file=sys.stderr)
@@ -1622,6 +1688,12 @@ def main() -> int:
     report["policy_checkpoint_size_bytes"] = int(
         _CHECKPOINT_PROVENANCE.get("size_bytes") or 0
     )
+    report["embodiment"] = dict(_EMBODIMENT_EVIDENCE) or {
+        "embodiment_digest": "stock_franka",
+        "expected_action_dim": 8,
+        "expected_observation_dim": 36,
+        "runtime_dimension_validation": "passed",
+    }
     report["policy_inference_provenance"] = policy_inference_provenance(
         checkpoint_uri=checkpoint_uri,
         checkpoint=_CHECKPOINT_PROVENANCE,

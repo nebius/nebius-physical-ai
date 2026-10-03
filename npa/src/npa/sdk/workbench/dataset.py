@@ -71,7 +71,14 @@ def ingest(
     )
     if _resolve_mode(mode=mode, service=service):
         return IngestResponse.model_validate(
-            _request_json("POST", endpoint or os.environ.get(ENDPOINT_ENV, ""), "/ingest", payload=request.model_dump(mode="json"), token_env=token_env, timeout=timeout)
+            _request_json(
+                "POST",
+                endpoint or os.environ.get(ENDPOINT_ENV, ""),
+                "/ingest",
+                payload=request.model_dump(mode="json"),
+                token_env=token_env,
+                timeout=timeout,
+            )
         )
     from npa.workbench.dataset.ingestion import ingest_dataset
 
@@ -106,7 +113,14 @@ def validate(
     )
     if _resolve_mode(mode=mode, service=service):
         return ValidateResponse.model_validate(
-            _request_json("POST", endpoint or os.environ.get(ENDPOINT_ENV, ""), "/validate", payload=request.model_dump(mode="json"), token_env=token_env, timeout=timeout)
+            _request_json(
+                "POST",
+                endpoint or os.environ.get(ENDPOINT_ENV, ""),
+                "/validate",
+                payload=request.model_dump(mode="json"),
+                token_env=token_env,
+                timeout=timeout,
+            )
         )
     from npa.workbench.dataset.validation import validate_manifest
 
@@ -140,7 +154,14 @@ def curate(
     )
     if _resolve_mode(mode=mode, service=service):
         return CurateResponse.model_validate(
-            _request_json("POST", endpoint or os.environ.get(ENDPOINT_ENV, ""), "/curate", payload=request.model_dump(mode="json"), token_env=token_env, timeout=timeout)
+            _request_json(
+                "POST",
+                endpoint or os.environ.get(ENDPOINT_ENV, ""),
+                "/curate",
+                payload=request.model_dump(mode="json"),
+                token_env=token_env,
+                timeout=timeout,
+            )
         )
     from npa.workbench.dataset.curation import curate_dataset
 
@@ -179,9 +200,20 @@ def query(
         lance_uri=lance_uri,
     )
     if _resolve_mode(mode=mode, service=service):
-        params = {k: v for k, v in request.model_dump(mode="json").items() if v not in ("", None)}
+        params = {
+            k: v
+            for k, v in request.model_dump(mode="json").items()
+            if v not in ("", None)
+        }
         return QueryResponse.model_validate(
-            _request_json("GET", endpoint or os.environ.get(ENDPOINT_ENV, ""), "/query", params=params, token_env=token_env, timeout=timeout)
+            _request_json(
+                "GET",
+                endpoint or os.environ.get(ENDPOINT_ENV, ""),
+                "/query",
+                params=params,
+                token_env=token_env,
+                timeout=timeout,
+            )
         )
     from npa.workbench.dataset.curation import query_dataset
 
@@ -217,13 +249,24 @@ def _request_json(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        response = httpx.request(method, f"{resolved}{path}", headers=headers, json=payload, params=params, timeout=timeout)
+        response = httpx.request(
+            method,
+            f"{resolved}{path}",
+            headers=headers,
+            json=payload,
+            params=params,
+            timeout=timeout,
+        )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text.strip()
-        raise DatasetServiceError(f"Dataset service request failed ({exc.response.status_code}): {detail}") from exc
+        raise DatasetServiceError(
+            f"Dataset service request failed ({exc.response.status_code}): {detail}"
+        ) from exc
     except httpx.HTTPError as exc:
-        raise DatasetServiceError(f"Cannot reach dataset service {resolved}: {exc}") from exc
+        raise DatasetServiceError(
+            f"Cannot reach dataset service {resolved}: {exc}"
+        ) from exc
     try:
         data = response.json()
     except ValueError as exc:

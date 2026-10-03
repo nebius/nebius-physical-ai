@@ -1,8 +1,52 @@
 # VLM-Eval Loop Runbook
 
+[Cookbooks](README.md)
+
 This runbook runs the sim-to-real VLM-eval loop on the self-hosted serving path:
 serve a VLM with vLLM, score rollout directories with `vlm-eval`, and write a
 task-success report.
+
+Each evaluation records the requested `model` and the endpoint's returned
+`served_model`. Self-hosted servers that omit the model identity leave
+`served_model` null; NPA does not infer it from the requested alias. A supplied
+identity must be a nonempty string. Retain the serving deployment's checkpoint
+revision separately: a model name alone does not identify its weight bytes.
+
+Successful real-backend results also contain an `evidence` record. It binds the
+requested and returned model to:
+
+- SHA-256 hashes, dimensions, media types, byte counts, and source-relative
+  labels for the exact normalized image bytes submitted to the model;
+- hashes of the prompt, rubric, and secret-free request manifest;
+- request time, endpoint role, HTTP status when available, latency, finish
+  reason, provider request ID and usage when returned;
+- the exact provider response body, its SHA-256 hash, and parser version.
+
+The request manifest intentionally excludes authorization, endpoint addresses,
+input/output locations, prompts, and base64 image data. It contains enough
+information to recompute what was submitted without copying pixels or secrets.
+The full result still belongs in private run storage because the provider
+response and existing task fields can describe operator data.
+
+`stub` results and `--score` overrides do not contain provider evidence. They are
+wiring checks, never visual proof. Real `benchmark` reports retain the evidence
+for every case so calibration failures and model disagreement remain inspectable.
+If a model wraps one complete JSON object in a single Markdown JSON fence, the
+parser removes only that transport wrapper and appends `+markdown-fence-v1` to
+the retained parser version. Prefixes, suffixes, duplicate keys, non-finite
+numbers, invalid types, and partial output still fail rather than being repaired.
+None of these fields turns a visual judgment into objective task, geometry,
+collision, or safety evidence.
+
+To verify this against your existing GPU endpoint, set
+`NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
+JSON file containing `input_path`, `output_path` (a local JSON filename),
+`endpoint_url`, `model`, `expected_served_model`, and `task`. Supply credentials
+through the environment variable named by `api_key_env` (default
+`VLM_EVAL_API_KEY`). Run
+`npa/.venv/bin/python -m pytest npa/tests/e2e/test_vlm_served_model_live.py -q`.
+The test calls the real endpoint and retains its verdict; it provisions and
+destroys no resources.
 
 ## Prerequisites
 
@@ -25,7 +69,7 @@ export RUN_ID="vlm-eval-loop-smoke"
 export NPA_S3_BUCKET="<your-bucket-name>"
 
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/vlm-eval-loop.yaml \
+  workflows/testing/vlm-eval-loop.yaml \
   --run-id "${RUN_ID}" \
   --var "bucket=${NPA_S3_BUCKET}" \
   --var "prefix=sim-to-real/${RUN_ID}" \
@@ -45,7 +89,7 @@ The default model is `Qwen/Qwen2-VL-7B-Instruct`, the default frame selection is
 `keyframes`, and the default success threshold is `0.8`.
 
 To score a *single* rollout instead of a set, use
-`npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml`, or call
+`workflows/testing/vlm-eval-single.yaml`, or call
 `npa workbench vlm-eval run` directly.
 
 ## Inputs
@@ -112,7 +156,7 @@ npa workbench vlm-eval benchmark \
 
 Use the best threshold and rubric from the benchmark report to update
 `vlm_success_threshold` in the loop spec (or pass `--var` at submit time).
-`npa/workflows/workbench/npa-workflows/vlm-eval-benchmark.yaml` runs the same sweep as
+`workflows/testing/vlm-eval-benchmark.yaml` runs the same sweep as
 a workflow stage.
 
 ## Troubleshooting

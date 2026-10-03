@@ -86,7 +86,9 @@ def test_in_memory_store_upsert_is_idempotent():
 def test_json_vector_store_persists(tmp_path):
     path = str(tmp_path / "corpus.json")
     store = R.JsonVectorStore(path)
-    store.add([{"id": "x", "text": "hello world", "vector": [1.0, 2.0], "source": "repo"}])
+    store.add(
+        [{"id": "x", "text": "hello world", "vector": [1.0, 2.0], "source": "repo"}]
+    )
     reopened = R.JsonVectorStore(path)
     assert reopened.count() == 1
     assert reopened.sources() == ["repo"]
@@ -100,7 +102,13 @@ def test_index_corpus_reports_chunks():
     store = R.InMemoryVectorStore()
     result = _index(
         store,
-        [("docs/genesis.md", "Genesis", "Genesis is a GPU physics simulator for robotics.")],
+        [
+            (
+                "docs/genesis.md",
+                "Genesis",
+                "Genesis is a GPU physics simulator for robotics.",
+            )
+        ],
         embed,
     )
     assert result["ok"] is True
@@ -114,12 +122,22 @@ def test_retrieve_returns_ranked_citations():
     _index(
         store,
         [
-            ("docs/genesis.md", "Genesis", "Genesis GPU physics simulator for robotics training."),
-            ("docs/s3.md", "Storage", "Configure S3 object storage buckets and credentials."),
+            (
+                "docs/genesis.md",
+                "Genesis",
+                "Genesis GPU physics simulator for robotics training.",
+            ),
+            (
+                "docs/s3.md",
+                "Storage",
+                "Configure S3 object storage buckets and credentials.",
+            ),
         ],
         embed,
     )
-    result = R.retrieve("genesis physics simulator", embed=embed, store=store, k=2, min_score=0.0)
+    result = R.retrieve(
+        "genesis physics simulator", embed=embed, store=store, k=2, min_score=0.0
+    )
     assert result["ok"] is True
     assert result["count"] >= 1
     top = result["citations"][0]
@@ -130,9 +148,13 @@ def test_retrieve_returns_ranked_citations():
 def test_retrieve_filters_below_min_score():
     embed = _fake_embed()
     store = R.InMemoryVectorStore()
-    _index(store, [("docs/s3.md", "Storage", "S3 buckets and credentials only.")], embed)
+    _index(
+        store, [("docs/s3.md", "Storage", "S3 buckets and credentials only.")], embed
+    )
     # A totally unrelated query should score below a high floor -> no citations.
-    result = R.retrieve("quantum chromodynamics lecture", embed=embed, store=store, min_score=0.9)
+    result = R.retrieve(
+        "quantum chromodynamics lecture", embed=embed, store=store, min_score=0.9
+    )
     assert result["ok"] is True
     assert result["count"] == 0
 
@@ -157,11 +179,22 @@ def test_retrieve_folds_in_injected_web_search():
     _index(store, [("docs/genesis.md", "Genesis", "Genesis physics simulator.")], embed)
 
     def web(query):
-        return [{"title": "Genesis release notes", "url": "https://example.test/g", "snippet": "genesis physics simulator update"}]
+        return [
+            {
+                "title": "Genesis release notes",
+                "url": "https://example.test/g",
+                "snippet": "genesis physics simulator update",
+            }
+        ]
 
     result = R.retrieve(
-        "genesis physics", embed=embed, store=store, k=5, min_score=0.0,
-        web_search=web, index_web=True,
+        "genesis physics",
+        embed=embed,
+        store=store,
+        k=5,
+        min_score=0.0,
+        web_search=web,
+        index_web=True,
     )
     assert result["used_web"] is True
     kinds = {c["kind"] for c in result["citations"]}
@@ -178,7 +211,14 @@ def test_retrieve_ignores_web_when_not_requested():
         called["n"] += 1
         return [{"title": "x", "url": "y", "snippet": "z"}]
 
-    R.retrieve("genesis", embed=embed, store=store, min_score=0.0, web_search=web, index_web=False)
+    R.retrieve(
+        "genesis",
+        embed=embed,
+        store=store,
+        min_score=0.0,
+        web_search=web,
+        index_web=False,
+    )
     assert called["n"] == 0
 
 
@@ -187,7 +227,13 @@ def test_retrieve_ignores_web_when_not_requested():
 
 def test_format_grounded_answer_cites_sources():
     citations = [
-        {"title": "Genesis", "uri": "docs/genesis.md", "kind": "doc", "score": 0.91, "snippet": "Genesis is a simulator."},
+        {
+            "title": "Genesis",
+            "uri": "docs/genesis.md",
+            "kind": "doc",
+            "score": 0.91,
+            "snippet": "Genesis is a simulator.",
+        },
     ]
     answer = R.format_grounded_answer("what is genesis", citations)
     assert "docs/genesis.md" in answer
@@ -207,7 +253,13 @@ def test_grounded_reply_from_result_grounds_above_floor():
     result = {
         "ok": True,
         "citations": [
-            {"title": "Genesis", "uri": "docs/genesis.md", "kind": "doc", "score": 0.72, "snippet": "Genesis simulator."},
+            {
+                "title": "Genesis",
+                "uri": "docs/genesis.md",
+                "kind": "doc",
+                "score": 0.72,
+                "snippet": "Genesis simulator.",
+            },
         ],
     }
     reply = R.grounded_reply_from_result("genesis?", result, min_score=0.35)
@@ -217,7 +269,10 @@ def test_grounded_reply_from_result_grounds_above_floor():
 
 
 def test_grounded_reply_from_result_declines_below_floor():
-    result = {"ok": True, "citations": [{"uri": "docs/x.md", "score": 0.20, "snippet": "weak"}]}
+    result = {
+        "ok": True,
+        "citations": [{"uri": "docs/x.md", "score": 0.20, "snippet": "weak"}],
+    }
     assert R.grounded_reply_from_result("q", result, min_score=0.35) is None
 
 
@@ -228,8 +283,18 @@ def test_grounded_reply_from_result_declines_when_not_ok_or_empty():
 
 def test_grounded_reply_from_result_rejects_nan_and_missing_score():
     nan = float("nan")
-    assert R.grounded_reply_from_result("q", {"ok": True, "citations": [{"uri": "d", "score": nan, "snippet": "s"}]}) is None
-    assert R.grounded_reply_from_result("q", {"ok": True, "citations": [{"uri": "d", "snippet": "s"}]}) is None
+    assert (
+        R.grounded_reply_from_result(
+            "q", {"ok": True, "citations": [{"uri": "d", "score": nan, "snippet": "s"}]}
+        )
+        is None
+    )
+    assert (
+        R.grounded_reply_from_result(
+            "q", {"ok": True, "citations": [{"uri": "d", "snippet": "s"}]}
+        )
+        is None
+    )
 
 
 def test_index_corpus_raises_on_embed_count_mismatch():

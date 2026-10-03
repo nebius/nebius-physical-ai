@@ -5,15 +5,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import pytest
+import typer
 from typer.testing import CliRunner
 import yaml
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
+from npa.execution_preflight import ExecutionPreflightError
 from npa.orchestration.npa_workflow.submit import load_spec_for_submit
-from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+from npa.orchestration.npa_workflow.skypilot_render import (
+    ImagePullRequirements,
+    SkypilotRenderOptions,
+)
 from npa.orchestration.skypilot.image_bootstrap_contract import (
     ATTESTATION_LABEL,
     CONTRACT_VERSION,
@@ -23,17 +29,13 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
 from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalog
 from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
 from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+from npa.provisioning_journal import OperationJournalError
 
 
 runner = CliRunner()
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OPENPI_FOUR_MODE_SPEC = (
-    REPO_ROOT
-    / "npa"
-    / "workflows"
-    / "workbench"
-    / "npa-workflows"
-    / "openpi-pi05-four-mode.yaml"
+    REPO_ROOT / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 )
 
 SPEC = {
@@ -73,6 +75,11 @@ class _RecordingOperation:
         self.transitions.append((phase, kwargs))
 
 
+class _PreparedRecordingOperation(_RecordingOperation):
+    def read(self) -> dict[str, object]:
+        return {"phase": "prepared", "resources": []}
+
+
 def test_prelaunch_reconciliation_failure_does_not_leave_recovery_blocker() -> None:
     operation = _RecordingOperation()
     transaction = type("Transaction", (), {"launch_sequence": 0})()
@@ -91,10 +98,58 @@ def test_prelaunch_reconciliation_failure_does_not_leave_recovery_blocker() -> N
     assert operation.transitions[0][1]["details"]["launch_attempted"] is False
 
 
-def test_postlaunch_failure_preserves_recovery_blocker() -> None:
+def test_execution_preflight_failure_does_not_leave_recovery_blocker() -> None:
+    operation = _RecordingOperation()
+
+    workflow_cli._record_workflow_submit_failure(
+        operation,
+        ExecutionPreflightError("storage_mount", "static profile is unavailable"),
+    )
+
+    assert operation.rollback == {
+        "attempted": False,
+        "completed": True,
+        "removed": [],
+        "preserved": [],
+        "outcomes": [],
+    }
+    assert operation.transitions[0][0] == "rolled-back"
+    assert operation.transitions[0][1]["details"] == {
+        "error_type": "ExecutionPreflightError",
+        "launch_attempted": False,
+    }
+
+
+def test_verified_preflight_failure_releases_lifecycle_lock() -> None:
+    operation = _RecordingOperation()
+    error = SkyPilotSubmitError("capacity unavailable", launch_attempted=False)
+
+    workflow_cli._record_workflow_submit_failure(operation, error)
+
+    assert operation.rollback["attempted"] is False
+    assert operation.rollback["completed"] is True
+    assert operation.transitions[0][0] == "rolled-back"
+
+
+def test_ambiguous_failure_preserves_recovery_blocker() -> None:
+    operation = _RecordingOperation()
+    workflow_cli._record_workflow_submit_failure(
+        operation, SkyPilotSubmitError("unknown")
+    )
+
+    assert operation.rollback is None
+    assert operation.transitions == [("recovery-required", {"error": "unknown"})]
+
+
+@pytest.mark.parametrize("launch_attempted", [None, False])
+def test_postlaunch_failure_preserves_recovery_blocker(launch_attempted) -> None:
     operation = _RecordingOperation()
     transaction = type("Transaction", (), {"launch_sequence": 1})()
-    error = SkyPilotSubmitError("launch indeterminate", transaction=transaction)
+    error = SkyPilotSubmitError(
+        "launch indeterminate",
+        transaction=transaction,
+        launch_attempted=launch_attempted,
+    )
 
     workflow_cli._record_workflow_submit_failure(operation, error)
 
@@ -102,6 +157,28 @@ def test_postlaunch_failure_preserves_recovery_blocker() -> None:
     assert operation.transitions == [
         ("recovery-required", {"error": "launch indeterminate"})
     ]
+
+
+def test_context_rejection_finalizes_unentered_submit_operation() -> None:
+    operation = _PreparedRecordingOperation()
+
+    workflow_cli._record_unentered_workflow_submit_failure(
+        operation, OperationJournalError("another lifecycle operation is active")
+    )
+
+    assert operation.rollback == {
+        "attempted": False,
+        "completed": True,
+        "removed": [],
+        "preserved": [],
+        "outcomes": [],
+    }
+    assert operation.transitions[0][0] == "rolled-back"
+    assert operation.transitions[0][1]["details"] == {
+        "error_type": "OperationJournalError",
+        "launch_attempted": False,
+        "context_acquired": False,
+    }
 
 
 @pytest.fixture()
@@ -112,10 +189,28 @@ def spec_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def sky_bin(tmp_path: Path) -> str:
+def sky_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    from npa.orchestration.skypilot import workflow as workflow_runtime
+
     path = tmp_path / "sky"
     path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     path.chmod(0o755)
+    # This synthetic executable has no daemon. Keep the real health gate, but
+    # inspect synthetic procfs so an operator's running daemon cannot replace
+    # the accelerator behavior these tests are intended to exercise.
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    real_probe = workflow_runtime._probe_local_api_daemon_cwd
+
+    def probe(sky_executable, **kwargs):
+        kwargs.setdefault("proc_root", proc_root)
+        return real_probe(sky_executable, **kwargs)
+
+    monkeypatch.setattr(
+        workflow_runtime,
+        "_probe_local_api_daemon_cwd",
+        probe,
+    )
     return str(path)
 
 
@@ -127,7 +222,29 @@ RTXPRO-6000-BLACKWELL-SERVER-EDITION  1                         2 of 2 free
 
 def _stub_catalog(monkeypatch: pytest.MonkeyPatch, output: str) -> None:
     def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
-        return subprocess.CompletedProcess(cmd, 0, stdout=output, stderr="")
+        response = output
+        if "get" in cmd and "nodes" in cmd:
+            response = json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {
+                                "name": "unit-node",
+                                "labels": {"nvidia.com/gpu.product": "RTXPRO6000"},
+                            },
+                            "spec": {},
+                            "status": {
+                                "conditions": [{"type": "Ready", "status": "True"}],
+                                "capacity": {"nvidia.com/gpu": "8"},
+                                "allocatable": {"nvidia.com/gpu": "8", "pods": "110"},
+                            },
+                        }
+                    ]
+                }
+            )
+        elif "get" in cmd and "pods" in cmd:
+            response = json.dumps({"items": []})
+        return subprocess.CompletedProcess(cmd, 0, stdout=response, stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -143,6 +260,101 @@ def test_submit_remaps_the_spec_accelerator_onto_the_cluster_name(
     )
 
     assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
+
+
+def test_submit_remaps_single_accelerator_mapping(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+) -> None:
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["resources"]["gpu"]["accelerators"] = {"RTXPRO6000": 1}
+    path = tmp_path / "mapping-accelerator.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+
+    overrides = workflow_cli._resolve_submit_accelerators(
+        path, infra="k8s/npa-cluster", sky_bin=sky_bin, enabled=True
+    )
+
+    assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
+
+
+def test_submit_rejects_mapping_alternatives_before_daemon(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["resources"]["gpu"]["accelerators"] = {"RTXPRO6000": 1, "H100": 1}
+    path = tmp_path / "mapping-alternatives.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+    daemon_calls: list[object] = []
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+        lambda **kwargs: daemon_calls.append(kwargs),
+    )
+
+    with pytest.raises(typer.Exit):
+        workflow_cli._resolve_submit_accelerators(
+            path, infra="k8s/npa-cluster", sky_bin=sky_bin, enabled=True
+        )
+
+    assert daemon_calls == []
+    assert "SkyPilot alternatives" in capsys.readouterr().err
+
+
+def _two_gpu_inventory():
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuInventory,
+        KubernetesGpuNode,
+    )
+
+    return KubernetesGpuInventory(
+        "unit-context",
+        1,
+        1,
+        2,
+        2,
+        ("RTXPRO6000",),
+        {},
+        nodes=(
+            KubernetesGpuNode(
+                "unit-node",
+                True,
+                True,
+                ("RTXPRO6000",),
+                2,
+                2,
+                0,
+                2,
+                free_cpu_millis=8000,
+                free_memory_bytes=32 * 10**9,
+                free_pod_slots=1,
+                allocatable_cpu_millis=8000,
+                allocatable_memory_bytes=32 * 10**9,
+                allocatable_pods=1,
+            ),
+        ),
+    )
+
+
+def test_gang_preflight_uses_single_mapping_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        lambda **_kwargs: _two_gpu_inventory(),
+    )
+    spec = SimpleNamespace(
+        states={"train": SimpleNamespace(name="train", resources="gpu")},
+        resources={"gpu": {"accelerators": {"RTXPRO6000": 2}}},
+        config={},
+    )
+
+    row = workflow_cli._preflight_submit_gang_capacity(spec, context="unit-context")[0]
+
+    assert row["accelerator"] == "RTXPRO6000:2"
 
 
 def test_submit_accelerator_readiness_uses_resolved_config_overrides(
@@ -168,6 +380,74 @@ def test_submit_accelerator_readiness_uses_resolved_config_overrides(
     )
 
     assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
+
+
+def test_submit_accelerator_failure_redacts_exact_runtime_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    spec_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    opaque_secret = "synthetic-opaque-accelerator-credential"
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+
+    def reject_daemon(**_kwargs) -> None:  # noqa: ANN003 - test stub
+        raise ValueError(f"daemon rejected {opaque_secret}")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+        reject_daemon,
+    )
+
+    with pytest.raises(Exception) as excinfo:
+        workflow_cli._resolve_submit_accelerators(
+            spec_path,
+            infra="k8s/npa-cluster",
+            sky_bin=sky_bin,
+            enabled=True,
+            diagnostic_secrets=(opaque_secret,),
+        )
+
+    assert excinfo.type.__name__ == "Exit"
+    output = capsys.readouterr().err
+    assert "daemon rejected <redacted>" in output
+    assert opaque_secret not in output
+
+
+def test_submit_accelerator_catalog_failure_redacts_exact_runtime_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    spec_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    opaque_secret = "synthetic-opaque-catalog-credential"
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+        lambda **_kwargs: None,
+    )
+
+    def reject_catalog(*_args, **_kwargs) -> None:  # noqa: ANN002,ANN003
+        raise ValueError(f"catalog rejected {opaque_secret}")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
+        reject_catalog,
+    )
+
+    with pytest.raises(Exception) as excinfo:
+        workflow_cli._resolve_submit_accelerators(
+            spec_path,
+            infra="k8s/npa-cluster",
+            sky_bin=sky_bin,
+            enabled=True,
+            diagnostic_secrets=(opaque_secret,),
+        )
+
+    assert excinfo.type.__name__ == "Exit"
+    output = capsys.readouterr().err
+    assert "catalog rejected <redacted>" in output
+    assert opaque_secret not in output
 
 
 @pytest.mark.parametrize(
@@ -222,7 +502,10 @@ def test_openpi_readiness_uses_fully_resolved_planned_profiles(
 
 
 def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
     spec = {**SPEC}
@@ -237,6 +520,7 @@ def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
         )
 
     assert excinfo.type.__name__ == "Exit"
+    assert "nodes offer at most 1 of that GPU each" in capsys.readouterr().err
 
 
 def test_an_explicit_env_override_is_left_alone(
@@ -300,8 +584,27 @@ def test_resolution_is_skipped_when_disabled(
     )
 
 
+@pytest.fixture
+def owned_gpu_discovery(tmp_path, monkeypatch, sky_bin):
+    from npa.orchestration.skypilot import _bin, local_api
+
+    selected = tmp_path / "selected-kubeconfig"
+    selected.write_text(
+        "apiVersion: v1\ncurrent-context: npa-cluster\n"
+        "contexts:\n- name: npa-cluster\n  context: {cluster: selected}\n"
+        "clusters:\n- name: selected\n  cluster: {server: 'https://kubernetes.invalid'}\n"
+    )
+    monkeypatch.setenv("KUBECONFIG", str(selected))
+    monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "npa/config.yaml")
+    monkeypatch.setattr(_bin, "ensure_skypilot_version", lambda _value: Path(sky_bin))
+    monkeypatch.setattr(local_api, "_require_linux_host", lambda: None)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
+    monkeypatch.setattr(local_api, "stop_isolated_api", lambda _scope: None)
+    return selected
+
+
 def test_workflow_gpus_prints_the_export_line(
-    monkeypatch: pytest.MonkeyPatch, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -318,8 +621,172 @@ def test_workflow_gpus_prints_the_export_line(
     assert "requestable per node 1" in result.output
 
 
+def test_workflow_gpus_explicit_cluster_wins_over_ambient_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    monkeypatch.setenv("KUBECONTEXT", "unrelated-ambient-context")
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        owned_gpu_discovery.read_text().replace("npa-cluster", "selected-cluster")
+    )
+    monkeypatch.setattr(
+        "npa.cluster.state.kubeconfig_file", lambda _cluster: kubeconfig
+    )
+    seen: dict[str, str] = {}
+
+    def discover_inventory(*, context: str, kubeconfig: Path):
+        seen["inventory_context"] = context
+        return type(
+            "Inventory",
+            (),
+            {
+                "to_dict": lambda self: {},
+                "ready_nodes": 0,
+                "eligible_gpu_nodes": 0,
+                "capacity": 0,
+                "allocatable": 0,
+                "products": (),
+            },
+        )()
+
+    def discover_catalog(*, context: str, kubeconfig: Path, sky_bin: str):
+        seen["catalog_context"] = context
+        return KubernetesGpuCatalog({}, context=context)
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        discover_inventory,
+    )
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_recorded_controller_owner", lambda: None
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_catalog",
+        discover_catalog,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--cluster",
+            "selected-cluster",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == {
+        "inventory_context": "selected-cluster",
+        "catalog_context": "selected-cluster",
+    }
+
+
+def test_workflow_gpus_isolated_state_does_not_consult_shared_owner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_recorded_controller_owner",
+        lambda: pytest.fail("isolated discovery consulted the shared owner"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--isolated-config-dir",
+            str(tmp_path / "sky-state"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+
+
+def test_workflow_gpus_owned_discovery_ignores_another_shared_owner_context(
+    monkeypatch: pytest.MonkeyPatch, sky_bin: str, owned_gpu_discovery
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_recorded_controller_owner",
+        lambda: SimpleNamespace(context="another-context"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert not json.loads(result.stdout)["skypilot_error"]
+
+
+def test_submit_isolated_state_skips_shared_owner_verification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_controller_owner",
+        lambda *_args: pytest.fail("isolated submit consulted the shared owner"),
+    )
+
+    workflow_cli._verify_submit_controller_owner(
+        project="project-alias",
+        context="task-context",
+        bind_controller=False,
+        isolated_config_dir=tmp_path / "sky-state",
+    )
+
+
+def test_submit_isolated_state_refuses_shared_controller_binding(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="cannot be combined"):
+        workflow_cli._verify_submit_controller_owner(
+            project="project-alias",
+            context="task-context",
+            bind_controller=True,
+            isolated_config_dir=tmp_path / "sky-state",
+        )
+
+
+def test_submit_shared_state_still_verifies_controller_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_controller_owner",
+        lambda project, context: seen.append((project, context)),
+    )
+
+    workflow_cli._verify_submit_controller_owner(
+        project="project-alias",
+        context="task-context",
+        bind_controller=False,
+        isolated_config_dir=None,
+    )
+
+    assert seen == [("project-alias", "task-context")]
+
+
 def test_workflow_gpus_resolves_a_spec(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -342,7 +809,7 @@ def test_workflow_gpus_resolves_a_spec(
 
 
 def test_workflow_gpus_json_reports_the_exact_alias_resolution(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -372,18 +839,73 @@ def test_workflow_gpus_json_reports_the_exact_alias_resolution(
     ]
 
 
-def _stub_pull(monkeypatch: pytest.MonkeyPatch, checks: list[ImagePullCheck]) -> None:
+def test_workflow_gpus_resolves_templated_accelerator_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["config"].update({"gpu_type": "RTXPRO6000", "gpu_count": "1"})
+    spec["resources"]["gpu"]["accelerators"] = (
+        "{{config.gpu_type}}:{{config.gpu_count}}"
+    )
+    path = tmp_path / "templated-accelerator.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--spec",
+            str(path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["spec_resolutions"] == [
+        {
+            "requested": "RTXPRO6000:1",
+            "resolved": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
+            "remapped": True,
+        }
+    ]
+
+
+def _stub_pull(
+    monkeypatch: pytest.MonkeyPatch, checks: list[ImagePullCheck]
+) -> dict[str, object]:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    observed: dict[str, object] = {}
+
+    def check_images(images, **kwargs):  # noqa: ANN001
+        observed["images"] = images
+        observed.update(kwargs)
+        return checks
+
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
-        lambda images, **kwargs: checks,
+        check_images,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(namespace="target-namespace"),
     )
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.skypilot_render.plan_images",
         lambda *args, **kwargs: [check.image for check in checks],
     )
     monkeypatch.setattr(
-        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_secrets",
-        lambda *args, **kwargs: {},
+        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_requirements",
+        lambda *args, **kwargs: {
+            check.image: ImagePullRequirements(requires_kubernetes=True)
+            for check in checks
+        },
     )
     monkeypatch.setattr(
         workflow_cli,
@@ -396,9 +918,263 @@ def _stub_pull(monkeypatch: pytest.MonkeyPatch, checks: list[ImagePullCheck]) ->
             for image in images
         ],
     )
+    return observed
 
 
-NEBIUS_IMAGE = "cr.us-central1.nebius.cloud/u000/npa-cosmos2-transfer:2.5.1"
+NEBIUS_IMAGE = "registry-us.example/u000/npa-cosmos2-transfer:2.5.1"
+
+
+def test_single_state_workflow_runs_manifest_and_target_image_preflights(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-test:latest"
+    document = {
+        "apiVersion": "npa.workflow/v0.0.1",
+        "kind": "Workflow",
+        "metadata": {"name": "single-state-image-preflight"},
+        "config": {"bucket": "demo-bucket", "prefix": "demo"},
+        "resources": {
+            "k8s": {
+                "cloud": "kubernetes",
+                "image": image,
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {"serviceAccountName": "task-service-account"}
+                    }
+                },
+            }
+        },
+        "initial": "only",
+        "states": {
+            "only": {
+                "resources": "k8s",
+                "run": {"shell": "true"},
+                "terminal": True,
+            }
+        },
+    }
+    path = tmp_path / "single-state.yaml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    checked: list[tuple[list[str], dict[str, object]]] = []
+    bootstrap_service_accounts: list[dict[str, str]] = []
+
+    def check_images(images, **kwargs):  # noqa: ANN001
+        checked.append((images, kwargs))
+        return [ImagePullCheck(image=item, status="ok") for item in images]
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        check_images,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(
+            namespace="target-namespace",
+            service_account_name="base-service-account",
+        ),
+    )
+
+    def bootstrap_contracts(*, images, service_accounts_by_image, **_kwargs):
+        bootstrap_service_accounts.append(service_accounts_by_image)
+        return [
+            {"_requested_image": item, "image": item, "state": "compatible"}
+            for item in images
+        ]
+
+    monkeypatch.setattr(
+        workflow_cli,
+        "_preflight_image_bootstrap_contracts",
+        bootstrap_contracts,
+    )
+
+    workflow_cli._preflight_submit_image_manifests(
+        path,
+        options=SkypilotRenderOptions(),
+        assume_decision="",
+        enabled=True,
+        infra="k8s/target-context",
+    )
+    result = workflow_cli._preflight_submit_images(
+        path,
+        options=SkypilotRenderOptions(),
+        assume_decision="",
+        enabled=True,
+        infra="k8s/target-context",
+    )
+
+    assert [images for images, _ in checked] == [[image], [image]]
+    assert checked[1][1]["service_account_names_by_image"] == {
+        image: ("task-service-account",)
+    }
+    assert bootstrap_service_accounts == [{image: "task-service-account"}]
+    assert result == {image: image}
+
+
+def test_submit_preflight_preserves_explicit_empty_inherited_secret_layer(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    image = "registry.example/customer/private:latest"
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_images",
+        lambda *args, **kwargs: [image],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_requirements",
+        lambda *args, **kwargs: {
+            image: ImagePullRequirements(
+                requires_kubernetes=True,
+                pull_secret_name_sets=(("task-secret",),),
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(
+            namespace="target-namespace",
+            pull_secret_names=(),
+            pull_secret_names_configured=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        lambda *args, **kwargs: pytest.fail(
+            "invalid empty-base merge must fail before registry access"
+        ),
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        workflow_cli._preflight_submit_images(
+            spec_path,
+            options=object(),
+            assume_decision="",
+            enabled=True,
+            infra="k8s/target-context",
+        )
+
+    assert exc_info.type.__name__ == "Exit"
+
+
+@pytest.mark.parametrize("gate", ["manifest", "target"])
+def test_invalid_task_pull_secret_fails_closed_at_both_image_gates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    gate: str,
+) -> None:
+    image = "registry.example/customer/private:latest"
+    document = {
+        "apiVersion": "npa.workflow/v0.0.1",
+        "kind": "Workflow",
+        "metadata": {"name": "invalid-task-pull-secret"},
+        "config": {"bucket": "demo-bucket", "prefix": "demo"},
+        "resources": {
+            "k8s": {
+                "cloud": "kubernetes",
+                "image": image,
+                "kubernetes": {
+                    "pod_config": {"spec": {"imagePullSecrets": [{"name": ""}]}}
+                },
+            }
+        },
+        "initial": "only",
+        "states": {
+            "only": {
+                "resources": "k8s",
+                "run": {"shell": "true"},
+                "terminal": True,
+            }
+        },
+    }
+    path = tmp_path / "invalid-task-pull-secret.yaml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        lambda *args, **kwargs: pytest.fail(
+            "invalid task delivery must fail before registry access"
+        ),
+    )
+    selected_gate = (
+        workflow_cli._preflight_submit_image_manifests
+        if gate == "manifest"
+        else workflow_cli._preflight_submit_images
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        selected_gate(
+            path,
+            options=SkypilotRenderOptions(),
+            assume_decision="",
+            enabled=True,
+            infra="k8s/target-context",
+        )
+
+    assert exc_info.type.__name__ == "Exit"
+
+
+def test_public_manifest_failure_blocks_before_target_exists(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:0.1.2"
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_images",
+        lambda *args, **kwargs: [image],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_requirements",
+        lambda *args, **kwargs: {
+            image: ImagePullRequirements(requires_kubernetes=True)
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        lambda *args, **kwargs: [
+            ImagePullCheck(image=image, status="not_found", http_status=404)
+        ],
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        workflow_cli._preflight_submit_image_manifests(
+            spec_path,
+            options=object(),
+            assume_decision="",
+            enabled=True,
+            infra="k8s/not-created-yet",
+        )
+
+    assert exc_info.type.__name__ == "Exit"
+
+
+def test_private_kubernetes_manifest_failure_defers_to_exact_target(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    image = "private.example/team/image:tag"
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_images",
+        lambda *args, **kwargs: [image],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_requirements",
+        lambda *args, **kwargs: {
+            image: ImagePullRequirements(requires_kubernetes=True)
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        lambda *args, **kwargs: [
+            ImagePullCheck(image=image, status="no_credentials", http_status=401)
+        ],
+    )
+
+    workflow_cli._preflight_submit_image_manifests(
+        spec_path,
+        options=object(),
+        assume_decision="",
+        enabled=True,
+        infra="k8s/not-created-yet",
+    )
 
 
 def test_a_forbidden_nebius_image_blocks_submit(
@@ -450,15 +1226,130 @@ def test_a_third_party_registry_failure_blocks_submit(
 def test_pullable_images_pass(
     monkeypatch: pytest.MonkeyPatch, spec_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _stub_pull(
+    observed = _stub_pull(
         monkeypatch, [ImagePullCheck(image=NEBIUS_IMAGE, status="ok", http_status=200)]
     )
 
     workflow_cli._preflight_submit_images(
-        spec_path, options=object(), assume_decision="", enabled=True
+        spec_path,
+        options=object(),
+        assume_decision="",
+        enabled=True,
+        infra="k8s/target-context",
+        image_bootstrap_timeout_seconds=321,
     )
 
     assert "1 image(s) pullable" in capsys.readouterr().err
+    assert observed["operator_images"] == set()
+    assert observed["kubernetes_images"] == {NEBIUS_IMAGE}
+    assert observed["context"] == "target-context"
+    assert observed["namespace"] == "target-namespace"
+    assert observed["pull_secret_sets_by_image"] == {NEBIUS_IMAGE: ((),)}
+    assert observed["target_pull_timeout_seconds"] == 321
+
+
+def test_submit_image_preflight_checks_transition_free_spec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path = REPO_ROOT / "workflows" / "testing" / "vlm-eval-single.yaml"
+    observed: dict[str, object] = {}
+
+    def pull(images, **_kwargs):
+        observed["images"] = list(images)
+        return [ImagePullCheck(image=image, status="ok") for image in images]
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        pull,
+    )
+    monkeypatch.setattr(
+        workflow_cli,
+        "_preflight_image_bootstrap_contracts",
+        lambda **_kwargs: [],
+    )
+
+    assert (
+        workflow_cli._preflight_submit_images(
+            spec_path,
+            options=SkypilotRenderOptions(materialize_registry_secrets=False),
+            assume_decision="",
+            enabled=True,
+            infra="nebius",
+        )
+        == {}
+    )
+    assert observed["images"]
+
+
+def test_submit_image_preflight_keys_partial_contract_pins_by_requested_image(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    pull_only_image = "registry.example.invalid/operator/npa-retargeting:release"
+    contracted_image = "registry.example.invalid/operator/npa-cosmos-curate:release"
+    immutable_image = (
+        "registry.example.invalid/operator/npa-cosmos-curate@sha256:" + "a" * 64
+    )
+    monkeypatch.setattr(
+        workflow_cli,
+        "_plan_preflight_image_requirements",
+        lambda *_args, **_kwargs: (
+            [pull_only_image, contracted_image],
+            {},
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        lambda images, **_kwargs: [
+            ImagePullCheck(image=image, status="ok") for image in images
+        ],
+    )
+
+    def partial_contracts(*, bind_requested_images=False, **_kwargs):
+        assert bind_requested_images is True
+        return [
+            {
+                "_requested_image": contracted_image,
+                "image": immutable_image,
+                "state": "compatible",
+            }
+        ]
+
+    monkeypatch.setattr(
+        workflow_cli,
+        "_preflight_image_bootstrap_contracts",
+        partial_contracts,
+    )
+
+    assert workflow_cli._preflight_submit_images(
+        spec_path,
+        options=object(),
+        assume_decision="",
+        enabled=True,
+        infra="nebius",
+    ) == {contracted_image: immutable_image}
+
+
+def test_submit_image_preflight_defers_image_resolution_value_error(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    def unsupported_image(*_args, **_kwargs):
+        raise ValueError("synthetic unsupported image")
+
+    monkeypatch.setattr(
+        workflow_cli,
+        "_plan_preflight_image_requirements",
+        unsupported_image,
+    )
+
+    assert (
+        workflow_cli._preflight_submit_images(
+            spec_path,
+            options=object(),
+            assume_decision="",
+            enabled=True,
+        )
+        == {}
+    )
 
 
 def test_image_preflight_plans_with_submit_config_overrides(
@@ -474,7 +1365,7 @@ def test_image_preflight_plans_with_submit_config_overrides(
         "npa.orchestration.npa_workflow.skypilot_render.plan_images", plan_images
     )
     monkeypatch.setattr(
-        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_secrets",
+        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_requirements",
         lambda *_args, **_kwargs: {},
     )
     digest = "cr.example/openpi@sha256:" + "b" * 64
@@ -495,12 +1386,12 @@ def test_image_preflight_plans_with_submit_config_overrides(
     assert observed == {"runtime_image": digest}
 
 
-def test_image_preflight_includes_reject_only_image_and_pull_secret(
+def test_image_preflight_includes_reject_only_image_without_provider_secret(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    reject_image = (
-        "cr.us-central1.nebius.cloud/example-registry/npa-cosmos3:reject-only"
-    )
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    reject_image = "registry.example.invalid/operator/npa-cosmos3:reject-only"
     spec_path = tmp_path / "dynamic.yaml"
     spec_path.write_text(
         """
@@ -547,11 +1438,18 @@ states:
     def check(images, **kwargs):
         observed["images"] = list(images)
         observed["pull_secrets_by_image"] = kwargs["pull_secrets_by_image"]
-        return [ImagePullCheck(image=image, status="ok", http_status=200) for image in images]
+        return [
+            ImagePullCheck(image=image, status="ok", http_status=200)
+            for image in images
+        ]
 
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         check,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(namespace="target-namespace"),
     )
     monkeypatch.setattr(
         workflow_cli,
@@ -572,9 +1470,85 @@ states:
     )
 
     assert reject_image in observed["images"]
-    assert observed["pull_secrets_by_image"] == {
-        reject_image: ("npa-nebius-registry",)
-    }
+    assert observed["pull_secrets_by_image"] == {reject_image: ()}
+
+
+def test_image_preflight_includes_mixed_decision_reachable_image(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    hidden_image = "registry.example.invalid/customer/mixed-only:latest"
+    spec_path = tmp_path / "mixed-decisions.yaml"
+    spec_path.write_text(
+        f"""
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata: {{name: mixed-decision-image-preflight}}
+config: {{bucket: example-bucket, prefix: runs/test}}
+resources:
+  route: {{cloud: kubernetes, image: registry.example.invalid/customer/route:latest}}
+  hidden: {{cloud: kubernetes, image: {hidden_image}}}
+initial: first-gate
+states:
+  first-gate:
+    resources: route
+    run: {{shell: echo first}}
+    transitions:
+      - {{when: promote_checkpoint, goto: second-gate}}
+      - {{when: loop_back, goto: stop}}
+  second-gate:
+    resources: route
+    run: {{shell: echo second}}
+    transitions:
+      - {{when: promote_checkpoint, goto: stop}}
+      - {{when: loop_back, goto: mixed-only}}
+  mixed-only:
+    resources: hidden
+    run: {{shell: echo mixed}}
+    terminal: true
+  stop:
+    resources: route
+    run: {{shell: echo stop}}
+    terminal: true
+""",
+        encoding="utf-8",
+    )
+    observed: list[str] = []
+
+    def check(images, **_kwargs):
+        observed.extend(images)
+        return [
+            ImagePullCheck(image=image, status="ok", http_status=200)
+            for image in images
+        ]
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        check,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(namespace="target-namespace"),
+    )
+    monkeypatch.setattr(
+        workflow_cli,
+        "_preflight_image_bootstrap_contracts",
+        lambda *, images, **_kwargs: [
+            {"image": image, "state": "compatible"} for image in images
+        ],
+    )
+
+    workflow_cli._preflight_submit_images(
+        spec_path,
+        options=SkypilotRenderOptions(),
+        assume_decision="promote_checkpoint",
+        enabled=True,
+        infra="k8s/example-context",
+    )
+
+    assert hidden_image in observed
 
 
 def test_first_party_image_without_attestation_fails_instead_of_probing(
@@ -582,7 +1556,7 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
 ) -> None:
     digest = "sha256:" + "a" * 64
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("NPA_REGISTRY", "cr.us-central1.nebius.cloud/u000")
+    monkeypatch.setenv("NPA_REGISTRY", "registry-us.example/u000")
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
         lambda *_args, **_kwargs: ("iam", "opaque"),
@@ -613,8 +1587,210 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
                 )
             ],
             context="exact-context",
+            namespace="target-namespace",
         )
     assert excinfo.type.__name__ == "Exit"
+
+
+def test_registered_uncontracted_image_stops_after_pull_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+    digest = "sha256:" + "a" * 64
+
+    def metadata_forbidden(*_args, **_kwargs):
+        raise AssertionError("uncontracted image reached bootstrap metadata lookup")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        metadata_forbidden,
+    )
+
+    result = workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[
+            ImagePullCheck(
+                image=image,
+                status="ok",
+                http_status=200,
+                digest=digest,
+            )
+        ],
+        context="exact-context",
+        namespace="target-namespace",
+    )
+
+    assert result == [
+        {
+            "image": (f"ghcr.io/nebius/nebius-physical-ai/npa-retargeting@{digest}"),
+            "digest": digest,
+            "contract_version": "skypilot-0.12.2-v1",
+            "state": "compatible",
+            "source": "registry_pull_preflight",
+            "checks": ("immutable_registry_pull",),
+            "cleanup": "not_applicable",
+            "detail": "",
+        }
+    ]
+
+
+@pytest.mark.parametrize("source", ["oci_attestation", "ephemeral_capability_probe"])
+@pytest.mark.parametrize(
+    "selected_image",
+    [
+        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:release",
+        "registry.example.invalid/selected/npa-cosmos-curate:custom",
+    ],
+)
+def test_cached_capability_preserves_the_selected_image_repository(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    spec_path: Path,
+    selected_image: str,
+    source: str,
+) -> None:
+    """Identical mirrored bytes must not redirect a verified pull to another registry."""
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    digest = "sha256:" + "7" * 64
+    cached_image = "registry.example.invalid/previous/npa-cosmos-curate@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cache_path = tmp_path / ".npa/cache/sky-image-bootstrap.json"
+    store_cached_evidence(
+        cache_path,
+        ImageContractEvidence(
+            image=cached_image,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source=source,
+            cleanup="verified",
+        ),
+    )
+    original_cache = cache_path.read_bytes()
+    checked: list[str] = []
+
+    def pull(images, **_kwargs):
+        checked.extend(images)
+        return [
+            ImagePullCheck(image=image, status="ok", digest=digest) for image in images
+        ]
+
+    def metadata(image, **_kwargs):
+        assert image == selected_image
+        return digest, {ATTESTATION_LABEL: CONTRACT_VERSION}
+
+    def unexpected_probe(**_kwargs):
+        raise AssertionError("compatible bytes should reuse capability evidence")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        pull,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(namespace="target-namespace"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        metadata,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        unexpected_probe,
+    )
+    pins = workflow_cli._preflight_submit_images(
+        spec_path,
+        options=SkypilotRenderOptions(image_overrides={"*": selected_image}),
+        assume_decision="promote_checkpoint",
+        enabled=True,
+    )
+
+    assert checked == [selected_image]
+    assert pins == {selected_image: selected_image.rsplit(":", 1)[0] + "@" + digest}
+    assert cache_path.read_bytes() == original_cache
+
+
+def test_image_bootstrap_observing_progress_preserves_exact_json(capsys) -> None:
+    digest = "sha256:" + "9" * 64
+
+    workflow_cli._emit_image_bootstrap_observing_progress(
+        digest=digest, timeout_seconds=0
+    )
+
+    assert capsys.readouterr().err == (
+        '{"apiVersion": "npa.image-bootstrap-progress/v1", '
+        f'"digest": "{digest}", "state": "observing", "timeout_seconds": 0}}\n'
+    )
+
+
+@pytest.mark.parametrize("runtime_probe_required", [True, False])
+def test_image_bootstrap_probe_paths_share_observing_progress_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    runtime_probe_required: bool,
+) -> None:
+    digest = "sha256:" + "8" * 64
+    image = "registry.example.invalid/operator/image:tag"
+    immutable = image.rsplit(":", 1)[0] + "@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
+        lambda *_args, **_kwargs: ("iam", "opaque"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: (digest, {}),
+    )
+    monkeypatch.setattr(
+        "npa.deploy.images.requires_skypilot_bootstrap_runtime_probe",
+        lambda _image: runtime_probe_required,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.verify_attestation",
+        lambda **_kwargs: ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="incompatible",
+            source="oci_attestation",
+        ),
+    )
+    probes = []
+
+    def probe(**kwargs):
+        probes.append(kwargs)
+        return ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source="ephemeral_capability_probe",
+            cleanup="verified",
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        probe,
+    )
+    progress: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        workflow_cli,
+        "_emit_image_bootstrap_observing_progress",
+        lambda *, digest, timeout_seconds: progress.append((digest, timeout_seconds)),
+    )
+
+    workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", digest=digest)],
+        context="exact-context",
+        namespace="target-namespace",
+        observation_timeout_seconds=1800,
+    )
+
+    assert progress == [(digest, 1800)]
+    assert len(probes) == 1
+    assert probes[0].get("runtime_bootstrap", False) is not runtime_probe_required
 
 
 def test_groot_label_and_label_backed_cache_cannot_bypass_runtime_probe(
@@ -623,10 +1799,10 @@ def test_groot_label_and_label_backed_cache_cannot_bypass_runtime_probe(
     """Canonical and repaired GR00T use one repo, so only selected bytes are evidence."""
 
     digest = "sha256:" + "b" * 64
-    image = "cr.us-central1.nebius.cloud/u000/npa-groot:0.1.0-sky1"
+    image = "registry-us.example/u000/npa-groot:0.1.0-sky1"
     immutable = image.rsplit(":", 1)[0] + "@" + digest
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("NPA_REGISTRY", "cr.us-central1.nebius.cloud/u000")
+    monkeypatch.setenv("NPA_REGISTRY", "registry-us.example/u000")
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
         lambda *_args, **_kwargs: ("iam", "opaque"),
@@ -679,10 +1855,101 @@ def test_groot_label_and_label_backed_cache_cannot_bypass_runtime_probe(
             )
         ],
         context="exact-context",
+        namespace="target-namespace",
     )
 
     assert calls == [(image, digest, "exact-context")]
     assert result[0]["source"] == "ephemeral_capability_probe"
+
+
+def test_runtime_bootstrap_probe_receives_declared_image_pull_secrets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    digest = "sha256:" + "c" * 64
+    image = "registry-us.example/u000/npa-groot:0.1.0-sky1"
+    immutable = image.rsplit(":", 1)[0] + "@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
+        lambda *_args, **_kwargs: ("iam", "opaque"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: (digest, {}),
+    )
+    observed: dict[str, object] = {}
+
+    def probe(**kwargs):
+        observed.update(kwargs)
+        return ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source="ephemeral_capability_probe",
+            checks=("runtime_capabilities",),
+            cleanup="deleted",
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        probe,
+    )
+
+    workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", digest=digest)],
+        context="exact-context",
+        namespace="target-namespace",
+        pull_secrets_by_image={image: ("operator-registry",)},
+    )
+
+    assert observed["image_pull_secrets"] == ("operator-registry",)
+
+
+def test_runtime_bootstrap_probe_receives_no_deadline_observation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    digest = "sha256:" + "d" * 64
+    image = "registry-us.example/u000/npa-groot:0.1.0-sky1"
+    immutable = image.rsplit(":", 1)[0] + "@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
+        lambda *_args, **_kwargs: ("iam", "opaque"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: (digest, {}),
+    )
+    observed: dict[str, object] = {}
+
+    def probe(**kwargs):
+        observed.update(kwargs)
+        return ImageContractEvidence(
+            image=immutable,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source="ephemeral_capability_probe",
+            checks=("runtime_capabilities",),
+            cleanup="verified",
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        probe,
+    )
+
+    workflow_cli._preflight_image_bootstrap_contracts(
+        images=[image],
+        pull_checks=[ImagePullCheck(image=image, status="ok", digest=digest)],
+        context="exact-context",
+        namespace="target-namespace",
+        observation_timeout_seconds=0,
+    )
+
+    assert observed["observation_timeout_seconds"] == 0
 
 
 def test_preflight_is_skipped_when_disabled(
@@ -738,20 +2005,21 @@ def test_catalog_helper_reports_max_per_node() -> None:
 
 
 def test_image_and_capacity_checks_run_before_any_provisioning() -> None:
-    """A registry missing the workbench images must cost no cluster time.
+    """Definitive manifests fail free; exact target proof follows provisioning.
 
-    The check only needs the registry and the --image overrides, never the
-    cluster, so it belongs ahead of deployIfAbsent.
+    A Kubernetes pull pod cannot exist until deployIfAbsent has produced the
+    selected cluster. Public release manifests and VM paths remain a free gate.
     """
 
     import inspect
 
     source = inspect.getsource(workflow_cli.submit_cmd)
     capacity_at = source.index("resolved_deploy_plans = plan_infra_present(")
-    image_at = source.index("_preflight_submit_images(")
+    manifest_at = source.index("_preflight_submit_image_manifests(")
     mutation_at = source.index("records = ensure_infra_present(")
+    target_at = source.rindex("image_digest_pins = _preflight_submit_images(")
 
-    assert capacity_at < image_at < mutation_at
+    assert capacity_at < manifest_at < mutation_at < target_at
 
 
 def test_a_missing_workbench_image_carries_its_build_command(
@@ -766,7 +2034,7 @@ def test_a_missing_workbench_image_carries_its_build_command(
                 return (
                     401,
                     {
-                        "www-authenticate": 'Bearer realm="https://cr.x/v2/token/",service="cr.x"'
+                        "www-authenticate": 'Bearer realm="https://registry.example/v2/token/",service="registry.example"'
                     },
                     b"",
                 )
@@ -781,7 +2049,7 @@ def test_a_missing_workbench_image_carries_its_build_command(
             )
 
     check = check_image_pull(
-        "cr.eu-north1.nebius.cloud/e000/npa-cosmos-curate:some-old-tag",
+        "registry.example/e000/npa-cosmos-curate:some-old-tag",
         password="token",
         fetcher=Missing(),
     )
@@ -794,30 +2062,23 @@ def test_a_missing_workbench_image_carries_its_build_command(
     assert "docker login" in check.remedy
 
 
-def test_submit_checks_the_project_registry_not_the_first_party_default(
+def test_submit_ignores_an_existing_project_registry_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`npa configure` saves a project registry; the image pins must use it.
-
-    Without this, preflight checked one registry while the run pulled from
-    another, and the build command it printed named the wrong destination.
-    """
+    """A stale saved private registry must not repoint public workload images."""
 
     monkeypatch.setattr(
         "npa.clients.config.resolve_container_registry",
-        lambda project=None: "cr.us-central1.nebius.cloud/u00proj",
+        lambda project=None: "registry-us.example/u00proj",
     )
 
-    assert (
-        workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "cr.us-central1.nebius.cloud/u00proj"
-    )
+    assert workflow_cli._resolve_submit_registry("", "test-rtx") == ""
 
 
 def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "npa.clients.config.resolve_container_registry",
-        lambda project=None: "cr.us-central1.nebius.cloud/u00proj",
+        lambda project=None: "registry-us.example/u00proj",
     )
 
     assert (
@@ -825,27 +2086,30 @@ def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> Non
     )
 
 
-def test_npa_registry_env_wins_over_project_config(
+def test_submit_ignores_npa_registry_env_for_public_workload_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "ghcr.io/nebius/nebius-physical-ai")
     monkeypatch.setattr(
         "npa.clients.config.resolve_container_registry",
-        lambda project=None: "cr.us-central1.nebius.cloud/u00proj",
+        lambda project=None: "registry-us.example/u00proj",
     )
 
-    assert (
-        workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "ghcr.io/nebius/nebius-physical-ai"
-    )
+    assert workflow_cli._resolve_submit_registry("", "test-rtx") == ""
 
 
-def test_an_unreadable_config_falls_back_to_the_render_default(
+def test_submit_without_explicit_registry_defers_to_render_default_without_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def explode(project=None):  # noqa: ANN001 - test stub
-        raise RuntimeError("no config")
+    config_lookups: list[str | None] = []
 
-    monkeypatch.setattr("npa.clients.config.resolve_container_registry", explode)
+    def record_config_lookup(project=None):  # noqa: ANN001 - test stub
+        config_lookups.append(project)
+        return "registry.invalid/project"
+
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_container_registry", record_config_lookup
+    )
 
     assert workflow_cli._resolve_submit_registry("", "p") == ""
+    assert config_lookups == []

@@ -21,29 +21,30 @@
 #   * pre-warm the cache once per node/PVC to avoid paying the cold start per pod:
 #     npa/docker/workbench/common/warm-isaac-cache.yaml
 #
-# Digest pinned 2026-07-31. Tag: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
+# Digest pinned 2026-08-25. Tag: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 # Freely redistributable, already covered by the base-image CVE scan matrix in
-# .github/workflows/image-security-scan.yml, and already proven to host Isaac Sim 5.1
-# (npa-groot uses the same base). To update, resolve the digest via the registry HTTP
+# .github/workflows/image-security-scan.yml. To update, resolve the digest via the registry HTTP
 # API per docs/security/image-reproducibility.md and update the CI scan matrix too.
-FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04@sha256:ad6d59a3bbf3e82c1c849c9ac09cfc2a3e0bbb8655042fd899be6681b3fe2a85
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d374920721983312627f8adbfcf390bdb4b399d280ed
 
-ARG ISAAC_LAB_VERSION=2.3.2.post1
-ARG ISAAC_SIM_VERSION=5.1.0.0
-# Isaac Lab v2.3.2. Pinned by COMMIT because git tags are mutable; the bootstrap asserts
+ARG ISAAC_LAB_VERSION=3.0.0b2.post1
+ARG ISAAC_SIM_VERSION=6.0.1.0
+# Isaac Lab v3.0.0-beta2.patch1. Pinned by COMMIT because git tags are mutable; the bootstrap asserts
 # `git rev-parse HEAD` equals this. The GitHub repo is BSD-3-Clause and is the only
 # source of scripts/reinforcement_learning/, which the SkyPilot Isaac tasks invoke - the
 # isaaclab wheel ships the library but no scripts/.
-ARG ISAAC_LAB_SRC_COMMIT=37ddf626871758333d6ed89cf64ad702aef127d0
+ARG ISAAC_LAB_SRC_COMMIT=ffff603eafc6b74264a5261cc0183d6a65390d78
 ARG NPA_RUNTIME_USER=ubuntu
 ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="isaac-lab" \
       npa.version="${ISAAC_LAB_VERSION}" \
       npa.isaac_sim_version="${ISAAC_SIM_VERSION}" \
+      npa.isaac_lab_release_channel="beta" \
       npa.isaac_provisioning="runtime-fetch" \
       npa.architecture="no-baked-omniverse-kit" \
-      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 # NOTE the absence of ACCEPT_EULA / ISAACSIM_ACCEPT_EULA / OMNI_KIT_ACCEPT_EULA /
 # PRIVACY_CONSENT. Every one of those used to be baked here. They are now the operator's
@@ -58,14 +59,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_ISAAC_CACHE_DIR=/opt/isaac-cache \
     NPA_ISAAC_BASE_PYTHON=/opt/npa/sim/venv/bin/python \
     NPA_BAKED_PYTHON=/opt/npa/sim/venv/bin/python \
-    NPA_ISAAC_WHEELS_FILE=/opt/npa/docker/workbench/common/isaac-nvidia-wheels.txt \
+    NPA_ISAAC_WHEELS_FILE=/opt/npa/docker/workbench/common/isaac3-nvidia-wheels.txt \
+    NPA_ISAAC_OSS_DEPS_FILE=/opt/npa/docker/workbench/common/isaac3-oss-deps.txt \
     ISAAC_LAB_PYTHON=/isaac-sim/python.sh \
     NPA_ISAAC_LAB_OUTPUT_DIR=/workspace/isaaclab/npa-runs \
     NPA_ISAAC_LAB_WORKDIR=/workspace/isaaclab \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     OMNI_USER_DIR=/tmp/isaac-sim-cache \
     OMNI_LOG_DIR=/tmp/isaac-sim-cache/logs \
     XDG_RUNTIME_DIR=/tmp/xdg-runtime \
     NVIDIA_DRIVER_CAPABILITIES=all \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/opt/npa/src
 
@@ -87,7 +91,7 @@ RUN find /opt/npa/docker/workbench/common -type d -exec chmod 0755 {} + \
     && find /opt/npa/docker/workbench/common -type f -exec chmod 0644 {} + \
     && chmod 0755 /opt/npa/docker/workbench/common/*.sh
 
-# python3.11 + PyTorch cu128 (sm_120 for Blackwell) + the complete OSS dependency closure
+# python3.12 + PyTorch cu128 (sm_120 for Blackwell) + the complete OSS dependency closure
 # + the bootstrap, the /isaac-sim/python.sh shim and the SkyPilot k8s prerequisites. The
 # script ends by asserting that the bootstrap REFUSES without EULA acceptance and that no
 # isaacsim/isaaclab distribution is importable - the build proves the absence of the thing
@@ -96,7 +100,23 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
-       /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh
+       NPA_UBUNTU_SNAPSHOT=20260825T000000Z \
+       NPA_UBUNTU_SUITE=noble \
+       NPA_LINUX_LIBC_DEV_VERSION=6.8.0-138.138 \
+       NPA_ISAAC_PYTHON_MINOR=3.12 \
+       TORCH_VERSION=2.11.0 \
+       TORCHVISION_VERSION=0.26.0 \
+       TORCHAUDIO_VERSION=2.11.0 \
+       /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && find /opt/npa/sim/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test -z "$(find /opt/npa/sim/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && test "$(/opt/npa/sim/venv/bin/python -c \
+      'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" = /usr/bin/ffmpeg
 
 COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh /usr/local/bin/npa
 
@@ -122,7 +142,7 @@ RUN find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && /opt/npa/sim/venv/bin/python -c \
       "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
     && env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c \
-      'import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation'
+      'import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation, npa.workflows.sim2real.workflow_stage'
 
 RUN /opt/npa/sim/venv/bin/python -m \
       npa.workflows.sim2real.install_isaac_runtime /opt/npa/isaac-runtime \
@@ -137,10 +157,12 @@ RUN install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
     && chown -R "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" /opt/npa/docker/workbench/isaac-lab \
     && /opt/npa/sim/venv/bin/python -m py_compile \
       /opt/npa/docker/workbench/isaac-lab/smoke_env.py \
-      /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
+      /opt/npa/docker/workbench/isaac-lab/smoke_functional.py \
+    && rm -rf /opt/nvidia/nsight-compute \
+    && test ! -e /opt/nvidia/nsight-compute
 
-# SkyPilot's Kubernetes bootstrap must find the SYSTEM interpreter (python3.10 here), not
-# the Isaac venv's python3.11, which cannot import its own site-packages when invoked
+# SkyPilot's Kubernetes bootstrap must find the SYSTEM interpreter (Python 3.12 here), not
+# the Isaac venv's Python 3.12, which cannot import its own site-packages when invoked
 # outside the venv. Isaac work always goes through ISAAC_LAB_PYTHON.
 ENV PATH=/usr/bin:$PATH
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -12,11 +13,19 @@ from npa.clients import config, credentials
 
 runner = CliRunner()
 
+# The external tools provisioning is allowed to resolve. Anything else reaching
+# _require_bin is a new dependency that should be noticed, not silently satisfied.
+PROVISIONING_BINARIES = frozenset({"terraform", "nebius", "kubectl"})
+
 
 @pytest.fixture(autouse=True)
 def _successful_storage_probe(monkeypatch):
+    resolved_binaries: list[str] = []
     from npa.clients import storage_validation
     from npa.clients.storage_validation import StorageProbeResult
+    from npa.orchestration.skypilot import local_api
+
+    monkeypatch.setattr(local_api, "_require_linux_host", lambda: None)
 
     monkeypatch.setattr(
         storage_validation,
@@ -78,6 +87,30 @@ def _successful_storage_probe(monkeypatch):
             "default_storage_class": "compute-csi-default-sc",
         },
     )
+    # SkyPilot context enablement has its own CLI tests. Provisioning tests
+    # assert orchestration and must never invoke a real SkyPilot process.
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._check_skypilot_kubernetes",
+        lambda *_args, **_kwargs: ("sky", {}, "config"),
+    )
+
+    # provision_if_absent resolves kubectl before calling the validator stubbed
+    # above, so without this the cached-cluster tests pass only on a machine that
+    # happens to have kubectl installed. Nothing here ever executes the binary.
+    #
+    # Stand in for the filesystem lookup only, and record what was asked for: a
+    # blanket passthrough would also fake terraform and nebius resolution and let a
+    # regression that stopped resolving anything at all go unnoticed.
+    def _resolve_without_touching_the_filesystem(binary: str) -> str:
+        assert binary in PROVISIONING_BINARIES, f"unexpected binary resolved: {binary}"
+        resolved_binaries.append(binary)
+        return f"/usr/bin/{binary}"
+
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._require_bin",
+        _resolve_without_touching_the_filesystem,
+    )
+    return resolved_binaries
 
 
 def _write_runtime(tmp_path: Path, monkeypatch) -> None:
@@ -123,6 +156,47 @@ def _write_runtime(tmp_path: Path, monkeypatch) -> None:
     )
 
 
+def _capture_mk8s_backend_plan(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    from npa import cluster_backends
+
+    backend = cluster_backends.get_backend("mk8s")
+    seen: dict[str, object] = {}
+
+    class CapturingBackend:
+        def plan(self, desired):  # noqa: ANN001, ANN202 - backend test double
+            seen["desired"] = desired
+            seen["plan"] = backend.plan(desired)
+            return seen["plan"]
+
+        def preflight(self, desired, request):  # noqa: ANN001, ANN202
+            return backend.preflight(desired, request)
+
+    monkeypatch.setattr(
+        cluster_backends, "get_backend", lambda _name: CapturingBackend()
+    )
+    return seen
+
+
+def _reserved_capacity_plan():
+    from npa.provisioning_preflight import WholePathPreflightPlan, resolve_topology
+
+    return WholePathPreflightPlan(
+        project_alias="proj",
+        project_id="project-1",
+        tenant_id="tenant-1",
+        region="eu-north1",
+        topology=resolve_topology(
+            cluster_name="reserved-cluster",
+            gpu_nodes=1,
+            gpu_platform="gpu-rtx6000",
+            gpu_preset="1gpu-24vcpu-218gb",
+            capacity_block_group="capacityblockgroup-example",
+            preemptible=False,
+        ),
+        decision="ready",
+    )
+
+
 def test_provision_if_absent_dry_run_reports_actions(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -143,6 +217,209 @@ def test_provision_if_absent_dry_run_reports_actions(
         for action in result.actions
     )
     assert result.storage_bucket == "s3://bucket/checkpoints/"
+
+
+def test_provision_dry_run_keeps_absent_project_quota_unknown_after_tenant_rbac_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty project response must not authorize a quota-backed mutation."""
+    _write_runtime(tmp_path, monkeypatch)
+    from npa import provisioning_preflight
+    from npa.clients import nebius
+
+    calls: list[str] = []
+
+    def tenant_denied(parent_id: str, _region: str, _names):
+        calls.append(parent_id)
+        raise nebius.NebiusError("PermissionDenied")
+
+    monkeypatch.setattr(provisioning_preflight, "read_provider_quotas", tenant_denied)
+    monkeypatch.setattr(
+        nebius,
+        "list_quota_allowances",
+        lambda parent_id: calls.append(parent_id) or {"items": []},
+    )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=tmp_path / "missing-kubeconfig",
+        dry_run=True,
+        skip_s3=True,
+    )
+
+    assert result.status == "unknown"
+    assert calls == ["tenant-1", "project-1"]
+    scope = next(
+        item
+        for item in result.preflight["checks"]
+        if item["name"] == "quota_evidence_scope"
+    )
+    assert scope["status"] == "unknown"
+
+
+def test_provision_blocks_mutation_when_project_quota_is_absent_after_rbac_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The project fallback is fail-closed before Terraform can create nodes."""
+    _write_runtime(tmp_path, monkeypatch)
+    from npa import provisioning_preflight
+    from npa.clients import nebius
+    from npa.provisioning_preflight import PreflightBlockedError
+
+    monkeypatch.setattr(
+        provisioning_preflight,
+        "read_provider_quotas",
+        lambda *_args: (_ for _ in ()).throw(nebius.NebiusError("PermissionDenied")),
+    )
+    monkeypatch.setattr(nebius, "list_quota_allowances", lambda _parent: {"items": []})
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle.up_cmd",
+        lambda **_kwargs: pytest.fail("quota-blocked plan must not create a cluster"),
+    )
+
+    with pytest.raises(PreflightBlockedError, match="quota"):
+        provisioning.provision_if_absent(
+            project="proj",
+            kubeconfig=tmp_path / "missing-kubeconfig",
+            skip_s3=True,
+        )
+
+
+def test_provision_if_absent_dry_run_preserves_strict_reserved_topology(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    seen = _capture_mk8s_backend_plan(monkeypatch)
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=tmp_path / "missing-kubeconfig",
+        dry_run=True,
+        skip_s3=True,
+        gpu_nodes=1,
+        gpu_platform="gpu-b200-sxm",
+        gpu_preset="8gpu-160vcpu-1792gb",
+        gpu_driver_mode="managed-image",
+        capacity_block_group="capacityblockgroup-example",
+        infiniband_fabric="us-central1-b",
+    )
+
+    assert result.status == "ready"
+    assert result.preflight["topology"]["capacity_block_group"] == (
+        "capacityblockgroup-example"
+    )
+    assert result.preflight["topology"]["gpu_preemptible"] is False
+    assert not any(
+        quota["name"].startswith("compute.instance.gpu.")
+        for quota in result.preflight["quotas"]
+    )
+    assert seen["desired"].gpu_nodes.capacity_block_group == (
+        "capacityblockgroup-example"
+    )
+    assert seen["desired"].gpu_nodes.preemptible is False
+    assert seen["plan"]["gpu_reservation"] == "strict"
+    assert any("provider_mutation=false" in action for action in result.actions)
+
+
+def test_reserved_capacity_recovery_uses_the_effective_topology(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    from npa.provisioning_journal import ProvisioningOperation
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *_a, **_k: False)
+    applied: dict[str, object] = {}
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle.up_cmd",
+        lambda **kwargs: applied.update(kwargs),
+    )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="reserved-cluster",
+        kubeconfig=tmp_path / "reserved-kubeconfig",
+        skip_s3=True,
+        _resolved_plan=_reserved_capacity_plan(),
+    )
+
+    journal = ProvisioningOperation(result.operation_id).read()
+    resume_argv = journal["recovery_commands"]["resume_argv"]
+    group_index = resume_argv.index("--capacity-block-group")
+    assert resume_argv[group_index + 1] == "capacityblockgroup-example"
+    assert "--on-demand" in resume_argv
+    assert "--preemptible" not in resume_argv
+    assert journal["preflight_plan"]["topology"]["capacity_block_group"] == (
+        "capacityblockgroup-example"
+    )
+    assert applied["capacity_block_group"] == "capacityblockgroup-example"
+    assert applied["preemptible"] is False
+
+
+def test_empty_failed_operation_can_start_a_new_topology_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A GPU preflight failure must not block a later CPU-only retry forever."""
+    _write_runtime(tmp_path, monkeypatch)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    calls: list[dict] = []
+
+    def up_cmd(**kwargs):
+        calls.append(kwargs)
+        if kwargs["gpu_nodes"] == 1:
+            raise RuntimeError("synthetic pre-resource failure")
+
+    monkeypatch.setattr("npa.cli.cluster.terraform_lifecycle.up_cmd", up_cmd)
+    kubeconfig = tmp_path / "missing-kubeconfig"
+    with pytest.raises(RuntimeError, match="synthetic pre-resource failure"):
+        provisioning.provision_if_absent(
+            project="proj",
+            cluster_name="retry-shape",
+            kubeconfig=kubeconfig,
+            skip_s3=True,
+            cpu_nodes=0,
+            gpu_nodes=1,
+        )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="retry-shape",
+        kubeconfig=kubeconfig,
+        skip_s3=True,
+        cpu_nodes=1,
+        gpu_nodes=0,
+    )
+
+    assert result.operation_id.endswith("-r1")
+    assert [call["gpu_nodes"] for call in calls] == [1, 0]
+    from npa.provisioning_journal import ProvisioningOperation
+
+    first = ProvisioningOperation(result.operation_id.removesuffix("-r1")).read()
+    second = ProvisioningOperation(result.operation_id).read()
+    assert first["phase"] == "rolled-back"
+    assert first["rollback"]["completed"] is True
+    assert second["preflight_plan"]["topology"]["gpu_nodes"] == 0
+    assert second["preflight_plan"]["topology"]["cpu_nodes"] == 1
+
+
+def test_provision_if_absent_preflight_uses_terraform_disk_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    monkeypatch.setenv("TF_VAR_cpu_disk_size", "96")
+    monkeypatch.setenv("TF_VAR_gpu_disk_size", "600")
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=tmp_path / "missing-kubeconfig",
+        dry_run=True,
+        skip_s3=True,
+    )
+
+    topology = result.preflight["topology"]
+    assert topology["cpu_disk_gib"] == 96
+    assert topology["gpu_disk_gib"] == 600
+    assert topology["required_network_ssd_gib"] == "696"
 
 
 def test_provision_dry_run_from_installed_package_ignores_cached_cluster(
@@ -280,6 +557,7 @@ def test_provision_if_absent_reuses_kubeconfig_and_ensures_bucket(
     tmp_path: Path,
     monkeypatch,
     mocker,
+    _successful_storage_probe,
 ) -> None:
     _write_runtime(tmp_path, monkeypatch)
     kubeconfig = tmp_path / "kubeconfig"
@@ -294,6 +572,9 @@ def test_provision_if_absent_reuses_kubeconfig_and_ensures_bucket(
     assert "s3:verified writable bucket bucket" in result.actions
     assert f"k8s:reused kubeconfig {kubeconfig}" in result.actions
     assert "k8s:validated stable GPU health and CUDA vectorAdd" in result.actions
+    # The fixture fakes the lookup, so this is the assertion that keeps the
+    # resolution itself covered: reusing a kubeconfig must still demand kubectl.
+    assert "kubectl" in _successful_storage_probe
 
 
 def test_reused_cluster_runs_requested_skypilot_smoke(
@@ -303,6 +584,10 @@ def test_reused_cluster_runs_requested_skypilot_smoke(
     kubeconfig = tmp_path / "kubeconfig"
     kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
     seen: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._check_skypilot_kubernetes",
+        lambda *args, **kwargs: seen.append(("check", *args, kwargs)),
+    )
     monkeypatch.setattr(
         "npa.cli.cluster.terraform_lifecycle._run_skypilot_smoke",
         lambda *args, **kwargs: seen.append(("smoke", *args, kwargs)),
@@ -323,19 +608,25 @@ def test_reused_cluster_runs_requested_skypilot_smoke(
 
     assert result.status == "ok"
     assert "sky-smoke:passed" in result.actions
-    assert [item[0] for item in seen] == ["readiness", "smoke"]
-    readiness = seen[0]
+    assert [item[0] for item in seen] == ["check", "readiness", "smoke"]
+    assert seen[0] == (
+        "check",
+        kubeconfig,
+        "npa-cluster",
+        {"sky_bin": "/opt/npa/sky"},
+    )
+    readiness = seen[1]
     assert readiness[1] == ["RTXPRO6000:1"]
     assert readiness[-1]["kubeconfig"] == kubeconfig
     assert readiness[-1]["sky_bin"] == "/opt/npa/sky"
     assert readiness[-1]["label_known_gpus"] is True
-    assert seen[1] == (
+    assert seen[2] == (
         "smoke",
         kubeconfig,
         "npa-cluster",
         "npa-cluster",
         "RTXPRO6000:1",
-        {"sky_bin": "/opt/npa/sky"},
+        {"sky_bin": "/opt/npa/sky", "credentials_checked": True},
     )
 
 
@@ -350,6 +641,10 @@ def test_fresh_cluster_uses_the_same_readiness_then_smoke_boundary(
         seen.append(("up", kwargs))
 
     monkeypatch.setattr("npa.cli.cluster.terraform_lifecycle.up_cmd", up)
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._check_skypilot_kubernetes",
+        lambda *_args, **kwargs: seen.append(("check", kwargs)),
+    )
     monkeypatch.setattr(
         "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
         lambda *_args, **kwargs: seen.append(("readiness", kwargs)) or {},
@@ -369,13 +664,47 @@ def test_fresh_cluster_uses_the_same_readiness_then_smoke_boundary(
     )
 
     assert result.status == "ok"
-    assert [item[0] for item in seen] == ["up", "readiness", "smoke"]
+    assert [item[0] for item in seen] == ["up", "check", "readiness", "smoke"]
     up_kwargs = seen[0][1]
     assert up_kwargs["sky_smoke"] is False
     assert up_kwargs["sky_bin"] == "/opt/npa/sky"
-    assert seen[1][1]["label_known_gpus"] is True
     assert seen[1][1]["sky_bin"] == "/opt/npa/sky"
+    assert seen[2][1]["label_known_gpus"] is True
     assert seen[2][1]["sky_bin"] == "/opt/npa/sky"
+    assert seen[3][1]["sky_bin"] == "/opt/npa/sky"
+    assert seen[3][1]["credentials_checked"] is True
+
+
+def test_skypilot_smoke_uses_the_accelerator_name_resolved_by_readiness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    requested = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    resolved = "NVIDIA-RTX-PRO-6000-BLACKWELL-SERVER-EDITION:1"
+    seen: list[str] = []
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
+        lambda *_args, **_kwargs: {
+            requested: SimpleNamespace(resolved=resolved),
+        },
+    )
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle._run_skypilot_smoke",
+        lambda *_args, **_kwargs: seen.append(_args[3]),
+    )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="npa-cluster",
+        kubeconfig=kubeconfig,
+        sky_smoke=True,
+        accelerator=requested,
+    )
+
+    assert result.status == "ok"
+    assert seen == [resolved]
 
 
 def test_cached_smoke_without_accelerator_keeps_auto_detection(

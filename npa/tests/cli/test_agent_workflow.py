@@ -32,15 +32,16 @@ from npa.cli.agent_workflow import (
     generate_workflow_yaml,
     plan_workflow_yaml_text,
     validate_workflow_yaml_text,
+    _TEMPLATES,
 )
 from npa.cli.main import app
+from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-EXAMPLE_YAML = (
-    REPO_ROOT / "npa/workflows/workbench/npa-workflows/sim2real-two-step-agent.yaml"
-)
+EXAMPLE_YAML = REPO_ROOT / "workflows/testing/sim2real-two-step-agent.yaml"
 
 _GOLDEN_YAMLS = [
+    "nurec-reconstruct.yaml",
     "byof.yaml",
     "rl-policy-training-sim-success.yaml",
     "sim2real-two-step-agent.yaml",
@@ -257,8 +258,15 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
         "augment",
         "grade",
         "evaluate",
+        "select-candidates",
+        "evaluate-selected",
         "quality-gate",
         "quality-disposition",
+        "review-terminal-candidates",
+        "route-terminal-quality",
+        "require-accepted-quality",
+        "visualize-rejected",
+        "reject-quality",
         "annotate-augmented",
         "cosmos-curate",
         "curate",
@@ -266,7 +274,11 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
         "finalize",
     }
     assert expected.issubset(set(result["states"]))
-    plan = plan_workflow_yaml_text(yaml_text, run_id="paidf-demo")
+    plan = plan_workflow_yaml_text(
+        yaml_text,
+        run_id="paidf-demo",
+        assume_decision="promote_checkpoint",
+    )
     assert plan["ok"] is True
     tool_refs = [step.get("tool_ref") for step in plan["steps"]]
     assert "workbench.cosmos2.transfer_execute" in tool_refs
@@ -274,13 +286,44 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
     assert "workbench.cosmos_evaluator.evaluate" in tool_refs
     assert "workbench.cosmos_curate.curate" in tool_refs
     assert "workbench.fiftyone.curate_augmented" in tool_refs
+    assert "workbench.fiftyone.review_augmented" in tool_refs
     assert generated["states"]["cosmos-curate"]["resources"] == "gpu"
     assert generated["config"]["trigger_uri"] == generated["config"]["input_uri"]
     assert generated["config"]["grade_threshold"] == "0.75"
+    assert generated["config"]["plan_assume_decision"] == "promote_checkpoint"
+    assert generated["config"]["augment_control_weight"] == "1.0"
+    assert generated["config"]["augment_guidance"] == "3.0"
     assert generated["config"]["default_decision"] == "loop_back"
     assert generated["config"]["appearance_fidelity_mode"] == "advisory"
     assert generated["states"]["grade"]["next"] == "quality-disposition"
-    assert generated["states"]["annotate-augmented"]["needs"] == ["quality-disposition"]
+    assert generated["states"]["annotate-augmented"]["needs"] == [
+        "require-accepted-quality"
+    ]
+    assert generated["states"]["quality-disposition"]["transitions"] == [
+        {"when": "promote_checkpoint", "goto": "review-terminal-candidates"},
+        {"when": "loop_back", "goto": "review-terminal-candidates"},
+    ]
+    assert generated["states"]["review-terminal-candidates"]["next"] == (
+        "route-terminal-quality"
+    )
+    assert generated["states"]["route-terminal-quality"]["transitions"] == [
+        {"when": "promote_checkpoint", "goto": "require-accepted-quality"},
+        {"when": "loop_back", "goto": "visualize-rejected"},
+    ]
+    assert "enforce_quality_disposition" in " ".join(
+        generated["states"]["require-accepted-quality"]["run"]["argv"]
+    )
+    assert generated["states"]["visualize-rejected"]["toolRef"] == (
+        "workbench.nurec.visualize"
+    )
+    rejected_plan = plan_workflow_yaml_text(
+        yaml_text,
+        run_id="paidf-rejected",
+        assume_decision="loop_back",
+    )
+    rejected_states = [step["state"] for step in rejected_plan["steps"]]
+    assert rejected_states[-2:] == ["visualize-rejected", "reject-quality"]
+    assert "annotate-augmented" not in rejected_states
     assert "supported video" in generated["states"]["augment"]["description"].lower()
 
 
@@ -332,12 +375,16 @@ def test_data_factory_subject_is_an_argv_value_not_shell_source() -> None:
     run = spec["states"]["generate-configs"]["run"]
     assert "shell" not in run
     assert spec["config"]["augment_subject"] == "worker's robot clips"
-    assert run["argv"][-1] == "{{config.augment_subject}}"
+    assert run["argv"][-3:] == [
+        "{{config.augment_subject}}",
+        "{{config.augmentation_seed}}",
+        "{{config.quality_anchor_uri}}",
+    ]
     plan = plan_workflow_yaml_text(workflow, run_id="subject-safe")
     argv = next(step for step in plan["steps"] if step["state"] == "generate-configs")[
         "argv"
     ]
-    assert argv[-1] == "worker's robot clips"
+    assert argv[-3:] == ["worker's robot clips", "", ""]
 
 
 def test_data_factory_chat_propagates_quality_and_curator_knobs() -> None:
@@ -393,7 +440,10 @@ def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
     assert spec["config"]["env_count"] == "12000"
     assert spec["config"]["threshold"] == "0.82"
     assert spec["config"]["task_id"] == "Isaac-Lift-Cube-Franka-v0"
-    assert len(spec["states"]) == 20
+    assert len(spec["states"]) == 24
+    assert "stage-08-cosmos3" in spec["states"]
+    assert "stage-08-wave" not in spec["states"]
+    assert "stage-08-reason2" not in spec["states"]
     assert "run-sim2real" not in spec["states"]
     validation = validate_workflow_yaml_text(workflow)
     assert validation["ok"] is True
@@ -407,14 +457,9 @@ def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
 def test_embedded_agent_uses_the_exact_canonical_sim2real_yaml() -> None:
     from npa.cli.agent_contracts import _embedded_agent_workflow_source
 
-    canonical = (
-        REPO_ROOT
-        / "npa"
-        / "workflows"
-        / "workbench"
-        / "npa-workflows"
-        / "sim2real.yaml"
-    ).read_text(encoding="utf-8")
+    canonical = (REPO_ROOT / "workflows" / "main" / "sim2real.yaml").read_text(
+        encoding="utf-8"
+    )
     source = _embedded_agent_workflow_source()
 
     assert f"_EMBEDDED_CANONICAL_SIM2REAL_YAML = {canonical!r}" in source
@@ -475,7 +520,7 @@ def test_sim2real_named_text_and_clause_boundaries_are_exact() -> None:
         ("rollout length 3", "--steps-per-rollout", "3"),
         ("12 held-out environments", "--gold-count", "12"),
         ("5000 environments", "--env-count", "5000"),
-        ("2 envgen shards", "--shard-count", "2"),
+        ("8 envgen shards", "--shard-count", "8"),
         ("seed 9", "--seed", "9"),
         ("80% success threshold", "--threshold", "0.8"),
         ("75% train fraction", "--train-fraction", "0.75"),
@@ -505,7 +550,7 @@ def test_unsupported_envgen_shards_fail_draft_planning() -> None:
     )
     assert draft["plan"]["ok"] is False
     assert "parallelCount resolves to 16" in draft["plan"]["error"]
-    assert "declares 2 members" in draft["plan"]["error"]
+    assert "declares 8 members" in draft["plan"]["error"]
 
 
 @pytest.mark.parametrize(
@@ -627,6 +672,21 @@ def test_vlm_rl_loop_is_reachable_when_explicitly_requested() -> None:
             "create PAIDF yaml",
             "create_data_factory_workflow",
             "physical-ai-data-factory",
+        ),
+        (
+            "create a PAIDF defect image generation manual ROI workflow",
+            "create_data_factory_workflow",
+            "paidf-defect-image-generation",
+        ),
+        (
+            "create a PAIDF image attribute augmentation workflow",
+            "create_data_factory_workflow",
+            "paidf-image-attribute-augmentation",
+        ),
+        (
+            "create a PAIDF event video generation workflow",
+            "create_data_factory_workflow",
+            "paidf-event-video-generation",
         ),
         ("create VLM-RL loop workflow", "create_vlm_rl_workflow", "vlm-rl-loop"),
         ("create near sim realism yaml", "create_workflow", "two-step"),
@@ -872,6 +932,23 @@ def test_choose_template_selects_data_factory() -> None:
     assert selection["template"] == "physical-ai-data-factory"
 
 
+@pytest.mark.parametrize(
+    ("alias", "workflow_name"),
+    [
+        ("dig", "paidf-defect-image-generation"),
+        ("iaa", "paidf-image-attribute-augmentation"),
+        ("evg", "paidf-event-video-generation"),
+    ],
+)
+def test_paidf_agent_aliases_render_shipped_native_specs(
+    alias: str, workflow_name: str
+) -> None:
+    rendered = yaml.safe_load(generate_workflow_yaml(alias, bucket="agent-bucket"))
+    assert rendered["metadata"]["name"] == workflow_name
+    assert rendered["config"]["bucket"] == "agent-bucket"
+    assert rendered["apiVersion"] == "npa.workflow/v0.0.1"
+
+
 def test_data_factory_draft_from_intent_and_text_is_runnable() -> None:
     from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
@@ -941,7 +1018,10 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert '@app.get("/infra/soperator/status/{{name}}")' in source
     assert "agent-live-infra-plan" in source
     assert "pip install -e" in source
-    assert "deploy/cluster" in source
+    from npa.cli.agent_source_archive import _REQUIRED_ROOTS
+
+    assert "create_agent_source_archive" in source
+    assert "deploy/cluster" in _REQUIRED_ROOTS
     assert "_soperator_deploy_from_payload" in source
     assert "DEFAULT_SOLUTIONS_LIBRARY_REF" in source
     assert "_validate_immutable_solutions_library_ref" in source
@@ -1162,6 +1242,8 @@ def test_generate_isaac_byof_yaml_validates() -> None:
     assert result["ok"] is True, f"isaac-byof validate failed: {result.get('error')}"
     assert result["name"] == "byof"
     assert "<repo-url>" in yaml_text
+    assert "repo_auth: none" in yaml_text
+    assert "repo_token_env: GH_TOKEN" in yaml_text
     assert "base_profile: ubuntu" in yaml_text
     assert "byof-run" in set(result["states"])
 
@@ -1241,6 +1323,28 @@ def test_generate_workflow_yaml_dispatcher() -> None:
     assert "rl-policy-training-sim-success" in rl_policy
     default = generate_workflow_yaml("unknown-template")
     assert "sim2real-two-step" in default
+
+
+def test_cpu_workflow_draft_binds_the_discovered_kubernetes_context() -> None:
+    draft = generate_workflow_draft(
+        template="token-factory-deployment-review",
+        bucket="unit-bucket",
+        infrastructure={
+            "project": "unit",
+            "has_infra": True,
+            "configured": [
+                {
+                    "cluster_name": "unit-cluster",
+                    "context": "unit-context",
+                    "kubeconfig": str(Path.cwd() / "unit-kubeconfig"),
+                }
+            ],
+        },
+    )
+
+    spec = yaml.safe_load(draft["yaml"])
+    assert draft["runnable"] is True
+    assert spec["resources"]["cpu"]["infra"] == "k8s/unit-context"
 
 
 def test_vlm_rl_draft_keeps_canonical_resource_profiles_without_live_infra() -> None:
@@ -1333,6 +1437,55 @@ def test_generate_workflow_draft_returns_selection_and_valid_yaml() -> None:
     assert "\n\n  scene_uri:" in draft["yaml"]
 
 
+def test_deployment_review_draft_is_runnable_and_chains_real_artifacts() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    draft = generate_workflow_draft(
+        user_text="create a Token Factory deployment readiness review workflow",
+        intent="create_workflow",
+        bucket="run-bucket",
+        tool_refs=frozenset(TOOL_CATALOG),
+    )
+
+    assert draft["template"] == "token-factory-deployment-review"
+    assert draft["validation"]["ok"] is True
+    assert draft["plan"]["ok"] is True
+    assert draft["runnable"] is True
+    spec = yaml.safe_load(draft["yaml"])
+    assert (
+        "token_factory_deployment_input"
+        in spec["states"]["prepare-prompts"]["run"]["shell"]
+    )
+    assert spec["states"]["prepare-prompts"]["outputs"] == [
+        {
+            "uri": "{{config.prompts_uri}}",
+            "schema": "npa.token_factory.prompts.v1",
+        }
+    ]
+    assert spec["states"]["generate-recommendations"]["toolRef"] == (
+        "workbench.token_factory.generate"
+    )
+    assert spec["states"]["generate-recommendations"]["needs"] == ["prepare-prompts"]
+    assert spec["states"]["triage-recommendations"]["toolRef"] == (
+        "workbench.token_factory.triage"
+    )
+    assert spec["resources"]["cpu"] == {
+        "cloud": "kubernetes",
+        "cpus": 1,
+        "memory": "4Gi",
+    }
+    assert spec["config"]["artifacts_uri"].endswith("/")
+
+
+def test_deployment_review_beats_generic_gate_for_the_chat_intent() -> None:
+    selection = choose_workflow_template(
+        user_text="Create a Token Factory deployment readiness review workflow.",
+        intent="create_gate_workflow",
+    )
+
+    assert selection["template"] == "token-factory-deployment-review"
+
+
 def test_generate_workflow_draft_sets_not_runnable_when_plan_fails(monkeypatch) -> None:
     monkeypatch.setattr(
         "npa.cli.agent_workflow.plan_workflow_yaml_text",
@@ -1342,6 +1495,21 @@ def test_generate_workflow_draft_sets_not_runnable_when_plan_fails(monkeypatch) 
     assert draft["validation"]["ok"] is True
     assert draft["plan"]["ok"] is False
     assert draft["runnable"] is False
+
+
+def test_every_agent_template_toolref_resolves_catalog() -> None:
+    """Agent drafts must not surface retired or doc-only workflow toolRefs."""
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    emitted = []
+    for template in _TEMPLATES:
+        spec = yaml.safe_load(generate_workflow_yaml(template))
+        emitted.extend(
+            state["toolRef"] for state in spec["states"].values() if "toolRef" in state
+        )
+
+    unknown = sorted(set(emitted) - set(TOOL_CATALOG))
+    assert unknown == []
 
 
 def test_generate_workflow_yaml_aliases() -> None:
@@ -1358,9 +1526,8 @@ def test_generate_workflow_yaml_aliases() -> None:
 @pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)
 def test_golden_yaml_validates(yaml_name: str) -> None:
     """All golden NPA workflow YAMLs in the repo should parse and validate."""
-    yaml_path = REPO_ROOT / "npa/workflows/workbench/npa-workflows" / yaml_name
-    if not yaml_path.is_file():
-        pytest.skip(f"golden YAML not found: {yaml_name}")
+    yaml_path = resolve_npa_workflow_spec(yaml_name)
+    assert yaml_path is not None, f"golden YAML not found: {yaml_name}"
     yaml_text = yaml_path.read_text(encoding="utf-8")
     result = validate_workflow_yaml_text(yaml_text)
     assert result["ok"] is True, f"{yaml_name} failed: {result.get('error')}"
@@ -1369,9 +1536,8 @@ def test_golden_yaml_validates(yaml_name: str) -> None:
 @pytest.mark.parametrize("yaml_name", _GOLDEN_YAMLS)
 def test_golden_yaml_plan_spec_cli(yaml_name: str) -> None:
     """Golden YAMLs should plan successfully with the CLI."""
-    yaml_path = REPO_ROOT / "npa/workflows/workbench/npa-workflows" / yaml_name
-    if not yaml_path.is_file():
-        pytest.skip(f"golden YAML not found: {yaml_name}")
+    yaml_path = resolve_npa_workflow_spec(yaml_name)
+    assert yaml_path is not None, f"golden YAML not found: {yaml_name}"
     result = runner.invoke(
         app,
         [

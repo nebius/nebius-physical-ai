@@ -1,5 +1,7 @@
 # Turn a real photo capture into a 3D scene you can fly through
 
+[Guides](README.md)
+
 Point a camera at a thing. Get back a 3D scene you can re-render from angles the
 camera never visited.
 
@@ -13,11 +15,16 @@ photographed:
 
 ![Novel views rendered from the trained Gaussians](../../assets/nurec-novel-views.png)
 
+For original COLMAP photographs, camera poses and sparse points, see the
+[new COLMAP ingestion workflow](nurec-colmap-reconstruct.md). That CPU NCore
+conversion path is **not yet live validated**; the results on this page apply
+to the existing preconverted-NCore input only.
+
 ## Ingredients
 
 | | |
 | --- | --- |
-| **Input** | `nvidia/PhysicalAI-NuRec-PPISP` — ungated, CC-BY-4.0, real photos of a sculpture, already in NCore V4 |
+| **Input** | `nvidia/PhysicalAI-NuRec-PPISP` at revision `2521064a3af6ab1c1caa2ba1b01ddde7eecded69` — automatically downloaded, ungated, CC-BY-4.0, real photos of a sculpture, already in NCore V4 |
 | **Engine** | `nvcr.io/nvidia/nre/nre-ga:26.04` from NGC (pulled, never rebuilt) |
 | **GPU** | One RTX PRO 6000 Blackwell (or L40S). **Must have RT cores** |
 | **Time** | ~45 minutes end to end |
@@ -29,7 +36,7 @@ photographed:
 
 ## The spec
 
-**`npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml`**
+**`workflows/main/nurec-reconstruct.yaml`**
 
 Six stages, each a real `npa workbench nurec` command — no manifest stubs:
 
@@ -40,45 +47,54 @@ check ──▶ fetch ──▶ reconstruct ──▶ render ──▶ visualize
 
 | Stage | What it does |
 | --- | --- |
-| `check` | Entitlement, real HF download authorization, RT-core detection — before spending a 14 GB pull or a GPU-minute |
+| `check` | Rechecks entitlement, real HF download authorization, and RT-core detection inside the GPU worker; run the operator preflight below before submitting |
 | `fetch` | Downloads the NCore V4 shards and derives the `rig -> world` pose edge NRE demands |
 | `reconstruct` | Trains 3DGUT Gaussians, exports the USDZ and real PSNR/SSIM/LPIPS |
 | `render` | Renders **novel** views at an offset rig pose |
-| `visualize` | Builds `reports/sim2real.rrd` for the agent's Rerun panel |
+| `visualize` | Builds `reports/sim2real.rrd` for the agent and a compact offline `reports/index.html` |
 | `finalize` | Aggregates the run tree into `reports/final.json` |
 
 ## Fast path
 
-Free, no GPU, no credentials — see the shape of the pipeline before committing to
-it:
+With a configured project and RT-core target, the public demo command supplies
+the sample, output paths and source staging:
+
+```bash
+npa workbench workflow demo run nurec \
+  --project '<project>' --infra 'k8s/<rtx-context>'
+npa workbench workflow demo view nurec '<run-id>' --project '<project>'
+```
+
+Use the run ID printed by `run` after the workflow finishes. `view` downloads
+the compact HTML report and opens it locally. See
+[public workflow demos](public-workflow-demos.md) for project setup and the four
+presets. The commands below expose the same underlying workflow for customization.
+
+Inspect the workflow locally before preparing its GPU runtime:
 
 ```bash
 npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml
+  workflows/main/nurec-reconstruct.yaml
 ```
 
-Then the cheap real preflight (seconds, no image pull):
+With your NGC key in the private environment or credential store, check access:
 
 ```bash
-export NGC_API_KEY=...
-npa workbench nurec check --json
+npa workbench nurec check --output json
 ```
 
 This probes actual **download authorization**, not just visibility — a gated
 Hugging Face repo still answers `200` on its metadata endpoint, so "I can see it"
 is not "I can fetch it".
 
-> **Never** test a token with `echo "${HF_TOKEN:+yes}${HF_TOKEN:-no}"`. That
-> prints the token: `${VAR:-no}` only falls back when the variable is *empty*.
-> Use `hf auth whoami` or `echo ${#HF_TOKEN}`.
-
 ## Go bigger: the real GPU run
 
-The NRE container has no `npa` inside it, so stage the source the pods install:
-
-```bash
-export NPA_SRC_S3_URI=s3://<your-bucket>/npa-src/<tag>
-```
+Complete [Workbench setup](../getting-started.md) for your RT-core cluster.
+Use `--stage-src` to submit the current reviewed checkout. The workflow enables
+`source_overlay` so its CPU viewer stage also uses the submitted source, even
+when the viewer image contains an older NPA. An explicit verified
+`NPA_SRC_S3_URI` with `--no-stage-src` is an override. Use the same project and
+target throughout.
 
 Submit:
 
@@ -86,10 +102,10 @@ Submit:
 RUN_ID="nurec-$(date -u +%Y%m%dt%H%M%S)z"
 
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/nurec-reconstruct.yaml \
-  --run-id "$RUN_ID" \
-  --infra k8s/<your-rt-core-context> \
-  --var bucket=<your-bucket> \
+  workflows/main/nurec-reconstruct.yaml \
+  --run-id "$RUN_ID" --project "<project-alias>" --runtime --stage-src \
+  --infra "k8s/<your-rt-core-context>" \
+  --var bucket="<your-bucket>" \
   --var prefix="checkpoints/neural-reconstruction/$RUN_ID" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env NGC_API_KEY
@@ -98,7 +114,7 @@ npa workbench workflow submit \
 Watch it:
 
 ```bash
-sky jobs queue
+npa workbench workflow status "$RUN_ID" --project "<project-alias>" --watch
 ```
 
 A healthy run looks like this — `reconstruct` is the long pole:
@@ -108,6 +124,15 @@ check 4m26s → fetch 3m31s → reconstruct 25m33s → render → visualize → 
 ```
 
 ## Look at it
+
+Download `reports/index.html` from the run prefix and open it in any browser.
+It embeds actual capture, novel-view and reconstruction-validation thumbnails,
+separate timeline controls, and the recorded NRE test PSNR/SSIM/LPIPS. It works
+offline without credentials or an agent server. Each timeline includes at most
+32 evenly spaced images; this display sampling does not reduce training or
+rendering. Playback is a slideshow, and the independent timelines do not claim
+paired camera viewpoints. Original images, videos, the USDZ and RRD remain in
+the complete run output.
 
 Open the NPA agent, pick the run, and it loads `reports/sim2real.rrd`
 automatically. Entities you get:
@@ -123,6 +148,13 @@ automatically. Entities you get:
 The `.usdz` is offered as a **download**, not an inline preview — it is ~240 MB
 and belongs in Omniverse, Isaac Sim, or CARLA.
 
+The default public sample's access check and download use the same pinned HF
+revision. The fetch manifest records `dataset_revision` and the actual archive's
+`archive_sha256`. To use a different revision, set `config.dataset_revision` in
+the workflow or pass `--revision` to `npa workbench nurec check` and `fetch`.
+`NPA_NUREC_DATASET_REVISION` supplies the direct CLI/SDK default. Unrelated
+dataset overrides default to their `main` revision unless explicitly pinned.
+
 From the shell instead — a stage-by-stage accounting of what the run prefix
 actually holds:
 
@@ -134,6 +166,49 @@ npa workbench nurec status \
 
 Expect `PSNR ≈ 31`, `SSIM ≈ 0.83`, `LPIPS ≈ 0.27` on the default scene.
 
+## Promotion evidence
+
+The [September 28 public demo qualification](../evidence/public-demos/README.md)
+completed the current pinned-input workflow through `workflow demo run`: 30,000
+verified training steps, 38 novel views, decoded Rerun output, and a working
+offline report. Its receipt distinguishes the original native report from the
+subsequent CPU correction of its metric display. The earlier evidence below is
+preserved for its own source revision.
+
+The main workflow preserves the parsed YAML from the completed September 8,
+2026 multi-pod run; the move changes only the quickstart path comment. The saved
+testing YAML had SHA-256
+`a7d317382e05da80cd947bbeca2f3d0c4671d39e3bcd137678681ebca0880b0d`.
+The [readiness record](../../../workflows/main/nurec-reconstruct.readiness.json)
+binds planning checks to the promoted file and records future-run prerequisites.
+
+The public `struktur28` sample supplied the input photos. The run computed new
+outputs with NRE 26.4.149, using the vendor image digest
+`sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284`:
+
+| Evidence | Observed result |
+| --- | --- |
+| Training | 30,000 steps, one RTX PRO 6000 Blackwell, checkpoint tensors on `cuda:0`, no resumed checkpoint |
+| Quality | PSNR 31.08336, SSIM 0.83245, LPIPS 0.26844 |
+| Run artifacts | 224 objects, including a 240,542,295-byte USDZ |
+| Novel views | 38 frames, rig translation `[0, 0.25, 0]`, training-view replication disabled; MP4 decoded successfully |
+| Viewer | 1,429,920-byte RRD decoded with required run entities; authenticated agent served the same recording hash |
+| Completion | Durable runtime and stage records succeeded; final report confirmed USDZ, novel views, and RRD |
+
+This evidence covers the default sample and single-GPU execution. L40S and
+other captures were not tested in this run, and GPU utilization history was not
+retained. The original controller endpoint was unavailable at the later status
+check; completion evidence comes from durable records and validated outputs.
+Raw operational evidence stays in access-controlled storage. Each new run still
+needs its own writable bucket, staged source, registry access, and healthy
+RT-core target. Promotion does not provision those prerequisites.
+
+On September 9, the promotion check listed the same 224 stored objects,
+verified seven retained artifact hashes, and downloaded the RRD, metrics, and
+final report again with matching hashes. The USDZ archive, MP4 decode, and RRD
+entity checks passed again. This was a read-only artifact check, not a new
+training run.
+
 ## When it breaks
 
 The first failure is nearly always one specific thing:
@@ -144,10 +219,38 @@ The first failure is nearly always one specific thing:
 > for you** — for a single-camera capture the rig *is* the camera, so the derived
 > edge is exact.
 
+The derivation prefers an existing dynamic `<camera> -> world` pose edge. If a
+capture has no dynamic camera pose edge, it can instead read the per-frame
+`T_sensor_worlds` values stored on NCore camera components. Every selected frame
+must provide a finite 4×4 transform on a strictly increasing timestamp timeline;
+missing, malformed, duplicate, or non-finite data stops conversion before a
+derived sequence is published. `--reference-camera <id>` selects a camera
+explicitly; otherwise the longest trajectory wins, with camera ID breaking ties.
+
+This fallback only applies the exact single-camera identity assumption: the rig
+is the selected camera. It does not infer extrinsics for other cameras and does
+not establish reconstruction quality for a multi-camera capture. The derived
+sidecar records both the selected camera and whether poses came from a dynamic
+edge or camera-frame `T_sensor_worlds`.
+
+Local regression coverage establishes conversion compatibility only. Live
+workflow readiness for a frame-pose capture still requires a decoded NRE
+reconstruction on applicable RT-core hardware and inspection of its retained
+artifacts.
+
 For everything else — 402s from NGC, placeholder sensor ids in the stock recipes,
 the missing `sudo`, the 64 MB `/dev/shm` — see the troubleshooting table in
 `skills/workflows/neural-reconstruction/SKILL.md`. Most are already handled
 automatically; the table tells you which.
+
+Native object-centric captures can store their SfM points in a LiDAR component,
+such as `virtual_lidar`, instead of a `PointCloudsComponent`. The stock native
+initializer supports one camera for those captures. When no camera selection is
+provided, Workbench uses the derived rig's reference camera and emits a warning
+listing the excluded cameras. Select a camera explicitly with `--camera-id` to
+make that scope part of the command. An explicit multi-camera selection is never
+silently narrowed. Converted captures with a verified point-cloud inventory keep
+their existing multi-camera initialization path.
 
 ## Dig deeper
 
@@ -164,3 +267,16 @@ automatically; the table tells you which.
   does *not* implement — simulator streaming over `serve-grpc`, LiDAR sweeps,
   object harvesting, frame cleanup — are listed as upstream-owned in the skill's
   routing table.
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../../teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.

@@ -6,9 +6,17 @@ import hmac
 import logging
 import os
 import platform
-from typing import Any
+from pathlib import Path
+from typing import Any, Sequence
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
+
+from npa.workbench.storage_scope import (
+    StorageAuthorizationError,
+    StorageScope,
+    use_storage_scope,
+)
 
 from .analytics import (
     InsightsQueryError,
@@ -33,17 +41,42 @@ from .schemas import (
     RecordRequest,
     RecordResponse,
 )
-from .store import InsightsStoreError, ingest_run, read_edges, read_records, record_metrics
+from .storage import InsightsStorageError
+from .store import (
+    InsightsStoreError,
+    ingest_run,
+    read_edges,
+    read_records,
+    record_metrics,
+)
 
 # Service-tracked stores keyed by store URI.
 STORES: dict[str, dict[str, Any]] = {}
 LOGGER = logging.getLogger(__name__)
 
 
-def create_app(*, auth_mode: str | None = None, token: str | None = None) -> FastAPI:
+def create_app(
+    *,
+    auth_mode: str | None = None,
+    token: str | None = None,
+    allowed_s3_roots: Sequence[str] | None = None,
+    allowed_local_roots: Sequence[str | Path] | None = None,
+) -> FastAPI:
     """Create the insights FastAPI application."""
-    resolved_auth_mode = auth_mode or os.environ.get("INSIGHTS_AUTH_MODE", "none")
-    resolved_token = token if token is not None else os.environ.get("INSIGHTS_TOKEN", "")
+    resolved_auth_mode = auth_mode or os.environ.get("INSIGHTS_AUTH_MODE", "token")
+    if resolved_auth_mode not in {"token", "none"}:
+        raise ValueError("INSIGHTS_AUTH_MODE must be 'token' or explicit 'none'")
+    resolved_token = (
+        token if token is not None else os.environ.get("INSIGHTS_TOKEN", "")
+    )
+    storage_scope = (
+        StorageScope.from_env("INSIGHTS")
+        if allowed_s3_roots is None and allowed_local_roots is None
+        else StorageScope.from_config(
+            s3_roots=allowed_s3_roots or (),
+            local_roots=allowed_local_roots or (),
+        )
+    )
     app = FastAPI(title="NPA Insights")
     if resolved_auth_mode == "none":
         LOGGER.warning(
@@ -51,26 +84,47 @@ def create_app(*, auth_mode: str | None = None, token: str | None = None) -> Fas
             "without a token. Set INSIGHTS_AUTH_MODE=token and INSIGHTS_TOKEN."
         )
 
-    async def require_auth(request: Request, authorization: str = Header(default="")) -> None:
+    @app.middleware("http")
+    async def apply_storage_scope(request: Request, call_next):
+        with use_storage_scope(storage_scope):
+            return await call_next(request)
+
+    @app.exception_handler(StorageAuthorizationError)
+    async def storage_denied(
+        _request: Request, exc: StorageAuthorizationError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+    async def require_auth(
+        request: Request, authorization: str = Header(default="")
+    ) -> None:
         if resolved_auth_mode == "none":
             return
         if not resolved_token:
-            raise HTTPException(status_code=500, detail="INSIGHTS_TOKEN is not configured")
+            raise HTTPException(
+                status_code=503, detail="INSIGHTS_TOKEN is not configured"
+            )
         if not hmac.compare_digest(authorization, f"Bearer {resolved_token}"):
             raise HTTPException(status_code=401, detail="invalid token")
 
     @app.get("/health")
-    async def health(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    async def health(
+        request: Request, authorization: str = Header(default="")
+    ) -> dict[str, Any]:
         await require_auth(request, authorization)
         return {"status": "ok", "stores": len(STORES)}
 
     @app.get("/system-info")
-    async def system_info(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    async def system_info(
+        request: Request, authorization: str = Header(default="")
+    ) -> dict[str, Any]:
         await require_auth(request, authorization)
         return system_info_payload()
 
     @app.get("/list", response_model=InsightsListResponse)
-    async def list_stores(request: Request, authorization: str = Header(default="")) -> InsightsListResponse:
+    async def list_stores(
+        request: Request, authorization: str = Header(default="")
+    ) -> InsightsListResponse:
         await require_auth(request, authorization)
         return InsightsListResponse(stores=list(STORES.values()))
 
@@ -82,7 +136,10 @@ def create_app(*, auth_mode: str | None = None, token: str | None = None) -> Fas
         authorization: str = Header(default=""),
     ) -> dict[str, Any]:
         await require_auth(request, authorization)
-        return status_for_store(input_uri, run_id)
+        try:
+            return status_for_store(input_uri, run_id)
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.post("/record", response_model=RecordResponse)
     async def record(
@@ -95,6 +152,8 @@ def create_app(*, auth_mode: str | None = None, token: str | None = None) -> Fas
             response = record_metrics(body)
         except InsightsStoreError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except InsightsIntegrationError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         _track(response.store_uri, response.total_records, response.total_edges)
@@ -111,6 +170,8 @@ def create_app(*, auth_mode: str | None = None, token: str | None = None) -> Fas
             response = ingest_run(body)
         except InsightsStoreError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except InsightsIntegrationError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         _track(response.store_uri, response.total_records, response.total_edges)
@@ -130,11 +191,17 @@ def create_app(*, auth_mode: str | None = None, token: str | None = None) -> Fas
         try:
             return traverse_lineage(
                 LineageRequest(
-                    input_uri=input_uri, uri=uri, version=version, direction=direction, depth=depth
+                    input_uri=input_uri,
+                    uri=uri,
+                    version=version,
+                    direction=direction,
+                    depth=depth,
                 )
             )
         except InsightsQueryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.get("/query", response_model=QueryResponse)
     async def query(
@@ -191,6 +258,8 @@ def create_app(*, auth_mode: str | None = None, token: str | None = None) -> Fas
             )
         except InsightsQueryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except InsightsIntegrationError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -217,6 +286,8 @@ def create_app(*, auth_mode: str | None = None, token: str | None = None) -> Fas
             )
         except InsightsQueryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.get("/dashboard", response_model=DashboardResponse)
     async def dashboard(
@@ -241,6 +312,8 @@ def create_app(*, auth_mode: str | None = None, token: str | None = None) -> Fas
             )
         except InsightsQueryError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except InsightsStorageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return app
 
@@ -256,7 +329,9 @@ def _track(store_uri: str, total_records: int, total_edges: int) -> None:
 def status_for_store(input_uri: str, run_id: str = "") -> dict[str, Any]:
     records = read_records(input_uri)
     edges = read_edges(input_uri)
-    runs = sorted({str(record.get("run_id", "")) for record in records if record.get("run_id")})
+    runs = sorted(
+        {str(record.get("run_id", "")) for record in records if record.get("run_id")}
+    )
     payload: dict[str, Any] = {
         "store_uri": input_uri,
         "total_records": len(records),
@@ -267,7 +342,9 @@ def status_for_store(input_uri: str, run_id: str = "") -> dict[str, Any]:
         run_records = [record for record in records if record.get("run_id") == run_id]
         payload["run_id"] = run_id
         payload["run_record_count"] = len(run_records)
-        payload["run_metrics"] = sorted({str(r.get("metric_name", "")) for r in run_records})
+        payload["run_metrics"] = sorted(
+            {str(r.get("metric_name", "")) for r in run_records}
+        )
     return payload
 
 

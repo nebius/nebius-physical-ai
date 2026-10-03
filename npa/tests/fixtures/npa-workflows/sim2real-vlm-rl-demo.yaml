@@ -1,7 +1,7 @@
 # TEST FIXTURE ONLY. This intentionally contains obsolete stub toolRefs so the
 # generic workflow DSL's nested-loop and decision semantics retain coverage.
 # It is not discovered as an operator workflow. The only canonical executable
-# Sim2Real spec is npa/workflows/workbench/npa-workflows/sim2real.yaml.
+# Sim2Real spec is workflows/main/sim2real.yaml.
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 

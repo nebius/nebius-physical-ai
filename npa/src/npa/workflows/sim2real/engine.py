@@ -55,6 +55,7 @@ from npa.workflows.sim2real.artifact_upload import (
 from npa.workbench.cosmos.reason import (
     CosmosReasonError,
     merge_dual_reason_evaluations,
+    merge_reason_evaluations,
     resolve_cosmos_reason_model_id,
     run_cosmos_reason_vlm,
     task_description_from_manifest,

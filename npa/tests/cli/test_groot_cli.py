@@ -207,7 +207,9 @@ def test_groot_deploy_checks_cosmos_reason_access_before_provisioning(mocker) ->
 
     def validate(_token, repo):
         if repo == COSMOS_REASON_MODEL:
-            return SimpleNamespace(ok=False, error="HF token lacks Cosmos-Reason access")
+            return SimpleNamespace(
+                ok=False, error="HF token lacks Cosmos-Reason access"
+            )
         return SimpleNamespace(ok=True, error="")
 
     mocker.patch("npa.cli.groot.validate_hf_access", side_effect=validate)
@@ -1000,6 +1002,12 @@ def test_groot_container_dockerfile_pins_runtime_versions() -> None:
     assert "isaaclab[isaacsim,all]==" not in dockerfile
     assert "GROOT_MODEL_DIR=/opt/groot-data/models" in dockerfile
     assert "huggingface-cli download nvidia/GR00T-N1.7-3B" not in dockerfile
+    assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
+    assert "NPA_LIGHT_WORKBENCH_TOOL=groot" in dockerfile
+    assert "workbench groot finetune --help >/dev/null" in dockerfile
+    assert '"mcap>=1.3,<2"' in dockerfile
+    assert "from mcap.writer import Writer" in dockerfile
+    assert "make_reader(BytesIO(buffer.getvalue())).get_summary()" in dockerfile
     assert "--platform linux/amd64" in build_script
 
 
@@ -2257,9 +2265,6 @@ def _mock_groot_serverless_env(mocker):
             aws_secret_access_key="SECRET",
         ),
     )
-    mocker.patch(
-        "npa.cli.groot.resolve_container_registry", return_value="registry.example"
-    )
     image_for_tool = mocker.patch(
         "npa.cli.groot.container_image_for_tool",
         return_value="registry.example/npa-groot:smoke",
@@ -2281,9 +2286,6 @@ def test_groot_serverless_uses_shared_subnet_resolver(mocker) -> None:
             aws_access_key_id="AKIA",
             aws_secret_access_key="SECRET",
         ),
-    )
-    mocker.patch(
-        "npa.cli.groot.resolve_container_registry", return_value="registry.example"
     )
     mocker.patch(
         "npa.cli.groot.container_image_for_tool",
@@ -2400,9 +2402,7 @@ def test_groot_serverless_uses_shared_env_builder(mocker) -> None:
     assert kwargs["env"]["HF_HOME"] == "/tmp/hf_home"
     assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "AKIA"
     assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "SECRET"
-    image_for_tool.assert_called_once_with(
-        "groot", registry="registry.example", tag=GROOT_RUNTIME_VERSION
-    )
+    image_for_tool.assert_called_once_with("groot", tag=GROOT_RUNTIME_VERSION)
     assert kwargs["image"] == "registry.example/npa-groot:smoke"
 
 
@@ -2671,6 +2671,64 @@ def test_groot_status_reports_readiness_blockers(mocker) -> None:
         for b in payload["readiness"]["blockers"]
     )
     assert f"Model {DEFAULT_MODEL} not loaded" in payload["readiness"]["blockers"]
+
+
+@pytest.mark.parametrize("loaded", ["false", "true", 0, 1])
+def test_groot_status_rejects_malformed_loaded_values(mocker, loaded) -> None:
+    http = mocker.MagicMock()
+    http.health.return_value = {
+        "status": "ok",
+        "app_status": "healthy",
+        "model": DEFAULT_MODEL,
+        "loaded": loaded,
+        "ngc_credentials_configured": True,
+    }
+    mocker.patch(
+        "npa.cli.groot.resolve_config",
+        return_value=_cfg(hf_token="PLACEHOLDER_HF_TOKEN"),
+    )
+    mocker.patch("npa.cli.groot.HTTPClient", return_value=http)
+
+    result = runner.invoke(app, ["workbench", "groot", "status", "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["app_status"] == "degraded"
+    assert payload["readiness"]["ngc_credentials_configured"] is True
+    assert payload["readiness"]["model_loaded"] is False
+    assert payload["readiness"]["ready"] is False
+
+
+@pytest.mark.parametrize("ngc_configured", ["false", "true", 0, 1])
+def test_groot_status_rejects_malformed_ngc_values_without_blocking_loaded_model(
+    mocker, ngc_configured
+) -> None:
+    http = mocker.MagicMock()
+    http.health.return_value = {
+        "status": "ok",
+        "model": DEFAULT_MODEL,
+        "loaded": True,
+        "ngc_credentials_configured": ngc_configured,
+    }
+    mocker.patch(
+        "npa.cli.groot.resolve_config",
+        return_value=_cfg(hf_token="PLACEHOLDER_HF_TOKEN"),
+    )
+    mocker.patch("npa.cli.groot.HTTPClient", return_value=http)
+
+    result = runner.invoke(app, ["workbench", "groot", "status", "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["app_status"] == "healthy"
+    assert payload["readiness"]["ngc_credentials_configured"] is False
+    assert payload["readiness"]["model_loaded"] is True
+    assert payload["readiness"]["ready"] is True
+    assert payload["readiness"]["blockers"] == []
+    assert any(
+        note.startswith("NGC credentials not configured")
+        for note in payload["readiness"]["notes"]
+    )
 
 
 def test_groot_status_ready_when_loaded_without_ngc(mocker) -> None:

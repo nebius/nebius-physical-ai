@@ -14,15 +14,17 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import stat
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
-SPEC_PATH = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows" / "bdd100k-pipeline.yaml"
+SPEC_PATH = ROOT / "workflows" / "testing" / "bdd100k-pipeline.yaml"
 WRAPPER_PATH = ROOT / "npa" / "scripts" / "run_bdd100k_pipeline.py"
 
 EXPECTED_STAGE_ORDER = [
@@ -36,7 +38,6 @@ EXPECTED_STAGE_ORDER = [
     "eval-rider",
     "eval-nighttime",
     "eval-distant",
-    "review",
 ]
 SYNTHETIC_BDD100K_LABEL_MAP = {
     "person": 0,
@@ -99,7 +100,7 @@ def test_gpu_stages_are_the_ones_that_need_a_gpu() -> None:
     for state in ("backfill-clip", "train-rider", "train-nighttime", "train-distant"):
         profile = spec.resources[by_state[state].resources]
         assert "accelerators" in profile, state
-    for state in ("ingest", "backfill-cpu", "curate-views", "review"):
+    for state in ("ingest", "backfill-cpu", "curate-views"):
         profile = spec.resources[by_state[state].resources]
         assert "accelerators" not in profile, state
 
@@ -128,14 +129,18 @@ def test_eval_stages_discover_their_checkpoint_and_publish_metrics() -> None:
         assert "--discover-checkpoint" in step.argv, state
         assert "--write-canonical-metrics" in step.argv, state
         # The search prefix is the TRAINING output, which is what /train was handed.
-        assert step.argv[step.argv.index("--checkpoint-uri") + 1].endswith(f"/training/{view}")
+        assert step.argv[step.argv.index("--checkpoint-uri") + 1].endswith(
+            f"/training/{view}"
+        )
         assert step.outputs[0]["uri"].endswith("/metrics.json")
 
 
 def test_spec_documents_synthetic_and_real_label_maps() -> None:
     text = SPEC_PATH.read_text(encoding="utf-8")
 
-    assert "pedestrian/motorcycle/bicycle" in text, "the real-BDD100K alternative must stay documented"
+    assert "pedestrian/motorcycle/bicycle" in text, (
+        "the real-BDD100K alternative must stay documented"
+    )
     assert json.loads(yaml.safe_load(text)["config"]["detection_label_map"]) == (
         SYNTHETIC_BDD100K_LABEL_MAP
     )
@@ -208,8 +213,12 @@ def test_wrapper_submits_the_rendered_spec_and_forwards_tokens(
     # The rendered document is the spec's plan, and the override reached the argv.
     names = [doc["name"] for doc in captured["docs"] if "name" in doc and "run" in doc]
     assert names, captured["docs"]
-    rendered = Path.read_text  # keep flake-free; the assertion below uses the parsed docs
-    assert any("--synthetic 5000" in doc["run"] for doc in captured["docs"] if "run" in doc)
+    rendered = (
+        Path.read_text
+    )  # keep flake-free; the assertion below uses the parsed docs
+    assert any(
+        "--synthetic 5000" in doc["run"] for doc in captured["docs"] if "run" in doc
+    )
     assert rendered is Path.read_text
 
 
@@ -237,12 +246,68 @@ def test_wrapper_yaml_flag_is_still_accepted(monkeypatch, capsys) -> None:
     assert "npa workbench lancedb import-bdd100k" in payload["rendered_skypilot"]
 
 
+def _path_without_scripts_dir() -> str:
+    """PATH as an unactivated venv leaves it: no `npa` console script on it.
+
+    The mock stages below run each step's real argv, which starts with a bare
+    `npa`. Both CI and an activated venv have that on PATH, so those tests pass
+    whether or not the runner resolves the program itself; the failure only shows up
+    for a contributor running `<venv>/bin/python -m pytest`. Pruning PATH inside the
+    tests is what makes them fail everywhere instead.
+    """
+
+    scripts_dir = sysconfig.get_path("scripts")
+    return os.pathsep.join(
+        entry
+        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and Path(entry) != Path(scripts_dir)
+    )
+
+
+class TestMockStageEnv:
+    """The environment that makes a step's bare `npa` resolvable."""
+
+    def test_env_prepends_the_scripts_dir(self, monkeypatch) -> None:
+        wrapper = _load_wrapper_module()
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+        path = wrapper._mock_stage_env()["PATH"].split(os.pathsep)
+
+        assert path[0] == sysconfig.get_path("scripts")
+        # Prepend, never replace: stages also call git, aws and other real binaries.
+        assert path[1:] == ["/usr/bin", "/bin"]
+
+    def test_env_is_a_no_op_when_the_dir_is_already_on_path(self, monkeypatch) -> None:
+        wrapper = _load_wrapper_module()
+        scripts_dir = sysconfig.get_path("scripts")
+        monkeypatch.setenv("PATH", f"/usr/bin{os.pathsep}{scripts_dir}")
+
+        # An activated venv already has it, and duplicating entries on every call
+        # would grow PATH without changing which npa is found.
+        assert wrapper._mock_stage_env()["PATH"] == f"/usr/bin{os.pathsep}{scripts_dir}"
+
+    def test_env_carries_the_rest_of_the_environment(self, monkeypatch) -> None:
+        wrapper = _load_wrapper_module()
+        monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+
+        # Stages read credentials and run config from the ambient environment, so
+        # this must stay a PATH edit rather than a constructed environment.
+        assert wrapper._mock_stage_env()["NPA_SRC_S3_URI"] == (
+            "s3://example-bucket/prefix/npa"
+        )
+
+
 @pytest.mark.timeout(300)
-def test_mock_endpoint_validation_drives_every_stage(capsys, tmp_path, monkeypatch) -> None:
+def test_mock_endpoint_validation_drives_every_stage(
+    capsys, tmp_path, monkeypatch
+) -> None:
     """The offline proof: every stage's real argv against stand-in services."""
 
     wrapper = _load_wrapper_module()
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+    # Prove the stages resolve their own program rather than inheriting a PATH that
+    # happens to carry npa, which is what CI and an activated venv both provide.
+    monkeypatch.setenv("PATH", _path_without_scripts_dir())
     output = tmp_path / "mock.json"
 
     rc = wrapper.main(
@@ -264,7 +329,9 @@ def test_mock_endpoint_validation_drives_every_stage(capsys, tmp_path, monkeypat
         item["path"] for item in summary["lancedb_requests"] if item["method"] == "POST"
     ] == wrapper.EXPECTED_LANCEDB_POSTS
     assert [
-        item["path"] for item in summary["detection_requests"] if item["method"] == "POST"
+        item["path"]
+        for item in summary["detection_requests"]
+        if item["method"] == "POST"
     ] == wrapper.EXPECTED_DETECTION_POSTS
     # Every stage ran, and each one ran its own argv.
     assert [item["name"] for item in summary["task_results"]] == EXPECTED_STAGE_ORDER
@@ -272,13 +339,23 @@ def test_mock_endpoint_validation_drives_every_stage(capsys, tmp_path, monkeypat
         assert item["returncode"] == 0, item
 
     train_payloads = [
-        item["payload"] for item in summary["detection_requests"] if item["path"] == "/train"
+        item["payload"]
+        for item in summary["detection_requests"]
+        if item["path"] == "/train"
     ]
     assert len(train_payloads) == 3
+    from npa.workbench.detection_training.schemas import TrainRequest
+    from npa.workbench.detection_training.training import resolve_num_classes
+
     for payload in train_payloads:
         assert payload["label_map"] == SYNTHETIC_BDD100K_LABEL_MAP
-        # num_classes agrees with the map rather than contradicting it.
-        assert payload["num_classes"] == len(SYNTHETIC_BDD100K_LABEL_MAP)
+        # The real training contract reserves detector category zero for
+        # background and resolves omitted counts from the explicit label map.
+        # Prove the effective model count, not an optional transport default.
+        assert (
+            resolve_num_classes(TrainRequest.model_validate(payload))
+            == len(SYNTHETIC_BDD100K_LABEL_MAP) + 1
+        )
 
 
 @pytest.mark.timeout(300)
@@ -289,11 +366,21 @@ def test_mock_run_awaits_training_and_resolves_the_real_checkpoint(
 
     wrapper = _load_wrapper_module()
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
+    monkeypatch.setenv("PATH", _path_without_scripts_dir())
     output = tmp_path / "mock.json"
 
-    assert wrapper.main(
-        ["--mock-endpoints", "--run-id", "bdd100k-mock-order", "--output-json", str(output)]
-    ) == 0
+    assert (
+        wrapper.main(
+            [
+                "--mock-endpoints",
+                "--run-id",
+                "bdd100k-mock-order",
+                "--output-json",
+                str(output),
+            ]
+        )
+        == 0
+    )
     capsys.readouterr()
     summary = json.loads(output.read_text(encoding="utf-8"))
 
@@ -309,7 +396,9 @@ def test_mock_run_awaits_training_and_resolves_the_real_checkpoint(
 
     # The eval payload names a concrete checkpoint file, not the training directory.
     eval_payloads = [
-        item["payload"] for item in summary["detection_requests"] if item["path"] == "/eval"
+        item["payload"]
+        for item in summary["detection_requests"]
+        if item["path"] == "/eval"
     ]
     assert len(eval_payloads) == 3
     for payload in eval_payloads:

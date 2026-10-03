@@ -255,7 +255,7 @@ def _loop_component_records(
     )
     stage_08_works = bool(
         iterations
-        and vlm_modes == {"kubernetes_job_dual_reason"}
+        and vlm_modes == {"kubernetes_job_two_evaluator"}
         and vlm_invocation
         and (vlm_invocation.get("gpu_provenance") or {}).get("selected_products")
         and (vlm_invocation.get("gpu_provenance") or {}).get("image_digests")

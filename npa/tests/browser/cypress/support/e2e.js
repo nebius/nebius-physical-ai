@@ -803,9 +803,13 @@ function installAgentApiMocks() {
   // bytes through the authenticated download proxy.
   cy.intercept("GET", "/api/artifacts/download*", (req) => {
     const url = new URL(req.url);
-    const uri = url.searchParams.get("s3_uri") || "";
-    if (uri.match(/\.(png|jpe?g|gif|webp)$/i)) {
+    const key = url.searchParams.get("key") || "";
+    if (key.match(/\.(png|jpe?g|gif|webp)$/i)) {
       req.reply({ statusCode: 200, headers: { "content-type": "image/png" }, body: "mock-image-bytes" });
+      return;
+    }
+    if (key.match(/\.(mp4|webm|mov)$/i)) {
+      req.reply({ statusCode: 200, headers: { "content-type": "video/mp4" }, fixture: "browser-compatible.mp4,null" });
       return;
     }
     req.reply({ statusCode: 200, headers: { "content-type": "application/octet-stream" }, body: "mock-bytes" });
@@ -828,7 +832,17 @@ function installAgentApiMocks() {
         : `inline; filename="${key.split("/").pop() || "artifact.bin"}"`,
     };
     if (req.method === "HEAD") {
-      req.reply({ statusCode: 200, headers: { ...baseHeaders, "content-length": "4096" }, body: "" });
+      const mediaType = key.match(/\.(mp4|webm|mov)$/i)
+        ? "video/mp4"
+        : (key.match(/\.(png|jpe?g|gif|webp)$/i) ? "image/png" : "application/octet-stream");
+      req.reply({
+        statusCode: 200,
+        headers: { ...baseHeaders, "content-type": mediaType, "content-length": "4096" },
+        // Cypress recalculates Content-Length for intercepted HEAD responses
+        // from the reply body. Supplying representative bytes keeps the mock's
+        // browser-streaming metadata truthful; fetch still exposes no HEAD body.
+        body: "x".repeat(4096),
+      });
       return;
     }
     if (!download && key.endsWith("manifest.json")) {
@@ -874,15 +888,13 @@ function installAgentApiMocks() {
       return;
     }
     if (!download && key.match(/\.(mp4|webm|mov)$/i)) {
-      const ranged = Boolean(req.headers.range);
       req.reply({
-        statusCode: ranged ? 206 : 200,
+        statusCode: 200,
         headers: {
           ...baseHeaders,
           "content-type": "video/mp4",
-          ...(ranged ? { "content-range": "bytes 0-99/4096", "content-length": "100" } : {}),
         },
-        body: "mock-video-bytes",
+        fixture: "browser-compatible.mp4,null",
       });
       return;
     }
@@ -1012,7 +1024,7 @@ function installAgentApiMocks() {
       access: { status: "available", scope: bucket ? "selected_resource" : "tenant" },
     }));
   }).as("artifactRuns");
-  cy.intercept("GET", `/api/artifacts/run/${NON_STOCK_RUN_ID}*`, json({
+  cy.intercept("GET", new RegExp(`/api/artifacts/run/(?:${NON_STOCK_RUN_ID}|npa1_mock_non_stock)(?:\\?|$)`), json({
     run_id: NON_STOCK_RUN_ID,
     run_ref: "npa1_mock_non_stock",
     bucket: "mock",
@@ -1025,6 +1037,7 @@ function installAgentApiMocks() {
   })).as("nonStockArtifactList");
   cy.intercept("GET", `/api/artifacts/run/${JSON_ONLY_RUN_ID}*`, json({
     run_id: JSON_ONLY_RUN_ID,
+    run_ref: "npa1_json_only",
     bucket: "project-artifacts",
     project_id: "project-a",
     resolved_prefix: "",
@@ -1034,6 +1047,7 @@ function installAgentApiMocks() {
   })).as("jsonOnlyArtifactList");
   cy.intercept("GET", `/api/artifacts/run/${ARTIFACT_ONLY_RUN_ID}*`, json({
     run_id: ARTIFACT_ONLY_RUN_ID,
+    run_ref: "npa1_artifact_only",
     bucket: "project-artifacts",
     project_id: "project-a",
     resolved_prefix: "tenant-runs",
@@ -1043,6 +1057,10 @@ function installAgentApiMocks() {
   })).as("artifactOnlyList");
   cy.intercept("GET", "/api/artifacts/run/mock-run*", json({
     run_id: "mock-run",
+    run_ref: "npa1_mock_run",
+    bucket: "mock",
+    project_id: "project-local",
+    resolved_prefix: "",
     prefix: "sim2real-b",
     artifacts: [
       {
@@ -1053,8 +1071,12 @@ function installAgentApiMocks() {
       },
     ],
   })).as("artifactList");
-  cy.intercept("GET", `/api/artifacts/run/${DF_MOCK_RUN_ID}*`, json({
+  cy.intercept("GET", new RegExp(`/api/artifacts/run/(?:${DF_MOCK_RUN_ID}|npa1_paidf_mock)(?:\\?|$)`), json({
     run_id: DF_MOCK_RUN_ID,
+    run_ref: "npa1_paidf_mock",
+    bucket: "mock",
+    project_id: "project-local",
+    resolved_prefix: "checkpoints/physical-ai-data-factory",
     prefix: "physical-ai-data-factory",
     count: DF_MOCK_ARTIFACTS.length,
     artifacts: DF_MOCK_ARTIFACTS,
@@ -1062,6 +1084,10 @@ function installAgentApiMocks() {
   })).as("dfArtifactList");
   cy.intercept("GET", `/api/artifacts/run/${DF_INPUT_ONLY_RUN_ID}*`, json({
     run_id: DF_INPUT_ONLY_RUN_ID,
+    run_ref: "npa1_paidf_input_only",
+    bucket: "mock",
+    project_id: "project-local",
+    resolved_prefix: "physical-ai-data-factory",
     prefix: "physical-ai-data-factory",
     count: DF_INPUT_ONLY_ARTIFACTS.length,
     artifacts: DF_INPUT_ONLY_ARTIFACTS,
@@ -1077,6 +1103,10 @@ function installAgentApiMocks() {
   }).as("artifactProvenance");
   cy.intercept("GET", `/api/fiftyone/dataset/${DF_MOCK_RUN_ID}`, json({
     run_id: DF_MOCK_RUN_ID,
+    run_ref: "npa1_paidf_mock",
+    bucket: "mock",
+    project_id: "project-local",
+    resolved_prefix: "checkpoints/physical-ai-data-factory",
     source: {
       source_kind: "user_supplied",
       input_origin: "operator_supplied",
@@ -1153,12 +1183,31 @@ function installAgentApiMocks() {
       ],
     },
   })).as("workflowPlan");
-  cy.intercept("POST", "/api/workflows/submit", json({
-    ok: true,
-    run_id: "workflow-run",
-    submit_mode: "mock",
-    validation: WORKFLOW_VALIDATION,
-  })).as("workflowSubmitYaml");
+  cy.intercept("POST", "/api/workflows/submit", (req) => {
+    if (req.body && req.body.prepare_execution) {
+      req.reply(json({
+        ok: true,
+        run_id: "workflow-run",
+        submit_mode: "agent-live-infra-confirm-required",
+        validation: WORKFLOW_VALIDATION,
+        needs_confirmation: true,
+        confirm_token: "mock-confirm-token",
+        proposed_action: { action: "execute_workflow" },
+      }));
+      return;
+    }
+    if (req.body && req.body.execute) {
+      req.reply(json({
+        ok: true,
+        run_id: "workflow-run",
+        submit_mode: "agent-live-infra-executed",
+        validation: WORKFLOW_VALIDATION,
+        execution: { run_id: "workflow-run", status: "SUCCEEDED" },
+      }));
+      return;
+    }
+    req.reply(json({ ok: false, error: "missing execution intent" }));
+  }).as("workflowSubmitYaml");
   cy.intercept("POST", "/api/workflows/sim2real/submit", json({
     ok: true,
     run_id: "submitted-run",
@@ -1320,9 +1369,45 @@ function decodePngStats(base64Payload) {
 }
 
 Cypress.Commands.add("installAgentApiMocks", installAgentApiMocks);
-Cypress.Commands.add("visitMockAgent", () => {
+Cypress.Commands.add("selectRunSource", (selectSelector, source, options = {}) => {
+  const has = (name) => Object.prototype.hasOwnProperty.call(source || {}, name);
+  const expected = [];
+  if (has("runId") || has("run_id")) expected.push(["runId", String(source.runId ?? source.run_id ?? "")]);
+  if (has("runRef") || has("run_ref")) expected.push(["runRef", String(source.runRef ?? source.run_ref ?? "")]);
+  if (has("projectId") || has("project_id")) expected.push(["projectId", String(source.projectId ?? source.project_id ?? "")]);
+  if (has("bucket") || has("resourceBucket") || has("resource_bucket")) {
+    expected.push(["bucket", String(source.bucket ?? source.resourceBucket ?? source.resource_bucket ?? "")]);
+  }
+  if (has("resolvedPrefix") || has("resolved_prefix")) {
+    expected.push(["resolvedPrefix", String(source.resolvedPrefix ?? source.resolved_prefix ?? "")]);
+  }
+  if (has("sourceType") || has("source_type")) {
+    expected.push(["sourceType", String(source.sourceType ?? source.source_type ?? "")]);
+  }
+  expect(expected, "run source selector has an identity field").not.to.be.empty;
+
+  let selectedValue = "";
+  return cy.get(`${selectSelector} option`).should(($options) => {
+    const matches = [...$options].filter((option) => expected.every(
+      ([datasetKey, value]) => String(option.dataset[datasetKey] || "") === value
+    ));
+    const readable = expected.map(([key, value]) => `${key}=${value || "<empty>"}`).join(", ");
+    expect(matches, `one option matches the exact run source tuple (${readable})`).to.have.length(1);
+    expect(matches[0].value, "source-qualified option value").not.to.eq("");
+    selectedValue = matches[0].value;
+  }).then(() => {
+    cy.get(selectSelector).select(selectedValue, { force: options.force !== false });
+    return cy.get(`${selectSelector} option:checked`).should(($selected) => {
+      expect($selected, "one exact run source remains selected").to.have.length(1);
+      for (const [datasetKey, value] of expected) {
+        expect(String($selected[0].dataset[datasetKey] || ""), `selected ${datasetKey}`).to.eq(value);
+      }
+    });
+  });
+});
+Cypress.Commands.add("visitMockAgent", (options = {}) => {
   installAgentApiMocks();
-  cy.visit("/");
+  cy.visit(options.enableLeIsaac ? "/ui-leisaac-enabled.html" : "/");
   cy.get("meta[name='npa-ui-version']").should("have.attr", "content").and("match", /^(\d+|dev)$/);
   cy.get("#statusBar").should("exist");
 });
@@ -1392,5 +1477,6 @@ export {
   resolveLiveAgentConfig,
   SIM_VIZ,
   STATIC_BUTTON_IDS,
+  WORKFLOW_VALIDATION,
   WORKFLOW_YAML,
 };

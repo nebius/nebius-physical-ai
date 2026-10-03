@@ -1,69 +1,156 @@
 # NPA workflow guide (`apiVersion: npa.workflow/v0.0.1`)
 
-Declarative state-machine specs for workbench tool pipelines. One format is consumed
-three ways: YAML file, CLI, and Python SDK.
+[Workbench docs](README.md) · [Workflow catalog](../../workflows/README.md)
+
+A workflow is a graph of tool calls, S3 artifacts, and transitions. NPA validates
+and plans the YAML, then uses SkyPilot to execute it. This page covers the command
+sequence and format; each workload guide supplies its inputs and resource needs.
 
 ## Quick start
 
+From the clone root, inspect a generation workflow locally:
+
 ```bash
-# Validate structure and closed toolRef / predicate registries
-npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
-
-# Expand loops/branches in the demo-only Sim2Real DSL fixture (dry-run)
-npa workbench workflow plan-spec npa/workflows/workbench/npa-workflows/sim2real.yaml \
-  --run-id demo --assume-decision loop_back
-
-# Plan + optional scheduler hints + S3 run manifest
-npa workbench workflow run-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
-  --plan-only --scheduler-plan --persist-state --json
-
-# Submit an npa.workflow spec
-npa workbench workflow submit npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml \
-  --run-id demo --registry cr.eu-north1.nebius.cloud/<your-registry-id>
-
-# Plan only (no submit) — inspect planned steps
-# Token Factory (and other no-image tools) need NPA_SRC_S3_URI or --image
-NPA_SRC_S3_URI=s3://<bucket>/npa-src/npa \
-  npa workbench workflow submit npa/workflows/workbench/npa-workflows/token-factory-caption.yaml \
-  --plan-only --run-id demo
+workflow_spec=workflows/testing/cosmos3-generate.yaml
+npa workbench workflow validate-spec "$workflow_spec"
+npa workbench workflow plan-spec "$workflow_spec" --run-id preview --json
 ```
 
-A successful submit prints the resolved run ID in text mode and returns it as
-the top-level `run_id` in `--output-format json`. If the spec configures an S3
-`bucket`, NPA also writes a run manifest under its resolved prefix. List those
-runs later with the established durable-run command:
+These commands launch no workload. The plan still contains the example bucket.
+For execution, complete [Workbench setup](getting-started.md) and the
+[Cosmos 3 prerequisites](cosmos3-generate.md#workflow), then set your actual target:
+
+```bash
+project_alias='<your-project-alias>'
+cluster_name='<your-npa-cluster-name>'
+bucket_name='<your-bucket>'
+run_id="$(npa workbench workflow prepare-run "$workflow_spec" --project "$project_alias")"
+
+npa workbench workflow plan-spec "$workflow_spec" \
+  --run-id "$run_id" --var "bucket=$bucket_name"
+npa workbench workflow preflight-images "$workflow_spec" \
+  --project "$project_alias" --infra "k8s/$cluster_name" \
+  --var "bucket=$bucket_name" --json
+```
+
+Review the resolved GPU shape, image, and output prefix. Image preflight may
+create and delete a temporary probe pod.
+
+Both `preflight-images` and `submit` accept
+`--image-pull-timeout-seconds` for each target pull and
+`--image-bootstrap-timeout-seconds` for each capability probe. Set the pull
+timeout to `0` to wait without a deadline for a large authenticated cold pull;
+interrupting the command still verifies deletion of its owned probe. When
+omitted, the pull timeout inherits the bootstrap timeout (default: 1800 seconds),
+preserving existing commands, including bootstrap timeout `0`. An explicit pull
+timeout changes only the pull probe. `timed_out` means observation expired; it
+does not prove an access failure. Recovery commands retain the selected value.
+The unlimited setting removes the NPA observation and Pod deadlines. Node
+container-runtime failures still report `image_pull_failed`, including canceled
+layer extraction; inspect the node's pull failure before retrying.
+
+Image preflight follows SkyPilot's resource override behavior. `--infra` replaces
+the declared target for a single task. SkyPilot ignores that override for
+multi-task YAML and JobGroups, while runtime workflows can also launch singleton
+waves. Preflight therefore checks both declared and selected pull authorities
+for a workflow with multiple reachable tasks, including parallel and mutually
+exclusive decision branches. Set an explicit cloud on every resource profile;
+a missing cloud cannot be certified through an override that SkyPilot may ignore.
+Kubernetes resource regions must agree with the complete selected context.
+This conservative check can require operator registry access even when a
+particular runtime execution uses only singleton Kubernetes waves.
+
+Then run the workload:
+
+```bash
+npa workbench workflow submit "$workflow_spec" \
+  --project "$project_alias" --infra "k8s/$cluster_name" \
+  --run-id "$run_id" --var "bucket=$bucket_name" --runtime \
+  --secret-env HF_TOKEN \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+`--runtime` supervises execution to a terminal state. The default generation
+requires gated guardrail access through `HF_TOKEN`. Secrets resolve from the
+private environment or selected project's credential store; pass names only.
+Public images need no registry login. Use `--registry` only for custom images.
+
+Inspect the same run from another shell or after submission returns:
+
+```bash
+npa workbench workflow status "$run_id" --project "$project_alias"
+npa workbench workflow logs "$run_id" --project "$project_alias"
+npa workbench workflow artifacts "$run_id" --project "$project_alias" --json
+```
+
+Open the generated media and `generate.json`; a successful job alone does not
+prove output quality. Keep the run ID for [recovery](../run-lifecycle.md#restart-safety)
+and follow [teardown](../teardown.md) when finished with owned resources.
+
+### Source staging and run IDs
+
+`prepare-run` reserves a new identity. `submit` prints the resolved ID in text
+mode or as `run_id` with `--output-format json`. Find durable runs with:
 
 ```bash
 npa workbench workflow list \
-  --s3-bucket <bucket> --workflow-s3-prefix <parent-prefix> --json
+  --s3-bucket "<bucket>" --workflow-s3-prefix "<parent-prefix>" --json
 ```
 
-Author and submit `npa.workflow/v0.0.1` specs under
-[`npa-workflows/`](../../npa/workflows/workbench/npa-workflows/). See that
-README for the full catalog.
+When tasks need source, submission automatically stages a content-addressed
+archive and persists its identity. A manually staged `NPA_SRC_S3_URI` or explicit
+image remains an override; it is not a prerequisite for the ordinary path.
+Resume the exact run using the command NPA prints, or `--resume-run <id>` with
+the original specification and target. See [run identity](../run-lifecycle.md#run-identity).
 
-**No-image tools** (Token Factory specs): set
-`NPA_SRC_S3_URI=s3://bucket/prefix/npa` so the job can sync and install `npa`,
-or pass `--image` to a workbench image that already includes it. `--plan-only`
-does not mint or print live registry tokens.
+For runtime orchestration, `--workflow-s3-uri` selects the exact control-state
+run root. `--workflow-s3-prefix` accepts a relative parent key and appends the
+run ID; use `--workflow-s3-uri` when supplying a full S3 URI. A
+plan-only submit reports the same resolved `run_prefix_uri` that execution will
+use. Resume keeps the location recorded by the original submit and rejects a
+different explicit destination before updating local or remote run state.
+
+The opt-in runtime-storage live regression uses the normal CPU Insights workflow
+and requires explicit operator routing. Set
+`NPA_E2E_RUNTIME_STORAGE_ISOLATED_ROOT` to a fresh, empty, canonical absolute
+directory owned by the current user with mode `0700`. The test creates a random
+run child below it and passes that child's controller directory through
+`--isolated-config-dir`. Set `NPA_E2E_SKY_BIN` (or the existing exact
+`NPA_SKYPILOT_BIN`) and `NPA_E2E_KUBECONTEXT`; the test passes both the pinned
+Sky executable and `--infra k8s/<context>` to plan, launch, and mismatched-resume
+commands. Before planning, it writes an owner-only `launch-coordinates.json`
+under the random run child with the run ID, spec path, isolated controller path,
+and science/control URIs so an operator can monitor the blocking test. See
+`npa/tests/e2e/test_workflow_runtime_storage_live_e2e.py` for the complete
+opt-in environment contract.
+
+### Choose another spec
+
+Browse the [workflow catalog](../../workflows/README.md). `workflows/main/`
+contains `sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`;
+other catalog workflows live in `workflows/testing/`. A directory name does not
+establish a workflow's validation scope; read its guide.
 
 Reference specs (all pytest-guarded):
 
 | File | Shows |
 | --- | --- |
 | `vlm-eval-single.yaml` | Single `toolRef`, terminal state |
-| `token-factory-caption.yaml` | Zero-GPU Token Factory caption |
+| `token-factory-caption.yaml` | Hosted Token Factory captioning |
 | `tokenfactory-rollout-judge.yaml` | Serial two-tool chain with `inputs`/`outputs` |
 | `sim2real.yaml` | Canonical compositional 14-stage Sim2Real runtime; requires immutable component images and task-aligned S3 inputs for execution |
 | `bdd100k-pipeline.yaml` | AV failure-mode pipeline — ingest → backfill → train → eval |
 | `av-night-scene-hardening.yaml` | AV night-scene hardening — fan-out into two per-view detector train→eval branches |
 | `cosmos-synth-fanout-curation.yaml` | Fan-out Cosmos Transfer 2.5 synthetic-data shards → Voxel51 (FiftyOne) curation |
 | `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
-| `sonic-locomotion-finetuning.yaml` | Retarget → SONIC train → MJLab eval |
+| `sonic-locomotion-finetuning.yaml` | Retarget → SONIC train → export → native SONIC eval |
 | `groot-1-7-finetune.yaml` | GR00T N1.7 operational pipeline: deterministic real-data split, parameterized distributed optimizer smoke, immutable checkpoint, aligned offline inference, honest learning outcome, native RRD/MCAP, S3 publication, and deployed-agent viewer verification |
 | `mjlab-eval.yaml` / `retargeting.yaml` / `sonic-*.yaml` / `cosmos3-reason.yaml` | Single-tool workbench specs |
 
 ## Document shape
+
+This excerpt illustrates the schema. Use a complete spec from the catalog for
+execution; each `toolRef` also requires its own configuration and inputs.
 
 ```yaml
 apiVersion: npa.workflow/v0.0.1
@@ -71,6 +158,8 @@ kind: Workflow
 
 metadata:
   name: my-workflow
+  # Set for workflows whose live branches depend on decision artifacts.
+  executionMode: runtime
 
 config:            # parameters; referenced by tokens
   bucket: my-bucket
@@ -97,6 +186,20 @@ states:
 
 ## State mechanics
 
+`metadata.executionMode: runtime` makes the generic submit command select the
+runtime orchestrator automatically. Use it when live execution must re-read a
+decision artifact to exit a loop or choose a transition. Read-only planning still
+flattens the selected `--assume-decision` path. An explicit `--no-runtime` is
+rejected for these workflows because a one-shot plan cannot honor their real
+data-dependent control flow. These workflows also reject `--assume-decision`
+for execution; use it only for offline planning previews.
+
+The runtime derives each managed-job name from the complete run ID, wave sequence,
+stage or group, and loop iteration. Names that exceed the provider limit retain a
+readable prefix plus a deterministic hash to distinguish runs or waves whose
+readable prefixes match. Resume continues to use the exact provider name already
+stored in durable run state, including names written by older NPA versions.
+
 | Field | Purpose |
 | --- | --- |
 | `toolRef` | Cataloged workbench tool (preferred) |
@@ -115,6 +218,27 @@ states:
 | `writesDecision` | State writes `config.decision_uri`; engine reads S3 after this state |
 | `inputs` / `outputs` | Artifact URIs + optional schema labels |
 | `terminal: true` | End state |
+
+Declare `inputs` and `outputs` beside `run` in the state mapping. A `run` block
+accepts only `shell` or `argv`; validation rejects nested artifact declarations
+before planning so they cannot disappear from the rendered task.
+
+Every declared `output` is required when a runtime state succeeds. If a state
+publishes `result.json` on success and `failure.json` on failure, declare only
+`result.json` as its output. Preserve `failure.json` in the failure handler and
+return a nonzero exit code. Declaring both makes a successful job fail the
+durable-output check because `failure.json` is absent.
+
+Check this contract with the artifacts each execution path actually produces.
+`validate-spec` and `plan-spec --check-render` cannot prove that a command will
+write its declared outputs.
+
+The schema is strict: omit optional fields instead of assigning `null`;
+collection fields must remain mappings/lists; integer fields reject booleans
+and every YAML float (including `1.0`); booleans accept only YAML `true`/`false`;
+and duplicate state names are rejected instead of being overwritten. Quote
+template tokens when they must remain strings, then run `validate-spec` again
+after generator output or configuration overrides.
 
 ## Tokens (no Jinja)
 
@@ -140,8 +264,8 @@ states:
 
 ## Tool catalog
 
-See `docs/workbench/npa-workflow-tool-catalog.md` and
-`npa/src/npa/orchestration/npa_workflow/catalog.py`. Add new tools in Python, not by
+See the [toolRef catalog](npa-workflow-tool-catalog.md) and its
+[source](../../npa/src/npa/orchestration/npa_workflow/catalog.py). Add new tools in Python, not by
 inventing YAML fields.
 
 ## Runtime features (v0.0.1+)
@@ -161,15 +285,15 @@ and launches it. Use `--plan-only` to inspect the plan without launching.
 
 ### Runtime orchestrator (`--runtime`)
 
-The default submit path is one-shot: it renders the flattened serial plan (loops
-unrolled with `--assume-decision`) and launches it. That path is unchanged.
+Without `metadata.executionMode: runtime`, the default submit path is one-shot:
+it renders the flattened serial plan (loops unrolled with `--assume-decision`)
+and launches it. Runtime-required workflows select the driver automatically.
 
 `--runtime` adds a driver that executes the graph wave by wave:
 
 ```bash
-npa workbench workflow submit <spec.yaml> --run-id <id> --runtime \
-  [--resume] [--poll-seconds 30] [--max-wait-seconds 3600] \
-  [--retries 1] [--max-concurrency 2] [--no-cancel-on-timeout]
+npa workbench workflow submit "<spec.yaml>" --run-id "<id>" --runtime \
+  --project "<alias>" --infra "k8s/<cluster>" --var bucket="<bucket>"
 ```
 
 | Capability | Behaviour |
@@ -179,15 +303,293 @@ npa workbench workflow submit <spec.yaml> --run-id <id> --runtime \
 | Real early-exit | After each loop iteration the driver re-reads `config.decision_uri` from S3; a promoting gate ends the loop instead of running the remaining budget |
 | Data-dependent branching | `transitions` outside a loop body are resolved from the real decision artifact (`goto`) |
 | Trigger / watch | A state's `trigger:` prefix is polled by the driver before its wave is submitted |
-| Retry / resume | Every wave attempt is written to `<config.prefix>/npa-workflow/runtime.json` (`npa.workflow.runtime.v1`); `--resume` replays succeeded waves instead of resubmitting them |
+| Retry / resume | Every wave attempt is written to `<config.prefix>/npa-workflow/runtime.json` (`npa.workflow.runtime.v1`); `--retries` is the payload/terminal-wave retry count, while `--max-infrastructure-recoveries` is the separate finite typed-infrastructure recovery count (default 1, 0 disables it); `--resume` reconciles the exact durable history |
+| Automated supervision | The CPU-side runtime observes the exact recorded SkyPilot job and Kubernetes pods, classifies stalls, cancels only an exact actionable configuration attempt, and recovers only a proven transient incomplete wave |
 | Timeout | A positive `--max-wait-seconds` bounds each wave; `0` waits indefinitely. `--no-cancel-on-timeout` preserves a timed-out job as in-flight so `--resume` adopts it instead of submitting a duplicate |
 
 Design notes: [`DESIGN.md`](../../DESIGN.md). Live evidence:
 [`EVIDENCE.md`](../../EVIDENCE.md).
 
+#### Durable run supervision and recovery
+
+The supervisor is part of the standard workflow runtime, runs outside ephemeral
+payload pods, and needs no GPU. SkyPilot remains the sole Kubernetes
+orchestrator. The durable runtime ledger and content-addressed events under
+`npa-workflow/supervisor/attempts/` are the source of truth; restarting the
+driver with the same explicit run ID reconciles those records instead of relying
+on process memory.
+
+Before any initial or recovered launch, submit reuses the normal exact-image,
+credential/access, accelerator-resolution, per-node GPU-shape, and gang-capacity
+preflights. A recovered attempt is permitted only after all of those checks pass
+again, the prior attempt's recorded workflow/source/image identity matches values
+independently recomputed from the current spec, source selection, and recorded
+image-identity version,
+declared S3 output evidence
+is authoritative, and any live prior attempt is cancelled by exact provider ID
+with terminal verification.
+
+New runtime attempts with rendered images record
+`npa.workflow.image-selection-references.v1`. This identity binds the complete
+v3 image selection (reference-to-digest pins, override selectors, registry, GPU
+target, and variant) to each state's tool and resolved image reference. The
+record also retains the canonical reference set and whether every reference is
+content-addressed with `@sha256:`. A hash over a mutable tag identifies that
+reference string; it is not evidence of the image bytes.
+
+Completed replay, durable output reuse, and supervised recovery reject older
+value-only, pin-only, reference-set-only, or unversioned image-bearing records
+that cannot prove this binding. They do not fall back to the old digest-pin-set
+comparison or rewrite saved identities. Ordinary in-flight provider adoption
+remains a separate legacy path; it is not a migration mechanism.
+
+For an upgrade, keep existing runs on their original controller, source, and
+images, and use the upgraded controller for new run IDs. Do not update an active
+controller in place or edit its ledger to bypass an identity mismatch. Retire
+the original controller only after its runs are terminal. Replacing an old run
+requires terminal evidence or verified exact cancellation before a new run ID
+is submitted. Follow the [controller rollout procedure](../run-lifecycle.md#controller-rollout-with-existing-runs)
+when merging and deploying these changes.
+
+Each wave also records its resolved per-state resource profiles before launch.
+Status uses those snapshots when the initial submission preview is unavailable,
+so requested accelerators, CPU, and memory remain visible. Legacy ledgers without
+the snapshots continue to report those fields as unknown. A safely redacted plan
+preview failure is retained as a status diagnostic while runtime planning remains
+authoritative.
+
+For runtime workflows, GPU capacity is checked against each rendered wave at the
+shared SDK submit boundary. Resuming an existing job does not require spare GPU
+capacity or record a new capacity check. Supervisor evidence retains the wave,
+attempt and observation time of a successful submission; adopting a job without
+that local evidence leaves capacity unknown. Every new or retried submission
+must pass the SDK checks again.
+
+Kubernetes accelerator requests accept either `accelerators: RTXPRO6000:2` or
+the single-entry mapping `accelerators: {RTXPRO6000: 2}`. Submit resolves the
+cluster's GPU product name and preserves the requested count in both forms.
+Mappings with multiple accelerator names describe SkyPilot alternatives;
+select one concrete request before Kubernetes submission so NPA can check its
+capacity. Other cloud targets retain SkyPilot's alternatives syntax.
+
+Submission binds those checks to one effective execution target. The selected
+NPA project must have saved project, tenant and region identities. The provider's
+exact project and bucket-owner responses must agree before any temporary storage
+write; the selected Kubernetes context must resolve to that same live project,
+including when SkyPilot uses isolated local state. The storage endpoint must be
+the selected region's Nebius endpoint. Ownership/authentication uncertainty
+blocks submission and never selects an alternative writable bucket.
+
+For `npa.workflow` specs, `--s3-bucket` and `--s3-prefix` override the corresponding
+`--var` values, followed by `NPA_S3_BUCKET` / `NPA_S3_PREFIX`, then the spec's
+`config`. These values control both the rendered workload and durable run ledger.
+`--s3-endpoint` takes precedence over endpoint environment variables and selected
+project storage settings. An S3 credential pair comes from one source: process
+environment, the submitted SkyPilot YAML's `envs`, selected
+project storage, then configured credentials. An incomplete higher-priority pair
+fails instead of combining keys from different principals. Each runtime wave
+uses the pair checked by that invocation; a new submit/resume resolves credentials
+again. Conflicting custom pod storage environment values are rejected.
+All supported S3 endpoint aliases are normalized to that endpoint, including
+`AWS_ENDPOINT_URL_S3`. Session-token overrides and unresolved pod secret
+references are rejected before access checks because they would change the
+executing principal.
+
+Declare a directory output with `kind: directory`, including when its URI has no
+trailing slash; use `kind: file` for an exact object. This role survives planning
+and rendering, so prefix checks and artifact discovery agree. Older declarations
+without a kind retain the trailing-slash directory convention.
+
+Raw SkyPilot YAML and the shared `submit_workflow` SDK use the same mandatory
+gate before creating a controller or job. Kubernetes tasks require one explicit
+context in `--infra k8s/<context>` or task resources, matching the selected NPA
+project. Native Nebius tasks and controllers must use that project's region;
+native submission verifies the executing SkyPilot principal and pins its project
+selection, preventing first-project fallback. Use `--controller-backend nebius`
+for a native controller, or declare an explicit Kubernetes controller context
+in the same project. Raw storage tasks declare `envs.NPA_EXECUTION_OUTPUTS` as a JSON list,
+for example `'[{"uri":"s3://example-bucket/run/checkpoints","kind":"directory"}]'`.
+The supported `NPA_OUTPUT_PATH`, `NPA_OUTPUT_URI`, `S3_OUTPUT_PATH`, and
+bucket-plus-prefix environment contracts also declare directories. An explicit
+`[]` means no durable outputs. Undeclared storage destinations and alternative
+resource targets require clarification in the YAML before submission.
+Explicit artifact declarations may use a sibling prefix or another bucket in
+the same project; each destination is checked separately. `config.prefix` is the
+default/ledger prefix and does not restrict explicitly declared artifact locations.
+With `config.bucket` set, the ledger accepts either a relative `config.prefix`
+or an absolute `s3://bucket/key` prefix naming that same bucket. Submission
+receipts, ledger storage, and storage preflight resolve the same location.
+Each runtime run must resolve to a unique bucket and prefix. A different
+`--run-id` does not make a literal `config.prefix` unique; NPA rejects a prefix
+whose runtime ledger or run manifest belongs to another workflow run before it
+rewrites source or state. Resume the exact recorded run to continue that prefix,
+or choose a different prefix for a new run. The runtime remains a single-writer
+design and does not coordinate simultaneous drivers for one empty prefix.
+Artifact templates still expand their configured values literally: use a
+relative prefix when a template constructs `s3://{{config.bucket}}/{{config.prefix}}`.
+On runtime resume, NPA retains the exact ledger location recorded in the prior
+submission receipt, including historical doubled prefixes. It checks access to
+that recorded location as well as the current declared outputs using the
+selected project's endpoint and credentials. An unavailable or malformed receipt
+blocks resume before submission state changes or a workload launches.
+
+Nebius storage mounts, including raw `--durable-s3` tasks, also verify the
+executing SkyPilot home's static `nebius` AWS profile against the selected
+storage credentials and endpoint. SkyPilot copies `~/.aws/credentials` and
+`~/.aws/config` to its controller, so both files must contain that matching
+profile. Missing or dynamic profiles, different principals, nondefault AWS
+file overrides, and task mounts replacing those files block submission before
+storage or compute creation. Writable mount prefixes receive the same ownership
+and write/readback checks as declared outputs.
+Use `--config-path` for SkyPilot configuration. Nonempty implicit `.sky.yaml`,
+`SKYPILOT_PROJECT_CONFIG`, and internal `SKYPILOT_CONFIG` overrides must be removed
+before submission so they cannot replace the checked configuration after the gate.
+
+`--isolated-config-dir` also owns a separate local SkyPilot API process, request
+queue, and persistent user identity. Its endpoint and process ownership are
+recorded before startup and verified again on reconnect. A conflicting endpoint,
+foreign listener, or changed executing identity blocks submission. Preserve this
+directory when reconnecting to existing jobs; an unrelated local SkyPilot API
+is never adopted or stopped as part of that isolated runtime. This isolates
+SkyPilot state and process ownership, not the selected provider files: the
+isolated home contains live symlinks to the operator's Nebius configuration and
+kubeconfig, so reads and writes through those paths reach the source files. Use
+dedicated task-owned provider configuration when credential helpers or other
+submit-time clients must not update shared operator files.
+
+The actual resolved output directories, file-parent prefixes, run-ledger prefix,
+and any source-staging destination receive a unique write/readback probe using
+the executing credentials. Probe deletion is best effort and does not require
+wider IAM. GPU checks include a one-node request's actual product, free GPU/CPU/
+memory capacity and placement constraints. Serverless Genesis checks the current
+project's platform/preset offering and exact GPU count before creating a job.
+Provider-owned catalog products require a matching lookup through that same
+project, without treating shared catalog ownership as workload ownership.
+Catalog availability is separate from actual allocation or reservation evidence.
+For existing Kubernetes capacity, `workflow submit` exits with code **75** when
+GPU, CPU, memory, pod-slot or ephemeral-storage requests fit the nominal node
+shape but cannot currently fit alongside active pod reservations. `disk_size`
+in a Kubernetes workflow profile is rendered as an ephemeral-storage request;
+it is checked at both submission preflights. For example, two 500 GB jobs cannot
+share a node with 950 GB allocatable disk even when their GPUs fit.
+
+This also applies when
+the requested per-node shape is supported but occupied, fragmented, temporarily
+unschedulable, or waiting for another pending GPU pod to be placed. This code is
+emitted only before any provider launch. An external queue can wait and retry the
+same run identity. It must preserve the pinned inputs and still reconcile any
+other failed or interrupted submission. Invalid shapes, unreadable inventories,
+credential failures and ambiguous provider launches do not return this code.
+NPA does not reserve the observed capacity or introduce a queue; the scheduler
+still owns actual placement.
+Scope, destination access and GPU gates remain active with `--skip-preflight`.
+Generic `health preflight --offline` still proves only credential presence;
+generic online health/access checks do not themselves prove execution readiness.
+
+SkyPilot launch uses asynchronous API submission followed by exact-name/ID
+reconciliation inside the crash-safe launch transaction. This allows production
+supervision to observe genuinely Pending work instead of waiting inside the
+submit command. Exact cancellation is also observed until terminal before a
+recovery attempt may cross the provider boundary.
+
+Machine-readable evidence distinguishes:
+
+- `actionable_configuration`: image pull/auth/reference errors, missing
+  Secrets/ConfigMaps, malformed pod configuration, and impossible accelerator or
+  per-node GPU placement. Retry stops immediately and the exact attempt is
+  terminalized with remediation.
+- `transient_infrastructure`: provider interruption/preemption, node loss,
+  capacity, Kubernetes transport/rate-limit/server failures. Recovery adopts an
+  exact live attempt or records a new provider attempt for only the incomplete
+  wave under the same NPA run ID. `--max-infrastructure-recoveries` bounds this
+  path independently of `--retries`; exhaustion is a durable terminal decision.
+- `payload`: the workload ran and failed, or claimed success without its declared
+  outputs. Infrastructure retry is disabled.
+- `unknown`: missing, conflicting, or ambiguous backend identity/evidence.
+  Relaunch and fuzzy cancellation are blocked to prevent duplicates.
+
+A credential-exec RPC stream closure during controller file synchronization can
+leave a reserved Pending row before the task payload arrives. The default SDK
+retains the typed transport cause and refuses to adopt that row as running work.
+The runtime may replace it only after checking every declared output is absent,
+cancelling the exact ID, rereading its actual terminal outcome, and refreshing
+the shared image/access/GPU preflight against unchanged task bytes. It checks
+output absence again after cancellation and preflight. A success racing with
+cancellation is reused only when all declared outputs validate. Unknown rows,
+auth/configuration failures, output uncertainty, and unverified cancellation
+block replacement.
+
+The supervisor records a content-addressed parent-to-successor reservation under
+the existing infrastructure recovery policy. A restarted driver consumes the
+same identity and count; it cannot invent another reservation or fall back to
+attempt 1. An observable successor is adopted exactly. An absent successor can
+be submitted only when durable intent proves the provider POST was not begun;
+unknown POST outcomes remain blocked. Explicit driver recovery is recorded as
+`recovery_resumed`, separately from payload replay. Recovery preparation retains
+the failed attempt's original local files and writes its refreshed preflight
+files into a separate owned directory.
+
+Status keeps the workflow lifecycle separate from the observed managed jobs.
+When every recorded job has succeeded but the workflow has not recorded
+completion, it retains the durable `RUNNING`/`SUBMITTED` lifecycle instead of
+reporting a failed live query or inferring workflow success. The JSON
+`workflow_lifecycle` includes the original durable status source and update time,
+`completion_recorded`, and `driver_liveness: unknown`. Polling an old completed
+job does not create a workflow heartbeat or establish driver liveness. `--watch`
+continues through inter-wave and finalization handoffs; check the original submit
+driver before deciding to resume. Durable failure/cancellation and conflicting
+outcomes remain visible; conflicting terminal evidence and live query errors
+exit nonzero, and `--cached` remains
+non-authoritative. Completion and declared artifact validation are separate
+requirements.
+
+Job aggregates and task rows come from separate queue snapshots. A successful
+task row or durable stage record can therefore coexist with a recognized
+nonterminal job observation. Status retains the incomplete workflow lifecycle
+and `--watch` continues. Each stage's `raw_job_scheduler_state` and
+`raw_task_scheduler_state` preserve the distinct observations; neither a poll nor
+stage success proves workflow completion. Missing, unknown, malformed, or failed
+queries still stop live verification. Contradictory terminal job/task outcomes
+remain `UNKNOWN` with explicit stage conflicts; a failed parallel job can
+legitimately include successful member tasks.
+
+The interpreter manifest records successful completion as `completed`. Status
+normalizes that manifest marker to `SUCCEEDED`; `workflow_lifecycle.manifest_evidence`
+retains its raw status, original update time, and authoritative source. The runtime
+ledger continues to use `succeeded`. Conflicting terminal outcomes and failed
+latest attempts still prevent a successful status.
+
+`npa workbench workflow status <run-id> --json` includes the latest durable
+supervisor snapshot: classification, recovery action, exact attempt identity,
+output/checkpoint validation, preflight evidence, and remediation. Its
+`recorded_at` timestamp bounds those historical observations. Status marks this
+object with `observation_scope: durable_supervisor_snapshot` and
+`current_artifact_state_verified: false`; live lifecycle verification does not
+refresh its artifact checks. See [Reading status](../run-lifecycle.md#reading-status).
+Evidence is credential-redacted.
+The shared Python contract also drives the existing production
+`npa workbench genesis train-teacher --runtime serverless` Jobs path. That command
+uses exact provider observation/cancellation, digest-resolved image identity,
+content-addressed S3 supervisor history, declared-output validation, and the same
+finite `--max-infrastructure-recoveries` policy. A recovery creates or adopts a
+deterministically named provider attempt under the same logical run and verified
+output/checkpoint prefix after process restart.
+
+This does **not** enable per-stage mixed Kubernetes/Serverless routing in an
+`npa.workflow/v0.0.1` graph. Workflow runtime waves remain SkyPilot/Kubernetes in
+this change; the Serverless adapter is wired through the Genesis workbench command.
+
+Checkpoint semantics are deliberately narrow. A completed wave may be reused
+only when every declared non-empty S3 output validates. An incomplete wave is
+restarted from its boundary by default. Mid-stage recovery is allowed only when
+the tool explicitly supplies a compatible checkpoint loader and the checkpoint
+is validated; tools without that implementation are reported as unsupported,
+not checkpoint-resumable.
+
 ### Live submit E2E
 
-On an operator VM with Nebius credentials and `NPA_REGISTRY`:
+On an operator VM with Nebius credentials (supported workload images resolve
+from public GHCR automatically):
 
 ```bash
 # Cheap first: Token Factory CPU twins
@@ -205,7 +607,7 @@ Matrix: `npa/src/npa/orchestration/npa_workflow/submit_matrix.py`
 ```python
 from npa.orchestration.npa_workflow import build_plan, load_spec, run_workflow
 
-spec = load_spec("npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml")
+spec = load_spec("workflows/testing/vlm-eval-single.yaml")
 plan = build_plan(spec, run_id="sdk-demo")
 report = run_workflow(spec, run_id="sdk-demo", persist_state=True)
 ```
@@ -252,9 +654,9 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_npa_work
 - Gang scheduling and runtime manifest-driven `foreach`
 - Multi-step branches inside a `parallel:` group (members are leaf states)
 - JSON Schema validation of artifact payloads
-- A detached/daemonized `--runtime` driver, and a unified `workflow status` for
-  npa.workflow runs (the runtime ledger JSON is the source of truth today; the
-  sim2real path is separate)
+- A detached/daemonized `--runtime` service. The lightweight supervisor runs in
+  the CPU-side runtime process and resumes durably through `--resume-run`; it is
+  not deployed into ephemeral GPU payloads.
 
 Parallel fan-out **is** supported as of the `parallel:` / `maxConcurrency` fields
 above — the explicit-field direction this section originally deferred to v0.0.2.
@@ -268,7 +670,28 @@ They are optional and additive, so every pre-v0.0.1 spec is unaffected.
 - Prefer `toolRef`; use `run.shell` only when no catalog entry exists.
 - Decision states that write threshold JSON must set `writesDecision: true`.
 
-`run.shell` resolves `config.*` tokens into `/bin/bash -lc` commands; treat spec files as trusted authored input.
+`run.shell` resolves `config.*` tokens into `bash -c` commands. The non-login
+shell inherits the prepared stage environment; treat spec files as trusted
+authored input.
+
+### Python environments in custom stages
+
+Workbench sets `NPA_CONTROL_PYTHON` to the executable Python path recorded by
+stage setup. Use it for NPA artifact and storage operations when a custom stage
+also runs a simulator or policy with its own Python environment. The exported
+path is inherited by child processes and remains usable after a change to `PATH`:
+
+```bash
+test -n "$NPA_CONTROL_PYTHON"
+"$NPA_CONTROL_PYTHON" -c 'from npa.clients.storage import StorageClient'
+```
+
+The value is empty when setup recorded no executable interpreter; a stage that
+requires it must fail before starting its workload. Workbench replaces inherited
+values with the current setup result. Keep the policy's pinned interpreter and
+dependencies separate, and retain the prepared NPA source path when calling NPA.
+If a stage explicitly starts a login shell, its profiles may change the inherited
+environment; verify the interpreter and source path inside that shell.
 
 Advanced scheduling stays in explicit fields (`parallel`, `maxConcurrency`,
 `params`, `trigger`), never Jinja. `gang` and `foreach` remain unimplemented.

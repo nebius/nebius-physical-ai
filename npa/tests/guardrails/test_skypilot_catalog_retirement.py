@@ -19,7 +19,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SKYPILOT_DIR = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
-NPA_WORKFLOW_ROOT = REPO_ROOT / "npa" / "workflows"
+NPA_WORKFLOW_ROOT = REPO_ROOT / "workflows"
 
 
 def _npa_workflow_documents() -> list[tuple[Path, dict]]:
@@ -36,7 +36,7 @@ def _npa_workflow_documents() -> list[tuple[Path, dict]]:
 def test_retired_skypilot_catalog_directory_does_not_exist() -> None:
     assert not SKYPILOT_DIR.exists(), (
         "npa/src/npa/workflows/skypilot/ is retired. Author workflow YAML under "
-        "npa/workflows/workbench/npa-workflows/ as npa.workflow/v0.0.1 specs; use "
+        "workflows/testing/ as npa.workflow/v0.0.1 specs; use "
         "npa/tests/fixtures/skypilot/ for raw SkyPilot submit-wrapper tests."
     )
 
@@ -56,7 +56,9 @@ def test_npa_workflow_specs_do_not_carry_skypilot_twin_metadata() -> None:
 
 
 @pytest.mark.parametrize("field", ["skypilotTwin", "skypilotTwins"])
-def test_schema_validator_rejects_retired_twin_metadata(tmp_path: Path, field: str) -> None:
+def test_schema_validator_rejects_retired_twin_metadata(
+    tmp_path: Path, field: str
+) -> None:
     from npa.orchestration.npa_workflow import NpaWorkflowError, load_spec
 
     value = "npa/src/npa/workflows/skypilot/example.yaml"
@@ -114,13 +116,19 @@ def test_cli_advertised_workflow_paths_exist() -> None:
             if not (REPO_ROOT / value).is_file():
                 missing.append(f"{module_name}.{attr} -> {value}")
     assert checked >= 8, f"expected to check several CLI workflow paths, saw {checked}"
-    assert not missing, "CLI modules advertise workflow files that do not exist: " + ", ".join(
-        missing
+    assert not missing, (
+        "CLI modules advertise workflow files that do not exist: " + ", ".join(missing)
     )
 
 
 def test_reference_skill_does_not_advertise_the_retired_catalog() -> None:
-    skill = REPO_ROOT / "skills" / "workflows" / "workbench-reference-workflows" / "SKILL.md"
+    skill = (
+        REPO_ROOT
+        / "skills"
+        / "workflows"
+        / "workbench-reference-workflows"
+        / "SKILL.md"
+    )
     text = skill.read_text(encoding="utf-8")
 
     assert "npa/src/npa/workflows/skypilot/" not in text

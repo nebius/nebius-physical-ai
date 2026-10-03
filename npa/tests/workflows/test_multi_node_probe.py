@@ -64,7 +64,9 @@ def test_node_report_without_a_rank_is_an_error() -> None:
         node_report(env={})
 
 
-def test_report_node_writes_a_rank_scoped_object(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_report_node_writes_a_rank_scoped_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     for key, value in _env(rank=0).items():
         monkeypatch.setenv(key, value)
     storage = _FakeStorage()
@@ -136,7 +138,12 @@ def test_verify_nodes_round_trips_through_storage() -> None:
 
 def test_verify_nodes_fails_when_nothing_was_written() -> None:
     with pytest.raises(MultiNodeProbeError, match="no node reports found"):
-        verify_nodes("s3://bucket/run/nodes/", "s3://bucket/run/report/", 2, client=_FakeStorage())
+        verify_nodes(
+            "s3://bucket/run/nodes/",
+            "s3://bucket/run/report/",
+            2,
+            client=_FakeStorage(),
+        )
 
 
 def test_shipped_spec_node_count_matches_its_resource_profile() -> None:

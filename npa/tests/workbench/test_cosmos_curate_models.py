@@ -118,7 +118,10 @@ def test_resolve_models_accepts_a_raw_model_key(checkout: Path) -> None:
 
 
 def test_resolve_models_deduplicates_overlapping_sets(checkout: Path) -> None:
-    keys = [spec.key for spec in mod.resolve_models(["embed-internvideo2", "bert", "split-annotate"])]
+    keys = [
+        spec.key
+        for spec in mod.resolve_models(["embed-internvideo2", "bert", "split-annotate"])
+    ]
     assert len(keys) == len(set(keys))
     assert "bert" in keys
 
@@ -128,18 +131,27 @@ def test_resolve_models_rejects_an_unknown_name(checkout: Path) -> None:
         mod.resolve_models(["not-a-model"])
 
 
-def test_resolve_models_needs_a_checkout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_models_needs_a_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("NPA_COSMOS_CURATE_SRC", str(tmp_path / "absent"))
     with pytest.raises(CosmosCurateError, match="no Cosmos Curator checkout"):
         mod.resolve_models([])
 
 
-def test_model_status_reports_missing_then_present(checkout: Path, tmp_path: Path) -> None:
+def test_model_status_reports_missing_then_present(
+    checkout: Path, tmp_path: Path
+) -> None:
     weights = tmp_path / "weights"
-    environ = {"NPA_COSMOS_CURATE_SRC": str(checkout), mod.WEIGHTS_DIR_ENV: str(weights)}
+    environ = {
+        "NPA_COSMOS_CURATE_SRC": str(checkout),
+        mod.WEIGHTS_DIR_ENV: str(weights),
+    }
     specs = mod.resolve_models(["filter-aesthetic"], environ=environ)
 
-    missing = {status.key: status for status in mod.model_status(specs, environ=environ)}
+    missing = {
+        status.key: status for status in mod.model_status(specs, environ=environ)
+    }
     assert not any(status.present for status in missing.values())
     assert missing["clip_vit"].local_dir.endswith("openai/clip-vit-large-patch14")
 
@@ -150,7 +162,9 @@ def test_model_status_reports_missing_then_present(checkout: Path, tmp_path: Pat
     assert not mod.model_status(specs, environ=environ)[0].present
 
     (partial / "model.safetensors").write_bytes(b"weights")
-    status = {entry.key: entry for entry in mod.model_status(specs, environ=environ)}["clip_vit"]
+    status = {entry.key: entry for entry in mod.model_status(specs, environ=environ)}[
+        "clip_vit"
+    ]
     assert status.present
     assert status.file_count == 2
     assert status.bytes > 0
@@ -166,7 +180,10 @@ def test_model_status_needs_more_than_a_file_when_there_is_no_file_list(
     """
 
     weights = tmp_path / "weights"
-    environ = {"NPA_COSMOS_CURATE_SRC": str(checkout), mod.WEIGHTS_DIR_ENV: str(weights)}
+    environ = {
+        "NPA_COSMOS_CURATE_SRC": str(checkout),
+        mod.WEIGHTS_DIR_ENV: str(weights),
+    }
     specs = mod.resolve_models(["split-transnetv2"], environ=environ)
     local = weights / "Sn4kehead/TransNetV2"
     local.mkdir(parents=True)
@@ -178,8 +195,13 @@ def test_model_status_needs_more_than_a_file_when_there_is_no_file_list(
     assert mod.model_status(specs, environ=environ)[0].present
 
 
-def test_fetch_models_requires_a_hugging_face_token(checkout: Path, tmp_path: Path) -> None:
-    environ = {"NPA_COSMOS_CURATE_SRC": str(checkout), mod.WEIGHTS_DIR_ENV: str(tmp_path / "w")}
+def test_fetch_models_requires_a_hugging_face_token(
+    checkout: Path, tmp_path: Path
+) -> None:
+    environ = {
+        "NPA_COSMOS_CURATE_SRC": str(checkout),
+        mod.WEIGHTS_DIR_ENV: str(tmp_path / "w"),
+    }
     with pytest.raises(CosmosCurateError, match="no Hugging Face token"):
         mod.fetch_models(["split-transnetv2"], environ=environ)
 
@@ -194,7 +216,9 @@ def test_fetch_models_gives_upstream_the_config_it_reads_its_token_from(
     weights = tmp_path / "weights"
     seen: dict[str, Any] = {}
 
-    def fake_download(model_id: str, revision: str | None, files: list[str] | None) -> None:
+    def fake_download(
+        model_id: str, revision: str | None, files: list[str] | None
+    ) -> None:
         import sys
 
         config_mod = sys.modules["cosmos_curator.core.utils.config.config"]
@@ -215,7 +239,9 @@ def test_fetch_models_gives_upstream_the_config_it_reads_its_token_from(
     assert seen["config"] == {"huggingface": {"api_key": "hf-secret-token"}}
     # Written into a private temporary file, not a persistent credential location.
     assert seen["mode"] == 0o600
-    assert not seen["path"].exists(), "the temporary token file must not outlive the fetch"
+    assert not seen["path"].exists(), (
+        "the temporary token file must not outlive the fetch"
+    )
 
     import sys
 
@@ -231,7 +257,9 @@ def test_fetch_models_calls_upstreams_downloader_with_upstreams_pins(
     weights = tmp_path / "weights"
     calls: list[tuple[str, str | None, list[str] | None]] = []
 
-    def fake_download(model_id: str, revision: str | None, files: list[str] | None) -> None:
+    def fake_download(
+        model_id: str, revision: str | None, files: list[str] | None
+    ) -> None:
         calls.append((model_id, revision, files))
         local = weights / model_id
         local.mkdir(parents=True, exist_ok=True)
@@ -253,7 +281,9 @@ def test_fetch_models_calls_upstreams_downloader_with_upstreams_pins(
         REGISTRY["aesthetic_scorer"]["version"],
         ["model.safetensors"],
     )
-    assert by_model["openai/clip-vit-large-patch14"][0] == REGISTRY["clip_vit"]["version"]
+    assert (
+        by_model["openai/clip-vit-large-patch14"][0] == REGISTRY["clip_vit"]["version"]
+    )
 
 
 def test_fetch_models_skips_what_is_already_complete(
@@ -272,8 +302,13 @@ def test_fetch_models_skips_what_is_already_complete(
     monkeypatch.setenv(mod.WEIGHTS_DIR_ENV, str(weights))
 
     # A finished download is one that left a stamp behind.
-    environ = {"NPA_COSMOS_CURATE_SRC": str(checkout), mod.WEIGHTS_DIR_ENV: str(weights)}
-    mod.write_completion_stamp(local, mod.resolve_models(["split-transnetv2"], environ=environ)[0])
+    environ = {
+        "NPA_COSMOS_CURATE_SRC": str(checkout),
+        mod.WEIGHTS_DIR_ENV: str(weights),
+    }
+    mod.write_completion_stamp(
+        local, mod.resolve_models(["split-transnetv2"], environ=environ)[0]
+    )
 
     result = mod.fetch_models(["split-transnetv2"])
     assert result.already_present == ["transnetv2"]
@@ -328,7 +363,9 @@ def test_describe_models_reports_credentials_and_set_membership(
 def test_describe_models_reports_a_missing_checkout_instead_of_raising(
     tmp_path: Path,
 ) -> None:
-    payload = mod.describe_models(environ={"NPA_COSMOS_CURATE_SRC": str(tmp_path / "absent")})
+    payload = mod.describe_models(
+        environ={"NPA_COSMOS_CURATE_SRC": str(tmp_path / "absent")}
+    )
     assert "error" in payload
     assert payload["sets"] == {}
 

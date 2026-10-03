@@ -1,0 +1,913 @@
+{
+  "schema_version": "npa.curobo.runtime-payload.v1",
+  "cudnn": {
+    "name": "nvidia-cudnn-cu13",
+    "version": "9.20.0.48",
+    "wheel_url": "https://files.pythonhosted.org/packages/6e/5e/edb9c0ae051602c3ccaffe424256463636d639e27d7f302dde9975ef9e7a/nvidia_cudnn_cu13-9.20.0.48-py3-none-manylinux_2_27_x86_64.whl",
+    "wheel_sha256": "0c45dd8eeb50b603f07995b1b300c62ffe6a1980482b82b3bcf94a4ca9d49304",
+    "install_root": "opt/npa-venv/lib/python3.12/site-packages",
+    "retained": [
+      {
+        "path": "nvidia/cudnn/lib/libcudnn.so.9",
+        "sha256": "b88025af76979b3f1af208790195093684fe01cb8d190528856058f988016660",
+        "size": 129240,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_adv.so.9",
+        "sha256": "7702094a50dbea5b8244df01af8e9d3565309d3996bbc8ca96b6c7a207d2d6bd",
+        "size": 109169104,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_cnn.so.9",
+        "sha256": "e830c5cba875ebeb8ed3cfde5cc038a2703692ce714a8a4ff28666ac8e2c5732",
+        "size": 4203904,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_engines_precompiled.so.9",
+        "sha256": "e5133109f710c215d72fdc8f1d9be187f4760f5f32e57cc8c57515ea9e91455e",
+        "size": 245391920,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_engines_runtime_compiled.so.9",
+        "sha256": "28db2a6f433a184e264d927b183c47ecaf72dc65ed58245a6d2380f980e29cd3",
+        "size": 29386664,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_graph.so.9",
+        "sha256": "35c099d318433a88d292775676a51a07d2dd152c3ae799b1c21a75b40f78e456",
+        "size": 4460192,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_heuristic.so.9",
+        "sha256": "a41eb9baa9ccc9e2d6c9f2ca226021b54c8ee2df4abf3a91e41687847b481228",
+        "size": 60822040,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia/cudnn/lib/libcudnn_ops.so.9",
+        "sha256": "705d3dcf9b209fdbeeecd8aaec5fcd0f6f55de5661e1c1388b5a4b8fd29db7c3",
+        "size": 39855888,
+        "kind": "runtime"
+      },
+      {
+        "path": "nvidia_cudnn_cu13-9.20.0.48.dist-info/licenses/License.txt",
+        "sha256": "49cf79bdb35734b52fe6203013b3bd759f81e998cd32aa2c65c51db9a88c61d2",
+        "size": 18174,
+        "kind": "license"
+      }
+    ],
+    "excluded_sdk": [
+      {
+        "path": "nvidia/cudnn/include/cudnn.h",
+        "sha256": "1082d51d3b564bace8ef6fc6ee335b668b2bfa517f57c06efd428263e5c21855",
+        "size": 2841
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_adv.h",
+        "sha256": "f74ee54b3fa51bbe10526f32fe2f34414530a790d0129462ed76254eab4f3f8e",
+        "size": 30855
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_adv_v9.h",
+        "sha256": "f74ee54b3fa51bbe10526f32fe2f34414530a790d0129462ed76254eab4f3f8e",
+        "size": 30855
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_backend.h",
+        "sha256": "add4f24c61d07edb2b8567894ba6d0c190d00b3addc80161a23d206d1927d45f",
+        "size": 2751
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_backend_v9.h",
+        "sha256": "add4f24c61d07edb2b8567894ba6d0c190d00b3addc80161a23d206d1927d45f",
+        "size": 2751
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_cnn.h",
+        "sha256": "86fe44b28e2c356cb0099a470e9894fe2fbdb231fdea144c35b1266e907f260a",
+        "size": 36700
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_cnn_v9.h",
+        "sha256": "86fe44b28e2c356cb0099a470e9894fe2fbdb231fdea144c35b1266e907f260a",
+        "size": 36700
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_graph.h",
+        "sha256": "75a70552a07660d25ad900dd45f180ec557965fd41433be8723bbd4c64337308",
+        "size": 49245
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_graph_v9.h",
+        "sha256": "75a70552a07660d25ad900dd45f180ec557965fd41433be8723bbd4c64337308",
+        "size": 49245
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_ops.h",
+        "sha256": "906942f64d5542c122101423d1a0e8d8711ee836c4cb61c9836c012bcb5f38c8",
+        "size": 63635
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_ops_v9.h",
+        "sha256": "906942f64d5542c122101423d1a0e8d8711ee836c4cb61c9836c012bcb5f38c8",
+        "size": 63635
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_v9.h",
+        "sha256": "1082d51d3b564bace8ef6fc6ee335b668b2bfa517f57c06efd428263e5c21855",
+        "size": 2841
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_version.h",
+        "sha256": "8d79398cefba20da6ca84b9b9c3160490373709b4bc940893695a2b7bc2a9528",
+        "size": 3114
+      },
+      {
+        "path": "nvidia/cudnn/include/cudnn_version_v9.h",
+        "sha256": "8d79398cefba20da6ca84b9b9c3160490373709b4bc940893695a2b7bc2a9528",
+        "size": 3114
+      }
+    ]
+  },
+  "nvshmem_notice": {
+    "path": "usr/share/doc/npa-curobo/NVSHMEM-LICENSE.txt",
+    "sha256": "43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f",
+    "size": 26566,
+    "url": "https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt",
+    "release_manifest": "https://developer.download.nvidia.com/compute/nvshmem/redist/redistrib_3.4.5.json",
+    "release_archive_sha256": "18f12807c23bc5b270581af1f9bafd540369da783e557171558887623d77842c"
+  },
+  "torch_cudnn_adapters": {
+    "source": "https://download.pytorch.org/whl/cu130/torch/",
+    "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl",
+    "wheel_sha256": "8db7338e6895c3d4bd89a02ff4209507d1f0cf2ffeb3b898538b5a07d1ea8c1e",
+    "wheel_size": 526482318,
+    "name": "torch",
+    "version": "2.13.0+cu130",
+    "license": {
+      "path": "torch-2.13.0+cu130.dist-info/licenses/LICENSE",
+      "sha256": "bd018feef8825e88181c84eb7e3aa4eafb8f08a20d9fd6ef948569610c4a3e43",
+      "size": 3464
+    },
+    "headers": [
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator.h",
+        "sha256": "ab14bee44d6c0e2fbdc50e83142346e3eae8008b74087b161995930f1eba099c",
+        "size": 1757
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_backward.h",
+        "sha256": "208c227637e31fede4d1f047c53509797e8845a419d9022107222670bd079d4e",
+        "size": 1844
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_backward_compositeexplicitautograd_dispatch.h",
+        "sha256": "be429e263d7e23241ca94cf613d0d21f980ef63399594a8f2e7d6df59c066b3f",
+        "size": 1269
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_backward_cuda_dispatch.h",
+        "sha256": "864facb096697ea4787321b13cb7f532a471dfcb006e66187476c882105bd114",
+        "size": 1050
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_backward_native.h",
+        "sha256": "1fc0bd4f1b0979139eb0927b64484aba2a0367f41ca7c13cab8a0171852cc186",
+        "size": 956
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_backward_ops.h",
+        "sha256": "ef25ceae5311663906ac0cf623add96548144d8f5ed1035eff42b78677291333",
+        "size": 2296
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_compositeexplicitautograd_dispatch.h",
+        "sha256": "d472ce3a0c6f928689106621f266e2fbd198f2965882436c7797b98296c32b24",
+        "size": 1253
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_cuda_dispatch.h",
+        "sha256": "785a46ead813683ab912caff2af299125d185aa21e3b1bde6e09e5cd2b7e2ce1",
+        "size": 1042
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_native.h",
+        "sha256": "916bd7152644e5c458cfd6ca55eb71b5631927425b6745ea1403ce45d7b81b56",
+        "size": 948
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_affine_grid_generator_ops.h",
+        "sha256": "50aa46ef3958d3787912caefd47bbf43511325cc13c990d294e15e9a1384994b",
+        "size": 2242
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm.h",
+        "sha256": "7389e697c2cce5e66734f69138400665fc8adfd0ff9891e3c3180f3435592834",
+        "size": 3277
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_backward.h",
+        "sha256": "07b325c586dab875b90d95510df112b0d959f1eb11b7c4830dc38e0ee6eb989a",
+        "size": 3469
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_backward_compositeexplicitautograd_dispatch.h",
+        "sha256": "cb3c92a44b3f56c0e46d1157ead3c53babad2ec549ec9102fb220cb337400d80",
+        "size": 1919
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_backward_cuda_dispatch.h",
+        "sha256": "be2c35a40f886a25b76a48265b360a0b8724a9b6357ba7f88bcdfe3cae88760e",
+        "size": 1332
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_backward_native.h",
+        "sha256": "8a1f51e731b5a4d7c0ff28ebf2d482e00626181fe5bc08453585c68a822fcf04",
+        "size": 1563
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_backward_ops.h",
+        "sha256": "447a339fa4bddac13884ec3abb49ea0bb67aa4441a9e787b2c10e6f28c7b93d6",
+        "size": 4268
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_cuda_dispatch.h",
+        "sha256": "d5e38d2a1fad9e9459e3909f38147ce25f2ac2a125cc4f79ce6877fe73312a5c",
+        "size": 2137
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_native.h",
+        "sha256": "34aa3136af588d780e408efb7f51a0947d72443fc94ed5f8604c9ca73af75c96",
+        "size": 1456
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_batch_norm_ops.h",
+        "sha256": "48455a805f56444b371a149e35b1c2289d5e5eb390ce5ed851b338d0e5209b3c",
+        "size": 3955
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution.h",
+        "sha256": "38cd24976225502750a75513046accb827891d019117593dc5d9271431fe26c1",
+        "size": 7890
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_add_relu.h",
+        "sha256": "573b1df426adbc5b05227b69c4846ce28bd63a5820ad635cd18dd92f70042d21",
+        "size": 8469
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_add_relu_compositeexplicitautograd_dispatch.h",
+        "sha256": "951e3f22dc2ce3f700a2f4ac5578f71e57bd699e2b9026fd3d6ed7624a5df98f",
+        "size": 2304
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_add_relu_cuda_dispatch.h",
+        "sha256": "0ca11228757c17fc2072c41b796abca7a966554181eabe9925f423ccbf53b48c",
+        "size": 1543
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_add_relu_native.h",
+        "sha256": "f562f48b763c1ce3be86da446668cf822080df8c9668d43628e35e236b6c55df",
+        "size": 1321
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_add_relu_ops.h",
+        "sha256": "889c8204489d8e8912ef0fe4d496258f181d047563d296a1721de4761fbea2eb",
+        "size": 3511
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_cuda_dispatch.h",
+        "sha256": "38db104d899d6c6e7ae2aa9610b33edaa4d7dea1a744689bbab271e89b3c38c5",
+        "size": 2505
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_native.h",
+        "sha256": "192d7283b05a2b35f8a7910553a79e5ecc57ae274f2d0373803891527455a830",
+        "size": 1172
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_ops.h",
+        "sha256": "ea8582f0cff98441ad50232091378d0cf334b8ff129f873f1058eacb1434130f",
+        "size": 3117
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_relu.h",
+        "sha256": "e7fa52a91048c7b6014ab4445d8267c6f60ec82810da1cde5effa8f66de32fff",
+        "size": 7295
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_relu_compositeexplicitautograd_dispatch.h",
+        "sha256": "68ab2d6983efce2411c3e46837c0b22d42d04af4a97e16ec3c6d52293c95bbec",
+        "size": 2028
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_relu_cuda_dispatch.h",
+        "sha256": "c5c1f3692ebb77e51639b688c29cb0b66d9fbb3f7ef024cb36904bba42557019",
+        "size": 1405
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_relu_native.h",
+        "sha256": "d9eb81f9068f4affe5d2195a0507de940df651b1127da8572416976398fd7794",
+        "size": 1183
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_relu_ops.h",
+        "sha256": "d0fd4f2ed2baf805ad302bfa22ab313ea884c9750d3fe254fb76c0269319fca0",
+        "size": 3063
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_transpose.h",
+        "sha256": "0c9638afe40a9e3531588a4be02421a48463f95c95e4dd8458f1e6af8c79da58",
+        "size": 9106
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_transpose_compositeexplicitautograd_dispatch.h",
+        "sha256": "ece6ea4731613c9fc02cbb44d6027c23e247364ad88d2da8f2791c802eb08a49",
+        "size": 2228
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_transpose_cuda_dispatch.h",
+        "sha256": "09361528797a144d027ff8e2b45d8e2915a139a1cb4900157f4f527470f5101e",
+        "size": 1505
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_transpose_native.h",
+        "sha256": "5798297a6b64c1c7d871fa2009a76fec9fcf1abc17e088620df39973d270f532",
+        "size": 1283
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_convolution_transpose_ops.h",
+        "sha256": "dd781ec6cb4ed6cfb1cbb0f1abb5fc2d0fcc5ae12a3e8ee5ad68c2fcb4a4721b",
+        "size": 3413
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler.h",
+        "sha256": "2dce890af3398739d16dd2c04087c1f3e9d468860c1bce57db302fb071fda5f3",
+        "size": 1540
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_backward.h",
+        "sha256": "07e50dda2e594af0545e9cbf37263d8a2e8b65110e8db32a12f8bd0c0c8c579a",
+        "size": 2045
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_backward_compositeexplicitautograd_dispatch.h",
+        "sha256": "2ccbb6a9911edceebed42a437e75d3a7cc3a6114291626d69f85a13db5e3f5bd",
+        "size": 1371
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_backward_cuda_dispatch.h",
+        "sha256": "ccee86ed9b571806cb25dea60056f2f599b0797e43336d8dae3af011d6e7c99b",
+        "size": 1079
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_backward_native.h",
+        "sha256": "4f70d2d998a979f1161aceb4f7ea4589fce3a831f74dd1dca8610e65bf5aa787",
+        "size": 1036
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_backward_ops.h",
+        "sha256": "aac79389de7d4fdad944b9922ef3ba4f1d6b69f137cbb6d914ed6c02698e1ba9",
+        "size": 2573
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_compositeexplicitautograd_dispatch.h",
+        "sha256": "17d2c97eb92724479ccc5980a38eab13105dd3e7617bbe903371ef5652d9a2e2",
+        "size": 1195
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_cuda_dispatch.h",
+        "sha256": "311027bf9bb2b507d1c7208c5cedad0a3b843b7e9af8f30b03544544a3da8e43",
+        "size": 1013
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_native.h",
+        "sha256": "6612f7594794d515cedc59ffb3079125885a26d11fa0c17f0c8836c2ad00bc09",
+        "size": 890
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_grid_sampler_ops.h",
+        "sha256": "137ccb7bb5a67e198d9a619cf98df8809a1dcfc00e90abf5b34c3da9d61987d1",
+        "size": 2046
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_is_acceptable.h",
+        "sha256": "a68a8ad3b9610e19a3d83ce3568134c26fff52340978f124e8ecce42e9aadadd",
+        "size": 935
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_is_acceptable_compositeimplicitautograd_dispatch.h",
+        "sha256": "87f2722bc5d2da1f28dafefa3befd9d9f78e0b69ff145e5b213ecc8e94c3ae0c",
+        "size": 1025
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_is_acceptable_native.h",
+        "sha256": "44e202bb1723ee81f2010fb8e47fe205d666f4216fe43e48d9427961d33831d3",
+        "size": 737
+      },
+      {
+        "path": "torch/include/ATen/ops/cudnn_is_acceptable_ops.h",
+        "sha256": "fcdf40186635ef22d048acf3e17174e4213532f1ddabc886ed26a9f7b6e6ff55",
+        "size": 1230
+      }
+    ],
+    "classification": "PyTorch generated ATen operator declarations, BSD-3-Clause; exact wheel header bytes only, not a path-prefix exemption for NVIDIA cuDNN SDK payload.",
+    "source_license_url": "https://raw.githubusercontent.com/pytorch/pytorch/v2.13.0/LICENSE",
+    "source_license_sha256": "bd018feef8825e88181c84eb7e3aa4eafb8f08a20d9fd6ef948569610c4a3e43",
+    "source_license_is_wheel_notice_prefix": true,
+    "generator_url": "https://github.com/pytorch/pytorch/blob/v2.13.0/torchgen/gen.py",
+    "third_party_notices": [
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/FP16/LICENSE",
+        "sha256": "17e4f539024be2749ee729d1e2f01d24cef12ece8c9bf18e91a4349be29c80bf",
+        "size": 1157
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/FXdiv/LICENSE",
+        "sha256": "7cac00006125b1486a27e4801ed66357236e984c540bd323945ab7b66b078ec3",
+        "size": 1117
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/NNPACK/LICENSE",
+        "sha256": "ab09e33621f513ebdd1ef685b324f39c1f6bee9221d15600bafd958322df1231",
+        "size": 1352
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/NVTX/LICENSE.txt",
+        "sha256": "abdfd8a6738b27cd1504e091f77b682dbae928339f040b8a6f59a548245991a0",
+        "size": 12483
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/NVTX/docs/LICENSE.txt",
+        "sha256": "abdfd8a6738b27cd1504e091f77b682dbae928339f040b8a6f59a548245991a0",
+        "size": 12483
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/NVTX/python/LICENSE.txt",
+        "sha256": "abdfd8a6738b27cd1504e091f77b682dbae928339f040b8a6f59a548245991a0",
+        "size": 12483
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/VulkanMemoryAllocator/LICENSE.txt",
+        "sha256": "8d70e4cf2a9941f6454da71cd60e38484dd3e34810c824760d550e982af6d97a",
+        "size": 1099
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/XNNPACK/LICENSE",
+        "sha256": "63f519e15726f4c4f830bd958f694c84fecb4e0a4cacc527d2696bb71ef95ada",
+        "size": 1560
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/aiter/LICENSE",
+        "sha256": "0baca809927cad448401b252ce3bae12687c2987597ad7088cf3423f872d5bcd",
+        "size": 1100
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/aiter/3rdparty/composable_kernel/LICENSE",
+        "sha256": "20f3b83dfda01bd18d285e0edbb9d044be6dde04cdf76a1ec18d9fc7127936bf",
+        "size": 1726
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/benchmark/LICENSE",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "size": 11358
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/composable_kernel/LICENSE",
+        "sha256": "20f3b83dfda01bd18d285e0edbb9d044be6dde04cdf76a1ec18d9fc7127936bf",
+        "size": 1726
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/cpp-httplib/LICENSE",
+        "sha256": "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed364d8b",
+        "size": 1075
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/cpuinfo/LICENSE",
+        "sha256": "8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70",
+        "size": 1424
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/cpuinfo/deps/clog/LICENSE",
+        "sha256": "68a14c3e79add023eecd83d611e73f05b8bf1d16852efeb7eb4033a96736da9e",
+        "size": 1384
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/cudnn_frontend/LICENSE.txt",
+        "sha256": "3fc4b473a2c08768a8066bf7e4a58a1185060f3ad674f2ca9e2011bca4adf2ce",
+        "size": 1148
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/cutlass/LICENSE.txt",
+        "sha256": "7bc733829f16663593865344541c6dcc433beb6b6b555c8f86a43e9b399993cf",
+        "size": 1854
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/cutlass/python/LICENSE.txt",
+        "sha256": "00bf1806f664ac1afe4221f5f04b384fb6f1ca6eb33efcb6dccf599eb06d08b9",
+        "size": 1547
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/fbgemm/LICENSE",
+        "sha256": "12c2370ec32e78115dcd71ba22cdcb1297320fdc4ade81f798136d42357c58b8",
+        "size": 1535
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/fbgemm/external/composable_kernel/LICENSE",
+        "sha256": "20f3b83dfda01bd18d285e0edbb9d044be6dde04cdf76a1ec18d9fc7127936bf",
+        "size": 1726
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/fbgemm/external/cpuinfo/LICENSE",
+        "sha256": "8e7e60636c3aa0cb03571a1a841ce5697f9551ff92b3c426c2561613d15ade70",
+        "size": 1424
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/fbgemm/external/cpuinfo/deps/clog/LICENSE",
+        "sha256": "68a14c3e79add023eecd83d611e73f05b8bf1d16852efeb7eb4033a96736da9e",
+        "size": 1384
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/fbgemm/external/cutlass/LICENSE.txt",
+        "sha256": "80a7a18b73d41f64dd9ca881af35938f8de88b18c728703251f4c94d1299884d",
+        "size": 1854
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/fbgemm/external/cutlass/python/LICENSE.txt",
+        "sha256": "42fec630f410aa308f70a51a89fadcd19586fa620f9831a32bee528a9a10000e",
+        "size": 1547
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/fbgemm/external/googletest/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/fbgemm/external/hipify_torch/LICENSE.txt",
+        "sha256": "ecf819d55b17c2f091b3ba0934d044368aa0680d8a81374860306aa2b91aa1eb",
+        "size": 1112
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/fbgemm/fbgemm_gpu/experimental/hstu/LICENSE",
+        "sha256": "e364577f7a53353281c4462d5810e284e14d5e801414a9117a108ff2da987bcd",
+        "size": 2124
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/fbgemm/fbgemm_gpu/src/quantize_ops/mx/LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+        "size": 1141
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/fbgemm/fbgemm_gpu/test/quantize/mx/LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+        "size": 1141
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/flash-attention/LICENSE",
+        "sha256": "8c9ccb96c065e706135b6cbad279b721da6156e51f3a5f27c6b3329af9416d73",
+        "size": 1558
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/flash-attention/csrc/composable_kernel/LICENSE",
+        "sha256": "20f3b83dfda01bd18d285e0edbb9d044be6dde04cdf76a1ec18d9fc7127936bf",
+        "size": 1726
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/flash-attention/csrc/cutlass/LICENSE.txt",
+        "sha256": "80a7a18b73d41f64dd9ca881af35938f8de88b18c728703251f4c94d1299884d",
+        "size": 1854
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/flash-attention/csrc/cutlass/python/LICENSE.txt",
+        "sha256": "42fec630f410aa308f70a51a89fadcd19586fa620f9831a32bee528a9a10000e",
+        "size": 1547
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/flash-attention/flash_attn/cute/LICENSE",
+        "sha256": "8c9ccb96c065e706135b6cbad279b721da6156e51f3a5f27c6b3329af9416d73",
+        "size": 1558
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/flash-attention/third_party/aiter/LICENSE",
+        "sha256": "0baca809927cad448401b252ce3bae12687c2987597ad7088cf3423f872d5bcd",
+        "size": 1100
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/flash-attention/third_party/aiter/3rdparty/composable_kernel/LICENSE",
+        "sha256": "20f3b83dfda01bd18d285e0edbb9d044be6dde04cdf76a1ec18d9fc7127936bf",
+        "size": 1726
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/flatbuffers/LICENSE",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "size": 11358
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/flatbuffers/dart/LICENSE",
+        "sha256": "edd9b3459bee4c79b549a5ef66d06d12bd144ddb8d08e0b448fb421267f43dd5",
+        "size": 11341
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/flatbuffers/swift/LICENSE",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "size": 11358
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/fmt/LICENSE",
+        "sha256": "07580f2a3b35709ce703d523f447b242f6dfec7582a8c0df102c7fa2849375f8",
+        "size": 1431
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/gemmlowp/gemmlowp/LICENSE",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "size": 11358
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/gloo/LICENSE",
+        "sha256": "2afbc572cf7f60888159bc2ca48ba58f8adec06682ae5de820d61449d1eeea81",
+        "size": 1525
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/googletest/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/ideep/LICENSE",
+        "sha256": "a26add03107a53a605a89711b9b7dbd4f5dd668ae193a912e01a879366a23b0e",
+        "size": 1062
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/ideep/mkl-dnn/LICENSE",
+        "sha256": "e9fc874fc09801b9acf3411ba72394098473704d832d713404b6c4861a086318",
+        "size": 11607
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/ideep/mkl-dnn/third_party/gtest/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/ideep/mkl-dnn/third_party/opencl/LICENSE",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "size": 11358
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/LICENSE",
+        "sha256": "6f3d59b9103e72e5c977eecf61b261c2e1546a9be2995847e3ee2d31021fd39b",
+        "size": 1609
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/LICENSE",
+        "sha256": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
+        "size": 1086
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/DCGM/LICENSE",
+        "sha256": "6617037401b04db6d1e89a9bec00e25a063edab9354dba63f84bf4e7e1345470",
+        "size": 587
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/DCGM/testing/python3/libs_3rdparty/colorama/LICENSE.txt",
+        "sha256": "90ba34a1de1a8f02b8a9896aa2c83b9a960376b85bc7d0d20f39b84c9174c7c1",
+        "size": 1721
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/cpr/LICENSE",
+        "sha256": "df77cacba01d8f241a2e7af01b9a636c0037cf810d80bbcfdbcc405c99a2d563",
+        "size": 1229
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/cpr/test/LICENSE",
+        "sha256": "7d412b7a16a0ca54f6a026b7e24394f9ac3621fba8301976db4044711135842b",
+        "size": 35231
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/fmt/LICENSE.rst",
+        "sha256": "825c9324e70f8c839c8ba910543dd4a7daee243b86ef960594c11381a19980b8",
+        "size": 1408
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/googletest/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/json/test/thirdparty/doctest/LICENSE.txt",
+        "sha256": "21d5cc7eacfbe785d8a7642457ecf630a611220683aa7d7d8cd9febfdb0d06fc",
+        "size": 1086
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/json/third_party/cpplint/LICENSE",
+        "sha256": "02fd655b9adb79e771fd60267a722f0862d43381f95bb38bd6ada5e2080272c4",
+        "size": 1502
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/pfs/LICENSE",
+        "sha256": "d86de50046bd9fd5e47f305236f2a1b342865e367e6da1fbd4185791be5f741a",
+        "size": 10767
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/prometheus-cpp/LICENSE",
+        "sha256": "631da2561d776749086945e1f5adf2e5f4fcde920ddaacda018d505787de1882",
+        "size": 1200
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/prometheus-cpp/3rdparty/civetweb/examples/rest/cJSON/LICENSE",
+        "sha256": "a36dda207c36db5818729c54e7ad4e8b0c6fba847491ba64f372c1a2037b6d5c",
+        "size": 1084
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/prometheus-cpp/3rdparty/civetweb/src/third_party/duktape-1.5.2/LICENSE.txt",
+        "sha256": "f95a124945067d1143f1c6de9a990f2db2426456408ee0f0bfe6de2f568a899f",
+        "size": 1172
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/prometheus-cpp/3rdparty/civetweb/src/third_party/duktape-1.8.0/LICENSE.txt",
+        "sha256": "5358498534dac625c89a69c10becf3dcc40f9af58e6b69ee358ebdf6934f49c6",
+        "size": 1172
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/prometheus-cpp/3rdparty/googletest/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/dynolog/third_party/prometheus-cpp/3rdparty/googletest/googlemock/scripts/generator/LICENSE",
+        "sha256": "5e0df8c845c742e76f2f64d2d9ce1b7e74a2422fddbc577ae6a56319083de0bf",
+        "size": 11386
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/fmt/LICENSE",
+        "sha256": "07580f2a3b35709ce703d523f447b242f6dfec7582a8c0df102c7fa2849375f8",
+        "size": 1431
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/kineto/libkineto/third_party/googletest/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/llvm-openmp/LICENSE.txt",
+        "sha256": "68395143f21a9aa29b8232168c71892af5ec4f1ae2529571cd250a71c9e37a03",
+        "size": 17003
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/mimalloc/LICENSE",
+        "sha256": "82ade5d7d9b029044b5fbbc326207fc47c2d44ee4dd71e8a559c36d728217de9",
+        "size": 1096
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/miniz-3.0.2/LICENSE",
+        "sha256": "0115478d567121238cf6cc1c0c361926cf07a49d9e4c9e66da97fac6a01646b3",
+        "size": 1184
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/mslk/LICENSE",
+        "sha256": "44519cbe722d7bf092cd7e0fa26558b9e3905b88fca4c0c278e2733a9f6b4cf9",
+        "size": 1533
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/mslk/external/composable_kernel/LICENSE",
+        "sha256": "20f3b83dfda01bd18d285e0edbb9d044be6dde04cdf76a1ec18d9fc7127936bf",
+        "size": 1726
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/mslk/external/cutlass/LICENSE.txt",
+        "sha256": "80a7a18b73d41f64dd9ca881af35938f8de88b18c728703251f4c94d1299884d",
+        "size": 1854
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/mslk/external/cutlass/python/LICENSE.txt",
+        "sha256": "42fec630f410aa308f70a51a89fadcd19586fa620f9831a32bee528a9a10000e",
+        "size": 1547
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/mslk/external/googletest/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/mslk/external/hipify_torch/LICENSE.txt",
+        "sha256": "ecf819d55b17c2f091b3ba0934d044368aa0680d8a81374860306aa2b91aa1eb",
+        "size": 1112
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/mslk/mslk/attention/flash_attn/LICENSE",
+        "sha256": "8c9ccb96c065e706135b6cbad279b721da6156e51f3a5f27c6b3329af9416d73",
+        "size": 1558
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/onnx/LICENSE",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "size": 11358
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/onnx/third_party/pybind11/LICENSE",
+        "sha256": "83965b843b98f670d3a85bd041ed4b372c8ec50d7b4a5995a83ac697ba675dcb",
+        "size": 1684
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/protobuf/LICENSE",
+        "sha256": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d",
+        "size": 1732
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/protobuf/third_party/benchmark/LICENSE",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "size": 11358
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/protobuf/third_party/googletest/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/protobuf/third_party/googletest/googlemock/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/protobuf/third_party/googletest/googlemock/scripts/generator/LICENSE",
+        "sha256": "5e0df8c845c742e76f2f64d2d9ce1b7e74a2422fddbc577ae6a56319083de0bf",
+        "size": 11386
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/protobuf/third_party/googletest/googletest/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/psimd/LICENSE",
+        "sha256": "984ce1e0b8ee89d234e28b960381f240e03a07a8031f35012f9c3256f56964e2",
+        "size": 1162
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/pthreadpool/LICENSE",
+        "sha256": "57814a606b4d0fb087d9a534919084b6c11b58a4174cb5a4aef200187780dc3a",
+        "size": 1378
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/pybind11/LICENSE",
+        "sha256": "83965b843b98f670d3a85bd041ed4b372c8ec50d7b4a5995a83ac697ba675dcb",
+        "size": 1684
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/python-peachpy/LICENSE.rst",
+        "sha256": "e6d6fdbfc09c9cc1bfc55946ca9690dd9276deeaed2b72ac7fc5c79bde80ff32",
+        "size": 1443
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/sleef/LICENSE.txt",
+        "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+        "size": 1338
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/tensorpipe/LICENSE.txt",
+        "sha256": "f4dcef0d1f0520b414d5bfaeed8df02f188e4ec05c0a17bf1c18f25f6cc66245",
+        "size": 1535
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/tensorpipe/third_party/googletest/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/tensorpipe/third_party/googletest/googlemock/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/tensorpipe/third_party/googletest/googlemock/scripts/generator/LICENSE",
+        "sha256": "5e0df8c845c742e76f2f64d2d9ce1b7e74a2422fddbc577ae6a56319083de0bf",
+        "size": 11386
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/tensorpipe/third_party/googletest/googletest/LICENSE",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138",
+        "size": 1475
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/tensorpipe/third_party/libnop/LICENSE",
+        "sha256": "876e8f7432440974ee5543a2aa1344370ef1f2f7949ad98a1f3899cf722d5631",
+        "size": 577
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/tensorpipe/third_party/libuv/LICENSE",
+        "sha256": "16de0c32b265cb7d46a6d3bd614f259dd4d693a5e26b3407b04aae8d73041f0c",
+        "size": 1079
+      },
+      {
+        "path": "torch-2.13.0+cu130.dist-info/licenses/third_party/tensorpipe/third_party/pybind11/LICENSE",
+        "sha256": "9a37ea54aa3cf12c7f3292799f20822ffd4b9b7142b36a7a9997b28c39264dc9",
+        "size": 1676
+      }
+    ]
+  }
+}

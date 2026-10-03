@@ -6,11 +6,15 @@ Dockerfile is not enough: the claim is about bytes in layers, so this inspects t
 image's filesystem and its layer history.
 
     npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-        cr.eu-north1.nebius.cloud/<registry-id>/npa-isaac-lab:2.3.2.post1
+        ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab:dev-<full-git-sha>
 
     # or from a local docker save tarball, with no registry access
     docker save npa-isaac-lab:rc1 -o /tmp/img.tar
     npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py --tarball /tmp/img.tar
+
+Saved Docker and OCI archives must contain their complete manifest, config and
+layer graph. A successful export command alone does not establish completeness.
+The reader keeps metadata in memory and streams layer contents without extraction.
 
 Why it keys on payload signatures rather than the string "isaac"
 ---------------------------------------------------------------
@@ -40,6 +44,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -51,6 +56,12 @@ PAYLOAD_SIGNATURES: tuple[tuple[str, str], ...] = (
     ),
     (r"(?i)site-packages/isaacsim/", "the isaacsim wheel's installed package tree"),
     (r"(?i)site-packages/isaaclab/", "the isaaclab wheel's installed package tree"),
+    (
+        r"(?i)(?:^|/)site-packages/ovrtx(?:/|-.*\.(?:dist-info|egg-info)/)",
+        "the proprietary OVRTX installed package tree",
+    ),
+    (r"(?i)(?:^|/)\.ovrtx_venv/", "a baked isolated OVRTX runtime"),
+    (r"(?i)(?:^|/)libovrtx[^/]*\.so", "an OVRTX native runtime library"),
     (
         r"(?i)(^|/)isaac-sim/(kit|exts|extscache|extsPhysics|apps)/",
         "an Isaac Sim install tree",
@@ -131,6 +142,11 @@ HISTORY_BAKE_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"(?i)pip[^\n]*install[^\n]*\bisaacsim\b", "a build layer pip-installed isaacsim"),
     (r"(?i)pip[^\n]*install[^\n]*\bisaaclab\b", "a build layer pip-installed isaaclab"),
     (
+        r"(?i)(?:pip[^\n]*install[^\n]*(?:\bovrtx\b|pylock\.ovrtx-runtime)|"
+        r"render_ovrtx[^\n]*--provision-only)",
+        "a build layer installed or provisioned OVRTX",
+    ),
+    (
         r"(?i)nvcr\.io/nvidia/(isaac-lab|isaac-sim|omniverse)",
         "a layer references an NVIDIA vendor image",
     ),
@@ -209,6 +225,9 @@ class ScanReport:
     #: True when only the layer history was inspected. Recorded in the JSON report so a
     #: consumer can never mistake a fast gate result for a full-filesystem proof.
     history_only: bool = False
+    #: Non-filesystem BuildKit metadata with verified manifest/config/subject
+    #: bindings. This records schema validation, not a payload-content scan.
+    validated_metadata_layers: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
@@ -234,6 +253,14 @@ class ScanReport:
             "history_hits": self.history_hits,
             "allowlisted_paths_present": sorted(self.allowlisted_hits),
             "weight_shaped_paths": sorted(self.weight_shaped_paths),
+            # Safe descriptors only; never copy predicate contents into the report.
+            "validated_metadata_layers": self.validated_metadata_layers,
+            "metadata_validation_scope": (
+                "saved-image-manifests"
+                if self.source in {"tarball", "local-docker-stream"}
+                and not self.history_only
+                else "not-inspected"
+            ),
         }
 
 
@@ -244,49 +271,361 @@ def _require(tool: str) -> str:
     return path
 
 
-def _iter_crane_export(image: str):
+def _iter_crane_export(image: str, *, max_attempts: int = 4):
     """Stream the flattened filesystem of a remote image, member by member."""
     crane = _require("crane")
     command = [crane, "export", image, "-"]
-    process = subprocess.Popen(  # noqa: S603 - fixed argv
-        command, stdout=subprocess.PIPE
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be positive")
+
+    for attempt in range(1, max_attempts + 1):
+        process = subprocess.Popen(  # noqa: S603 - fixed argv
+            command, stdout=subprocess.PIPE
+        )
+        assert process.stdout is not None
+        archive_error: tarfile.TarError | None = None
+        try:
+            # r|* streams without seeking, so a multi-GB image never lands on disk.
+            with tarfile.open(fileobj=process.stdout, mode="r|*") as archive:
+                for member in archive:
+                    yield member.name + ("/" if member.isdir() else "")
+        except tarfile.TarError as exc:
+            archive_error = exc
+        finally:
+            process.stdout.close()
+            returncode = process.wait()
+
+        if returncode == 0 and archive_error is None:
+            return
+        if attempt == max_attempts:
+            if returncode != 0:
+                raise subprocess.CalledProcessError(
+                    returncode, command
+                ) from archive_error
+            assert archive_error is not None
+            raise archive_error
+
+        # Registry exports are large enough to encounter transient 429s even after
+        # crane's internal retries. Restart the stream from byte zero; scan() ignores
+        # duplicate paths yielded by an interrupted attempt.
+        time.sleep(min(2 ** (attempt - 1), 30))
+
+
+class _LayerProbe:
+    """Retain only the opening bytes needed to distinguish a layer from JSON."""
+
+    def __init__(self, handle):
+        self.handle = handle
+        self.prefix: bytearray | None = bytearray()
+
+    def read(self, size=-1):
+        chunk = self.handle.read(size)
+        if self.prefix is not None:
+            self.prefix.extend(chunk)
+        return chunk
+
+
+def _iter_saved_member(handle, name, documents, scanned_layers):
+    probe = _LayerProbe(handle)
+    try:
+        layer = tarfile.open(fileobj=probe, mode="r|*")
+    except tarfile.TarError:
+        # Docker's content-addressed store gives JSON and layer blobs the same
+        # names. Preserve the small failed header probe without seeking the pipe.
+        prefix = bytes(probe.prefix)
+        if prefix.lstrip().startswith((b"{", b"[")):
+            documents[name] = json.loads(prefix + handle.read())
+        yield name
+        return
+    probe.prefix = None
+    with layer:
+        for entry in layer:
+            yield entry.name + ("/" if entry.isdir() else "")
+    scanned_layers.add(name)
+
+
+def _require_saved_config(name, documents):
+    if not isinstance(documents.get(name), dict):
+        raise RuntimeError(
+            f"Incomplete image archive: missing or invalid config {name}"
+        )
+
+
+def _require_saved_layer(name, scanned_layers):
+    if name not in scanned_layers:
+        raise RuntimeError(
+            f"Incomplete image archive: missing or unreadable layer {name}"
+        )
+
+
+def _check_docker_manifest(manifest, documents, scanned_layers):
+    if not isinstance(manifest, list) or not manifest:
+        raise RuntimeError("Invalid Docker image archive manifest.json")
+    for image in manifest:
+        if not isinstance(image, dict) or not isinstance(image.get("Config"), str):
+            raise RuntimeError("Invalid Docker image archive config reference")
+        _require_saved_config(image["Config"], documents)
+        layers = image.get("Layers")
+        if not isinstance(layers, list) or not all(
+            isinstance(item, str) for item in layers
+        ):
+            raise RuntimeError("Invalid Docker image archive layer references")
+        for name in layers:
+            _require_saved_layer(name, scanned_layers)
+
+
+def _saved_descriptor_path(descriptor, sizes):
+    if not isinstance(descriptor, dict):
+        raise RuntimeError("Invalid OCI image archive descriptor")
+    digest = descriptor.get("digest", "")
+    if (
+        not isinstance(digest, str)
+        or re.fullmatch(r"[a-z0-9]+:[a-f0-9]+", digest) is None
+    ):
+        raise RuntimeError("Invalid OCI image archive descriptor digest")
+    name = "blobs/" + digest.replace(":", "/", 1)
+    if name not in sizes:
+        raise RuntimeError(
+            f"Incomplete image archive: missing referenced member {name}"
+        )
+    if descriptor.get("size") != sizes[name]:
+        raise RuntimeError(f"Incomplete image archive: referenced size mismatch {name}")
+    return name
+
+
+def _check_saved_attestation(
+    name,
+    descriptor,
+    document,
+    documents,
+    scanned_layers,
+    sizes,
+    ancestors,
+    attestations,
+):
+    """Validate non-filesystem BuildKit metadata without treating JSON as a tar."""
+    manifest_type = "application/vnd.oci.image.manifest.v1+json"
+    annotations = descriptor.get("annotations", {})
+    target = annotations.get("vnd.docker.reference.digest", "")
+    if (
+        descriptor.get("mediaType") != manifest_type
+        or document.get("mediaType") != manifest_type
+        or descriptor.get("platform") != {"os": "unknown", "architecture": "unknown"}
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", target) is None
+        or not document["layers"]
+    ):
+        raise RuntimeError("Invalid OCI image archive: attestation manifest identity")
+    config_descriptor = document["config"]
+    config = documents[_saved_descriptor_path(config_descriptor, sizes)]
+    artifact_type = document.get("artifactType")
+    if artifact_type is not None:
+        subject = document.get("subject", {})
+        if (
+            artifact_type != "application/vnd.docker.attestation.manifest.v1+json"
+            or config_descriptor.get("mediaType") != "application/vnd.oci.empty.v1+json"
+            or config != {}
+            or subject.get("mediaType") != manifest_type
+            or subject.get("digest") != target
+        ):
+            raise RuntimeError(
+                "Invalid OCI image archive: attestation artifact binding"
+            )
+        target_name = _saved_descriptor_path(subject, sizes)
+    else:
+        if (
+            "subject" in document
+            or config_descriptor.get("mediaType")
+            != "application/vnd.oci.image.config.v1+json"
+            or config.get("architecture") != "unknown"
+            or config.get("os") != "unknown"
+            or config.get("rootfs")
+            != {
+                "type": "layers",
+                "diff_ids": [layer.get("digest") for layer in document["layers"]],
+            }
+        ):
+            raise RuntimeError("Invalid OCI image archive: attestation config binding")
+        target_name = "blobs/sha256/" + target[7:]
+    # The subject must itself have readable filesystem layers. Its JSON cannot
+    # recursively opt into metadata handling through an attestation annotation.
+    _check_oci_manifest(
+        target_name,
+        documents,
+        scanned_layers,
+        sizes,
+        (*ancestors, name),
+        attestations=attestations,
     )
+    for layer in document["layers"]:
+        layer_name = _saved_descriptor_path(layer, sizes)
+        statement = documents.get(layer_name)
+        if (
+            layer.get("mediaType") != "application/vnd.in-toto+json"
+            or not isinstance(statement, dict)
+            or statement.get("_type")
+            not in {
+                "https://in-toto.io/Statement/v0.1",
+                "https://in-toto.io/Statement/v1",
+            }
+            or not isinstance(statement.get("predicate"), dict)
+            or not isinstance(statement.get("predicateType"), str)
+            or not statement["predicateType"]
+            or statement["predicateType"]
+            != layer.get("annotations", {}).get("in-toto.io/predicate-type")
+            or not isinstance(statement.get("subject"), list)
+            or not statement["subject"]
+            or not all(
+                isinstance(subject, dict)
+                and isinstance(subject.get("name"), str)
+                and subject.get("digest") == {"sha256": target[7:]}
+                for subject in statement["subject"]
+            )
+        ):
+            raise RuntimeError(
+                "Invalid OCI image archive: attestation statement binding"
+            )
+
+        if attestations is not None:
+            record = {
+                "member": layer_name,
+                "media_type": layer["mediaType"],
+                "statement_type": statement["_type"],
+            }
+            if record not in attestations:
+                attestations.append(record)
+
+
+def _check_oci_manifest(
+    name,
+    documents,
+    scanned_layers,
+    sizes,
+    ancestors=(),
+    *,
+    descriptor=None,
+    attestations=None,
+):
+    if name in ancestors:
+        raise RuntimeError("Invalid OCI image archive: cyclic index reference")
+    document = documents.get(name)
+    if not isinstance(document, dict) or document.get("schemaVersion") != 2:
+        raise RuntimeError(
+            f"Incomplete image archive: missing or invalid manifest {name}"
+        )
+    if "manifests" in document:
+        children = document["manifests"]
+        if not isinstance(children, list) or not children:
+            raise RuntimeError(f"Invalid OCI image archive: empty index {name}")
+        for descriptor in children:
+            child = _saved_descriptor_path(descriptor, sizes)
+            _check_oci_manifest(
+                child,
+                documents,
+                scanned_layers,
+                sizes,
+                (*ancestors, name),
+                descriptor=descriptor,
+                attestations=attestations,
+            )
+        return
+    config = _saved_descriptor_path(document.get("config"), sizes)
+    _require_saved_config(config, documents)
+    layers = document.get("layers")
+    if not isinstance(layers, list):
+        raise RuntimeError(f"Invalid OCI image archive: missing layer list {name}")
+    if (
+        descriptor
+        and descriptor.get("annotations", {}).get("vnd.docker.reference.type")
+        == "attestation-manifest"
+    ):
+        _check_saved_attestation(
+            name,
+            descriptor,
+            document,
+            documents,
+            scanned_layers,
+            sizes,
+            ancestors,
+            attestations,
+        )
+        return
+    for descriptor in layers:
+        layer = _saved_descriptor_path(descriptor, sizes)
+        _require_saved_layer(layer, scanned_layers)
+
+
+def _check_saved_image(documents, scanned_layers, sizes, attestations=None):
+    if "manifest.json" not in documents and "index.json" not in documents:
+        raise RuntimeError("Incomplete image archive: no Docker or OCI manifest")
+    if "manifest.json" in documents:
+        _check_docker_manifest(documents["manifest.json"], documents, scanned_layers)
+    if "index.json" in documents:
+        layout = documents.get("oci-layout")
+        if not isinstance(layout, dict) or layout.get("imageLayoutVersion") != "1.0.0":
+            raise RuntimeError(
+                "Incomplete image archive: missing or invalid oci-layout"
+            )
+        _check_oci_manifest(
+            "index.json", documents, scanned_layers, sizes, attestations=attestations
+        )
+
+
+def _iter_saved_image(fileobj, *, mode: str, attestations=None):
+    """Stream layer paths and require complete Docker/OCI references before success."""
+    documents, scanned_layers, sizes = {}, set(), {}
+    with tarfile.open(fileobj=fileobj, mode=mode) as archive:
+        for member in archive:
+            name = member.name.removeprefix("./")
+            if not member.isfile():
+                yield name + ("/" if member.isdir() else "")
+                continue
+            if name in sizes:
+                raise RuntimeError(f"Invalid image archive: duplicate member {name}")
+            sizes[name] = member.size
+            handle = archive.extractfile(member)
+            assert handle is not None
+            with handle:
+                yield from _iter_saved_member(handle, name, documents, scanned_layers)
+    _check_saved_image(documents, scanned_layers, sizes, attestations)
+
+
+def _iter_tarball(tarball: Path, *, attestations=None):
+    """Yield member names from a `docker save` tarball, including inside layer blobs."""
+    with tarball.open("rb") as handle:
+        yield from _iter_saved_image(handle, mode="r", attestations=attestations)
+
+
+def _iter_docker_save(image: str, *, attestations=None):
+    """Stream all local image layers without materialising a second image-sized file."""
+    docker = _require("docker")
+    command = [docker, "save", image]
+    process = subprocess.Popen(command, stdout=subprocess.PIPE)  # noqa: S603
     assert process.stdout is not None
     try:
-        # r|* streams without seeking, so a multi-GB image never lands on disk.
-        with tarfile.open(fileobj=process.stdout, mode="r|*") as archive:
-            for member in archive:
-                yield member.name + ("/" if member.isdir() else "")
+        yield from _iter_saved_image(
+            process.stdout, mode="r|*", attestations=attestations
+        )
     finally:
-        if process.stdout:
-            process.stdout.close()
+        process.stdout.close()
         returncode = process.wait()
     if returncode != 0:
         raise subprocess.CalledProcessError(returncode, command)
 
 
-def _iter_tarball(tarball: Path):
-    """Yield member names from a `docker save` tarball, including inside layer blobs."""
-    with tarfile.open(tarball, mode="r") as archive:
-        for member in archive:
-            name = member.name
-            if not (
-                name.endswith(("/layer.tar", ".tar"))
-                or name.startswith("blobs/")
-                or "/blobs/" in name
-            ):
-                yield name + ("/" if member.isdir() else "")
-                continue
-            handle = archive.extractfile(member)
-            if handle is None:
-                continue
-            try:
-                with tarfile.open(fileobj=handle, mode="r|*") as layer:
-                    for entry in layer:
-                        yield entry.name + ("/" if entry.isdir() else "")
-            except tarfile.TarError:
-                # Not a tar (config JSON, manifest); the outer name was already yielded.
-                yield name
+def _local_image_history(image: str) -> list[str]:
+    docker = _require("docker")
+    command = [
+        docker,
+        "history",
+        "--no-trunc",
+        "--format",
+        "{{json .CreatedBy}}",
+        image,
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, command)
+    return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
 
 def _image_history(image: str) -> tuple[list[str], str | None]:
@@ -322,6 +661,7 @@ def scan(
     image: str | None,
     tarball: Path | None,
     *,
+    docker_image: str | None = None,
     max_report: int = 40,
     history_only: bool = False,
 ) -> ScanReport:
@@ -336,9 +676,18 @@ def scan(
     as a fast gate in front of an irreversible action, never as the proof itself -- the
     full scan is what the redistribution claim actually rests on.
     """
-    if tarball is not None:
+    attestations: list[dict[str, str]] = []
+    if docker_image is not None:
+        report = ScanReport(image=docker_image, source="local-docker-stream")
+        entries = (
+            ()
+            if history_only
+            else _iter_docker_save(docker_image, attestations=attestations)
+        )
+        history = _local_image_history(docker_image)
+    elif tarball is not None:
         report = ScanReport(image=str(tarball), source="tarball")
-        entries = _iter_tarball(tarball)
+        entries = _iter_tarball(tarball, attestations=attestations)
         history: list[str] = []
     else:
         assert image is not None
@@ -347,7 +696,11 @@ def scan(
         entries = () if history_only else _iter_crane_export(image)
     report.history_only = history_only
 
+    seen_paths: set[str] = set()
     for path in entries:
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
         report.entries_scanned += 1
         if is_allowed(path):
             report.allowlisted_hits.append(_normalize(path))
@@ -366,6 +719,7 @@ def scan(
         if why:
             report.history_hits.append({"command": command.strip()[:400], "why": why})
 
+    report.validated_metadata_layers = attestations
     return report
 
 
@@ -376,6 +730,13 @@ def main(argv: list[str] | None = None) -> int:
         "--tarball",
         type=Path,
         help="Scan a `docker save` tarball instead of a registry.",
+    )
+    parser.add_argument(
+        "--docker-image",
+        help=(
+            "Scan every layer of a local Docker image through a streaming `docker save`; "
+            "no image-sized temporary archive is created."
+        ),
     )
     parser.add_argument("--json", type=Path, help="Write the JSON report here.")
     parser.add_argument(
@@ -389,10 +750,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not args.image and not args.tarball:
-        parser.error("pass an image reference or --tarball")
+    selected = sum(
+        bool(value) for value in (args.image, args.tarball, args.docker_image)
+    )
+    if selected != 1:
+        parser.error("pass exactly one image reference, --tarball, or --docker-image")
 
-    report = scan(args.image, args.tarball, history_only=args.history_only)
+    report = scan(
+        args.image,
+        args.tarball,
+        docker_image=args.docker_image,
+        history_only=args.history_only,
+    )
     payload = report.to_dict()
 
     print(f"image            {payload['image']}")

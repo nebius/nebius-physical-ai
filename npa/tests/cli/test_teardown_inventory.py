@@ -522,9 +522,28 @@ def _iam_stubs(
             for key in keys
         ],
     )
-    monkeypatch.setattr(
-        nebius_module, "_run_json", lambda *args, **kwargs: {"items": []}
-    )
+
+    def provider_query(args, **kwargs):
+        if args[:3] == ["compute", "instance", "list"]:
+            return {"items": []}
+        if args[:3] == ["iam", "project", "get"]:
+            return {"metadata": {"id": "project-a", "parent_id": "tenant-test"}}
+        if args[:3] == ["iam", "service-account", "get"]:
+            if args[-1] in deleted:
+                raise nebius_module.NebiusError("NotFound")
+            return {
+                "metadata": {"id": sa_id, "parent_id": "project-a", "name": "npa-agent"}
+            }
+        raise AssertionError("unexpected provider call")
+
+    monkeypatch.setattr(nebius_module, "_run_json", provider_query)
+
+    def key_scalar(key_id, *args, **kwargs):
+        if key_id in deleted:
+            raise nebius_module.NebiusError("NotFound")
+        return key_id
+
+    monkeypatch.setattr(nebius_module, "_access_key_metadata_scalar", key_scalar)
     monkeypatch.setattr(
         nebius_module, "get_compute_instance_identity", lambda *args, **kwargs: None
     )
@@ -736,4 +755,7 @@ def test_wait_for_ssh_gates_the_terraform_wait_resource() -> None:
 
     assert 'variable "wait_for_ssh"' in variables_tf
     body = main_tf[main_tf.index('resource "null_resource" "wait_for_cloud_init"') :]
-    assert "count      = var.wait_for_ssh ? 1 : 0" in body[: body.index("provisioner")]
+    assert (
+        'count      = var.wait_for_ssh && trimspace(var.ssh_cidr_block) != "" ? 1 : 0'
+        in body[: body.index("provisioner")]
+    )

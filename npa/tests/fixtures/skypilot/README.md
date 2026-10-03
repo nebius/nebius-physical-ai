@@ -1,13 +1,18 @@
-# Raw SkyPilot task fixtures
+# Raw SkyPilot test fixtures
 
-These are **not** shipped workflows. They are frozen copies of two retired catalog templates,
-kept only as fixtures for `tests/cli/test_workflow_cli.py`.
+[Contributor guide](../../../../CONTRIBUTING.md)
 
-`npa workbench workflow submit <a raw SkyPilot YAML>` remains a supported path — a customer can
-bring their own task and have the wrapper resolve images, registry auth, S3 wiring and
-`${PLACEHOLDER}` substitution for it. That contract needs a raw task to exercise, and it should
-**not** be exercised against a shipped template: doing so is what made these tests block the
-templates' retirement even though nothing in the product referenced them.
+These frozen tasks exercise raw-YAML handling in
+[`test_workflow_cli.py`](../../cli/test_workflow_cli.py). They are test inputs,
+not examples to deploy. For current runnable workflows, use the
+[workflow catalog](../../../../workflows/README.md).
 
-Keeping the fixtures here says the wrapper's contract is independent of the catalog, which is
-the point of retiring the catalog in the first place. See EVIDENCE.md §R51.
+The fixtures keep coverage of image resolution, registry authentication, S3
+wiring, and `${PLACEHOLDER}` substitution independent of the shipped catalog.
+That allows production templates to change or retire without removing coverage
+of customer-owned raw SkyPilot tasks.
+
+When editing a fixture, run its CLI tests and explain which input contract the
+change exercises. Keep private infrastructure values and credentials out of
+fixture content. See the historical R51 record in
+[EVIDENCE.md](../../../../EVIDENCE.md) for the catalog retirement.

@@ -35,7 +35,10 @@ def main() -> int:
     try:
         while process.poll() is None:
             try:
-                with urllib.request.urlopen("http://127.0.0.1:8080/status") as response:
+                nonce = environment.get("NPA_LEISAAC_SESSION_NONCE", "a" * 64)
+                req = urllib.request.Request("http://127.0.0.1:8080/status")
+                req.add_header("x-npa-leisaac-nonce", nonce)
+                with urllib.request.urlopen(req) as response:
                     status = json.loads(response.read().decode("utf-8"))
                 if (
                     status.get("state") == "ready"

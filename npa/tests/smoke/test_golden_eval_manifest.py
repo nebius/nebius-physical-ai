@@ -9,15 +9,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 import json
 import re
 import shlex
+
+import pytest
+import yaml
 from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.deploy.images import CONTAINER_IMAGE_NAMES
+from npa.smoke import manifest as manifest_module
 from npa.smoke.manifest import (
     VALID_GPU,
     VALID_KINDS,
@@ -28,6 +31,127 @@ from npa.smoke.manifest import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 runner = CliRunner()
+
+
+def _manifest_payload(*, flags_by_container: dict[str, dict[str, object]]) -> str:
+    containers = {}
+    for name, flags in flags_by_container.items():
+        containers[name] = {
+            "image": f"npa-{name}",
+            "dockerfile": "npa/docker/workbench/example/Dockerfile",
+            "golden_eval": {
+                "kind": "container-smoke",
+                "command": "true",
+                "gpu": "none",
+                "timeout_seconds": 30,
+                "status": "ready",
+            },
+            **flags,
+        }
+    return yaml.safe_dump(
+        {"format": manifest_module.MANIFEST_FORMAT, "containers": containers}
+    )
+
+
+def _load_manifest_text(
+    monkeypatch: pytest.MonkeyPatch, text: str
+) -> dict[str, manifest_module.ContainerSpec]:
+    monkeypatch.setattr(manifest_module, "_manifest_text", lambda: text)
+    return manifest_module.load_manifest.__wrapped__()
+
+
+def test_classification_flags_preserve_booleans_and_default_to_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    text = _manifest_payload(
+        flags_by_container={
+            "enabled": {
+                "foundation": True,
+                "internal": True,
+                "external_build": True,
+            },
+            "disabled": {
+                "foundation": False,
+                "internal": False,
+                "external_build": False,
+            },
+            "omitted": {},
+        }
+    )
+
+    specs = _load_manifest_text(monkeypatch, text)
+
+    assert (
+        specs["enabled"].foundation,
+        specs["enabled"].internal,
+        specs["enabled"].external_build,
+    ) == (True, True, True)
+    for name in ("disabled", "omitted"):
+        assert (
+            specs[name].foundation,
+            specs[name].internal,
+            specs[name].external_build,
+        ) == (False, False, False)
+
+
+@pytest.mark.parametrize("field_name", ["foundation", "internal", "external_build"])
+@pytest.mark.parametrize(
+    "invalid_value",
+    ["false", "true", 0, 1, [], {}, None],
+    ids=["false-string", "true-string", "zero", "one", "list", "mapping", "null"],
+)
+def test_classification_flags_reject_non_boolean_values(
+    monkeypatch: pytest.MonkeyPatch, field_name: str, invalid_value: object
+) -> None:
+    text = _manifest_payload(
+        flags_by_container={"malformed": {field_name: invalid_value}}
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"Container 'malformed' field '{field_name}' must be a boolean",
+    ):
+        _load_manifest_text(monkeypatch, text)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["foundation", "external_build", "internal"],
+    ids=["known-image", "Dockerfile", "variant"],
+)
+def test_false_string_cannot_enable_validation_bypass(
+    monkeypatch: pytest.MonkeyPatch, field_name: str
+) -> None:
+    text = _manifest_payload(
+        flags_by_container={"bypass-attempt": {field_name: "false"}}
+    )
+
+    with pytest.raises(ValueError, match=rf"field '{field_name}' must be a boolean"):
+        _load_manifest_text(monkeypatch, text)
+
+
+@pytest.mark.parametrize("field_name", ["foundation", "external_build", "internal"])
+def test_cli_rejects_malformed_classification_before_execution(
+    monkeypatch: pytest.MonkeyPatch, field_name: str
+) -> None:
+    text = _manifest_payload(flags_by_container={"malformed": {field_name: "false"}})
+    monkeypatch.setattr(manifest_module, "_manifest_text", lambda: text)
+
+    def forbidden_execution(*_args, **_kwargs):
+        pytest.fail("malformed manifest reached eval execution")
+
+    monkeypatch.setattr("npa.smoke.batch.subprocess.run", forbidden_execution)
+    manifest_module.load_manifest.cache_clear()
+    try:
+        result = runner.invoke(
+            app, ["workbench", "golden-eval", "run-all", "--execute"]
+        )
+    finally:
+        manifest_module.load_manifest.cache_clear()
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValueError)
+    assert f"field '{field_name}' must be a boolean" in str(result.exception)
 
 
 def test_manifest_loads_and_is_valid() -> None:
@@ -133,10 +257,20 @@ def _copy_directives(dockerfile_text: str) -> tuple[list[str], list[str]]:
         stripped = line.strip()
         if not stripped.upper().startswith("COPY "):
             continue
-        tokens = [t for t in stripped.split()[1:] if not t.startswith("--")]
+        tokens = stripped.split()[1:]
+        options: list[str] = []
+        while tokens and tokens[0].startswith("--"):
+            options.append(tokens.pop(0))
         if len(tokens) < 2:
             continue
-        sources.extend(tokens[:-1])
+        for source in tokens[:-1]:
+            if (
+                "--from=npa-source-provenance" in options
+                and source.startswith("/inputs/")
+                and ".." not in Path(source.removeprefix("/inputs/")).parts
+            ):
+                source = source.removeprefix("/inputs/")
+            sources.append(source)
         dests.append(tokens[-1])
     return sources, dests
 
@@ -145,6 +279,103 @@ def _copy_directives(dockerfile_text: str) -> tuple[list[str], list[str]]:
 # workflow-smoke (entrypoint comes from a base image), and entrypoint-smoke kinds
 # are provisioned differently and are not covered by this static contract.
 _IN_IMAGE_SMOKE_KINDS = {"container-smoke", "server-smoke"}
+_IN_IMAGE_SMOKE_PREFIXES = (
+    "python -m npa.",
+    "python3 -m npa.",
+    "python /",
+    "/isaac-sim/python.sh /",
+    "sh /",
+    "bash ",
+)
+_ENV_GUARD_PREFIX = re.compile(
+    r'[ \t]*test[ \t]+-n[ \t]+"(?P<reference>\$[A-Za-z_][A-Za-z0-9_]*)"'
+    r"[ \t]*&&[ \t]*"
+)
+_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+_SHELL_CONTROL = frozenset("();<>|&")
+
+
+def _shell_tokens(command: str) -> list[str]:
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.commenters = ""
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError as error:
+        raise AssertionError("invalid golden-eval shell command") from error
+    if not tokens:
+        raise AssertionError("empty golden-eval shell command")
+    for token in tokens:
+        is_control = token != "&&" and set(token) <= _SHELL_CONTROL
+        if is_control or "$(" in token or "`" in token:
+            raise AssertionError("unsafe golden-eval shell command")
+        if _ENV_ASSIGNMENT.fullmatch(token):
+            raise AssertionError("golden-eval shell assignments are forbidden")
+    return tokens
+
+
+def _guarded_in_image_smoke_tail(command: str) -> str:
+    segments: list[list[str]] = [[]]
+    for token in _shell_tokens(command):
+        if token == "&&":
+            if not segments[-1]:
+                raise AssertionError("empty golden-eval guard")
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    if not segments[-1]:
+        raise AssertionError("missing golden-eval smoke command")
+
+    offset = 0
+    for guard in segments[:-1]:
+        match = _ENV_GUARD_PREFIX.match(command, offset)
+        if match is None or guard != ["test", "-n", match.group("reference")]:
+            raise AssertionError("invalid golden-eval environment guard")
+        offset = match.end()
+    tail = shlex.join(segments[-1])
+    if not tail.startswith(_IN_IMAGE_SMOKE_PREFIXES):
+        raise AssertionError("missing supported in-image smoke command")
+    return tail
+
+
+def test_guarded_in_image_smoke_tail_accepts_safe_environment_guards() -> None:
+    command = (
+        'test -n "$NPA_RUN_ID" && test -n "$NPA_OUTPUT_URI" && '
+        'python3 -m npa.smoke.fixture --output "$NPA_OUTPUT_URI"'
+    )
+    tail = _guarded_in_image_smoke_tail(command)
+    assert shlex.split(tail) == [
+        "python3",
+        "-m",
+        "npa.smoke.fixture",
+        "--output",
+        "$NPA_OUTPUT_URI",
+    ]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "",
+        "&& python -m npa.smoke.fixture",
+        'test -n "$NPA_RUN_ID" &&',
+        'test -n "$NPA_RUN_ID"',
+        'test -n "$NPA_RUN_ID" || python -m npa.smoke.fixture',
+        'test -n "$NPA_RUN_ID"; python -m npa.smoke.fixture',
+        'test -n "$NPA_RUN_ID" > /tmp/guard && python -m npa.smoke.fixture',
+        'test -n "$(id)" && python -m npa.smoke.fixture',
+        'test -n "$NPA_RUN_ID" | cat && python -m npa.smoke.fixture',
+        "NPA_RUN_ID=fixture && python -m npa.smoke.fixture",
+        "echo ready && python -m npa.smoke.fixture",
+        "test -n $NPA_RUN_ID && python -m npa.smoke.fixture",
+        'test -n "${NPA_RUN_ID}" && python -m npa.smoke.fixture',
+        'test -e "$NPA_RUN_ID" && python -m npa.smoke.fixture',
+        'test -n "$NPA_RUN_ID" && golden-smoke',
+    ],
+)
+def test_guarded_in_image_smoke_tail_rejects_unsafe_commands(command: str) -> None:
+    with pytest.raises(AssertionError):
+        _guarded_in_image_smoke_tail(command)
 
 
 @pytest.mark.parametrize(
@@ -167,9 +398,11 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
     text = (REPO_ROOT / spec.dockerfile).read_text(encoding="utf-8")
     sources, dests = _copy_directives(text)
     command = spec.golden_eval.command
+    if name != "leisaac":
+        command = _guarded_in_image_smoke_tail(command)
 
-    if command.startswith("python -m npa.smoke."):
-        module = command.split("python -m ", 1)[1].split()[0]
+    if command.startswith(("python -m npa.", "python3 -m npa.")):
+        module = command.split(" -m ", 1)[1].split()[0]
         module_file = "src/" + module.replace(".", "/") + ".py"
         provides = any(
             src == "src/npa" or src.startswith("src/npa/smoke") or src == module_file
@@ -177,7 +410,7 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
         )
         assert provides, (
             f"{name}: {spec.dockerfile} runs `{command}` but does not COPY the "
-            f"npa.smoke package (need src/npa, src/npa/smoke, or {module_file})"
+            f"NPA module (need src/npa, src/npa/smoke, or {module_file})"
         )
     elif command.startswith("python /"):
         script_path = command.split("python ", 1)[1].split()[0]
@@ -268,6 +501,80 @@ def test_serverless_gpu_values_are_known() -> None:
             assert gpu in known, f"{name}: unknown serverless_gpu {gpu!r}"
 
 
+def test_serverless_gpu_counts_are_positive_integers() -> None:
+    for name, spec in load_manifest().items():
+        count = spec.golden_eval.serverless_gpu_count
+        assert type(count) is int and count > 0, (
+            f"{name}: invalid serverless_gpu_count {count!r}"
+        )
+
+
+def test_cosmos3_serving_requests_its_documented_eight_gpu_node() -> None:
+    spec = load_manifest()["cosmos3-serving"]
+    assert spec.golden_eval.serverless_gpu == "b200"
+    assert spec.golden_eval.serverless_gpu_count == 8
+
+
+def test_non_candidate_quarantined_images_are_not_reported_as_runnable() -> None:
+    from npa.deploy.images import (
+        PUBLICATION_QUARANTINE_TOOLS,
+        VALIDATION_CANDIDATE_TOOLS,
+    )
+
+    specs = load_manifest()
+    # Explicit dev-SHA candidates can remain GPU-gated so maintainers can run
+    # the acceptance workload that promotes them. Every other quarantined
+    # release must stay out of the runnable default batch.
+    for name in PUBLICATION_QUARANTINE_TOOLS - VALIDATION_CANDIDATE_TOOLS:
+        assert specs[name].golden_eval.status in {
+            "blocked-on-upstream",
+            "needs-image-update",
+        }, name
+
+
+def test_runnable_defaults_exist_in_shared_serverless_project() -> None:
+    """Keep the nightly sweep on platforms the configured project offers."""
+
+    from npa.smoke.serverless_runner import DEFAULT_SERVERLESS_GPU
+
+    available = {"h200", "b200", "rtx6000"}
+    for name, spec in load_manifest().items():
+        if spec.golden_eval.status == "blocked-on-upstream":
+            continue
+        gpu = spec.golden_eval.serverless_gpu or DEFAULT_SERVERLESS_GPU
+        assert gpu in available, (
+            f"{name}: serverless GPU {gpu!r} is not offered in the shared "
+            f"golden-eval project; choose one of {sorted(available)}"
+        )
+
+
+def test_shared_serverless_fallback_is_the_smallest_available_preset() -> None:
+    from npa.smoke.serverless_runner import DEFAULT_SERVERLESS_GPU
+
+    # L40S remains a valid operator-selected target, but it is not offered in
+    # the shared project used by the golden-eval sweep.
+    assert DEFAULT_SERVERLESS_GPU == "h200"
+
+
+def test_cpu_only_smokes_pin_their_shared_project_platform_explicitly() -> None:
+    """CPU-only payloads must not inherit a silently changing GPU cost default."""
+
+    for name, spec in load_manifest().items():
+        if spec.golden_eval.gpu != "none":
+            continue
+        assert spec.golden_eval.serverless_gpu == "h200", (
+            f"{name}: CPU-only serverless smoke must explicitly pin the smallest "
+            "offered shared-project platform"
+        )
+
+
+def test_openpi_serverless_gpu_matches_its_runtime_assertion() -> None:
+    spec = load_manifest()["openpi"]
+    assert spec.golden_eval.serverless_gpu == "rtx6000"
+    assert '--expected-gpu-type "RTX PRO 6000"' in spec.golden_eval.command
+    assert "--expected-compute-capability 12.0" in spec.golden_eval.command
+
+
 def test_serverless_runner_imports() -> None:
     # Import-safe: pulls in no GPU/framework deps.
     from npa.smoke import serverless_runner
@@ -347,12 +654,13 @@ def test_cli_run_rejects_unknown_container() -> None:
     assert result.exit_code != 0
 
 
-# Isaac Lab and SONIC render through RTX ray-tracing cores. H100 and H200 have none: they
-# are throughput parts. A render path scheduled there does not fail cleanly -- imports pass
-# and the job burns its budget before producing wrong or empty output, which is the worst
-# kind of failure to debug. See skills/atomic/gpu-selection/SKILL.md.
+# Isaac Lab, SONIC, and Content Agents render through RTX ray-tracing cores. H100 and
+# H200 have none: they are throughput parts. A render path scheduled there does not fail
+# cleanly -- imports pass and the job burns its budget before producing wrong or empty
+# output, which is the worst kind of failure to debug. See
+# skills/atomic/gpu-selection/SKILL.md.
 RT_CORE_GPUS = {"l40s", "rtx6000"}
-RT_CORE_REQUIRED = {"isaac-lab", "sonic"}
+RT_CORE_REQUIRED = {"content-agents", "isaac-lab", "sonic"}
 
 
 @pytest.mark.parametrize("name", sorted(RT_CORE_REQUIRED))
@@ -375,7 +683,7 @@ def test_every_manifest_entry_resolves_to_a_real_image() -> None:
     CONTAINER_IMAGE_NAMES key, so it has to resolve through its parent tool's image
     manifest instead. Nothing checked that the entry pointed at something resolvable.
     """
-    from npa.deploy.images import container_image_for_tool
+    from npa.deploy.images import PUBLICATION_QUARANTINE_TOOLS, container_image_for_tool
     from npa.smoke.serverless_runner import resolve_golden_image
 
     for name, spec in load_manifest().items():
@@ -390,7 +698,12 @@ def test_every_manifest_entry_resolves_to_a_real_image() -> None:
                 image_variant=spec.image_variant,
             )
         else:
-            ref = container_image_for_tool(name, registry="registry.example/test")
+            # Quarantine inventories do not promise a release exists. An
+            # explicit full-SHA development tag must still resolve for testing.
+            tag = "dev-" + "a" * 40 if name in PUBLICATION_QUARANTINE_TOOLS else None
+            ref = container_image_for_tool(
+                name, registry="registry.example/test", tag=tag
+            )
         assert ref.rsplit("/", 1)[-1].startswith(spec.image + ":"), (
             f"{name}: manifest declares image {spec.image!r} but resolves to {ref!r}"
         )

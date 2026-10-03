@@ -4,7 +4,11 @@ import pytest
 
 from npa.cluster.config import NodeGroupConfig
 from npa.cluster.exceptions import ClusterConfigError
-from npa.cluster.node_group import GPU_TYPE_DEFAULTS, default_node_group_name, resolve_gpu_preset
+from npa.cluster.node_group import (
+    GPU_TYPE_DEFAULTS,
+    default_node_group_name,
+    resolve_gpu_preset,
+)
 
 
 def test_node_group_config_defaults_to_private_h100() -> None:
@@ -34,7 +38,9 @@ def test_invalid_gpu_type_rejected() -> None:
     ("autoscaling_min", "autoscaling_max"),
     [(1, None), (3, 2), (-1, 2), (0, 0)],
 )
-def test_invalid_autoscaling_bounds_rejected(autoscaling_min: int | None, autoscaling_max: int | None) -> None:
+def test_invalid_autoscaling_bounds_rejected(
+    autoscaling_min: int | None, autoscaling_max: int | None
+) -> None:
     with pytest.raises(ClusterConfigError):
         NodeGroupConfig(
             cluster_name="cluster-a",

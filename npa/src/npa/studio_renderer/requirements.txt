@@ -1,0 +1,4 @@
+# Local editing dependencies; install FFmpeg separately on the host.
+Pillow>=10,<13
+numpy>=1.24,<3
+edge-tts==7.2.7

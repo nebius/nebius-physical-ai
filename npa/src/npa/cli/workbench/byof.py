@@ -6,9 +6,11 @@ import importlib.util
 import json
 import os
 import sys
+import tempfile
+from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, Mapping, NoReturn
 
 import typer
 from rich.console import Console
@@ -58,6 +60,11 @@ class Workload(str, Enum):
     solution_smoke = "solution-smoke"
 
 
+class RepoAuth(str, Enum):
+    none = "none"
+    github = "github"
+
+
 class OutputFormat(str, Enum):
     text = "text"
     json = "json"
@@ -74,18 +81,108 @@ def _load_runner():
     return module
 
 
+def _raise_robotwin_worker_refusal() -> NoReturn:
+    """Raise a fixed refusal without retaining confidential parser failures."""
+
+    try:
+        raise typer.BadParameter("RoboTwin worker authorization refused") from None
+    except typer.BadParameter as failure:
+        failure.__cause__ = None
+        failure.__context__ = None
+        raise
+
+
+@contextmanager
+def _robotwin_runtime_materialization(
+    runner: Any, argv: list[str]
+) -> Iterator[tuple[Any | None, Mapping[str, str] | None]]:
+    """Exercise the inert transport prototype in unit tests only.
+
+    The public CLI rejects every RoboTwin request before loading its runner.
+    No runtime caller reaches this helper; it does not authorize worker submit."""
+
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        CONTEXT_ENV_NAMES,
+        CUSTOMER_ENTITLEMENT_ENV,
+        MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
+        MATERIALIZED_KUBECONFIG_ENV,
+        MATERIALIZED_SKYPILOT_CONFIG_ENV,
+        PUBLIC_CONTEXT_ENV,
+        TRANSPORT_CONTEXT_ENV,
+        is_robotwin_request,
+        load_runtime_authorization,
+        materialize_transport,
+        validate_invocation,
+    )
+
+    parsed = runner._parse_args(argv)
+    transport = os.environ.get(TRANSPORT_CONTEXT_ENV, "")
+    if not is_robotwin_request(
+        solution_name=parsed.solution_name,
+        repo_url=parsed.repo_url,
+        base_image=parsed.base_image,
+        image=parsed.image,
+        smoke_command=parsed.smoke_command,
+        capability_name=parsed.capability_name,
+        yaml_path=parsed.yaml,
+    ):
+        yield None, None
+        return
+    if not transport:
+        yield None, None
+        return
+    validate_invocation(parsed)
+    if (
+        os.environ.get(PUBLIC_CONTEXT_ENV, "").strip()
+        or os.environ.get(CUSTOMER_ENTITLEMENT_ENV, "").strip()
+    ):
+        raise ValueError("RoboTwin worker received conflicting context channels")
+    with tempfile.TemporaryDirectory(prefix="npa-robotwin-runtime-") as raw_dir:
+        try:
+            materialized = materialize_transport(transport, Path(raw_dir))
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            _raise_robotwin_worker_refusal()
+        runtime_environment = dict(os.environ)
+        for name in CONTEXT_ENV_NAMES:
+            runtime_environment.pop(name, None)
+        runtime_environment[PUBLIC_CONTEXT_ENV] = str(materialized.context_path)
+        runtime_environment[MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV] = str(
+            materialized.customer_authorization_path
+        )
+        runtime_environment[MATERIALIZED_KUBECONFIG_ENV] = str(
+            materialized.kubeconfig_path
+        )
+        runtime_environment[MATERIALIZED_SKYPILOT_CONFIG_ENV] = str(
+            materialized.skypilot_config_path
+        )
+        try:
+            authorization = load_runtime_authorization(runtime_environment)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            _raise_robotwin_worker_refusal()
+        yield authorization, runtime_environment
+
+
 def build_byof_argv(
     *,
     repo_url: str,
     repo_ref: str = "main",
+    repo_auth: str = "none",
+    repo_token_env: str = "",
     base_profile: str = "ubuntu",
     base_image: str = "",
     workload: str = "container-verify",
     build_command: str = "",
+    source_prune_path: str = "",
     smoke_command: str = "",
     solution_name: str = "",
     capability_name: str = "",
     smoke_artifact_name: str = "",
+    runtime_context_env: str = "",
+    libero_qualified_candidate_image: str = "",
     project: str = "",
     registry: str = "",
     image: str = "",
@@ -112,6 +209,8 @@ def build_byof_argv(
         repo_url,
         "--repo-ref",
         repo_ref,
+        "--repo-auth",
+        repo_auth,
         "--base-profile",
         base_profile,
         "--workload",
@@ -129,10 +228,14 @@ def build_byof_argv(
         "--poll-interval",
         str(poll_interval),
     ]
+    if repo_token_env:
+        argv.extend(["--repo-token-env", repo_token_env])
     if base_image:
         argv.extend(["--base-image", base_image])
     if build_command:
         argv.extend(["--build-command", build_command])
+    if source_prune_path:
+        argv.extend(["--source-prune-path", source_prune_path])
     if smoke_command:
         argv.extend(["--smoke-command", smoke_command])
     if solution_name:
@@ -141,6 +244,12 @@ def build_byof_argv(
         argv.extend(["--capability-name", capability_name])
     if smoke_artifact_name:
         argv.extend(["--smoke-artifact-name", smoke_artifact_name])
+    if runtime_context_env:
+        argv.extend(["--runtime-context-env", runtime_context_env])
+    if libero_qualified_candidate_image:
+        argv.extend(
+            ["--libero-qualified-candidate-image", libero_qualified_candidate_image]
+        )
     if project:
         argv.extend(["--project", project])
     if registry:
@@ -170,10 +279,23 @@ def build_byof_argv(
 @app.command("run")
 def run_cmd(
     repo_url: str = typer.Option(
-        ..., "--repo-url", help="Public GitHub/GitLab repo URL."
+        ..., "--repo-url", help="GitHub/GitLab repository URL without credentials."
     ),
     repo_ref: str = typer.Option(
         "main", "--repo-ref", help="Git ref to clone into the image."
+    ),
+    repo_auth: RepoAuth = typer.Option(
+        RepoAuth.none,
+        "--repo-auth",
+        help="none for public source; github for secret-mounted private access.",
+    ),
+    repo_token_env: str = typer.Option(
+        "",
+        "--repo-token-env",
+        help=(
+            "Environment variable holding a fine-grained GitHub token; otherwise "
+            "use GH_TOKEN, GITHUB_TOKEN, or the existing gh login."
+        ),
     ),
     base_profile: BaseProfile = typer.Option(
         BaseProfile.ubuntu,
@@ -193,6 +315,14 @@ def run_cmd(
         "--build-command",
         help="Optional shell command run at image build time from /opt/byof.",
     ),
+    source_prune_path: str = typer.Option(
+        "",
+        "--source-prune-path",
+        help=(
+            "Optional safe repo-relative path removed with Git objects in the source "
+            "clone layer."
+        ),
+    ),
     smoke_command: str = typer.Option(
         "",
         "--smoke-command",
@@ -208,6 +338,19 @@ def run_cmd(
         "",
         "--smoke-artifact-name",
         help="Expected JSON artifact filename for solution-smoke.",
+    ),
+    runtime_context_env: str = typer.Option(
+        "",
+        "--runtime-context-env",
+        help=(
+            "Environment-variable name containing owner-only runtime authorization; "
+            "the secret value is never placed in argv."
+        ),
+    ),
+    libero_qualified_candidate_image: str = typer.Option(
+        "",
+        "--libero-qualified-candidate-image",
+        help="Explicit immutable, separately qualified npa-libero image.",
     ),
     project: str = typer.Option(
         "", "--project", help="Project alias for registry resolution."
@@ -263,14 +406,19 @@ def run_cmd(
     argv = build_byof_argv(
         repo_url=repo_url,
         repo_ref=repo_ref,
+        repo_auth=repo_auth.value,
+        repo_token_env=repo_token_env,
         base_profile=base_profile.value,
         base_image=base_image,
         workload=workload.value,
         build_command=build_command,
+        source_prune_path=source_prune_path,
         smoke_command=smoke_command,
         solution_name=solution_name,
         capability_name=capability_name,
         smoke_artifact_name=smoke_artifact_name,
+        runtime_context_env=runtime_context_env,
+        libero_qualified_candidate_image=libero_qualified_candidate_image,
         project=project,
         registry=registry,
         image=image,
@@ -302,6 +450,28 @@ def run_cmd(
         else:
             typer.echo(" ".join(["npa", "workbench", "byof", "run", *argv]))
         return
+
+    from npa.orchestration.npa_workflow.robotwin_preflight import is_robotwin_request
+
+    if is_robotwin_request(
+        solution_name=solution_name,
+        repo_url=repo_url,
+        base_image=base_image,
+        image=image,
+        smoke_command=smoke_command,
+        capability_name=capability_name,
+        yaml_path=yaml_path,
+    ):
+        # The transport is a secret-value carrier, not proof that this public
+        # CLI was invoked by the normal-submit CPU outer task.  Phase A has no
+        # independently attestable outer identity, so accepting an ambient
+        # transport value here would make the direct CLI a scheduler bypass.
+        # Keep the public surface inert until that attestation is designed and
+        # separately approved.
+        raise typer.BadParameter(
+            "RoboTwin runs only through normal npa workbench workflow submit; "
+            "the Phase A worker bridge is disabled"
+        )
 
     runner = _load_runner()
     code = int(runner.main(argv))
@@ -350,7 +520,7 @@ def status_cmd(
         "cli": "npa workbench byof",
         "sdk": "npa.sdk.workbench.byof",
         "tool_refs": ["workbench.byof.repo", "workbench.isaac_lab.byof_repo"],
-        "workflow": "npa/workflows/workbench/npa-workflows/byof.yaml",
+        "workflow": "workflows/testing/byof.yaml",
         "script": "npa/scripts/run_byof_repo.py",
         "packaging": "docs/workbench/container-packaging.md",
         "ladder": _LADDER_DOC,

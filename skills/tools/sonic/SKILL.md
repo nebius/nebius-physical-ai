@@ -9,7 +9,8 @@ description: Use when working on SONIC whole-body-control training, export, eval
 
 Use this skill for NVIDIA GEAR-SONIC whole-body-control workbench changes,
 including standalone training, export, evaluation, serving, image routing, and
-workflow composition with retargeting or MJLab.
+workflow composition with retargeting and native SONIC evaluation. MJLab uses
+its own native RSL-RL checkpoints; no automatic SONIC checkpoint adapter is implied.
 
 ## Procedure
 
@@ -33,7 +34,7 @@ workflow composition with retargeting or MJLab.
 - CLI: `deploy`, `train`, `export`, `eval`, `serve`, `status`, and `list`.
 - SDK/API: keep train/eval/export/serve request construction shared with service
   payloads and tests where possible.
-- Workflow: SONIC specs live under `npa/workflows/workbench/npa-workflows/`
+- Workflow: SONIC specs live under `workflows/testing/`
   (`sonic-train.yaml`, `sonic-export.yaml`, `sonic-eval.yaml`,
   `sonic-export-eval.yaml`, `sonic-locomotion-finetuning.yaml`). Submit them with
   `npa workbench workflow submit`. `sonic export` / `sonic eval` accept `s3://`
@@ -46,13 +47,40 @@ workflow composition with retargeting or MJLab.
 
 - The legacy baked L40S and inherited MuJoCo variants are quarantined because
   their built bytes contain restricted NVIDIA payloads; resolvers must reject them.
-- Use the active host-mounted runtime-fetch image selected by
-  `npa/src/npa/deploy/sonic_image_manifest.json` for RTX PRO 6000 Blackwell
-  Kubernetes targets with NVIDIA GPU Operator mounted drivers. The CUDA 13
-  image inherits the truthful `sm80-sm90-sm100-sm103-sm120` base alias; do not
-  reconstruct that tag in callers.
+- `sonic-mujoco-runtime-fetch` is an independently rebuilt public release on
+  a digest-pinned Python base and hash-locked CUDA Toolkit/MuJoCo closure. It is
+  not derived from either quarantined image; release promotion is bound to its
+  exact clean, GPU-accepted public development digest.
+- The host-mounted runtime-fetch recipe selected by
+  `npa/src/npa/deploy/sonic_image_manifest.json` is the intended RTX PRO 6000
+  Kubernetes route, but its recorded public tag is publication-quarantined: it
+  defaults to root and exposes operator-specific build provenance in OCI
+  labels. Default resolution must fail until a repaired non-root release is
+  scanned and accepted. Use only an explicit reviewed immutable replacement;
+  do not reconstruct or force the withdrawn tag in callers. A B300 validation
+  image uses the same Dockerfile but must be supplied explicitly by immutable
+  digest until its own accepted release updates the manifest. B300
+  is compute capability 10.3: that development image must use the
+  digest-pinned CUDA 13 base, PyTorch `cu130`, CUDA 13 NVRTC, and the truthful
+  `sm80-sm90-sm100-sm103-sm120` target contract. The official cu130 PyTorch
+  wheel exposes Blackwell 10.x family SASS as `sm_100`; the literal `sm_103`
+  requirement applies to CUDA 13 NVRTC JIT compilation on the B300 device.
+  CUDA 12.8 NVRTC rejects `sm_103`; do not treat environment startup before
+  that JIT boundary as B300 training evidence.
+- `npa-sonic-mujoco:0.2.0-runtime` is independently accepted and remains
+  consumable for the MuJoCo-only workload. Variant-level resolution must not
+  let that separate package exempt `npa-sonic` from quarantine, or let the
+  `npa-sonic` quarantine hide the MuJoCo release.
 - SONIC render validation requires RT-capable GPUs. Use RTX PRO 6000 Blackwell;
   do not silently fall back to the quarantined H100/L40S images.
+- `sonic eval --backend container` consumes ONNX plus its metadata sidecar and
+  resolves `isaac-render`, including explicit manifest variants. The separate
+  `mujoco-eval` container entrypoint consumes a checkpoint through
+  `SONIC_EVAL_CHECKPOINT_PATH`; it is not a substitute for the ONNX contract.
+  Image resolution must use the workload at every caller that knows its stage.
+- Generic Blackwell labels containing B200/B300 remain datacenter targets.
+  Custom workflow `--image` overrides may select an unpublished runtime without
+  being attributed to a first-party variant; callers must validate those bytes.
 - The built-in serverless compute-only default is intentionally unavailable:
   its L40S/H100/H200 images are quarantined, while the active image requires
   Kubernetes GPU Operator driver mounts. A serverless run must supply an
@@ -102,11 +130,12 @@ injects the host driver and the Vulkan ICD given `NVIDIA_DRIVER_CAPABILITIES=all
 (verified on RTX PRO 6000 — `vulkaninfo --summary` reports the discrete GPU at driver
 580.95.05). `VK_ICD_FILENAMES` is deliberately not pinned.
 
-The image must carry `lxml` and `open3d` in its baked Python environment. The real
-training path imports both while constructing the motion library, although the pinned
-upstream training extra declares neither. Keep the Dockerfile's build-time import
-assertions and the one-iteration real fine-tune smoke together; an import-only SONIC
-check is not enough.
+The image must carry `lxml`, `open3d`, and `vector_quantize_pytorch` in its baked Python
+environment. Real training imports the first two while constructing the motion library
+and instantiates `vector_quantize_pytorch.FSQ` while building the actor-critic, although
+the pinned upstream training extra declares none of them. Keep the Dockerfile's
+build-time import assertions and the one-iteration real fine-tune smoke together; an
+import-only SONIC check is not enough.
 
 ## Gotchas
 

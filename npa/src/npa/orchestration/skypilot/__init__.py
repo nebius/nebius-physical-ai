@@ -28,7 +28,6 @@ from npa.orchestration.skypilot.gpu_catalog import (
     resolve_nebius_gpu_preferences,
 )
 from npa.orchestration.skypilot.resources import (
-    SKYPILOT_VERSION,
     InvalidResourceSpecError,
     NPASpec,
     SkyPilotResourceError,
@@ -43,7 +42,6 @@ from npa.orchestration.skypilot.workflow import (
 )
 
 __all__ = [
-    "SKYPILOT_VERSION",
     "CleanupResult",
     "AcceleratorRequest",
     "InvalidResourceSpecError",

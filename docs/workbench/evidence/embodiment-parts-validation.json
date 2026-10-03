@@ -1,0 +1,107 @@
+{
+  "cleanup": {
+    "artifact_storage_retained": true,
+    "cluster_removed": true,
+    "workflow_iam_resources_removed": 5
+  },
+  "comparison_scope": "Independent policies and within-robot paired resets. This does not isolate morphology or establish physical robot transfer.",
+  "compute": {
+    "concurrent_gpu_count": 1,
+    "embodiments_run_sequentially": true,
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+  },
+  "documentation_checks": {
+    "aggregate_confidentiality_passed": true,
+    "ci_result_claimed": false,
+    "gitleaks_passed": true,
+    "guide_local_links_verified": 24,
+    "lint_passed": true,
+    "pytest_collection_count": 22027,
+    "readiness_file_links_verified": 8,
+    "readiness_workflow_sha256_verified": true,
+    "staged_confidentiality_passed": true
+  },
+  "failed_ur10e_attempt": {
+    "completed_ppo_updates": 0,
+    "correction": "Use unique shoulder_link as sensor reference, keep wrist_3_link plus the grasp offset as target, and independently verify the world TCP at environment initialization.",
+    "failure": "Native frame-transformer initialization included the nested Robotiq base_link and raised KeyError. No training artifact was produced; the workflow failed.",
+    "native_matching_mechanism_established": false,
+    "replacement_used_fresh_run": true,
+    "retained": true,
+    "source_commit": "8fb789553f1c90f14e27689cd5698b8522e487be"
+  },
+  "physical_robot_tested": false,
+  "review": {
+    "claude_read_only": true,
+    "codex_read_only": true,
+    "open_blockers": 0
+  },
+  "schema": "npa.embodied-rl.validation.v1",
+  "test_log_sha256": {
+    "full_unit": "91dd3229910586fea6a61d8a1693c4328d5b9ce85efb80e19eabac00248e54af",
+    "security": "e11b340ac898436e5de12f07e83dfae249a9eeb886d48457ed0b58b935df1f83"
+  },
+  "tests": {
+    "focused_linux_passed": 76,
+    "full_unit": {
+      "deselected": 13,
+      "passed": 21472,
+      "skipped": 103,
+      "xpassed": 1
+    },
+    "guardrails_passed": 3508,
+    "security": {
+      "passed": 736
+    },
+    "security_torch": "2.13.0+cpu",
+    "tested_source_commit": "02750e7988937676355a97b8ba20f649cc833238"
+  },
+  "trials": {
+    "kinova_jaco7": {
+      "all_file_checksums_verified": true,
+      "all_five_stages_completed": true,
+      "artifact_audit_sha256": "2c7e285a625bff00defd9dde68c2f2d2c500028b6392339ea6b02bf80abd1f32",
+      "completed_ppo_updates": 1500,
+      "evidence": "docs/workbench/evidence/kinova_jaco7-parts-rtx.json",
+      "exact_worker_source_verified": true,
+      "fresh_hosted_judgments": 32,
+      "invalid_visual_responses": 3,
+      "lerobot_frames": 8000,
+      "physical_robot_tested": false,
+      "physics_qualified": false,
+      "runtime_source_commit": "8fb789553f1c90f14e27689cd5698b8522e487be",
+      "simulation_qualified": false,
+      "test_trials": 1024,
+      "video_count": 32
+    },
+    "ur10e_robotiq85": {
+      "all_file_checksums_verified": true,
+      "all_five_stages_completed": true,
+      "artifact_audit_sha256": "8db799f2bccd81a3d5694d9affa7de3594124fae3f9d595fe53c4b3ca9474dac",
+      "completed_ppo_updates": 1500,
+      "evidence": "docs/workbench/evidence/ur10e_robotiq85-parts-rtx.json",
+      "exact_worker_source_verified": true,
+      "fresh_hosted_judgments": 32,
+      "invalid_visual_responses": 6,
+      "lerobot_frames": 8000,
+      "native_tcp_initialization_checks": {
+        "capture_episode_receipts_share_initialization_within_arm_condition": true,
+        "maximum_error_m": 2.9802322387695312e-08,
+        "receipts": 46,
+        "scope": "Startup of each native environment; not continuous monitoring. Four capture episode receipts per arm/condition repeat the same initialization check.",
+        "source_body": "shoulder_link",
+        "tolerance_m": 0.0001,
+        "tool_body": "wrist_3_link",
+        "training_environments_checked": 4096
+      },
+      "physical_robot_tested": false,
+      "physics_qualified": false,
+      "runtime_source_commit": "02750e7988937676355a97b8ba20f649cc833238",
+      "simulation_qualified": false,
+      "test_trials": 1024,
+      "video_count": 32
+    }
+  },
+  "workflow": "workflows/testing/franka-rl-transfer.yaml",
+  "workflow_sha256": "f5377607715dc2c918b02954b82e91082f1039c213b7f9e5d52292618b0cd8f7"
+}

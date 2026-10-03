@@ -10,6 +10,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from npa.lifecycle_intent import json_stdout_contract
 from npa.workflows.sim_to_real import DEFAULT_GPU_FAILOVER, DEFAULT_GPU_TYPE
 from npa.workflows.sim_to_real_trigger import (
     DEFAULT_TRIGGER_POLL_INTERVAL,
@@ -38,12 +39,96 @@ class TaskCloudOption(str, Enum):
     nebius = "nebius"
 
 
+@app.command("list-presets")
+@json_stdout_contract
+def list_presets_cmd(
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
+) -> None:
+    """List explicit workflow trigger/seed presets."""
+
+    from npa.orchestration.npa_workflow.presets import available_presets
+
+    payload = {"presets": list(available_presets()), "count": len(available_presets())}
+    _emit(payload, output_format)
+
+
+@app.command("stage-preset")
+@json_stdout_contract
+def stage_preset_cmd(
+    preset: str = typer.Option(..., "--preset", help="Explicit public seed preset."),
+    bucket: str = typer.Option(..., "--bucket", help="Destination S3 bucket."),
+    run_id: str = typer.Option(..., "--run-id", help="Run-scoped workflow id."),
+    project: str = typer.Option(
+        "", "--project", "-p", help="Configured project alias for S3 credentials."
+    ),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="S3-compatible endpoint override."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
+) -> None:
+    """Runtime-fetch and stage a verified preset into a run-scoped trigger prefix."""
+
+    from npa.clients.storage import StorageClient
+    from npa.orchestration.npa_workflow.presets import PUBLIC_FRANKA_LIFT
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        resolve_submit_credentials,
+    )
+    from npa.workflows.sim2real.public_seed import (
+        PublicSeedError,
+        stage_public_franka_lift,
+    )
+
+    if preset != PUBLIC_FRANKA_LIFT:
+        _fail(
+            f"unsupported preset {preset!r}; use `npa workbench workflow trigger "
+            "list-presets`"
+        )
+    try:
+        credentials = resolve_submit_credentials(
+            project=project,
+            explicit_endpoint=s3_endpoint,
+            requested=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        )
+        if credentials.missing:
+            raise PublicSeedError(
+                "missing S3 credentials: " + ", ".join(credentials.missing)
+            )
+        client = StorageClient.from_environment(
+            endpoint_url=credentials.endpoint_url,
+            aws_access_key_id=credentials.secret_values.get("AWS_ACCESS_KEY_ID", ""),
+            aws_secret_access_key=credentials.secret_values.get(
+                "AWS_SECRET_ACCESS_KEY", ""
+            ),
+        )
+        result = stage_public_franka_lift(
+            bucket=bucket,
+            run_id=run_id,
+            client=client,
+        )
+    except Exception as exc:  # noqa: BLE001 - stable operator-facing boundary
+        _fail(str(exc))
+        return
+    _emit(result, output_format)
+
+
 @app.command("run")
 def run_cmd(
-    s3_endpoint: str = typer.Option(..., "--s3-endpoint", help="S3-compatible endpoint URL."),
-    s3_bucket: str = typer.Option(..., "--s3-bucket", help="Bucket containing the LeRobot dataset prefix."),
-    s3_prefix: str = typer.Option(..., "--s3-prefix", help="Prefix to poll for LeRobot-format objects."),
-    watermark_uri: str = typer.Option("", "--watermark-uri", help="S3 URI or local path for the trigger cursor."),
+    s3_endpoint: str = typer.Option(
+        ..., "--s3-endpoint", help="S3-compatible endpoint URL."
+    ),
+    s3_bucket: str = typer.Option(
+        ..., "--s3-bucket", help="Bucket containing the LeRobot dataset prefix."
+    ),
+    s3_prefix: str = typer.Option(
+        ..., "--s3-prefix", help="Prefix to poll for LeRobot-format objects."
+    ),
+    watermark_uri: str = typer.Option(
+        "", "--watermark-uri", help="S3 URI or local path for the trigger cursor."
+    ),
     pipeline_yaml: Path | None = typer.Option(
         None,
         "--pipeline-yaml",
@@ -84,7 +169,9 @@ def run_cmd(
         "--sky-bin",
         help="SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN when set.",
     ),
-    gpu: str = typer.Option(DEFAULT_GPU_TYPE, "--gpu", help="Primary SkyPilot accelerator."),
+    gpu: str = typer.Option(
+        DEFAULT_GPU_TYPE, "--gpu", help="Primary SkyPilot accelerator."
+    ),
     gpu_failover: str = typer.Option(
         DEFAULT_GPU_FAILOVER,
         "--gpu-failover",
@@ -95,7 +182,9 @@ def run_cmd(
         "--submit-timeout",
         help="Pipeline submission timeout in seconds.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Poll once and launch one pipeline run if new LeRobot data is present."""
 
@@ -127,10 +216,18 @@ def run_cmd(
 
 @app.command("watch")
 def watch_cmd(
-    s3_endpoint: str = typer.Option(..., "--s3-endpoint", help="S3-compatible endpoint URL."),
-    s3_bucket: str = typer.Option(..., "--s3-bucket", help="Bucket containing the LeRobot dataset prefix."),
-    s3_prefix: str = typer.Option(..., "--s3-prefix", help="Prefix to poll for LeRobot-format objects."),
-    watermark_uri: str = typer.Option("", "--watermark-uri", help="S3 URI or local path for the trigger cursor."),
+    s3_endpoint: str = typer.Option(
+        ..., "--s3-endpoint", help="S3-compatible endpoint URL."
+    ),
+    s3_bucket: str = typer.Option(
+        ..., "--s3-bucket", help="Bucket containing the LeRobot dataset prefix."
+    ),
+    s3_prefix: str = typer.Option(
+        ..., "--s3-prefix", help="Prefix to poll for LeRobot-format objects."
+    ),
+    watermark_uri: str = typer.Option(
+        "", "--watermark-uri", help="S3 URI or local path for the trigger cursor."
+    ),
     pipeline_yaml: Path | None = typer.Option(
         None,
         "--pipeline-yaml",
@@ -171,7 +268,9 @@ def watch_cmd(
         "--sky-bin",
         help="SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN when set.",
     ),
-    gpu: str = typer.Option(DEFAULT_GPU_TYPE, "--gpu", help="Primary SkyPilot accelerator."),
+    gpu: str = typer.Option(
+        DEFAULT_GPU_TYPE, "--gpu", help="Primary SkyPilot accelerator."
+    ),
     gpu_failover: str = typer.Option(
         DEFAULT_GPU_FAILOVER,
         "--gpu-failover",
@@ -187,13 +286,17 @@ def watch_cmd(
         "--poll-interval",
         help="Seconds between polls.",
     ),
-    max_polls: int = typer.Option(0, "--max-polls", help="Maximum polls before exiting; 0 means forever."),
+    max_polls: int = typer.Option(
+        0, "--max-polls", help="Maximum polls before exiting; 0 means forever."
+    ),
     max_launches: int = typer.Option(
         0,
         "--max-launches",
         help="Maximum launched pipeline runs before exiting; 0 means forever.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Poll continuously and launch one pipeline run per new LeRobot data batch."""
 

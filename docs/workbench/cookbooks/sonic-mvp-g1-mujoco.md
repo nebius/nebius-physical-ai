@@ -1,24 +1,44 @@
-# SONIC G1 MuJoCo Image Status
+# SONIC G1 MuJoCo image status
 
-The historical `sonic-mujoco-h100-mvp` / `npa-sonic-mujoco:0.1.3-mvp`
-variant is quarantined. It inherits `npa-sonic:0.1.2`, whose built bytes include
-an old `nvcr.io/nvidia/isaac-lab` base and baked NVIDIA driver libraries.
+[Cookbooks](README.md) · [SONIC images](../sonic-image-catalog.md) · [G1 guide](../guides/g1-humanoid-walk-sonic.md)
 
-Do not submit, mirror, or publish that variant. The resolver intentionally
-rejects `h100`, `h200`, `mujoco`, and the explicit legacy variant ID. Supplying
-credentials or EULA acceptance at runtime cannot change the licensing of bytes
-already baked into the image.
+The active public `sonic-mujoco-runtime-fetch` image evaluates a Unitree G1
+checkpoint in headless MuJoCo. The old combined
+`sonic-mujoco-h100-mvp` / `npa-sonic-mujoco:0.1.3-mvp` image is quarantined;
+its historical H100 fine-tune-and-evaluate instructions no longer apply.
 
-A replacement must:
+## Supported capability
 
-1. Build from the active runtime-fetch SONIC base without NVIDIA Isaac or driver
-   payloads.
-2. Add only redistributable MuJoCo/EGL dependencies.
-3. Pass the built-byte Omniverse payload scan and no-baked-consent checks.
-4. Record a new additive tag and immutable digest in
-   `npa/src/npa/deploy/sonic_image_manifest.json`.
-5. Pass real GPU training/evaluation validation before its status becomes
-   `active`.
+The [image manifest](../../../npa/src/npa/deploy/sonic_image_manifest.json)
+records the active tag, immutable digest, supported GPUs, and `mujoco-eval`
+workload. The replacement is built independently from the quarantined image
+and advertises evaluation only. It is not a training image.
 
-Until those gates pass, use the active RTX PRO 6000 Kubernetes SONIC workflow
-where its supported evaluation path is sufficient.
+The evaluator reads a checkpoint through `SONIC_EVAL_CHECKPOINT_PATH` using
+the container's `mujoco-eval` entrypoint. The released warm-start checkpoint is
+`nvidia/GEAR-SONIC:sonic_release/last.pt`. ONNX evaluation through
+`npa workbench sonic eval --backend container` has a different ONNX/metadata
+contract and requests the Isaac-render workload; changing its container argument
+to `mujoco-eval` does not convert those inputs.
+
+## Recorded validation
+
+The manifest records real B200 acceptance: **64 finite simulation steps, zero
+falls, and verified metrics**. The public checkout omits Git-LFS assets. When
+mesh paths are pointers, the evaluator uses primitive collision proxies while
+retaining the G1 joints, actuators, masses, and inertias. Metrics record
+`geometry_mode=primitive-proxy-no-lfs-payload`.
+
+This establishes the measured checkpoint-to-dynamics path. It does not prove
+mesh fidelity, long-horizon walking, or fine-tuning convergence.
+
+## Training and workflow composition
+
+[`sonic-locomotion-finetuning.yaml`](../../../workflows/testing/sonic-locomotion-finetuning.yaml)
+is an `npa.workflow/v0.0.1` spec with **retarget → train → MJLab** stages.
+It is not the old raw SkyPilot fine-tune/MuJoCo template. Follow the
+[locomotion runbook](sonic-locomotion-finetuning.md) for its input and resource
+preparation, or the [training runbook](sonic-train-runbook.md) for a single stage.
+
+For packaging and publication, use the [SONIC image catalog](../sonic-image-catalog.md#build-and-publication-commands).
+A runtime EULA flag does not change the redistribution status of existing bytes.

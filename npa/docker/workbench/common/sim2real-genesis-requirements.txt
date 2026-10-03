@@ -5,3 +5,6 @@
 # with LeRobot's required huggingface-hub <0.36.
 huggingface-hub==0.35.3
 tomli==2.4.1
+# Replace the parent's GitPython 3.1.57, affected by CVE-2026-78676,
+# before EnvGen's sanitized filesystem becomes the published image.
+GitPython==3.1.62

@@ -1,5 +1,10 @@
 # Deploy the Physical AI Data Factory (from zero)
 
+[Guides](README.md) · [Quick start](#quick-start-copy-paste) · [Failure recovery](#if-submit-fails) · [View outputs](#8-view-results-in-the-npa-agent)
+
+Follow the quick start once. The numbered sections below explain its individual
+steps and optional variants; they are not a second setup sequence.
+
 A step-by-step, copy-paste runbook that takes you from an empty machine to a
 running **NVIDIA Physical AI Data Factory** blueprint on Nebius + SkyPilot, with
 results viewable in the NPA agent (Main stages, embedded Rerun, and an explicitly
@@ -10,7 +15,7 @@ the "how to stand it up".
 
 The blueprint is a single `npa.workflow/v0.0.1` spec, promoted to the top of the
 workflow tree for prominence:
-[`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml`](../../../npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml).
+[`workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml`](../../../workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml).
 SkyPilot is the only orchestrator; there is no OSMO and no bespoke "data factory"
 tool — every stage is an existing workbench tool or a real `run.shell` step.
 
@@ -40,7 +45,7 @@ repository files.
 The Nebius CLI is already authenticated. Configure NPA, deploy and verify the NPA
 agent, provision one CPU node and one on-demand RTX PRO 6000 GPU node (use
 preemptible only if needed), then run
-`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml`
+`workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml`
 end to end with its verified real RoboPro starter input and one augmentation.
 
 Tenant: <tenant-id>
@@ -79,14 +84,10 @@ python -m pip install -e npa
 # S3 keys, Token Factory key, and optional HF/NGC tokens under ~/.npa/.
 npa configure
 eval "$(npa configure --show --env)"   # emits non-secret NPA_* assignments only
-# Force the public mirror after eval; configure --env may restore a saved
-# project registry.
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 
-SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+SPEC=workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
 PROJECT="$NPA_PROJECT_ALIAS"
 BUCKET="$NPA_BUCKET"
-REGISTRY="$NPA_REGISTRY"
 RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
 
 npa workbench health preflight
@@ -100,8 +101,6 @@ npa skypilot bootstrap
 # Reload the kube context written by provision-if-absent, discover its actual
 # accelerator spelling, and validate/plan with the real bucket.
 eval "$(npa configure --show --env)"
-export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
-REGISTRY="$NPA_REGISTRY"
 KUBE_CONTEXT="$NPA_KUBE_CONTEXT"
 npa workbench workflow gpus --context "$KUBE_CONTEXT" --spec "$SPEC"
 npa workbench workflow validate-spec "$SPEC" --json
@@ -110,25 +109,24 @@ npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
   --var bucket="$BUCKET" \
   --var n_augmentations=1 --json
 
-# Proves manifest pulls. GHCR is anonymous; for a private Nebius registry,
-# submit also refreshes the Kubernetes imagePullSecret before launch.
+# Supported image namespace: ghcr.io/nebius/nebius-physical-ai (selected
+# automatically). Prove every repository-owned manifest through anonymous pulls.
 npa workbench workflow preflight-images "$SPEC" \
-  --project "$PROJECT" --registry "$REGISTRY"
+  --project "$PROJECT"
 
 # Source staging is automatic and content-addressed. Each secret name resolves
 # from the environment or project store; a missing gate fails before GPU launch.
 npa workbench workflow submit "$SPEC" \
-  --project "$PROJECT" --registry "$REGISTRY" \
+  --project "$PROJECT" \
   --run-id "$RUN_ID" --runtime --auto-load \
   --var bucket="$BUCKET" \
   --var n_augmentations=1 \
-  --assume-decision promote_checkpoint \
   --infra "k8s/$KUBE_CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env HF_TOKEN
 
-MANIFEST_URI="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/npa-workflow/manifest.json"
+MANIFEST_URI="s3://$BUCKET/nvidia-paidf-vda-cosmos-transfer25/$RUN_ID/npa-workflow/manifest.json"
 # Normal NPA-only status lookup:
 npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch
 # Explicit fallback if this shell cannot resolve the project storage location:
@@ -145,7 +143,7 @@ The sequence has five fail-fast gates:
 | Credentials | S3 and Token Factory checks pass |
 | Model terms | Cosmos Transfer reports `HF access ok` |
 | Cluster | one CPU node fits the controller plus a PAIDF CPU stage; one GPU node fits Transfer |
-| Images | every manifest is pullable; private Nebius credentials refresh `npa-nebius-registry` |
+| Images | every public manifest is anonymously pullable; customer BYOF images use an explicitly configured registry credential |
 | Submit secrets | Token Factory, S3, and `HF_TOKEN` are forwarded without entering YAML |
 
 Stop at the first nonzero command; it prints the remedy. Detailed recovery is
@@ -165,10 +163,9 @@ Only non-secret IDs are arguments. Keep all credential material in the active
 Nebius profile and `~/.npa/credentials.yaml`, never shell history.
 
 The configured S3 endpoint is selected automatically; `--s3-endpoint` is only an
-explicit override. `NPA_REGISTRY` has the same precedence in `preflight-images`
-and submit: an explicit `--registry` wins, then `NPA_REGISTRY`, then the selected
-project's registry. Set `REGISTRY=ghcr.io/nebius/nebius-physical-ai` explicitly
-to choose the public anonymous mirror even when the project has a private one.
+explicit override. Workbench images default to the anonymous GHCR mirror and do
+not inherit `NPA_REGISTRY` or a saved registry value. Pass `--registry` explicitly
+to `preflight-images` and submit only when selecting custom runtime bytes.
 The quick start requests one real augmentation variant for a decisive first run;
 omit `--var n_augmentations=1` to use the spec's default two-variant multiply, or
 raise it together with the requested GPU count for a larger batch.
@@ -222,13 +219,13 @@ With no input selector, submit uses the verified real RoboPro starter described
 in the [PAIDF guide](physical-ai-data-factory.md#starter-input-authenticity-licensing-and-replacement).
 It prints whether the checksum-verified cache was hit or fetched and stages the
 source plus its derived conditioning artifacts at
-`s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input/`.
+`s3://$BUCKET/nvidia-paidf-vda-cosmos-transfer25/$RUN_ID/input/`.
 
 Not sure what is still missing? `submit` checks first and prints everything at
 once:
 
 ```text
-Error: Cannot submit physical-ai-data-factory.yaml: missing prerequisites:
+Error: Cannot submit nvidia-paidf-vda-cosmos-transfer25.yaml: missing prerequisites:
   - SkyPilot CLI is not usable (...)
       fix: run `npa skypilot bootstrap` ...
   - config.bucket is the spec placeholder 'example-bucket'
@@ -238,8 +235,9 @@ Error: Cannot submit physical-ai-data-factory.yaml: missing prerequisites:
 Add `--plan-only` to render the SkyPilot YAML without launching. Do not bypass
 preflight on a first run: it is what keeps registry/auth/config failures local.
 
-Replace the starter with a local clip or one S3 object by adding exactly one
-selector to the complete submit command above:
+Replace the starter with a local clip, one S3 object, or one camera/episode from
+an S3 LeRobotDataset by adding exactly one selector to the complete submit
+command above:
 
 ```bash
 # Local H.264 MP4 (NPA verifies and stages it)
@@ -248,16 +246,28 @@ selector to the complete submit command above:
 # One existing S3 object (not a prefix)
 --input-uri s3://source-bucket/captures/my-capture.mp4
 
+# One LeRobotDataset prefix; camera is an exact video feature and episode is >= 0
+--lerobot-uri s3://source-bucket/datasets/robot-run/ \
+--lerobot-camera observation.images.front --lerobot-episode 0 \
+--require-explicit-lerobot-selection
+
 # Developers/tests only: geometric synthetic frames, explicitly labeled
 --seed-fixture
 ```
 
-The selectors conflict by design. Local and S3 replacements are labeled
-“User-supplied input”; NPA does not claim they are captured or assign a media
-license. It validates MP4/H.264, positive dimensions/duration, normalizes the
-source to exactly 93 frames, extracts eight caption frames, records all digests
-and lineage in `input/provenance.json`, and invokes Cosmos with mandatory
-`--condition-on-input`. `--seed-fixture` is never selected silently.
+The selectors conflict by design. LeRobot selection validates `meta/info.json`,
+declared video features, and the requested camera/episode before downloading only
+the selected observation video; it does not materialize the full dataset. Local,
+S3-object, and LeRobot replacements are labeled without NPA claiming that they
+are captured or assigning a media license. NPA validates MP4/H.264, positive
+dimensions/duration, normalizes the source to exactly 93 frames, extracts eight
+caption frames, records lineage in `input/provenance.json`, and invokes Cosmos
+with mandatory `--condition-on-input`. `--seed-fixture` is never selected silently.
+For subject-sensitive input, privately inspect representative beginning, middle,
+and end frames before submit, then use
+`--require-explicit-lerobot-selection`. It fails before object-store access unless
+both reviewed selectors were supplied; a LeRobot schema or checksum is not a
+semantic-subject assertion.
 
 ### If submit fails
 
@@ -273,7 +283,7 @@ and lineage in `input/provenance.json`, and invokes Cosmos with mandatory
 | status reports `EVIDENCE_INCONSISTENT` | exact current-ledger, S3, or immutable-job evidence conflicts | preserve the run and inspect the reported identities; do not force `NOT_SUBMITTED` or rerun succeeded waves |
 | `Kube context '<name>' ... is not available` | no cluster for that context: neither your kubeconfig nor `~/.npa/clusters/<name>/` has it | provision one (`npa provision-if-absent --project <alias>`, and read its warnings — it now exits non-zero when it could not) or point `KUBECONFIG` at the cluster you want; `kubectl config get-contexts` lists what is resolvable |
 | A cluster is RUNNING in the console but npa has no kubeconfig for it (interrupted provision) | `up` writes the kubeconfig only after apply finishes | `npa cluster kubeconfig --cluster-name <name> --project <alias>` adopts it (writes the kubeconfig + cluster state), or `npa cluster up` again to resume, or `npa cluster down --force` to remove it |
-| `blocked` quota rows before apply | one or more exact hard quotas (instance, disk count, `compute.disk.size.network-ssd` bytes, public IP, or GPU) cannot cover the cumulative topology | read each row's exact `required`, `available`, and `shortfall` (disk capacity is also rendered in GiB), reduce the topology, or ask the tenant operator to resolve the named allowance; the default cluster needs 1,151 GiB (128 + 1,023), and the README agent+cluster path needs 1,251 GiB; preemptible nodes consume exactly the same disk bytes |
+| `blocked` quota rows before apply | one or more exact hard quotas (instance, disk count, `compute.disk.size.network-ssd` bytes, public IP, or GPU) cannot cover the cumulative topology | read each row's exact `required`, `available`, and `shortfall` (disk capacity is also rendered in GiB), reduce the topology, or ask the tenant operator to resolve the named allowance; the default cluster needs 1,151 GiB (128 + 1,023), and the agent+cluster path needs 1,251 GiB (see [Run lifecycle](../../run-lifecycle.md)); preemptible nodes consume exactly the same disk bytes |
 | `Nebius refused node group ...` mid-apply | the provider changed after the green preflight or rejected a create | NPA rolls back only this operation's newly created Terraform stack. If the journal says `rollback-incomplete`, use its exact recovery command; pre-existing clusters/storage/credentials are preserved. |
 | `npa cluster status` reports `DEGRADED` with `provider_state: RUNNING` and a non-ready node group | the control plane is up while that node group was never provisioned | the same quota/capacity fix; the cluster bills while it exists, so tear it down (`npa cluster down --force`) if you cannot get the nodes |
 | `npa cluster status` reports `VERIFICATION_UNAVAILABLE` and a DNS/RBAC/auth code | the configured cluster's current provider/API state could not be verified | run the printed NPA retry command after fixing the typed cause; `npa cluster status --cached` is an explicit last-known-only view, not evidence the cluster is healthy |
@@ -284,12 +294,111 @@ and lineage in `input/provenance.json`, and invokes Cosmos with mandatory
 | `unsupported video container/codec` | replacement media is not a decodable H.264 MP4 | transcode as the message shows before submitting; validation occurs before automatic provisioning |
 | `manifest_state: pending` with `resolution_source: durable_submission_receipt`, `canonical_paidf_s3_prefix`, or `managed_job` | the exact run exists, but artifact publication has not produced its final workflow manifest yet | keep using the NPA status/log/artifact commands; do not resubmit merely to make the manifest appear |
 | A stage remains `PENDING` | the exact scheduler/pod/event reason may be accelerator/capacity, image pull, storage, init/crash, or backoff | run `npa workbench workflow status <run> --project <alias> --json`, then its stage `log_command`; if diagnostics are unavailable, fix the reported DNS/RBAC/controller cause rather than guessing |
-| `status: VERIFICATION_UNAVAILABLE` | an S3/provider/auth/SkyPilot check failed, so absence cannot be established | fix the reported source; if project storage selection is the problem, retry with `--workflow-s3-uri s3://<bucket>/physical-ai-data-factory/<run>/npa-workflow` |
+| `status: VERIFICATION_UNAVAILABLE` | an S3/provider/auth/SkyPilot check failed, so absence cannot be established | fix the reported source; if project storage selection is the problem, retry with `--workflow-s3-uri s3://<bucket>/nvidia-paidf-vda-cosmos-transfer25/<run>/npa-workflow` |
 | `status: NOT_FOUND` with every applicable source listed as checked/absent | no receipt, exact canonical PAIDF object, exact managed job, or ordinary workflow manifest exists for that ID | verify the project alias/run ID; cancellation remains an idempotent no-op for this conclusively absent run |
 | cancel reports `NOT_SUBMITTED` | the owner-only durable ledger is still planned/reserved/staged and contains no workflow, stage, controller, or job launch identity | no provider dependency is required; the repeat-safe cancellation no-op exits 0 |
 | cancel reports `VERIFICATION_UNAVAILABLE` after local S3/SkyPilot removal | durable evidence says submission began, but no terminal receipt exists and the exact provider dependency is unavailable | restore the receipt-recorded provider context/dependency and retry; missing local tools are never treated as proof of absence |
+| cancel reports exact job absence but durable state is non-terminal | queue absence contradicts the retained run ledger, so standalone cancel remains non-terminal and exits 2 | inspect the JSON. If an explicit project teardown is intended, `npa destroy --project <alias> --all --yes` may continue owned infrastructure cleanup only when cancel reports `owned_teardown_allowed: true`; provider, ledger, identity, or cleanup errors still block it |
 | provider package does not match lock checksums | the tracked lock lacks/cannot verify this operator package or a registry mirror/cache is inconsistent | upgrade NPA first. Maintainers regenerate with `terraform providers lock` for the recorded Linux/macOS platforms and review the lock diff; never delete the lock or bypass checksums |
 | agent setup reaches `access-key list` after configure already reports writable S3 | stale NPA version is redundantly reprovisioning storage credentials | upgrade NPA: setup/preflight now share the deployment credential decision and reuse the health-verified configured key without listing/creating/rotating access keys |
+
+### Variant: run PAIDF without the browser agent
+
+The browser agent is optional. PAIDF needs writable storage, a cluster, an
+orchestrator, and a copy of `npa` the workers can install — nothing else. Use
+this variant when you want the workload first and the viewer later, or in CI
+where no VM should be deployed.
+
+It differs from the quick start in two ways: it reads the immutable topology
+plan and the exact teardown plan *before* provisioning anything, and it never
+touches `npa agent`. It stops at the first failed core prerequisite and defaults
+to on-demand capacity.
+
+```bash
+set -eu
+set -o pipefail
+CONTEXT=npa-cluster
+SPEC=workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
+
+npa configure
+# For prompt-free setup, export supported credential variables first and use:
+# npa configure --no-interactive --save-env-credentials ...known project flags...
+eval "$(npa configure --show --env)"
+PROJECT="$NPA_PROJECT_ALIAS"
+npa workbench health preflight
+
+# Reserve the exact run identity, then complete deterministic validation,
+# planning, and image gates before provisioning or source upload.
+BUCKET="$NPA_BUCKET"
+RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
+npa workbench workflow validate-spec "$SPEC" --json
+npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
+  --assume-decision promote_checkpoint --var bucket="$BUCKET" \
+  --var n_augmentations=1 --json
+npa workbench workflow preflight-images "$SPEC"
+npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
+  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
+  --gpu-preset 1gpu-24vcpu-218gb --on-demand \
+  --accelerator RTXPRO6000:1 --dry-run --output-format json
+npa destroy --project "$PROJECT" --all --json
+
+npa provision-if-absent --project "$PROJECT" --skip-k8s
+eval "$(npa configure --show --env)"
+npa skypilot bootstrap
+npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
+  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
+  --gpu-preset 1gpu-24vcpu-218gb --on-demand \
+  --accelerator RTXPRO6000:1 --gpu-readiness-timeout 900
+# The accelerator-gated provisioning transaction verifies the exact
+# project/context/provider cluster identity and atomically binds the shared
+# jobs-controller owner before waiting for GPU readiness. No separate bind is
+# needed, and an incompatible/stale owner fails the earlier dry-run/preflight
+# before Terraform or source staging.
+
+npa workbench workflow submit "$SPEC" --project "$PROJECT" \
+  --registry "$REGISTRY" \
+  --run-id "$RUN_ID" --runtime --var bucket="$BUCKET" \
+  --var n_augmentations=1 \
+  --infra "k8s/$CONTEXT" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN
+
+npa cluster status --project "$PROJECT"
+npa workbench workflow status "$RUN_ID" --project "$PROJECT"
+```
+
+This script performs **no teardown**. When the run is done, the exact commands
+are `npa workflow cancel "$RUN_ID" --project "$PROJECT"`,
+`npa cluster down --project "$PROJECT" --context "$CONTEXT" --force`,
+`npa storage bucket delete --project "$PROJECT" --yes`, and then
+`npa storage service-account delete --project "$PROJECT" --yes`. Ordering
+matters — see [Tear it all down](../../teardown.md).
+
+Add the agent afterwards if you want to look at the results in a browser. Its
+failure neither cancels nor blocks the submitted run:
+
+```bash
+PROJECT="configured-alias"
+RUN_ID="existing-paidf-run-id"
+
+if ! npa agent status --project "$PROJECT" --name agent --json >/dev/null 2>&1; then
+  npa agent preflight --project "$PROJECT" \
+    && npa agent setup --project "$PROJECT" --name agent
+fi
+if npa agent status --project "$PROJECT" --name agent --json >/dev/null 2>&1; then
+  npa workbench workflow load-artifact "$RUN_ID" --project "$PROJECT"
+else
+  printf '%s\n' \
+    "Optional agent is not healthy; PAIDF remains submitted." \
+    "Later, after agent recovery: npa workbench workflow load-artifact $RUN_ID --project $PROJECT"
+fi
+```
+
+For what the gates in this sequence are checking — quota arithmetic, image
+digests, run identity, and restart safety — see
+[Run lifecycle](../../run-lifecycle.md).
 
 ---
 
@@ -363,11 +472,11 @@ Explicit environment variables are optional overrides when scripting. They take
 precedence over configured values, but are not required for the quick start:
 
 ```bash
-export AWS_ACCESS_KEY_ID=<...>
-export AWS_SECRET_ACCESS_KEY=<...>
-export AWS_ENDPOINT_URL=https://storage.<region>.nebius.cloud
-export NEBIUS_TOKEN_FACTORY_KEY=<...>
-export HF_TOKEN=<...>                # optional
+export AWS_ACCESS_KEY_ID="<...>"
+export AWS_SECRET_ACCESS_KEY="<...>"
+export AWS_ENDPOINT_URL="https://storage.<region>.nebius.cloud"
+export NEBIUS_TOKEN_FACTORY_KEY="<...>"
+export HF_TOKEN="<...>"                # optional
 ```
 
 ### 2b. `~/.npa/config.yaml` (machine-managed project config)
@@ -403,8 +512,8 @@ If the bucket / cluster do not exist yet, `provision-if-absent` creates only wha
 is missing (dry-run first):
 
 ```bash
-npa provision-if-absent --project <alias> --dry-run --output-format json
-npa provision-if-absent --project <alias> \
+npa provision-if-absent --project "<alias>" --dry-run --output-format json
+npa provision-if-absent --project "<alias>" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
   --gpu-preset 1gpu-24vcpu-218gb --on-demand          # real
@@ -423,9 +532,10 @@ The documented path uses on-demand nodes. If that capacity is unavailable,
 replace `--on-demand` with `--preemptible`; Nebius may reclaim a preemptible GPU
 node mid-stage, so rely on PAIDF's durable S3 manifests and resume the run.
 
-The container registry must be reachable for the workbench images. Point
-`NPA_REGISTRY` (or the project `registry_id`) at your registry, e.g.
-`cr.<region>.nebius.cloud/<registry-id>`.
+The default GHCR images must be reachable anonymously. For a private or modified
+image, pass its complete reference with the tool's `--image` option or pass its
+namespace explicitly as workflow `--registry`, then configure exact-host pull
+credentials.
 
 ---
 
@@ -445,16 +555,16 @@ project:
 
 ```bash
 # Interactive: pick one of the projects `npa configure` saved, then deploy.
-npa agent setup --name <agent-name>
+npa agent setup --name "<agent-name>"
 ```
 
 For scripted / non-interactive deploys, pass the ids explicitly instead:
 
 ```bash
 npa agent fresh-setup \
-  --project <alias> --name <agent-name> \
-  --project-id <nebius-project-id> --tenant-id <nebius-tenant-id> \
-  --region <region>
+  --project "<alias>" --name "<agent-name>" \
+  --project-id "<nebius-project-id>" --tenant-id "<nebius-tenant-id>" \
+  --region "<region>"
 ```
 
 Both provision the VM and bake the UI/backend. To re-bake later (e.g. after an
@@ -462,7 +572,7 @@ agent code change) without reprovisioning:
 
 ```bash
 # Bake/refresh the UI + backend + nginx on the VM (~1 min; reuses auth/creds).
-npa agent bootstrap --project <alias> --name <agent-name>
+npa agent bootstrap --project "<alias>" --name "<agent-name>"
 ```
 
 Before IAM or VM creation, agent deploy probes the exact Terraform backend
@@ -502,7 +612,7 @@ agent config exists.
 Verify the deploy:
 
 ```bash
-NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project <alias> --name <agent-name>
+NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project "<alias>" --name "<agent-name>"
 ```
 
 ### 3a. Auth and first connection
@@ -521,15 +631,14 @@ NPA_AGENT_CHAT_LIVE=1 npa agent verify-live --project <alias> --name <agent-name
 Three stages pull a workbench image: `augment` needs `npa-cosmos2-transfer`,
 `evaluate` needs `npa-cosmos-evaluator`, and `curate` needs `npa-cosmos-curate`.
 
-The public `ghcr.io/nebius/nebius-physical-ai` mirror is anonymously pullable.
-A new private project registry starts empty: `npa configure` selects or creates
-it, but does not mirror images into it. Pick one path and preflight the same
-registry submit will use:
+The public `ghcr.io/nebius/nebius-physical-ai` mirror is anonymously pullable
+and is the runtime default. A private project registry starts empty and is only
+used when you select it explicitly. Pick one path and preflight the same registry
+submit will use:
 
 ```bash
-REGISTRY=ghcr.io/nebius/nebius-physical-ai    # or the configured NPA_REGISTRY
-npa workbench workflow preflight-images npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml \
-  --project "$PROJECT" --registry "$REGISTRY"
+npa workbench workflow preflight-images workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml \
+  --project "$PROJECT"
 ```
 
 That reports each image as `ok` / `not_found` / `forbidden` and prints the exact
@@ -549,16 +658,20 @@ or incompatible (tags below track
 `npa/src/npa/deploy/images.py`, which is what submit pulls):
 
 ```bash
-REGISTRY="$(npa configure --show 2>/dev/null | grep -o 'cr\.[^ ]*' | head -1)"   # or your NPA_REGISTRY
+REGISTRY="<your-registry>/<namespace>"
 printf '%s' "$(nebius iam get-access-token)" \
   | docker login "${REGISTRY%%/*}" -u iam --password-stdin
 
 docker buildx create --name npa-cosmos-oss --driver docker-container   # scoped cache
-for tool in cosmos-evaluator cosmos-curate; do
-  # Tag must match npa/src/npa/deploy/images.py; submit pulls exactly that tag.
+for tool_tag in \
+  cosmos-evaluator:0.1.2-skypilot-v1-20260813T164700Z-r2 \
+  cosmos-curate:0.1.2-skypilot-v1-20260813T164700Z; do
+  # Tags must match npa/src/npa/deploy/images.py; submit pulls them exactly.
+  tool="${tool_tag%%:*}"
+  tag="${tool_tag#*:}"
   docker buildx build --builder npa-cosmos-oss --push \
     -f "npa/docker/workbench/$tool/Dockerfile" \
-    -t "$REGISTRY/npa-$tool:0.1.2-skypilot-v1-20260813T164700Z" npa
+    -t "$REGISTRY/npa-$tool:$tag" npa
 done
 docker buildx rm npa-cosmos-oss
 ```
@@ -568,7 +681,8 @@ stages fetch theirs at run time with your Hugging Face token:
 
 ```bash
 docker run --rm -e HF_TOKEN="$HF_TOKEN" -v curator-weights:/config/models \
-  "$REGISTRY/npa-cosmos-curate:0.1.2-skypilot-v1-20260813T164700Z" fetch-models --models split-annotate
+  "$REGISTRY/npa-cosmos-curate:0.1.2-skypilot-v1-20260813T164700Z" \
+  fetch-models --models split-annotate
 ```
 
 The loop below is only a registry reachability diagnostic. The mandatory
@@ -577,13 +691,13 @@ results to immutable digests and refuses a missing, stale, or wrong-digest
 bootstrap attestation before spending GPU time:
 
 ```bash
-for ref in npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z \
-           npa-cosmos-evaluator:0.1.2-skypilot-v1-20260813T164700Z \
+for ref in npa-cosmos2-transfer:2.5.1-sim2real-coherent-20260904 \
+           npa-cosmos-evaluator:0.1.2-skypilot-v1-20260813T164700Z-r2 \
            npa-cosmos-curate:0.1.2-skypilot-v1-20260813T164700Z; do
   docker manifest inspect "$REGISTRY/$ref" >/dev/null && echo "OK   $ref" || echo "MISS $ref"
 done
 
-npa workbench workflow preflight-images npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml \
+npa workbench workflow preflight-images workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml \
   --project "$PROJECT" --registry "$REGISTRY"
 ```
 
@@ -594,7 +708,7 @@ npa workbench workflow preflight-images npa/workflows/workbench/npa-workflows/ph
 The blueprint lives at the promoted top-level path. Validate and plan first:
 
 ```bash
-SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
+SPEC=workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
 
 npa workbench workflow validate-spec "$SPEC" --json
 npa workbench workflow plan-spec   "$SPEC" \
@@ -607,11 +721,22 @@ Prepare one project/workflow-scoped fresh `RUN_ID`. With no input selector, subm
 the pinned RoboPro Aloha-Agilex physical capture, verifies its SHA-256, caches it,
 and stages `source.mp4`, the exact 93-frame `conditioning.mp4`, eight derived
 caption frames, and `provenance.json` under the canonical input prefix.
+For this NVIDIA VDA spec, the conditioning clip traverses the complete source
+exactly once, maps its endpoints to frames 0 and 92, letterboxes without cropping,
+and performs a metadata-driven SDR conversion to limited-range BT.709. Decoded
+frame timestamps, rather than average FPS, define the mapping, so valid VFR input
+still traverses exactly once. HDR/BT.2020 or an untagged range/matrix is rejected
+before staging instead of being mislabeled; tone-map or tag replacement input
+explicitly. If an SDR clip declares its matrix but omits transfer/primaries, those
+two fields inherit that supported matrix and the inference is recorded in provenance.
+The eight caption frames include both endpoints; `provenance.json` records the
+complete source-index and decoded-timestamp map used to synchronize the original,
+conditioning, control, and generated Rerun streams.
 
 ```bash
-BUCKET=<your-artifact-bucket>
+BUCKET="<your-artifact-bucket>"
 RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
-INPUT="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input"
+INPUT="s3://$BUCKET/nvidia-paidf-vda-cosmos-transfer25/$RUN_ID/input"
 ```
 
 No extra flag is the production starter path. To replace it, add exactly one of:
@@ -619,15 +744,33 @@ No extra flag is the production starter path. To replace it, add exactly one of:
 ```bash
 --input-video ./my-capture.mp4
 --input-uri s3://source-bucket/captures/my-capture.mp4
+--lerobot-uri s3://source-bucket/datasets/robot-run/ \
+  --lerobot-camera observation.images.front --lerobot-episode 0 \
+  --require-explicit-lerobot-selection
 --seed-fixture  # developers/tests only: explicitly synthetic geometry
 ```
 
-Local and S3 replacements must be decodable H.264 MP4s. Kubernetes placement is
-checked before input or source staging. Conflicts, missing media, unsupported
+Local, S3-object, and selected LeRobot observation videos must be decodable H.264
+MP4s. Kubernetes placement is checked before input or source staging. Conflicts,
+missing media, unsupported
 codec/container/shape, checksum mismatch, or an unavailable object fail with an
 actionable error and never fall back to shapes. `NPA_PAIDF_OFFLINE=1` permits
 only a verified cache hit. A committed run input is immutable, so a repeated
 submit reuses it and refuses a different source rather than overwriting data.
+
+To enable optional real SAM2 protection, override
+`segmentation_mode=sam2-auto` on submit. SAM2 runs in the existing augment GPU
+task, publishes a versioned frame-aligned mask contract bound to the immutable
+run input, and reuses it for every augmentation variant and bounded retry; `off`
+remains the default. Proposal density, quality/stability thresholds, area bounds,
+and object count remain
+configurable. The mask contract and Cosmos metadata record the pinned official
+source/model revisions, component version/license, aggregate coverage,
+object/frame counts, and runtime. A missing or partial mask sequence fails closed.
+Use the same non-sensitive `augmentation_seed` override for baseline and SAM2
+runs when comparing quality or throughput. It controls both the coherent profile
+order and distinct per-candidate diffusion seeds; empty keeps deterministic
+run-ID-derived sampling.
 
 See the [starter provenance and licensing table](physical-ai-data-factory.md#starter-input-authenticity-licensing-and-replacement)
 for the immutable source URL, CC BY 4.0 attribution, exact digest/media facts,
@@ -635,7 +778,8 @@ and the separate Cosmos source/model/media license boundaries.
 
 ### 5b. Submit a real run
 
-Submit with the **same** `RUN_ID` (dynamic gate → pass `--assume-decision`):
+Submit with the **same** `RUN_ID`. Runtime-required workflows deliberately do
+not accept `--assume-decision`; the measured evaluator result controls the gate:
 
 ```bash
 npa workbench workflow submit "$SPEC" \
@@ -644,7 +788,6 @@ npa workbench workflow submit "$SPEC" \
   --var bucket="$BUCKET" \
   --runtime --auto-load \
   --registry "$REGISTRY" \
-  --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY \
@@ -663,7 +806,7 @@ back the `image_id` lines to confirm the three images are pinned:
 ```bash
 npa workbench workflow submit "$SPEC" --run-id preflight --plan-only \
   --assume-decision promote_checkpoint --registry "$REGISTRY" \
-  --var bucket=<your-artifact-bucket> | grep -E 'image_id|accelerators'
+  --var bucket="<your-artifact-bucket>" | grep -E 'image_id|accelerators'
 ```
 
 > **Do not submit with cleared workbench images.** The submit CLI no longer treats
@@ -699,19 +842,40 @@ contract.
   `NPA_WORKFLOW_GPU_ACCELERATOR` env var (it fully replaces the accelerator
   string, count included):
 
+The direct NVIDIA VDA workflow defaults `config.augment_cpus` to `16` so
+multi-GPU model loading has host headroom. On an existing single-GPU node where
+the read-only capacity preflight reports fewer than 16 free CPUs because shared
+controller/system pods are resident, `--var augment_cpus=<available-cpus>` is a
+supported placement-only override. The lightweight CPU stages likewise expose
+`cpu_cpus` and `cpu_memory` (defaults `4` and `16Gi`) for an already-provisioned
+cluster. Lower them only after proving the requested pair fits one node, for
+example `--var cpu_cpus=1 --var cpu_memory=4Gi`. Keep the defaults for a fresh
+cluster and multi-GPU fan-out unless host-side loading headroom has been verified
+separately; these overrides do not change inference parameters or quality
+thresholds.
+
 ```bash
 # Fan 4 scenario variants across 4 GPUs on one node.
 NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO6000:4 \
+NPA_WORKFLOW_GPU_MEMORY=384Gi \
 npa workbench workflow submit "$SPEC" \
   --run-id "$(date -u +paidf-4gpu-%Y%m%dt%H%M%sz)" \
-  --var bucket=<your-artifact-bucket> \
+  --var bucket="<your-artifact-bucket>" \
   --var n_augmentations=4 \
-  --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env HF_TOKEN
 ```
+
+`NPA_WORKFLOW_GPU_MEMORY` is optional and applies only to resource profiles that
+request accelerators. Use it when one model process per GPU would exceed the
+blueprint's host-memory default; CPU stages retain their declared memory. A
+single failed diffusion no longer discards completed siblings: its typed,
+non-promoting failure record remains under the scheduler-attempt prefix, and the
+run manifest reports `attempted_variant_count`, `variant_count`, and
+`failed_variant_count`. If every diffusion fails, no empty run manifest is
+published.
 
 When no valid `NPA_SRC_S3_URI` or image override is supplied, real submit
 automatically stages the current content-addressed NPA source and reuses that
@@ -746,10 +910,9 @@ is an instantaneous preflight snapshot, not a reservation.
 NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO6000:4 \
 npa workbench workflow submit "$SPEC" \
   --run-id "$(date -u +paidf-4x4-%Y%m%dt%H%M%sz)" \
-  --var bucket=<your-artifact-bucket> \
+  --var bucket="<your-artifact-bucket>" \
   --var n_augmentations=16 \
   --var augment_nodes=4 \
-  --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
@@ -760,7 +923,8 @@ How the nodes divide the work and rejoin:
 - Every pod runs the same augment command and reads the same
   `configs/manifest.json`. Node `k` of `N` renders variants `k, k+N, k+2N, …`
   (striding, so the nodes stay within one variant of each other) and pins each of
-  its own concurrent renders to a local GPU starting at 0.
+  its own concurrent renders to one of the pod's cloud GPUs (CUDA device
+  indices starting at 0).
 - Variant indices are global, so clip names (`aug-<run-id>-<i>`) stay disjoint.
   Every scheduler-managed wave attempt, including the one-node default, writes only below
   `cosmos_augmented/_attempts/<attempt-id>/`, and every clip dir there is written
@@ -821,11 +985,10 @@ letting the prompt change what it is *made of*:
 ```bash
 npa workbench workflow submit "$SPEC" \
   --run-id "$(date -u +paidf-seg-%Y%m%dt%H%M%sz)" \
-  --var bucket=<your-artifact-bucket> \
+  --var bucket="<your-artifact-bucket>" \
   --var augment_control=seg \
   --var augment_control_prompt="robot arm, conveyor, bin" \
   --var augment_mask_prompt="robot arm" \
-  --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
@@ -888,9 +1051,9 @@ Run real curation standalone against a completed run's augmented output:
 
 ```bash
 npa workbench fiftyone curate-augmented \
-  --augment-uri s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/cosmos_augmented/ \
-  --report-uri  s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/curation/report.json \
-  --curator-report-uri s3://<your-artifact-bucket>/physical-ai-data-factory/<run-id>/curation/cosmos_curator.json \
+  --augment-uri "s3://<your-artifact-bucket>/nvidia-paidf-vda-cosmos-transfer25/<run-id>/cosmos_augmented/" \
+  --report-uri  "s3://<your-artifact-bucket>/nvidia-paidf-vda-cosmos-transfer25/<run-id>/curation/report.json" \
+  --curator-report-uri "s3://<your-artifact-bucket>/nvidia-paidf-vda-cosmos-transfer25/<run-id>/curation/cosmos_curator.json" \
   --require-fiftyone \
   --dedup-threshold 0.10
 ```
@@ -911,7 +1074,7 @@ guide's curation section.
 
 The agent discovers runs from its artifact bucket. If the agent's base prefix is
 `checkpoints`, the run lands at
-`checkpoints/physical-ai-data-factory/<run-id>/`. Open `https://<public-ip>/`,
+`checkpoints/nvidia-paidf-vda-cosmos-transfer25/<run-id>/`. Open `https://<public-ip>/`,
 sign in, then:
 
 - **Main stages:** the run's stage graph (config → annotate → augment → grade →
@@ -928,7 +1091,7 @@ sign in, then:
 
 Useful authenticated JSON endpoints for scripted verification:
 
-```bash
+```text
 GET  /api/artifacts/runs?prefix=physical-ai-data-factory
 GET  /api/artifacts/run/<run-id>?prefix=physical-ai-data-factory
 GET  /api/artifacts/provenance/<run-id>
@@ -939,7 +1102,9 @@ POST /api/sim-viz/load-artifact   # {"run_id":"<run-id>","key":"reports/sim2real
 
 ---
 
-## 8. Tear everything down
+<a id="8-tear-everything-down"></a>
+
+## 9. Tear everything down
 
 Cleanup has three owners — the agent VM, the cluster, and the storage/IAM that
 `npa configure` provisioned. Preview the unified, project-scoped teardown first;
@@ -972,13 +1137,13 @@ Then remove them:
 ```bash
 # 1. Cancel the workflow. Planned/staged runs that never launched are a
 #    successful repeat-safe no-op.
-npa workflow cancel <run-id> --project "$PROJECT" --json
+npa workflow cancel "<run-id>" --project "$PROJECT" --json
 
 # 2. Agent VM, its network, local record, and the IAM the deploy created for it.
-npa agent destroy --project "$PROJECT" --name <agent-name> --yes
+npa agent destroy --project "$PROJECT" --name "<agent-name>" --yes
 
 # 3. Remove the shared jobs controller only after every NPA workflow is terminal.
-npa skypilot cleanup-controller --project "$PROJECT" --context <context> --yes
+npa skypilot cleanup-controller --project "$PROJECT" --context "<context>" --yes
 
 # 4. Cluster. `down` owns everything the Terraform path created — cluster, VPC,
 #    subnet — and clears ~/.npa/clusters/<context>/. It reads
@@ -992,20 +1157,17 @@ npa storage bucket delete --project "$PROJECT" --yes --wait
 # 6. Storage IAM. Inspect first. If legacy state lacks ownership provenance,
 #    reconcile the exact immutable ID before returning to the guarded delete.
 npa storage service-account delete --project "$PROJECT" --dry-run
-npa storage service-account reconcile --project "$PROJECT" --id <exact-id> --dry-run
-npa storage service-account reconcile --project "$PROJECT" --id <exact-id> \
+npa storage service-account reconcile --project "$PROJECT" --id "<exact-id>" --dry-run
+npa storage service-account reconcile --project "$PROJECT" --id "<exact-id>" \
   --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
 npa storage service-account delete --project "$PROJECT" --dry-run
 npa storage service-account delete --project "$PROJECT" --yes
 
-# 7. If this validation created a private image registry, delete its exact
-#    immutable artifact DAG and registry. For an NPA-created disposable project,
-#    remove only its unique provider default topology; either command refuses
-#    mixed/shared evidence.
-npa registry delete --project "$PROJECT" --project-id <project-id> \
-  --tenant-id <tenant-id> --id <registry-id> --name <registry-name> --yes
-npa network delete-project-default --project "$PROJECT" \
-  --project-id <project-id> --tenant-id <tenant-id> --yes
+# 7. Retire any separately created private registry through its provider.
+#    NPA has no top-level registry command. For an NPA-created disposable
+#    project, remove only its unique provider default topology.
+npa network delete-project-default --project "$PROJECT" --project-id "<project-id>" \
+  --tenant-id "<tenant-id>" --yes
 
 # 8. Optional: delete only a proven NPA-created, provider-empty project.
 npa destroy --project "$PROJECT" --all --delete-project --yes --json
@@ -1023,13 +1185,13 @@ If project configuration was already removed, take the opaque receipt ID printed
 before that rewrite and use the same NPA-only recovery surfaces:
 
 ```bash
-npa agent destroy --receipt <receipt-id> --name <agent-name> --yes
-npa skypilot cleanup-controller --receipt <receipt-id> --context <context> --yes
-npa cluster down --receipt <receipt-id> --context <context> --force
-npa storage service-account delete --receipt <receipt-id> --id <exact-id> --dry-run
-npa workflow cancel <run-id> --receipt <receipt-id> --json
+npa agent destroy --receipt "<receipt-id>" --name "<agent-name>" --yes
+npa skypilot cleanup-controller --receipt "<receipt-id>" --context "<context>" --yes
+npa cluster down --receipt "<receipt-id>" --context "<context>" --force
+npa storage service-account delete --receipt "<receipt-id>" --id "<exact-id>" --dry-run
+npa workflow cancel "<run-id>" --receipt "<receipt-id>" --json
 # Optional, after the provider proves every managed child absent:
-npa destroy --receipt <receipt-id> --all --delete-project --yes --json
+npa destroy --receipt "<receipt-id>" --all --delete-project --yes --json
 ```
 
 Exact flags override receipt fields, and receipt fields override live config;
@@ -1107,7 +1269,9 @@ Notes:
   actual deferred removal requires `--remove-environment --yes` and never
   includes source, `.git`, credentials, or unrelated caches.
 
-## 9. Where to go next
+<a id="9-where-to-go-next"></a>
+
+## 10. Where to go next
 
 - Conceptual blueprint, stage-by-stage mapping, and S3 layout:
   [physical-ai-data-factory.md](physical-ai-data-factory.md).

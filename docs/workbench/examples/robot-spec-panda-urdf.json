@@ -1,0 +1,51 @@
+{
+  "schema": "npa.sim2real.robot_spec.v1",
+  "robot_source": "byo_urdf",
+  "name": "moveit_resources_panda",
+  "robot_uri": "s3://YOUR_BUCKET/robots/panda/c55b102711fc0aebe80c6952d2ce97c38110abba/moveit_resources_panda_description/urdf/panda.urdf",
+  "asset_root_uri": "s3://YOUR_BUCKET/robots/panda/c55b102711fc0aebe80c6952d2ce97c38110abba",
+  "base_link": "panda_link0",
+  "ee_link": "panda_hand",
+  "finger_links": [
+    "panda_leftfinger",
+    "panda_rightfinger"
+  ],
+  "joint_names": [
+    "panda_joint1",
+    "panda_joint2",
+    "panda_joint3",
+    "panda_joint4",
+    "panda_joint5",
+    "panda_joint6",
+    "panda_joint7",
+    "panda_finger_joint1",
+    "panda_finger_joint2"
+  ],
+  "gripper_joint_names": [
+    "panda_finger_joint1",
+    "panda_finger_joint2"
+  ],
+  "n_arm_joints": 7,
+  "n_gripper_joints": 2,
+  "home_qpos": [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785, 0.04, 0.04],
+  "kp": [4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100],
+  "kv": [450, 450, 350, 350, 200, 200, 200, 10, 10],
+  "force_lower": [-87, -87, -87, -87, -12, -12, -12, -20, -20],
+  "force_upper": [87, 87, 87, 87, 12, 12, 12, 20, 20],
+  "gripper_open": 0.04,
+  "gripper_close": 0.0,
+  "task": {
+    "skill": "lift",
+    "workspace_reach_m": 0.855
+  },
+  "license": {
+    "spdx": "Apache-2.0",
+    "file": "panda_description/LICENSE",
+    "package_xml_declares": "BSD"
+  },
+  "provenance": {
+    "repository": "https://github.com/moveit/moveit_resources",
+    "commit": "c55b102711fc0aebe80c6952d2ce97c38110abba",
+    "package": "moveit_resources_panda_description"
+  }
+}

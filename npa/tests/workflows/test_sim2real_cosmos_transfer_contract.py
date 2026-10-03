@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from npa.workflows.sim2real.cosmos_transfer_stage import (
+    _task_conditioned_transfer_input,
     run_cosmos_transfer_component,
 )
 from npa.workflows.sim2real.models import Sim2RealLoopError
@@ -18,6 +19,40 @@ class _RecordingStorage:
         assert Path(local).is_file()
         self.uploads.append(uri)
         return uri
+
+
+class _SeedStorage:
+    def download_directory(self, _uri: str, local: str) -> None:
+        frames = Path(local) / "frames" / "trajectory-000"
+        frames.mkdir(parents=True)
+        for index in range(4):
+            (frames / f"frame-{index:04d}.png").write_bytes(b"png")
+        (frames / "frame-preview.png").write_bytes(b"not-numbered")
+
+
+def test_task_conditioned_transfer_accepts_numbered_seed_contract_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(argv: list[str], **_kwargs: object) -> None:
+        Path(argv[-1]).write_bytes(b"video")
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.cosmos_transfer_stage.subprocess.run", fake_run
+    )
+    calls: list[dict[str, object]] = []
+
+    def run_transfer(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {"status": "executed"}
+
+    result, fixture = _task_conditioned_transfer_input(
+        _SeedStorage(), "s3://unit/seed/", "run-1", run_transfer
+    )
+
+    assert result == {"status": "executed"}
+    assert fixture is not None
+    assert fixture["source_frame_count"] == 4
+    assert calls[0]["prompt"].startswith("A photorealistic Franka Panda robot")
 
 
 def _real_result(*, frames: object = None, frame_count: int = 1) -> dict:

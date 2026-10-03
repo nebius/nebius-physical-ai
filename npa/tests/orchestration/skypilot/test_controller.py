@@ -51,7 +51,9 @@ def test_apply_controller_override_can_emit_nebius_vm_fallback() -> None:
     assert config["jobs"]["controller"]["resources"] == controller_resources_nebius_vm()
 
 
-def test_apply_controller_override_preserves_explicitly_larger_kubernetes_controller() -> None:
+def test_apply_controller_override_preserves_explicitly_larger_kubernetes_controller() -> (
+    None
+):
     existing = {
         "jobs": {
             "controller": {
@@ -94,7 +96,9 @@ def test_apply_controller_override_drops_disk_and_preserves_larger_shape() -> No
     }
 
 
-def test_apply_controller_override_preserves_explicitly_larger_nebius_controller() -> None:
+def test_apply_controller_override_preserves_explicitly_larger_nebius_controller() -> (
+    None
+):
     existing = {
         "jobs": {
             "controller": {
@@ -137,7 +141,9 @@ def test_apply_controller_override_disables_existing_controller_autostop() -> No
 
 
 def test_apply_controller_override_pins_kubernetes_region_on_fresh_config() -> None:
-    config = apply_controller_override({"name": "dag"}, controller_region="npa-rtxpro-mk8s")
+    config = apply_controller_override(
+        {"name": "dag"}, controller_region="npa-rtxpro-mk8s"
+    )
 
     assert config["jobs"]["controller"]["resources"]["region"] == "npa-rtxpro-mk8s"
 
@@ -160,7 +166,7 @@ def test_apply_controller_override_pins_region_on_existing_default_controller() 
     assert config["jobs"]["controller"]["resources"]["region"] == "ctx-a"
 
 
-def test_apply_controller_override_preserves_explicit_region() -> None:
+def test_apply_controller_override_replaces_stale_explicit_region() -> None:
     existing = {
         "jobs": {
             "controller": {
@@ -176,7 +182,7 @@ def test_apply_controller_override_preserves_explicit_region() -> None:
 
     config = apply_controller_override(existing, controller_region="ctx-b")
 
-    assert config["jobs"]["controller"]["resources"]["region"] == "already-set"
+    assert config["jobs"]["controller"]["resources"]["region"] == "ctx-b"
 
 
 def test_apply_controller_override_without_region_is_unchanged() -> None:
@@ -186,7 +192,10 @@ def test_apply_controller_override_without_region_is_unchanged() -> None:
 
 
 def test_controller_region_from_infra_extracts_kubernetes_context() -> None:
-    assert _controller_region_from_infra("k8s/npa-rtxpro-mk8s", "kubernetes") == "npa-rtxpro-mk8s"
+    assert (
+        _controller_region_from_infra("k8s/npa-rtxpro-mk8s", "kubernetes")
+        == "npa-rtxpro-mk8s"
+    )
     assert _controller_region_from_infra("kubernetes/ctx-x", "kubernetes") == "ctx-x"
 
 

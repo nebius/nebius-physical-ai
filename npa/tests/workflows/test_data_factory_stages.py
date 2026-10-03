@@ -2,13 +2,71 @@
 
 from __future__ import annotations
 
+import io
 import json
+import multiprocessing
+import subprocess
+import time
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 import typer
 
 from npa.workflows import data_factory_stages as dfs
+
+
+class _SharedConditionalStorage:
+    """Small process-shared implementation of the StorageClient CAS contract."""
+
+    def __init__(self, objects, guard, sequence) -> None:
+        self.objects = objects
+        self.guard = guard
+        self.sequence = sequence
+
+    def read_bytes_with_etag(self, uri: str):
+        with self.guard:
+            item = self.objects.get(uri)
+            return None if item is None else (bytes(item[0]), str(item[1]))
+
+    def put_bytes_conditional(
+        self,
+        payload: bytes,
+        uri: str,
+        *,
+        if_match: str = "",
+        if_none_match: bool = False,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        del content_type
+        from npa.clients.storage import StoragePreconditionFailed
+
+        with self.guard:
+            current = self.objects.get(uri)
+            if if_none_match:
+                if current is not None:
+                    raise StoragePreconditionFailed("synthetic collision")
+            elif not current or str(current[1]) != if_match:
+                raise StoragePreconditionFailed("synthetic stale etag")
+            self.sequence.value += 1
+            etag = f'"etag-{self.sequence.value}"'
+            self.objects[uri] = (bytes(payload), etag)
+            return etag
+
+
+def _selection_lock_process_worker(
+    storage, selection_uri: str, active, peak, counter_guard, entered
+) -> None:
+    dfs._storage = lambda: storage
+    with dfs._candidate_selection_destination_lock(selection_uri):
+        with counter_guard:
+            active.value += 1
+            peak.value = max(peak.value, active.value)
+            entered.value += 1
+        time.sleep(0.15)
+        with counter_guard:
+            active.value -= 1
 
 
 def _stub_real_fiftyone(
@@ -43,17 +101,24 @@ def _mock_committed_manifest(
     """Make listed canonical test objects carry the real committed contract."""
 
     original = dfs._download_json
-    videos = sorted(key for key in keys if key.endswith("/augmented_video.mp4"))
-    variants = [
-        {
-            "clip": key.rsplit("/", 2)[-2],
-            "augmented_video_uri": f"s3://{bucket}/{key}",
-        }
-        for key in videos
-    ]
 
     def load(uri: str):
-        if uri.rstrip("/").endswith("cosmos_augmented/manifest.json"):
+        if "cosmos_augmented/" in uri and uri.endswith("/manifest.json"):
+            object_key = uri.split(f"s3://{bucket}/", 1)[-1]
+            manifest_prefix = object_key.rsplit("/", 1)[0] + "/"
+            videos = sorted(
+                key
+                for key in keys
+                if key.startswith(manifest_prefix)
+                and key.endswith("/augmented_video.mp4")
+            )
+            variants = [
+                {
+                    "clip": key.rsplit("/", 2)[-2],
+                    "augmented_video_uri": f"s3://{bucket}/{key}",
+                }
+                for key in videos
+            ]
             return {
                 "schema": "npa.cosmos2.transfer.v1",
                 "mode": "cosmos_transfer2.5_gpu",
@@ -115,11 +180,98 @@ def test_prompt_from_combo_is_appearance_only() -> None:
         "background": "plain wall",
     }
     prompt = dfs.prompt_from_combo(combo)
-    assert "warm color grade" in prompt
-    assert "matte surface finish" in prompt
-    assert "change appearance only" in prompt
-    assert "Preserve every frame's exact input objects" in prompt
+    assert "warm" in prompt
+    assert "matte" in prompt
+    assert "non-identity-bearing backdrop" in prompt
+    assert "Preserve the exact foreground objects" in prompt
     assert "cloth" not in prompt
+
+
+def test_source_fidelity_prompt_policy_is_deterministic_and_fail_mode_specific(
+    tmp_path: Path,
+) -> None:
+    first = dfs.generate_configs(
+        str(tmp_path / "first.json"),
+        n_augmentations=4,
+        seed="run-a",
+        augmentation_seed="controlled-vda-quality",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
+    )
+    second = dfs.generate_configs(
+        str(tmp_path / "second.json"),
+        n_augmentations=4,
+        seed="run-b",
+        augmentation_seed="controlled-vda-quality",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
+    )
+
+    assert first["prompt_policy"] == "source-fidelity-v3"
+    assert first["augmentations"] == second["augmentations"]
+    for combo in first["augmentations"]:
+        assert combo["negative_prompt"] == dfs.SOURCE_FIDELITY_NEGATIVE_PROMPT
+        assert "cyan or blue color cast" in combo["negative_prompt"]
+        assert "repeated action" in combo["negative_prompt"]
+        assert "input video is the authoritative scene" in combo["prompt"]
+        assert "contact relationship" in combo["prompt"]
+        assert "Preserve each foreground object's source color" in combo["prompt"]
+        assert "horizontal work surface" in combo["prompt"]
+        assert "do not treat walls, cabinets" in combo["prompt"]
+        assert combo["color_grade"] in combo["prompt"]
+        assert "cool blue" not in combo["prompt"].lower()
+
+    production_seed = dfs.generate_configs(
+        str(tmp_path / "production-seed.json"),
+        n_augmentations=2,
+        augmentation_seed="profile4",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
+    )
+    # The controlled production seed deliberately uses high-signal backdrop
+    # attributes. The previous subtle off-white/matte and overcast/matte pairs
+    # each failed two of four independent attribute checks.
+    for combo in production_seed["augmentations"]:
+        assert "clear" in combo["lighting"]
+        assert combo["background"] in {
+            "solid warm-beige work surface beneath the manipulation",
+            "solid terracotta work surface beneath the manipulation",
+        }
+        assert combo["surface_finish"] in {
+            "satin softly reflective work-surface finish",
+            "matte low-gloss work-surface finish",
+        }
+        assert "blue" not in combo["prompt"].lower()
+
+    corrected_quality_seed = dfs.generate_configs(
+        str(tmp_path / "corrected-quality-seed.json"),
+        n_augmentations=2,
+        augmentation_seed="4",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
+    )
+    assert corrected_quality_seed["augmentations"][1]["surface_finish"] == (
+        "matte low-gloss work-surface finish"
+    )
+    assert (
+        "matte low-gloss work-surface finish"
+        in (corrected_quality_seed["augmentations"][1]["prompt"])
+    )
+
+
+def test_source_fidelity_v2_prompt_policy_remains_replay_compatible(
+    tmp_path: Path,
+) -> None:
+    result = dfs.generate_configs(
+        str(tmp_path / "v2.json"),
+        n_augmentations=2,
+        augmentation_seed="profile4",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY_V2,
+    )
+
+    assert result["prompt_policy"] == "source-fidelity-v2"
+    assert result["augmentations"][0]["background"] == "solid warm beige backdrop"
+    assert "horizontal work surface" not in result["augmentations"][0]["prompt"]
+    assert (
+        result["augmentations"][0]["negative_prompt"]
+        == dfs.SOURCE_FIDELITY_NEGATIVE_PROMPT
+    )
 
 
 def test_generate_configs_is_deterministic_by_seed(tmp_path: Path) -> None:
@@ -128,19 +280,1384 @@ def test_generate_configs_is_deterministic_by_seed(tmp_path: Path) -> None:
     assert a["augmentations"] == b["augmentations"]
 
 
-def test_grade_gate_promotes_above_threshold(tmp_path: Path, monkeypatch) -> None:
-    scores = tmp_path / "vlm_eval_stub.json"
-    scores.write_text(json.dumps({"score": 0.8}))
-    captured = {}
+def test_generate_configs_fans_out_coherent_profiles_and_distinct_seeds(
+    tmp_path: Path,
+) -> None:
+    result = dfs.generate_configs(
+        str(tmp_path / "profiles.json"),
+        n_augmentations=4,
+        seed="quality-search",
+    )
+
+    candidates = result["augmentations"]
+    assert (
+        len(
+            {
+                tuple(candidate[key] for key in dfs.APPEARANCE_VARIABLES)
+                for candidate in candidates
+            }
+        )
+        == 4
+    )
+    assert len({candidate["inference_seed"] for candidate in candidates}) == 4
+    assert all(0 <= candidate["inference_seed"] < 2**31 for candidate in candidates)
+
+
+def test_generate_configs_supports_a_shared_controlled_comparison_seed(
+    tmp_path: Path,
+) -> None:
+    baseline = dfs.generate_configs(
+        str(tmp_path / "baseline.json"),
+        n_augmentations=3,
+        seed="baseline-run",
+        augmentation_seed="controlled-comparison-v1",
+    )
+    component = dfs.generate_configs(
+        str(tmp_path / "component.json"),
+        n_augmentations=3,
+        seed="component-run",
+        augmentation_seed="controlled-comparison-v1",
+    )
+
+    assert baseline["augmentations"] == component["augmentations"]
+    assert baseline["augmentation_seed"] == "controlled-comparison-v1"
+
+
+def test_generate_configs_includes_coherent_low_key_wrist_camera_profile(
+    tmp_path: Path,
+) -> None:
+    result = dfs.generate_configs(
+        str(tmp_path / "wrist-camera.json"),
+        n_augmentations=1,
+        seed="run-specific",
+        augmentation_seed="8",
+    )
+
+    candidate = result["augmentations"][0]
+    assert {key: candidate[key] for key in dfs.APPEARANCE_VARIABLES} == {
+        "lighting": "dim soft evening illumination",
+        "background": "neutral gray backdrop",
+        "color_grade": "warm amber color palette",
+        "surface_finish": "matte uniform backdrop finish",
+    }
+    assert all(
+        len(options) == len(set(options))
+        for options in dfs.APPEARANCE_VARIABLES.values()
+    )
+
+
+def test_generate_configs_derives_first_search_candidate_from_passing_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = {
+        "status": "completed",
+        "augment_uri": "s3://b/prior/cosmos_augmented/iteration-1/",
+        "clips": [
+            {
+                "clip_id": "prior-best",
+                "score": 0.91,
+                "passed": True,
+                "attribute_verification": {
+                    "passed": True,
+                    "passed_checks": 4,
+                    "total_checks": 4,
+                },
+                "hallucination": {"passed": True},
+            }
+        ],
+    }
+    variables = {
+        "color_grade": "neutral balanced color",
+        "surface_finish": "natural low-gloss materials",
+        "lighting": "soft diffuse daylight",
+        "background": "stable low-detail surroundings",
+    }
     monkeypatch.setattr(
-        "npa.orchestration.npa_workflow.decisions.write_decision",
-        lambda uri, decision: captured.update(uri=uri, decision=decision),
+        dfs,
+        "_list_keys",
+        lambda _uri: ["prior/grade/iteration-1/ranking/cosmos_evaluator.json"],
     )
-    decision = dfs.grade_gate(
-        str(scores), str(tmp_path / "decision.json"), threshold=0.5
+    monkeypatch.setattr(dfs, "_read_json_key", lambda _bucket, _key: report)
+    monkeypatch.setattr(
+        dfs,
+        "_committed_augment_manifest",
+        lambda _uri: {
+            "variants": [
+                {
+                    "clip": "prior-best",
+                    "augmented_video_uri": (
+                        "s3://b/prior/cosmos_augmented/iteration-1/"
+                        "prior-best/augmented_video.mp4"
+                    ),
+                }
+            ]
+        },
     )
+    monkeypatch.setattr(
+        dfs,
+        "_download_json",
+        lambda _uri: {
+            "variables": variables,
+            "inference_seed": 42,
+            "effective_control_weight": 0.9,
+            "effective_guidance": 2.0,
+        },
+    )
+
+    manifest = dfs.generate_configs(
+        str(tmp_path / "configs.json"),
+        n_augmentations=8,
+        seed="new-run",
+        quality_anchor_uri="s3://b/prior/",
+    )
+
+    assert manifest["n_augmentations"] == 8
+    assert manifest["augmentations"][0]["inference_seed"] == 42
+    assert {
+        key: manifest["augmentations"][0][key] for key in dfs.APPEARANCE_VARIABLES
+    } == variables
+    assert manifest["quality_anchor"]["clip_id"] == "prior-best"
+    assert manifest["quality_anchor"]["score"] == 0.91
+
+
+@pytest.mark.parametrize(
+    ("passing", "expected_selected"),
+    [(True, ["candidate-a"]), (False, [])],
+    ids=["one-independent-pass", "zero-selection-fails-closed"],
+)
+def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
+    monkeypatch: pytest.MonkeyPatch,
+    passing: bool,
+    expected_selected: list[str],
+) -> None:
+    augment_uri = "s3://b/run/cosmos_augmented/iteration-1/"
+    selection_uri = "s3://b/run/selection/iteration-1/"
+    attempt_uri = f"{selection_uri}_attempts/fence-1/"
+    source_rows = [
+        {
+            "key": "run/cosmos_augmented/iteration-1/manifest.json",
+            "size": 100,
+            "etag": "m",
+        },
+        {
+            "key": "run/cosmos_augmented/iteration-1/candidate-a/augmented_video.mp4",
+            "size": 200,
+            "etag": "a",
+        },
+        {
+            "key": "run/cosmos_augmented/iteration-1/candidate-a/metadata.json",
+            "size": 50,
+            "etag": "am",
+        },
+        {
+            "key": "run/cosmos_augmented/iteration-1/candidate-b/augmented_video.mp4",
+            "size": 210,
+            "etag": "b",
+        },
+        {
+            "key": "run/cosmos_augmented/iteration-1/candidate-b/metadata.json",
+            "size": 55,
+            "etag": "bm",
+        },
+    ]
+    destination_rows: list[dict[str, object]] = []
+    manifest = {
+        "schema": "npa.cosmos2.transfer.v1",
+        "mode": "cosmos_transfer2.5_gpu",
+        "status": "executed",
+        "node_count": 1,
+        "variant_count": 2,
+        "variants": [
+            {
+                "clip": clip,
+                "variant_index": index,
+                "augmented_video_uri": (f"{augment_uri}{clip}/augmented_video.mp4"),
+                "control_uris": {},
+            }
+            for index, clip in enumerate(("candidate-a", "candidate-b"))
+        ],
+    }
+    ranking = {
+        "status": "completed",
+        "clips": [
+            {
+                "clip_id": "candidate-a",
+                "status": "completed",
+                "score": 0.9,
+                "passed": passing,
+                "input_conditioned": True,
+                "attribute_verification": {
+                    "passed": passing,
+                    "total_checks": 4,
+                    "passed_checks": 4 if passing else 3,
+                },
+                "hallucination": {"passed": True},
+            },
+            {
+                "clip_id": "candidate-b",
+                "status": "completed",
+                "score": 0.6,
+                "passed": False,
+                "input_conditioned": True,
+                "attribute_verification": {
+                    "passed": False,
+                    "total_checks": 4,
+                    "passed_checks": 3,
+                },
+                "hallucination": {"passed": True},
+            },
+        ],
+    }
+    ranking_uri = "s3://b/run/grade/iteration-1/ranking/cosmos_evaluator.json"
+    stored_json = {ranking_uri: ranking}
+    copied_keys: list[str] = []
+    lock_state: dict[str, object] = {"synthetic": True, "generation": 1}
+    if expected_selected:
+        # A crashed owner may have conditionally committed one media object
+        # before its lease expired. Recovery must preserve it and finish the
+        # missing objects/evidence without overwriting the committed byte set.
+        destination_rows.append(
+            {
+                **source_rows[1],
+                "key": (
+                    "run/selection/iteration-1/_attempts/fence-1/"
+                    "candidate-a/augmented_video.mp4"
+                ),
+            }
+        )
+
+    def inventory(uri: str) -> list[dict]:
+        if uri == augment_uri:
+            return [dict(row) for row in source_rows]
+        if uri == attempt_uri:
+            return [dict(row) for row in destination_rows]
+        raise AssertionError(uri)
+
+    @contextmanager
+    def destination_lock(_uri: str):
+        yield lock_state
+
+    def commit_lock(lock: dict, commit: dict) -> None:
+        lock["_committed_record"] = dict(commit)
+
+    def immutable_copy(
+        *, source_bucket, source_row, destination_bucket, destination_key
+    ):
+        assert source_bucket == destination_bucket == "b"
+        if not any(row["key"] == destination_key for row in destination_rows):
+            destination_rows.append({**source_row, "key": destination_key})
+            copied_keys.append(destination_key)
+
+    def immutable_json(payload: dict, uri: str, *, label: str) -> str:
+        del label
+        if uri in stored_json:
+            if stored_json[uri] != payload:
+                raise dfs.RefinementStateError(
+                    "candidate selection prior evidence differs from deterministic replay"
+                )
+            return uri
+        stored_json[uri] = json.loads(json.dumps(payload))
+        if uri == f"{attempt_uri}manifest.json":
+            destination_rows.append(
+                {
+                    "key": (
+                        "run/selection/iteration-1/_attempts/fence-1/manifest.json"
+                    ),
+                    "size": 100,
+                    "etag": "sm",
+                }
+            )
+        elif uri == f"{attempt_uri}selection.json":
+            destination_rows.append(
+                {
+                    "key": (
+                        "run/selection/iteration-1/_attempts/fence-1/selection.json"
+                    ),
+                    "size": 100,
+                    "etag": "sr",
+                }
+            )
+        return uri
+
+    monkeypatch.setattr(dfs, "_inventory_rows", inventory)
+    monkeypatch.setattr(
+        dfs, "_committed_augment_manifest", lambda *_args, **_kwargs: manifest
+    )
+    monkeypatch.setattr(dfs, "_download_json", lambda uri: stored_json[uri])
+    monkeypatch.setattr(dfs, "_candidate_selection_destination_lock", destination_lock)
+    monkeypatch.setattr(dfs, "_renew_candidate_selection_lock", lambda _lock: None)
+    monkeypatch.setattr(dfs, "_commit_candidate_selection_lock", commit_lock)
+    monkeypatch.setattr(dfs, "_immutable_candidate_copy", immutable_copy)
+    monkeypatch.setattr(dfs, "_put_immutable_json", immutable_json)
+
+    result = dfs.select_hard_passing_candidates(
+        augment_uri,
+        "s3://b/run/grade/iteration-1/ranking/",
+        selection_uri,
+        "s3://b/run/selection/iteration-1/selection.json",
+        0.75,
+    )
+
+    assert result["selected_clip_ids"] == expected_selected
+    assert result["ranking_pool_unchanged_after_selection"] is True
+    assert source_rows == inventory(augment_uri)
+    assert any(row["key"].endswith("manifest.json") for row in destination_rows)
+    if expected_selected:
+        assert any(
+            "/_attempts/fence-1/candidate-a/augmented_video.mp4" in row["key"]
+            for row in destination_rows
+        )
+        assert not any(
+            "/_attempts/fence-1/candidate-a/augmented_video.mp4" in key
+            for key in copied_keys
+        )
+        assert any(
+            "/_attempts/fence-1/candidate-a/metadata.json" in key for key in copied_keys
+        )
+    assert not any("candidate-b/" in row["key"] for row in destination_rows)
+
+    copied_once = list(copied_keys)
+    replay = dfs.select_hard_passing_candidates(
+        augment_uri,
+        "s3://b/run/grade/iteration-1/ranking/",
+        selection_uri,
+        "s3://b/run/selection/iteration-1/selection.json",
+        0.75,
+    )
+    assert {key: value for key, value in replay.items() if key != "replayed"} == {
+        key: value for key, value in result.items() if key != "replayed"
+    }
+    assert replay["replayed"] is True
+    assert copied_keys == copied_once
+
+    original_etag = destination_rows[0]["etag"]
+    destination_rows[0]["etag"] = '"tampered"'
+    with pytest.raises(
+        dfs.CandidateSelectionLockError,
+        match="committed generation inventory changed",
+    ):
+        dfs.select_hard_passing_candidates(
+            augment_uri,
+            "s3://b/run/grade/iteration-1/ranking/",
+            selection_uri,
+            "s3://b/run/selection/iteration-1/selection.json",
+            0.75,
+        )
+    destination_rows[0]["etag"] = original_etag
+
+    stored_json[f"{selection_uri}selection.json"]["selected_count"] = 99
+    with pytest.raises(RuntimeError, match="prior evidence differs"):
+        dfs.select_hard_passing_candidates(
+            augment_uri,
+            "s3://b/run/grade/iteration-1/ranking/",
+            selection_uri,
+            "s3://b/run/selection/iteration-1/selection.json",
+            0.75,
+        )
+
+
+def test_candidate_selection_lock_serializes_independent_processes() -> None:
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        objects = manager.dict()
+        storage_guard = manager.RLock()
+        sequence = manager.Value("i", 0)
+        storage = _SharedConditionalStorage(objects, storage_guard, sequence)
+        active = manager.Value("i", 0)
+        peak = manager.Value("i", 0)
+        entered = manager.Value("i", 0)
+        counter_guard = manager.RLock()
+        args = (
+            storage,
+            "s3://synthetic/run/selection/iteration-1/",
+            active,
+            peak,
+            counter_guard,
+            entered,
+        )
+        processes = [
+            context.Process(target=_selection_lock_process_worker, args=args)
+            for _ in range(2)
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(10)
+            assert process.exitcode == 0
+
+        assert entered.value == 2
+        assert peak.value == 1
+
+
+def test_candidate_selection_lock_heartbeats_during_slow_object_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        storage = _SharedConditionalStorage(
+            manager.dict(), manager.RLock(), manager.Value("i", 0)
+        )
+        selection_uri = "s3://synthetic/run/selection/slow-copy/"
+        monkeypatch.setattr(dfs, "_storage", lambda: storage)
+        monkeypatch.setattr(dfs, "_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS", 0.15)
+
+        with dfs._candidate_selection_destination_lock(selection_uri) as acquired:
+            initial_etag = acquired["etag"]
+            time.sleep(0.18)
+            assert acquired["etag"] != initial_etag
+            raw, observed_etag = storage.read_bytes_with_etag(acquired["uri"])
+            observed = dfs._candidate_selection_lock_record(
+                raw, label="candidate selection lock"
+            )
+            assert observed["state"] == "held"
+            assert observed["owner"] == acquired["owner"]
+            assert observed["generation"] == acquired["generation"]
+            assert observed_etag == acquired["etag"]
+            assert observed["_expires"] > datetime.now(timezone.utc)
+
+
+def test_candidate_selection_lock_recovers_stale_owner_and_fences_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        objects = manager.dict()
+        guard = manager.RLock()
+        sequence = manager.Value("i", 1)
+        storage = _SharedConditionalStorage(objects, guard, sequence)
+        selection_uri = "s3://synthetic/run/selection/iteration-2/"
+        lock_uri = dfs._candidate_selection_lock_uri(selection_uri)
+        stale_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+        stale = dfs._candidate_selection_lock_payload(
+            owner="stale-owner", generation=4, state="held", now=stale_time
+        )
+        objects[lock_uri] = (dfs._canonical_json_bytes(stale), '"etag-1"')
+        monkeypatch.setattr(dfs, "_storage", lambda: storage)
+
+        with pytest.raises(
+            dfs.CandidateSelectionLockError,
+            match="lost during the critical section",
+        ):
+            with dfs._candidate_selection_destination_lock(selection_uri) as acquired:
+                assert acquired["generation"] == 5
+                successor = dfs._candidate_selection_lock_payload(
+                    owner="recovery-successor",
+                    generation=6,
+                    state="held",
+                    now=datetime.now(timezone.utc),
+                )
+                acquired_etag = acquired["etag"]
+                successor_etag = storage.put_bytes_conditional(
+                    dfs._canonical_json_bytes(successor),
+                    lock_uri,
+                    if_match=acquired_etag,
+                )
+
+        raw, final_etag = storage.read_bytes_with_etag(lock_uri)
+        final = dfs._candidate_selection_lock_record(
+            raw, label="candidate selection lock"
+        )
+        assert final["owner"] == "recovery-successor"
+        assert final["state"] == "held"
+        assert final_etag == successor_etag
+
+
+def test_stale_selection_owner_cannot_publish_after_continuing_attempt_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale writer may finish only in its private generation, never commit it."""
+
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        storage = _SharedConditionalStorage(
+            manager.dict(), manager.RLock(), manager.Value("i", 0)
+        )
+        selection_uri = "s3://synthetic/run/selection/fenced/"
+        monkeypatch.setattr(dfs, "_storage", lambda: storage)
+
+        with pytest.raises(
+            dfs.CandidateSelectionLockError,
+            match="lost during the critical section",
+        ):
+            with dfs._candidate_selection_destination_lock(selection_uri) as stale:
+                stale_attempt = dfs._candidate_selection_attempt_uri(
+                    selection_uri, stale
+                )
+                successor_owner = "successor"
+                successor_generation = int(stale["generation"]) + 1
+                successor_payload = dfs._candidate_selection_lock_payload(
+                    owner=successor_owner,
+                    generation=successor_generation,
+                    state="held",
+                    now=datetime.now(timezone.utc),
+                )
+                successor_etag = storage.put_bytes_conditional(
+                    dfs._canonical_json_bytes(successor_payload),
+                    stale["uri"],
+                    if_match=stale["etag"],
+                )
+
+                # The expired process can still finish an in-flight object call,
+                # but that byte lands only in its generation-scoped attempt.
+                objects = storage.objects
+                objects[stale_attempt + "candidate/media.mp4"] = (
+                    b"stale-attempt-byte",
+                    '"stale-object"',
+                )
+                successor = {
+                    "storage": storage,
+                    "uri": stale["uri"],
+                    "owner": successor_owner,
+                    "generation": successor_generation,
+                    "etag": successor_etag,
+                    "_guard": multiprocessing.RLock(),
+                    "_lost": False,
+                }
+                successor_attempt = dfs._candidate_selection_attempt_uri(
+                    selection_uri, successor
+                )
+                assert successor_attempt != stale_attempt
+                commit = {
+                    "attempt_uri": successor_attempt,
+                    "manifest_uri": successor_attempt + "manifest.json",
+                    "report_uri": successor_attempt + "selection.json",
+                    "canonical_manifest_uri": selection_uri + "manifest.json",
+                    "canonical_report_uri": selection_uri + "selection.json",
+                    "manifest_sha256": "a" * 64,
+                    "report_sha256": "b" * 64,
+                    "attempt_inventory_sha256": "c" * 64,
+                }
+                dfs._commit_candidate_selection_lock(successor, commit)
+                with pytest.raises(dfs.CandidateSelectionLockError):
+                    dfs._commit_candidate_selection_lock(stale, commit)
+
+        raw, _etag = storage.read_bytes_with_etag(
+            dfs._candidate_selection_lock_uri(selection_uri)
+        )
+        committed = dfs._candidate_selection_lock_record(
+            raw, label="candidate selection lock"
+        )
+        assert committed["state"] == "committed"
+        assert committed["owner"] == "successor"
+        assert committed["commit"]["attempt_uri"] == successor_attempt
+
+
+def test_selection_heartbeat_accepts_its_own_terminal_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        storage = _SharedConditionalStorage(
+            manager.dict(), manager.RLock(), manager.Value("i", 0)
+        )
+        monkeypatch.setattr(dfs, "_storage", lambda: storage)
+        monkeypatch.setattr(dfs, "_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS", 0.15)
+        selection_uri = "s3://synthetic/run/selection/committed/"
+        with dfs._candidate_selection_destination_lock(selection_uri) as lock:
+            attempt_uri = dfs._candidate_selection_attempt_uri(selection_uri, lock)
+            dfs._commit_candidate_selection_lock(
+                lock,
+                {
+                    "attempt_uri": attempt_uri,
+                    "manifest_uri": attempt_uri + "manifest.json",
+                    "report_uri": attempt_uri + "selection.json",
+                    "canonical_manifest_uri": selection_uri + "manifest.json",
+                    "canonical_report_uri": selection_uri + "selection.json",
+                    "manifest_sha256": "a" * 64,
+                    "report_sha256": "b" * 64,
+                    "attempt_inventory_sha256": "c" * 64,
+                },
+            )
+            time.sleep(0.12)
+            assert lock["_lost"] is False
+
+
+def test_candidate_selection_lock_releases_after_stage_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        storage = _SharedConditionalStorage(
+            manager.dict(), manager.RLock(), manager.Value("i", 0)
+        )
+        selection_uri = "s3://synthetic/run/selection/iteration-error/"
+        monkeypatch.setattr(dfs, "_storage", lambda: storage)
+
+        with pytest.raises(RuntimeError, match="synthetic stage failure"):
+            with dfs._candidate_selection_destination_lock(selection_uri):
+                raise RuntimeError("synthetic stage failure")
+
+        raw, _etag = storage.read_bytes_with_etag(
+            dfs._candidate_selection_lock_uri(selection_uri)
+        )
+        record = dfs._candidate_selection_lock_record(
+            raw, label="candidate selection lock"
+        )
+        assert record["state"] == "released"
+
+
+def test_candidate_selection_copy_requires_source_version_identity() -> None:
+    with pytest.raises(RuntimeError, match="lacks immutable identity"):
+        dfs._immutable_candidate_copy(
+            source_bucket="synthetic",
+            source_row={"key": "run/candidate.mp4", "size": 20, "etag": ""},
+            destination_bucket="synthetic",
+            destination_key="run/selected/candidate.mp4",
+        )
+
+
+def test_rejected_review_fields_are_truthful_and_never_promotion_eligible() -> None:
+    candidate = dfs._review_candidate_from_evaluation(
+        iteration=2,
+        clip="candidate-z",
+        media_key="run/candidate-z/augmented_video.mp4",
+        evaluation={
+            "score": 0.8,
+            "passed": True,
+            "attribute_verification": {
+                "checks": [{"variable": "lighting", "passed": True}]
+            },
+            "hallucination": {"passed": True},
+        },
+        run_disposition="rejected",
+    )
+
+    assert candidate["candidate_id"] == "iteration-2/candidate-z"
+    assert candidate["candidate_passed"] is True
+    assert candidate["promotion_eligible"] is False
+    assert candidate["hallucination_status"] == "passed"
+
+
+def test_terminal_review_preservation_ignores_only_declared_outputs_and_ledger() -> (
+    None
+):
+    before = [
+        {"key": "run/candidate.mp4", "size": 11, "etag": "source"},
+        {"key": "run/npa-workflow/runtime.json", "size": 20, "etag": "old"},
+    ]
+    after = [
+        {"key": "run/candidate.mp4", "size": 11, "etag": "source"},
+        {"key": "run/npa-workflow/runtime.json", "size": 21, "etag": "new"},
+        {"key": "run/review/dataset/samples.json", "size": 30, "etag": "data"},
+        {"key": "run/review/report.json", "size": 40, "etag": "report"},
+    ]
+
+    preserved = dfs._assert_terminal_review_source_preserved(
+        before,
+        after,
+        dataset_prefix="run/review/dataset/",
+        report_key="run/review/report.json",
+        workflow_prefix="run/npa-workflow/",
+    )
+
+    assert preserved == [before[0]]
+    changed = [dict(row) for row in after]
+    changed[0]["etag"] = "changed"
+    with pytest.raises(RuntimeError, match="changed source inventory"):
+        dfs._assert_terminal_review_source_preserved(
+            before,
+            changed,
+            dataset_prefix="run/review/dataset/",
+            report_key="run/review/report.json",
+            workflow_prefix="run/npa-workflow/",
+        )
+    with pytest.raises(RuntimeError, match="removed workflow evidence"):
+        dfs._assert_terminal_review_source_preserved(
+            before,
+            [row for row in after if "npa-workflow" not in row["key"]],
+            dataset_prefix="run/review/dataset/",
+            report_key="run/review/report.json",
+            workflow_prefix="run/npa-workflow/",
+        )
+
+
+def test_terminal_review_archive_resumes_exact_objects_without_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "archive"
+    (archive / "data").mkdir(parents=True)
+    (archive / "metadata.json").write_text('{"name":"review"}\n')
+    (archive / "data" / "candidate.mp4").write_bytes(b"video-bytes")
+    objects: dict[str, bytes] = {}
+    put_count = 0
+
+    class Body(io.BytesIO):
+        def close(self) -> None:
+            super().close()
+
+    class FakeS3:
+        def put_object(self, *, Bucket: str, Key: str, Body, **_kwargs) -> None:
+            nonlocal put_count
+            assert Bucket == "b"
+            if Key in objects:
+                raise AssertionError("publisher attempted to overwrite an object")
+            objects[Key] = Body.read() if hasattr(Body, "read") else bytes(Body)
+            put_count += 1
+
+        def get_object(self, *, Bucket: str, Key: str) -> dict:
+            assert Bucket == "b"
+            return {"Body": Body(objects[Key])}
+
+    client = FakeS3()
+
+    def inventory(uri: str) -> list[dict]:
+        assert uri == "s3://b/run/review/dataset/"
+        return [
+            {"key": key, "size": len(value), "etag": f"etag-{index}"}
+            for index, (key, value) in enumerate(sorted(objects.items()))
+            if key.startswith("run/review/dataset/")
+        ]
+
+    monkeypatch.setattr(dfs, "_s3_client", lambda: client)
+    monkeypatch.setattr(dfs, "_inventory_rows", inventory)
+
+    uri, rows = dfs._publish_terminal_review_directory_once(
+        archive, "s3://b/run/review/dataset/"
+    )
+    first_put_count = put_count
+    resumed_uri, resumed_rows = dfs._publish_terminal_review_directory_once(
+        archive, "s3://b/run/review/dataset/"
+    )
+
+    assert uri == resumed_uri == "s3://b/run/review/dataset/"
+    assert rows == resumed_rows
+    assert first_put_count == 2
+    assert put_count == first_put_count
+
+    (archive / "metadata.json").write_text('{"name":"different"}\n')
+    with pytest.raises(RuntimeError, match="mismatched archive object"):
+        dfs._publish_terminal_review_directory_once(
+            archive, "s3://b/run/review/dataset/"
+        )
+
+
+def test_terminal_review_validates_existing_portable_dataset_semantically(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = {
+        "candidate_id": "iteration-1/candidate-a",
+        "iteration": 1,
+        "clip_id": "candidate-a",
+        "media_key": "run/cosmos/candidate-a.mp4",
+        "score": 0.7,
+        "candidate_passed": False,
+        "hard_checks_passed": False,
+        "promotion_eligible": False,
+        "failed_attributes": ["lighting"],
+        "attribute_results": [{"attribute": "lighting", "passed": False}],
+        "hallucination_status": "passed",
+        "hard_check_results": {"hallucination": {"passed": True}},
+    }
+    prefix = "run/review/dataset/"
+    objects = {
+        prefix + "metadata.json": json.dumps(
+            {
+                "version": "1.0",
+                "info": {
+                    "schema": "npa.paidf.fiftyone-terminal-review/v1",
+                    "dataset_name": "review-dataset",
+                    "quality_disposition": "rejected",
+                    "review_only": True,
+                },
+                "sample_fields": [{"name": "candidate_id"}],
+            }
+        ).encode(),
+        prefix + "samples.json": json.dumps(
+            {
+                "samples": [
+                    {
+                        "candidate_id": candidate["candidate_id"],
+                        "iteration": 1,
+                        "clip_id": "candidate-a",
+                        "filepath": "data/candidate-a.mp4",
+                        "score": 0.7,
+                        "candidate_passed": False,
+                        "hard_checks_passed": False,
+                        "promotion_eligible": False,
+                        "quality_disposition": "rejected",
+                        "failed_attributes": ["lighting"],
+                        "hallucination_status": "passed",
+                        "attribute_results_json": json.dumps(
+                            candidate["attribute_results"], sort_keys=True
+                        ),
+                        "hard_check_results_json": json.dumps(
+                            candidate["hard_check_results"], sort_keys=True
+                        ),
+                    }
+                ]
+            }
+        ).encode(),
+        prefix + "frames.json": b'{"frames":[]}',
+        prefix + "data/candidate-a.mp4": b"same-media",
+        candidate["media_key"]: b"same-media",
+    }
+
+    class Body(io.BytesIO):
+        pass
+
+    class FakeS3:
+        def get_object(self, *, Bucket: str, Key: str) -> dict:
+            assert Bucket == "b"
+            return {"Body": Body(objects[Key])}
+
+    monkeypatch.setattr(dfs, "_s3_client", lambda: FakeS3())
+    archive_rows = [
+        {"key": key, "size": len(value), "etag": key}
+        for key, value in objects.items()
+        if key.startswith(prefix)
+    ]
+
+    metadata = dfs._terminal_review_archive_metadata(
+        dataset_uri="s3://b/run/review/dataset/",
+        archive_rows=archive_rows,
+        candidates=[candidate],
+        dataset_name="review-dataset",
+        run_disposition="rejected",
+    )
+
+    assert metadata["candidate_count"] == 1
+    assert metadata["promotion_eligible_count"] == 0
+    assert metadata["review_only"] is True
+    objects[prefix + "data/candidate-a.mp4"] = b"different"
+    with pytest.raises(RuntimeError, match="media differs"):
+        dfs._terminal_review_archive_metadata(
+            dataset_uri="s3://b/run/review/dataset/",
+            archive_rows=archive_rows,
+            candidates=[candidate],
+            dataset_name="review-dataset",
+            run_disposition="rejected",
+        )
+
+
+def test_candidate_selection_does_not_trust_a_bare_passed_summary() -> None:
+    assert not dfs._independently_hard_passing_candidate(
+        {"status": "completed", "score": 0.99, "passed": True}, 0.75
+    )
+    assert not dfs._independently_hard_passing_candidate(
+        {
+            "status": "completed",
+            "score": 0.99,
+            "passed": True,
+            "input_conditioned": True,
+            "attribute_verification": {
+                "passed": True,
+                "total_checks": 4,
+                "passed_checks": 4,
+            },
+            "hallucination": {"passed": False},
+        },
+        0.75,
+    )
+
+
+def test_prepare_refinement_uses_baseline_then_adapts_failed_retry(
+    tmp_path: Path,
+) -> None:
+    grade = tmp_path / "grade"
+    grade.mkdir()
+    refinement = tmp_path / "configs" / "refinement.json"
+    decision = tmp_path / "grade" / "decision.json"
+
+    baseline = dfs.prepare_refinement(
+        str(grade), str(refinement), decision_uri=str(decision)
+    )
+    assert baseline["attempt"] == 0
+    assert baseline["adapted_from_prior_evaluation"] is False
+    assert baseline["settings"] == {"control_weight": 1.0, "guidance": 3}
+    assert (tmp_path / "configs" / "refinement-attempt-00.json").is_file()
+    assert (tmp_path / "configs" / "refinement-attempt-00.commit.json").is_file()
+
+    (grade / "cosmos_evaluator.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "score": 0.4,
+                "passed": False,
+                "clips": [
+                    {
+                        "passed": False,
+                        "appearance_fidelity": {"passed": False},
+                        "hallucination": {"passed": True},
+                    }
+                ],
+            }
+        )
+    )
+    assert (
+        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement)) == "loop_back"
+    )
+    retry = dfs.prepare_refinement(
+        str(grade), str(refinement), decision_uri=str(decision)
+    )
+    assert retry["attempt"] == 1
+    assert retry["adapted_from_prior_evaluation"] is True
+    assert retry["settings"] == {"control_weight": 1.0, "guidance": 2}
+    assert retry["failed_checks"] == ["appearance_fidelity"]
+    assert (tmp_path / "configs" / "refinement-attempt-01.json").is_file()
+
+
+def test_prepare_refinement_records_exact_failed_attribute_names(
+    tmp_path: Path,
+) -> None:
+    grade = tmp_path / "grade"
+    grade.mkdir()
+    refinement = tmp_path / "configs" / "refinement.json"
+    decision = grade / "decision.json"
+    dfs.prepare_refinement(str(grade), str(refinement), decision_uri=str(decision))
+    (grade / "cosmos_evaluator.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "score": 0.7,
+                "passed": False,
+                "clips": [
+                    {
+                        "passed": False,
+                        "attribute_verification": {
+                            "passed": False,
+                            "checks": [
+                                {"variable": "lighting", "passed": False},
+                                {"variable": "background", "passed": True},
+                            ],
+                        },
+                        "hallucination": {"passed": True},
+                    }
+                ],
+            }
+        )
+    )
+    assert (
+        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement)) == "loop_back"
+    )
+
+    retry = dfs.prepare_refinement(
+        str(grade), str(refinement), decision_uri=str(decision)
+    )
+
+    assert retry["failed_checks"] == ["attribute_verification"]
+    assert retry["failed_attributes"] == ["lighting"]
+
+
+def test_prepare_refinement_uses_ranking_failures_when_holdout_is_empty(
+    tmp_path: Path,
+) -> None:
+    grade = tmp_path / "grade"
+    refinement = tmp_path / "configs" / "refinement.json"
+    decision = grade / "decision.json"
+    dfs.prepare_refinement(
+        str(grade),
+        str(refinement),
+        decision_uri=str(decision),
+        loop_iteration=1,
+    )
+    first_grade = grade / "iteration-1"
+    ranking = first_grade / "ranking" / "cosmos_evaluator.json"
+    ranking.parent.mkdir(parents=True)
+    ranking.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "score": 0.8,
+                "passed": False,
+                "clips": [
+                    {
+                        "passed": False,
+                        "attribute_verification": {
+                            "passed": False,
+                            "checks": [
+                                {"variable": "surface_finish", "passed": False},
+                                {"variable": "lighting", "passed": True},
+                            ],
+                        },
+                        "temporal_consistency": {"passed": False},
+                        "hallucination": {"passed": True},
+                    }
+                ],
+            }
+        )
+    )
+    final_report = first_grade / "cosmos_evaluator.json"
+    final_report.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "score": 0.0,
+                "passed": False,
+                "clips": [],
+            }
+        )
+    )
+    assert (
+        dfs.grade_gate(
+            str(first_grade),
+            str(first_grade / "decision.json"),
+            0.75,
+            str(refinement),
+        )
+        == "loop_back"
+    )
+
+    retry = dfs.prepare_refinement(
+        str(grade),
+        str(refinement),
+        decision_uri=str(decision),
+        loop_iteration=2,
+    )
+
+    assert retry["failed_checks"] == [
+        "attribute_verification",
+        "temporal_consistency",
+    ]
+    assert retry["failed_attributes"] == ["surface_finish"]
+    assert retry["prior_evaluator_report_uri"] == str(final_report)
+    assert retry["adaptation_evaluator_report_uri"] == str(ranking)
+    assert retry["adaptation_evaluator_report_sha256"] == dfs._payload_sha256(
+        json.loads(ranking.read_text())
+    )
+
+
+def test_prepare_refinement_reads_preceding_append_only_iteration(
+    tmp_path: Path,
+) -> None:
+    grade = tmp_path / "grade"
+    refinement = tmp_path / "configs" / "refinement.json"
+    decision = grade / "decision.json"
+    baseline = dfs.prepare_refinement(
+        str(grade),
+        str(refinement),
+        decision_uri=str(decision),
+        loop_iteration=1,
+    )
+    assert baseline["attempt"] == 0
+
+    first_grade = grade / "iteration-1"
+    first_grade.mkdir(parents=True)
+    (first_grade / "cosmos_evaluator.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "score": 0.4,
+                "passed": False,
+                "clips": [
+                    {
+                        "passed": False,
+                        "appearance_fidelity": {"passed": False},
+                        "hallucination": {"passed": True},
+                    }
+                ],
+            }
+        )
+    )
+    assert (
+        dfs.grade_gate(
+            str(first_grade),
+            str(first_grade / "decision.json"),
+            0.75,
+            str(refinement),
+        )
+        == "loop_back"
+    )
+
+    retry = dfs.prepare_refinement(
+        str(grade),
+        str(refinement),
+        decision_uri=str(decision),
+        loop_iteration=2,
+    )
+
+    assert retry["attempt"] == 1
+    assert retry["failed_checks"] == ["appearance_fidelity"]
+    assert (first_grade / "cosmos_evaluator.json").is_file()
+    assert (first_grade / "decision.json").is_file()
+    assert not (grade / "cosmos_evaluator.json").exists()
+    assert not decision.exists()
+
+
+def test_prepare_refinement_replays_a_committed_adapted_attempt_idempotently(
+    tmp_path: Path,
+) -> None:
+    grade = tmp_path / "grade"
+    grade.mkdir()
+    refinement = tmp_path / "configs" / "refinement.json"
+    decision = grade / "decision.json"
+    dfs.prepare_refinement(str(grade), str(refinement), decision_uri=str(decision))
+    (grade / "cosmos_evaluator.json").write_text(
+        json.dumps({"status": "completed", "score": 0.4, "passed": False})
+    )
+    assert (
+        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement)) == "loop_back"
+    )
+    retry = dfs.prepare_refinement(
+        str(grade), str(refinement), decision_uri=str(decision)
+    )
+    history = tmp_path / "configs" / "refinement-attempt-01.json"
+    marker = tmp_path / "configs" / "refinement-attempt-01.commit.json"
+    before = (refinement.read_bytes(), history.read_bytes(), marker.read_bytes())
+
+    repeated = dfs.prepare_refinement(
+        str(grade), str(refinement), decision_uri=str(decision)
+    )
+
+    assert repeated == retry
+    assert (
+        refinement.read_bytes(),
+        history.read_bytes(),
+        marker.read_bytes(),
+    ) == before
+    assert not (tmp_path / "configs" / "refinement-attempt-02.json").exists()
+
+
+def test_prepare_refinement_can_record_a_non_adaptive_policy(tmp_path: Path) -> None:
+    scores = tmp_path / "grade"
+    result = dfs.prepare_refinement(
+        str(scores),
+        str(tmp_path / "refinement.json"),
+        enabled="false",
+        base_control_weight="0.8",
+        base_guidance="2.0",
+    )
+    assert result["adaptive"] is False
+    assert result["adapted_from_prior_evaluation"] is False
+    assert result["settings"] == {"control_weight": 0.8, "guidance": 2.0}
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        {"status": "completed", "score": 0.74, "passed": True},
+        {"status": "degraded", "score": 0.99, "passed": True},
+    ],
+    ids=["passed-below-score", "passed-non-completed"],
+)
+def test_prepare_refinement_adapts_exactly_when_quality_gate_retries(
+    tmp_path: Path, report: dict
+) -> None:
+    grade = tmp_path / "grade"
+    grade.mkdir()
+    refinement = tmp_path / "configs" / "refinement.json"
+    decision = grade / "decision.json"
+    dfs.prepare_refinement(str(grade), str(refinement), decision_uri=str(decision))
+    (grade / "cosmos_evaluator.json").write_text(json.dumps(report))
+    assert (
+        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement)) == "loop_back"
+    )
+
+    retry = dfs.prepare_refinement(
+        str(grade), str(refinement), decision_uri=str(decision)
+    )
+
+    assert retry["attempt"] == 1
+    assert retry["adapted_from_prior_evaluation"] is True
+    assert retry["settings"] == {"control_weight": 1.0, "guidance": 2}
+
+
+def test_prepare_refinement_changes_every_retry_then_fails_closed_at_saturation(
+    tmp_path: Path,
+) -> None:
+    grade = tmp_path / "grade"
+    grade.mkdir()
+    refinement = tmp_path / "configs" / "refinement.json"
+    decision = grade / "decision.json"
+    current = dfs.prepare_refinement(
+        str(grade), str(refinement), decision_uri=str(decision)
+    )
+    effective_pairs = [
+        (current["settings"]["control_weight"], current["settings"]["guidance"])
+    ]
+
+    for evaluation_cycle in range(1, 3):
+        (grade / "cosmos_evaluator.json").write_text(
+            json.dumps(
+                {
+                    "status": "completed",
+                    "score": 0.1,
+                    "passed": False,
+                    "evaluation_cycle": evaluation_cycle,
+                }
+            )
+        )
+        assert (
+            dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement))
+            == "loop_back"
+        )
+        current = dfs.prepare_refinement(
+            str(grade), str(refinement), decision_uri=str(decision)
+        )
+        pair = (
+            current["settings"]["control_weight"],
+            current["settings"]["guidance"],
+        )
+        assert pair != effective_pairs[-1]
+        assert current["attempt"] == evaluation_cycle
+        effective_pairs.append(pair)
+
+    pointer_before = refinement.read_bytes()
+    (grade / "cosmos_evaluator.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "score": 0.1,
+                "passed": False,
+                "evaluation_cycle": 3,
+            }
+        )
+    )
+    assert (
+        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement)) == "loop_back"
+    )
+    with pytest.raises(dfs.RefinementStateError, match="schedule is exhausted"):
+        dfs.prepare_refinement(str(grade), str(refinement), decision_uri=str(decision))
+    assert refinement.read_bytes() == pointer_before
+    assert not (tmp_path / "configs" / "refinement-attempt-03.json").exists()
+
+
+def test_prepare_refinement_does_not_create_a_retry_after_promotion(
+    tmp_path: Path,
+) -> None:
+    grade = tmp_path / "grade"
+    grade.mkdir()
+    refinement = tmp_path / "configs" / "refinement.json"
+    decision = grade / "decision.json"
+    baseline = dfs.prepare_refinement(
+        str(grade), str(refinement), decision_uri=str(decision)
+    )
+    (grade / "cosmos_evaluator.json").write_text(
+        json.dumps({"status": "completed", "score": 0.9, "passed": True})
+    )
+    assert (
+        dfs.grade_gate(str(grade), str(decision), 0.75, str(refinement))
+        == "promote_checkpoint"
+    )
+
+    promoted = dfs.prepare_refinement(
+        str(grade), str(refinement), decision_uri=str(decision)
+    )
+
+    assert promoted == baseline
+    assert not (tmp_path / "configs" / "refinement-attempt-01.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"base_control_weight": "1.1"}, "between 0 and 1"),
+        ({"max_control_weight": "1.1"}, "between base_control_weight and 1"),
+        ({"base_guidance": "2.5"}, "non-negative integer"),
+        ({"guidance_step": "0.5"}, "non-negative integer"),
+    ],
+)
+def test_prepare_refinement_rejects_values_cosmos_cannot_load(
+    tmp_path: Path, kwargs: dict[str, str], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        dfs.prepare_refinement(
+            str(tmp_path / "grade"),
+            str(tmp_path / "refinement.json"),
+            **kwargs,
+        )
+
+
+def test_prepare_refinement_propagates_non_not_found_reads_safely(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    refinement = tmp_path / "private-object-name.json"
+    original = dfs._download_json
+
+    def fail_read(uri: str):
+        if uri == str(refinement):
+            raise PermissionError(f"private provider detail for {uri}")
+        return original(uri)
+
+    monkeypatch.setattr(dfs, "_download_json", fail_read)
+
+    with pytest.raises(dfs.RefinementStateError) as captured:
+        dfs.prepare_refinement(str(tmp_path / "grade"), str(refinement))
+
+    assert "read failed (PermissionError)" in str(captured.value)
+    assert "private-object-name" not in str(captured.value)
+
+
+def test_prepare_refinement_fails_closed_on_malformed_prior_state(
+    tmp_path: Path,
+) -> None:
+    refinement = tmp_path / "private-object-name.json"
+    refinement.write_text("not-json")
+
+    with pytest.raises(dfs.RefinementStateError) as captured:
+        dfs.prepare_refinement(str(tmp_path / "grade"), str(refinement))
+
+    message = str(captured.value)
+    assert "read failed (JSONDecodeError)" in message
+    assert "private-object-name" not in message
+
+
+def test_prepare_refinement_is_idempotent_only_with_commit_proof(
+    tmp_path: Path,
+) -> None:
+    refinement = tmp_path / "configs" / "refinement.json"
+    baseline = dfs.prepare_refinement(str(tmp_path / "grade"), str(refinement))
+    history = tmp_path / "configs" / "refinement-attempt-00.json"
+    marker = tmp_path / "configs" / "refinement-attempt-00.commit.json"
+    before_history = history.read_bytes()
+    before_marker = marker.read_bytes()
+
+    repeated = dfs.prepare_refinement(str(tmp_path / "grade"), str(refinement))
+
+    assert repeated == baseline
+    assert history.read_bytes() == before_history
+    assert marker.read_bytes() == before_marker
+
+
+def test_prepare_refinement_repairs_exact_history_after_marker_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    refinement = tmp_path / "configs" / "refinement.json"
+    original = dfs._put_immutable_json
+    failed_once = False
+
+    def fail_marker(payload: dict, uri: str, *, label: str) -> str:
+        nonlocal failed_once
+        if label == "refinement commit marker" and not failed_once:
+            failed_once = True
+            raise dfs.RefinementStateError("injected marker failure")
+        return original(payload, uri, label=label)
+
+    monkeypatch.setattr(dfs, "_put_immutable_json", fail_marker)
+    with pytest.raises(dfs.RefinementStateError, match="injected marker failure"):
+        dfs.prepare_refinement(str(tmp_path / "grade"), str(refinement))
+    history = tmp_path / "configs" / "refinement-attempt-00.json"
+    assert history.is_file()
+    assert not refinement.exists()
+
+    recovered = dfs.prepare_refinement(str(tmp_path / "grade"), str(refinement))
+
+    assert recovered["attempt"] == 0
+    assert (tmp_path / "configs" / "refinement-attempt-00.commit.json").is_file()
+
+
+def test_prepare_refinement_never_overwrites_conflicting_attempt_history(
+    tmp_path: Path,
+) -> None:
+    refinement = tmp_path / "configs" / "refinement.json"
+    history = tmp_path / "configs" / "refinement-attempt-00.json"
+    history.parent.mkdir(parents=True)
+    history.write_text(json.dumps({"schema": "conflicting"}))
+    before = history.read_bytes()
+
+    with pytest.raises(dfs.RefinementStateError, match="conflicting immutable"):
+        dfs.prepare_refinement(str(tmp_path / "grade"), str(refinement))
+
+    assert history.read_bytes() == before
+    assert not refinement.exists()
+
+
+def test_grade_gate_promotes_above_threshold(tmp_path: Path) -> None:
+    scores = tmp_path / "vlm_eval_stub.json"
+    scores.write_text(json.dumps({"status": "completed", "score": 0.8, "passed": True}))
+    decision_path = tmp_path / "decision.json"
+    decision = dfs.grade_gate(str(scores), str(decision_path), threshold=0.5)
     assert decision == "promote_checkpoint"
-    assert captured["decision"] == "promote_checkpoint"
+    assert json.loads(decision_path.read_text())["decision"] == "promote_checkpoint"
 
 
 def test_grade_gate_loops_below_threshold(tmp_path: Path, monkeypatch) -> None:
@@ -160,7 +1677,7 @@ def test_grade_gate_accepts_string_threshold(tmp_path: Path, monkeypatch) -> Non
     """The blueprint interpolates a quoted config.grade_threshold; grade_gate must
     cast a str threshold (and fall back to 0.5 on a non-numeric value)."""
     scores = tmp_path / "vlm_eval_stub.json"
-    scores.write_text(json.dumps({"score": 0.6}))
+    scores.write_text(json.dumps({"status": "completed", "score": 0.6, "passed": True}))
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.decisions.write_decision",
         lambda uri, decision: None,
@@ -259,6 +1776,93 @@ def test_quality_disposition_accepts_only_a_complete_hard_check_pass(
     )
     assert result["quality_status"] == "accepted"
     assert json.loads(disposition.read_text())["quality_status"] == "accepted"
+
+
+def test_quality_disposition_preserves_per_criterion_evaluator_evidence(
+    tmp_path: Path,
+) -> None:
+    scores = tmp_path / "cosmos_evaluator.json"
+    disposition = tmp_path / "quality_disposition.json"
+    criteria = {
+        "attribute_verification": {
+            "passed": True,
+            "passed_checks": 4,
+            "total_checks": 4,
+            "checks": [{"variable": "background", "score": 1.0, "passed": True}],
+        },
+        "hallucination": {"passed": True, "score": 0.91},
+        "temporal_consistency": {"passed": False, "score": 0.42},
+        "appearance_fidelity": {"passed": True, "score": 0.88},
+    }
+    report = {
+        "status": "completed",
+        "score": 0.81,
+        "passed": True,
+        "clips": [
+            {"clip_id": "candidate-0", "score": 0.81, "passed": True, **criteria}
+        ],
+    }
+    scores.write_text(json.dumps(report), encoding="utf-8")
+
+    result = dfs.enforce_quality_disposition(
+        str(scores), str(disposition), threshold=0.75
+    )
+
+    assert result["score"] == report["score"]
+    assert result["evaluator_report_sha256"] == dfs._payload_sha256(report)
+    assert result["criterion_evidence"] == [
+        {"clip_id": "candidate-0", "score": 0.81, "passed": True, **criteria}
+    ]
+    assert (
+        json.loads(disposition.read_text())["criterion_evidence"]
+        == result["criterion_evidence"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("report", "expected_status", "expected_decision"),
+    [
+        (
+            {"score": 0.81, "status": "completed", "passed": True},
+            "accepted",
+            "promote_checkpoint",
+        ),
+        (
+            {"score": 0.74, "status": "completed", "passed": True},
+            "rejected",
+            "loop_back",
+        ),
+    ],
+)
+def test_write_quality_disposition_routes_without_raising(
+    tmp_path: Path,
+    monkeypatch,
+    report: dict,
+    expected_status: str,
+    expected_decision: str,
+) -> None:
+    scores = tmp_path / "cosmos_evaluator.json"
+    disposition = tmp_path / "quality_disposition.json"
+    scores.write_text(json.dumps(report))
+    decisions: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.decisions.write_decision",
+        lambda uri, decision: decisions.append((uri, decision)),
+    )
+
+    result = dfs.write_quality_disposition(
+        str(scores),
+        str(disposition),
+        "s3://example/grade/decision.json",
+        threshold=0.75,
+    )
+
+    assert result["quality_status"] == expected_status
+    assert result["decision"] == expected_decision
+    durable = json.loads(disposition.read_text())
+    assert durable["quality_status"] == expected_status
+    assert durable["decision"] == expected_decision
+    assert decisions == [("s3://example/grade/decision.json", expected_decision)]
 
 
 def test_quality_disposition_persists_rejection_before_failing(tmp_path: Path) -> None:
@@ -380,7 +1984,9 @@ def test_dynamic_quality_disposition_persists_strict_route(
     assert result["quality_status"] == expected_status
     assert result["decision"] == expected_decision
     assert decisions == [("s3://example-bucket/run/decision.json", expected_decision)]
-    assert json.loads(disposition.read_text())["quality_status"] == expected_status
+    durable = json.loads(disposition.read_text())
+    assert durable["quality_status"] == expected_status
+    assert durable["decision"] == expected_decision
 
 
 @pytest.mark.parametrize("contents", [None, "not-json", "[]"])
@@ -409,10 +2015,10 @@ def test_dynamic_quality_disposition_rejects_unavailable_or_malformed_report(
     assert decisions == ["loop_back"]
 
 
-def test_grade_gate_falls_through_a_malformed_report_to_the_older_contract(
+def test_grade_gate_malformed_authoritative_report_fails_closed(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """A malformed newest-contract report must not shadow a usable older one."""
+    """A present but malformed newest report must not promote from stale data."""
 
     (tmp_path / "cosmos_evaluator.json").write_text(json.dumps({"score": "n/a"}))
     (tmp_path / "vlm_eval_stub.json").write_text(json.dumps({"score": 0.9}))
@@ -420,8 +2026,9 @@ def test_grade_gate_falls_through_a_malformed_report_to_the_older_contract(
         "npa.orchestration.npa_workflow.decisions.write_decision",
         lambda uri, decision: None,
     )
-    assert dfs.grade_gate(str(tmp_path), str(tmp_path / "d.json"), threshold=0.5) == (
-        "promote_checkpoint"
+    assert (
+        dfs.grade_gate(str(tmp_path), str(tmp_path / "d.json"), threshold=0.5)
+        == "loop_back"
     )
 
 
@@ -437,8 +2044,8 @@ def test_download_json_missing_exact_file_does_not_substitute(
     (prefix_dir / "decision.json").write_text(json.dumps({"decision": "loop_back"}))
 
     class _FakeStorage:
-        def download_path(self, uri, dest):  # noqa: ARG002
-            return str(prefix_dir)
+        def download_file(self, uri, dest):  # noqa: ARG002
+            raise FileNotFoundError("exact object absent")
 
     monkeypatch.setattr(dfs, "_storage", lambda: _FakeStorage())
     with pytest.raises(FileNotFoundError):
@@ -457,14 +2064,13 @@ def test_grade_gate_missing_eval_loops_not_reads_decision(
     )
 
     class _FakeStorage:
-        def download_path(self, uri, dest):  # noqa: ARG002
-            return str(prefix_dir)
+        def download_file(self, uri, dest):  # noqa: ARG002
+            raise FileNotFoundError("exact object absent")
+
+        def upload_file(self, source, uri):  # noqa: ARG002
+            return uri
 
     monkeypatch.setattr(dfs, "_storage", lambda: _FakeStorage())
-    monkeypatch.setattr(
-        "npa.orchestration.npa_workflow.decisions.write_decision",
-        lambda uri, decision: None,
-    )
     assert (
         dfs.grade_gate("s3://bucket/grade/", "s3://bucket/grade/decision.json", 0.5)
         == "loop_back"
@@ -480,7 +2086,7 @@ def test_grade_gate_reads_the_cosmos_evaluator_report(
     prefix_dir = tmp_path / "grade"
     prefix_dir.mkdir()
     (prefix_dir / RESULT_FILENAME).write_text(
-        json.dumps({"score": 0.9, "passed": True})
+        json.dumps({"status": "completed", "score": 0.9, "passed": True})
     )
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.decisions.write_decision",
@@ -658,6 +2264,7 @@ def test_generate_configs_feeds_first_augmentation_to_transfer(tmp_path: Path) -
         "background",
         "color_grade",
         "surface_finish",
+        "inference_seed",
         "prompt",
     }
     # The prompt is what the augment stage feeds into Cosmos Transfer.
@@ -688,10 +2295,11 @@ def test_generate_configs_uses_leisaac_task_lineage_for_conditioning(
         "background",
         "color_grade",
         "surface_finish",
+        "inference_seed",
         "prompt",
     }
     assert "red-cube lift motion" in combo["prompt"]
-    assert "Preserve every frame's exact input objects" in combo["prompt"]
+    assert "Preserve the exact foreground objects" in combo["prompt"]
     assert manifest["source_leisaac"]["episode_index"] == 0
 
 
@@ -719,8 +2327,30 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(
     from npa.workbench.cosmos import transfer as tx
     from npa.workflows.data_factory_viz import build_run_rrd
 
+    source_frame = _png(tmp_path / "source.png")
     video = tmp_path / "out.mp4"
-    video.write_bytes(b"x" * 200_000)
+    encoded = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-loop",
+            "1",
+            "-i",
+            str(source_frame),
+            "-t",
+            "0.2",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            str(video),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert encoded.returncode == 0, encoded.stderr
 
     # Mock frame extraction (no cosmos venv here); write real PNGs into dest.
     def fake_extract(vp, dest, max_frames=8):
@@ -743,7 +2373,7 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(
             return uri
 
     manifest = tx.publish_transfer_to_s3(
-        {"video_path": str(video), "video_bytes": 200_000, "spec": "s"},
+        {"video_path": str(video), "video_bytes": video.stat().st_size, "spec": "s"},
         "s3://bkt/run1/cosmos_augmented/",
         run_id="run1",
         variables={"weather": "rainy", "time_of_day": "night"},
@@ -769,6 +2399,9 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(
     assert "manifest.json" not in report["clip_ids"]
 
     # (b) build_run_rrd must consume the same per-clip layout (frames + metadata).
+    input_frame = mirror / "run1" / "input" / "source-frame.png"
+    input_frame.parent.mkdir(parents=True)
+    input_frame.write_bytes(source_frame.read_bytes())
     out_rrd = tmp_path / "reports" / "sim2real.rrd"
     result = build_run_rrd(str(mirror / "run1"), str(out_rrd))
     assert result["frames_logged"] >= 3
@@ -828,6 +2461,117 @@ def test_finalize_reports_multi_variant_from_clip_dirs(
     assert report["variant_count"] == 2
 
 
+def test_finalize_counts_only_latest_append_only_augmentation_iteration(
+    monkeypatch,
+) -> None:
+    keys = [
+        "physical-ai-data-factory/run1/cosmos_augmented/iteration-1/manifest.json",
+        "physical-ai-data-factory/run1/cosmos_augmented/iteration-1/old/augmented_video.mp4",
+        "physical-ai-data-factory/run1/cosmos_augmented/iteration-2/manifest.json",
+        "physical-ai-data-factory/run1/cosmos_augmented/iteration-2/new-a/augmented_video.mp4",
+        "physical-ai-data-factory/run1/cosmos_augmented/iteration-2/new-b/augmented_video.mp4",
+    ]
+    monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
+    _mock_committed_manifest(monkeypatch, keys, bucket="b")
+    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+
+    report = dfs.finalize(
+        "s3://b/physical-ai-data-factory/run1/", "s3://b/run1/final.json"
+    )
+
+    assert report["multiply_mode"] == "multi-variant"
+    assert report["variant_count"] == 2
+
+
+def test_finalize_counts_only_committed_hard_pass_selection(monkeypatch) -> None:
+    root = "s3://b/physical-ai-data-factory/run1/"
+    keys = [
+        "physical-ai-data-factory/run1/cosmos_augmented/manifest.json",
+        "physical-ai-data-factory/run1/cosmos_augmented/rejected/augmented_video.mp4",
+        "physical-ai-data-factory/run1/cosmos_augmented/accepted/augmented_video.mp4",
+        "physical-ai-data-factory/run1/selection/iteration-1/manifest.json",
+        "physical-ai-data-factory/run1/selection/iteration-1/accepted/augmented_video.mp4",
+    ]
+    monkeypatch.setattr(dfs, "_list_keys", lambda _uri: list(keys))
+    monkeypatch.setattr(
+        dfs,
+        "_committed_augment_manifest",
+        lambda uri, **_kwargs: (
+            {"variant_count": 1} if "/selection/" in uri else {"variant_count": 2}
+        ),
+    )
+    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+
+    report = dfs.finalize(
+        root,
+        root + "reports/final.json",
+        selection_uri=root + "selection/iteration-1/",
+    )
+
+    assert report["multiply_mode"] == "single-variant"
+    assert report["variant_count"] == 1
+
+
+def test_finalize_publishes_latest_iteration_at_canonical_contract_paths(
+    monkeypatch,
+) -> None:
+    root = "s3://b/physical-ai-data-factory/run1/"
+    keys = [
+        "physical-ai-data-factory/run1/cosmos_augmented/iteration-2/manifest.json",
+        "physical-ai-data-factory/run1/cosmos_augmented/iteration-2/clip/augmented_video.mp4",
+        "physical-ai-data-factory/run1/grade/iteration-2/cosmos_evaluator.json",
+        "physical-ai-data-factory/run1/grade/iteration-2/decision.json",
+    ]
+    payloads = {
+        root + "cosmos_augmented/iteration-2/manifest.json": {
+            "schema": "npa.cosmos2.transfer.v1",
+            "mode": "cosmos_transfer2.5_gpu",
+            "status": "executed",
+            "node_count": 1,
+            "variant_count": 1,
+            "variants": [
+                {
+                    "clip": "clip",
+                    "augmented_video_uri": (
+                        root + "cosmos_augmented/iteration-2/clip/augmented_video.mp4"
+                    ),
+                }
+            ],
+        },
+        root + "grade/iteration-2/cosmos_evaluator.json": {
+            "schema": "npa.cosmos_evaluator.report.v1",
+            "status": "completed",
+        },
+        root + "grade/iteration-2/decision.json": {
+            "schema": "npa.sim2real.threshold_decision.v1",
+            "decision": "promote_checkpoint",
+        },
+    }
+    uploads: dict[str, dict] = {}
+    monkeypatch.setattr(dfs, "_list_keys", lambda _uri: list(keys))
+    monkeypatch.setattr(dfs, "_download_json", lambda uri: payloads.get(uri, {}))
+    monkeypatch.setattr(
+        dfs,
+        "_upload_json",
+        lambda payload, uri: uploads.setdefault(uri, payload) or uri,
+    )
+    monkeypatch.setattr(
+        dfs,
+        "_read_json_key",
+        lambda _bucket, key: uploads[root + key.split("run1/", 1)[-1]],
+    )
+
+    report = dfs.finalize(root, root + "reports/final.json")
+
+    for relative, source_relative in {
+        "cosmos_augmented/manifest.json": "cosmos_augmented/iteration-2/manifest.json",
+        "grade/cosmos_evaluator.json": "grade/iteration-2/cosmos_evaluator.json",
+        "grade/decision.json": "grade/iteration-2/decision.json",
+    }.items():
+        assert uploads[root + relative] == payloads[root + source_relative]
+    assert report["augmentation_engine"] == "cosmos_transfer2.5_gpu"
+
+
 def test_all_augmentations_reads_every_combo(tmp_path: Path) -> None:
     from npa.cli.workbench.cosmos2 import _all_augmentations, _first_augmentation
 
@@ -844,7 +2588,7 @@ def test_all_augmentations_missing_manifest_fails_closed(tmp_path: Path) -> None
 
     with pytest.raises(
         typer.BadParameter,
-        match="configured augmentation manifest could not be read",
+        match="could not read the configured augmentation manifest",
     ):
         _all_augmentations(str(tmp_path / "nope") + "/")
 
@@ -857,14 +2601,32 @@ def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> Non
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    upstream = {
+        "schema": "npa.paidf.upstream.v1",
+        "run_id": "run1",
+        "workflow_variant": "cosmos-transfer2.5",
+        "sources": ["official"],
+    }
+    monkeypatch.setattr(dfs, "_download_json", lambda _uri: upstream)
     report = dfs.finalize(
         "s3://b/physical-ai-data-factory/run1/",
         "s3://b/physical-ai-data-factory/run1/reports/final.json",
+        upstream_variant="cosmos-transfer2.5",
+        run_id="run1",
     )
     assert report["artifact_count"] == 3
     assert report["has_rrd"] is True
     assert report["stages"]["input"] == 1
     assert report["multiply_mode"] == "single-variant"
+    assert report["upstream"] == upstream
+    upstream["run_id"] = "foreign-run"
+    with pytest.raises(RuntimeError, match="does not match"):
+        dfs.finalize(
+            "s3://b/physical-ai-data-factory/run1/",
+            "s3://b/physical-ai-data-factory/run1/reports/final.json",
+            upstream_variant="cosmos-transfer2.5",
+            run_id="run1",
+        )
 
 
 def test_curation_and_final_reports_carry_input_provenance(

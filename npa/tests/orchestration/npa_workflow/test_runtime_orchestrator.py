@@ -9,10 +9,12 @@ runtime traversal matches the plan-time unroll for the same decisions.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,16 +22,468 @@ import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-from npa.orchestration.npa_workflow.run_state import RunStateStore, RuntimeRunState
+from npa.orchestration.npa_workflow.run_state import (
+    RunManifest,
+    RunStateStore,
+    RuntimeRunState,
+    runtime_key,
+)
 from npa.orchestration.npa_workflow.runtime import (
+    CANCELLATION_VERIFY_ATTEMPTS,
+    IMAGE_IDENTITY_VERSION,
+    MAX_TERMINAL_PLAN_MIGRATIONS,
+    SCHEDULER_OBSERVATION_SCHEMA,
+    SCHEDULER_OBSERVATION_SOURCE,
     RuntimeLedger,
     RuntimeOptions,
     SkyPilotWaveExecutor,
     WaveAttempt,
+    _claims_for_steps,
+    _expected_image_identity,
+    _image_identity,
+    _loaded_image_identity,
+    _record_reached_running,
+    _reference_set_identity,
+    _resource_profiles_for_steps,
+    _selection_reference_identity,
+    _wave_image_references,
+    plan_fingerprint,
     run_workflow_runtime,
+    s3_artifact_exists,
     s3_trigger_waiter,
+    wave_key,
 )
-from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+from npa.orchestration.npa_workflow.skypilot_render import (
+    SkypilotRenderOptions,
+    build_skypilot_task_doc,
+)
+from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
+
+
+def test_wave_attempt_persists_exact_rendered_claim_names() -> None:
+    steps = [
+        SimpleNamespace(
+            resources_profile={
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "volumes": [
+                                {
+                                    "persistentVolumeClaim": {
+                                        "claimName": "run-workspace"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+    ]
+    claims = _claims_for_steps(steps)
+    attempt = WaveAttempt(
+        key="wave",
+        states=["train"],
+        kind="serial",
+        persistent_volume_claims=list(claims),
+    )
+
+    record = attempt.to_dict()
+    restored = SkyPilotWaveExecutor._attempt_from_record(
+        record, steps=[], kind="serial", group=""
+    )
+
+    assert claims == ("run-workspace",)
+    assert record["persistent_volume_claims"] == ["run-workspace"]
+    assert restored.persistent_volume_claims == ["run-workspace"]
+
+
+def test_wave_attempt_round_trip_preserves_resource_and_image_evidence() -> None:
+    reference = "registry.example/npa@sha256:" + "a" * 64
+    attempt = WaveAttempt(
+        key="wave",
+        states=["train"],
+        kind="serial",
+        image_digest=_selection_reference_identity(
+            "b" * 64, [reference], [["train", "", reference]]
+        ),
+        image_identity_version=IMAGE_IDENTITY_VERSION,
+        image_selection_sha256="b" * 64,
+        image_bindings=[["train", "", reference]],
+        image_references=[reference],
+        resource_profiles={"train": {"accelerators": "B200:1", "cpus": 16}},
+    )
+
+    record = attempt.to_dict()
+    restored = SkyPilotWaveExecutor._attempt_from_record(
+        record, steps=[], kind="serial", group=""
+    )
+
+    assert restored.resource_profiles == attempt.resource_profiles
+    assert restored.image_references == [reference]
+    assert restored.image_selection_sha256 == "b" * 64
+    assert restored.image_bindings == attempt.image_bindings
+    assert record["image_identity"]["reference_set_sha256"] == _reference_set_identity(
+        [reference]
+    )
+    identity = record["image_identity"]
+    assert identity["version"] == IMAGE_IDENTITY_VERSION
+    assert identity["all_references_content_addressed"] is True
+    attempt.image_references = ["registry.example/npa:mutable"]
+    mutable = attempt.to_dict()["image_identity"]
+    assert mutable["all_references_content_addressed"] is False
+    legacy = WaveAttempt(
+        key="legacy", states=["train"], kind="serial", image_digest="c" * 64
+    ).to_dict()["image_identity"]
+    assert legacy["kind"] == "legacy_digest_pin_set"
+    assert "reference_set_sha256" not in legacy
+    tampered = json.loads(json.dumps(record))
+    tampered["image_identity"]["references"] = ["registry.example/other:tag"]
+    with pytest.raises(NpaWorkflowError, match="image bindings differ from references"):
+        SkyPilotWaveExecutor._attempt_from_record(
+            tampered, steps=[], kind="serial", group=""
+        )
+
+
+@pytest.mark.parametrize("invalid", [None, "", 1, {}, []])
+def test_image_identity_rejects_invalid_reference_members(invalid) -> None:
+    reference = "registry.example/image:tag"
+    record = {
+        "immutable_identity": {"image_digest": _reference_set_identity([reference])},
+        "image_identity": {
+            "version": IMAGE_IDENTITY_VERSION,
+            "references": [reference, invalid],
+        },
+    }
+    with pytest.raises(NpaWorkflowError, match="must be nonempty strings"):
+        _loaded_image_identity(record)
+
+
+def test_resource_snapshot_matches_rendered_environment_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = GATE_LOOP_SPEC.replace(
+        "    memory: 16Gi", "    memory: 16Gi\n    accelerators: B200:1"
+    )
+    spec = load_spec(_write_spec(tmp_path, source))
+    step = build_plan(
+        spec, run_id="resource-evidence", assume_decision="promote_checkpoint"
+    ).steps[0]
+    options = SkypilotRenderOptions(
+        gpu_accelerator_overrides={"B200:1": "nvidia.com/gpu:B200:1"}
+    )
+    monkeypatch.setenv("NPA_WORKFLOW_GPU_ACCELERATOR", "H200:1")
+    monkeypatch.setenv("NPA_WORKFLOW_GPU_MEMORY", "96Gi")
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://source-role/" + "d" * 64)
+    rendered = build_skypilot_task_doc(
+        spec, step, run_id="resource-evidence", options=options
+    )["resources"]
+    expected = {
+        key: value
+        for key, value in rendered.items()
+        if key not in {"image_id", "image_login_config"}
+    }
+    snapshots = _resource_profiles_for_steps(spec, [step], options, "resource-evidence")
+
+    assert snapshots[step.state] == expected
+    assert snapshots[step.state]["accelerators"] == "H200:1"
+    assert snapshots[step.state]["memory"] == "96+"
+
+
+def test_resolved_image_identity_includes_inline_image_and_rejects_legacy(
+    tmp_path: Path,
+) -> None:
+    source = GATE_LOOP_SPEC.replace(
+        "    memory: 16Gi", "    memory: 16Gi\n    image: repo/image@sha256:" + "a" * 64
+    )
+    spec = load_spec(_write_spec(tmp_path, source))
+    step = build_plan(
+        spec, run_id="image-evidence", assume_decision="promote_checkpoint"
+    ).steps[0]
+    options = SkypilotRenderOptions()
+
+    references = _wave_image_references(spec, [step], options, "image-evidence")
+    resolved = _expected_image_identity(
+        spec, [step], options, IMAGE_IDENTITY_VERSION, "image-evidence"
+    )
+    changed_spec = load_spec(_write_spec(tmp_path, source.replace("a" * 64, "c" * 64)))
+    changed_step = build_plan(
+        changed_spec, run_id="image-evidence", assume_decision="promote_checkpoint"
+    ).steps[0]
+
+    assert references == ("repo/image@sha256:" + "a" * 64,)
+    assert resolved != _image_identity(options)
+    assert resolved != _expected_image_identity(
+        changed_spec,
+        [changed_step],
+        options,
+        IMAGE_IDENTITY_VERSION,
+        "image-evidence",
+    )
+    with pytest.raises(NpaWorkflowError, match="IMMUTABLE_IDENTITY_MISMATCH"):
+        _expected_image_identity(spec, [step], options, "", "image-evidence")
+
+
+def _parallel_image_replay_spec():
+    document = yaml.safe_load(_image_selection_replay_spec())
+    document["initial"] = "image-wave"
+    document["states"]["image-wave"] = {
+        "parallel": ["caption", "export"],
+        "terminal": True,
+    }
+    document["states"]["caption"].pop("next", None)
+    document["states"]["export"].pop("terminal", None)
+    return yaml.safe_dump(document)
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_parallel_replay_binds_selection_even_when_reference_set_is_unchanged(
+    tmp_path, changed
+):
+    references = list(_image_pin_bindings().values())
+    initial = _image_selection_options(
+        {"*": references[0], "workbench.token_factory.caption": references[1]}
+    )
+    selected = (
+        _image_selection_options(
+            {"workbench.token_factory.caption": references[0], "*": references[1]}
+        )
+        if changed
+        else initial
+    )
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=initial, spec_text=_parallel_image_replay_spec()
+    )
+    steps = build_plan(spec, run_id="rt-completed-replay-identity").steps
+    assert _wave_image_references(spec, steps, initial, "binding-check") == (
+        _wave_image_references(spec, steps, selected, "binding-check")
+    )
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=selected
+    )
+    assert report.status == ("failed" if changed else "succeeded")
+    assert submitter.calls == []
+    if changed:
+        assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    else:
+        assert len(report.waves) == 1 and report.waves[0]["replayed"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["legacy-reference-set", "unversioned-v3", "selection", "references", "bindings"],
+)
+def test_completed_replay_rejects_incomplete_or_tampered_image_binding(
+    tmp_path, mutation
+):
+    selected = _image_selection_options(
+        {"*": next(iter(_image_pin_bindings().values()))}
+    )
+    spec, store = _completed_replay_case(tmp_path, render_options=selected)
+    state = store.read_runtime_state()
+    record = state.waves[-1]
+    identity = record["image_identity"]
+    if mutation == "legacy-reference-set":
+        identity["version"] = "npa.workflow.image-reference-set.v1"
+        record["immutable_identity"]["image_digest"] = _reference_set_identity(
+            identity["references"]
+        )
+        identity.pop("selection_sha256")
+    elif mutation == "unversioned-v3":
+        record.pop("image_identity")
+        record["immutable_identity"]["image_digest"] = _image_identity(selected)
+    elif mutation == "selection":
+        identity["selection_sha256"] = "c" * 64
+        record["immutable_identity"]["image_digest"] = _selection_reference_identity(
+            identity["selection_sha256"], identity["references"], identity["bindings"]
+        )
+    elif mutation == "bindings":
+        identity["bindings"][0][0] = "different-state"
+        record["immutable_identity"]["image_digest"] = _selection_reference_identity(
+            identity["selection_sha256"], identity["references"], identity["bindings"]
+        )
+    else:
+        identity["references"] = ["registry.example/another@sha256:" + "c" * 64]
+    store.write_runtime_state(state)
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=selected
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_completed_replay_binds_catalog_assignments_with_unchanged_image_set(
+    tmp_path, monkeypatch, changed
+):
+    document = yaml.safe_load(_parallel_image_replay_spec())
+    for state in ("caption", "export"):
+        document["resources"][state] = {
+            **document["resources"]["cpu"],
+            "image": f"tool://catalog-{state}",
+        }
+        document["states"][state]["resources"] = state
+    references = list(_image_pin_bindings().values())
+    catalog = dict(zip(("catalog-caption", "catalog-export"), references))
+    monkeypatch.setattr(
+        "npa.deploy.images.container_image_for_tool",
+        lambda tool, **_kwargs: catalog[tool],
+    )
+    options = _image_selection_options({})
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=options, spec_text=yaml.safe_dump(document)
+    )
+    original = store.read_runtime_state().waves[-1]["image_identity"]
+    if changed:
+        catalog.update(zip(catalog, reversed(references)))
+    steps = build_plan(spec, run_id="rt-completed-replay-identity").steps
+    assert (
+        list(_wave_image_references(spec, steps, options, "catalog-check"))
+        == (original["references"])
+    )
+    assert _image_identity(options) == original["selection_sha256"]
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=options
+    )
+    assert report.status == ("failed" if changed else "succeeded")
+    assert submitter.calls == []
+    if changed:
+        assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    else:
+        assert report.waves[0]["replayed"]
+
+
+def _typed_running_observation(
+    *,
+    wave_key: str,
+    job_id: str,
+    job_name: str,
+    logical_launch_id: str,
+    attempt: int = 1,
+    scheduler_fence_sequence: int = 1,
+    launch_sequence: int = 1,
+    scheduler_state: str = "RUNNING",
+) -> dict[str, object]:
+    return {
+        "schema": SCHEDULER_OBSERVATION_SCHEMA,
+        "source": SCHEDULER_OBSERVATION_SOURCE,
+        "observed_at": "2026-09-15T19:00:00+00:00",
+        "wave_key": wave_key,
+        "job_id": job_id,
+        "job_name": job_name,
+        "logical_launch_id": logical_launch_id,
+        "attempt": attempt,
+        "scheduler_fence_sequence": scheduler_fence_sequence,
+        "launch_sequence": launch_sequence,
+        "scheduler_state": scheduler_state,
+    }
+
+
+def test_typed_exact_scheduler_running_evidence_authorizes_adoption() -> None:
+    record = {
+        "key": "001|serial|state:-",
+        "job_id": "77",
+        "job_name": "typed-job",
+        "logical_launch_id": "logical-1",
+        "attempt": 2,
+        "scheduler_fence_sequence": 8,
+        "launch_sequence": 3,
+    }
+    record["observations"] = [
+        _typed_running_observation(
+            wave_key=record["key"],
+            job_id=record["job_id"],
+            job_name=record["job_name"],
+            logical_launch_id=record["logical_launch_id"],
+            attempt=record["attempt"],
+            scheduler_fence_sequence=record["scheduler_fence_sequence"],
+            launch_sequence=record["launch_sequence"],
+        )
+    ]
+
+    assert _record_reached_running(record) is True
+
+
+@pytest.mark.parametrize(
+    ("label", "observation"),
+    [
+        (
+            "queued",
+            _typed_running_observation(
+                wave_key="001|serial|state:-",
+                job_id="77",
+                job_name="typed-job",
+                logical_launch_id="logical-1",
+                attempt=2,
+                scheduler_fence_sequence=8,
+                launch_sequence=3,
+                scheduler_state="PENDING",
+            ),
+        ),
+        (
+            "submitted",
+            {
+                "scheduler_state": "SUBMITTED",
+                "message": "job may be running soon",
+            },
+        ),
+        (
+            "ambiguous-running-text",
+            {"message": "submitted; worker running setup", "statuses": {}},
+        ),
+        (
+            "mismatched-job",
+            _typed_running_observation(
+                wave_key="001|serial|state:-",
+                job_id="different-job",
+                job_name="typed-job",
+                logical_launch_id="logical-1",
+                attempt=2,
+                scheduler_fence_sequence=8,
+                launch_sequence=3,
+            ),
+        ),
+        (
+            "stale-launch",
+            _typed_running_observation(
+                wave_key="001|serial|state:-",
+                job_id="77",
+                job_name="typed-job",
+                logical_launch_id="logical-1",
+                attempt=1,
+                scheduler_fence_sequence=7,
+                launch_sequence=2,
+            ),
+        ),
+        (
+            "unavailable",
+            {
+                "schema": SCHEDULER_OBSERVATION_SCHEMA,
+                "source": SCHEDULER_OBSERVATION_SOURCE,
+                "scheduler_state": "UNAVAILABLE",
+            },
+        ),
+    ],
+)
+def test_non_running_or_unbound_scheduler_evidence_cannot_authorize_adoption(
+    label: str, observation: dict[str, object]
+) -> None:
+    del label
+    record = {
+        "key": "001|serial|state:-",
+        "job_id": "77",
+        "job_name": "typed-job",
+        "logical_launch_id": "logical-1",
+        "attempt": 2,
+        "scheduler_fence_sequence": 8,
+        "launch_sequence": 3,
+        "observations": [observation],
+        "tasks": [{"status": "RUNNING", "log": "running"}],
+    }
+
+    assert _record_reached_running(record) is False
+
 
 GATE_LOOP_SPEC = """
 apiVersion: npa.workflow/v0.0.1
@@ -90,6 +544,91 @@ states:
     run:
       shell: "echo publish"
     resources: cpu
+    terminal: true
+"""
+
+SCOPED_GATE_LOOP_SPEC = """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: scoped-gate-loop-demo
+
+config:
+  bucket: example-bucket
+  prefix: "scoped-gate/{{run.id}}"
+  max_iterations: 2
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/legacy/decision.json"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: refine
+
+states:
+  refine:
+    description: Bounded loop whose gate has an iteration-scoped decision.
+    loop:
+      max: "{{config.max_iterations}}"
+      until: promote_checkpoint
+    sequence:
+      - work
+      - gate
+    next: publish
+
+  work:
+    description: Do the work.
+    run:
+      shell: "echo work"
+    resources: cpu
+
+  gate:
+    description: Write this iteration's decision artifact.
+    writesDecision: true
+    needs: [work]
+    params:
+      decision_uri: >-
+        s3://{{config.bucket}}/{{config.prefix}}/iteration-{{loop.refine}}/decision.json
+    run:
+      shell: "echo gate {{config.decision_uri}}"
+    resources: cpu
+    outputs:
+      - uri: "{{config.prefix}}/gate-report.json"
+        schema: npa.example.report.v1
+      - uri: "{{config.decision_uri}}"
+        schema: npa.sim2real.threshold_decision.v1
+
+  publish:
+    description: Publish after promotion or loop exhaustion.
+    run:
+      shell: "echo publish"
+    resources: cpu
+    terminal: true
+"""
+
+COMPLETED_REPLAY_SPEC = """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: completed-replay-identity
+config:
+  bucket: example-bucket
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 1
+initial: export
+states:
+  export:
+    run:
+      shell: "echo export"
+    resources: cpu
+    outputs:
+      - uri: "s3://example-bucket/completed-replay/result.json"
+        schema: npa.example.result.v1
     terminal: true
 """
 
@@ -186,6 +725,8 @@ states:
 class FakeResult:
     status: str = "SUBMITTED"
     job_id: str = "1"
+    returncode: int = 0
+    error: str = ""
 
 
 class FakeSubmitter:
@@ -225,13 +766,20 @@ class FakeStatus:
 class MemoryStore(RunStateStore):
     """RunStateStore backed by a dict (mirrors the injected reader/writer seam)."""
 
-    def __init__(self, objects: dict[str, bytes] | None = None) -> None:
+    def __init__(
+        self,
+        objects: dict[str, bytes] | None = None,
+        *,
+        prefix: str = "unit-prefix",
+    ) -> None:
         self.objects: dict[str, bytes] = objects if objects is not None else {}
+        self.write_calls: list[str] = []
         super().__init__(
             bucket="unit-bucket",
-            prefix="unit-prefix",
+            prefix=prefix,
             reader=self._read_obj,
             writer=self._write_obj,
+            artifact_lister=self._list_obj,
         )
 
     def _read_obj(self, bucket: str, key: str) -> str:
@@ -240,7 +788,11 @@ class MemoryStore(RunStateStore):
         return self.objects[key].decode("utf-8")
 
     def _write_obj(self, bucket: str, key: str, body: bytes) -> None:
+        self.write_calls.append(key)
         self.objects[key] = body
+
+    def _list_obj(self, _bucket: str, prefix: str) -> list[str]:
+        return [key for key in self.objects if key.startswith(prefix)]
 
 
 def test_stage_ledger_heartbeat_requires_real_progress_and_poll_only_updates_observation() -> (
@@ -365,7 +917,9 @@ def _executor(
     cancels: list[dict[str, Any]] | None = None,
     name_lookup_fn: Any | None = None,
     output_checker: Any | None = None,
+    use_default_output_checker: bool = False,
     reconcile_fn: Any | None = None,
+    render_options: SkypilotRenderOptions | None = None,
 ) -> SkyPilotWaveExecutor:
     opts = options or RuntimeOptions(poll_seconds=0, max_wait_seconds=60)
     ledger = RuntimeLedger(
@@ -391,7 +945,8 @@ def _executor(
     return SkyPilotWaveExecutor(
         spec,
         run_id=run_id,
-        render_options=SkypilotRenderOptions(
+        render_options=render_options
+        or SkypilotRenderOptions(
             image_overrides={"*": "cr.example/x@sha256:" + "c" * 64}
         ),
         options=opts,
@@ -406,7 +961,11 @@ def _executor(
         else None,
         # Default: the launched name resolves to the id the fake submitter reported.
         name_lookup_fn=effective_lookup,
-        output_checker=output_checker or (lambda _uri: True),
+        output_checker=(
+            None
+            if use_default_output_checker
+            else output_checker or (lambda _uri: True)
+        ),
         reconcile_fn=reconcile_fn or default_reconcile,
         sleeper=(sleeps.append if sleeps is not None else (lambda _seconds: None)),
         clock=_fake_clock(),
@@ -460,6 +1019,9 @@ def test_default_skypilot_calls_preserve_explicit_runtime_isolation(
         "npa.orchestration.skypilot.workflow.find_job_ids_by_name",
         return_value=["1"],
     )
+    reconcile = mocker.patch(
+        "npa.orchestration.skypilot.workflow.lookup_managed_job",
+    )
 
     rendered = tmp_path / "rendered.yaml"
     rendered.write_text("name: isolated\n", encoding="utf-8")
@@ -474,6 +1036,7 @@ def test_default_skypilot_calls_preserve_explicit_runtime_isolation(
     executor._status("1")
     executor._timeline("1")
     assert executor._job_ids_by_name("isolated-job") == ["1"]
+    executor._reconcile_exact("isolated-job", "1")
 
     expected = {
         "isolated_config_dir": isolated,
@@ -492,13 +1055,18 @@ def test_default_skypilot_calls_preserve_explicit_runtime_isolation(
         "controller_backend": "kubernetes",
         "infra": "k8s/test-context",
         "secret_envs": [],
-        "extra_env": {},
+        "extra_env": {
+            "NPA_S3_BUCKET": "example-bucket",
+            "NPA_S3_PREFIX": "trigger/rt-isolated",
+        },
         "timeout": 1800,
         "logical_launch_id": "",
+        "project": "default",
     }
     status.assert_called_once_with("1", **expected)
     timeline.assert_called_once_with("1", **expected)
     lookup.assert_called_once_with("isolated-job", **expected)
+    reconcile.assert_called_once_with("isolated-job", job_id="1", **expected)
 
 
 def test_successful_job_without_declared_output_fails_closed(tmp_path: Path) -> None:
@@ -551,7 +1119,222 @@ def test_declared_output_checker_receives_uri_and_ledger_keeps_schema(
     ]
 
 
+def test_prefix_marker_does_not_authorize_absent_output_recovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class PagedS3:
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            if kwargs.get("ContinuationToken") == "page-2":
+                return {
+                    "Contents": [
+                        {"Key": "gate-loop/run/output/result.json", "Size": 17}
+                    ],
+                    "IsTruncated": False,
+                }
+            return {
+                "Contents": [{"Key": "gate-loop/run/output/", "Size": 0}],
+                "IsTruncated": True,
+                "NextContinuationToken": "page-2",
+            }
+
+    client = PagedS3()
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: SimpleNamespace(s3=client),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec, output_checker=s3_artifact_exists)
+    output = "s3://example-bucket/gate-loop/run/output/"
+
+    assert executor._outputs_exist([output])
+    assert executor._declared_outputs_absent([output]) == (False, "present")
+
+
+def test_malformed_prefix_pagination_is_indeterminate_for_recovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class MissingTruncationFlagS3:
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            if kwargs.get("ContinuationToken") == "page-2":
+                return {
+                    "Contents": [
+                        {"Key": "gate-loop/run/output/result.json", "Size": 17}
+                    ],
+                    "IsTruncated": False,
+                }
+            return {
+                "Contents": [{"Key": "gate-loop/run/output/", "Size": 0}],
+                "NextContinuationToken": "page-2",
+            }
+
+    client = MissingTruncationFlagS3()
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: SimpleNamespace(s3=client),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec, output_checker=s3_artifact_exists)
+    output = "s3://example-bucket/gate-loop/run/output/"
+
+    assert executor._declared_outputs_absent([output]) == (False, "indeterminate")
+    assert calls == [
+        {
+            "Bucket": "example-bucket",
+            "Prefix": "gate-loop/run/output/",
+            "MaxKeys": 1000,
+        }
+    ]
+    with pytest.raises(RuntimeError, match="malformed pagination"):
+        s3_artifact_exists(output)
+
+
 # ------------------------------------------------------------------- early exit
+
+
+def _image_pin_bindings() -> dict[str, str]:
+    return {
+        "cr.example/tool-a:latest": "cr.example/tool-a@sha256:" + "a" * 64,
+        "cr.example/tool-b:latest": "cr.example/tool-b@sha256:" + "b" * 64,
+    }
+
+
+def _image_pin_options(bindings: dict[str, str]) -> SkypilotRenderOptions:
+    return SkypilotRenderOptions(
+        image_overrides={"*": "cr.example/x@sha256:" + "c" * 64},
+        image_digest_pins=bindings,
+    )
+
+
+@pytest.mark.parametrize("change", ["swap", "rename", "add", "remove"])
+def test_image_identity_binds_digest_pins_to_reference_keys(change: str) -> None:
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+
+    bindings = _image_pin_bindings()
+    if change == "swap":
+        changed = {
+            "cr.example/tool-a:latest": bindings["cr.example/tool-b:latest"],
+            "cr.example/tool-b:latest": bindings["cr.example/tool-a:latest"],
+        }
+    elif change == "rename":
+        changed = {
+            "cr.example/tool-a-renamed:latest": bindings["cr.example/tool-a:latest"],
+            "cr.example/tool-b:latest": bindings["cr.example/tool-b:latest"],
+        }
+    elif change == "add":
+        changed = {
+            **bindings,
+            "cr.example/tool-c:latest": "cr.example/tool-c@sha256:" + "c" * 64,
+        }
+    else:
+        changed = {"cr.example/tool-a:latest": bindings["cr.example/tool-a:latest"]}
+
+    expected = _image_identity(_image_pin_options(bindings))
+    reordered = _image_identity(
+        _image_pin_options(dict(reversed(list(bindings.items()))))
+    )
+    actual = _image_identity(_image_pin_options(changed))
+
+    assert reordered == expected
+    assert actual != expected
+
+
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_swapped_image_pin_bindings(tmp_path, outputs_exist):
+    bindings = _image_pin_bindings()
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=_image_pin_options(bindings)
+    )
+    swapped = dict(zip(bindings, reversed(list(bindings.values()))))
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=_image_pin_options(swapped)
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+def test_completed_replay_accepts_reordered_image_pin_bindings(tmp_path):
+    bindings = _image_pin_bindings()
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=_image_pin_options(bindings)
+    )
+    reordered = dict(reversed(list(bindings.items())))
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=_image_pin_options(reordered)
+    )
+    assert report.status == "succeeded"
+    assert report.waves[0]["replayed"] is True
+    assert submitter.calls == []
+
+
+def _image_selection_replay_spec() -> str:
+    document = yaml.safe_load(COMPLETED_REPLAY_SPEC)
+    document["config"].update(
+        images_uri="s3://example-bucket/images/",
+        captions_uri="s3://example-bucket/captions/",
+        caption_model="fixture-model",
+        max_images=1,
+        max_tokens=8,
+    )
+    document["initial"] = "caption"
+    document["states"]["caption"] = {
+        "toolRef": "workbench.token_factory.caption",
+        "resources": "cpu",
+        "outputs": [{"uri": "s3://example-bucket/captions/result.json"}],
+        "next": "export",
+    }
+    return yaml.safe_dump(document)
+
+
+def _image_selection_options(
+    overrides, *, pins=None, registry="", gpu_target="", image_variant=""
+):
+    return SkypilotRenderOptions(
+        registry=registry,
+        image_overrides=overrides,
+        image_digest_pins=pins or {},
+        gpu_target=gpu_target,
+        image_variant=image_variant,
+    )
+
+
+@pytest.mark.parametrize("pinned", [True, False])
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_reassigned_image_selection(
+    tmp_path,
+    pinned,
+    outputs_exist,
+):
+    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
+
+    bindings = _image_pin_bindings()
+    references = list(bindings) if pinned else list(bindings.values())
+    pins = bindings if pinned else {}
+    initial = _image_selection_options(
+        {"*": references[0], "workbench.token_factory.caption": references[1]},
+        pins=pins,
+    )
+    changed = _image_selection_options(
+        {"*": references[1], "workbench.token_factory.caption": references[0]},
+        pins=pins,
+    )
+    assert resolve_task_image("", {}, options=initial) != resolve_task_image(
+        "", {}, options=changed
+    )
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=initial, spec_text=_image_selection_replay_spec()
+    )
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=changed
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
 
 
 def test_runtime_early_exits_when_gate_promotes_on_first_iteration(
@@ -597,6 +1380,164 @@ def test_runtime_persists_exact_submitted_workflow_yaml(tmp_path: Path) -> None:
     assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
 
 
+def _completed_runtime_prefix(tmp_path: Path):
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    objects: dict[str, bytes] = {}
+    first_store = MemoryStore(objects)
+    first_executor = _executor(spec, run_id="cpu-run", store=first_store)
+    first_yaml = GATE_LOOP_SPEC.encode("utf-8")
+
+    first = run_workflow_runtime(
+        spec,
+        run_id="cpu-run",
+        executor=first_executor,
+        state_store=first_store,
+        options=first_executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        workflow_yaml=first_yaml,
+    )
+    assert first.status == "succeeded"
+    return spec, objects
+
+
+def test_runtime_rejects_foreign_run_on_shared_prefix_before_any_write(
+    tmp_path: Path,
+) -> None:
+    spec, objects = _completed_runtime_prefix(tmp_path)
+    snapshot = dict(objects)
+
+    second_store = MemoryStore(objects)
+    second_submitter = FakeSubmitter()
+    second_executor = _executor(
+        spec,
+        run_id="gpu-run",
+        store=second_store,
+        submitter=second_submitter,
+    )
+    with pytest.raises(NpaWorkflowError, match="already belongs.*cpu-run"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=second_executor,
+            state_store=second_store,
+            options=second_executor.options,
+            workflow_yaml=b"different workflow source",
+        )
+
+    assert second_submitter.calls == []
+    assert second_store.write_calls == []
+    assert objects == snapshot
+
+
+def test_runtime_allows_a_new_run_with_a_distinct_prefix(tmp_path: Path) -> None:
+    spec, objects = _completed_runtime_prefix(tmp_path)
+    snapshot = dict(objects)
+    other_store = MemoryStore(objects, prefix="gpu-prefix")
+    other_executor = _executor(spec, run_id="gpu-run", store=other_store)
+    other = run_workflow_runtime(
+        spec,
+        run_id="gpu-run",
+        executor=other_executor,
+        state_store=other_store,
+        options=other_executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        workflow_yaml=b"different workflow source",
+    )
+    assert other.status == "succeeded"
+    assert objects["gpu-prefix/workflow.yaml"] == b"different workflow source"
+    assert {key: objects[key] for key in snapshot} == snapshot
+
+
+def test_runtime_rejects_foreign_manifest_owner_when_runtime_is_absent(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    store.write_manifest(
+        RunManifest(
+            workflow=spec.name,
+            run_id="cpu-run",
+            api_version=spec.api_version,
+        )
+    )
+    snapshot = dict(store.objects)
+    store.write_calls.clear()
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="gpu-run", store=store, submitter=submitter)
+
+    with pytest.raises(NpaWorkflowError, match="run manifest.*unique config.prefix"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=executor,
+            state_store=store,
+            options=executor.options,
+            workflow_yaml=b"different workflow source",
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects == snapshot
+
+
+@pytest.mark.parametrize(
+    "manifest_bytes",
+    [b"[1]", b'{"workflow":"example"}', b'{"run_id":"cpu-run"}'],
+)
+def test_runtime_rejects_corrupt_manifest_before_any_write(
+    tmp_path: Path,
+    manifest_bytes: bytes,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    key = "unit-prefix/npa-workflow/manifest.json"
+    store = MemoryStore({key: manifest_bytes})
+    snapshot = dict(store.objects)
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="gpu-run", store=store, submitter=submitter)
+
+    with pytest.raises(NpaWorkflowError, match="durable run manifest is corrupt"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=executor,
+            state_store=store,
+            options=executor.options,
+            workflow_yaml=b"different workflow source",
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects == snapshot
+
+
+def test_runtime_prefix_guard_propagates_storage_read_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="gpu-run", store=store, submitter=submitter)
+
+    def fail_read() -> RuntimeRunState | None:
+        raise PermissionError("state read denied")
+
+    monkeypatch.setattr(store, "read_runtime_state", fail_read)
+    with pytest.raises(PermissionError, match="state read denied"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=executor,
+            state_store=store,
+            options=executor.options,
+            workflow_yaml=b"workflow source",
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects == {}
+
+
 def test_runtime_uses_executor_ledger_store_for_exact_workflow_yaml(
     tmp_path: Path,
 ) -> None:
@@ -632,6 +1573,45 @@ def test_runtime_rejects_workflow_yaml_without_any_durable_store(
             options=executor.options,
             workflow_yaml=GATE_LOOP_SPEC.encode("utf-8"),
         )
+
+
+@pytest.mark.parametrize("selector", ["*", "workbench.train", "workbench.train.export"])
+def test_image_identity_tracks_effective_override_precedence(selector):
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
+
+    pins = _image_pin_bindings()
+    references = list(pins)
+    overrides = {"*": references[0], selector: references[0]}
+    initial = _image_selection_options(overrides, pins=pins)
+    changed = _image_selection_options(
+        {**overrides, selector: references[1]}, pins=pins
+    )
+    assert (
+        resolve_task_image("workbench.train.export", {}, options=initial)
+        == pins[references[0]]
+    )
+    assert (
+        resolve_task_image("workbench.train.export", {}, options=changed)
+        == pins[references[1]]
+    )
+    assert _image_identity(initial) != _image_identity(changed)
+
+
+@pytest.mark.parametrize("field", ["image", "image_id"])
+def test_workflow_identity_binds_resource_image_selection(tmp_path, field):
+    from dataclasses import replace
+    from npa.orchestration.npa_workflow.runtime import _workflow_identity
+
+    spec = load_spec(_write_spec(tmp_path, COMPLETED_REPLAY_SPEC))
+    images = list(_image_pin_bindings().values())
+    initial = replace(
+        spec, resources={"cpu": {**spec.resources["cpu"], field: images[0]}}
+    )
+    changed = replace(
+        spec, resources={"cpu": {**spec.resources["cpu"], field: images[1]}}
+    )
+    assert _workflow_identity(initial) != _workflow_identity(changed)
 
 
 def test_runtime_runs_full_budget_when_gate_keeps_looping(tmp_path: Path) -> None:
@@ -721,10 +1701,14 @@ def test_runtime_refreshes_launch_dependencies_again_before_retry(
 
     assert report.status == "succeeded"
     assert len(refreshed) == len(submitter.calls) == 4
-    assert submitter.calls[0]["tasks"] == submitter.calls[1]["tasks"] == [
-        "shard-a",
-        "shard-b",
-    ]
+    assert (
+        submitter.calls[0]["tasks"]
+        == submitter.calls[1]["tasks"]
+        == [
+            "shard-a",
+            "shard-b",
+        ]
+    )
 
 
 def test_runtime_launch_dependency_refresh_failure_prevents_submit(
@@ -749,6 +1733,202 @@ def test_runtime_launch_dependency_refresh_failure_prevents_submit(
 
     assert report.status == "failed"
     assert "registry credential refresh failed" in report.error
+    assert submitter.calls == []
+
+
+def test_runtime_reads_exact_iteration_scoped_decision_output(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, SCOPED_GATE_LOOP_SPEC))
+    submitter = FakeSubmitter()
+    executor = _executor(spec, submitter=submitter)
+    reads: list[tuple[str, str]] = []
+    decisions = iter(("loop_back", "promote_checkpoint"))
+
+    def reader(bucket: str, key: str) -> str:
+        reads.append((bucket, key))
+        return json.dumps({"decision": next(decisions)})
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-scoped-decision",
+        executor=executor,
+        options=executor.options,
+        decision_reader=reader,
+        assume_decision="loop_back",
+    )
+
+    assert report.status == "succeeded"
+    assert reads == [
+        (
+            "example-bucket",
+            "scoped-gate/rt-scoped-decision/iteration-1/decision.json",
+        ),
+        (
+            "example-bucket",
+            "scoped-gate/rt-scoped-decision/iteration-2/decision.json",
+        ),
+    ]
+    assert all(
+        decision.get("source") != "assume_decision_fallback"
+        for decision in report.decisions
+    )
+    assert [call["tasks"][0] for call in submitter.calls] == [
+        "work",
+        "gate",
+        "work",
+        "gate",
+        "publish",
+    ]
+
+
+def _changed_image_selection(overrides, references, change):
+    changed = dict(overrides)
+    options = {}
+    if change == "swap":
+        changed = {
+            "workbench.train": references[1],
+            "workbench.evaluate": references[0],
+        }
+    elif change == "rename":
+        changed["workbench.builder"] = changed.pop("workbench.train")
+    elif change == "add":
+        changed["workbench.publish"] = references[0]
+    elif change == "remove":
+        changed.pop("workbench.evaluate")
+    else:
+        options[change] = f"changed-{change}"
+    return changed, options
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["swap", "rename", "add", "remove", "registry", "gpu_target", "image_variant"],
+)
+def test_image_identity_binds_render_selection_inputs(change):
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
+
+    pins = _image_pin_bindings()
+    references = list(pins)
+    overrides = {"workbench.train": references[0], "workbench.evaluate": references[1]}
+    changed_overrides, options = _changed_image_selection(overrides, references, change)
+    initial = _image_selection_options(overrides, pins=pins)
+    changed = _image_selection_options(changed_overrides, pins=pins, **options)
+    reordered = _image_selection_options(
+        dict(reversed(list(overrides.items()))),
+        pins=dict(reversed(list(pins.items()))),
+    )
+    if change == "swap":
+        assert (
+            resolve_task_image("workbench.train", {}, options=initial)
+            == pins[references[0]]
+        )
+        assert (
+            resolve_task_image("workbench.train", {}, options=changed)
+            == pins[references[1]]
+        )
+    assert _image_identity(reordered) == _image_identity(initial)
+    assert _image_identity(changed) != _image_identity(initial)
+
+
+@pytest.mark.parametrize("pinned", [True, False])
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_changed_image_selection(
+    tmp_path, pinned, outputs_exist
+):
+    bindings = _image_pin_bindings()
+    references = list(bindings) if pinned else list(bindings.values())
+    pins = bindings if pinned else {}
+    initial = _image_selection_options({"*": references[0]}, pins=pins)
+    changed = _image_selection_options({"*": references[1]}, pins=pins)
+    spec, store = _completed_replay_case(tmp_path, render_options=initial)
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=changed
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+@pytest.mark.parametrize("field", ["registry", "gpu_target", "image_variant"])
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_changed_render_selector(
+    tmp_path, field, outputs_exist
+):
+    image = next(iter(_image_pin_bindings().values()))
+    initial = _image_selection_options({"*": image})
+    changed = _image_selection_options({"*": image}, **{field: "changed"})
+    spec, store = _completed_replay_case(tmp_path, render_options=initial)
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=changed
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+@pytest.mark.parametrize("reorder", ["pins", "selectors", "both"])
+def test_completed_replay_accepts_reordered_image_selection(tmp_path, reorder):
+    from npa.orchestration.npa_workflow.skypilot_render import plan_images
+
+    pins = _image_pin_bindings()
+    references = list(pins)
+    overrides = {"workbench.token_factory.caption": references[0], "*": references[1]}
+    initial = _image_selection_options(overrides, pins=pins)
+    changed = _image_selection_options(
+        dict(reversed(list(overrides.items()))) if reorder != "pins" else overrides,
+        pins=dict(reversed(list(pins.items()))) if reorder != "selectors" else pins,
+    )
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=initial, spec_text=_image_selection_replay_spec()
+    )
+    plan = build_plan(spec, run_id="rt-completed-replay-identity")
+    for selection in (initial, changed):
+        assert plan_images(
+            spec, plan.steps, run_id="rt-completed-replay-identity", options=selection
+        ) == list(pins.values())
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=changed
+    )
+    assert report.status == "succeeded"
+    assert len(report.waves) == 2
+    assert all(wave["replayed"] for wave in report.waves)
+    assert submitter.calls == []
+
+
+def _legacy_image_identity(pins, schema):
+    if schema == "values-only":
+        material = "\0".join(sorted(pins.values()))
+    else:
+        material = json.dumps(
+            {
+                "bindings": sorted(pins.items()),
+                "schema": "npa.workflow.image-pin-bindings/v2",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize("schema", ["values-only", "pin-only"])
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_rejects_legacy_image_identity(
+    tmp_path, schema, outputs_exist
+):
+    pins = _image_pin_bindings()
+    selection = _image_selection_options({"*": next(iter(pins))}, pins=pins)
+    spec, store = _completed_replay_case(tmp_path, render_options=selection)
+    persisted = store.read_runtime_state()
+    persisted.waves[-1]["immutable_identity"]["image_digest"] = _legacy_image_identity(
+        pins, schema
+    )
+    store.write_runtime_state(persisted)
+    report, submitter = _resume_completed_case(
+        spec, store, outputs_exist, render_options=selection
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
     assert submitter.calls == []
 
 
@@ -945,9 +2125,9 @@ def test_wave_retry_recovers_from_a_transient_failure(tmp_path: Path) -> None:
     }
     assert len(first_attempt_ids) == len(second_attempt_ids) == 1
     assert first_attempt_ids.isdisjoint(second_attempt_ids)
-    assert {
-        doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in first_docs[1:]
-    } == {doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in second_docs[1:]}
+    assert {doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in first_docs[1:]} == {
+        doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in second_docs[1:]
+    }
 
 
 def test_launch_transaction_cannot_overwrite_the_scheduler_publication_fence() -> None:
@@ -1073,6 +2253,7 @@ def test_zero_max_wait_is_unbounded(tmp_path: Path) -> None:
         spec,
         status_fn=FakeStatus(["PENDING", "RUNNING", "SUCCEEDED"] * 3),
         options=options,
+        store=MemoryStore(),
     )
 
     report = run_workflow_runtime(
@@ -1128,8 +2309,334 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
     assert [wave["replayed"] for wave in second_report.waves] == [True, True, True]
 
 
+SEMANTIC_RESUME_CORRUPTION_CASES = (
+    "truncated_json",
+    "empty_object",
+    "missing_run_id",
+    "missing_workflow",
+    "mismatched_run_id",
+    "mismatched_workflow",
+    "missing_schema_version",
+    "unsupported_schema_version",
+    "waves_string",
+    "waves_non_object_entry",
+    "stages_string",
+    "decisions_object",
+    "plan_migrations_string",
+    "watermarks_array",
+    "api_version_array",
+)
+
+
+def _semantic_resume_payload(
+    case: str,
+    *,
+    workflow: str,
+    run_id: str,
+) -> dict[str, object]:
+    payload = RuntimeRunState(workflow=workflow, run_id=run_id).to_dict()
+    if case == "empty_object":
+        return {}
+    if case.startswith("missing_"):
+        payload.pop(case.removeprefix("missing_"))
+    elif case == "mismatched_run_id":
+        payload["run_id"] = "other-run"
+    elif case == "mismatched_workflow":
+        payload["workflow"] = "other-workflow"
+    elif case == "unsupported_schema_version":
+        payload["schema_version"] = "npa.workflow.runtime.v999"
+    elif case == "waves_string":
+        payload["waves"] = "corrupt-but-valid-json"
+    elif case == "waves_non_object_entry":
+        payload["waves"] = [
+            {"key": "done", "status": "succeeded"},
+            "corrupt-entry",
+        ]
+    elif case == "stages_string":
+        payload["stages"] = "corrupt-but-valid-json"
+    elif case == "decisions_object":
+        payload["decisions"] = {"decision": "promote"}
+    elif case == "plan_migrations_string":
+        payload["plan_migrations"] = "corrupt-but-valid-json"
+    elif case == "watermarks_array":
+        payload["watermarks"] = []
+    elif case == "api_version_array":
+        payload["api_version"] = ["wrong-type"]
+    return payload
+
+
+@pytest.mark.parametrize("case", SEMANTIC_RESUME_CORRUPTION_CASES)
+def test_resume_rejects_corrupt_ledger_before_executor_creation(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    run_id = "rt-corrupt-ledger"
+    corrupt_bytes = (
+        b'{"schema_version":'
+        if case == "truncated_json"
+        else (
+            json.dumps(
+                _semantic_resume_payload(case, workflow=spec.name, run_id=run_id),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode()
+    )
+    key = runtime_key("unit-prefix")
+    store = MemoryStore({key: corrupt_bytes})
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(resume=True)
+
+    with pytest.raises(
+        NpaWorkflowError,
+        match=r"durable runtime state is corrupt.*runtime\.json",
+    ) as error:
+        _executor(
+            spec,
+            run_id=run_id,
+            submitter=submitter,
+            options=options,
+            store=store,
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects[key] == corrupt_bytes
+    assert key in str(error.value)
+    assert "s3://unit-bucket" not in str(error.value)
+
+
+def _completed_replay_case(
+    tmp_path: Path,
+    *,
+    render_options: SkypilotRenderOptions | None = None,
+    spec_text: str = COMPLETED_REPLAY_SPEC,
+) -> tuple[Any, MemoryStore]:
+    spec = load_spec(_write_spec(tmp_path, spec_text))
+    store = MemoryStore()
+    first = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=FakeSubmitter(),
+        status_fn=FakeStatus(["SUCCEEDED"]),
+        output_checker=lambda _uri: True,
+        store=store,
+        render_options=render_options,
+    )
+    first_report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=first,
+        options=first.options,
+    )
+    assert first_report.status == "succeeded"
+    return spec, store
+
+
+def _completed_replay_with_provider_traps(spec, store, mocker, render_options=None):
+    submitter = FakeSubmitter()
+    provider = mocker.Mock(side_effect=AssertionError("unexpected provider call"))
+    checker = mocker.Mock(return_value=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=submitter,
+        status_fn=provider,
+        reconcile_fn=provider,
+        name_lookup_fn=provider,
+        options=RuntimeOptions(poll_seconds=0, resume=True),
+        output_checker=checker,
+        store=store,
+        render_options=render_options,
+    )
+    resumed._cancel = provider
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=resumed,
+        options=resumed.options,
+    )
+    provider.assert_not_called()
+    assert submitter.calls == []
+    return report, checker
+
+
+@pytest.mark.parametrize("changed_image", [False, True])
+def test_completed_replay_validates_current_rendered_image(
+    tmp_path, mocker, changed_image
+):
+    spec, store = _completed_replay_case(tmp_path)
+    wave = store.read_runtime_state().waves[-1]
+    assert wave["image_identity"]["version"] == IMAGE_IDENTITY_VERSION
+    assert wave["image_identity"]["references"] == ["cr.example/x@sha256:" + "c" * 64]
+    options = SkypilotRenderOptions(
+        image_overrides={
+            "*": "cr.example/x@sha256:" + ("d" if changed_image else "c") * 64
+        }
+    )
+    assert not options.image_digest_pins
+    report, checker = _completed_replay_with_provider_traps(
+        spec, store, mocker, options
+    )
+    if changed_image:
+        assert report.status == "failed"
+        assert "IMMUTABLE_IDENTITY_MISMATCH (image_digest)" in report.error
+        checker.assert_not_called()
+    else:
+        assert report.status == "succeeded"
+        checker.assert_called()
+        assert report.waves[-1]["replayed"]
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing",
+        "malformed",
+        "unknown-version",
+        "missing-references",
+        "changed-reference",
+    ],
+)
+def test_completed_replay_rejects_invalid_image_metadata_before_outputs(
+    tmp_path, mocker, corruption
+):
+    spec, store = _completed_replay_case(tmp_path)
+    state = store.read_runtime_state()
+    wave = state.waves[-1]
+    if corruption == "missing":
+        wave.pop("image_identity")
+    elif corruption == "malformed":
+        wave["image_identity"] = ["invalid"]
+    elif corruption == "unknown-version":
+        wave["image_identity"]["version"] = "unsupported-image-protocol"
+    elif corruption == "missing-references":
+        wave["image_identity"].pop("references")
+    else:
+        wave["image_identity"]["references"] = ["cr.example/x@sha256:" + "d" * 64]
+    store.write_runtime_state(state)
+    report, checker = _completed_replay_with_provider_traps(spec, store, mocker)
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH (image_digest)" in report.error
+    checker.assert_not_called()
+    assert store.read_runtime_state().waves == state.waves
+
+
+@pytest.mark.parametrize(
+    ("identity_field", "identity_function"),
+    [
+        ("workflow_sha256", "_workflow_identity"),
+        ("source_sha256", "_source_identity"),
+        ("image_digest", "_expected_image_identity"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("recorded_identity", "expected_identity_missing"),
+    [("changed", False), ("", False), ("", True), ("changed", True), ("same", True)],
+)
+@pytest.mark.parametrize("outputs_exist", [True, False])
+def test_completed_replay_requires_current_immutable_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    identity_field: str,
+    identity_function: str,
+    recorded_identity: str,
+    expected_identity_missing: bool,
+    outputs_exist: bool,
+) -> None:
+    from npa.orchestration.npa_workflow import runtime as runtime_module
+
+    spec, store = _completed_replay_case(tmp_path)
+    persisted = store.read_runtime_state()
+    assert persisted is not None
+    if recorded_identity != "same":
+        persisted.waves[-1]["immutable_identity"][identity_field] = (
+            "d" * 64 if recorded_identity else ""
+        )
+    store.write_runtime_state(persisted)
+    if expected_identity_missing:
+        monkeypatch.setattr(runtime_module, identity_function, lambda *_args: "")
+
+    report, submitter = _resume_completed_case(spec, store, outputs_exist)
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert identity_field in report.error
+    assert "new run ID" in report.error
+    assert submitter.calls == []
+
+
+def _resume_completed_case(spec, store, outputs_exist: bool, *, render_options=None):
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(poll_seconds=0, resume=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=submitter,
+        status_fn=FakeStatus(["SUCCEEDED"]),
+        options=options,
+        output_checker=lambda _uri: outputs_exist,
+        store=store,
+        render_options=render_options,
+    )
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=resumed,
+        options=options,
+    )
+    return report, submitter
+
+
+@pytest.mark.parametrize("identity", [None, {}, [], "invalid"])
+def test_completed_replay_rejects_unreadable_identity(
+    tmp_path: Path,
+    identity,
+) -> None:
+    spec, store = _completed_replay_case(tmp_path)
+    persisted = store.read_runtime_state()
+    assert persisted is not None
+    persisted.waves[-1]["immutable_identity"] = identity
+    store.write_runtime_state(persisted)
+    report, submitter = _resume_completed_case(spec, store, True)
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+def test_completed_replay_checks_missing_outputs_with_matching_identity(
+    tmp_path: Path,
+) -> None:
+    spec, store = _completed_replay_case(tmp_path)
+    report, submitter = _resume_completed_case(spec, store, False)
+    assert report.status == "failed"
+    assert "completed without declared durable output" in report.error
+    assert "IMMUTABLE_IDENTITY_MISMATCH" not in report.error
+    assert len(submitter.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "cancelled_record,outcome,status,observable,outputs_valid,adopt",
+    [
+        (False, "found", "SUCCEEDED", True, True, True),
+        (True, "found", "SUCCEEDED", True, True, True),
+        (True, "found", "SUCCEEDED", True, False, False),
+        (True, "found", "SUCCEEDED", False, True, False),
+        (True, "found", "CANCELLED", True, True, False),
+        (True, "found", "FAILED", True, True, False),
+        (True, "found", "RUNNING", True, True, False),
+        (True, "absent", "", False, True, False),
+        (True, "unknown", "UNKNOWN", False, True, False),
+    ],
+)
 def test_resume_adopts_terminal_success_after_output_check_driver_failure(
     tmp_path: Path,
+    cancelled_record,
+    outcome,
+    status,
+    observable,
+    outputs_valid,
+    adopt,
 ) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     store = MemoryStore()
@@ -1159,6 +2666,22 @@ def test_resume_adopts_terminal_success_after_output_check_driver_failure(
     failed_gate = first_report.waves[-1]
     assert failed_gate["status"] == "failed"
     assert failed_gate["sky_status"] == "SUCCEEDED"
+    if cancelled_record:
+        persisted = store.read_runtime_state()
+        persisted.record_wave(
+            {
+                **failed_gate,
+                "sky_status": "CANCELLED",
+                "cancellation": {"state": "verified", "error": ""},
+            }
+        )
+        store.write_runtime_state(persisted)
+
+    def reconcile(name, *, job_id=""):
+        assert name == failed_gate["job_name"] and job_id == failed_gate["job_id"]
+        return SimpleNamespace(
+            outcome=outcome, status=status, workload_observable=observable
+        )
 
     resumed_submitter = FakeSubmitter()
     options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
@@ -1168,7 +2691,10 @@ def test_resume_adopts_terminal_success_after_output_check_driver_failure(
         submitter=resumed_submitter,
         options=options,
         store=store,
-        output_checker=lambda uri: uri.endswith("/gate/decision.json"),
+        output_checker=lambda uri: (
+            outputs_valid and uri.endswith("/gate/decision.json")
+        ),
+        reconcile_fn=reconcile,
     )
     report = run_workflow_runtime(
         spec,
@@ -1178,11 +2704,18 @@ def test_resume_adopts_terminal_success_after_output_check_driver_failure(
         decision_reader=_decision_reader(["promote_checkpoint"]),
     )
 
+    if not adopt:
+        assert report.status == "failed"
+        assert resumed_submitter.calls == []
+        assert report.waves[-1]["sky_status"] == "CANCELLED"
+        return
     assert report.status == "succeeded"
     assert [call["tasks"] for call in resumed_submitter.calls] == [["publish"]]
     adopted_gate = next(wave for wave in report.waves if wave["states"] == ["gate"])
     assert adopted_gate["job_id"] == failed_gate["job_id"]
     assert adopted_gate["status"] == "succeeded"
+    assert adopted_gate["sky_status"] == "SUCCEEDED"
+    assert adopted_gate["reconciliation"][-1]["declared_outputs_valid"] is True
     assert adopted_gate["adopted"] is True
     assert adopted_gate["replayed"] is True
     assert (
@@ -1240,7 +2773,9 @@ def test_resume_with_explicit_retry_replays_success_and_retries_terminal_wave(
     assert [call["tasks"] for call in submitter.calls] == [["join"]]
     assert submitter.calls[0]["job_name"].endswith("-a2")
     assert [wave["replayed"] for wave in report.waves[:2]] == [True, True]
-    retry_doc = [doc for doc in yaml.safe_load_all(submitter.calls[0]["yaml"]) if doc][1]
+    retry_doc = [doc for doc in yaml.safe_load_all(submitter.calls[0]["yaml"]) if doc][
+        1
+    ]
     assert retry_doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] == "3"
     assert retry_doc["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] == "2"
     retried = next(wave for wave in report.waves if wave["states"] == ["join"])
@@ -1265,11 +2800,133 @@ def test_long_run_id_preserves_retry_attempt_suffix(tmp_path: Path) -> None:
     assert name.endswith("-a3")
 
 
+def test_long_job_names_bind_complete_run_wave_and_iteration(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    prefix = "example-evaluation-run-" + "x" * 42
+    names = set()
+    for run_suffix, sequence, state, iteration in (
+        ("1", 1, "diagnose", None),
+        ("2", 1, "diagnose", None),
+        ("1", 2, "diagnose", None),
+        ("1", 1, "publish", None),
+        ("1", 1, "diagnose", 2),
+        ("1", 1, "diagnose", 3),
+    ):
+        executor = _executor(spec, run_id=f"{prefix}{run_suffix}")
+        executor._sequence = sequence
+        step = SimpleNamespace(state=state, iteration=iteration)
+        name = executor._job_name(
+            [step],
+            group="",
+            attempt=WaveAttempt(key="wave", states=[state], kind="serial"),
+        )
+        assert len(name) <= 60
+        assert "-h" in name
+        discriminator = name.rsplit("-h", maxsplit=1)[1]
+        assert len(discriminator) == 16
+        int(discriminator, 16)
+        names.add(name)
+
+    assert len(names) == 6
+
+
+def test_short_job_name_remains_readable_and_byte_compatible(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    executor = _executor(spec, run_id="short-run")
+    executor._sequence = 1
+    step = SimpleNamespace(state="diagnose", iteration=None)
+
+    name = executor._job_name(
+        [step],
+        group="",
+        attempt=WaveAttempt(key="wave", states=[step.state], kind="serial"),
+    )
+
+    assert name == "short-run-01-diagnose"
+
+
+def test_resume_preserves_recorded_pre_hash_long_job_name(tmp_path: Path) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    step = next(iter(build_plan(spec, run_id="legacy-long-run").steps))
+    key = wave_key([step], group="", sequence_number=1)
+    legacy_name = "example-legacy-job-" + "x" * 41
+    observed = []
+
+    def reconcile(name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        observed.append((name, job_id))
+        return ManagedJobEvidence("found", job_id=job_id, status="SUCCEEDED")
+
+    executor = _executor(spec, run_id="legacy-long-run", reconcile_fn=reconcile)
+    executor.ledger.record(
+        WaveAttempt(
+            key=key,
+            states=[step.state],
+            kind="serial",
+            job_id="41",
+            job_name=legacy_name,
+            status="running",
+            sky_status="RUNNING",
+            logical_launch_id="legacy-logical-launch",
+        )
+    )
+
+    adopted = executor._reconcile_in_flight(key, [step], kind="serial", group="")
+
+    assert adopted is not None and adopted.job_name == legacy_name
+    assert observed == [(legacy_name, "41")]
+
+
+def test_parallel_job_name_fingerprints_exact_batch_membership(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    executor = _executor(spec, run_id="rt-batch-name")
+    steps = list(build_plan(spec, run_id="rt-batch-name").steps)[:3]
+    executor._sequence = 1
+
+    first_key = wave_key(steps[:2], group="shards", sequence_number=1)
+    full_key = wave_key(steps, group="shards", sequence_number=1)
+    first = executor._job_name(
+        steps[:2],
+        group="shards",
+        attempt=WaveAttempt(
+            key=first_key,
+            states=[step.state for step in steps[:2]],
+            kind="parallel",
+            attempt=1,
+        ),
+    )
+    full = executor._job_name(
+        steps,
+        group="shards",
+        attempt=WaveAttempt(
+            key=full_key,
+            states=[step.state for step in steps],
+            kind="parallel",
+            attempt=1,
+        ),
+    )
+    retried = executor._job_name(
+        steps[:2],
+        group="shards",
+        attempt=WaveAttempt(
+            key=first_key,
+            states=[step.state for step in steps[:2]],
+            kind="parallel",
+            attempt=2,
+        ),
+    )
+
+    assert first != full
+    assert "-m" in first
+    assert retried.startswith(first)
+    assert retried.endswith("-a2")
+    assert max(map(len, (first, full, retried))) <= 60
+
+
 def _canonical_sim2real_1x1():
     root = Path(__file__).resolve().parents[4]
-    spec = load_spec(
-        root / "npa" / "workflows" / "workbench" / "npa-workflows" / "sim2real.yaml"
-    )
+    spec = load_spec(root / "workflows" / "main" / "sim2real.yaml")
     image = "cr.example/npa/runtime@sha256:" + "b" * 64
     spec.config.update(
         {
@@ -1284,7 +2941,6 @@ def _canonical_sim2real_1x1():
             "controller_image": image,
             "transfer_image": image,
             "envgen_image": image,
-            "reason_image": image,
             "isaac_image": image,
             "viewer_image": image,
             "isaac_cache_pvc": "isaac-cache",
@@ -1329,7 +2985,7 @@ def test_canonical_three_iteration_budget_promotes_and_finalizes_outer_one() -> 
         assert "--outer-iteration 3" not in rendered
 
 
-def test_canonical_resume_replays_stage8_wave_then_restarts_at_stage9() -> None:
+def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> None:
     spec = _canonical_sim2real_1x1()
     store = MemoryStore()
     first_submitter = FakeSubmitter()
@@ -1349,10 +3005,7 @@ def test_canonical_resume_replays_stage8_wave_then_restarts_at_stage9() -> None:
         trigger_waiter=_trigger_ready,
     )
     assert first_report.status == "failed"
-    assert first_submitter.calls[-2]["tasks"] == [
-        "stage-08-reason2",
-        "stage-08-reason3",
-    ]
+    assert first_submitter.calls[-2]["tasks"] == ["stage-08-cosmos3"]
     assert first_submitter.calls[-1]["tasks"] == ["stage-09-ppo"]
 
     options = RuntimeOptions(
@@ -1387,7 +3040,7 @@ def test_canonical_resume_replays_stage8_wave_then_restarts_at_stage9() -> None:
         ["stage-13-retrigger"],
         ["stage-14-visualize"],
     ]
-    stage8 = next(wave for wave in report.waves if "stage-08-reason2" in wave["states"])
+    stage8 = next(wave for wave in report.waves if "stage-08-cosmos3" in wave["states"])
     assert stage8["replayed"] is True
 
 
@@ -1573,6 +3226,76 @@ def test_persistent_status_errors_cancel_the_job_and_fail(tmp_path: Path) -> Non
     assert report.waves[0]["cancellation"]["state"] == "requested"
 
 
+@pytest.mark.parametrize("recovered_status", ["RUNNING", "SUCCEEDED", "UNAVAILABLE"])
+def test_resume_after_status_outage_reconciles_original_job_without_resubmission(
+    tmp_path: Path, recovered_status: str
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    first = _executor(spec, store=store, status_fn=BoomStatus(failures=99))
+    failed = run_workflow_runtime(
+        spec, run_id="rt-1", executor=first, options=first.options
+    )
+    original = failed.waves[0]
+    assert failed.status == "failed"
+    assert original["job_id"] == "1"
+    assert original["recovery_decision"] == "block_relaunch"
+    reconciled = []
+
+    def reconcile(name: str, *, job_id: str = ""):
+        reconciled.append((name, job_id))
+        return SimpleNamespace(
+            outcome="unavailable" if recovered_status == "UNAVAILABLE" else "found",
+            job_id=job_id,
+            status=recovered_status,
+            workload_observable=True,
+        )
+
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        store=store,
+        submitter=submitter,
+        reconcile_fn=reconcile,
+        options=RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True),
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-1", executor=resumed, options=resumed.options
+    )
+    assert reconciled[0] == (original["job_name"], original["job_id"])
+    assert report.waves[0]["job_id"] == original["job_id"]
+    assert all(call["job_name"] != original["job_name"] for call in submitter.calls)
+    if recovered_status == "UNAVAILABLE":
+        assert report.status == "failed"
+        assert submitter.calls == []
+    else:
+        assert report.status == "succeeded"
+        assert report.waves[0]["adopted"] is True
+
+
+def test_unknown_status_result_is_counted_as_a_failed_query(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    cancels: list[dict[str, Any]] = []
+
+    def unreadable(job_id: str, **_: Any) -> FakeResult:
+        return FakeResult(
+            status="UNKNOWN",
+            job_id=job_id,
+            returncode=2,
+            error="invalid relative config path",
+        )
+
+    executor = _executor(spec, status_fn=unreadable, cancels=cancels)
+    report = run_workflow_runtime(
+        spec, run_id="rt-unknown-status", executor=executor, options=executor.options
+    )
+
+    assert report.status == "failed"
+    assert "consecutive" in report.error
+    assert len(report.waves[0]["status_errors"]) == 6
+    assert cancels and cancels[0]["job_id"] == "1"
+
+
 def test_exact_cancellation_is_verified_without_masking_primary_error(
     tmp_path: Path,
 ) -> None:
@@ -1592,6 +3315,10 @@ def test_exact_cancellation_is_verified_without_masking_primary_error(
     )
     wave = report.waves[0]
     assert report.status == "failed"
+    # Runtime attempts have succeeded/failed lifecycle state. Provider
+    # cancellation is persisted separately and never masquerades as a third,
+    # otherwise-unreachable attempt status.
+    assert wave["status"] == "failed"
     assert "consecutive" in wave["primary_error"]
     assert wave["cancellation"]["state"] == "verified"
     assert wave["sky_status"] == "CANCELLED"
@@ -1680,8 +3407,10 @@ def test_unidentifiable_job_is_rejected_instead_of_polling_unknown(
     assert not cancels, "no fuzzy/name-only cancellation is permitted"
 
 
+@pytest.mark.parametrize("capacity_blocked", [False, True])
 def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
     tmp_path: Path,
+    capacity_blocked: bool,
 ) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     store = MemoryStore()
@@ -1710,9 +3439,24 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
     )
     store.write_runtime_state(persisted)
 
-    # Second driver resumes: it must poll job 1, not submit a second copy.
+    # Second driver resumes: it must poll job 1 before checking free capacity.
+    refreshed = []
+
+    def check_capacity(path: Path) -> None:
+        tasks = [doc["name"] for doc in yaml.safe_load_all(path.read_text()) if doc][1:]
+        refreshed.append(tasks)
+        assert tasks == ["shard-c"] or tasks == ["join"]
+        if capacity_blocked:
+            raise RuntimeError("no free GPU capacity for the next wave")
+
     second_submitter = FakeSubmitter()
-    resume_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    resume_options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        pre_submit_hook=check_capacity,
+        preflight_evidence=_supervisor_preflight(),
+    )
     second = _executor(
         spec,
         run_id="rt-adopt",
@@ -1724,12 +3468,89 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
         spec, run_id="rt-adopt", executor=second, options=resume_options
     )
 
-    assert second_report.status == "succeeded"
     adopted = [wave for wave in second_report.waves if wave.get("adopted")]
     assert adopted and adopted[0]["job_id"] == "1"
     assert adopted[0]["key"] == key
-    # Only the *remaining* waves were submitted; the in-flight one was adopted.
-    assert [call["tasks"] for call in second_submitter.calls] == [["shard-c"], ["join"]]
+    proof = second._attempt_preflight(
+        next(attempt for attempt in second.attempts if attempt.adopted)
+    )
+    assert proof.checks["gang_capacity"] == "unknown"
+    assert proof.observed_at == "" and proof.scope == {}
+    if capacity_blocked:
+        assert second_report.status == "failed"
+        assert "no free GPU capacity" in second_report.error
+        assert refreshed == [["shard-c"]]
+        assert second_submitter.calls == []
+    else:
+        assert second_report.status == "succeeded"
+        assert refreshed == [["shard-c"], ["join"]]
+        assert [call["tasks"] for call in second_submitter.calls] == refreshed
+
+
+def test_resume_cancels_phantom_pending_record_before_new_attempt(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-phantom")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "running",
+            "job_id": "125",
+            "job_name": "rt-phantom-01-shards",
+            "attempt": 1,
+            "sky_status": "PENDING",
+            "logical_launch_id": "logical-phantom",
+            "launch_sequence": 1,
+            "recovery_decision": "adopt_after_uncertain_launch",
+        }
+    )
+    store.write_runtime_state(state)
+    cancellations: list[dict[str, Any]] = []
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    executor = _executor(
+        spec,
+        run_id="rt-phantom",
+        submitter=submitter,
+        status_fn=FakeStatus(["CANCELLED"]),
+        options=options,
+        store=store,
+        cancels=cancellations,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence(
+            "found",
+            job_id="125",
+            status="PENDING",
+            workload_observable=False,
+        ),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-phantom", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    assert cancellations == [
+        {
+            "job_id": "125",
+            "run_id": "rt-phantom-01-shards",
+            "cluster": "rt-phantom-01-shards",
+        }
+    ]
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    attempts = [
+        item
+        for item in store.read_runtime_state().waves
+        if item["key"] == "001|shards|shards:shard-a:-,shards:shard-b:-"
+    ]
+    assert [item["attempt"] for item in attempts[:2]] == [1, 2]
+    assert (
+        attempts[0]["recovery_decision"] == "phantom_record_cancelled_verified_relaunch"
+    )
+    assert attempts[0]["cancellation"]["state"] == "verified"
 
 
 def test_resume_preserves_an_in_flight_job_that_actually_failed(tmp_path: Path) -> None:
@@ -1763,6 +3584,58 @@ def test_resume_preserves_an_in_flight_job_that_actually_failed(tmp_path: Path) 
 
     assert report.status == "failed"
     assert submitter.calls == []
+
+
+def test_resume_explicitly_retries_an_in_flight_job_proven_terminal(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-adopt-failed-retry")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "running",
+            "job_id": "77",
+            "job_name": "rt-adopt-failed-retry-01-shards",
+            "attempt": 1,
+        }
+    )
+    store.write_runtime_state(state)
+
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retries=1,
+        retry_backoff_seconds=0,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-adopt-failed-retry",
+        submitter=submitter,
+        status_fn=FakeStatus(["FAILED"]),
+        options=options,
+        store=store,
+    )
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-adopt-failed-retry",
+        executor=executor,
+        options=options,
+    )
+
+    assert report.status == "succeeded"
+    assert [call["tasks"] for call in submitter.calls] == [
+        ["shard-a", "shard-b"],
+        ["shard-c"],
+        ["join"],
+    ]
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    retried = report.waves[0]
+    assert retried["attempt"] == 2
+    assert retried["status"] == "succeeded"
 
 
 def test_resume_relaunches_only_authoritatively_absent_transient_wave(
@@ -1800,6 +3673,703 @@ def test_resume_relaunches_only_authoritatively_absent_transient_wave(
     )
     assert report.status == "succeeded"
     assert [call["tasks"] for call in submitter.calls][0] == ["shard-a", "shard-b"]
+    attempts = [
+        item
+        for item in store.read_runtime_state().waves
+        if item["key"] == "001|shards|shards:shard-a:-,shards:shard-b:-"
+    ]
+    assert [item["attempt"] for item in attempts] == [1, 2]
+
+
+def test_resume_absent_submitted_wave_stays_blocked_across_repeated_resume(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-sticky-absence")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "running",
+            "job_id": "77",
+            "job_name": "rt-sticky-absence-01-shards",
+            "attempt": 1,
+            "sky_status": "SUBMITTED",
+            "logical_launch_id": "logical-sticky-absence",
+            "launch_sequence": 1,
+            "recovery_decision": "submitted_and_reconciled",
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+
+    for _ in range(2):
+        submitter = FakeSubmitter()
+        executor = _executor(
+            spec,
+            run_id="rt-sticky-absence",
+            submitter=submitter,
+            options=options,
+            store=store,
+            reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+        )
+        report = run_workflow_runtime(
+            spec, run_id="rt-sticky-absence", executor=executor, options=options
+        )
+        assert report.status == "failed"
+        assert submitter.calls == []
+        assert (
+            store.read_runtime_state().waves[0]["recovery_decision"]
+            == "resume_block_terminal_or_legacy_absence"
+        )
+
+
+def test_explicit_resume_relaunches_absent_submitted_wave_as_new_attempt(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC
+    for shard, next_state in (
+        ("a", "shard-b"),
+        ("b", "shard-c"),
+        ("c", "join"),
+    ):
+        output_spec = output_spec.replace(
+            f"    resources: cpu\n\n  {next_state}:",
+            "    resources: cpu\n"
+            "    outputs:\n"
+            f'      - uri: "s3://{{{{config.bucket}}}}/'
+            f'{{{{config.prefix}}}}/shard-{shard}.json"\n\n'
+            f"  {next_state}:",
+            1,
+        )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-explicit-absence")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "running",
+            "job_id": "77",
+            "job_name": "rt-explicit-absence-01-shards",
+            "attempt": 1,
+            "sky_status": "SUBMITTED",
+            "logical_launch_id": "logical-explicit-absence",
+            "launch_sequence": 1,
+            "recovery_decision": "submitted_and_reconciled",
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retry_absent_in_flight=True,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-explicit-absence",
+        submitter=submitter,
+        options=options,
+        store=store,
+        output_checker=lambda _uri: bool(submitter.calls),
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-explicit-absence", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    attempts = [
+        item
+        for item in store.read_runtime_state().waves
+        if item["key"] == "001|shards|shards:shard-a:-,shards:shard-b:-"
+    ]
+    assert [item["attempt"] for item in attempts] == [1, 2]
+    assert (
+        attempts[0]["recovery_decision"]
+        == "operator_authorized_verified_absent_relaunch"
+    )
+    assert attempts[1]["status"] == "succeeded"
+
+
+def test_explicit_absent_resume_refuses_existing_declared_output(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shared.json"\n'
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shard-a.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-output-present")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "running",
+            "job_id": "77",
+            "job_name": "rt-output-present-01-shards",
+            "attempt": 1,
+            "sky_status": "RUNNING",
+            "logical_launch_id": "logical-output-present",
+            "launch_sequence": 1,
+            "recovery_decision": "submitted_and_reconciled",
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retry_absent_in_flight=True,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-output-present",
+        submitter=submitter,
+        options=options,
+        store=store,
+        output_checker=lambda _uri: True,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-output-present", executor=executor, options=options
+    )
+
+    assert report.status == "failed"
+    assert submitter.calls == []
+    assert (
+        store.read_runtime_state().waves[0]["recovery_decision"]
+        == "resume_block_output_present"
+    )
+
+
+def test_explicit_resume_adopts_controller_lost_running_wave_with_valid_outputs(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shard-a.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-output-adopt")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "running",
+            "job_id": "77",
+            "job_name": "rt-output-adopt-01-shards",
+            "attempt": 1,
+            "sky_status": "RUNNING",
+            "logical_launch_id": "logical-output-adopt",
+            "scheduler_fence_sequence": 1,
+            "launch_sequence": 1,
+            "recovery_decision": "submitted_and_reconciled",
+            "observations": [
+                _typed_running_observation(
+                    wave_key="001|shards|shards:shard-a:-,shards:shard-b:-",
+                    job_id="77",
+                    job_name="rt-output-adopt-01-shards",
+                    logical_launch_id="logical-output-adopt",
+                )
+            ],
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        adopt_absent_in_flight_outputs=True,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-output-adopt",
+        submitter=submitter,
+        options=options,
+        store=store,
+        output_checker=lambda _uri: True,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-output-adopt", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    adopted = next(item for item in report.waves if item["job_id"] == "77")
+    assert adopted["status"] == "succeeded"
+    assert adopted["adopted"] is True
+    assert adopted["recovery_decision"] == "operator_authorized_absent_output_adoption"
+    assert all(
+        call["job_name"] != "rt-output-adopt-01-shards-a2" for call in submitter.calls
+    )
+
+
+def test_explicit_resume_adopts_output_complete_lost_wave_after_driver_interrupt(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shard-a.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-output-interrupted")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "failed",
+            "job_id": "77",
+            "job_name": "rt-output-interrupted-01-shards",
+            "attempt": 1,
+            "sky_status": "SUBMITTED",
+            "logical_launch_id": "logical-output-interrupted",
+            "scheduler_fence_sequence": 1,
+            "launch_sequence": 1,
+            "recovery_decision": "adopt_exact_attempt",
+            "error": "KeyboardInterrupt:",
+            "outputs": [
+                {
+                    "uri": "s3://bucket/prefix/shard-a.json",
+                    "schema": "test.output.v1",
+                }
+            ],
+            "observations": [
+                _typed_running_observation(
+                    wave_key="001|shards|shards:shard-a:-,shards:shard-b:-",
+                    job_id="77",
+                    job_name="rt-output-interrupted-01-shards",
+                    logical_launch_id="logical-output-interrupted",
+                )
+            ],
+            "cancellation": {"state": "failed", "error": "controller absent"},
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        adopt_absent_in_flight_outputs=True,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-output-interrupted",
+        submitter=submitter,
+        options=options,
+        store=store,
+        output_checker=lambda _uri: True,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-output-interrupted", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    adopted = next(item for item in report.waves if item["job_id"] == "77")
+    assert adopted["status"] == "succeeded"
+    assert adopted["adopted"] is True
+    assert adopted["replayed"] is True
+    assert adopted["recovery_decision"] == "operator_authorized_absent_output_adoption"
+    assert all(
+        call["job_name"] != "rt-output-interrupted-01-shards-a2"
+        for call in submitter.calls
+    )
+
+
+def test_explicit_resume_rejects_untyped_running_task_evidence(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shard-a.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-output-task-evidence")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "failed",
+            "job_id": "77",
+            "job_name": "rt-output-task-evidence-01-shards",
+            "attempt": 1,
+            "sky_status": "SUBMITTED",
+            "logical_launch_id": "logical-output-task-evidence",
+            "launch_sequence": 1,
+            "recovery_decision": "block_indeterminate",
+            "outputs": [
+                {
+                    "uri": "s3://bucket/prefix/shard-a.json",
+                    "schema": "test.output.v1",
+                }
+            ],
+            "tasks": [{"task_id": 0, "status": "RUNNING"}],
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        adopt_absent_in_flight_outputs=True,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-output-task-evidence",
+        submitter=submitter,
+        options=options,
+        store=store,
+        output_checker=lambda _uri: True,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-output-task-evidence", executor=executor, options=options
+    )
+
+    assert report.status == "failed"
+    assert submitter.calls == []
+    assert not any(
+        item.get("recovery_decision") == "operator_authorized_absent_output_adoption"
+        for item in report.waves
+    )
+
+
+@pytest.mark.parametrize("default_resumes", [0, 1, 2])
+def test_explicit_resume_relaunches_typed_pre_id_transport_failure(
+    tmp_path: Path,
+    default_resumes: int,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shard-a.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-pre-id-transport")
+    state.record_wave(
+        {
+            "key": "000|serial|:prior-wave:-",
+            "status": "succeeded",
+            "job_id": "76",
+            "job_name": "rt-pre-id-transport-prior-wave",
+            "attempt": 1,
+            "outputs": [
+                {
+                    "uri": "s3://unit-bucket/unit-prefix/shared.json",
+                    "schema": "unit.shared.v1",
+                }
+            ],
+        }
+    )
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "failed",
+            "job_id": "",
+            "job_name": "rt-pre-id-transport-01-shards",
+            "attempt": 1,
+            "sky_status": "",
+            "logical_launch_id": "logical-pre-id-transport",
+            "launch_sequence": 1,
+            "error_category": "kubernetes_transport",
+            "recovery_decision": "block_indeterminate",
+        }
+    )
+    store.write_runtime_state(state)
+    submitter = FakeSubmitter()
+    for _ in range(default_resumes):
+        safe_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+        safe_executor = _executor(
+            spec,
+            run_id="rt-pre-id-transport",
+            submitter=submitter,
+            options=safe_options,
+            store=store,
+            output_checker=lambda uri: uri.endswith("/shared.json"),
+            reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+        )
+        blocked = run_workflow_runtime(
+            spec,
+            run_id="rt-pre-id-transport",
+            executor=safe_executor,
+            options=safe_options,
+        )
+        assert blocked.status == "failed"
+        assert submitter.calls == []
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retry_absent_in_flight=True,
+    )
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-pre-id-transport",
+        submitter=submitter,
+        options=options,
+        store=store,
+        output_checker=lambda uri: (
+            uri.endswith("/shared.json") or bool(submitter.calls)
+        ),
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-pre-id-transport", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    attempts = [
+        item
+        for item in store.read_runtime_state().waves
+        if item["key"] == "001|shards|shards:shard-a:-,shards:shard-b:-"
+    ]
+    assert [item["attempt"] for item in attempts] == [1, 2]
+    assert (
+        attempts[0]["recovery_decision"]
+        == "operator_authorized_verified_absent_relaunch"
+    )
+
+
+def test_recovery_uses_durable_store_credentials_not_process_global_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shard-a.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-project-storage")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "failed",
+            "job_id": "",
+            "job_name": "rt-project-storage-01-shards",
+            "attempt": 1,
+            "sky_status": "",
+            "logical_launch_id": "logical-project-storage",
+            "launch_sequence": 1,
+            "error_category": "kubernetes_transport",
+            "recovery_decision": "block_indeterminate",
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retry_absent_in_flight=True,
+    )
+    submitter = FakeSubmitter()
+    checked: list[str] = []
+
+    def project_artifact_exists(uri: str) -> bool:
+        checked.append(uri)
+        return bool(submitter.calls)
+
+    store.artifact_exists = project_artifact_exists  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.runtime.s3_artifact_exists",
+        lambda _uri: True,
+    )
+    executor = _executor(
+        spec,
+        run_id="rt-project-storage",
+        submitter=submitter,
+        options=options,
+        store=store,
+        use_default_output_checker=True,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-project-storage", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    assert checked
+
+
+@pytest.mark.parametrize(
+    (
+        "error_category",
+        "persisted_decision",
+        "prior_absence",
+        "fresh_state",
+        "output_present",
+        "expected_success",
+    ),
+    [
+        (
+            "kubernetes_transport",
+            "resume_block_output_present",
+            False,
+            "absent",
+            False,
+            True,
+        ),
+        (
+            "kubernetes_transport",
+            "resume_block_output_indeterminate",
+            False,
+            "absent",
+            False,
+            True,
+        ),
+        ("unknown", "verified_absent_no_retry", False, "absent", False, True),
+        ("unknown", "resume_block_output_present", True, "absent", False, True),
+        ("unknown", "resume_block_output_indeterminate", True, "absent", False, True),
+        ("unknown", "resume_block_output_indeterminate", False, "absent", False, False),
+        (
+            "unknown",
+            "resume_block_output_indeterminate",
+            True,
+            "indeterminate",
+            False,
+            False,
+        ),
+        ("unknown", "resume_block_output_indeterminate", True, "absent", True, False),
+    ],
+)
+def test_explicit_pre_id_recovery_rechecks_persisted_output_block(
+    tmp_path: Path,
+    error_category: str,
+    persisted_decision: str,
+    prior_absence: bool,
+    fresh_state: str,
+    output_present: bool,
+    expected_success: bool,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    output_spec = FANOUT_SPEC.replace(
+        "    resources: cpu\n\n  shard-b:",
+        "    resources: cpu\n"
+        "    outputs:\n"
+        '      - uri: "s3://{{config.bucket}}/{{config.prefix}}/shard-a.json"\n\n'
+        "  shard-b:",
+        1,
+    )
+    spec = load_spec(_write_spec(tmp_path, output_spec))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-recheck-output-block")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "failed",
+            "job_id": "",
+            "job_name": "rt-recheck-output-block-01-shards",
+            "attempt": 1,
+            "sky_status": "",
+            "logical_launch_id": "logical-recheck-output-block",
+            "launch_sequence": 1,
+            "error_category": error_category,
+            "recovery_decision": persisted_decision,
+            "reconciliation": [{"state": "absent"}] if prior_absence else [],
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retry_absent_in_flight=True,
+    )
+    submitter = FakeSubmitter()
+
+    def check_output(uri: str) -> bool:
+        assert uri.startswith("s3://"), "Output schemas must not become storage keys"
+        return output_present or bool(submitter.calls)
+
+    executor = _executor(
+        spec,
+        run_id="rt-recheck-output-block",
+        submitter=submitter,
+        options=options,
+        store=store,
+        output_checker=check_output,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence(fresh_state),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-recheck-output-block", executor=executor, options=options
+    )
+
+    if not expected_success:
+        assert report.status == "failed"
+        assert not submitter.calls
+        return
+
+    assert report.status == "succeeded"
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    attempts = [
+        item
+        for item in store.read_runtime_state().waves
+        if item["key"] == "001|shards|shards:shard-a:-,shards:shard-b:-"
+    ]
+    assert [item["attempt"] for item in attempts] == [1, 2]
+    assert (
+        attempts[0]["recovery_decision"]
+        == "operator_authorized_verified_absent_relaunch"
+    )
 
 
 def test_resume_blocks_indeterminate_incomplete_wave_without_submit(
@@ -1927,10 +4497,8 @@ def test_corrupt_decision_artifact_fails_the_run(tmp_path: Path) -> None:
 def test_paidf_cosmos3_runtime_rejection_visualizes_and_skips_downstream() -> None:
     spec_path = (
         Path(__file__).resolve().parents[4]
-        / "npa"
         / "workflows"
-        / "workbench"
-        / "npa-workflows"
+        / "main"
         / "paidf-cosmos3.yaml"
     )
     spec = load_spec(spec_path)
@@ -1948,6 +4516,8 @@ def test_paidf_cosmos3_runtime_rejection_visualizes_and_skips_downstream() -> No
 
     task_names = [name for call in submitter.calls for name in call["tasks"]]
     assert report.status == "succeeded"
+    assert sum("generate-variants" in name for name in task_names) == 2
+    assert sum("evaluate" in name for name in task_names) == 2
     assert any("visualize-quality-evidence" in name for name in task_names)
     assert any("reject-quality" in name for name in task_names)
     for forbidden in ("annotate-augmented", "cosmos-curate", "curate", "finalize"):
@@ -2171,3 +4741,1998 @@ def test_resume_accepts_an_unchanged_plan(tmp_path: Path) -> None:
     )
     assert report.status == "succeeded"
     assert not submitter.calls, "an unchanged plan must replay, not resubmit"
+
+
+def test_explicit_terminal_plan_migration_preserves_failed_attempts(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    prior = RuntimeRunState(
+        workflow=spec.name,
+        run_id="rt-plan-migrate",
+        api_version=spec.api_version,
+        status="failed",
+        plan_fingerprint="0" * 64,
+        waves=[
+            {
+                "key": "001|parallel|fanout",
+                "states": ["shard-a", "shard-b", "shard-c"],
+                "attempt": 1,
+                "status": "failed",
+                "sky_status": "FAILED",
+                "job_id": "prior-1",
+                "outputs": [],
+            }
+        ],
+    )
+    store.write_runtime_state(prior)
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        retries=1,
+        resume=True,
+        allow_terminal_plan_migration=True,
+        plan_migration_reason="add-staged-reviewable-rrd",
+    )
+    executor = _executor(
+        spec,
+        run_id="rt-plan-migrate",
+        options=options,
+        store=store,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-plan-migrate", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    recorded = store.read_runtime_state()
+    assert recorded is not None
+    assert len(recorded.plan_migrations) == 1
+    migration = recorded.plan_migrations[0]
+    assert migration["migration_index"] == 1
+    assert migration["old_plan_fingerprint"] == "0" * 64
+    assert migration["new_plan_fingerprint"] == recorded.plan_fingerprint
+    assert migration["reason"] == "add-staged-reviewable-rrd"
+    assert recorded.waves[0] == prior.waves[0]
+    assert len(recorded.waves) > 1
+    assert recorded.waves[-1]["status"] == "succeeded"
+
+
+def test_terminal_plan_migration_appends_a_contiguous_second_repair(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    previous = "0" * 64
+    store.write_runtime_state(
+        RuntimeRunState(
+            workflow=spec.name,
+            run_id="rt-plan-migrate-twice",
+            api_version=spec.api_version,
+            status="failed",
+            plan_fingerprint=previous,
+            plan_migrations=[
+                {
+                    "migration_index": 1,
+                    "old_plan_fingerprint": "1" * 64,
+                    "new_plan_fingerprint": previous,
+                    "reason": "add-staged-reviewable-rrd",
+                }
+            ],
+            waves=[
+                {
+                    "key": "001|parallel|fanout",
+                    "attempt": 1,
+                    "status": "failed",
+                    "sky_status": "FAILED",
+                    "job_id": "prior-1",
+                    "outputs": [],
+                }
+            ],
+        )
+    )
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        allow_terminal_plan_migration=True,
+        plan_migration_reason="adopt-reviewed-runtime-image",
+    )
+    executor = _executor(
+        spec,
+        run_id="rt-plan-migrate-twice",
+        options=options,
+        store=store,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-plan-migrate-twice",
+        executor=executor,
+        options=options,
+    )
+
+    assert report.status == "succeeded"
+    recorded = store.read_runtime_state()
+    assert recorded is not None
+    assert len(recorded.plan_migrations) == 2
+    second = recorded.plan_migrations[1]
+    assert second["migration_index"] == 2
+    assert second["old_plan_fingerprint"] == previous
+    assert second["new_plan_fingerprint"] == recorded.plan_fingerprint
+
+
+def test_terminal_plan_migration_rejects_a_fingerprint_cycle(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    run_id = "rt-plan-migrate-cycle"
+    target = plan_fingerprint(spec, run_id=run_id)
+    store = MemoryStore()
+    store.write_runtime_state(
+        RuntimeRunState(
+            workflow=spec.name,
+            run_id=run_id,
+            api_version=spec.api_version,
+            status="failed",
+            plan_fingerprint="0" * 64,
+            plan_migrations=[
+                {
+                    "migration_index": 1,
+                    "old_plan_fingerprint": target,
+                    "new_plan_fingerprint": "0" * 64,
+                    "reason": "first-repair",
+                }
+            ],
+            waves=[
+                {
+                    "key": "001|parallel|fanout",
+                    "attempt": 1,
+                    "status": "failed",
+                    "sky_status": "FAILED",
+                    "job_id": "prior-1",
+                    "outputs": [],
+                }
+            ],
+        )
+    )
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        allow_terminal_plan_migration=True,
+        plan_migration_reason="cycle",
+    )
+
+    with pytest.raises(NpaWorkflowError, match="revisit a prior fingerprint"):
+        run_workflow_runtime(
+            spec,
+            run_id=run_id,
+            executor=_executor(spec, run_id=run_id, options=options, store=store),
+            options=options,
+        )
+
+
+def test_terminal_plan_migration_chain_is_bounded(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    migrations = [
+        {
+            "migration_index": index,
+            "old_plan_fingerprint": str(index - 1) * 64,
+            "new_plan_fingerprint": str(index) * 64,
+            "reason": f"repair-{index}",
+        }
+        for index in range(1, MAX_TERMINAL_PLAN_MIGRATIONS + 1)
+    ]
+    store.write_runtime_state(
+        RuntimeRunState(
+            workflow=spec.name,
+            run_id="rt-plan-migrate-bounded",
+            api_version=spec.api_version,
+            status="failed",
+            plan_fingerprint=str(MAX_TERMINAL_PLAN_MIGRATIONS) * 64,
+            plan_migrations=migrations,
+            waves=[
+                {
+                    "key": "001|parallel|fanout",
+                    "attempt": 1,
+                    "status": "failed",
+                    "sky_status": "FAILED",
+                    "job_id": "prior-1",
+                    "outputs": [],
+                }
+            ],
+        )
+    )
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        allow_terminal_plan_migration=True,
+        plan_migration_reason="one-too-many",
+    )
+
+    with pytest.raises(NpaWorkflowError, match="migration limit reached"):
+        run_workflow_runtime(
+            spec,
+            run_id="rt-plan-migrate-bounded",
+            executor=_executor(
+                spec,
+                run_id="rt-plan-migrate-bounded",
+                options=options,
+                store=store,
+            ),
+            options=options,
+        )
+
+
+@pytest.mark.parametrize(
+    ("wave", "message"),
+    [
+        (
+            {"status": "running", "sky_status": "RUNNING", "outputs": []},
+            "every prior attempt",
+        ),
+        (
+            {"status": "succeeded", "sky_status": "SUCCEEDED", "outputs": []},
+            "every prior attempt",
+        ),
+    ],
+)
+def test_terminal_plan_migration_rejects_nonfailed_prior_attempt(
+    tmp_path: Path, wave: dict[str, Any], message: str
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    wave = {"key": "001|parallel|fanout", "attempt": 1, **wave}
+    store.write_runtime_state(
+        RuntimeRunState(
+            workflow=spec.name,
+            run_id="rt-plan-migrate-blocked",
+            api_version=spec.api_version,
+            status="failed",
+            plan_fingerprint="0" * 64,
+            waves=[wave],
+        )
+    )
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        allow_terminal_plan_migration=True,
+        plan_migration_reason="safe-reason",
+    )
+    executor = _executor(
+        spec, run_id="rt-plan-migrate-blocked", options=options, store=store
+    )
+
+    with pytest.raises(NpaWorkflowError, match=message):
+        run_workflow_runtime(
+            spec,
+            run_id="rt-plan-migrate-blocked",
+            executor=executor,
+            options=options,
+        )
+
+
+def _supervisor_preflight() -> dict[str, str]:
+    return {
+        "exact_image_pull": "pass",
+        "credentials_access": "pass",
+        "accelerator_resolution": "pass",
+        "per_node_gpu_shape": "pass",
+        "gang_capacity": "pass",
+    }
+
+
+@pytest.fixture()
+def runtime_sdk_submission(tmp_path: Path, mocker):
+    """Keep the real SDK gate and submit ordering; fake its external boundaries."""
+    from npa.orchestration.skypilot import workflow as sdk
+    from npa.orchestration.skypilot.launch_transaction import (
+        LaunchState,
+        LaunchTransactionResult,
+    )
+
+    config = SimpleNamespace(
+        sky_bin=tmp_path / "sky",
+        global_config_path=None,
+        isolated_config_dir=tmp_path / "sdk-state",
+    )
+    mocker.patch.object(sdk, "resolve_config", return_value=config)
+    mocker.patch.object(sdk, "ensure_skypilot_version", return_value=config.sky_bin)
+    mocker.patch.object(sdk, "sky_environment", return_value={})
+    mocker.patch.object(sdk, "_selected_kube_context", return_value="unit-context")
+    preflight = mocker.patch.object(
+        sdk, "_execution_preflight", return_value=(None, {}, {})
+    )
+    health = SimpleNamespace(to_dict=lambda: {})
+    api = mocker.patch.object(
+        sdk, "_ensure_local_api_daemon_cwd_locked", return_value=health
+    )
+    controller = mocker.patch.object(
+        sdk, "_wait_for_healthy_jobs_controller", return_value=health
+    )
+    transactions = []
+
+    def launch(**kwargs):
+        transactions.append(kwargs["logical_id"])
+        return LaunchTransactionResult(
+            LaunchState.SUBMITTED,
+            kwargs["logical_id"],
+            job_id=str(len(transactions)),
+            launch_sequence=1,
+        )
+
+    job = mocker.patch.object(sdk, "run_launch_transaction", side_effect=launch)
+    return SimpleNamespace(preflight=preflight, api=api, controller=controller, job=job)
+
+
+def test_runtime_default_sdk_records_wave_proof_without_poll_time_refresh(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(spec, run_id="rt-proof").steps
+        if step.state == "gate"
+    )
+    now = mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.utc_now",
+        return_value="2026-08-30T01:00:00Z",
+    )
+    options = RuntimeOptions(poll_seconds=0, preflight_evidence=_supervisor_preflight())
+    executor = _executor(
+        spec,
+        run_id="rt-proof",
+        options=options,
+        store=MemoryStore(),
+        status_fn=FakeStatus(["PENDING", "SUCCEEDED"]),
+    )
+    executor._submitter = None
+    wave_hashes = []
+    options.pre_submit_hook = lambda path: wave_hashes.append(
+        hashlib.sha256(path.read_bytes()).hexdigest()
+    )
+
+    def observe(**kwargs):
+        now.return_value = "2026-08-30T02:00:00Z"
+        return JobBlockerReport(job_id=kwargs["job_id"])
+
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        side_effect=observe,
+    )
+    executor.execute(gate)
+
+    proof = next(
+        event["preflight"]
+        for event in SupervisorLedger(executor.ledger.store).events()
+        if event.get("phase") == "decision"
+    )
+    assert proof["checks"]["gang_capacity"] == "pass"
+    assert proof["observed_at"] == "2026-08-30T01:00:00Z"
+    assert proof["scope"] == {
+        "source": "default_sdk_submit",
+        "run_id": "rt-proof",
+        "wave_key": executor.attempts[0].key,
+        "attempt": 1,
+        "rendered_wave_sha256": wave_hashes[0],
+    }
+    runtime_sdk_submission.preflight.assert_called_once()
+    assert [doc["name"] for doc in runtime_sdk_submission.preflight.call_args.args[0]][
+        1:
+    ] == ["gate"]
+    assert now.return_value == "2026-08-30T02:00:00Z"
+
+
+@pytest.mark.parametrize("denied_attempt", [1, 2])
+def test_runtime_sdk_capacity_denial_blocks_initial_launch_and_explicit_retry(
+    tmp_path: Path,
+    runtime_sdk_submission,
+    denied_attempt: int,
+) -> None:
+    from npa.execution_preflight import ExecutionPreflightError
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(spec, run_id="rt-denied").steps
+        if step.state == "gate"
+    )
+    options = RuntimeOptions(
+        poll_seconds=0,
+        retries=1,
+        retry_backoff_seconds=0,
+        preflight_evidence=_supervisor_preflight(),
+    )
+    executor = _executor(
+        spec,
+        run_id="rt-denied",
+        options=options,
+        status_fn=FakeStatus(["FAILED"]),
+        store=MemoryStore(),
+    )
+    executor._submitter = None
+    observed = []
+
+    def preflight(documents, **kwargs):
+        attempt = executor.attempts[-1]
+        observed.append((attempt.attempt, executor._attempt_preflight(attempt)))
+        if attempt.attempt == denied_attempt:
+            raise ExecutionPreflightError("gpu", "no free gang capacity")
+        return None, {}, {}
+
+    runtime_sdk_submission.preflight.side_effect = preflight
+    with pytest.raises(NpaWorkflowError, match="no free gang capacity"):
+        executor.execute(gate)
+
+    assert [number for number, _proof in observed] == list(range(1, denied_attempt + 1))
+    assert all(proof.checks["gang_capacity"] == "unknown" for _, proof in observed)
+    failed_proof = executor._attempt_preflight(executor.attempts[-1])
+    assert failed_proof.checks["gang_capacity"] == "unknown"
+    assert failed_proof.observed_at == "" and failed_proof.scope == {}
+    assert runtime_sdk_submission.api.call_count == denied_attempt - 1
+    assert runtime_sdk_submission.controller.call_count == denied_attempt - 1
+    assert runtime_sdk_submission.job.call_count == denied_attempt - 1
+    if denied_attempt == 2:
+        assert (
+            executor._attempt_preflight(executor.attempts[0]).checks["gang_capacity"]
+            == "pass"
+        )
+
+
+def test_runtime_custom_submitter_does_not_invent_capacity_proof(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    options = RuntimeOptions(preflight_evidence=_supervisor_preflight(), resume=True)
+    submitter = FakeSubmitter()
+    executor = _executor(spec, options=options, submitter=submitter)
+    attempt = WaveAttempt(key="001|serial|work", states=["work"], kind="serial")
+    wave = tmp_path / "wave.yaml"
+    wave.write_text("name: workflow\n---\nname: work\nrun: 'true'\n")
+    executor._submit(wave, "work", attempt)
+    assert len(submitter.calls) == 1
+    proof = executor._attempt_preflight(attempt)
+    assert proof.checks["gang_capacity"] == "unknown"
+    assert proof.observed_at == "" and proof.scope == {}
+    assert options.preflight_evidence == _supervisor_preflight()
+
+
+def test_runtime_refresh_failure_invalidates_prior_submit_proof(
+    tmp_path: Path,
+    runtime_sdk_submission,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(
+        spec, options=RuntimeOptions(preflight_evidence=_supervisor_preflight())
+    )
+    executor._submitter = None
+    attempt = WaveAttempt(key="001|serial|work", states=["work"], kind="serial")
+    wave = tmp_path / "wave.yaml"
+    wave.write_text("name: work\nresources: {cloud: kubernetes}\nrun: 'true'\n")
+    executor._submit(wave, "work", attempt)
+    assert executor._attempt_preflight(attempt).checks["gang_capacity"] == "pass"
+
+    def fail_refresh(_path):
+        raise RuntimeError("image refresh failed")
+
+    executor.options.pre_submit_hook = fail_refresh
+    with pytest.raises(RuntimeError, match="image refresh failed"):
+        executor._submit(wave, "work", attempt)
+    proof = executor._attempt_preflight(attempt)
+    assert proof.checks["gang_capacity"] == "unknown"
+    assert proof.observed_at == "" and proof.scope == {}
+    runtime_sdk_submission.preflight.assert_called_once()
+    runtime_sdk_submission.job.assert_called_once()
+
+
+def _terminal_supervisor_run(tmp_path, mocker, statuses, *, outputs=True, retries=0):
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(job_id="1"),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-terminal", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    store, submitter = MemoryStore(), FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-terminal",
+        store=store,
+        submitter=submitter,
+        status_fn=FakeStatus(statuses),
+        output_checker=lambda _uri: outputs,
+        options=RuntimeOptions(poll_seconds=0, retries=retries),
+    )
+    return executor, gate, store, submitter
+
+
+@pytest.mark.parametrize(
+    ("terminal", "outputs", "action"),
+    [
+        ("FAILED", False, "terminalize"),
+        ("FAILED_SETUP", False, "terminalize"),
+        ("CANCELLED", False, "terminalize"),
+        ("SUCCEEDED", False, "terminalize"),
+        ("SUCCEEDED", True, "reuse_completed_wave"),
+    ],
+)
+def test_terminal_supervisor_replaces_stale_live_advice(
+    tmp_path, mocker, terminal, outputs, action
+):
+    executor, gate, store, submitter = _terminal_supervisor_run(
+        tmp_path, mocker, ["PENDING", "RUNNING", terminal], outputs=outputs
+    )
+    if action == "terminalize":
+        with pytest.raises(NpaWorkflowError):
+            executor.execute(gate)
+    else:
+        executor.execute(gate)
+    event = SupervisorLedger(store).latest()
+    assert event["phase"] == "attempt_terminal"
+    assert event["recovery"]["action"] == action
+    assert "Continue observing" not in event["recovery"]["remediation"]
+    assert store.read_runtime_state().waves[-1]["recovery_decision"] == action
+    assert len(submitter.calls) == 1
+
+
+def test_terminal_advice_preserves_explicit_payload_retry(tmp_path, mocker):
+    executor, gate, store, submitter = _terminal_supervisor_run(
+        tmp_path,
+        mocker,
+        ["PENDING", "FAILED", "PENDING", "SUCCEEDED"],
+        retries=1,
+    )
+    executor.execute(gate)
+    attempts = store.read_runtime_state().waves
+    assert [row["status"] for row in attempts] == ["failed", "succeeded"]
+    assert [row["recovery_decision"] for row in attempts] == [
+        "terminalize",
+        "reuse_completed_wave",
+    ]
+    assert len(submitter.calls) == 2
+
+
+def test_runtime_supervisor_stops_configuration_retry_immediately(
+    tmp_path: Path, mocker
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-config-stall", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="1",
+            blockers=[
+                PodBlocker(
+                    pod="worker",
+                    phase="Pending",
+                    reason="CreateContainerConfigError",
+                    reason_code="MISSING_SECRET",
+                )
+            ],
+        ),
+    )
+    submitter = FakeSubmitter()
+    statuses = FakeStatus(["PENDING", "CANCELLED"])
+    cancels: list[dict[str, Any]] = []
+    options = RuntimeOptions(
+        poll_seconds=0,
+        retries=3,
+        preflight_evidence=_supervisor_preflight(),
+    )
+    executor = _executor(
+        spec,
+        run_id="rt-config-stall",
+        submitter=submitter,
+        status_fn=statuses,
+        options=options,
+        cancels=cancels,
+        output_checker=lambda _uri: False,
+        store=MemoryStore(),
+    )
+
+    with pytest.raises(NpaWorkflowError, match="MISSING_SECRET"):
+        executor.execute(gate)
+
+    assert len(submitter.calls) == 1, "configuration failures must ignore --retries"
+    assert cancels == [
+        {
+            "job_id": "1",
+            "run_id": "rt-config-stall-01-gate",
+            "cluster": "rt-config-stall-01-gate",
+        }
+    ]
+    assert executor.attempts[0].error_category == "actionable_configuration"
+    assert executor.attempts[0].recovery_decision == "cancel_and_terminalize"
+    assert executor.attempts[0].resource_profiles == {
+        "gate": {"cloud": "kubernetes", "cpus": "4+", "memory": "16+"}
+    }
+
+
+def test_runtime_supervisor_recovers_transient_once_without_duplicate(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-transient", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="1", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    submitter = FakeSubmitter()
+    statuses = FakeStatus(["PENDING", "CANCELLED", "SUCCEEDED"])
+    cancels: list[dict[str, Any]] = []
+    checks = iter([False, True])
+    options = RuntimeOptions(
+        poll_seconds=0,
+        retries=0,
+        preflight_evidence=_supervisor_preflight(),
+    )
+    executor = _executor(
+        spec,
+        run_id="rt-transient",
+        submitter=submitter,
+        status_fn=statuses,
+        options=options,
+        cancels=cancels,
+        output_checker=lambda _uri: next(checks),
+        store=MemoryStore(),
+    )
+    executor._submitter = None
+
+    result = executor.execute(gate)
+
+    assert result["status"] == "ok"
+    assert [attempt.attempt for attempt in executor.attempts] == [1, 2]
+    assert runtime_sdk_submission.preflight.call_count == 2
+    assert runtime_sdk_submission.job.call_count == 2
+    assert executor.attempts[0].job_name != executor.attempts[1].job_name
+    assert cancels[0]["job_id"] == "1"
+
+
+@pytest.mark.parametrize("drift", ["workflow", "source", "image"])
+@pytest.mark.parametrize(
+    ("scheduler_status", "outputs_present"),
+    [("PENDING", False), ("SUCCEEDED", True)],
+)
+def test_runtime_restart_blocks_each_immutable_identity_drift(
+    tmp_path: Path,
+    mocker,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+    scheduler_status: str,
+    outputs_present: bool,
+) -> None:
+    from npa.orchestration.npa_workflow.runtime import (
+        _image_identity,
+        _source_identity,
+        _workflow_identity,
+    )
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-identity-drift", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://source-role/" + "a" * 64)
+    store = MemoryStore()
+    first = _executor(spec, run_id="rt-identity-drift", store=store)
+    prior = WaveAttempt(
+        key="001|serial|refine:gate:-",
+        states=[gate.state],
+        kind="serial",
+        attempt=1,
+        job_id="prior-job",
+        job_name="rt-identity-drift-01-gate",
+        status="running",
+        sky_status="PENDING",
+        started_at="2026-08-30T00:00:00Z",
+        outputs=[dict(item) for item in gate.outputs],
+        logical_launch_id="prior-logical-attempt",
+        workflow_sha256=_workflow_identity(spec),
+        source_sha256=_source_identity(),
+        image_digest=_image_identity(first.render_options),
+    )
+    setattr(prior, f"{drift}_sha256" if drift != "image" else "image_digest", "d" * 64)
+    first.ledger.record(prior)
+
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="prior-job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancels: list[dict[str, Any]] = []
+    restarted = _executor(
+        spec,
+        run_id="rt-identity-drift",
+        store=store,
+        options=RuntimeOptions(
+            poll_seconds=0,
+            resume=True,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=cancels,
+        output_checker=lambda _uri: outputs_present,
+    )
+    record = restarted.ledger.latest_wave(prior.key)
+    assert record is not None
+    resumed = restarted._attempt_from_record(
+        record, steps=[gate], kind="serial", group=""
+    )
+
+    with pytest.raises(NpaWorkflowError, match="IMMUTABLE_IDENTITY_MISMATCH"):
+        restarted._supervise_pending(resumed, scheduler_status=scheduler_status)
+
+    assert cancels == []
+    assert resumed.recovery_decision == "block_relaunch"
+    events = SupervisorLedger(store).events()
+    assert events[-1]["recovery"]["reason_code"] == "IMMUTABLE_IDENTITY_MISMATCH"
+
+
+def test_runtime_persistent_transient_exhausts_finite_policy(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-transient-exhausted", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    submitter = FakeSubmitter()
+    cancels: list[dict[str, Any]] = []
+    executor = _executor(
+        spec,
+        run_id="rt-transient-exhausted",
+        submitter=submitter,
+        status_fn=FakeStatus(["PENDING", "CANCELLED", "PENDING", "CANCELLED"]),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=cancels,
+        output_checker=lambda _uri: False,
+        store=MemoryStore(),
+    )
+    executor._submitter = None
+
+    with pytest.raises(NpaWorkflowError, match="INFRASTRUCTURE_RECOVERY_EXHAUSTED"):
+        executor.execute(gate)
+
+    assert runtime_sdk_submission.preflight.call_count == 2
+    assert runtime_sdk_submission.job.call_count == 2
+    assert [attempt.infrastructure_recovery_count for attempt in executor.attempts] == [
+        0,
+        1,
+    ]
+    assert executor.attempts[-1].infrastructure_recovery_exhausted
+    assert executor.attempts[-1].recovery_decision == "cancel_and_terminalize"
+
+
+def _resume_recovery_gate(spec: Any) -> Any:
+    return next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-block-relaunch", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+
+
+def _seed_resume_recovery_case(
+    tmp_path: Path,
+    *,
+    recovery_decision: str = "block_relaunch",
+    terminal_verified: bool = False,
+) -> tuple[Any, Any, MemoryStore, WaveAttempt]:
+    from npa.orchestration.npa_workflow.runtime import (
+        _image_identity,
+        _source_identity,
+        _workflow_identity,
+    )
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = _resume_recovery_gate(spec)
+    store = MemoryStore()
+    seed = _executor(spec, run_id="rt-block-relaunch", store=store)
+    key = wave_key([gate], group="", sequence_number=1)
+    blocked = WaveAttempt(
+        key=key,
+        states=[gate.state],
+        kind="serial",
+        attempt=2,
+        job_id="job-2",
+        job_name="rt-block-relaunch-01-gate-a2",
+        status="failed",
+        sky_status="PENDING",
+        started_at="2026-09-20T00:00:00Z",
+        outputs=[dict(item) for item in gate.outputs],
+        logical_launch_id="blocked-logical-attempt-2",
+        workflow_sha256=_workflow_identity(spec),
+        source_sha256=_source_identity(),
+        image_digest=_image_identity(seed.render_options),
+        error_category="unknown",
+        recovery_decision=recovery_decision,
+        operator_remedy="restore exact queue access and resume",
+    )
+    if terminal_verified:
+        blocked.sky_status = "CANCELLED"
+        blocked.cancellation_state = "verified"
+    seed.ledger.record(blocked)
+    return spec, gate, store, blocked
+
+
+def test_resume_reconciles_block_relaunch_exact_job_before_submit(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec, gate, store, blocked = _seed_resume_recovery_case(tmp_path)
+
+    reconciled: list[tuple[str, str]] = []
+
+    def reconcile(job_name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        reconciled.append((job_name, job_id))
+        return ManagedJobEvidence(
+            "found", job_id=job_id, status="RUNNING", workload_observable=True
+        )
+
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        run_id="rt-block-relaunch",
+        submitter=submitter,
+        status_fn=FakeStatus(["SUCCEEDED"]),
+        options=RuntimeOptions(poll_seconds=0, resume=True, retries=3),
+        store=store,
+        reconcile_fn=reconcile,
+    )
+
+    result = resumed.execute(gate)
+
+    assert result["status"] == "ok"
+    assert submitter.calls == []
+    assert reconciled == [(blocked.job_name, blocked.job_id)]
+    assert resumed.attempts[-1].attempt == 2
+    assert resumed.attempts[-1].job_id == "job-2"
+    assert resumed.attempts[-1].adopted
+
+
+def test_resume_reconciles_unknown_recovery_decision_before_submit(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec, gate, store, blocked = _seed_resume_recovery_case(
+        tmp_path, recovery_decision="block_awaiting_quota_v2"
+    )
+    reconciled: list[tuple[str, str]] = []
+
+    def reconcile(job_name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        reconciled.append((job_name, job_id))
+        return ManagedJobEvidence(
+            "found", job_id=job_id, status="RUNNING", workload_observable=True
+        )
+
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        run_id="rt-block-relaunch",
+        submitter=submitter,
+        status_fn=FakeStatus(["SUCCEEDED"]),
+        options=RuntimeOptions(poll_seconds=0, resume=True, retries=3),
+        store=store,
+        reconcile_fn=reconcile,
+    )
+
+    result = resumed.execute(gate)
+
+    assert result["status"] == "ok"
+    assert submitter.calls == []
+    assert reconciled == [(blocked.job_name, blocked.job_id)]
+    assert resumed.attempts[-1].attempt == 2
+    assert resumed.attempts[-1].adopted
+
+
+def test_resume_keeps_block_relaunch_fail_closed_when_queue_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec, gate, store, blocked = _seed_resume_recovery_case(tmp_path)
+    reconciled: list[tuple[str, str]] = []
+
+    def reconcile(job_name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        reconciled.append((job_name, job_id))
+        return ManagedJobEvidence("error", error="controller unavailable")
+
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        run_id="rt-block-relaunch",
+        submitter=submitter,
+        options=RuntimeOptions(poll_seconds=0, resume=True, retries=3),
+        store=store,
+        reconcile_fn=reconcile,
+    )
+
+    with pytest.raises(NpaWorkflowError, match="refusing a duplicate"):
+        resumed.execute(gate)
+
+    assert submitter.calls == []
+    assert reconciled == [(blocked.job_name, blocked.job_id)]
+    attempt = resumed.attempts[-1]
+    assert attempt.attempt == 2
+    assert attempt.recovery_decision == "block_indeterminate"
+
+
+def test_resume_retries_verified_terminal_block_without_queue_dependency(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec, gate, store, blocked = _seed_resume_recovery_case(
+        tmp_path, terminal_verified=True
+    )
+    reconciled: list[tuple[str, str]] = []
+
+    def reconcile(job_name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        reconciled.append((job_name, job_id))
+        return ManagedJobEvidence("error", error="retained row unavailable")
+
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        run_id="rt-block-relaunch",
+        submitter=submitter,
+        status_fn=FakeStatus(["SUCCEEDED"]),
+        options=RuntimeOptions(poll_seconds=0, resume=True, retries=3),
+        store=store,
+        reconcile_fn=reconcile,
+    )
+
+    result = resumed.execute(gate)
+
+    assert result["status"] == "ok"
+    # The legacy verified-completion probe remains best-effort. Its unavailable
+    # result must not turn already verified terminality back into an in-flight
+    # block.
+    assert reconciled == [(blocked.job_name, blocked.job_id)]
+    assert len(submitter.calls) == 1
+    assert submitter.calls[0]["job_name"].endswith("-a3")
+    assert resumed.attempts[-1].attempt == 3
+
+
+@pytest.mark.parametrize(
+    "terminal_provider_status",
+    ["CANCELLED", "FAILED", "FAILED_SETUP", "SUCCEEDED", "COMPLETED"],
+)
+def test_runtime_reuses_valid_outputs_at_infrastructure_recovery_limit(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+    terminal_provider_status: str,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-valid-output-limit", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancels: list[dict[str, Any]] = []
+    status = FakeStatus(["PENDING", "CANCELLED", "PENDING", terminal_provider_status])
+    store = MemoryStore()
+    executor = _executor(
+        spec,
+        run_id="rt-valid-output-limit",
+        submitter=FakeSubmitter(),
+        status_fn=status,
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=cancels,
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=store,
+    )
+    executor._submitter = None
+
+    result = executor.execute(gate)
+    attempt = executor.attempts[-1]
+
+    assert result["status"] == "ok"
+    assert attempt.status == "succeeded"
+    assert attempt.sky_status == terminal_provider_status
+    assert attempt.recovery_decision == "reuse_completed_wave"
+    assert attempt.infrastructure_recovery_count == 1
+    assert attempt.cancellation_state == "verified"
+    assert runtime_sdk_submission.preflight.call_count == 2
+    assert runtime_sdk_submission.job.call_count == 2
+    assert len(cancels) == 2
+    assert len(executor.attempts) == 2
+    assert len(status.calls) == 4
+    reuse_event = next(
+        event
+        for event in reversed(SupervisorLedger(store).events())
+        if event["phase"] == "cancellation"
+        and event["recovery"]["action"] == "reuse_completed_wave"
+    )
+    assert (
+        reuse_event["cancellation"]["provider_terminal_status"]
+        == terminal_provider_status
+    )
+
+
+def _replace_supervisor_event(store, key, payload) -> str:
+    body = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    digest = hashlib.sha256(body).hexdigest()
+    replacement = f"{key.rsplit('/', 1)[0]}/{payload['phase']}-{digest}.json"
+    del store.objects[key]
+    store.objects[replacement] = body
+    return replacement
+
+
+class _ReusePowerLoss(BaseException):
+    pass
+
+
+def _output_reuse_crash_executor(spec, run_id, store, mocker, submission, terminal):
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        status_fn=FakeStatus(["PENDING", "CANCELLED", "PENDING", terminal]),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=[],
+        output_checker=lambda _uri: submission.job.call_count >= 2,
+        store=store,
+    )
+    executor._submitter = None
+    return executor
+
+
+def _crash_reuse_write(executor, mocker, before_record):
+    original_record = executor.ledger.record
+    crashed = []
+
+    def record(attempt):
+        if (
+            not crashed
+            and attempt.recovery_decision == "reuse_completed_wave"
+            and attempt.status == "running"
+        ):
+            crashed.append(True)
+            if not before_record:
+                original_record(attempt)
+            # Power loss cannot run the in-process abort handler.
+            executor._abort_wave = lambda *_args, **_kwargs: None
+            raise _ReusePowerLoss
+        original_record(attempt)
+
+    mocker.patch.object(executor.ledger, "record", side_effect=record)
+    return crashed
+
+
+def _crashed_output_reuse_case(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    *,
+    run_id="rt-output-reuse-crash",
+    crash_before_runtime_record=True,
+    terminal_status="CANCELLED",
+):
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id=run_id, assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    store = MemoryStore()
+    executor = _output_reuse_crash_executor(
+        spec, run_id, store, mocker, runtime_sdk_submission, terminal_status
+    )
+    crashed = _crash_reuse_write(executor, mocker, crash_before_runtime_record)
+    with pytest.raises((_ReusePowerLoss, NpaWorkflowError)):
+        executor.execute(gate)
+    state = store.read_runtime_state()
+    assert state is not None and crashed
+    assert runtime_sdk_submission.job.call_count == 2
+    assert any(
+        event["phase"] == "cancellation"
+        and event["recovery"]["action"] == "reuse_completed_wave"
+        for event in SupervisorLedger(store).events()
+    )
+    return spec, gate, store, state.waves[-1]
+
+
+def _interrupt_reuse_cancellation(executor, submission):
+    cancel = executor._cancel
+
+    def interrupted_cancel(job_id, job_name):
+        if submission.job.call_count >= 2:
+            executor._abort_wave = lambda *_args, **_kwargs: None
+            raise _ReusePowerLoss
+        return cancel(job_id, job_name)
+
+    executor._cancel = interrupted_cancel
+
+
+def _interrupted_history_case(tmp_path, mocker, submission, *, decision_only):
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    run_id = "rt-history-reconciliation"
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id=run_id, assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    store = MemoryStore()
+    executor = _output_reuse_crash_executor(
+        spec, run_id, store, mocker, submission, "CANCELLED"
+    )
+    if decision_only:
+        _interrupt_reuse_cancellation(executor, submission)
+    else:
+        executor._abort_wave = lambda *_args, **_kwargs: None
+        mocker.patch.object(executor, "_poll", side_effect=_ReusePowerLoss)
+    with pytest.raises((_ReusePowerLoss, NpaWorkflowError)):
+        executor.execute(gate)
+    attempt = store.read_runtime_state().waves[-1]
+    assert attempt["recovery_decision"] != "reuse_completed_wave"
+    history = SupervisorLedger(store).events(attempt["logical_launch_id"])
+    assert all(event["phase"] != "cancellation" for event in history)
+    assert any(event["phase"] == "decision" for event in history) == decision_only
+    return spec, gate, store, attempt
+
+
+def _deny_existing_history(store, failure, monkeypatch):
+    reader = store.read_artifact
+    existing = set(store.objects)
+
+    def denied(*_args):
+        raise PermissionError("supervisor history temporarily unavailable")
+
+    def read_artifact(key):
+        if f"{store.prefix}/{key}" in existing:
+            denied()
+        return reader(key)
+
+    method = "list_artifacts" if failure == "list" else "read_artifact"
+    monkeypatch.setattr(store, method, denied if failure == "list" else read_artifact)
+
+
+def _exact_history_resume(case, mocker, status):
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    executor = _reuse_executor(case)
+    executor._status_fn = FakeStatus(["RUNNING", "SUCCEEDED"])
+    executor._reconcile_fn = mocker.Mock(
+        return_value=ManagedJobEvidence(
+            "found", job_id=case[3]["job_id"], status=status
+        )
+    )
+    return executor
+
+
+@pytest.mark.parametrize("failure", ["list", "read"])
+def test_transient_history_failure_recovers_ordinary_live_attempt(
+    tmp_path,
+    mocker,
+    monkeypatch,
+    runtime_sdk_submission,
+    failure,
+):
+    case = _interrupted_history_case(
+        tmp_path, mocker, runtime_sdk_submission, decision_only=False
+    )
+    blocked = _reuse_executor(case)
+    with monkeypatch.context() as denied:
+        _deny_existing_history(case[2], failure, denied)
+        with pytest.raises(NpaWorkflowError, match="output-reuse"):
+            blocked.execute(case[1])
+    assert blocked._submitter.calls == []
+    assert blocked.attempts[-1].recovery_decision == "block_output_reuse_evidence"
+    assert all(
+        event["recovery"]["action"] != "reuse_completed_wave"
+        for event in SupervisorLedger(case[2]).events(case[3]["logical_launch_id"])
+    )
+    resumed = _exact_history_resume(case, mocker, "RUNNING")
+    assert resumed.execute(case[1])["status"] == "ok"
+    resumed._reconcile_fn.assert_called_once_with(
+        case[3]["job_name"], job_id=case[3]["job_id"]
+    )
+    assert resumed._submitter.calls == []
+    assert set(resumed._status_fn.calls) == {case[3]["job_id"]}
+    assert resumed.attempts[-1].attempt == case[3]["attempt"]
+    assert not resumed.attempts[-1].supervisor_blocks_cancellation
+    assert resumed.attempts[-1].recovery_decision != "reuse_completed_wave"
+
+
+@pytest.mark.parametrize("status", ["RUNNING", "SUCCEEDED", "CANCELLED", "FAILED"])
+def test_decision_only_crash_reconciles_exact_provider_attempt(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    status,
+):
+    case = _interrupted_history_case(
+        tmp_path, mocker, runtime_sdk_submission, decision_only=True
+    )
+    resumed = _exact_history_resume(case, mocker, status)
+    if status in {"CANCELLED", "FAILED"}:
+        with pytest.raises(NpaWorkflowError, match="terminal"):
+            resumed.execute(case[1])
+        assert resumed.attempts[-1].status == "failed"
+        assert resumed.attempts[-1].sky_status == status
+        assert resumed.attempts[-1].recovery_decision == "terminalize"
+    else:
+        assert resumed.execute(case[1])["status"] == "ok"
+        assert resumed.attempts[-1].sky_status == "SUCCEEDED"
+    resumed._reconcile_fn.assert_called_once_with(
+        case[3]["job_name"], job_id=case[3]["job_id"]
+    )
+    assert resumed._submitter.calls == []
+    assert resumed.attempts[-1].attempt == case[3]["attempt"]
+    assert resumed.attempts[-1].recovery_decision != "reuse_completed_wave"
+    assert not resumed.attempts[-1].supervisor_blocks_cancellation
+
+
+def _unexpected_reuse_reconcile(_name, *, job_id=""):
+    raise AssertionError(f"provider reconciliation was not expected for {job_id}")
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("attempt_identity", "provider_job_id", "different-job"),
+        ("attempt_identity", "source_sha256", "d" * 64),
+        ("recovery", "reason_code", "different-reason"),
+        ("recovery", "action", "terminalize"),
+        ("outputs", "valid", []),
+    ],
+)
+def test_decision_only_crash_blocks_invalid_evidence(
+    tmp_path, mocker, runtime_sdk_submission, section, field, value
+):
+    case = _interrupted_history_case(
+        tmp_path, mocker, runtime_sdk_submission, decision_only=True
+    )
+    store = case[2]
+    decisions = [
+        (key, json.loads(body))
+        for key, body in store.objects.items()
+        if "/supervisor/attempts/" in key
+        and json.loads(body).get("phase") == "decision"
+        and json.loads(body)["recovery"]["action"] == "reuse_completed_wave"
+    ]
+    assert len(decisions) == 1
+    key, event = decisions[0]
+    event[section][field] = value
+    _replace_supervisor_event(store, key, event)
+    _assert_reuse_blocked(case, _reuse_executor(case))
+
+
+@pytest.mark.parametrize(
+    "failure", ["different_job", "unobservable", "absent", "unknown"]
+)
+def test_decision_only_crash_never_relaunches_without_exact_provider_evidence(
+    tmp_path, mocker, runtime_sdk_submission, failure
+):
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    case = _interrupted_history_case(
+        tmp_path, mocker, runtime_sdk_submission, decision_only=True
+    )
+    resumed = _exact_history_resume(case, mocker, "RUNNING")
+    resumed._reconcile_fn.return_value = ManagedJobEvidence(
+        failure if failure in {"absent", "unknown"} else "found",
+        job_id="different-job" if failure == "different_job" else case[3]["job_id"],
+        status="RUNNING",
+        workload_observable=failure != "unobservable",
+    )
+    with pytest.raises(NpaWorkflowError):
+        resumed.execute(case[1])
+    resumed._reconcile_fn.assert_called_once_with(
+        case[3]["job_name"], job_id=case[3]["job_id"]
+    )
+    assert resumed._submitter.calls == []
+    assert resumed._status_fn.calls == []
+    assert resumed.attempts[-1].job_id == case[3]["job_id"]
+    assert resumed.attempts[-1].recovery_decision != "reuse_completed_wave"
+
+
+@pytest.mark.parametrize("status", ["CANCELLED", "FAILED"])
+def test_decision_only_terminal_failure_allows_later_explicit_retry(
+    tmp_path, mocker, runtime_sdk_submission, status
+):
+    case = _interrupted_history_case(
+        tmp_path, mocker, runtime_sdk_submission, decision_only=True
+    )
+    failed = _exact_history_resume(case, mocker, status)
+    with pytest.raises(NpaWorkflowError, match="terminal"):
+        failed.execute(case[1])
+    retried = _reuse_executor(case)
+    assert retried.execute(case[1])["status"] == "ok"
+    assert len(retried._submitter.calls) == 1
+    assert retried.attempts[-1].attempt == case[3]["attempt"] + 1
+    assert retried.attempts[-1].recovery_decision != "reuse_completed_wave"
+
+
+def test_decision_only_provider_success_revalidates_current_outputs(
+    tmp_path, mocker, runtime_sdk_submission
+):
+    case = _interrupted_history_case(
+        tmp_path, mocker, runtime_sdk_submission, decision_only=True
+    )
+    resumed = _exact_history_resume(case, mocker, "SUCCEEDED")
+    resumed._output_checker = mocker.Mock(return_value=False)
+    with pytest.raises(NpaWorkflowError, match="without declared durable output"):
+        resumed.execute(case[1])
+    assert resumed._output_checker.call_count > 0
+    assert resumed._submitter.calls == []
+    assert resumed.attempts[-1].status == "failed"
+    assert resumed.attempts[-1].sky_status == "SUCCEEDED"
+    assert resumed.attempts[-1].recovery_decision != "reuse_completed_wave"
+
+
+def _reuse_executor(case, *, output_checker=lambda _uri: True):
+    spec, _gate, store, _attempt = case
+    return _executor(
+        spec,
+        run_id=store.read_runtime_state().run_id,
+        submitter=FakeSubmitter(),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            resume=True,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        output_checker=output_checker,
+        store=store,
+        reconcile_fn=_unexpected_reuse_reconcile,
+    )
+
+
+def _reuse_cancellation_key(store):
+    keys = [
+        key
+        for key, body in store.objects.items()
+        if "/supervisor/attempts/" in key
+        and (event := json.loads(body)).get("phase") == "cancellation"
+        and event["recovery"]["action"] == "reuse_completed_wave"
+    ]
+    assert len(keys) == 1
+    return keys[0]
+
+
+def _deny_reuse_event_read(store, key, mocker):
+    reader = store.read_artifact
+
+    def read_artifact(relative_key):
+        if key == f"{store.prefix}/{relative_key}":
+            raise PermissionError("history denied")
+        return reader(relative_key)
+
+    mocker.patch.object(store, "read_artifact", side_effect=read_artifact)
+
+
+def _assert_reuse_blocked(case, executor, match="output-reuse", *, decision=None):
+    with pytest.raises(NpaWorkflowError, match=match):
+        executor.execute(case[1])
+    assert executor._submitter.calls == []
+    blocked = executor.attempts[-1]
+    assert blocked.attempt == case[3]["attempt"]
+    assert blocked.status == "failed"
+    expected = decision or (
+        "reuse_completed_wave"
+        if case[3]["recovery_decision"] == "reuse_completed_wave"
+        else "block_output_reuse_evidence"
+    )
+    assert blocked.recovery_decision == expected
+    assert blocked.supervisor_blocks_cancellation
+    return blocked
+
+
+@pytest.mark.parametrize("changed_image", [False, True])
+def test_crashed_output_reuse_validates_current_rendered_image(
+    tmp_path, mocker, runtime_sdk_submission, changed_image
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    checker = mocker.Mock(return_value=True)
+    resumed = _reuse_executor(case, output_checker=checker)
+    identity = case[3]["image_identity"]
+    assert identity["version"] == IMAGE_IDENTITY_VERSION
+    assert identity["references"] == ["cr.example/x@sha256:" + "c" * 64]
+    legacy_digest = _image_identity(resumed.render_options)
+    assert case[3]["immutable_identity"]["image_digest"] != legacy_digest
+    if changed_image:
+        resumed.render_options = SkypilotRenderOptions(
+            image_overrides={"*": "cr.example/x@sha256:" + "d" * 64}
+        )
+        assert not resumed.render_options.image_digest_pins
+        _assert_reuse_blocked(case, resumed, match="identity")
+        checker.assert_not_called()
+    else:
+        assert resumed.execute(case[1])["status"] == "ok"
+        checker.assert_called()
+        assert resumed.attempts[-1].sky_status == "CANCELLED"
+        assert resumed.attempts[-1].cancellation_state == "verified"
+    assert resumed.attempts[-1].attempt == case[3]["attempt"]
+    assert resumed._submitter.calls == []
+    assert resumed._status_fn.calls == []
+
+
+@pytest.mark.parametrize("crash_before_runtime_record", [True, False])
+@pytest.mark.parametrize("terminal_status", ["CANCELLED", "FAILED", "SUCCEEDED"])
+def test_resume_reuses_output_complete_wave_after_driver_crash(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    crash_before_runtime_record,
+    terminal_status,
+):
+    case = _crashed_output_reuse_case(
+        tmp_path,
+        mocker,
+        runtime_sdk_submission,
+        crash_before_runtime_record=crash_before_runtime_record,
+        terminal_status=terminal_status,
+    )
+    resumed = _reuse_executor(case)
+    assert resumed.execute(case[1])["status"] == "ok"
+    adopted = resumed.attempts[-1]
+    assert resumed._submitter.calls == []
+    assert adopted.attempt == case[3]["attempt"]
+    assert adopted.status == "succeeded"
+    assert adopted.sky_status == terminal_status
+    assert adopted.cancellation_state == "verified"
+    assert adopted.recovery_decision == "reuse_completed_wave"
+    assert adopted.adopted and adopted.replayed
+    assert not adopted.supervisor_blocks_cancellation
+
+
+@pytest.mark.parametrize("output_state", ["missing", "unavailable"])
+@pytest.mark.parametrize("crash_before_runtime_record", [True, False])
+def test_resume_blocks_output_reuse_when_artifacts_cannot_be_revalidated(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    output_state,
+    crash_before_runtime_record,
+):
+    case = _crashed_output_reuse_case(
+        tmp_path,
+        mocker,
+        runtime_sdk_submission,
+        crash_before_runtime_record=crash_before_runtime_record,
+    )
+
+    def check_output(_uri):
+        if output_state == "unavailable":
+            raise RuntimeError("object store unavailable")
+        return False
+
+    blocked = _assert_reuse_blocked(
+        case,
+        _reuse_executor(case, output_checker=check_output),
+        "declared output",
+        decision="reuse_completed_wave",
+    )
+    assert blocked.sky_status == "CANCELLED"
+    assert blocked.cancellation_state == "verified"
+    resumed = _reuse_executor(case)
+    assert resumed.execute(case[1])["status"] == "ok"
+    assert resumed._submitter.calls == []
+    assert resumed.attempts[-1].attempt == case[3]["attempt"]
+    assert resumed.attempts[-1].sky_status == "CANCELLED"
+    assert not resumed.attempts[-1].supervisor_blocks_cancellation
+
+
+@pytest.mark.parametrize(
+    ("tamper", "crash_before_runtime_record"),
+    [
+        ("missing_event", False),
+        ("invalid_json", True),
+        ("invalid_json", False),
+        ("invalid_envelope", True),
+        ("invalid_envelope", False),
+        ("invalid_schema", True),
+        ("invalid_schema", False),
+        ("content_address_mismatch", True),
+        ("content_address_mismatch", False),
+        ("event_read_failure", True),
+        ("event_read_failure", False),
+        ("event_list_failure", True),
+        ("event_list_failure", False),
+    ],
+)
+def test_resume_blocks_unreadable_output_reuse_history(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    tamper,
+    crash_before_runtime_record,
+):
+    case = _crashed_output_reuse_case(
+        tmp_path,
+        mocker,
+        runtime_sdk_submission,
+        crash_before_runtime_record=crash_before_runtime_record,
+    )
+    store = case[2]
+    key = _reuse_cancellation_key(store)
+    body = store.objects[key]
+    if tamper == "missing_event":
+        del store.objects[key]
+    elif tamper == "invalid_schema":
+        payload = json.loads(body)
+        payload["schema_version"] = "future-schema"
+        _replace_supervisor_event(store, key, payload)
+    elif tamper == "event_read_failure":
+        _deny_reuse_event_read(store, key, mocker)
+    elif tamper == "event_list_failure":
+        mocker.patch.object(
+            store, "list_artifacts", side_effect=PermissionError("history denied")
+        )
+    else:
+        store.objects[key] = {
+            "invalid_json": b"{invalid",
+            "invalid_envelope": b"[]",
+            "content_address_mismatch": body + b" ",
+        }[tamper]
+    _assert_reuse_blocked(case, _reuse_executor(case))
+    if tamper == "missing_event":
+        _assert_reuse_blocked(case, _reuse_executor(case))
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("attempt_identity", "runtime", "serverless"),
+        ("attempt_identity", "run_id", "different-run"),
+        ("attempt_identity", "attempt", 99),
+        ("attempt_identity", "logical_attempt_id", "different-attempt"),
+        ("attempt_identity", "provider_job_id", "different-job"),
+        ("attempt_identity", "provider_job_name", "different-name"),
+        ("attempt_identity", "workflow_sha256", "d" * 64),
+        ("attempt_identity", "source_sha256", "d" * 64),
+        ("attempt_identity", "image_digest", "sha256:" + "d" * 64),
+        ("cancellation", "provider_job_id", "different-job"),
+        ("cancellation", "exact", False),
+        ("cancellation", "status", "requested"),
+        ("cancellation", "provider_terminal_status", "RUNNING"),
+        ("cancellation", "error", "verification unavailable"),
+        ("recovery", "action", "future_recovery_action"),
+        ("recovery", "action", "terminalize"),
+        ("recovery", "reason_code", "different-reason"),
+        ("outputs", "valid", []),
+        ("outputs", "declared", {}),
+        ("outputs", "missing", None),
+        ("outputs", "status", "indeterminate"),
+    ],
+)
+def test_resume_blocks_mismatched_output_reuse_evidence(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    section,
+    field,
+    value,
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    store = case[2]
+    key = _reuse_cancellation_key(store)
+    payload = json.loads(store.objects[key])
+    payload[section][field] = value
+    _replace_supervisor_event(store, key, payload)
+    _assert_reuse_blocked(case, _reuse_executor(case))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("recovery", []),
+        ("recovery", {}),
+        ("recovery", {"reason_code": "valid"}),
+        ("attempt_identity", []),
+        ("cancellation", []),
+        ("outputs", []),
+        ("phase", "future_phase"),
+    ],
+)
+def test_resume_blocks_malformed_output_reuse_evidence(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    field,
+    value,
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    store = case[2]
+    key = _reuse_cancellation_key(store)
+    payload = json.loads(store.objects[key])
+    payload[field] = value
+    _replace_supervisor_event(store, key, payload)
+    _assert_reuse_blocked(case, _reuse_executor(case))
+
+
+@pytest.mark.parametrize("later_conflict", [True, False])
+@pytest.mark.parametrize("conflict", ["terminal_status", "outputs", "nonreuse"])
+def test_resume_blocks_conflicting_output_reuse_history(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    later_conflict,
+    conflict,
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    store = case[2]
+    key = _reuse_cancellation_key(store)
+    payload = json.loads(store.objects[key])
+    payload["recorded_at"] = "9999" if later_conflict else "0000"
+    if conflict == "terminal_status":
+        payload["cancellation"]["provider_terminal_status"] = "FAILED"
+    elif conflict == "outputs":
+        payload["outputs"]["valid"] = []
+    else:
+        payload["recovery"]["action"] = "terminalize"
+    SupervisorLedger(store).record(payload)
+    _assert_reuse_blocked(case, _reuse_executor(case))
+
+
+@pytest.mark.parametrize("field", ["workflow_sha256", "source_sha256", "image_digest"])
+def test_resume_blocks_runtime_identity_mismatch_during_output_reuse(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    field,
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    state = case[2].read_runtime_state()
+    state.waves[-1]["immutable_identity"][field] = "d" * 64
+    case[2].write_runtime_state(state)
+    checker = mocker.Mock(return_value=True)
+    resumed = _reuse_executor(case, output_checker=checker)
+    if field == "image_digest":
+        with pytest.raises(NpaWorkflowError, match="versioned image.*identity"):
+            resumed.execute(case[1])
+        assert resumed.attempts == []
+        assert case[2].read_runtime_state().waves == state.waves
+    else:
+        _assert_reuse_blocked(case, resumed, "runtime output-reuse identity")
+    checker.assert_not_called()
+    assert resumed._submitter.calls == []
+    assert resumed._status_fn.calls == []
+
+
+def test_resume_skips_well_formed_nonreuse_cancellation_event(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    store = case[2]
+    for key, body in list(store.objects.items()):
+        if "/supervisor/attempts/" not in key:
+            continue
+        payload = json.loads(body)
+        if payload.get("phase") != "cancellation":
+            continue
+        payload["recovery"]["action"] = "block_relaunch"
+        payload["recovery"]["reason_code"] = "CANCELLATION_UNVERIFIED"
+        payload["cancellation"]["status"] = "cancellation_requested"
+        payload["cancellation"]["provider_terminal_status"] = ""
+        _replace_supervisor_event(store, key, payload)
+    resumed = _reuse_executor(case)
+    record = resumed.ledger.in_flight_wave(case[3]["key"])
+    assert record is not None
+    attempt = resumed._attempt_from_record(
+        record, steps=[case[1]], kind="serial", group=""
+    )
+    assert not resumed._resume_durable_output_reuse(attempt, [case[1]])
+
+
+@pytest.mark.parametrize("unrelated_suffix", ["unrelated", "same-prefix"])
+def test_resume_ignores_unrelated_malformed_supervisor_history(
+    tmp_path,
+    mocker,
+    runtime_sdk_submission,
+    unrelated_suffix,
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    store = case[2]
+    logical_id = case[3]["logical_launch_id"]
+    unrelated = (
+        "unrelated" if unrelated_suffix == "unrelated" else logical_id + "-other"
+    )
+    store.objects[
+        f"{store.prefix}/npa-workflow/supervisor/attempts/"
+        f"{unrelated}/cancellation-deadbeef.json"
+    ] = b"{invalid"
+    resumed = _reuse_executor(case)
+    assert resumed.execute(case[1])["status"] == "ok"
+    assert resumed._submitter.calls == []
+    assert resumed.attempts[-1].attempt == case[3]["attempt"]
+    assert resumed.attempts[-1].sky_status == "CANCELLED"
+
+
+def test_runtime_preserves_unverified_output_reuse_cancellation(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec,
+            run_id="rt-output-reuse-unverified",
+            assume_decision="promote_checkpoint",
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancels: list[dict[str, Any]] = []
+    executor = _executor(
+        spec,
+        run_id="rt-output-reuse-unverified",
+        submitter=FakeSubmitter(),
+        status_fn=FakeStatus(
+            [
+                "PENDING",
+                "CANCELLED",
+                "PENDING",
+                *(["PENDING"] * CANCELLATION_VERIFY_ATTEMPTS),
+            ]
+        ),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=cancels,
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=MemoryStore(),
+    )
+    executor._submitter = None
+
+    with pytest.raises(NpaWorkflowError, match="CANCELLATION_UNVERIFIED"):
+        executor.execute(gate)
+
+    attempt = executor.attempts[-1]
+    assert attempt.recovery_decision == "block_relaunch"
+    assert attempt.cancellation_state == "requested"
+    assert attempt.cancellation_error == ""
+    assert attempt.supervisor_blocks_cancellation
+    assert runtime_sdk_submission.job.call_count == 2
+    assert len(cancels) == 2
+
+
+def test_runtime_rejects_failed_output_reuse_cancellation(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec,
+            run_id="rt-output-reuse-cancel-failed",
+            assume_decision="promote_checkpoint",
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancellation_calls: list[dict[str, Any]] = []
+
+    def cancel(**kwargs: Any) -> dict[str, Any]:
+        cancellation_calls.append(kwargs)
+        if len(cancellation_calls) == 1:
+            return {"cancel_returncode": 0}
+        return {
+            "cancel_returncode": 1,
+            "cancel_stderr": "controller unavailable",
+        }
+
+    executor = _executor(
+        spec,
+        run_id="rt-output-reuse-cancel-failed",
+        submitter=FakeSubmitter(),
+        status_fn=FakeStatus(["PENDING", "CANCELLED", "PENDING"]),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=MemoryStore(),
+    )
+    executor._canceller = cancel
+    executor._submitter = None
+
+    with pytest.raises(NpaWorkflowError, match="CANCELLATION_UNVERIFIED"):
+        executor.execute(gate)
+
+    attempt = executor.attempts[-1]
+    assert attempt.recovery_decision == "block_relaunch"
+    assert attempt.cancellation_state == "failed"
+    assert attempt.cancellation_error == "controller unavailable"
+    assert attempt.supervisor_blocks_cancellation
+    assert runtime_sdk_submission.job.call_count == 2
+    assert len(cancellation_calls) == 2
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "s3://example/shared.json",
+        {"uri": "s3://example/shared.json", "schema": "example.v1"},
+    ],
+)
+def test_recovery_compares_output_uris_and_retains_invalid_declarations(
+    declaration,
+) -> None:
+    ledger = RuntimeLedger(None, workflow="example", run_id="example")
+    ledger.state.record_wave(
+        {"key": "earlier", "status": "succeeded", "outputs": [declaration]}
+    )
+    outputs = [
+        {"uri": "s3://example/shared.json", "schema": "example.v2"},
+        {"uri": "s3://example/new", "kind": "directory"},
+        {"schema": "missing-uri"},
+    ]
+    assert ledger.outputs_not_from_succeeded_waves(outputs) == ["s3://example/new/", ""]
+
+
+@pytest.mark.parametrize("boundary", ["history", "outputs"])
+@pytest.mark.parametrize("error_class", [PermissionError, ValueError])
+def test_output_reuse_persists_sanitized_exception_type(
+    tmp_path, mocker, monkeypatch, runtime_sdk_submission, boundary, error_class
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    executor = _reuse_executor(case)
+    with monkeypatch.context() as failing:
+        target, name = (
+            (case[2], "list_artifacts")
+            if boundary == "history"
+            else (executor, "_output_checker")
+        )
+        failing.setattr(
+            target,
+            name,
+            mocker.Mock(
+                side_effect=error_class("access token=synthetic-sensitive-value")
+            ),
+        )
+        with pytest.raises(NpaWorkflowError, match="output-reuse"):
+            executor.execute(case[1])
+    blocked = case[2].read_runtime_state().waves[-1]
+    assert blocked["output_reuse_error_type"] == error_class.__name__
+    assert "synthetic-sensitive-value" not in json.dumps(blocked)
+    events = SupervisorLedger(case[2]).events(case[3]["logical_launch_id"])
+    terminal = [event for event in events if event["phase"] == "attempt_terminal"]
+    assert terminal[-1]["attempt"]["output_reuse_error_type"] == error_class.__name__
+    assert "synthetic-sensitive-value" not in json.dumps(events)
+    assert executor._submitter.calls == []
+    if boundary == "outputs":
+        assert blocked["sky_status"] == "CANCELLED"
+        assert blocked["cancellation"]["state"] == "verified"
+    resumed = _reuse_executor(case)
+    assert resumed.execute(case[1])["status"] == "ok"
+    assert resumed._submitter.calls == []
+    assert case[2].read_runtime_state().waves[-1]["output_reuse_error_type"] == ""
+
+
+@pytest.mark.parametrize("error_type", ["PermissionError", "ValueError", None])
+def test_output_reuse_error_type_restores_legacy_and_current_records(error_type):
+    record = {"key": "wave-1", "attempt": 1}
+    if error_type is not None:
+        record["output_reuse_error_type"] = error_type
+    restored = SkyPilotWaveExecutor._attempt_from_record(
+        record, steps=[], kind="serial", group=""
+    )
+    assert restored.output_reuse_error_type == (error_type or "")
+    assert restored.to_dict()["output_reuse_error_type"] == (error_type or "")

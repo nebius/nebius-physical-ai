@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import re
 import warnings
 
 from npa.guardrails.skypilot import (
@@ -29,6 +30,21 @@ def test_no_unsupported_skypilot_down_or_autodown() -> None:
     assert not hits, "\n".join(
         f"{hit.path}:{hit.line_number}: {hit.line}" for hit in hits
     )
+
+
+def test_debug_skill_does_not_restore_retired_registry_auth_helpers() -> None:
+    skill = (
+        REPO_ROOT / "skills" / "atomic" / "debug-failed-run" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    retired = {
+        "mint_nebius_iam_token",
+        "ensure_registry_pull_secret_for_images",
+        "this project's registry",
+    }
+
+    assert retired.isdisjoint(skill.splitlines())
+    for marker in retired:
+        assert marker not in skill
 
 
 def test_teardown_guard_catches_broken_fixture(tmp_path: Path) -> None:
@@ -161,17 +177,10 @@ def _mentions_local_cuda(node: ast.AST, source: str) -> bool:
     return "cuda.is_available" in segment or "torch.cuda" in segment
 
 
-def test_shipped_examples_use_registry_placeholder_not_first_party_id() -> None:
-    """Shipped BYO examples must not bake in the first-party registry ID.
-
-    Resolver-owned defaults (npa.deploy.images, the image manifests, and ops
-    scripts) may reference the concrete `npa-workbench` registry; committed
-    example YAMLs and cookbooks must use the `<your-registry-id>` placeholder
-    so external users never pull against a registry they cannot access.
-    """
-    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY_ID
-
+def test_shipped_examples_do_not_depend_on_nebius_container_registry() -> None:
+    """Runnable examples use GHCR releases or generic operator registries."""
     example_roots = [
+        REPO_ROOT / "workflows",
         REPO_ROOT / "npa" / "workflows",
         REPO_ROOT / "docs" / "workbench" / "cookbooks",
         REPO_ROOT / "docs" / "demos",
@@ -182,11 +191,69 @@ def test_shipped_examples_use_registry_placeholder_not_first_party_id() -> None:
             if path.suffix not in {".yaml", ".yml", ".md", ".json"}:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-            if DEFAULT_CONTAINER_REGISTRY_ID in text:
+            if re.search(r"cr\.[a-z0-9-]+\.nebius\.cloud", text, re.IGNORECASE):
                 offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders, (
-        "Concrete first-party registry ID found in shipped examples; "
-        "use the <your-registry-id> placeholder instead: " + ", ".join(offenders)
+        "legacy Nebius registry reference found in shipped examples: "
+        + ", ".join(offenders)
+    )
+
+
+def test_legacy_registry_hosts_are_only_vendor_dependencies_or_history() -> None:
+    """NPA-owned runtime/publication paths must never regain a provider registry."""
+    allowed_prefixes = (
+        "EVIDENCE.md",
+        "CHANGELOG.md",
+        "SECURITY.md",
+    )
+    host = re.compile(r"cr\.[a-z0-9-]+\.nebius\.cloud", re.IGNORECASE)
+    offenders: list[str] = []
+    for path in REPO_ROOT.rglob("*"):
+        if not path.is_file() or {
+            ".git",
+            ".venv",
+            ".pytest_cache",
+            "__pycache__",
+        }.intersection(path.parts):
+            continue
+        relative = str(path.relative_to(REPO_ROOT))
+        if relative.startswith(allowed_prefixes):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if host.search(text):
+            offenders.append(relative)
+    assert not offenders, "operative legacy registry hosts found: " + ", ".join(
+        sorted(offenders)
+    )
+
+
+def test_no_provider_specific_registry_auth_or_pull_secret_defaults() -> None:
+    """NPA-owned paths use anonymous GHCR or explicit generic BYOF auth only."""
+    forbidden = re.compile(
+        "(?i)(npa-" + "nebius-registry|NEBIUS_" + "REGISTRY_PROFILE|"
+        "private-" + "candidate|Nebius Container " + "Registry)"
+    )
+    allowed = {"EVIDENCE.md", "SECURITY.md"}
+    offenders: list[str] = []
+    for path in REPO_ROOT.rglob("*"):
+        if not path.is_file() or {".git", ".venv", "__pycache__"}.intersection(
+            path.parts
+        ):
+            continue
+        relative = str(path.relative_to(REPO_ROOT))
+        if relative in allowed:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if forbidden.search(text):
+            offenders.append(relative)
+    assert not offenders, "provider-specific registry dependency found: " + ", ".join(
+        sorted(offenders)
     )
 
 
@@ -202,7 +269,7 @@ def test_monolith_modules_do_not_grow() -> None:
         # agent.py embeds the shipped backend/UI as a generated multiline
         # string. Count reviewable Python lines, not the generated payload; the
         # reconciler itself lives in agent_setup_convergence.py.
-        "npa/src/npa/cli/agent.py": 3_700,
+        "npa/src/npa/cli/agent.py": 3_710,  # main merge #477 added lines
         "npa/src/npa/workflows/sim2real_loop.py": 100,
         "npa/src/npa/workflows/sim2real/engine.py": 200,
         "npa/src/npa/workflows/sim2real/legacy_artifacts.py": 150,
@@ -212,10 +279,10 @@ def test_monolith_modules_do_not_grow() -> None:
         "npa/src/npa/workflows/sim2real/legacy_orchestration.py": 1_150,
         "npa/src/npa/workflows/sim2real/workflow_stage.py": 1_050,
         "npa/src/npa/workflows/sim2real/stage_execution.py": 700,
-        "npa/src/npa/cli/groot/__init__.py": 4_400,
-        "npa/src/npa/cli/fiftyone/__init__.py": 4_250,
+        "npa/src/npa/cli/groot/__init__.py": 4_403,  # bulk ruff format (+9 lines)
+        "npa/src/npa/cli/fiftyone/__init__.py": 4_850,  # bulk ruff format (+600 lines); main merge added lines
         "npa/src/npa/cli/cosmos/__init__.py": 4_050,
-        "npa/src/npa/cli/isaac_lab/__init__.py": 3_500,
+        "npa/src/npa/cli/isaac_lab/__init__.py": 3_535,  # bulk ruff format (+35 lines)
     }
     over = []
     for rel_path, cap in caps.items():
@@ -316,3 +383,119 @@ def test_unreachable_statement_guard_catches_fixture(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _unreachable_statement_violations(broken)
+
+
+# Optional in the lightweight precheck environment: an unconditional import
+# can abort collection before a test or fixture can skip a missing dependency.
+HEAVY_TEST_IMPORTS = frozenset(
+    {
+        "torch",
+        "genesis",
+        "lerobot",
+        "isaaclab",
+        "open3d",
+        "mujoco",
+        "fiftyone",
+        "cv2",
+    }
+)
+
+
+def _heavy_module_import_violations(path: Path) -> list[str]:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+    # Scope is deliberately the direct Import/ImportFrom nodes of the module
+    # body. Imports nested at module level, inside if/class/for/with, do execute
+    # at import time but stay outside this guard. Reading the direct body alone
+    # is what lets the supported escapes through untouched: a function-level
+    # import, a try/except ImportError, an `if TYPE_CHECKING` block, and
+    # `pytest.importorskip` are all nested or are calls, never a top-level
+    # Import node.
+    violations = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [node.module] if node.module and not node.level else []
+        else:
+            continue
+        for name in names:
+            if name.split(".")[0] in HEAVY_TEST_IMPORTS:
+                violations.append(
+                    f"{path}:{node.lineno} imports {name} at module level; "
+                    "use pytest.importorskip or an optional-dependency fixture"
+                )
+    return violations
+
+
+def test_tests_do_not_import_heavy_packages_at_module_level() -> None:
+    """Keep optional GPU imports out of unconditional test-module imports.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A test imports an optional package unconditionally.
+    """
+    violations = [
+        violation
+        for path in _test_paths()
+        for violation in _heavy_module_import_violations(path)
+    ]
+    assert not violations, "\n".join(violations)
+
+
+def test_heavy_import_guard_catches_broken_fixture(tmp_path: Path) -> None:
+    """Reject both direct imports and from-imports before CPU collection breaks.
+
+    Args:
+        tmp_path: Isolated source fixture directory.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Either unconditional import escapes the guard.
+    """
+    bad = tmp_path / "test_bad_heavy_import.py"
+    bad.write_text(
+        "import torch\nfrom genesis import Scene\n\ndef test_x():\n    assert torch\n",
+        encoding="utf-8",
+    )
+
+    violations = _heavy_module_import_violations(bad)
+
+    assert len(violations) == 2
+    assert "module level" in violations[0]
+
+
+def test_heavy_import_guard_allows_the_supported_escapes(tmp_path: Path) -> None:
+    """Allow test-local and explicitly optional dependency imports.
+
+    Args:
+        tmp_path: Isolated source fixture directory.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A supported optional import is rejected.
+    """
+    ok = tmp_path / "test_supported_escapes.py"
+    ok.write_text(
+        "from typing import TYPE_CHECKING\n\n"
+        "import pytest\n\n"
+        "if TYPE_CHECKING:\n"
+        "    import torch\n\n"
+        "try:\n"
+        "    import lerobot\n"
+        "except ImportError:\n"
+        "    lerobot = None\n\n\n"
+        "def test_a():\n"
+        "    torch = pytest.importorskip('torch')\n"
+        "    assert torch\n\n\n"
+        "def test_b():\n"
+        "    import genesis\n\n"
+        "    assert genesis\n",
+        encoding="utf-8",
+    )
+    assert not _heavy_module_import_violations(ok)

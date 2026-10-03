@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any
+
+from npa.workbench.storage_scope import StorageAuthorizationError
 
 from .integrations import fiftyone_handoff, index_in_lancedb
 from .schemas import (
@@ -29,7 +32,11 @@ def compute_manifest_sha256(kind: str, payload: dict[str, Any]) -> str:
     digest = hashlib.sha256()
     digest.update(kind.encode("utf-8"))
     digest.update(b"\n")
-    digest.update(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+    digest.update(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode(
+            "utf-8"
+        )
+    )
     digest.update(b"\n")
     return digest.hexdigest()
 
@@ -42,10 +49,14 @@ def load_raw_records(input_uri: str) -> list[dict[str, Any]]:
     """Read raw sensor records from an input manifest URI."""
     try:
         payload = read_json_uri(input_uri)
+    except StorageAuthorizationError:
+        raise
     except FileNotFoundError as exc:
         raise DatasetIngestError(f"raw sensor data not found: {input_uri}") from exc
     except Exception as exc:
-        raise DatasetIngestError(f"cannot read raw sensor data {input_uri}: {exc}") from exc
+        raise DatasetIngestError(
+            f"cannot read raw sensor data {input_uri}: {exc}"
+        ) from exc
     records = payload.get("records") if isinstance(payload, dict) else payload
     if not isinstance(records, list) or not records:
         raise DatasetIngestError("raw sensor data has no records")
@@ -63,6 +74,24 @@ def _is_corrupt(raw: dict[str, Any], quality: dict[str, float]) -> bool:
     return float(quality.get("corruption", 0.0)) > 0.5
 
 
+def _normalize_quality(raw: dict[str, Any], record_index: int) -> dict[str, float]:
+    quality: dict[str, float] = {}
+    for key, value in (raw.get("quality") or {}).items():
+        quality_key = str(key)
+        try:
+            normalized_value = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise DatasetIngestError(
+                f"record {record_index} quality {quality_key!r} must be a finite number"
+            ) from exc
+        if not math.isfinite(normalized_value):
+            raise DatasetIngestError(
+                f"record {record_index} quality {quality_key!r} must be a finite number"
+            )
+        quality[quality_key] = normalized_value
+    return quality
+
+
 def normalize_records(
     raw_records: list[dict[str, Any]],
     schema: SensorSchema,
@@ -76,7 +105,9 @@ def normalize_records(
             raise DatasetIngestError(f"record {index} is not a mapping")
         for field in schema.required_fields:
             if not raw.get(field):
-                raise DatasetIngestError(f"record {index} missing required field {field!r}")
+                raise DatasetIngestError(
+                    f"record {index} missing required field {field!r}"
+                )
         modality = str(raw["modality"])
         if schema.modalities and modality not in schema.modalities:
             raise DatasetIngestError(
@@ -86,7 +117,7 @@ def normalize_records(
         if record_id in seen:
             raise DatasetIngestError(f"duplicate record_id: {record_id}")
         seen.add(record_id)
-        quality = {str(k): float(v) for k, v in (raw.get("quality") or {}).items()}
+        quality = _normalize_quality(raw, index)
         if _is_corrupt(raw, quality):
             corrupt += 1
         normalized.append(
@@ -105,12 +136,16 @@ def normalize_records(
     return normalized, corrupt
 
 
-def compute_quality_stats(records: list[SensorRecord], corrupt_count: int) -> QualityStats:
+def compute_quality_stats(
+    records: list[SensorRecord], corrupt_count: int
+) -> QualityStats:
     per_modality: dict[str, int] = {}
     for record in records:
         per_modality[record.modality] = per_modality.get(record.modality, 0) + 1
     mean_completeness = (
-        round(sum(record.completeness for record in records) / len(records), 4) if records else 0.0
+        round(sum(record.completeness for record in records) / len(records), 4)
+        if records
+        else 0.0
     )
     return QualityStats(
         record_count=len(records),

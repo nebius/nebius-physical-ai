@@ -14,7 +14,7 @@ prepare-run  Prepare a project/workflow-scoped fresh or explicit-resume run ID.
 submit  Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller.
 run  Run a named workflow end-to-end.
 status  Check the status of a workflow run.
-logs  Show logs for a specific stage of a workflow run.
+logs  Show a bounded log tail for a specific stage of a workflow run.
 artifacts  List durable S3 artifact URIs for a workflow run.
 load-artifact  Retry only the final artifact load; never relaunch workflow stages.
 list  List durable S3 workflow runs.
@@ -25,9 +25,13 @@ stage-src  Upload the local npa package to S3 for image-less workflow steps.
 validate-spec  Validate an NPA workflow specification file.
 plan-spec  Expand an NPA workflow spec into an execution plan (dry-run).
 run-spec  Run or plan an NPA workflow spec.
-preflight-images  Prove every image this spec pulls is pullable, with the run's own credentials.
-gpus  Print the accelerator names this cluster advertises to SkyPilot.
+preflight-images  Prove every image this spec pulls through each selected execution path.
+gpus  Print advertised GPU names using an owned API for a selected context.
+reconcile-controller  Reconcile an orphaned workflow against its original exclusive controller.
+reconcile-absent  Verify original native absence without inferring historical job success.
 trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
+demo  Run complete public sample workflows and view their results.
+challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 ```
 
 ## Options
@@ -44,7 +48,7 @@ trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 | `submit` | Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller. |
 | `run` | Run a named workflow end-to-end. |
 | `status` | Check the status of a workflow run. |
-| `logs` | Show logs for a specific stage of a workflow run. |
+| `logs` | Show a bounded log tail for a specific stage of a workflow run. |
 | `artifacts` | List durable S3 artifact URIs for a workflow run. |
 | `load-artifact` | Retry only the final artifact load; never relaunch workflow stages. |
 | `list` | List durable S3 workflow runs. |
@@ -55,9 +59,13 @@ trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 | `validate-spec` | Validate an NPA workflow specification file. |
 | `plan-spec` | Expand an NPA workflow spec into an execution plan (dry-run). |
 | `run-spec` | Run or plan an NPA workflow spec. |
-| `preflight-images` | Prove every image this spec pulls is pullable, with the run's own credentials. |
-| `gpus` | Print the accelerator names this cluster advertises to SkyPilot. |
+| `preflight-images` | Prove every image this spec pulls through each selected execution path. |
+| `gpus` | Print advertised GPU names using an owned API for a selected context. |
+| `reconcile-controller` | Reconcile an orphaned workflow against its original exclusive controller. |
+| `reconcile-absent` | Verify original native absence without inferring historical job success. |
 | `trigger` | Watch S3-compatible data prefixes and retrigger Workbench workflows. |
+| `demo` | Run complete public sample workflows and view their results. |
+| `challenge` | Prepare a BEHAVIOR DEV evaluation from one setup file. |
 
 ## Examples
 

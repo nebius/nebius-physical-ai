@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
+import tempfile
 from typing import Any
 
 import typer
@@ -50,7 +52,10 @@ def _auth_mode_for(runtime: LanceDBRuntime, auth_mode: str) -> str:
     if value not in {"none", "token"}:
         fail("--auth-mode must be one of auto, none, or token")
     if value == "none" and runtime in {LanceDBRuntime.vm, LanceDBRuntime.byovm}:
-        typer.echo("Warning: --auth-mode none exposes the LanceDB wrapper without token auth.", err=True)
+        typer.echo(
+            "Warning: --auth-mode none exposes the LanceDB wrapper without token auth.",
+            err=True,
+        )
     return value
 
 
@@ -71,15 +76,55 @@ def _run_container(
     replace: bool,
     dry_run: bool,
 ) -> str:
-    s3_env = storage_env()
+    local_storage = not storage_path.startswith("s3://")
+    container_storage_path = "/data/lancedb" if local_storage else storage_path
+    host_storage_path: Path | None = None
+    if local_storage:
+        if "," in storage_path:
+            fail("Local LanceDB --storage-path cannot contain a comma")
+        host_storage_path = Path(storage_path)
+        if not dry_run:
+            try:
+                host_storage_path.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                fail(f"Cannot create LanceDB storage directory {storage_path}: {exc}")
+            if not host_storage_path.is_dir():
+                fail(f"LanceDB storage path is not a directory: {storage_path}")
+            if os.getuid() == 0:
+                fail(
+                    "Local LanceDB container storage must be deployed by a non-root "
+                    "host user so the container can use the same uid/gid without "
+                    "weakening its non-root runtime."
+                )
+            try:
+                descriptor, sentinel = tempfile.mkstemp(
+                    dir=host_storage_path, prefix=".npa-lancedb-write-"
+                )
+                os.close(descriptor)
+                Path(sentinel).unlink()
+            except OSError as exc:
+                fail(
+                    f"LanceDB storage directory is not writable by uid {os.getuid()}: "
+                    f"{storage_path}: {exc}"
+                )
+
+    # Local bind mounts do not need object-storage credentials. Keeping those
+    # credentials out of the container also prevents an unrelated local service
+    # compromise from becoming an S3 credential compromise.
+    s3_env = storage_env() if not local_storage else {}
     env = {
         **s3_env,
-        "LANCEDB_STORAGE_PATH": storage_path,
+        "LANCEDB_STORAGE_PATH": container_storage_path,
         "LANCEDB_PORT": str(port),
         "LANCEDB_AUTH_MODE": auth_mode,
-        "LANCEDB_TOKEN": os.environ.get(token_env, ""),
+        "LANCEDB_TOKEN": os.environ.get(token_env, "") if auth_mode == "token" else "",
     }
-    if storage_endpoint:
+    if local_storage:
+        # Arbitrary non-root uid mapping must not inherit /home/ubuntu as a
+        # potentially unwritable home directory. The bind mount was just proven
+        # writable by this uid and gives caches a private, persistent location.
+        env["HOME"] = container_storage_path
+    if storage_endpoint and not local_storage:
         endpoint_url = storage_endpoint_url(storage_endpoint)
         env["AWS_ENDPOINT_URL"] = endpoint_url
         env["NEBIUS_S3_ENDPOINT"] = endpoint_url
@@ -88,7 +133,11 @@ def _run_container(
     # reach the bucket. Catch it up front.
     if storage_path.startswith("s3://"):
         has_endpoint = bool(env.get("AWS_ENDPOINT_URL"))
-        if not env.get("AWS_ACCESS_KEY_ID") or not env.get("AWS_SECRET_ACCESS_KEY") or not has_endpoint:
+        if (
+            not env.get("AWS_ACCESS_KEY_ID")
+            or not env.get("AWS_SECRET_ACCESS_KEY")
+            or not has_endpoint
+        ):
             fail(
                 "LanceDB storage path "
                 f"{storage_path} is on S3 but S3 credentials are incomplete. Run "
@@ -115,10 +164,17 @@ def _run_container(
         f"{port}:{port}",
     ]
     redacted_cmd = list(cmd)
+    if host_storage_path is not None:
+        mount = f"type=bind,source={host_storage_path},target={container_storage_path}"
+        runtime_user = f"{os.getuid()}:{os.getgid()}"
+        cmd.extend(["--user", runtime_user, "--mount", mount])
+        redacted_cmd.extend(["--user", runtime_user, "--mount", mount])
     for key, value in env.items():
         if value:
             cmd.extend(["-e", f"{key}={value}"])
-            redacted_cmd.extend(["-e", f"{key}={'<redacted>' if _is_secret_env(key) else value}"])
+            redacted_cmd.extend(
+                ["-e", f"{key}={'<redacted>' if _is_secret_env(key) else value}"]
+            )
     cmd.append(image)
     redacted_cmd.append(image)
 
@@ -162,24 +218,50 @@ def _cloud_payload(
 
 
 def deploy_cmd(
-    runtime: LanceDBRuntime = typer.Option(LanceDBRuntime.vm, "--runtime", help="Runtime: vm, container, byovm, or cloud."),
-    storage_path: str = typer.Option("", "--storage-path", help="S3 URI or absolute local path for LanceDB data."),
+    runtime: LanceDBRuntime = typer.Option(
+        LanceDBRuntime.vm, "--runtime", help="Runtime: vm, container, byovm, or cloud."
+    ),
+    storage_path: str = typer.Option(
+        "", "--storage-path", help="S3 URI or absolute local path for LanceDB data."
+    ),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="LanceDB wrapper port."),
-    auth_mode: str = typer.Option("auto", "--auth-mode", help="Auth mode: auto, none, or token."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing wrapper token."),
-    endpoint: str = typer.Option("", "--endpoint", help="Existing endpoint or LanceDB Cloud URL."),
-    api_key_env: str = typer.Option(DEFAULT_API_KEY_ENV, "--api-key-env", help="Environment variable containing LanceDB Cloud API key."),
+    auth_mode: str = typer.Option(
+        "auto", "--auth-mode", help="Auth mode: auto, none, or token."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing wrapper token.",
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Existing endpoint or LanceDB Cloud URL."
+    ),
+    api_key_env: str = typer.Option(
+        DEFAULT_API_KEY_ENV,
+        "--api-key-env",
+        help="Environment variable containing LanceDB Cloud API key.",
+    ),
     database: str = typer.Option("", "--database", help="LanceDB Cloud database name."),
-    cloud_region: str = typer.Option("", "--cloud-region", help="LanceDB Cloud region."),
-    cpu_platform: str = typer.Option("", "--cpu-platform", help="CPU VM selector for managed VM deploy."),
+    cloud_region: str = typer.Option(
+        "", "--cloud-region", help="LanceDB Cloud region."
+    ),
+    cpu_platform: str = typer.Option(
+        "", "--cpu-platform", help="CPU VM selector for managed VM deploy."
+    ),
     cpu_preset: str = typer.Option("4vcpu-16gb", "--cpu-preset", help="CPU VM preset."),
-    disk_size: int | None = typer.Option(None, "--disk-size", help="Boot disk size in GiB."),
-    data_disk_size: int | None = typer.Option(None, "--data-disk-size", help="Optional data disk size in GiB."),
+    disk_size: int | None = typer.Option(
+        None, "--disk-size", help="Boot disk size in GiB."
+    ),
+    data_disk_size: int | None = typer.Option(
+        None, "--data-disk-size", help="Optional data disk size in GiB."
+    ),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
     region: str = typer.Option("", "--region", help="Nebius region."),
     tf_dir: str = typer.Option("", "--tf-dir", help="Terraform directory override."),
-    tf_var: list[str] = typer.Option([], "--tf-var", "-v", help="Extra Terraform variable key=value."),
+    tf_var: list[str] = typer.Option(
+        [], "--tf-var", "-v", help="Extra Terraform variable key=value."
+    ),
     storage_endpoint: str = typer.Option(
         "",
         "--storage-endpoint",
@@ -188,12 +270,22 @@ def deploy_cmd(
             "storage.eu-north1.nebius.cloud. Also settable with NPA_STORAGE_ENDPOINT."
         ),
     ),
-    skip_infra: bool = typer.Option(False, "--skip-infra", help="Skip infrastructure provisioning."),
+    skip_infra: bool = typer.Option(
+        False, "--skip-infra", help="Skip infrastructure provisioning."
+    ),
     skip_app: bool = typer.Option(False, "--skip-app", help="Skip application deploy."),
-    destroy: bool = typer.Option(False, "--destroy", help="Tear down or unregister the service."),
-    replace: bool = typer.Option(False, "--replace", help="Replace existing container or instance."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show actions without running them."),
-    default: bool = typer.Option(False, "--default", help="Save endpoint as default config."),
+    destroy: bool = typer.Option(
+        False, "--destroy", help="Tear down or unregister the service."
+    ),
+    replace: bool = typer.Option(
+        False, "--replace", help="Replace existing container or instance."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show actions without running them."
+    ),
+    default: bool = typer.Option(
+        False, "--default", help="Save endpoint as default config."
+    ),
     image: str = typer.Option("", "--image", help="Container image reference."),
     container_name: str = typer.Option(
         "",
@@ -208,12 +300,18 @@ def deploy_cmd(
         "--pull-secret",
         help="Comma-separated imagePullSecrets for --runtime kubernetes.",
     ),
-    detach: bool = typer.Option(True, "--detach/--no-detach", help="Run local container in the background."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    detach: bool = typer.Option(
+        True, "--detach/--no-detach", help="Run local container in the background."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Deploy or register a LanceDB service."""
     validate_port(port)
-    storage_endpoint_override = storage_endpoint.strip() or os.environ.get("NPA_STORAGE_ENDPOINT", "").strip()
+    storage_endpoint_override = (
+        storage_endpoint.strip() or os.environ.get("NPA_STORAGE_ENDPOINT", "").strip()
+    )
     endpoint_warning = storage_endpoint_warning(
         storage_endpoint_override
         or os.environ.get("NEBIUS_S3_ENDPOINT", "")
@@ -238,13 +336,28 @@ def deploy_cmd(
         )
         if default:
             payload["default_requested"] = True
-            payload["note"] = "Saving defaults is deferred to the Workbench parent registration follow-up."
-        emit(payload, output=output, text=f"LanceDB Cloud endpoint configured: {payload['endpoint']}")
+            payload["note"] = (
+                "Saving defaults is deferred to the Workbench parent registration follow-up."
+            )
+        emit(
+            payload,
+            output=output,
+            text=f"LanceDB Cloud endpoint configured: {payload['endpoint']}",
+        )
         return
 
     resolved_storage = validate_storage_path(storage_path)
     resolved_auth = _auth_mode_for(runtime, auth_mode)
     image_ref = container_image(image)
+    if (
+        runtime == LanceDBRuntime.kubernetes
+        and not destroy
+        and not resolved_storage.startswith("s3://")
+    ):
+        fail(
+            "--runtime kubernetes requires an s3:// --storage-path; a pod-local "
+            "path is not persistent across rollouts or restarts"
+        )
 
     if destroy and runtime == LanceDBRuntime.container:
         name = _container_name(container_name, port)
@@ -253,19 +366,19 @@ def deploy_cmd(
             typer.echo(" ".join(cmd))
         else:
             subprocess.run(cmd, check=False, capture_output=True, text=True)
-        emit({"runtime": "container", "container": name, "status": "removed"}, output=output)
+        emit(
+            {"runtime": "container", "container": name, "status": "removed"},
+            output=output,
+        )
         return
 
     if runtime == LanceDBRuntime.kubernetes:
         from npa.workbench.service_kubernetes import (
-            MANAGED_PULL_SECRET,
             ServiceKubernetesError,
             apply,
             build_manifests,
             destroy as destroy_kubernetes,
-            ensure_registry_secret,
             ensure_storage_secret,
-            registry_host,
             service_endpoint,
             wait_available,
         )
@@ -291,18 +404,22 @@ def deploy_cmd(
             )
             return
 
-        endpoint_url = storage_endpoint_url(storage_endpoint_override) if storage_endpoint_override else (
-            os.environ.get("AWS_ENDPOINT_URL", "") or os.environ.get("NEBIUS_S3_ENDPOINT", "")
+        endpoint_url = (
+            storage_endpoint_url(storage_endpoint_override)
+            if storage_endpoint_override
+            else (
+                os.environ.get("AWS_ENDPOINT_URL", "")
+                or os.environ.get("NEBIUS_S3_ENDPOINT", "")
+            )
         )
         secret_name = ""
         if resolved_storage.startswith("s3://"):
             secret_name = f"{service_name}-storage"
-        # A private registry needs a pull secret the kubelet can use on every restart, not just
-        # at deploy time. Mint one rather than borrowing a shared secret whose token expires.
-        pull_secrets = tuple(ref.strip() for ref in pull_secret.split(",") if ref.strip())
-        host = registry_host(image_ref)
-        if host and not pull_secrets:
-            pull_secrets = (MANAGED_PULL_SECRET,)
+        # Public releases need no pull secret. Private images use an explicitly
+        # pre-created, operator-managed Kubernetes secret.
+        pull_secrets = tuple(
+            ref.strip() for ref in pull_secret.split(",") if ref.strip()
+        )
         manifests = build_manifests(
             name=service_name,
             namespace=target_namespace,
@@ -313,7 +430,11 @@ def deploy_cmd(
                 "LANCEDB_STORAGE_PATH": resolved_storage,
                 "LANCEDB_PORT": str(port),
                 "LANCEDB_AUTH_MODE": resolved_auth,
-                **({"LANCEDB_TOKEN": os.environ[token_env]} if os.environ.get(token_env) else {}),
+                **(
+                    {"LANCEDB_TOKEN": os.environ[token_env]}
+                    if os.environ.get(token_env)
+                    else {}
+                ),
             },
             storage_endpoint_url=endpoint_url,
             secret_name=secret_name,
@@ -342,10 +463,10 @@ def deploy_cmd(
                 "--auth-mode none for a ClusterIP service that is not reachable off-cluster."
             )
         try:
-            if host and pull_secrets == (MANAGED_PULL_SECRET,):
-                ensure_registry_secret(MANAGED_PULL_SECRET, target_namespace, host)
             if secret_name:
-                ensure_storage_secret(secret_name, target_namespace, dict(storage_env()))
+                ensure_storage_secret(
+                    secret_name, target_namespace, dict(storage_env())
+                )
             apply(manifests)
             wait_available(service_name, target_namespace)
         except LanceDBKubernetesError as exc:
@@ -360,7 +481,11 @@ def deploy_cmd(
             "auth_mode": resolved_auth,
             "status": "running",
         }
-        emit(payload, output=output, text=f"LanceDB service available at {resolved_endpoint}")
+        emit(
+            payload,
+            output=output,
+            text=f"LanceDB service available at {resolved_endpoint}",
+        )
         return
 
     if runtime == LanceDBRuntime.container:
@@ -387,7 +512,11 @@ def deploy_cmd(
             "auth_mode": resolved_auth,
             "status": "running" if not dry_run else "dry-run",
         }
-        emit(payload, output=output, text=f"LanceDB container running at {payload['endpoint']}")
+        emit(
+            payload,
+            output=output,
+            text=f"LanceDB container running at {payload['endpoint']}",
+        )
         return
 
     if skip_app and not skip_infra:

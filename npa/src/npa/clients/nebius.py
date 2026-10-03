@@ -29,6 +29,18 @@ class NebiusError(Exception):
     pass
 
 
+class NebiusCliCompatibilityError(NebiusError):
+    """The selected CLI cannot satisfy NPA's version compatibility check.
+
+    Args:
+        message: Generated compatibility diagnostic without provider output.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
+
+
 @dataclass(frozen=True)
 class ServiceAccountIdentity:
     """Allowlisted provider identity used by guarded IAM reconciliation."""
@@ -52,16 +64,6 @@ class ProjectIdentity:
 
 
 @dataclass(frozen=True)
-class RegistryIdentity:
-    """Allowlisted immutable identity for guarded registry teardown."""
-
-    registry_id: str
-    name: str
-    project_id: str
-    profile: str = ""
-
-
-@dataclass(frozen=True)
 class ProjectDefaultNetworkIdentity:
     """Exact provider-created default topology in one disposable project."""
 
@@ -81,6 +83,23 @@ class IamBindingState(str, Enum):
     CREATED = "created"
     EXISTING = "existing"
     FAILED = "failed"
+
+
+class ProfileMutationResult(str, Enum):
+    """Describe whether a Nebius profile rebind completed or was recovered.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
+
+    UPDATED = "updated"
+    UNCHANGED = "unchanged"
+    RESTORED = "restored"
+    PARTIAL = "partial"
 
 
 @dataclass(frozen=True)
@@ -120,7 +139,7 @@ STORAGE_BINDING_GROUP_NAME = STORAGE_BINDING_GROUP_PREFIX
 
 
 def storage_binding_group_name(project_id: str) -> str:
-    """Give each exact project a distinct tenant IAM group capability boundary."""
+    """Give each exact project a distinct project IAM group capability boundary."""
 
     suffix = re.sub(r"[^a-z0-9-]", "-", str(project_id).lower()).strip("-")
     return f"{STORAGE_BINDING_GROUP_PREFIX}-{suffix}"
@@ -144,12 +163,7 @@ def _parse_cli_version(output: str) -> str | None:
     return match.group(1)
 
 
-def _warn_if_nebius_version_mismatch(nebius_path: str) -> None:
-    global _NEBIUS_VERSION_CHECKED
-
-    if _NEBIUS_VERSION_CHECKED:
-        return
-
+def _checked_nebius_cli_version(nebius_path: str) -> tuple[str, str]:
     try:
         expected = supported_tool_version("nebius-cli", __file__)
         result = subprocess.run(
@@ -160,14 +174,14 @@ def _warn_if_nebius_version_mismatch(nebius_path: str) -> None:
             check=False,
         )
     except Exception as exc:
-        raise NebiusError(
+        raise NebiusCliCompatibilityError(
             "Could not check the Nebius CLI version. Reinstall the tested version: "
             f"`{_nebius_cli_install_remedy(supported_tool_version('nebius-cli', __file__))}`"
         ) from exc
 
     output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
     if result.returncode != 0:
-        raise NebiusError(
+        raise NebiusCliCompatibilityError(
             f"Could not check the Nebius CLI version (exit {result.returncode}). "
             "Reinstall the tested version: "
             f"`{_nebius_cli_install_remedy(expected)}`"
@@ -175,16 +189,25 @@ def _warn_if_nebius_version_mismatch(nebius_path: str) -> None:
 
     actual = _parse_cli_version(output)
     if actual is None:
-        raise NebiusError(
+        raise NebiusCliCompatibilityError(
             "Could not parse the Nebius CLI version. Reinstall the tested version: "
             f"`{_nebius_cli_install_remedy(expected)}`"
         )
+    return actual, expected
 
+
+def _warn_if_nebius_version_mismatch(nebius_path: str) -> None:
+    global _NEBIUS_VERSION_CHECKED
+
+    if _NEBIUS_VERSION_CHECKED:
+        return
+
+    actual, expected = _checked_nebius_cli_version(nebius_path)
     tested = set(_TESTED_NEBIUS_CLI_VERSIONS)
     tested.add(expected)
     if actual not in tested:
         supported = ", ".join(sorted(tested))
-        raise NebiusError(
+        raise NebiusCliCompatibilityError(
             f"Unsupported Nebius CLI {actual}; NPA has tested {supported}. "
             f"Install {expected}: `{_nebius_cli_install_remedy(expected)}`"
         )
@@ -249,8 +272,15 @@ def nebius_cli_env(base: "Mapping[str, str] | None" = None) -> dict[str, str]:
 def _run(args: list[str], *, check: bool = True) -> str:
     """Run a nebius CLI command, return stdout."""
     nebius = _require_nebius()
+    from npa.clients.nebius_auth import nebius_profile
+
+    profile = nebius_profile()
+    explicit_profile = any(
+        arg == "--profile" or arg.startswith("--profile=") for arg in args
+    )
+    profile_args = ["--profile", profile] if profile and not explicit_profile else []
     result = subprocess.run(
-        [nebius] + args,
+        [nebius, *profile_args, *args],
         capture_output=True,
         text=True,
         env=nebius_cli_env(),
@@ -433,13 +463,21 @@ def _metadata_iam_token(timeout_s: float = 2.0) -> str:
 
 
 def get_iam_token() -> str:
-    """Resolve an IAM token from CLI profile, env/file overrides, or VM metadata."""
-    cli_error: str = ""
+    """Resolve an IAM token from CLI profile, env/file overrides, or VM metadata.
+
+    Args:
+        None.
+    Returns:
+        The resolved IAM token.
+    Raises:
+        NebiusError: No source resolves a token; retains CLI compatibility subtype.
+    """
+    cli_error: NebiusError | None = None
     try:
         token = _run(["iam", "get-access-token"])
     except NebiusError as exc:
         token = ""
-        cli_error = str(exc)
+        cli_error = exc
     if token:
         return token
 
@@ -456,6 +494,8 @@ def get_iam_token() -> str:
     if metadata_token:
         return metadata_token
 
+    if isinstance(cli_error, NebiusCliCompatibilityError):
+        raise cli_error
     detail = f" Last CLI error: {cli_error}" if cli_error else ""
     raise NebiusError(
         "Unable to resolve IAM token from Nebius CLI profile, environment, token files, "
@@ -489,30 +529,78 @@ def current_tenant_id() -> str:
     return _config_get("tenant-id")
 
 
-def set_profile_project(project_id: str, tenant_id: str = "") -> bool:
-    """Point the active Nebius CLI profile at *project_id* / *tenant_id*.
+def _write_profile_value(key: str, value: str) -> None:
+    command = ["config", "set", key, value] if value else ["config", "unset", key]
+    _run(command)
 
-    ``npa`` shells out to the Nebius CLI with the operator's active profile, so a
-    profile whose ``parent-id``/``tenant-id`` are empty (or point somewhere else)
-    silently disables project discovery and makes later commands target the wrong
-    place. Writing the selected ids back onto the profile keeps the two in sync.
 
-    Best-effort: returns ``False`` (never raises) when the CLI is missing or a
-    ``nebius config set`` call fails.
+def _read_profile_values(keys: tuple[str, ...]) -> dict[str, str]:
+    return {key: _run(["config", "get", key]) for key in keys}
+
+
+def _profile_values_match(expected: Mapping[str, str]) -> bool:
+    try:
+        return _read_profile_values(tuple(expected)) == expected
+    except Exception:
+        return False
+
+
+def _try_write_profile_value(key: str, value: str) -> bool:
+    try:
+        _write_profile_value(key, value)
+    except Exception:
+        return False
+    return True
+
+
+def _restore_profile_values(previous: Mapping[str, str]) -> bool:
+    for key, value in previous.items():
+        _try_write_profile_value(key, value)
+    return _profile_values_match(previous)
+
+
+def _rollback_profile_values(previous: Mapping[str, str]) -> ProfileMutationResult:
+    return (
+        ProfileMutationResult.RESTORED
+        if _restore_profile_values(previous)
+        else ProfileMutationResult.PARTIAL
+    )
+
+
+def set_profile_project(project_id: str, tenant_id: str = "") -> ProfileMutationResult:
+    """Rebind the active CLI profile with verified best-effort rollback.
+
+    Separate CLI writes are not atomic across processes. Recovery restores the
+    observed prior values when possible, including unset values, and verifies
+    them by readback. Concurrent profile writers can race mutation or rollback.
+
+    Args:
+        project_id: Project to set as the active profile's parent.
+        tenant_id: Optional tenant to set on the active profile.
+    Returns:
+        A typed result; compare explicitly with ProfileMutationResult.UPDATED.
+    Raises:
+        None. CLI and verification failures are represented by the result.
     """
     project = str(project_id or "").strip()
     tenant = str(tenant_id or "").strip()
     if not project:
-        return False
-    updates = [("parent-id", project)]
+        return ProfileMutationResult.UNCHANGED
+    updates = {"parent-id": project}
     if tenant:
-        updates.append(("tenant-id", tenant))
+        updates["tenant-id"] = tenant
     try:
-        for key, value in updates:
-            _run(["config", "set", key, value])
+        previous = _read_profile_values(tuple(updates))
     except Exception:
-        return False
-    return True
+        return ProfileMutationResult.UNCHANGED
+    for key, value in updates.items():
+        if not _try_write_profile_value(key, value):
+            if _profile_values_match(previous):
+                return ProfileMutationResult.UNCHANGED
+            return _rollback_profile_values(previous)
+    if _profile_values_match(updates):
+        return ProfileMutationResult.UPDATED
+    return _rollback_profile_values(previous)
 
 
 # ── Tenant / project discovery ───────────────────────────────────────────
@@ -784,49 +872,6 @@ def delete_project(project_id: str, *, profile: str | None = None) -> None:
         raise
 
 
-def get_registry_identity(
-    registry_id: str, *, profile: str | None = None
-) -> RegistryIdentity | None:
-    """Strictly get one registry by immutable ID; exact NotFound is absence."""
-
-    exact_id = str(registry_id or "").strip()
-    if not exact_id:
-        raise NebiusError("exact registry ID is required")
-    profile_args, resolved_profile = _iam_profile_args(profile)
-    try:
-        payload = _run_json([*profile_args, "registry", "get", "--id", exact_id])
-    except NebiusError as exc:
-        if _is_not_found(str(exc)):
-            return None
-        raise
-    metadata = payload.get("metadata") if isinstance(payload, dict) else None
-    if not isinstance(metadata, dict):
-        raise NebiusError("Nebius returned schema-invalid registry identity")
-    returned_id = str(metadata.get("id") or "").strip()
-    project_id = str(
-        metadata.get("parent_id") or metadata.get("parentId") or ""
-    ).strip()
-    name = str(metadata.get("name") or "").strip()
-    if returned_id != exact_id or not project_id or not name:
-        raise NebiusError("Nebius returned incomplete or mismatched registry identity")
-    return RegistryIdentity(exact_id, name, project_id, resolved_profile)
-
-
-def delete_registry(registry_id: str, *, profile: str | None = None) -> None:
-    """Delete one exact container registry through the supported provider adapter."""
-
-    exact_id = str(registry_id or "").strip()
-    if not exact_id:
-        raise NebiusError("exact registry ID is required")
-    profile_args, _resolved_profile = _iam_profile_args(profile)
-    try:
-        _run([*profile_args, "registry", "delete", "--id", exact_id])
-    except NebiusError as exc:
-        if _is_not_found(str(exc)):
-            return
-        raise
-
-
 def get_project_default_network_identity(
     project_id: str, *, profile: str | None = None
 ) -> ProjectDefaultNetworkIdentity | None:
@@ -948,117 +993,45 @@ def delete_network(network_id: str, *, profile: str | None = None) -> None:
             raise
 
 
-def list_registry_image_ids(
-    registry_id: str, *, profile: str | None = None
-) -> tuple[str, ...]:
-    """List immutable image IDs under one exact registry, failing on bad schema."""
-
-    exact_id = str(registry_id or "").strip()
-    if not exact_id:
-        raise NebiusError("exact registry ID is required")
-    profile_args, _resolved_profile = _iam_profile_args(profile)
-    payload = _run_json(
-        [
-            *profile_args,
-            "registry",
-            "image",
-            "list",
-            "--parent-id",
-            exact_id,
-            "--all",
-        ]
-    )
-    if payload == {} or payload == {"items": None}:
-        items: Any = []
-    else:
-        items = payload.get("items") if isinstance(payload, dict) else None
-    if not isinstance(items, list):
-        raise NebiusError("Nebius returned schema-invalid registry image inventory")
-    image_ids: list[tuple[bool, str]] = []
-    for item in items:
-        # Registry image list rows are a flat Artifact API projection. They do
-        # not repeat parent_id; the exact --parent-id selector is the parent
-        # boundary, while every returned row must still carry an immutable ID.
-        image_id = str((item.get("id") or "") if isinstance(item, dict) else "").strip()
-        if not image_id:
-            raise NebiusError(
-                "Nebius returned a registry image without immutable identity"
-            )
-        image_ids.append((bool(item.get("tags")), image_id))
-    # Tagged manifests are repository roots and therefore depend on their
-    # untagged platform/config manifests. Delete roots first.
-    return tuple(
-        image_id
-        for tagged, image_id in sorted(image_ids, key=lambda row: (not row[0], row[1]))
-    )
-
-
-def delete_registry_image(image_id: str, *, profile: str | None = None) -> None:
-    """Delete one registry image by exact immutable ID."""
-
-    exact_id = str(image_id or "").strip()
-    if not exact_id:
-        raise NebiusError("exact registry image ID is required")
-    profile_args, _resolved_profile = _iam_profile_args(profile)
-    try:
-        _run([*profile_args, "registry", "image", "delete", "--id", exact_id])
-    except NebiusError as exc:
-        if _is_not_found(str(exc)):
-            return
-        raise
-
-
-def delete_all_registry_images(
-    registry_id: str, *, profile: str | None = None
-) -> tuple[str, ...]:
-    """Delete the exact registry's artifact DAG and verify it becomes empty."""
-
-    removed: list[str] = []
-    while True:
-        remaining = list_registry_image_ids(registry_id, profile=profile)
-        if not remaining:
-            return tuple(removed)
-        progress = False
-        dependency_errors: list[str] = []
-        for image_id in remaining:
-            try:
-                delete_registry_image(image_id, profile=profile)
-            except NebiusError as exc:
-                detail = str(exc).lower()
-                if "resources that depends on the artifact" in detail:
-                    dependency_errors.append(image_id)
-                    continue
-                raise
-            removed.append(image_id)
-            progress = True
-        if not progress:
-            raise NebiusError(
-                "registry artifact dependency cleanup made no progress for exact IDs: "
-                + ", ".join(dependency_errors)
-            )
-
-
-def list_quota_allowances(tenant_id: str) -> dict[str, Any]:
-    """Return one provider quota snapshot for *tenant_id*.
+def list_quota_allowances(
+    parent_id: str, *, profile: str | None = None
+) -> dict[str, Any]:
+    """Return one provider quota snapshot for a tenant or project container.
 
     Unlike the historical per-quota best-effort helpers, this API preserves
     provider/RBAC/malformed failures.  Mutation preflights must fail closed, and
     cannot distinguish "plenty of quota" from "the query was denied" if errors
     are normalized to ``(None, None)`` here.
+
+    The query is profile-scoped like every other read here. Without that, a
+    tenant only reachable through a non-default profile answers
+    ``PermissionDenied``, and because this API fails closed that denial blocks a
+    deploy the operator is fully entitled to make.
     """
 
-    tenant = str(tenant_id or "").strip()
-    if not tenant:
-        raise NebiusError("tenant_id is required to list quota allowances")
+    parent = str(parent_id or "").strip()
+    if not parent:
+        raise NebiusError("parent_id is required to list quota allowances")
+    profile_args, _resolved = _iam_profile_args(profile)
     payload = _run_json(
-        ["quotas", "quota-allowance", "list", "--parent-id", tenant, "--all"]
+        [
+            *profile_args,
+            "quotas",
+            "quota-allowance",
+            "list",
+            "--parent-id",
+            parent,
+            "--all",
+        ]
     )
     if not isinstance(payload.get("items"), list):
         raise NebiusError("quota allowance response is malformed: items is not a list")
     return payload
 
 
-def get_public_ipv4_quota(tenant_id: str, region: str) -> tuple[int | None, int | None]:
+def get_public_ipv4_quota(
+    tenant_id: str, region: str, *, profile: str | None = None
+) -> tuple[int | None, int | None]:
     """Return ``(usage, limit)`` for the tenant public IPv4 quota in *region*.
 
     Nebius meters public IPv4 addresses per (tenant, region) via the
@@ -1071,9 +1044,18 @@ def get_public_ipv4_quota(tenant_id: str, region: str) -> tuple[int | None, int 
     reg = str(region or "").strip()
     if not tenant or not reg:
         return (None, None)
+    profile_args, _resolved = _iam_profile_args(profile)
     try:
         data = _run_json(
-            ["quotas", "quota-allowance", "list", "--parent-id", tenant, "--all"]
+            [
+                *profile_args,
+                "quotas",
+                "quota-allowance",
+                "list",
+                "--parent-id",
+                tenant,
+                "--all",
+            ]
         )
     except Exception:
         return (None, None)
@@ -1097,7 +1079,7 @@ def get_public_ipv4_quota(tenant_id: str, region: str) -> tuple[int | None, int 
 
 
 def get_compute_instance_quota(
-    tenant_id: str, region: str
+    tenant_id: str, region: str, *, profile: str | None = None
 ) -> tuple[int | None, int | None]:
     """Return ``(usage, limit)`` for the tenant compute-instance quota in *region*.
 
@@ -1113,9 +1095,18 @@ def get_compute_instance_quota(
     reg = str(region or "").strip()
     if not tenant or not reg:
         return (None, None)
+    profile_args, _resolved = _iam_profile_args(profile)
     try:
         data = _run_json(
-            ["quotas", "quota-allowance", "list", "--parent-id", tenant, "--all"]
+            [
+                *profile_args,
+                "quotas",
+                "quota-allowance",
+                "list",
+                "--parent-id",
+                tenant,
+                "--all",
+            ]
         )
     except Exception:
         return (None, None)
@@ -1142,44 +1133,15 @@ def get_compute_instance_quota(
     return region_less if region_less is not None else (None, None)
 
 
-def discover_container_registry(
-    project_id: str, *, preferred_region: str = "eu-north1"
-) -> str:
-    """Best-effort container registry URL for *project_id*, or "".
+def discover_container_registry(project_id: str, *, preferred_region: str = "") -> str:
+    """Compatibility seam for callers that previously discovered a registry.
 
-    Returns ``<registry_fqdn>/<registry-id>`` (matching the
-    ``DEFAULT_CONTAINER_REGISTRY`` format). A project can hold registries in
-    several regions, and the API list order is not stable, so prefer a registry
-    in *preferred_region* (``eu-north1``, the main registry region) and fall back
-    to the first registry otherwise. Any failure resolves to "" so callers fall
-    back to the default registry.
+    Official execution defaults to public GHCR and configuration no longer
+    discovers or persists a provider registry. Customer BYOF registries must be
+    selected explicitly.
     """
-    if not project_id:
-        return ""
-    try:
-        data = _run_json(["registry", "list", "--parent-id", project_id])
-    except Exception:
-        return ""
 
-    def _url(item: dict[str, Any]) -> str:
-        fqdn = item.get("status", {}).get("registry_fqdn", "")
-        registry_id = item.get("metadata", {}).get("id", "")
-        if fqdn and registry_id:
-            return f"{fqdn}/{registry_id.removeprefix('registry-')}"
-        return ""
-
-    items = data.get("items", [])
-    if preferred_region:
-        for item in items:
-            fqdn = item.get("status", {}).get("registry_fqdn", "")
-            if f".{preferred_region}." in fqdn:
-                url = _url(item)
-                if url:
-                    return url
-    for item in items:
-        url = _url(item)
-        if url:
-            return url
+    del project_id, preferred_region
     return ""
 
 
@@ -1207,6 +1169,7 @@ def _is_permission_denied(message: str) -> bool:
     return (
         "permissiondenied" in lowered
         or "permission denied" in lowered
+        or "unauthorizedsingle" in lowered
         or "no permission" in lowered
         # Nebius object storage reports authorization failures as AccessDenied.
         or "accessdenied" in lowered
@@ -1650,7 +1613,7 @@ def ensure_storage_capability_binding(
                 "group",
                 "get-by-name",
                 "--parent-id",
-                tenant_id,
+                project_id,
                 "--name",
                 group_name,
             ]
@@ -1667,7 +1630,7 @@ def ensure_storage_capability_binding(
                 "group",
                 "create",
                 "--parent-id",
-                tenant_id,
+                project_id,
                 "--name",
                 group_name,
             ]
@@ -2170,6 +2133,143 @@ def ensure_access_key(
 
 DEFAULT_BUCKET_BASENAME = "npa-bucket"
 DEFAULT_BUCKET_STORAGE_CLASS = "standard"
+RERUN_BROWSER_CORS_RULE_ID = "npa-rerun-app"
+RERUN_BROWSER_ORIGIN = "https://app.rerun.io"
+
+
+@dataclass(frozen=True)
+class BucketCorsPlan:
+    """A lossless plan for reconciling the Rerun browser CORS rule."""
+
+    bucket_id: str
+    resource_version: str
+    current_rules: tuple[dict[str, Any], ...]
+    desired_rules: tuple[dict[str, Any], ...]
+    changed: bool
+
+    @property
+    def preserved_rule_count(self) -> int:
+        return sum(
+            1
+            for rule in self.current_rules
+            if str(rule.get("id") or "") != RERUN_BROWSER_CORS_RULE_ID
+        )
+
+
+def rerun_browser_cors_rule() -> dict[str, Any]:
+    """Return the least-privilege CORS rule needed by the Rerun web viewer."""
+
+    return {
+        "id": RERUN_BROWSER_CORS_RULE_ID,
+        "allowed_origins": [RERUN_BROWSER_ORIGIN],
+        "allowed_methods": ["GET"],
+        "allowed_headers": ["Range"],
+        "expose_headers": ["Accept-Ranges", "Content-Length", "Content-Range"],
+        "max_age_seconds": 3600,
+    }
+
+
+def _bucket_cors_rules(item: dict[str, Any]) -> list[dict[str, Any]]:
+    spec = item.get("spec")
+    if not isinstance(spec, dict):
+        raise NebiusError("exact bucket lookup returned no resource spec")
+    cors = spec.get("cors")
+    if cors in (None, {}):
+        return []
+    if not isinstance(cors, dict):
+        raise NebiusError("exact bucket lookup returned schema-invalid CORS data")
+    rules = cors.get("rules", [])
+    if not isinstance(rules, list) or not all(isinstance(rule, dict) for rule in rules):
+        raise NebiusError("exact bucket lookup returned schema-invalid CORS rules")
+    return [dict(rule) for rule in rules]
+
+
+def _rule_values(rule: Mapping[str, Any], field: str) -> set[str]:
+    values = rule.get(field, [])
+    if not isinstance(values, list):
+        return set()
+    return {str(value).strip().lower() for value in values if str(value).strip()}
+
+
+def bucket_cors_supports_rerun(rule: Mapping[str, Any]) -> bool:
+    """Return whether one provider rule satisfies the browser fetch contract."""
+
+    origins = _rule_values(rule, "allowed_origins")
+    methods = _rule_values(rule, "allowed_methods")
+    headers = _rule_values(rule, "allowed_headers")
+    exposed = _rule_values(rule, "expose_headers")
+    required_exposed = {"accept-ranges", "content-length", "content-range"}
+    return bool(
+        (RERUN_BROWSER_ORIGIN.lower() in origins or "*" in origins)
+        and "get" in methods
+        and ("range" in headers or "*" in headers)
+        and (required_exposed <= exposed or "*" in exposed)
+    )
+
+
+def plan_bucket_rerun_cors(project_id: str, bucket_name: str) -> BucketCorsPlan:
+    """Read and merge a Rerun rule without discarding unrelated bucket CORS."""
+
+    item = get_bucket_by_name(project_id, bucket_name)
+    if item is None:
+        raise NebiusError("the configured object-storage bucket does not exist")
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        raise NebiusError("exact bucket lookup returned no resource metadata")
+    bucket_id = str(metadata.get("id") or "").strip()
+    if not bucket_id:
+        raise NebiusError("exact bucket lookup returned no resource ID")
+    resource_version = str(metadata.get("resource_version") or "").strip()
+    current = _bucket_cors_rules(item)
+    if any(bucket_cors_supports_rerun(rule) for rule in current):
+        desired = list(current)
+    else:
+        desired = [
+            rule
+            for rule in current
+            if str(rule.get("id") or "") != RERUN_BROWSER_CORS_RULE_ID
+        ]
+        desired.append(rerun_browser_cors_rule())
+    return BucketCorsPlan(
+        bucket_id=bucket_id,
+        resource_version=resource_version,
+        current_rules=tuple(current),
+        desired_rules=tuple(desired),
+        changed=current != desired,
+    )
+
+
+def apply_bucket_rerun_cors(project_id: str, bucket_name: str) -> BucketCorsPlan:
+    """Reconcile the browser rule through bucket-admin control-plane credentials."""
+
+    plan = plan_bucket_rerun_cors(project_id, bucket_name)
+    if not plan.changed:
+        return plan
+    args = [
+        "storage",
+        "bucket",
+        "update",
+        "--id",
+        plan.bucket_id,
+        "--cors-rules",
+        json.dumps(list(plan.desired_rules), separators=(",", ":"), sort_keys=True),
+    ]
+    if plan.resource_version:
+        args.extend(["--resource-version", plan.resource_version])
+    _run_json(args)
+
+    verified = plan_bucket_rerun_cors(project_id, bucket_name)
+    if verified.changed:
+        raise NebiusError(
+            "bucket CORS update completed but read-back verification failed"
+        )
+    return BucketCorsPlan(
+        bucket_id=verified.bucket_id,
+        resource_version=verified.resource_version,
+        current_rules=plan.current_rules,
+        desired_rules=verified.desired_rules,
+        changed=True,
+    )
 
 
 def normalize_bucket_storage_class(value: str) -> str:
@@ -2196,13 +2296,10 @@ def bucket_name_for(tenant_id: str, project_id: str) -> str:
 
 
 def _list_project_buckets(project_id: str) -> list[dict[str, Any]]:
-    """Return every bucket in *project_id*.
+    """Return every bucket in *project_id* for explicit inventory commands.
 
-    Uses ``--all`` so existing buckets are never missed behind the CLI's default
-    pagination (matching the orphan-instance/tenant/project listers). Without it,
-    a project with many buckets returned only the first page, so ``bucket_exists``
-    reported ``False`` for a real bucket and ``npa configure`` wrongly prompted to
-    create a new one.
+    Exact-name configure checks use ``get_bucket_by_name`` and never enumerate
+    unrelated buckets in the project.
     """
     data = _run_json(
         [
@@ -2219,12 +2316,37 @@ def _list_project_buckets(project_id: str) -> list[dict[str, Any]]:
 
 
 def get_bucket_by_name(project_id: str, bucket_name: str) -> dict[str, Any] | None:
-    """Return the bucket list item for *bucket_name*, or ``None``."""
+    """Return the exact parent-scoped bucket, or ``None`` on verified NotFound."""
 
-    for item in _list_project_buckets(project_id):
-        if item.get("metadata", {}).get("name") == bucket_name:
-            return item
-    return None
+    exact_project = str(project_id or "").strip()
+    exact_name = str(bucket_name or "").strip()
+    if not exact_project or not exact_name:
+        return None
+    try:
+        item = _run_json(
+            [
+                "storage",
+                "bucket",
+                "get-by-name",
+                "--parent-id",
+                exact_project,
+                "--name",
+                exact_name,
+            ]
+        )
+    except NebiusError as exc:
+        if _is_exact_bucket_not_found(str(exc), exact_name):
+            return None
+        raise
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        raise NebiusError("exact bucket lookup returned no resource metadata")
+    if str(metadata.get("name") or "").strip() != exact_name:
+        raise NebiusError("exact bucket lookup returned an unexpected resource name")
+    returned_parent = str(metadata.get("parent_id") or "").strip()
+    if returned_parent and returned_parent != exact_project:
+        raise NebiusError("exact bucket lookup returned an unexpected parent")
+    return item
 
 
 def delete_bucket(bucket_id: str, *, ttl: str = "") -> None:
@@ -2246,10 +2368,37 @@ def delete_bucket(bucket_id: str, *, ttl: str = "") -> None:
 
 def bucket_exists(project_id: str, bucket_name: str) -> bool:
     """Return True when *bucket_name* already exists in the project."""
-    return any(
-        item.get("metadata", {}).get("name") == bucket_name
-        for item in _list_project_buckets(project_id)
-    )
+    return get_bucket_by_name(project_id, bucket_name) is not None
+
+
+def _is_exact_bucket_not_found(message: str, bucket_name: str) -> bool:
+    """Classify only a provider-confirmed absence of the requested bucket.
+
+    The command wrapper itself contains ``storage bucket`` for every failure, so
+    a broad ``"not found"`` substring check can misclassify a missing CLI
+    profile or parent project as bucket absence. Restrict the decision to the
+    provider detail line naming the exact bucket or explicitly saying that a
+    bucket does not exist.
+    """
+
+    exact_name = str(bucket_name or "").strip().lower()
+    for raw_line in str(message or "").splitlines():
+        detail = raw_line.strip().lower()
+        # The current CLI emits the bucket-specific provider detail before
+        # trailing request/trace diagnostics, so inspecting only the final line
+        # loses the authoritative NoSuchBucket result.
+        if "nosuchbucket" in detail:
+            return True
+        if not _is_not_found(detail):
+            continue
+        if exact_name and exact_name in detail:
+            return True
+        if re.search(
+            r"\bbucket\b\s+(?:does(?:n['’]?t| not)\s+exist|not found|is missing)\b",
+            detail,
+        ):
+            return True
+    return False
 
 
 def ensure_bucket(
@@ -2259,18 +2408,27 @@ def ensure_bucket(
     max_size_bytes: int = 0,
     default_storage_class: str = DEFAULT_BUCKET_STORAGE_CLASS,
     on_created: Callable[[str], None] | None = None,
+    allow_existing: bool = True,
 ) -> str:
     """Get or create an S3 bucket, return its name.
 
     *max_size_bytes* caps a newly created bucket (0 = unlimited). It is only
     applied when the bucket is created; an existing bucket is reused unchanged.
     *default_storage_class* is applied only when the bucket is created.
+    Set *allow_existing* false when a generated name must never be adopted if it
+    appears during either exact lookup race.
     """
     from npa.lifecycle_intent import forbid_destructive_provisioning
 
     forbid_destructive_provisioning("ensure_bucket")
     if bucket_exists(project_id, bucket_name):
-        return bucket_name
+        if allow_existing:
+            return bucket_name
+        raise NebiusError(
+            f"Object-storage bucket name '{bucket_name}' is already taken; "
+            "refusing to adopt an existing bucket selected by a generated-name "
+            "configure flow."
+        )
 
     storage_class = normalize_bucket_storage_class(default_storage_class)
     args = [
@@ -2299,7 +2457,13 @@ def ensure_bucket(
         if not _is_already_exists(str(exc)):
             raise
         if get_bucket_by_name(project_id, bucket_name) is not None:
-            return bucket_name
+            if allow_existing:
+                return bucket_name
+            raise NebiusError(
+                f"Object-storage bucket name '{bucket_name}' became already taken "
+                "during creation; refusing to adopt an existing bucket selected "
+                "by a generated-name configure flow."
+            ) from exc
         raise NebiusError(
             f"Object-storage bucket name '{bucket_name}' is already taken "
             "(bucket names are globally unique) and is not in project "
@@ -2329,6 +2493,7 @@ def bootstrap_environment(
     on_status: Callable[[str], None] | None = None,
     on_resource_created: Callable[[str, dict[str, str]], None] | None = None,
     allow_editors_fallback: bool = False,
+    allow_existing_bucket: bool = True,
 ) -> dict[str, str]:
     """Run the full environment bootstrap, return a dict of credentials.
 
@@ -2338,8 +2503,9 @@ def bootstrap_environment(
     to the deterministic ``bucket_name_for`` name. *bucket_max_size_bytes* caps
     a newly created bucket (0 = unlimited); it is ignored when the bucket
     already exists. *bucket_storage_class* applies only when the bucket is
-    created. *on_status* is an optional callback ``(message: str) -> None`` for
-    progress reporting.
+    created. Set *allow_existing_bucket* false for a generated configure name
+    that must fail closed across a concurrent create. *on_status* is an optional
+    callback ``(message: str) -> None`` for progress reporting.
     """
 
     from npa.lifecycle_intent import forbid_destructive_provisioning
@@ -2389,6 +2555,13 @@ def bootstrap_environment(
 
     bucket_name = bucket_name or bucket_name_for(tenant_id, project_id)
     saved_storage: dict[str, str] | None = None
+    created_bucket = False
+
+    def _record_created_bucket(name: str) -> None:
+        nonlocal created_bucket
+        created_bucket = True
+        if on_resource_created:
+            on_resource_created("bucket", {"name": name})
 
     _status("Setting up S3 bucket...")
     try:
@@ -2397,15 +2570,8 @@ def bootstrap_environment(
             bucket_name,
             max_size_bytes=bucket_max_size_bytes,
             default_storage_class=bucket_storage_class,
-            **(
-                {
-                    "on_created": lambda name: on_resource_created(
-                        "bucket", {"name": name}
-                    )
-                }
-                if on_resource_created
-                else {}
-            ),
+            on_created=_record_created_bucket,
+            allow_existing=allow_existing_bucket,
         )
     except NebiusError as exc:
         if not _is_permission_denied(str(exc)):
@@ -2434,7 +2600,18 @@ def bootstrap_environment(
 
     _status("Verifying least-privilege storage capability binding...")
     try:
-        binding = _existing_editors_binding(tenant_id, sa_id)
+        try:
+            binding = _existing_editors_binding(tenant_id, sa_id)
+        except NebiusError:
+            # A project-scoped administrator does not need tenant-wide group
+            # inventory. Failure to read the legacy compatibility binding is not
+            # evidence of capability, so continue to the exact-project binding
+            # and still fail closed unless that narrower path is verified.
+            binding = None
+            _status(
+                "Tenant-wide editors membership is not readable; verifying the "
+                "exact-project storage binding instead."
+            )
         if binding is None:
             binding = ensure_storage_capability_binding(
                 project_id=project_id,
@@ -2458,7 +2635,10 @@ def bootstrap_environment(
             f"{', '.join(STORAGE_REQUIRED_S3_ACTIONS)}. Supported binding choices: "
             f"bucket-scoped {STORAGE_RUNTIME_ROLE}; verified existing editors "
             "membership; or explicit editors compatibility fallback only when the "
-            "provider reports the narrow role unsupported.",
+            "provider reports the narrow role unsupported. The active profile needs "
+            "project-scoped admin permission to manage the storage IAM group and its "
+            "access permit; tenant-wide project listing or tenant-wide admin is not "
+            "required.",
             failed,
         ) from exc
 
@@ -2507,6 +2687,7 @@ def bootstrap_environment(
         "nebius_secret_key": aws_secret_key,
         "s3_bucket": bucket_name,
         "s3_endpoint": s3_endpoint,
+        "bucket_disposition": "created" if created_bucket else "reused",
         "nebius_project_id": project_id,
         "nebius_region": region,
         "iam_binding_state": binding.state.value,
@@ -2805,8 +2986,9 @@ def bootstrap_agent_environment(
 ) -> dict[str, str]:
     """Bootstrap a long-lived ``npa-agent`` service account for agent VMs.
 
-    When IAM provisioning is blocked, reuse saved or configured object-storage
-    credentials instead of failing bootstrap.
+    Configured object-storage credentials are reused independently of the
+    VM identity. That identity receives a verified grant on the exact project.
+    The legacy storage-bootstrap route retains its saved-credential fallback.
     """
     from npa.lifecycle_intent import forbid_destructive_provisioning
 
@@ -2820,41 +3002,87 @@ def bootstrap_agent_environment(
     if sa_id and on_status:
         on_status(f"Reusing existing service account {AGENT_SERVICE_ACCOUNT_NAME!r}.")
     created_this_attempt: list[tuple[str, dict[str, str]]] = []
+    from npa.cli.agent_iam import preflight_agent_iam_journal
+
+    preflight_agent_iam_journal()
+    if reuse_storage_credentials is not None:
+        from npa.clients.agent_iam_binding import verify_agent_project_scope
+
+        verify_agent_project_scope(project_id, tenant_id)
 
     def _record_agent_resource(kind: str, metadata: dict[str, str]) -> None:
         from npa.cli.agent_iam import record_agent_iam_resource
 
         created_this_attempt.append((kind, dict(metadata)))
-        record_agent_iam_resource(project_id, kind, metadata)
-        if external_created:
-            external_created(kind, metadata)
+        try:
+            record_agent_iam_resource(project_id, kind, metadata)
+        finally:
+            # The operation journal also receives the immutable provider ID if
+            # the credential store fails after its successful preflight.
+            if external_created:
+                external_created(kind, metadata)
 
     def _rollback_agent_resources() -> None:
         """Roll back this invocation's exact resources and preserve failures."""
+        from npa.cli.agent_iam import (
+            _verify_access_key_absent,
+            mark_agent_iam_status,
+            remove_agent_iam_resource,
+        )
+        from npa.clients.agent_iam_binding import (
+            BINDING_KINDS,
+            cleanup_agent_project_binding,
+            remove_created_agent_account,
+        )
 
         rollback_failed = False
         journal_resources_remain = False
-        from npa.cli.agent_iam import mark_agent_iam_status, remove_agent_iam_resource
-
+        bindings = {kind: {} for kind in BINDING_KINDS}
+        for kind, metadata in created_this_attempt:
+            if kind in bindings:
+                bindings[kind][metadata["id"]] = metadata
+        if any(bindings.values()):
+            try:
+                cleanup_agent_project_binding(
+                    project_id,
+                    bindings,
+                    on_removed=lambda kind, identity: remove_agent_iam_resource(
+                        project_id, kind, identity
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - retain exact creation journal on rollback failure
+                rollback_failed = True
         for kind, metadata in reversed(created_this_attempt):
+            if kind in BINDING_KINDS:
+                continue
+            # Retain the newly created identity if a permission object could
+            # not be reconciled. A later teardown can verify both together.
+            if kind == "service_account" and rollback_failed:
+                continue
             try:
                 if kind == "access_key":
-                    delete_access_key(metadata.get("id", ""))
+                    try:
+                        delete_access_key(metadata.get("id", ""))
+                    except NebiusError as key_error:
+                        if not _is_not_found(str(key_error)) or _is_permission_denied(
+                            str(key_error)
+                        ):
+                            raise
+                    _verify_access_key_absent(metadata.get("id", ""))
                 elif kind == "service_account":
-                    delete_service_account(metadata.get("id", ""))
-            except NebiusError as rollback_exc:
-                if not _is_not_found(str(rollback_exc)):
-                    rollback_failed = True
-                    continue
+                    remove_created_agent_account(
+                        project_id, tenant_id, metadata.get("id", "")
+                    )
+            except NebiusError:
+                rollback_failed = True
+                continue
             try:
                 journal_resources_remain = remove_agent_iam_resource(
                     project_id, kind, metadata.get("id", "")
                 )
             except Exception:  # noqa: BLE001 - provider rollback succeeded; retain journal
                 rollback_failed = True
-        if not created_this_attempt:
-            return
-        if rollback_failed or journal_resources_remain:
+        if created_this_attempt and (rollback_failed or journal_resources_remain):
             mark_agent_iam_status(project_id, "partial")
 
     try:
@@ -2882,15 +3110,16 @@ def bootstrap_agent_environment(
                 on_created=_record_created_agent_account,
                 allow_saved_fallback=False,
             )
-            try:
-                ensure_editors_membership(tenant_id, sa_id)
-            except NebiusError as exc:
-                raise NebiusError(
-                    "Required agent IAM grant failed before deploy: service account "
-                    f"{sa_id} must be a member of tenant {tenant_id}'s 'editors' "
-                    "group, or the provider must prove an equivalent role."
-                ) from exc
+            from npa.clients.agent_iam_binding import ensure_agent_project_binding
+
+            binding = ensure_agent_project_binding(
+                project_id=project_id,
+                tenant_id=tenant_id,
+                service_account_id=sa_id,
+                on_resource_created=_record_agent_resource,
+            )
             result = dict(reuse_storage_credentials)
+            result.update(binding)
             result.update(
                 {
                     "iam_token": get_iam_token(),
@@ -2916,20 +3145,20 @@ def bootstrap_agent_environment(
 
         mark_agent_iam_status(project_id, "complete")
         return result
-    except NebiusError as exc:
-        if not _is_permission_denied(str(exc)):
+    except Exception as exc:  # noqa: BLE001 - every provider creation needs rollback on local failure
+        if (
+            reuse_storage_credentials is not None
+            or not isinstance(exc, NebiusError)
+            or not _is_permission_denied(str(exc))
+        ):
             _rollback_agent_resources()
             raise
-        fallback = (
-            dict(reuse_storage_credentials)
-            if reuse_storage_credentials is not None
-            else _saved_storage_credentials(
-                project_id=project_id,
-                tenant_id=tenant_id,
-                region=region,
-                bucket_name=bucket_name,
-                service_account_id=sa_id or resolve_service_account_id(project_id),
-            )
+        fallback = _saved_storage_credentials(
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+            bucket_name=bucket_name,
+            service_account_id=sa_id or resolve_service_account_id(project_id),
         )
         if fallback is None:
             _rollback_agent_resources()

@@ -7,6 +7,7 @@ All video paths converge on the same canonical run prefix and provenance schema.
 
 from __future__ import annotations
 
+import bisect
 from contextlib import contextmanager
 from dataclasses import dataclass
 import fcntl
@@ -16,25 +17,56 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
+from string import Formatter
 import subprocess
 import tempfile
 import time
 from typing import Any, Callable, Iterator
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 class PaidfInputError(RuntimeError):
     """An input cannot be selected, verified, normalized, or staged safely."""
 
 
+class _InputListingError(PaidfInputError):
+    """A pagination contract failed with a fixed, non-sensitive diagnosis."""
+
+
 PROVENANCE_SCHEMA = "npa.paidf.input-provenance.v1"
 CONDITIONING_FRAMES = 8
 CONDITIONING_FRAME_COUNT = 93
 CONDITIONING_FPS = 16
+SOURCE_FIDELITY_CONDITIONING_POLICY_V2 = "source-fidelity-v2"
+SOURCE_FIDELITY_CONDITIONING_POLICY = "source-fidelity-v3"
 SUPPORTED_CODECS = frozenset({"h264"})
+MAX_LEROBOT_INFO_BYTES = 1_000_000
+MAX_LEROBOT_EPISODE_METADATA_BYTES = 64_000_000
+MAX_LEROBOT_VIDEO_PATH_BYTES = 1_024
+
+
+def _paidf_input_prefix(run_id: str, *, artifact_prefix: str = "") -> str:
+    """Resolve one safe object-key prefix while preserving the legacy default."""
+
+    if not artifact_prefix:
+        return f"physical-ai-data-factory/{run_id}"
+    prefix = str(artifact_prefix).strip().strip("/")
+    parts = prefix.split("/")
+    if (
+        not prefix
+        or "://" in prefix
+        or "\\" in prefix
+        or any(part in {"", ".", ".."} for part in parts)
+        or any(ord(character) < 32 for character in prefix)
+    ):
+        raise PaidfInputError(
+            "PAIDF input artifact prefix must be a safe relative object-key prefix"
+        )
+    return prefix
 
 
 @dataclass(frozen=True)
@@ -48,6 +80,7 @@ class PreparedPaidfInput:
 
     def config_overrides(self) -> dict[str, str]:
         source = self.provenance
+        customer_dataset = source.get("source_kind") == "lerobot_dataset"
         return {
             "seed_fixture": "true"
             if self.selection == "synthetic_fixture"
@@ -61,9 +94,12 @@ class PreparedPaidfInput:
             "input_source_kind": str(source.get("source_kind") or ""),
             "input_origin": str(source.get("input_origin") or ""),
             "input_origin_label": str(source.get("input_origin_label") or ""),
-            "input_sha256": str(source.get("sha256") or ""),
+            # LeRobot content hashes are used only for in-memory immutable-byte
+            # checks; they are not expanded into scheduler commands or persisted.
+            "input_sha256": "" if customer_dataset else str(source.get("sha256") or ""),
             "input_license": str(source.get("asset_license") or ""),
             "input_staged_uri": str(source.get("staged_canonical_s3_uri") or ""),
+            "input_source_format": str(source.get("source_format") or "video"),
             "input_authoritative_url": str(
                 source.get("authoritative_upstream_url")
                 or source.get("source_ref")
@@ -92,17 +128,24 @@ def load_starter_contract() -> dict[str, Any]:
 
 
 def select_paidf_input(
-    *, input_video: Path | None = None, input_uri: str = "", seed_fixture: bool = False
+    *,
+    input_video: Path | None = None,
+    input_uri: str = "",
+    lerobot_uri: str = "",
+    seed_fixture: bool = False,
 ) -> str:
     """Resolve mutually exclusive CLI selectors without performing I/O."""
 
     selected = (
-        int(input_video is not None) + int(bool(input_uri.strip())) + int(seed_fixture)
+        int(input_video is not None)
+        + int(bool(input_uri.strip()))
+        + int(bool(lerobot_uri.strip()))
+        + int(seed_fixture)
     )
     if selected > 1:
         raise PaidfInputError(
-            "choose exactly one PAIDF input: --input-video, --input-uri, or "
-            "--seed-fixture; the options conflict"
+            "choose exactly one PAIDF input: --input-video, --input-uri, "
+            "--lerobot-uri, or --seed-fixture; the options conflict"
         )
     if seed_fixture:
         return "synthetic_fixture"
@@ -123,6 +166,14 @@ def select_paidf_input(
         if not parsed.path.lower().endswith(".mp4"):
             raise PaidfInputError("--input-uri must name one MP4 object ending in .mp4")
         return "object_uri"
+    if lerobot_uri.strip():
+        parsed = urlparse(lerobot_uri.strip())
+        if parsed.scheme != "s3" or not parsed.netloc:
+            raise PaidfInputError(
+                "--lerobot-uri must name an S3 LeRobotDataset prefix, for example "
+                "s3://bucket/datasets/robot-run/"
+            )
+        return "lerobot_dataset"
     return "starter"
 
 
@@ -130,17 +181,36 @@ def plan_paidf_input(
     *,
     run_id: str,
     bucket: str,
+    artifact_prefix: str = "",
     input_video: Path | None = None,
     input_uri: str = "",
+    lerobot_uri: str = "",
+    lerobot_camera: str = "",
+    lerobot_episode: int = 0,
+    require_explicit_lerobot_selection: bool = False,
+    lerobot_episode_was_explicit: bool = False,
     seed_fixture: bool = False,
+    conditioning_policy: str = "",
 ) -> PreparedPaidfInput:
     """Describe selection for ``--plan-only`` without filesystem, S3, or network I/O."""
 
+    normalized_conditioning_policy = _conditioning_policy(conditioning_policy)
     selection = select_paidf_input(
-        input_video=input_video, input_uri=input_uri, seed_fixture=seed_fixture
+        input_video=input_video,
+        input_uri=input_uri,
+        lerobot_uri=lerobot_uri,
+        seed_fixture=seed_fixture,
     )
+    validate_lerobot_selector(
+        selection=selection,
+        camera=lerobot_camera,
+        episode=lerobot_episode,
+        require_explicit_selection=require_explicit_lerobot_selection,
+        episode_was_explicit=lerobot_episode_was_explicit,
+    )
+    input_prefix = _paidf_input_prefix(run_id, artifact_prefix=artifact_prefix)
     base_uri = (
-        f"s3://{bucket}/physical-ai-data-factory/{run_id}/input/"
+        f"s3://{bucket}/{input_prefix}/input/"
         if bucket and bucket != "example-bucket"
         else ""
     )
@@ -159,20 +229,36 @@ def plan_paidf_input(
             },
             derivation={
                 "kind": "normalized_conditioning_clip",
+                "policy": normalized_conditioning_policy,
                 "staged_uri": f"{base_uri}conditioning.mp4" if base_uri else "",
             },
         )
     else:
-        source_ref = str(input_video) if input_video is not None else input_uri.strip()
+        source_ref = (
+            lerobot_uri.strip()
+            if selection == "lerobot_dataset"
+            else str(input_video)
+            if input_video is not None
+            else input_uri.strip()
+        )
+        source = (
+            _lerobot_source_metadata(
+                camera=lerobot_camera,
+                explicit_selection=require_explicit_lerobot_selection,
+            )
+            if selection == "lerobot_dataset"
+            else _user_source_metadata(
+                source_ref=source_ref,
+                transport="local_file" if input_video is not None else "s3_object",
+            )
+        )
         provenance = _build_provenance(
             run_id=run_id,
             base_uri=base_uri,
-            source=_user_source_metadata(
-                source_ref=source_ref,
-                transport="local_file" if input_video is not None else "s3_object",
-            ),
+            source=source,
             derivation={
                 "kind": "normalized_conditioning_clip",
+                "policy": normalized_conditioning_policy,
                 "staged_uri": f"{base_uri}conditioning.mp4" if base_uri else "",
             },
         )
@@ -183,8 +269,14 @@ def prepare_paidf_input(
     *,
     run_id: str,
     bucket: str,
+    artifact_prefix: str = "",
     input_video: Path | None = None,
     input_uri: str = "",
+    lerobot_uri: str = "",
+    lerobot_camera: str = "",
+    lerobot_episode: int = 0,
+    require_explicit_lerobot_selection: bool = False,
+    lerobot_episode_was_explicit: bool = False,
     seed_fixture: bool = False,
     endpoint_url: str = "",
     aws_access_key_id: str = "",
@@ -193,6 +285,7 @@ def prepare_paidf_input(
     offline: bool | None = None,
     storage_client: Any | None = None,
     reporter: Callable[[str], None] | None = None,
+    conditioning_policy: str = "",
 ) -> PreparedPaidfInput:
     """Verify, normalize, and stage the selected input under the canonical prefix.
 
@@ -202,8 +295,19 @@ def prepare_paidf_input(
     source once a run is committed.
     """
 
+    normalized_conditioning_policy = _conditioning_policy(conditioning_policy)
     selection = select_paidf_input(
-        input_video=input_video, input_uri=input_uri, seed_fixture=seed_fixture
+        input_video=input_video,
+        input_uri=input_uri,
+        lerobot_uri=lerobot_uri,
+        seed_fixture=seed_fixture,
+    )
+    validate_lerobot_selector(
+        selection=selection,
+        camera=lerobot_camera,
+        episode=lerobot_episode,
+        require_explicit_selection=require_explicit_lerobot_selection,
+        episode_was_explicit=lerobot_episode_was_explicit,
     )
     clean_run_id = str(run_id or "").strip()
     clean_bucket = str(bucket or "").strip()
@@ -214,7 +318,8 @@ def prepare_paidf_input(
             "PAIDF input preparation requires the real object-storage bucket; "
             "pass --var bucket=<bucket>"
         )
-    base_uri = f"s3://{clean_bucket}/physical-ai-data-factory/{clean_run_id}/input/"
+    input_prefix = _paidf_input_prefix(clean_run_id, artifact_prefix=artifact_prefix)
+    base_uri = f"s3://{clean_bucket}/{input_prefix}/input/"
 
     if storage_client is None:
         from npa.clients.storage import StorageClient
@@ -273,16 +378,26 @@ def prepare_paidf_input(
 
         if existing and selection == "starter":
             # An implicit default must never replace a committed user source.
-            report(
-                "PAIDF input: reusing committed "
-                f"{existing.get('input_origin_label', 'run input')} at {base_uri}"
-            )
+            if existing.get("source_kind") == "lerobot_dataset":
+                report(
+                    "PAIDF input: reusing committed operator-supplied "
+                    "LeRobotDataset selection (source identifiers redacted)"
+                )
+            else:
+                report(
+                    "PAIDF input: reusing committed "
+                    f"{existing.get('input_origin_label', 'run input')} at {base_uri}"
+                )
             requested_source = _download_staged_source(storage_client, base_uri, tmp)
-            _verify_digest(
-                requested_source,
-                str(existing.get("sha256") or ""),
-                context="committed staged source",
-            )
+            # Confidential LeRobot provenance intentionally omits content hashes.
+            # The immutable stage check below compares the bytes in memory without
+            # serializing their digest into reports or object metadata.
+            if existing.get("source_kind") != "lerobot_dataset":
+                _verify_digest(
+                    requested_source,
+                    str(existing.get("sha256") or ""),
+                    context="committed staged source",
+                )
             requested_meta = dict(existing)
             selection = str(existing.get("source_kind") or "user_supplied")
         elif selection == "local_video":
@@ -319,6 +434,16 @@ def prepare_paidf_input(
                 )
             requested_meta = _user_source_metadata(
                 source_ref=input_uri.strip(), transport="s3_object"
+            )
+        elif selection == "lerobot_dataset":
+            requested_source = tmp / "lerobot-source.mp4"
+            requested_meta = _materialize_lerobot_episode(
+                storage_client,
+                lerobot_uri=lerobot_uri.strip(),
+                camera=lerobot_camera,
+                episode=lerobot_episode,
+                explicit_selection=require_explicit_lerobot_selection,
+                destination=requested_source,
             )
         else:
             legacy = _legacy_staged_video(storage_client, base_uri)
@@ -363,22 +488,71 @@ def prepare_paidf_input(
         conditioning = tmp / "conditioning.mp4"
         frames_dir = tmp / "frames"
         frames_dir.mkdir()
-        ffmpeg_contract = _derive_conditioning(requested_source, conditioning) or {
+        source_fidelity_v2 = (
+            normalized_conditioning_policy == SOURCE_FIDELITY_CONDITIONING_POLICY_V2
+        )
+        source_fidelity_v3 = (
+            normalized_conditioning_policy == SOURCE_FIDELITY_CONDITIONING_POLICY
+        )
+        source_fidelity = source_fidelity_v2 or source_fidelity_v3
+        source_timestamps = (
+            _decoded_video_timestamps(requested_source, media)
+            if source_fidelity_v3
+            else []
+        )
+        if source_fidelity_v3:
+            ffmpeg_contract = _derive_source_fidelity_conditioning(
+                requested_source, conditioning, media, source_timestamps
+            )
+        elif source_fidelity_v2:
+            ffmpeg_contract = _derive_source_fidelity_v2_conditioning(
+                requested_source, conditioning, media
+            )
+        else:
+            ffmpeg_contract = _derive_conditioning(requested_source, conditioning)
+        ffmpeg_contract = ffmpeg_contract or {
             "name": "ffmpeg",
             "version": "unreported",
-            "arguments": _conditioning_arguments(),
+            "arguments": (
+                _source_fidelity_conditioning_arguments(media, source_timestamps)
+                if source_fidelity_v3
+                else _source_fidelity_v2_conditioning_arguments(media)
+                if source_fidelity_v2
+                else _conditioning_arguments()
+            ),
         }
         conditioning_media = probe_video(conditioning)
-        frames = _extract_conditioning_frames(conditioning, frames_dir)
+        if source_fidelity_v3:
+            _validate_source_fidelity_conditioning(conditioning_media)
+        frames = (
+            _extract_aligned_conditioning_frames(conditioning, frames_dir)
+            if source_fidelity
+            else _extract_conditioning_frames(conditioning, frames_dir)
+        )
+        operations = [
+            "repeat source as needed to exactly 93 frames",
+            "sample at 16 fps",
+            "preserve aspect ratio and letterbox to 1280x720",
+            "encode H.264/yuv420p without audio",
+        ]
+        temporal_alignment = None
+        if source_fidelity:
+            operations = [
+                "time-normalize the source once to exactly 93 frames without looping",
+                "sample the complete source timeline at 16 fps with aligned endpoints",
+                "preserve aspect ratio and letterbox to 1280x720 without cropping",
+                "convert explicitly to limited-range BT.709 H.264/yuv420p without audio",
+            ]
+            temporal_alignment = (
+                _source_fidelity_alignment(media, source_timestamps)
+                if source_fidelity_v3
+                else _source_fidelity_v2_alignment(media)
+            )
         derivation = {
             "kind": "normalized_conditioning_clip",
+            "policy": normalized_conditioning_policy,
             "derived_from_sha256": source_sha,
-            "operations": [
-                "repeat source as needed to exactly 93 frames",
-                "sample at 16 fps",
-                "preserve aspect ratio and letterbox to 1280x720",
-                "encode H.264/yuv420p without audio",
-            ],
+            "operations": operations,
             "sha256": _sha256(conditioning),
             "byte_size": conditioning.stat().st_size,
             "media": conditioning_media,
@@ -391,19 +565,28 @@ def prepare_paidf_input(
                 "tool": {
                     "name": "ffmpeg",
                     "version": str(ffmpeg_contract.get("version") or "unreported"),
-                    "arguments": _frame_extraction_arguments(),
+                    "arguments": (
+                        _aligned_frame_extraction_arguments()
+                        if source_fidelity
+                        else _frame_extraction_arguments()
+                    ),
                 },
                 "items": [
                     {"name": frame.name, "sha256": _sha256(frame)} for frame in frames
                 ],
             },
         }
+        if temporal_alignment is not None:
+            derivation["temporal_alignment"] = temporal_alignment
+            if source_fidelity_v3:
+                derivation["color_conversion"] = _source_color_conversion(media)
         provenance = _build_provenance(
             run_id=clean_run_id,
             base_uri=base_uri,
             source=requested_meta,
             derivation=derivation,
         )
+        confidential_input = provenance.get("source_kind") == "lerobot_dataset"
 
         if existing:
             # Different ffmpeg/libx264 builds can produce different bytes from
@@ -416,24 +599,43 @@ def prepare_paidf_input(
             f"{base_uri}source.mp4",
             source_sha,
             immutable_source=True,
+            persist_digest_metadata=not confidential_input,
         )
         _stage_file(
             storage_client,
             conditioning,
             f"{base_uri}conditioning.mp4",
             _sha256(conditioning),
+            persist_digest_metadata=not confidential_input,
         )
         for frame in frames:
             _stage_file(
-                storage_client, frame, f"{base_uri}{frame.name}", _sha256(frame)
+                storage_client,
+                frame,
+                f"{base_uri}{frame.name}",
+                _sha256(frame),
+                persist_digest_metadata=not confidential_input,
             )
         if not existing:
-            _upload_json(storage_client, provenance, f"{base_uri}provenance.json", tmp)
-        report(
-            "PAIDF input: "
-            f"{'reused' if existing else 'prepared'} {provenance['input_origin_label']} "
-            f"sha256={provenance['sha256']} staged={base_uri}"
-        )
+            _upload_json(
+                storage_client,
+                provenance,
+                f"{base_uri}provenance.json",
+                tmp,
+                persist_digest_metadata=not confidential_input,
+            )
+        if provenance.get("source_kind") == "lerobot_dataset":
+            report(
+                "PAIDF input: "
+                f"{'reused' if existing else 'prepared'} operator-supplied "
+                "LeRobotDataset selection (source identifiers redacted)"
+            )
+        else:
+            report(
+                "PAIDF input: "
+                f"{'reused' if existing else 'prepared'} {provenance['input_origin_label']} "
+                f"sha256={provenance['sha256']} staged={base_uri}"
+            )
         return PreparedPaidfInput(
             str(provenance.get("source_kind") or selection),
             provenance,
@@ -452,7 +654,9 @@ def probe_video(path: Path) -> dict[str, Any]:
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=codec_name,profile,width,height,pix_fmt,avg_frame_rate,nb_frames:format=format_name,duration,size",
+        "stream=codec_name,profile,width,height,pix_fmt,avg_frame_rate,nb_frames,"
+        "color_range,color_space,color_transfer,color_primaries:"
+        "format=format_name,duration,size",
         "-of",
         "json",
         str(path),
@@ -516,7 +720,492 @@ def probe_video(path: Path) -> dict[str, Any]:
         "frame_rate": frame_rate_raw,
         "frame_count": frame_count,
         "pixel_format": str(stream.get("pix_fmt") or ""),
+        "color_range": str(stream.get("color_range") or "unknown"),
+        "color_space": str(stream.get("color_space") or "unknown"),
+        "color_transfer": str(stream.get("color_transfer") or "unknown"),
+        "color_primaries": str(stream.get("color_primaries") or "unknown"),
     }
+
+
+def _conditioning_policy(value: str) -> str:
+    """Normalize the opt-in VDA conditioning policy without changing legacy runs."""
+
+    normalized = str(value or "").strip()
+    if not normalized:
+        return "legacy-loop-v1"
+    if normalized not in {
+        SOURCE_FIDELITY_CONDITIONING_POLICY_V2,
+        SOURCE_FIDELITY_CONDITIONING_POLICY,
+    }:
+        raise PaidfInputError(
+            "unsupported PAIDF conditioning policy; expected source-fidelity-v2 "
+            "or source-fidelity-v3"
+        )
+    return normalized
+
+
+def _source_fidelity_v2_time_scale(media: dict[str, Any]) -> float:
+    """Historical v2 frame-rate scale retained byte-for-byte for resume."""
+
+    frame_count = int(media.get("frame_count") or 0)
+    frame_rate = _ffprobe_frame_rate(
+        str(media.get("frame_rate") or ""), Path("source.mp4")
+    )
+    if frame_count < 2:
+        raise PaidfInputError(
+            "source-fidelity conditioning requires at least two source video frames"
+        )
+    source_span = (frame_count - 1) / frame_rate
+    target_span = (CONDITIONING_FRAME_COUNT - 1) / CONDITIONING_FPS
+    scale = target_span / source_span
+    if not math.isfinite(scale) or scale <= 0:
+        raise PaidfInputError(
+            "source-fidelity conditioning produced an invalid time scale"
+        )
+    return scale
+
+
+def _source_fidelity_v2_color_filter(media: dict[str, Any]) -> str:
+    """Historical v2 scale options retained exactly for immutable derivations."""
+
+    color_range = str(media.get("color_range") or "").strip().lower()
+    color_space = str(media.get("color_space") or "").strip().lower()
+    options = ["in_range=pc" if color_range in {"pc", "jpeg"} else "in_range=tv"]
+    if color_range not in {"pc", "jpeg", "tv", "mpeg"}:
+        options = []
+    if color_space in {
+        "bt709",
+        "bt470bg",
+        "smpte170m",
+        "smpte240m",
+        "bt2020nc",
+        "bt2020c",
+    }:
+        options.append(f"in_color_matrix={color_space}")
+    options.extend(("out_range=tv", "out_color_matrix=bt709"))
+    return ":".join(options)
+
+
+def _source_fidelity_v2_filter(media: dict[str, Any]) -> str:
+    scale = _source_fidelity_v2_time_scale(media)
+    color = _source_fidelity_v2_color_filter(media)
+    return (
+        f"setpts=(PTS-STARTPTS)*{scale:.15g},"
+        f"fps={CONDITIONING_FPS}:round=near:start_time=0,"
+        "scale=1280:720:force_original_aspect_ratio=decrease:"
+        f"{color},"
+        "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"
+    )
+
+
+def _derive_source_fidelity_v2_conditioning(
+    source: Path, output: Path, media: dict[str, Any]
+) -> dict[str, Any]:
+    """Reproduce the previously committed v2 conditioning bytes for resume."""
+
+    command = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        str(source),
+        "-vf",
+        _source_fidelity_v2_filter(media),
+        "-frames:v",
+        str(CONDITIONING_FRAME_COUNT),
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-color_range",
+        "tv",
+        "-colorspace",
+        "bt709",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-movflags",
+        "+faststart",
+        str(output),
+    ]
+    _run_ffmpeg(command, "derive the source-fidelity PAIDF conditioning clip")
+    return {
+        "name": "ffmpeg",
+        "version": _ffmpeg_version(),
+        "arguments": _source_fidelity_v2_conditioning_arguments(media),
+    }
+
+
+def _source_fidelity_v2_conditioning_arguments(
+    media: dict[str, Any],
+) -> list[str]:
+    return [
+        "-i",
+        "<source-by-sha256>",
+        "-vf",
+        _source_fidelity_v2_filter(media),
+        "-frames:v",
+        str(CONDITIONING_FRAME_COUNT),
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-color_range",
+        "tv",
+        "-colorspace",
+        "bt709",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-movflags",
+        "+faststart",
+        "<conditioning-by-sha256>",
+    ]
+
+
+def _source_fidelity_v2_alignment(media: dict[str, Any]) -> dict[str, Any]:
+    """Reproduce the committed v2 provenance map for immutable resume."""
+
+    source_count = int(media["frame_count"])
+    source_rate = _ffprobe_frame_rate(str(media["frame_rate"]), Path("source.mp4"))
+    frame_map = []
+    for output_index in range(CONDITIONING_FRAME_COUNT):
+        source_index = round(
+            output_index * (source_count - 1) / (CONDITIONING_FRAME_COUNT - 1)
+        )
+        frame_map.append(
+            {
+                "output_index": output_index,
+                "output_timestamp_seconds": round(output_index / CONDITIONING_FPS, 9),
+                "source_index": source_index,
+                "source_timestamp_seconds": round(source_index / source_rate, 9),
+            }
+        )
+    return {
+        "method": "single-pass-endpoint-aligned-nearest-frame",
+        "source_frame_count": source_count,
+        "source_frame_rate": str(media["frame_rate"]),
+        "output_frame_count": CONDITIONING_FRAME_COUNT,
+        "output_frame_rate": f"{CONDITIONING_FPS}/1",
+        "loop_count": 0,
+        "frame_map": frame_map,
+    }
+
+
+def _decoded_video_timestamps(source: Path, media: dict[str, Any]) -> list[float]:
+    """Return every decoded source PTS, rejecting ambiguous timing before staging."""
+
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "frame=best_effort_timestamp_time",
+        "-of",
+        "json",
+        str(source),
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PaidfInputError(
+            f"could not decode source frame timestamps for {source.name}: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "unknown ffprobe error").strip()
+        raise PaidfInputError(
+            f"could not decode source frame timestamps for {source.name}: {detail}"
+        )
+    try:
+        frames = json.loads(result.stdout).get("frames", [])
+        timestamps = [float(frame["best_effort_timestamp_time"]) for frame in frames]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise PaidfInputError(
+            "source-fidelity conditioning requires a decoded timestamp for every frame"
+        ) from exc
+    expected = int(media.get("frame_count") or 0)
+    if len(timestamps) != expected or len(timestamps) < 2:
+        raise PaidfInputError(
+            "source-fidelity conditioning requires decoded frame timestamps to match "
+            f"the source frame count ({len(timestamps)} decoded, {expected} reported)"
+        )
+    if any(not math.isfinite(value) for value in timestamps) or any(
+        right <= left for left, right in zip(timestamps, timestamps[1:])
+    ):
+        raise PaidfInputError(
+            "source-fidelity conditioning requires finite, strictly increasing frame timestamps"
+        )
+    return timestamps
+
+
+def _source_fidelity_time_scale(timestamps: list[float]) -> float:
+    """Map the exact decoded source timestamp span onto the Transfer frame span."""
+
+    if len(timestamps) < 2:
+        raise PaidfInputError(
+            "source-fidelity conditioning requires at least two source video frames"
+        )
+    source_span = timestamps[-1] - timestamps[0]
+    target_span = (CONDITIONING_FRAME_COUNT - 1) / CONDITIONING_FPS
+    scale = target_span / source_span
+    if not math.isfinite(scale) or scale <= 0:
+        raise PaidfInputError(
+            "source-fidelity conditioning produced an invalid time scale"
+        )
+    return scale
+
+
+def _source_color_filter(media: dict[str, Any]) -> str:
+    """Build a real SDR color conversion; reject inputs that need tone mapping."""
+
+    resolved = _source_color_conversion(media)["resolved_input"]
+    color_range = str(resolved["color_range"])
+    color_space = str(resolved["color_space"])
+    transfer = str(resolved["color_transfer"])
+    primaries = str(resolved["color_primaries"])
+    input_range = "pc" if color_range in {"pc", "jpeg"} else "tv"
+    return (
+        f"colorspace=ispace={color_space}:iprimaries={primaries}:itrc={transfer}:"
+        f"irange={input_range}:space=bt709:primaries=bt709:trc=bt709:range=tv"
+    )
+
+
+def _source_color_conversion(media: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a truthful SDR input contract, recording bounded tag inference."""
+
+    reported = {
+        key: str(media.get(key) or "unknown").strip().lower()
+        for key in (
+            "color_range",
+            "color_space",
+            "color_transfer",
+            "color_primaries",
+        )
+    }
+    color_range = reported["color_range"]
+    color_space = reported["color_space"]
+    transfer = reported["color_transfer"]
+    primaries = reported["color_primaries"]
+    if (
+        transfer in {"smpte2084", "arib-std-b67"}
+        or primaries in {"bt2020", "2020"}
+        or color_space in {"bt2020nc", "bt2020c", "bt2020ncl", "2020_ncl", "2020_cl"}
+    ):
+        raise PaidfInputError(
+            "source-fidelity conditioning does not silently retag HDR/BT.2020 input; "
+            "tone-map it to explicitly tagged SDR before submission"
+        )
+    supported = {"bt709", "bt470bg", "smpte170m"}
+    unspecified = {"", "unknown", "unspecified", "reserved"}
+    inferred_fields: list[str] = []
+    if transfer in unspecified and color_space in supported:
+        transfer = color_space
+        inferred_fields.append("color_transfer")
+    if primaries in unspecified and color_space in supported:
+        primaries = color_space
+        inferred_fields.append("color_primaries")
+    if (
+        color_range not in {"pc", "jpeg", "tv", "mpeg"}
+        or color_space not in supported
+        or transfer not in supported
+        or primaries not in supported
+    ):
+        raise PaidfInputError(
+            "source-fidelity conditioning requires a supported SDR range/matrix and "
+            "compatible transfer/primaries (BT.709, BT.470BG, or SMPTE170M)"
+        )
+    return {
+        "reported_input": reported,
+        "resolved_input": {
+            "color_range": color_range,
+            "color_space": color_space,
+            "color_transfer": transfer,
+            "color_primaries": primaries,
+        },
+        "inferred_fields": inferred_fields,
+        "inference_rule": (
+            "missing SDR transfer/primaries inherit the explicit supported matrix"
+            if inferred_fields
+            else "none"
+        ),
+        "output": {
+            "color_range": "tv",
+            "color_space": "bt709",
+            "color_transfer": "bt709",
+            "color_primaries": "bt709",
+        },
+    }
+
+
+def _source_fidelity_filter(media: dict[str, Any], timestamps: list[float]) -> str:
+    scale = _source_fidelity_time_scale(timestamps)
+    color = _source_color_filter(media)
+    return (
+        f"setpts=(PTS-STARTPTS)*{scale:.15g},"
+        f"fps={CONDITIONING_FPS}:round=near:start_time=0,"
+        f"{color},"
+        "scale=1280:720:force_original_aspect_ratio=decrease,"
+        "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"
+    )
+
+
+def _derive_source_fidelity_conditioning(
+    source: Path,
+    output: Path,
+    media: dict[str, Any],
+    timestamps: list[float] | None = None,
+) -> dict[str, Any]:
+    """Encode one endpoint-aligned source traversal with explicit color metadata."""
+
+    decoded_timestamps = timestamps or _decoded_video_timestamps(source, media)
+    command = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        str(source),
+        "-vf",
+        _source_fidelity_filter(media, decoded_timestamps),
+        "-frames:v",
+        str(CONDITIONING_FRAME_COUNT),
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-color_range",
+        "tv",
+        "-colorspace",
+        "bt709",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-movflags",
+        "+faststart",
+        str(output),
+    ]
+    _run_ffmpeg(command, "derive the source-fidelity PAIDF conditioning clip")
+    return {
+        "name": "ffmpeg",
+        "version": _ffmpeg_version(),
+        "arguments": _source_fidelity_conditioning_arguments(media, decoded_timestamps),
+    }
+
+
+def _source_fidelity_conditioning_arguments(
+    media: dict[str, Any], timestamps: list[float]
+) -> list[str]:
+    """Stable path-free arguments for the VDA source-fidelity derivation."""
+
+    return [
+        "-i",
+        "<source-by-sha256>",
+        "-vf",
+        _source_fidelity_filter(media, timestamps),
+        "-frames:v",
+        str(CONDITIONING_FRAME_COUNT),
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-color_range",
+        "tv",
+        "-colorspace",
+        "bt709",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-movflags",
+        "+faststart",
+        "<conditioning-by-sha256>",
+    ]
+
+
+def _source_fidelity_alignment(
+    media: dict[str, Any], timestamps: list[float]
+) -> dict[str, Any]:
+    """Record the exact decoded source PTS selected for every Transfer frame."""
+
+    source_count = int(media["frame_count"])
+    if len(timestamps) != source_count:
+        raise PaidfInputError(
+            "source-fidelity alignment requires one decoded timestamp per source frame"
+        )
+    first_timestamp = timestamps[0]
+    scale = _source_fidelity_time_scale(timestamps)
+    transition_indices = [
+        min(
+            CONDITIONING_FRAME_COUNT - 1,
+            max(
+                0,
+                math.floor(
+                    (timestamp - first_timestamp) * scale * CONDITIONING_FPS + 0.5
+                ),
+            ),
+        )
+        for timestamp in timestamps
+    ]
+    frame_map = []
+    for output_index in range(CONDITIONING_FRAME_COUNT):
+        source_index = max(0, bisect.bisect_right(transition_indices, output_index) - 1)
+        frame_map.append(
+            {
+                "output_index": output_index,
+                "output_timestamp_seconds": round(output_index / CONDITIONING_FPS, 9),
+                "source_index": source_index,
+                "source_timestamp_seconds": round(timestamps[source_index], 9),
+                "source_relative_timestamp_seconds": round(
+                    timestamps[source_index] - first_timestamp, 9
+                ),
+            }
+        )
+    return {
+        "method": "single-pass-endpoint-aligned-fps-round-near-decoded-pts",
+        "source_frame_count": source_count,
+        "source_frame_rate": str(media["frame_rate"]),
+        "output_frame_count": CONDITIONING_FRAME_COUNT,
+        "output_frame_rate": f"{CONDITIONING_FPS}/1",
+        "loop_count": 0,
+        "frame_map": frame_map,
+    }
+
+
+def _validate_source_fidelity_conditioning(media: dict[str, Any]) -> None:
+    """Fail before staging unless the exact Transfer timing/color contract holds."""
+
+    if int(media.get("frame_count") or 0) != CONDITIONING_FRAME_COUNT:
+        raise PaidfInputError(
+            "source-fidelity conditioning must contain exactly 93 decoded frames"
+        )
+    rate = _ffprobe_frame_rate(
+        str(media.get("frame_rate") or ""), Path("conditioning.mp4")
+    )
+    if not math.isclose(rate, float(CONDITIONING_FPS), rel_tol=0, abs_tol=1e-9):
+        raise PaidfInputError("source-fidelity conditioning must be exactly 16 fps")
+    expected_color = {
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+    }
+    if any(
+        str(media.get(key) or "").lower() != value
+        for key, value in expected_color.items()
+    ):
+        raise PaidfInputError(
+            "source-fidelity conditioning must decode as limited-range BT.709"
+        )
 
 
 def _derive_conditioning(source: Path, output: Path) -> dict[str, Any]:
@@ -682,11 +1371,115 @@ def _frame_extraction_arguments() -> list[str]:
     ]
 
 
+def _aligned_conditioning_frame_indices() -> list[int]:
+    """Eight deterministic caption indices including both timeline endpoints."""
+
+    return [
+        round(index * (CONDITIONING_FRAME_COUNT - 1) / (CONDITIONING_FRAMES - 1))
+        for index in range(CONDITIONING_FRAMES)
+    ]
+
+
+def _aligned_frame_select_filter() -> str:
+    return "select=" + "+".join(
+        f"eq(n\\,{index})" for index in _aligned_conditioning_frame_indices()
+    )
+
+
+def _extract_aligned_conditioning_frames(
+    conditioning: Path, output_dir: Path
+) -> list[Path]:
+    pattern = output_dir / "conditioning-frame-%04d.png"
+    command = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        str(conditioning),
+        "-vf",
+        _aligned_frame_select_filter(),
+        "-vsync",
+        "vfr",
+        "-frames:v",
+        str(CONDITIONING_FRAMES),
+        str(pattern),
+    ]
+    _run_ffmpeg(command, "extract endpoint-aligned PAIDF conditioning frames")
+    frames = sorted(output_dir.glob("conditioning-frame-*.png"))
+    if len(frames) != CONDITIONING_FRAMES:
+        raise PaidfInputError(
+            f"conditioning-frame extraction produced {len(frames)} frames; "
+            f"expected {CONDITIONING_FRAMES}"
+        )
+    return frames
+
+
+def _aligned_frame_extraction_arguments() -> list[str]:
+    return [
+        "-i",
+        "<conditioning-by-sha256>",
+        "-vf",
+        _aligned_frame_select_filter(),
+        "-vsync",
+        "vfr",
+        "-frames:v",
+        str(CONDITIONING_FRAMES),
+        "<frame-pattern>",
+    ]
+
+
 def _run_ffmpeg(command: list[str], action: str) -> None:
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "unknown ffmpeg error").strip()
         raise PaidfInputError(f"could not {action}: {detail}")
+
+
+def _https_origin(url: str) -> tuple[str, int]:
+    parsed = urlparse(url)
+    try:
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError("invalid HTTPS origin")
+        return parsed.hostname.lower(), parsed.port or 443
+    except ValueError as exc:
+        raise PaidfInputError(
+            "PAIDF starter downloads require an HTTPS URL without credentials"
+        ) from exc
+
+
+class _StarterRedirectHandler(HTTPRedirectHandler):
+    """Keep authentication bound to the packaged source origin across redirects."""
+
+    def __init__(self, source_url: str, token: str) -> None:
+        self._origin = _https_origin(source_url)
+        self._token = token
+
+    def redirect_request(self, request, response, code, message, headers, newurl):
+        origin = _https_origin(newurl)
+        redirected = super().redirect_request(
+            request, response, code, message, headers, newurl
+        )
+        if redirected is not None:
+            redirected.remove_header("Authorization")
+            if self._token and origin == self._origin:
+                redirected.add_unredirected_header(
+                    "Authorization", f"Bearer {self._token}"
+                )
+        return redirected
+
+
+def _open_starter_url(source_url: str, token: str):
+    handler = _StarterRedirectHandler(source_url, token)
+    request = Request(source_url)
+    if token:
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
+    return build_opener(handler).open(request, timeout=30)
 
 
 def _fetch_starter(
@@ -702,6 +1495,7 @@ def _fetch_starter(
     digest = str(integrity["sha256"])
     size = int(integrity["byte_size"])
     source_url = str(contract["source"]["asset_url"])
+    _https_origin(source_url)
     root = cache_dir or _default_cache_dir()
     root.mkdir(parents=True, exist_ok=True)
     target = root / f"{contract['asset_id']}-{digest[:16]}.mp4"
@@ -716,7 +1510,11 @@ def _fetch_starter(
             f"{acceptance_env}=1 before fetching"
         )
     token_env = str(delivery.get("authentication_environment_variable") or "HF_TOKEN")
-    token = os.environ.get(token_env, "").strip()
+    token = (
+        os.environ.get(token_env, "").strip()
+        if license_data.get("authentication_required")
+        else ""
+    )
     if license_data.get("authentication_required") and not token:
         raise PaidfInputError(
             "the pinned PAIDF starter requires upstream authentication; configure "
@@ -748,15 +1546,7 @@ def _fetch_starter(
             part = target.with_suffix(f".attempt-{attempt}.part")
             try:
                 with (
-                    urlopen(
-                        Request(
-                            source_url,
-                            headers=(
-                                {"Authorization": f"Bearer {token}"} if token else {}
-                            ),
-                        ),
-                        timeout=30,
-                    ) as response,
+                    _open_starter_url(source_url, token) as response,
                     part.open("wb") as handle,
                 ):
                     while chunk := response.read(1024 * 1024):
@@ -858,6 +1648,552 @@ def _user_source_metadata(*, source_ref: str, transport: str) -> dict[str, Any]:
     }
 
 
+def validate_lerobot_selector(
+    *,
+    selection: str,
+    camera: str,
+    episode: int,
+    require_explicit_selection: bool = False,
+    episode_was_explicit: bool = False,
+) -> None:
+    """Validate LeRobot-only selectors before any object-store access."""
+
+    if episode < 0:
+        raise PaidfInputError("--lerobot-episode must be a non-negative integer")
+    if require_explicit_selection:
+        if selection != "lerobot_dataset":
+            raise PaidfInputError(
+                "--require-explicit-lerobot-selection requires --lerobot-uri"
+            )
+        missing: list[str] = []
+        if not camera.strip():
+            missing.append("--lerobot-camera")
+        if not episode_was_explicit:
+            missing.append("--lerobot-episode")
+        if missing:
+            raise PaidfInputError(
+                "--require-explicit-lerobot-selection fails closed unless the "
+                "operator supplies " + " and ".join(missing)
+            )
+    if selection != "lerobot_dataset" and (
+        camera.strip() or episode != 0 or episode_was_explicit
+    ):
+        raise PaidfInputError(
+            "--lerobot-camera and --lerobot-episode require --lerobot-uri"
+        )
+
+
+def _lerobot_source_metadata(
+    *, camera: str, explicit_selection: bool = False
+) -> dict[str, Any]:
+    """Describe a selected LeRobot trajectory without inferring its ownership."""
+
+    # The source prefix, episode, and feature names can themselves be customer
+    # metadata. Durable provenance records only the generic selection policy.
+    return {
+        "source_kind": "lerobot_dataset",
+        "source_format": "lerobot",
+        "input_origin": "operator_supplied_dataset",
+        "input_origin_label": "Operator-supplied LeRobotDataset",
+        "source_ref": "",
+        "transport": "s3_lerobot_dataset",
+        "lerobot_selection": {
+            "episode_selector": "operator-supplied",
+            "camera_selector": "explicit" if camera.strip() else "automatic",
+            "selection_contract": (
+                "explicit-camera-and-episode"
+                if explicit_selection
+                else "compatibility-defaults"
+            ),
+        },
+        "authenticity": {
+            "classification": "operator_supplied_unverified",
+            "evidence": (
+                "NPA validated the LeRobot metadata/media layout but does not infer "
+                "whether operator-supplied observations are captured or generated."
+            ),
+        },
+        "asset_license": "operator-managed",
+        "asset_license_url": "",
+        "asset_attribution": "operator-managed",
+        "redistribution_permitted": None,
+        "hosted_service_use_permitted": None,
+        "field_of_use_restrictions": "operator-managed",
+        "acceptance_required": None,
+        "authentication_required": None,
+        "delivery_mode": "operator_runtime_selection",
+    }
+
+
+def _materialize_lerobot_episode(
+    client: Any,
+    *,
+    lerobot_uri: str,
+    camera: str,
+    episode: int,
+    explicit_selection: bool,
+    destination: Path,
+) -> dict[str, Any]:
+    """Select one LeRobot camera/episode MP4 without downloading the dataset.
+
+    LeRobot v2/v3 datasets place ``meta/info.json`` below the dataset root and
+    videos below ``videos/``. The selector intentionally downloads only the
+    chosen trajectory: production datasets can be many terabytes and input
+    preparation must finish before GPU provisioning.
+    """
+
+    bucket, prefix = _split_s3(lerobot_uri)
+    normalized_prefix = prefix.rstrip("/") + "/" if prefix else ""
+    info_key = f"{normalized_prefix}meta/info.json"
+    try:
+        response = client.s3.get_object(Bucket=bucket, Key=info_key)
+        body = response["Body"]
+        try:
+            raw_info = body.read(MAX_LEROBOT_INFO_BYTES + 1)
+        finally:
+            close = getattr(body, "close", None)
+            if callable(close):
+                close()
+    except Exception as exc:  # noqa: BLE001
+        if _missing_s3(exc):
+            raise PaidfInputError(
+                "--lerobot-uri does not contain a LeRobot meta/info.json contract"
+            ) from exc
+        raise PaidfInputError(
+            "could not read the configured LeRobot meta/info.json contract"
+        ) from exc
+    if len(raw_info) > MAX_LEROBOT_INFO_BYTES:
+        raise PaidfInputError(
+            "LeRobot meta/info.json exceeds the 1 MB validation limit"
+        )
+    try:
+        info = json.loads(raw_info.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PaidfInputError(
+            "could not validate the configured LeRobot meta/info.json contract"
+        ) from exc
+    if not isinstance(info, dict) or not isinstance(info.get("features"), dict):
+        raise PaidfInputError("LeRobot meta/info.json must contain a features mapping")
+    version_family = _lerobot_version_family(info)
+    video_features = sorted(
+        str(name)
+        for name, feature in info["features"].items()
+        if isinstance(feature, dict) and str(feature.get("dtype") or "") == "video"
+    )
+    if not video_features:
+        raise PaidfInputError(
+            "LeRobot meta/info.json declares no video observation features"
+        )
+    try:
+        raw_total_episodes = info.get("total_episodes")
+        if isinstance(raw_total_episodes, bool):
+            raise ValueError
+        total_episodes = int(raw_total_episodes)
+    except (TypeError, ValueError) as exc:
+        raise PaidfInputError(
+            "LeRobot total_episodes must be a positive integer"
+        ) from exc
+    if total_episodes < 1:
+        raise PaidfInputError("LeRobot total_episodes must be a positive integer")
+    if episode >= total_episodes:
+        raise PaidfInputError(
+            "the requested LeRobot episode is outside the declared dataset range"
+        )
+    try:
+        raw_chunks_size = info.get("chunks_size", 1_000)
+        if isinstance(raw_chunks_size, bool):
+            raise ValueError
+        chunks_size = int(raw_chunks_size)
+    except (TypeError, ValueError) as exc:
+        raise PaidfInputError("LeRobot chunks_size must be an integer") from exc
+    if chunks_size < 1:
+        raise PaidfInputError("LeRobot chunks_size must be a positive integer")
+    camera_name = camera.strip()
+    if camera_name and camera_name not in video_features:
+        raise PaidfInputError(
+            "the requested LeRobot camera is not a declared video feature"
+        )
+    candidate_features = [camera_name] if camera_name else video_features
+    selected_key = ""
+    clip_start = clip_end = None
+    if version_family == 3:
+        # LeRobot v3 groups many episodes into each video file. Resolve its
+        # metadata row and trim only the selected episode rather than staging the
+        # entire shared file as one trajectory.
+        record = _read_lerobot_episode_record(
+            client,
+            bucket=bucket,
+            prefix=normalized_prefix,
+            episode=episode,
+            chunks_size=chunks_size,
+            destination_dir=destination.parent,
+        )
+        template = str(info.get("video_path") or "").strip() or (
+            "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+        )
+        missing_time_range = False
+        for feature in candidate_features:
+            chunk_index = record.get(f"videos/{feature}/chunk_index")
+            file_index = record.get(f"videos/{feature}/file_index")
+            if chunk_index is None or file_index is None:
+                if camera_name:
+                    raise PaidfInputError(
+                        "LeRobot v3 video metadata is missing the selected camera location"
+                    )
+                continue
+            rel = _format_lerobot_video_path(
+                template,
+                feature=feature,
+                episode=episode,
+                episode_chunk=episode // chunks_size,
+                chunk_index=chunk_index,
+                file_index=file_index,
+            )
+            key = f"{normalized_prefix}{rel}"
+            if _s3_object_exists(client, bucket=bucket, key=key):
+                candidate_start = record.get(f"videos/{feature}/from_timestamp")
+                candidate_end = record.get(f"videos/{feature}/to_timestamp")
+                if candidate_start is None or candidate_end is None:
+                    missing_time_range = True
+                    continue
+                selected_key = key
+                clip_start = candidate_start
+                clip_end = candidate_end
+                break
+        if not selected_key and missing_time_range:
+            raise PaidfInputError(
+                "LeRobot v3 video metadata is missing the selected episode time range"
+            )
+    else:
+        template = str(info.get("video_path") or "").strip() or (
+            "videos/chunk-{episode_chunk:03d}/{video_key}/"
+            "episode_{episode_index:06d}.mp4"
+        )
+        for feature in candidate_features:
+            rel = _format_lerobot_video_path(
+                template,
+                feature=feature,
+                episode=episode,
+                episode_chunk=episode // chunks_size,
+                chunk_index=episode // chunks_size,
+                file_index=episode,
+            )
+            key = f"{normalized_prefix}{rel}"
+            if _s3_object_exists(client, bucket=bucket, key=key):
+                selected_key = key
+                break
+    if not selected_key:
+        raise PaidfInputError(
+            "the requested LeRobot episode/camera has no resolvable observation video"
+        )
+    download_target = (
+        destination.with_name("lerobot-shared-source.mp4")
+        if clip_start is not None or clip_end is not None
+        else destination
+    )
+    try:
+        client.s3.download_file(bucket, selected_key, str(download_target))
+    except Exception as exc:  # noqa: BLE001
+        raise PaidfInputError(
+            "could not read the selected LeRobot observation video; verify "
+            "least-privilege GetObject access"
+        ) from exc
+    if clip_start is not None or clip_end is not None:
+        _trim_lerobot_episode(
+            download_target,
+            destination,
+            start_seconds=clip_start,
+            end_seconds=clip_end,
+        )
+        download_target.unlink(missing_ok=True)
+    if not destination.is_file() or destination.stat().st_size <= 0:
+        raise PaidfInputError("the selected LeRobot observation video is empty")
+    metadata = _lerobot_source_metadata(
+        camera=camera,
+        explicit_selection=explicit_selection,
+    )
+    metadata["lerobot_selection"].update(
+        {
+            "media_kind": "video",
+            "selected_object": "redacted",
+        }
+    )
+    return metadata
+
+
+def _read_lerobot_episode_record(
+    client: Any,
+    *,
+    bucket: str,
+    prefix: str,
+    episode: int,
+    chunks_size: int,
+    destination_dir: Path,
+) -> dict[str, Any]:
+    """Read one LeRobot v3 episode row without materializing dataset media."""
+
+    if chunks_size < 1:
+        raise PaidfInputError("LeRobot chunks_size must be a positive integer")
+    # V3 metadata files are packed by file size, independently of episode IDs.
+    marker = f"{prefix}meta/episodes/"
+    try:
+        candidates = sorted(
+            key
+            for key in _list_s3_keys(client, bucket=bucket, prefix=marker)
+            if key.lower().endswith(".parquet")
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise PaidfInputError(
+            "could not inspect the selected LeRobot episode-metadata shard: "
+            f"{_input_listing_diagnostic(exc)}"
+        ) from exc
+    if not candidates:
+        raise PaidfInputError(
+            "the requested LeRobot episode has no episode-metadata shard"
+        )
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise PaidfInputError(
+            "pyarrow is required to resolve LeRobot v3 episode metadata"
+        ) from exc
+    for index, key in enumerate(candidates):
+        local = destination_dir / f"lerobot-episode-metadata-{index:03d}.parquet"
+        try:
+            head = client.s3.head_object(Bucket=bucket, Key=key)
+            size = int(head.get("ContentLength") or 0)
+            if not 0 < size <= MAX_LEROBOT_EPISODE_METADATA_BYTES:
+                raise PaidfInputError(
+                    "LeRobot v3 episode metadata exceeds the safe shard-size limit"
+                )
+            client.s3.download_file(bucket, key, str(local))
+            rows = pq.read_table(
+                local, filters=[("episode_index", "=", episode)]
+            ).to_pylist()
+        except PaidfInputError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise PaidfInputError("could not read LeRobot v3 episode metadata") from exc
+        finally:
+            local.unlink(missing_ok=True)
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                row_episode = int(row.get("episode_index", -1))
+            except (TypeError, ValueError):
+                continue
+            if row_episode == episode:
+                return row
+    raise PaidfInputError(
+        "the requested LeRobot episode is absent from its metadata shard"
+    )
+
+
+def _lerobot_version_family(info: dict[str, Any]) -> int:
+    """Return a supported LeRobot major format version without guessing."""
+
+    raw = str(info.get("codebase_version") or "").strip().lower()
+    normalized = raw[1:] if raw.startswith("v") else raw
+    try:
+        major = int(normalized.split(".", 1)[0])
+    except (TypeError, ValueError) as exc:
+        raise PaidfInputError(
+            "LeRobot meta/info.json has no supported codebase_version"
+        ) from exc
+    if major not in {2, 3}:
+        raise PaidfInputError(
+            "PAIDF supports LeRobotDataset v2.x and v3.x video layouts"
+        )
+    return major
+
+
+def _format_lerobot_video_path(
+    template: str,
+    *,
+    feature: str,
+    episode: int,
+    episode_chunk: int,
+    chunk_index: Any,
+    file_index: Any,
+) -> str:
+    """Resolve the official LeRobot video template and keep it under videos/."""
+
+    if len(template.encode("utf-8")) > MAX_LEROBOT_VIDEO_PATH_BYTES:
+        raise PaidfInputError("LeRobot video_path exceeds the safe length limit")
+    allowed_fields = {
+        "video_key",
+        "episode_index",
+        "episode_chunk",
+        "chunk_index",
+        "file_index",
+    }
+    try:
+        fields = list(Formatter().parse(template))
+    except ValueError as exc:
+        raise PaidfInputError("LeRobot video_path has invalid format syntax") from exc
+    for _literal, field_name, format_spec, conversion in fields:
+        if field_name is None:
+            continue
+        if (
+            field_name not in allowed_fields
+            or conversion is not None
+            or (format_spec and re.fullmatch(r"0?[1-9][0-9]*d", format_spec) is None)
+        ):
+            raise PaidfInputError(
+                "LeRobot video_path contains an unsupported format field"
+            )
+    try:
+        resolved = template.format(
+            video_key=feature,
+            episode_index=episode,
+            episode_chunk=episode_chunk,
+            chunk_index=int(chunk_index),
+            file_index=int(file_index),
+        )
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+        raise PaidfInputError(
+            "LeRobot video_path cannot resolve the requested episode"
+        ) from exc
+    normalized = resolved.replace("\\", "/").strip()
+    parsed = urlparse(normalized)
+    parts = Path(normalized).parts
+    if (
+        not normalized
+        or parsed.scheme
+        or normalized.startswith("/")
+        or not normalized.lower().endswith(".mp4")
+        or not parts
+        or parts[0] != "videos"
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        raise PaidfInputError(
+            "LeRobot video_path must resolve to one relative videos/... MP4 object"
+        )
+    return normalized
+
+
+def _s3_object_exists(client: Any, *, bucket: str, key: str) -> bool:
+    """Check one declared object without enumerating a production dataset."""
+
+    try:
+        client.s3.head_object(Bucket=bucket, Key=key)
+    except Exception as exc:  # noqa: BLE001
+        if _missing_s3(exc):
+            return False
+        raise PaidfInputError(
+            "could not verify the selected LeRobot observation object"
+        ) from exc
+    return True
+
+
+def _trim_lerobot_episode(
+    source: Path,
+    destination: Path,
+    *,
+    start_seconds: Any,
+    end_seconds: Any,
+) -> None:
+    """Extract one exact LeRobot v3 episode from a shared H.264 video file."""
+
+    try:
+        start = float(start_seconds)
+        end = float(end_seconds)
+    except (TypeError, ValueError) as exc:
+        raise PaidfInputError(
+            "LeRobot v3 video metadata requires numeric episode timestamps"
+        ) from exc
+    if not (math.isfinite(start) and math.isfinite(end) and 0.0 <= start < end):
+        raise PaidfInputError(
+            "LeRobot v3 video metadata has an invalid episode time range"
+        )
+    command = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-i",
+        str(source),
+        "-ss",
+        f"{start:.9f}",
+        "-t",
+        f"{end - start:.9f}",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(destination),
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PaidfInputError("could not extract the selected LeRobot episode") from exc
+    if result.returncode != 0 or not destination.is_file():
+        raise PaidfInputError("could not extract the selected LeRobot episode")
+
+
+def _validate_s3_listing_page(
+    page: dict[str, Any], seen_tokens: set[str], *, has_paginator: bool
+) -> None:
+    # Minimal storage adapters may omit the flag; explicit values must be booleans.
+    truncated = page.get("IsTruncated", False)
+    if type(truncated) is not bool:
+        raise _InputListingError(
+            "input listing IsTruncated must be a boolean when present"
+        )
+    if not truncated:
+        return
+    token = page.get("NextContinuationToken")
+    if not isinstance(token, str) or not token:
+        raise _InputListingError("truncated input listing has no continuation token")
+    if token in seen_tokens:
+        raise _InputListingError("input listing repeated continuation token")
+    if not has_paginator:
+        raise _InputListingError(
+            "storage client cannot complete a truncated input listing"
+        )
+    seen_tokens.add(token)
+
+
+def _input_listing_diagnostic(exc: Exception) -> str:
+    """Retain failure categories without exposing provider messages or object keys."""
+    if isinstance(exc, _InputListingError):
+        return str(exc)
+    response = getattr(exc, "response", None)
+    error = response.get("Error") if isinstance(response, dict) else None
+    code = error.get("Code") if isinstance(error, dict) else None
+    name = type(exc).__name__
+    if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9]+", code):
+        return f"{name} ({code})"
+    return name
+
+
+def _list_s3_keys(client: Any, *, bucket: str, prefix: str) -> list[str]:
+    """Collect a prefix only after validating every page's continuation contract."""
+
+    paginator_factory = getattr(client.s3, "get_paginator", None)
+    has_paginator = callable(paginator_factory)
+    if has_paginator:
+        pages = paginator_factory("list_objects_v2").paginate(
+            Bucket=bucket, Prefix=prefix
+        )
+    else:
+        pages = [client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix)]
+    keys: list[str] = []
+    seen_tokens: set[str] = set()
+    for page in pages:
+        _validate_s3_listing_page(page, seen_tokens, has_paginator=has_paginator)
+        keys.extend(
+            str(item.get("Key") or "")
+            for item in page.get("Contents", [])
+            if str(item.get("Key") or "")
+        )
+    return keys
+
+
 def _fixture_provenance(run_id: str, base_uri: str) -> dict[str, Any]:
     return {
         "schema_version": PROVENANCE_SCHEMA,
@@ -889,14 +2225,28 @@ def _fixture_provenance(run_id: str, base_uri: str) -> dict[str, Any]:
 def _build_provenance(
     *, run_id: str, base_uri: str, source: dict[str, Any], derivation: dict[str, Any]
 ) -> dict[str, Any]:
+    safe_source = dict(source)
+    safe_derivation = json.loads(json.dumps(derivation))
+    if safe_source.get("source_kind") == "lerobot_dataset":
+        # Source and derived hashes are confidential customer-content identifiers.
+        # Keep them in memory for immutable stage comparisons, but never serialize
+        # them into provenance, downstream reports, or object metadata.
+        safe_source.pop("sha256", None)
+        safe_derivation.pop("derived_from_sha256", None)
+        safe_derivation.pop("sha256", None)
+        frame_derivation = safe_derivation.get("frame_derivation")
+        if isinstance(frame_derivation, dict):
+            for item in frame_derivation.get("items") or []:
+                if isinstance(item, dict):
+                    item.pop("sha256", None)
     payload = {
         "schema_version": PROVENANCE_SCHEMA,
         "run_id": run_id,
-        **source,
+        **safe_source,
         "staged_canonical_s3_uri": base_uri,
         "staged_source_uri": f"{base_uri}source.mp4",
         "provenance_uri": f"{base_uri}provenance.json",
-        "derivation": derivation,
+        "derivation": safe_derivation,
         "cosmos_conditioning": {
             "enabled": True,
             "mode": "input_conditioned",
@@ -915,7 +2265,22 @@ def _assert_existing_matches(
         return
     existing_sha = str(existing.get("sha256") or "")
     requested_sha = str(requested.get("sha256") or "")
+    if not existing_sha and (
+        existing.get("source_kind") == "lerobot_dataset"
+        or requested.get("source_kind") == "lerobot_dataset"
+    ):
+        # _stage_file compares the selected bytes against the immutable staged
+        # source without persisting the confidential digest.
+        return
     if existing_sha != requested_sha:
+        if (
+            existing.get("source_kind") == "lerobot_dataset"
+            or requested.get("source_kind") == "lerobot_dataset"
+        ):
+            raise PaidfInputError(
+                "run input is immutable: the selected LeRobot observation differs "
+                "from the committed run input. Use a new --run-id."
+            )
         qualifier = "explicit input" if explicit else "selected input"
         raise PaidfInputError(
             f"run input is immutable: {qualifier} SHA-256 {requested_sha} does not match "
@@ -927,6 +2292,11 @@ def _assert_existing_derivation_matches(
     existing: dict[str, Any], derived: dict[str, Any]
 ) -> None:
     """Require every recomputed artifact byte hash to match committed provenance."""
+
+    if existing.get("source_kind") == "lerobot_dataset":
+        # Confidential provenance has no content hashes; each existing derived
+        # object is compared byte-for-byte through _stage_file instead.
+        return
 
     committed = existing.get("derivation")
     if not isinstance(committed, dict):
@@ -998,16 +2368,16 @@ def _read_provenance(client: Any, base_uri: str) -> dict[str, Any] | None:
 def _legacy_staged_video(client: Any, base_uri: str) -> str:
     bucket, prefix = _split_s3(base_uri)
     try:
-        response = client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        keys = _list_s3_keys(client, bucket=bucket, prefix=prefix)
     except Exception as exc:  # noqa: BLE001
         raise PaidfInputError(
-            f"could not inspect the canonical PAIDF input prefix: {exc}"
+            "could not inspect every object in the canonical PAIDF input prefix: "
+            f"{_input_listing_diagnostic(exc)}"
         ) from exc
     videos = [
-        str(item.get("Key") or "")
-        for item in response.get("Contents", [])
-        if str(item.get("Key") or "").lower().endswith(".mp4")
-        and not str(item.get("Key") or "").lower().endswith("conditioning.mp4")
+        key
+        for key in keys
+        if key.lower().endswith(".mp4") and key != f"{prefix}conditioning.mp4"
     ]
     if len(videos) > 1:
         raise PaidfInputError(
@@ -1015,18 +2385,31 @@ def _legacy_staged_video(client: Any, base_uri: str) -> str:
             "explicitly with --input-uri or use a new --run-id"
         )
     if videos:
+        _check_legacy_artifacts(keys, videos[0], prefix, base_uri)
         return f"s3://{bucket}/{videos[0]}"
-    other = [
-        str(item.get("Key") or "")
-        for item in response.get("Contents", [])
-        if str(item.get("Key") or "")
-    ]
-    if other:
+    if keys:
         raise PaidfInputError(
             f"uncommitted input artifacts already exist under {base_uri}, but no source "
-            "MP4 can be adopted. Use --input-video/--input-uri, --seed-fixture, or a new run id."
+            "MP4 is present. Restore the original source with --input-video/--input-uri "
+            "to resume this run."
         )
     return ""
+
+
+def _check_legacy_artifacts(
+    keys: list[str], source: str, prefix: str, base_uri: str
+) -> None:
+    expected = {source, f"{prefix}conditioning.mp4"}
+    expected.update(
+        f"{prefix}conditioning-frame-{index:04d}.png"
+        for index in range(1, CONDITIONING_FRAMES + 1)
+    )
+    if set(keys) - expected:
+        raise PaidfInputError(
+            f"a source MP4 is present under {base_uri}, but conflicting uncommitted "
+            "artifacts exist. Pass the source explicitly with --input-uri to verify "
+            "and resume this run."
+        )
 
 
 def _download_staged_source(client: Any, base_uri: str, tmp: Path) -> Path:
@@ -1053,6 +2436,7 @@ def _stage_file(
     digest: str,
     *,
     immutable_source: bool = False,
+    persist_digest_metadata: bool = True,
 ) -> None:
     bucket, key = _split_s3(uri)
     try:
@@ -1077,11 +2461,14 @@ def _stage_file(
             f"{uri}; use a new --run-id"
         )
     try:
+        metadata = {"npa-role": "paidf-input"}
+        if persist_digest_metadata:
+            metadata["sha256"] = digest
         client.s3.upload_file(
             str(local),
             bucket,
             key,
-            ExtraArgs={"Metadata": {"sha256": digest, "npa-role": "paidf-input"}},
+            ExtraArgs={"Metadata": metadata},
         )
     except Exception as exc:  # noqa: BLE001
         raise PaidfInputError(
@@ -1089,13 +2476,26 @@ def _stage_file(
         ) from exc
 
 
-def _upload_json(client: Any, payload: dict[str, Any], uri: str, tmp: Path) -> None:
+def _upload_json(
+    client: Any,
+    payload: dict[str, Any],
+    uri: str,
+    tmp: Path,
+    *,
+    persist_digest_metadata: bool = True,
+) -> None:
     local = tmp / "provenance.json"
     local.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     digest = _sha256(local)
-    _stage_file(client, local, uri, digest)
+    _stage_file(
+        client,
+        local,
+        uri,
+        digest,
+        persist_digest_metadata=persist_digest_metadata,
+    )
 
 
 def _verify_file(path: Path, digest: str, size: int, *, context: str) -> None:

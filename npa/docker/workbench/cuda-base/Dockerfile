@@ -5,7 +5,7 @@
 # FastAPI service + data (lancedb / pyarrow / boto3 / pillow) stack. Factoring
 # that shared layer into one base keeps the per-tool images thin and composable
 # and lets them share the (large) CUDA + torch layers in the registry.
-FROM pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime
+FROM pytorch/pytorch:2.12.1-cuda13.0-cudnn9-runtime@sha256:72f863fa1fe13d5d87a72d00db2c85fb2d43409ee08dd26bc469de4c8a28b427
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir \
     "lancedb==0.30.2" \
     "pyarrow==23.0.1" \
     "pydantic==2.13.4" \
-    "pillow==12.2.0" \
+    "pillow==12.3.0" \
     "boto3==1.42.9" \
     "numpy==2.4.6"
 

@@ -19,6 +19,12 @@ variable "nebius_region" {
   default     = "eu-north1"
 }
 
+variable "ipv4_public_pool_id" {
+  description = "Optional existing VPC public IPv4 pool used by the agent network; empty uses the provider default"
+  type        = string
+  default     = ""
+}
+
 # ── Service account (created by environment.sh) ───────────────────────────
 
 variable "service_account_id" {
@@ -126,10 +132,67 @@ variable "ssh_public_key_path" {
   default     = "~/.ssh/id_ed25519.pub"
 }
 
-variable "ssh_cidr_block" {
-  description = "CIDR block allowed to SSH. Defaults to open access (0.0.0.0/0)."
+variable "ssh_host_key_nonce" {
+  description = "Fresh boot challenge persisted by NPA for provider-authenticated SSH host keys"
   type        = string
-  default     = "0.0.0.0/0"
+  default     = ""
+  validation {
+    condition     = var.ssh_host_key_nonce == "" || can(regex("^[a-f0-9]{64}$", var.ssh_host_key_nonce))
+    error_message = "ssh_host_key_nonce must be a 64-character lowercase hexadecimal boot challenge."
+  }
+}
+
+variable "ssh_cidr_block" {
+  description = "CIDR block allowed to SSH. Empty disables SSH ingress; set explicitly for remote bootstrap."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      trimspace(var.ssh_cidr_block) == "" ||
+      can(cidrnetmask(var.ssh_cidr_block))
+    )
+    error_message = "ssh_cidr_block must be empty (no SSH ingress) or a valid IPv4 CIDR."
+  }
+
+  validation {
+    condition     = !endswith(trimspace(var.ssh_cidr_block), "/0") || var.allow_world_open_ssh
+    error_message = "World-open SSH (/0) requires allow_world_open_ssh=true."
+  }
+}
+
+variable "application_cidr_block" {
+  description = "CIDR block allowed to reach server_port and extra_ingress_ports. Empty disables public application ingress."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      trimspace(var.application_cidr_block) == "" ||
+      can(cidrnetmask(var.application_cidr_block))
+    )
+    error_message = "application_cidr_block must be empty (no application ingress) or a valid IPv4 CIDR."
+  }
+
+  validation {
+    condition = (
+      !endswith(trimspace(var.application_cidr_block), "/0") ||
+      var.allow_world_open_application
+    )
+    error_message = "World-open application ingress (/0) requires allow_world_open_application=true."
+  }
+}
+
+variable "allow_world_open_ssh" {
+  description = "Conspicuous operator acknowledgement required when SSH ingress is 0.0.0.0/0"
+  type        = bool
+  default     = false
+}
+
+variable "allow_world_open_application" {
+  description = "Conspicuous operator acknowledgement required when application ingress is 0.0.0.0/0; especially hazardous for unauthenticated apps such as FiftyOne"
+  type        = bool
+  default     = false
 }
 
 # ── LeRobot ────────────────────────────────────────────────────────────────
@@ -148,14 +211,14 @@ variable "lerobot_version" {
 # ── S3 credentials (from environment.sh) ──────────────────────────────────
 
 variable "nebius_api_key" {
-  description = "AWS-compatible access key for S3"
+  description = "Deprecated compatibility input for operator-side Terraform state access; never rendered into VM metadata or cloud-init"
   type        = string
   sensitive   = true
   default     = ""
 }
 
 variable "nebius_secret_key" {
-  description = "AWS-compatible secret key for S3"
+  description = "Deprecated compatibility input for operator-side Terraform state access; never rendered into VM metadata or cloud-init"
   type        = string
   sensitive   = true
   default     = ""
@@ -178,7 +241,7 @@ variable "s3_endpoint" {
 variable "fiftyone_version" {
   description = "FiftyOne PyPI version to install when workbench_type is fiftyone"
   type        = string
-  default     = "1.15.0"
+  default     = "1.22.0"
 }
 
 variable "wait_for_ssh" {

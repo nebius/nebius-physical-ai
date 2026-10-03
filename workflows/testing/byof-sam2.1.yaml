@@ -1,0 +1,80 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-sam2.1
+  description: Native GPU prompted_video_mask_propagation over a hash-verified input video. Publishes
+    raw predictions and decoded visualization; no ground-truth or robot-success claim.
+config:
+  bucket: example-bucket
+  repo_url: https://github.com/facebookresearch/sam2.git
+  repo_ref: 2b90b9f5ceec907a1c18123530e92e794ad901a4
+  repo_auth: none
+  repo_token_env: GH_TOKEN
+  base_profile: prebuilt
+  base_image: ghcr.io/nebius/nebius-physical-ai/npa-sam2@sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16
+  build_command: ''
+  pip_extra: viz
+  workload: solution-smoke
+  smoke_command: |
+    set -euo pipefail
+    export VIDEO_INPUT_B64="{{config.input_uri|base64}}"
+    export VIDEO_SHA256_B64="{{config.input_sha256|base64}}"
+    export VIDEO_BOX_B64="{{config.box_json|base64}}"
+    model-runtime ensure
+    export PYTHONPATH="/opt/byof:${PYTHONPATH:-}"
+    /opt/byof/.venv/bin/python - <<'PY_VIDEO'
+    import base64
+    import json
+    import os
+    from pathlib import Path
+    from npa.solutions.media_input import download_input
+    from npa.solutions.perception_video import run_perception
+
+    def value(name):
+        return base64.b64decode(os.environ[name], validate=True).decode()
+    out = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    video = download_input(value("VIDEO_INPUT_B64"), value("VIDEO_SHA256_B64"), out / "input.mp4")
+    result = run_perception('sam', video, out, json.loads(value("VIDEO_BOX_B64")))
+    assert result["solution"] == 'sam2.1'
+    assert result["capability"] == 'prompted_video_mask_propagation'
+    assert {'prompted_video_mask_propagation', "decoded_mp4_validation"} <= set(result["capabilities_exercised"])
+    (out / 'sam2_1_video_mask_propagation.json').write_text(json.dumps(result, indent=2) + "\n")
+    PY_VIDEO
+  solution_name: sam2.1
+  capability_name: prompted_video_mask_propagation
+  smoke_artifact_name: sam2_1_video_mask_propagation.json
+  resource_profile_yaml: byof-solution-smoke-rtxpro-gpu
+  task: text-to-video
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: '-1'
+  poll_interval: '60'
+  output_root: s3://{{config.bucket}}/oss-solutions/sam2.1
+  summary_uri: s3://{{config.bucket}}/oss-solutions/sam2.1/{{run.id}}/npa_byof_summary.json
+  artifact_uri: s3://{{config.bucket}}/oss-solutions/sam2.1/{{run.id}}/sam2_1_video_mask_propagation.json
+  video_uri: s3://{{config.bucket}}/oss-solutions/sam2.1/{{run.id}}/video.mp4
+  input_uri: s3://example-bucket/inputs/rollout.mp4
+  input_sha256: <complete-input-sha256>
+  box_json: '[250, 180, 650, 450]'
+resources:
+  gpu:
+    cloud: kubernetes
+    image: '{{config.base_image}}'
+    accelerators: B200:1
+    cpus: 16
+    memory: 100Gi
+    disk_size: 80
+initial: generate
+states:
+  generate:
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+    - uri: '{{config.summary_uri}}'
+      schema: npa.workbench.byof.summary.v1
+    - uri: '{{config.artifact_uri}}'
+      schema: npa.workbench.byof.perception_video.v1
+    - uri: '{{config.video_uri}}'
+      schema: video/mp4
+    terminal: true

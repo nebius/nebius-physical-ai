@@ -23,26 +23,64 @@ import httpx
 
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
 DEFAULT_API_KEY_ENV = "NEBIUS_TOKEN_FACTORY_KEY"
-DEFAULT_TIMEOUT_S = 120.0
+# Large vision-language caption requests can spend several minutes in hosted
+# inference even after the connection is established.  Keep a bounded network
+# failure mode, but do not turn normal Qwen-VL latency into four identical
+# transport retries and a failed workflow stage.
+DEFAULT_TIMEOUT_S = 600.0
 DEFAULT_RETRY_ATTEMPTS = 4
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504, 529})
-DEFAULT_TEXT_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
-DEFAULT_VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
-# NVIDIA Cosmos3 Super-Reasoner: hosted vision-language physical-AI reasoner.
-# Confirm availability for your key with `npa workbench token-factory models`.
-DEFAULT_REASONER_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+# Public serverless replacements from the August 2026 deprecation notice.
+# Explicit model IDs and endpoint overrides remain authoritative, including
+# dedicated endpoints serving older models.
+DEFAULT_TEXT_MODEL = "nvidia/Nemotron-3_5-Lightning"
+DEFAULT_VISION_MODEL = "MiniMaxAI/MiniMax-M3"
+DEFAULT_REASONER_MODEL = "MiniMaxAI/MiniMax-M3"
+
+# Batch inference is a separate entitlement from real-time chat: a model can
+# serve /chat/completions and still reject a batch operation. The batch default
+# is therefore not DEFAULT_TEXT_MODEL. Check a candidate with
+# `npa workbench token-factory batch-models`.
+DEFAULT_BATCH_MODEL = "openai/gpt-oss-120b"
+DEFAULT_COMPLETION_WINDOW = "24h"
+DEFAULT_BATCH_POLL_INTERVAL_S = 20.0
+DEFAULT_BATCH_TIMEOUT_S = 86_400.0
+BATCH_TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 
 BASE_URL_ENV_KEYS = (
     "NEBIUS_TOKEN_FACTORY_BASE_URL",
     "NEBIUS_BASE_URL",
 )
-API_KEY_ENV_KEYS = (
-    DEFAULT_API_KEY_ENV,
-)
+API_KEY_ENV_KEYS = (DEFAULT_API_KEY_ENV,)
 
 
 class TokenFactoryError(RuntimeError):
     """Raised when a Token Factory request is misconfigured or fails."""
+
+
+def default_chat_extra(model: str) -> dict[str, Any]:
+    """Keep visible-output workloads from spending their allowance on thinking.
+
+    These are model-specific template parameters, verified on Token Factory.
+    Callers can explicitly enable thinking through ``extra``. Unknown and
+    dedicated model IDs receive no guessed template parameters.
+    """
+
+    if model == "nvidia/Nemotron-3_5-Lightning":
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+    if model == "MiniMaxAI/MiniMax-M3":
+        return {"chat_template_kwargs": {"thinking_mode": "disabled"}}
+    return {}
+
+
+@dataclass(frozen=True)
+class TokenFactoryAccessResult:
+    """Secret-free model availability and billable-inference preflight result."""
+
+    ok: bool
+    model: str
+    error: str = ""
+    request_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +98,22 @@ class TokenFactoryConfig:
     @property
     def models_url(self) -> str:
         return _join_path(self.base_url, "models")
+
+    @property
+    def datasets_url(self) -> str:
+        return _join_path(self.base_url, "datasets")
+
+    @property
+    def operations_url(self) -> str:
+        return _join_path(self.base_url, "operations")
+
+    @property
+    def batches_url(self) -> str:
+        return _join_path(self.base_url, "batches")
+
+    @property
+    def files_url(self) -> str:
+        return _join_path(self.base_url, "files")
 
 
 def resolve_config(
@@ -79,10 +133,14 @@ def resolve_config(
     """
 
     env = _resolve_env(environ)
-    resolved_base = base_url.strip() or _first_env(env, BASE_URL_ENV_KEYS) or DEFAULT_BASE_URL
+    resolved_base = (
+        base_url.strip() or _first_env(env, BASE_URL_ENV_KEYS) or DEFAULT_BASE_URL
+    )
     resolved_key = api_key.strip()
     if not resolved_key:
-        key_candidates = (api_key_env, *API_KEY_ENV_KEYS) if api_key_env else API_KEY_ENV_KEYS
+        key_candidates = (
+            (api_key_env, *API_KEY_ENV_KEYS) if api_key_env else API_KEY_ENV_KEYS
+        )
         resolved_key = _first_env(env, key_candidates)
     if require_api_key and not resolved_key:
         raise TokenFactoryError(
@@ -92,7 +150,54 @@ def resolve_config(
         )
     if timeout_s <= 0:
         raise TokenFactoryError("timeout_s must be positive")
-    return TokenFactoryConfig(base_url=resolved_base, api_key=resolved_key, timeout_s=timeout_s)
+    return TokenFactoryConfig(
+        base_url=resolved_base, api_key=resolved_key, timeout_s=timeout_s
+    )
+
+
+def validate_model_access(api_key: str, model: str) -> TokenFactoryAccessResult:
+    """Verify key scope, model availability, and ability to execute inference."""
+
+    try:
+        # Probe the same endpoint runtime inference uses, including a dedicated
+        # deployment of a retired public model. Keep the supplied key exclusive
+        # so a missing preflight key cannot fall back to another account's key.
+        endpoint_env = {
+            key: os.environ[key] for key in BASE_URL_ENV_KEYS if key in os.environ
+        }
+        client = TokenFactoryClient(
+            resolve_config(api_key=api_key, environ=endpoint_env)
+        )
+        if model not in client.list_models():
+            return TokenFactoryAccessResult(
+                False, model, "model unavailable to this key"
+            )
+        response = client.chat_completion(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": 'Return the single JSON object {"preflight":true}.',
+                }
+            ],
+            temperature=0.0,
+            max_tokens=16,
+        )
+        if not response.get("choices"):
+            return TokenFactoryAccessResult(
+                False, model, "inference returned no choice"
+            )
+        choice = response["choices"][0]
+        visible, _ = split_reasoning(choice.get("message") or {})
+        if not visible or choice.get("finish_reason") == "length":
+            return TokenFactoryAccessResult(
+                False, model, "inference returned no complete visible answer"
+            )
+        return TokenFactoryAccessResult(
+            True, model, request_id=str(response.get("id") or "") or None
+        )
+    except TokenFactoryError as exc:
+        return TokenFactoryAccessResult(False, model, str(exc))
 
 
 _THINK_RE = re.compile(r"\A\s*<think>(?P<reasoning>.*?)</think>\s*", re.DOTALL)
@@ -116,7 +221,9 @@ def split_reasoning(message: dict[str, Any]) -> tuple[str, str | None]:
     if isinstance(content, str):
         match = _THINK_RE.match(content)
         if match:  # Cosmos 3: leading <think>...</think>
-            return content[match.end():].strip(), (match.group("reasoning").strip() or reasoning)
+            return content[match.end() :].strip(), (
+                match.group("reasoning").strip() or reasoning
+            )
         if "<think>" in content and "</think>" not in content:
             # Truncated mid-think (finish_reason=length): all reasoning, no answer.
             return "", (content.split("<think>", 1)[1].strip() or reasoning)
@@ -142,10 +249,17 @@ class TokenFactoryClient:
             raise ValueError("retry_attempts must be at least one")
         self._retry_attempts = retry_attempts
         self._sleeper = sleeper or time.sleep
+        self._last_request_metrics: dict[str, Any] = {}
 
     @property
     def config(self) -> TokenFactoryConfig:
         return self._config
+
+    @property
+    def last_request_metrics(self) -> dict[str, Any]:
+        """Return secret-free transport metrics for the most recent request."""
+
+        return dict(self._last_request_metrics)
 
     def chat_completion(
         self,
@@ -168,13 +282,20 @@ class TokenFactoryClient:
             "model": model,
             "messages": list(messages),
             "temperature": temperature,
+            **default_chat_extra(model),
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if response_format is not None:
             payload["response_format"] = response_format
         if extra:
+            template = payload.get("chat_template_kwargs", {})
             payload.update(extra)
+            if isinstance(extra.get("chat_template_kwargs"), dict):
+                payload["chat_template_kwargs"] = {
+                    **template,
+                    **extra["chat_template_kwargs"],
+                }
 
         data = self._post_json(self._config.chat_completions_url, payload)
         if not isinstance(data, dict):
@@ -227,7 +348,179 @@ class TokenFactoryClient:
         items = data.get("data") if isinstance(data, dict) else None
         if not isinstance(items, list):
             raise TokenFactoryError("Token Factory models response missing data list")
-        return [str(item["id"]) for item in items if isinstance(item, dict) and item.get("id")]
+        return [
+            str(item["id"])
+            for item in items
+            if isinstance(item, dict) and item.get("id")
+        ]
+
+    # ------------------------------------------------------------------
+    # Batch inference.
+    #
+    # Unlike chat completions, batch inference is not OpenAI-compatible: rows are
+    # uploaded as a dataset, an operation runs the model over them
+    # asynchronously within a completion window, and the responses land in a
+    # destination dataset that is exported back. These wrappers keep callers from
+    # assembling dataset schemas and operation mappings by hand.
+    # ------------------------------------------------------------------
+
+    def create_dataset(
+        self,
+        *,
+        name: str,
+        folder: str,
+        columns: dict[str, str],
+        rows: Sequence[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Upload ``rows`` as a dataset and return the created dataset record.
+
+        ``columns`` maps a column name to a Token Factory primitive type name
+        (for example ``"string"`` or ``"json"``).
+        """
+
+        if not name:
+            raise TokenFactoryError("dataset name is required")
+        if not columns:
+            raise TokenFactoryError("dataset columns are required")
+        if not rows:
+            raise TokenFactoryError("dataset rows must be a non-empty sequence")
+        payload = {
+            "name": name,
+            "folder": folder or "/",
+            "schema": [
+                {"name": key, "type": {"name": kind}} for key, kind in columns.items()
+            ],
+            "rows": list(rows),
+        }
+        return _expect_object(
+            self._post_json(self._config.datasets_url, payload), "dataset"
+        )
+
+    def get_dataset(self, dataset_id: str) -> dict[str, Any]:
+        url = f"{self._config.datasets_url}/{dataset_id}"
+        return _expect_object(self._get_json(url), "dataset")
+
+    def delete_dataset(self, dataset_id: str) -> None:
+        """Delete a dataset, ignoring an already-absent one."""
+
+        url = f"{self._config.datasets_url}/{dataset_id}"
+        try:
+            self._request("DELETE", url)
+        except TokenFactoryError as exc:
+            if "(404)" not in str(exc):
+                raise
+
+    def export_dataset(self, dataset_id: str, *, output_format: str = "jsonl") -> str:
+        """Return the raw exported body of a dataset (``jsonl`` or ``csv``)."""
+
+        url = f"{self._config.datasets_url}/{dataset_id}/export"
+        return self._request_text("GET", url, params={"format": output_format})
+
+    def create_batch_inference(
+        self,
+        *,
+        model: str,
+        dataset_id: str,
+        dataset_version: str,
+        messages_column: str,
+        custom_id_column: str = "",
+        max_tokens: int | None = None,
+        completion_window: str = DEFAULT_COMPLETION_WINDOW,
+    ) -> dict[str, Any]:
+        """Start a ``text_messages`` batch-inference operation over a dataset."""
+
+        if not model:
+            raise TokenFactoryError("model is required")
+        if not dataset_id or not dataset_version:
+            raise TokenFactoryError("dataset_id and dataset_version are required")
+        mapping: dict[str, Any] = {
+            "type": "text_messages",
+            "messages": {"type": "column", "name": messages_column},
+        }
+        if custom_id_column:
+            mapping["custom_id"] = {"type": "column", "name": custom_id_column}
+        if max_tokens is not None:
+            mapping["max_tokens"] = {"type": "number", "value": int(max_tokens)}
+        payload = {
+            "type": "batch_inference",
+            "src": [{"id": dataset_id, "version": dataset_version, "mapping": mapping}],
+            "params": {"model": model, "completion_window": completion_window},
+        }
+        return _expect_object(
+            self._post_json(self._config.operations_url, payload), "operation"
+        )
+
+    def get_operation(self, operation_id: str) -> dict[str, Any]:
+        url = f"{self._config.operations_url}/{operation_id}"
+        return _expect_object(self._get_json(url), "operation")
+
+    def operation_errors(self, operation_id: str) -> list[str]:
+        """Return the operation's error strings, dropping empty placeholders.
+
+        A failed batch operation frequently reports a single empty string, so an
+        empty list here does not mean the operation succeeded.
+        """
+
+        url = f"{self._config.operations_url}/{operation_id}/errors"
+        try:
+            data = self._get_json(url)
+        except TokenFactoryError:
+            return []
+        items = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            return []
+        return [str(item).strip() for item in items if str(item).strip()]
+
+    def get_batch(self, batch_id: str) -> dict[str, Any]:
+        """Return the OpenAI-compatible batch record for an operation.
+
+        A batch-inference operation id doubles as a batch id, and this view
+        carries what the operations endpoint omits: ``request_counts``, and the
+        ``output_file_id`` / ``error_file_id`` that hold the real per-row results
+        and errors.
+        """
+
+        url = f"{self._config.batches_url}/{batch_id}"
+        return _expect_object(self._get_json(url), "batch")
+
+    def download_file(self, file_id: str) -> str:
+        """Return the contents of a file, following the redirect it serves."""
+
+        url = f"{self._config.files_url}/{file_id}/content"
+        return self._request_text("GET", url, follow_redirects=True)
+
+    def cancel_operation(self, operation_id: str) -> dict[str, Any]:
+        url = f"{self._config.operations_url}/{operation_id}/cancel"
+        return _expect_object(self._post_json(url, {}), "operation")
+
+    def wait_for_operation(
+        self,
+        operation_id: str,
+        *,
+        poll_interval_s: float = DEFAULT_BATCH_POLL_INTERVAL_S,
+        timeout_s: float = DEFAULT_BATCH_TIMEOUT_S,
+        on_poll: Callable[[dict[str, Any]], None] | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> dict[str, Any]:
+        """Poll an operation until it reaches a terminal status or times out."""
+
+        if poll_interval_s <= 0:
+            raise TokenFactoryError("poll_interval_s must be positive")
+        deadline = monotonic() + max(timeout_s, 0.0)
+        while True:
+            operation = self.get_operation(operation_id)
+            if on_poll is not None:
+                on_poll(operation)
+            if str(operation.get("status") or "") in BATCH_TERMINAL_STATUSES:
+                return operation
+            if monotonic() >= deadline:
+                raise TokenFactoryError(
+                    f"Token Factory operation {operation_id} did not finish within "
+                    f"{timeout_s:.0f}s (last status "
+                    f"{operation.get('status') or 'unknown'!r}). It keeps running "
+                    "server-side; poll it again or cancel it."
+                )
+            self._sleeper(poll_interval_s)
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -241,14 +534,61 @@ class TokenFactoryClient:
     def _get_json(self, url: str) -> Any:
         return self._request("GET", url)
 
-    def _request(self, method: str, url: str, *, json_body: dict[str, Any] | None = None) -> Any:
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        return self._send(
+            method, url, json_body=json_body, params=params, decode_json=True
+        )
+
+    def _request_text(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        follow_redirects: bool = False,
+    ) -> str:
+        return self._send(
+            method,
+            url,
+            json_body=None,
+            params=params,
+            decode_json=False,
+            follow_redirects=follow_redirects,
+        )
+
+    def _send(
+        self,
+        method: str,
+        url: str,
+        *,
+        json_body: dict[str, Any] | None,
+        params: dict[str, Any] | None,
+        decode_json: bool,
+        follow_redirects: bool = False,
+    ) -> Any:
         owns_client = self._http_client is None
         client = self._http_client or httpx.Client(timeout=self._config.timeout_s)
+        started = time.perf_counter()
+        attempts = 0
+        self._last_request_metrics = {}
         try:
             for attempt in range(1, self._retry_attempts + 1):
+                attempts = attempt
                 try:
                     response = client.request(
-                        method, url, headers=self._headers(), json=json_body
+                        method,
+                        url,
+                        headers=self._headers(),
+                        json=json_body,
+                        params=params,
+                        follow_redirects=follow_redirects,
                     )
                 except httpx.TransportError as exc:
                     if attempt == self._retry_attempts:
@@ -264,6 +604,16 @@ class TokenFactoryClient:
                     self._sleeper(float(2 ** (attempt - 1)))
                     continue
                 response.raise_for_status()
+                self._last_request_metrics = {
+                    "attempts": attempts,
+                    "retries": attempts - 1,
+                    "latency_seconds": round(time.perf_counter() - started, 6),
+                    "status_code": response.status_code,
+                }
+                if not decode_json:
+                    return response.text
+                if not response.content:
+                    return {}
                 return response.json()
             raise AssertionError("unreachable Token Factory retry loop")
         except httpx.HTTPStatusError as exc:
@@ -279,6 +629,13 @@ class TokenFactoryClient:
         except json.JSONDecodeError as exc:  # pragma: no cover - defensive
             raise TokenFactoryError("Token Factory returned non-JSON response") from exc
         finally:
+            if not self._last_request_metrics:
+                self._last_request_metrics = {
+                    "attempts": attempts,
+                    "retries": max(0, attempts - 1),
+                    "latency_seconds": round(time.perf_counter() - started, 6),
+                    "status_code": None,
+                }
             if owns_client:
                 client.close()
 
@@ -319,6 +676,12 @@ def _join_path(base_url: str, suffix: str) -> str:
     if base.endswith("/v1"):
         return f"{base}/{suffix}"
     return f"{base}/v1/{suffix}"
+
+
+def _expect_object(data: Any, what: str) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise TokenFactoryError(f"Token Factory returned a non-object {what} response")
+    return data
 
 
 def _truncate(text: str, *, limit: int = 500) -> str:

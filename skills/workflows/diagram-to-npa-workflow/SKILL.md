@@ -10,7 +10,7 @@ description: Use when turning an architecture diagram plus a step-by-step write-
 Load when the input is a **picture of a pipeline** (architecture diagram, boxes +
 arrows + decision diamonds) **and/or a numbered step write-up**, and the output
 must be a runnable `npa.workflow/v0.0.1` spec under
-`npa/workflows/workbench/npa-workflows/` (or a skill/example directory).
+`workflows/testing/` (or a skill/example directory).
 
 This skill is the **front end** that produces the graph. It composes two existing
 skills — read them too:
@@ -23,7 +23,7 @@ Reference material for this skill:
 - `reference/mapping.md` — keyword→`toolRef` table, control-flow patterns, the
   sim2real worked example, and discrepancy-reconciliation rules.
 - The real Sim2Real composition is the canonical
-  `npa/workflows/workbench/npa-workflows/sim2real.yaml`; do not regenerate a
+  `workflows/main/sim2real.yaml`; do not regenerate a
   stub-toolRef twin from the historical diagram.
 - `examples/av-failure-mode-from-diagram.yaml` — a second, differently-shaped diagram (linear, multi-resource, no loop) proving the method generalizes.
 
@@ -141,7 +141,7 @@ The method is domain-agnostic. Confirm on a new diagram:
 
 The v0.0.1 spec captures the **graph**; the sim2real GPU **engine** that produces
 real weight updates is the staged runbook
-`npa/workflows/workbench/npa-workflows/sim2real.yaml` (see
+`workflows/main/sim2real.yaml` (see
 `skills/workbench/sim2real-engine/SKILL.md` for the 14-stage map and
 `skills/workflows/sim2real-operate/SKILL.md` to run it on a cluster). The produced
 spec mirrors that engine one-to-one (augment → envgen → inner rollouts/VLM → heldout

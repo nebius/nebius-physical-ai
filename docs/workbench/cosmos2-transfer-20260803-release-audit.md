@@ -1,5 +1,7 @@
 # Cosmos Transfer 2.5 release audit — 2026-08-03
 
+[Workbench docs](README.md)
+
 > **Historical release only — not a current SkyPilot bootstrap attestation.**
 > The exact index below predates `skypilot-0.12.2-v1`; its linux/amd64 OCI
 > config does not carry
@@ -111,7 +113,7 @@ obligations. The authoritative dual-license text is Apache Arrow's tagged
 
 ## Functional release gates
 
-Four superseded private candidates were rejected by the real GPU/workflow gates rather
+Four superseded development builds were rejected by the real GPU/workflow gates rather
 than waived: the first revealed that the SigLIP/scientific-Python import path reaches
 `numpy.testing`, whose pinned NumPy 2.2.6
 `numpy/testing/_private/utils.py` unconditionally imports `pd_NA` from

@@ -243,7 +243,7 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
         "6733636aeb1c5d541aa06c578a95d12c2253c4e99fc85623595341905d3d6221"
     ),
     "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1": (
-        "66f751ec9d3d5bff254a498e020d37f9bbde8e0193ba11d1b78f29153ffe694a"
+        "e481655791a9b75f4d5957e40101d7d0b5d9c13a18d1ca233731d03365ad0aec"
     ),
     "usr/lib/x86_64-linux-gnu/libmbedcrypto.so.2.28.3": (
         "c04f91fdb172e17ddb21c9e0b75c04cb4f802bdfc40bb65484550746cd0019a8"
@@ -272,20 +272,31 @@ def scan_tars(tars: list[Path], config: dict[str, Any]) -> list[walker.Finding]:
         return walker.scan_tars(tars, config)
 
 
+docker_save_material = walker.docker_save_material
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", nargs="?")
     parser.add_argument("--rootfs-tar", type=Path)
+    parser.add_argument("--docker-save", type=Path)
     parser.add_argument("--config-json", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
-    if bool(args.image) == bool(args.rootfs_tar):
-        parser.error("provide exactly one IMAGE or --rootfs-tar")
+    if (
+        sum(bool(value) for value in (args.image, args.rootfs_tar, args.docker_save))
+        != 1
+    ):
+        parser.error("provide exactly one IMAGE, --rootfs-tar, or --docker-save")
+    if args.config_json and not args.rootfs_tar:
+        parser.error("--config-json is valid only with --rootfs-tar")
 
     try:
         with tempfile.TemporaryDirectory(prefix="npa-ltx-byte-scan-") as tmp:
             if args.image:
                 tars, config = walker.remote_material(args.image, Path(tmp))
+            elif args.docker_save:
+                tars, config = docker_save_material(args.docker_save, Path(tmp))
             else:
                 tars = [args.rootfs_tar]
                 config = (
@@ -298,7 +309,8 @@ def main(argv: list[str] | None = None) -> int:
 
     result = {
         "format": "npa_ltx_image_byte_scan_v1",
-        "image": args.image or "offline-rootfs",
+        "image": args.image
+        or ("docker-save" if args.docker_save else "offline-rootfs"),
         "status": "pass" if not findings else "fail",
         "archives_scanned": len(tars),
         "findings": [asdict(item) for item in findings],

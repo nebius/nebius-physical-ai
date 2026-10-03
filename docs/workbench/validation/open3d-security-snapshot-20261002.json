@@ -1,0 +1,152 @@
+{
+  "timestamp": "20261002T000000Z",
+  "keyring_base": "python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0",
+  "keyring_sha256": "506b815cbb32d9b6066b4a2aa524071e071761e7e7f68c3ac74f3061ba852017",
+  "sources": {
+    "debian": {
+      "inrelease_url": "https://snapshot.debian.org/file/aa33cb317177428f33c9ff72fc3e9b634645f6ae/InRelease",
+      "inrelease_sha256": "0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675",
+      "bytes": 140421,
+      "packages_sha256": "7778d3e3f303b7ddb8ce0fe7c8d57473a076c6bf2e8f241f75421d2396352498",
+      "packages_bytes": 9678380,
+      "signed_date": "Date: Sat, 12 Sep 2026 07:55:41 UTC"
+    },
+    "debian-security": {
+      "inrelease_url": "https://snapshot.debian.org/file/b3df7376d253f7a2145b8fd9def8051cf0edcdf3/InRelease",
+      "inrelease_sha256": "149086dac63993f431be3e8177971376fd361d2133e765537d7472fc0c49fac2",
+      "bytes": 43409,
+      "packages_sha256": "ccec1667443a165d6989e8c531fa168c0b8b2ac1f7a2c35c4aa28d0f094ccd26",
+      "packages_bytes": 263496,
+      "signed_date": "Date: Thu, 01 Oct 2026 18:36:23 UTC"
+    }
+  },
+  "packages": {
+    "libglib2.0-0t64": [
+      {
+        "archive": "debian",
+        "Version": "2.84.4-3~deb13u5",
+        "SHA256": "e2baf92c57d1db1753e5781a61450d9a01e7833c7bd2dfe87776a6811c11ecc2",
+        "Filename": "pool/main/g/glib2.0/libglib2.0-0t64_2.84.4-3~deb13u5_amd64.deb"
+      }
+    ],
+    "libxml2": [
+      {
+        "archive": "debian",
+        "Version": "2.12.7+dfsg+really2.9.14-2.1+deb13u3",
+        "SHA256": "e0c6b63ce4602a036a526f60fe5e6c1586710688058d98fc1001b9b3147b7efd",
+        "Filename": "pool/main/libx/libxml2/libxml2_2.12.7+dfsg+really2.9.14-2.1+deb13u3_amd64.deb"
+      },
+      {
+        "archive": "debian-security",
+        "Version": "2.12.7+dfsg+really2.9.14-2.1+deb13u1",
+        "SHA256": "b4743a0fd8e86379ec2bdfb6b97b99fb1c92a925e538920052316814470e99f8",
+        "Filename": "pool/updates/main/libx/libxml2/libxml2_2.12.7+dfsg+really2.9.14-2.1+deb13u1_amd64.deb"
+      }
+    ],
+    "openssh-client": [
+      {
+        "archive": "debian",
+        "Version": "1:10.0p1-7+deb13u4",
+        "SHA256": "8fff343654f86c3b3266f94cd338c7b4da2e386da029327815118ea00bce03b9",
+        "Filename": "pool/main/o/openssh/openssh-client_10.0p1-7+deb13u4_amd64.deb"
+      },
+      {
+        "archive": "debian-security",
+        "Version": "1:10.0p1-7+deb13u2",
+        "SHA256": "e6bbb079e06539ecebd598b74f7725299ba61cebd64a2cfb09f2bab8fbe25d18",
+        "Filename": "pool/updates/main/o/openssh/openssh-client_10.0p1-7+deb13u2_amd64.deb"
+      }
+    ],
+    "libssl3t64": [
+      {
+        "archive": "debian",
+        "Version": "3.5.7-1~deb13u2",
+        "SHA256": "916f7f40b34a06e6ebfaefcdab331bff458328411da672598f126a760472467d",
+        "Filename": "pool/main/o/openssl/libssl3t64_3.5.7-1~deb13u2_amd64.deb"
+      },
+      {
+        "archive": "debian-security",
+        "Version": "3.5.7-1~deb13u3",
+        "SHA256": "ff16bc048bcd7d1b256094450b79c77947d8e76fe2a24bd99b91021d591fa074",
+        "Filename": "pool/updates/main/o/openssl/libssl3t64_3.5.7-1~deb13u3_amd64.deb"
+      }
+    ],
+    "openssl": [
+      {
+        "archive": "debian",
+        "Version": "3.5.7-1~deb13u2",
+        "SHA256": "4ff006f431d8c2e69fa736885a3b6e779f2448535f69dbde821d9f0ff87ad8ea",
+        "Filename": "pool/main/o/openssl/openssl_3.5.7-1~deb13u2_amd64.deb"
+      },
+      {
+        "archive": "debian-security",
+        "Version": "3.5.7-1~deb13u3",
+        "SHA256": "43a9cbcf2a8a0e1f0a1c3f5a33ee1f56b269690e7a2129f2b2d0582e789589d7",
+        "Filename": "pool/updates/main/o/openssl/openssl_3.5.7-1~deb13u3_amd64.deb"
+      }
+    ],
+    "openssl-provider-legacy": [
+      {
+        "archive": "debian",
+        "Version": "3.5.7-1~deb13u2",
+        "SHA256": "f155c8191ae6d41da73d792f4182680aeafeb85c3dd223934ee9fdd115c4f1fa",
+        "Filename": "pool/main/o/openssl/openssl-provider-legacy_3.5.7-1~deb13u2_amd64.deb"
+      },
+      {
+        "archive": "debian-security",
+        "Version": "3.5.7-1~deb13u3",
+        "SHA256": "c12e0266c4780749a4702b8959ac979689f4182e18eed85a8a5eb90ed0e16eab",
+        "Filename": "pool/updates/main/o/openssl/openssl-provider-legacy_3.5.7-1~deb13u3_amd64.deb"
+      }
+    ],
+    "libpcre2-8-0": [
+      {
+        "archive": "debian",
+        "Version": "10.46-1~deb13u2",
+        "SHA256": "1252b96a5bc44bb5db982bef8eb18e54f5047cede2aff641bce4f8e1edb91c3e",
+        "Filename": "pool/main/p/pcre2/libpcre2-8-0_10.46-1~deb13u2_amd64.deb"
+      },
+      {
+        "archive": "debian-security",
+        "Version": "10.46-1~deb13u3",
+        "SHA256": "e226f661d918f04daf38cdbc4806b7ed7d6ef95c7eb0ade692fc350e31970040",
+        "Filename": "pool/updates/main/p/pcre2/libpcre2-8-0_10.46-1~deb13u3_amd64.deb"
+      }
+    ],
+    "perl-base": [
+      {
+        "archive": "debian",
+        "Version": "5.40.1-6+deb13u1",
+        "SHA256": "b795464137a0f4d443fc9284f4b93e883fb83883cb533adf300ac660807a352a",
+        "Filename": "pool/main/p/perl/perl-base_5.40.1-6+deb13u1_amd64.deb"
+      }
+    ],
+    "rsync": [
+      {
+        "archive": "debian",
+        "Version": "3.4.1+ds1-5+deb13u4",
+        "SHA256": "8aa122f6ba8d2ff112c72bb9814ee096ee516f0213b36b98bbe79c83c92fb226",
+        "Filename": "pool/main/r/rsync/rsync_3.4.1+ds1-5+deb13u4_amd64.deb"
+      },
+      {
+        "archive": "debian-security",
+        "Version": "3.5.0+ds1-0+deb13u1",
+        "SHA256": "4e7c9ceffc110e23e91177811fb02c7033b161d327f696f1b8f2f57d2edb92c5",
+        "Filename": "pool/updates/main/r/rsync/rsync_3.5.0+ds1-0+deb13u1_amd64.deb"
+      }
+    ]
+  },
+  "signature_verification": {
+    "tool": "gpgv",
+    "exit_codes": {
+      "debian": 0,
+      "debian-security": 0
+    },
+    "scope": "Both InRelease signatures verified with the digest-pinned base image Debian archive keyring; compressed package indexes verified against their signed SHA256 and size."
+  },
+  "advisories": [
+    "https://security-tracker.debian.org/tracker/DSA-6530-1",
+    "https://security-tracker.debian.org/tracker/DSA-6531-1",
+    "https://security-tracker.debian.org/tracker/DSA-6527-1"
+  ]
+}

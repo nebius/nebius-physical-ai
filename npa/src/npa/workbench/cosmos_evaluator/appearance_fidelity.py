@@ -190,12 +190,8 @@ def check_appearance_fidelity(
             delta = augmented_lab - source_lab
             full_shift = np.median(delta.reshape(-1, 3), axis=0)
             for index, (_, bounds) in enumerate(normalized_regions):
-                y_slice, x_slice = _region_slices(
-                    bounds, height=height, width=width
-                )
-                region_shift = np.median(
-                    delta[y_slice, x_slice].reshape(-1, 3), axis=0
-                )
+                y_slice, x_slice = _region_slices(bounds, height=height, width=width)
+                region_shift = np.median(delta[y_slice, x_slice].reshape(-1, 3), axis=0)
                 region_chroma = region_shift[1:3]
                 luminance_values[index].append(float(abs(region_shift[0])))
                 chroma_values[index].append(float(np.linalg.norm(region_chroma)))
@@ -310,9 +306,7 @@ def _iter_rgb_frames(
         if returncode != 0 or partial:
             detail = ""
             if proc.stderr is not None:
-                detail = (proc.stderr.read() or b"").decode(
-                    "utf-8", "replace"
-                ).strip()
+                detail = (proc.stderr.read() or b"").decode("utf-8", "replace").strip()
             raise CosmosEvaluatorError(
                 f"ffmpeg failed to decode {video} (exit {returncode}): "
                 f"{detail or 'stream ended mid-frame'}"[:300]
@@ -356,14 +350,17 @@ def _rgb_to_lab(frame: np.ndarray) -> np.ndarray:
         rgb / 12.92,
         ((rgb + 0.055) / 1.055) ** 2.4,
     )
-    xyz = linear @ np.array(
-        [
-            [0.4124564, 0.3575761, 0.1804375],
-            [0.2126729, 0.7151522, 0.0721750],
-            [0.0193339, 0.1191920, 0.9503041],
-        ],
-        dtype=np.float32,
-    ).T
+    xyz = (
+        linear
+        @ np.array(
+            [
+                [0.4124564, 0.3575761, 0.1804375],
+                [0.2126729, 0.7151522, 0.0721750],
+                [0.0193339, 0.1191920, 0.9503041],
+            ],
+            dtype=np.float32,
+        ).T
+    )
     xyz /= np.array([0.95047, 1.0, 1.08883], dtype=np.float32)
     delta = 6.0 / 29.0
     transformed = np.where(

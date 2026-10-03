@@ -126,11 +126,12 @@ class StorageSetupTransaction:
         project = f" --project {self.project_alias}" if self.project_alias else ""
         return f"npa provision-if-absent{project} --skip-k8s"
 
-    def begin(self) -> None:
+    def begin(self) -> bool:
         # An interrupted attempt owns its exact bucket name. Reconcile that
         # resource even if a later invocation proposes a different default;
         # creating the new name would orphan the first bucket and overwrite its
         # provenance. Unproven/legacy records are never adopted this way.
+        resuming_owned_bucket = False
         prior = storage_setup_record(self.project_id, path=self.credentials_path)
         prior_resources = prior.get("resources")
         prior_bucket = (
@@ -144,6 +145,7 @@ class StorageSetupTransaction:
             and str(prior_bucket.get("name", "")).strip()
         ):
             self.bucket_name = str(prior_bucket["name"]).strip()
+            resuming_owned_bucket = True
         self._update_record(
             {
                 "version": 1,
@@ -163,6 +165,7 @@ class StorageSetupTransaction:
             phase = str(self.operation.read().get("phase") or "")
             if phase != "mutating":
                 self.operation.transition("mutating")
+        return resuming_owned_bucket
 
     def record_created(self, kind: str, metadata: dict[str, str]) -> None:
         """Persist ownership before allowing the next fallible provider step."""
@@ -191,9 +194,7 @@ class StorageSetupTransaction:
         )
         required = "name" if kind == "bucket" else "id"
         if not clean.get(required):
-            raise ValueError(
-                f"created storage {kind} record is missing its {required}"
-            )
+            raise ValueError(f"created storage {kind} record is missing its {required}")
         self._created_this_attempt.append((kind, clean))
         if self.operation is not None:
             resource_type = {
@@ -459,6 +460,7 @@ class StorageSetupTransaction:
         # resurrect the exact entries just removed. Replace this field in the
         # persisted project record while retaining every unrelated project.
         path = self.credentials_path
+
         def remove_from(current: dict[str, Any]) -> dict[str, Any]:
             document = deepcopy(current)
             setup = document.get("storage_setup")
@@ -480,6 +482,7 @@ class StorageSetupTransaction:
 
     def _update_record(self, patch: Mapping[str, Any]) -> None:
         path = self.credentials_path
+
         def update(current: dict[str, Any]) -> dict[str, Any]:
             document = deepcopy(current)
             setup = document.get("storage_setup")
@@ -513,6 +516,7 @@ def provision_storage(
     convergence_sleep: Callable[[float], None] | None = None,
     convergence_random: Callable[[], float] | None = None,
     allow_editors_fallback: bool = False,
+    allow_existing_bucket: bool = True,
 ) -> tuple[dict[str, str], StorageProbeResult]:
     """Reconcile, validate and atomically commit first-run storage."""
 
@@ -572,24 +576,25 @@ def provision_storage(
         ) from exc
     context = operation_context(operation) if owns_operation else nullcontext(operation)
     with context:
-        transaction.begin()
+        resuming_owned_bucket = transaction.begin()
         try:
             identity_name_kwargs: dict[str, str] = {}
             if service_account_name != "lerobot-training":
                 identity_name_kwargs["service_account_name"] = service_account_name
             if access_key_name != "lerobot-access-key":
                 identity_name_kwargs["access_key_name"] = access_key_name
-            fallback_enabled = (
-                allow_editors_fallback
-                or os.environ.get("NPA_ALLOW_EDITORS_STORAGE_FALLBACK", "")
-                .strip()
-                .lower()
-                in {"1", "true", "yes"}
-            )
+            fallback_enabled = allow_editors_fallback or os.environ.get(
+                "NPA_ALLOW_EDITORS_STORAGE_FALLBACK", ""
+            ).strip().lower() in {"1", "true", "yes"}
             fallback_kwargs: dict[str, bool] = {}
             if fallback_enabled:
                 fallback_kwargs["allow_editors_fallback"] = True
-            bootstrap = cast(Callable[..., dict[str, str]], nebius.bootstrap_environment)
+            bucket_reuse_kwargs: dict[str, bool] = {}
+            if not allow_existing_bucket and not resuming_owned_bucket:
+                bucket_reuse_kwargs["allow_existing_bucket"] = False
+            bootstrap = cast(
+                Callable[..., dict[str, str]], nebius.bootstrap_environment
+            )
             credentials = bootstrap(
                 project_id,
                 tenant_id,
@@ -599,9 +604,11 @@ def provision_storage(
                 bucket_storage_class=bucket_storage_class,
                 on_status=on_status,
                 on_resource_created=transaction.record_created,
+                **bucket_reuse_kwargs,
                 **fallback_kwargs,
                 **identity_name_kwargs,
             )
+
             def run_probe() -> StorageProbeResult:
                 return probe_storage_write(
                     bucket=credentials.get("s3_bucket", ""),

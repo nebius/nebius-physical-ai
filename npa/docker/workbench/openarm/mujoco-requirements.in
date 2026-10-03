@@ -1,0 +1,14 @@
+# Exact OpenArm CLI, service, and MuJoCo runtime layered onto
+# common/isaac-oss-deps.txt. The OpenArm override replaces the shared Isaac
+# closure's vulnerable Starlette release while leaving that validated closure
+# unchanged for its existing consumers.
+# Generate the lock from the repository root with:
+# sed '/^starlette==/d' npa/docker/workbench/common/isaac-oss-deps.txt | \
+#   npa/.venv/bin/uv pip compile npa/docker/workbench/openarm/mujoco-requirements.in \
+#   --constraint - --python-version 3.11 --generate-hashes --no-emit-index-url \
+#   --output-file npa/docker/workbench/openarm/mujoco-requirements.txt
+fastapi==0.136.1
+mujoco==3.6.0
+pydantic==2.13.5
+starlette==1.6.0
+uvicorn==0.53.0

@@ -33,7 +33,6 @@ this process downloads them into the local rollout dirs.
 
 from __future__ import annotations
 
-import base64
 import copy
 import json
 import os
@@ -41,9 +40,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from npa.clients.storage import safe_s3_download_target
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
-from npa.workflows.sim2real.isaac_job_payload import compressed_bash_launch
+from npa.workflows.sim2real.isaac_job_payload import (
+    compressed_bash_launch,
+    embedded_base64_file_block,
+)
 
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
@@ -52,6 +55,7 @@ DEFAULT_TASK_DESCRIPTION = (
     "Move the manipulation object to the target while maintaining stable contact."
 )
 _LAST_GPU_PROVENANCE: dict[str, Any] = {}
+_LAST_EMBODIMENT_EVIDENCE: dict[str, Any] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -72,6 +76,7 @@ def build_rollout_manifest(
     checkpoint_sha256: str = "",
     checkpoint_size_bytes: int = 0,
     scenario: dict[str, Any] | None = None,
+    simulation_device: str = "cuda:0",
 ) -> dict[str, Any]:
     """Build an ``npa.sim2real.action_rollout.v1`` manifest for one rollout.
 
@@ -98,6 +103,7 @@ def build_rollout_manifest(
         # Provenance: distinguishes a real policy rollout from the synthetic stub.
         "source": "byo_isaac_policy_rollout",
         "sim_backend": "isaac",
+        "simulation_device": simulation_device,
         "policy_checkpoint": checkpoint_uri,
         "policy_checkpoint_sha256": checkpoint_sha256,
         "policy_checkpoint_size_bytes": int(checkpoint_size_bytes),
@@ -266,8 +272,16 @@ CAMERA_VIEWS = json.loads(os.environ.get("ROLLOUT_CAMERA_VIEWS_JSON", "[]") or "
 CAPTURE_WIDTH = int(os.environ.get("ROLLOUT_CAPTURE_WIDTH", "640"))
 CAPTURE_HEIGHT = int(os.environ.get("ROLLOUT_CAPTURE_HEIGHT", "480"))
 CAPTURE_STRIDE = max(1, int(os.environ.get("ROLLOUT_CAPTURE_STRIDE", "1")))
+CAPTURE_STEPS = [step for step in SAMPLE_STEPS if step % CAPTURE_STRIDE == 0]
+if HORIZON_STEPS not in CAPTURE_STEPS:
+    CAPTURE_STEPS.append(HORIZON_STEPS)
 PNG_COMPRESS_LEVEL = int(os.environ.get("ROLLOUT_PNG_COMPRESS_LEVEL", "3"))
 CAPTURE_FPS = float(os.environ.get("ROLLOUT_CAPTURE_FPS", "10"))
+SIM_DEVICE = os.environ.get("ROLLOUT_SIM_DEVICE", "cuda:0").strip() or "cuda:0"
+if SIM_DEVICE != "cpu" and not (
+    SIM_DEVICE.startswith("cuda:") and SIM_DEVICE.removeprefix("cuda:").isdigit()
+):
+    raise RuntimeError("ROLLOUT_SIM_DEVICE must be cpu or cuda:<index>")
 CKPT_URI = os.environ.get("ROLLOUT_CKPT_URI", "").strip()
 trained = False
 def checkpoint_provenance():
@@ -285,9 +299,12 @@ def upload_and_exit(rollouts, note, applied=None):
             "applied_scenarios": applied or {},
             "policy_checkpoint": checkpoint,
             "camera_metadata": CAMERA_VIEWS,
+            "simulation_device": SIM_DEVICE,
             "capture": {"width": CAPTURE_WIDTH, "height": CAPTURE_HEIGHT,
                         "rollout_stride": CAPTURE_STRIDE,
                         "decision_points": STEPS, "horizon_steps": HORIZON_STEPS,
+                        "expected_frames_per_view": len(CAPTURE_STEPS),
+                        "sample_steps": SAMPLE_STEPS,
                         "png_compress_level": PNG_COMPRESS_LEVEL, "fps": CAPTURE_FPS}}
     json.dump(meta, open("/tmp/rollwork/rollouts.json", "w"))
     print("ROLLOUT_WROTE", note, "rollouts", len(rollouts), flush=True)
@@ -316,6 +333,20 @@ try:
             "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
         ),
     ).app
+    # Isaac Sim 5.1 may leave the RTX data-window settings unset under a
+    # portable root. Replicator treats those ``None`` values as overscan and
+    # then subtracts them while reading RGB. Initialize the standard full-frame
+    # window so Replicator preserves exact WxH output without fake overscan.
+    import carb
+    rtx_settings = carb.settings.get_settings()
+    rtx_settings.set_float("/rtx/dataWindowNDC/0", 0.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/1", 0.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/2", 1.0)
+    rtx_settings.set_float("/rtx/dataWindowNDC/3", 1.0)
+    rtx_settings.set_bool("/rtx/dataWindow/fitOutputToDataWindow", False)
+    if os.environ.get("NPA_PREPARE_ROBOT_ASSET_IN_APP") == "1":
+        from npa.workflows.sim2real.isaac_robot_asset import prepare_with_running_app
+        prepare_with_running_app()
     import gymnasium as gym, torch
     import isaaclab_tasks  # noqa: F401
     _scenarios = None
@@ -332,13 +363,21 @@ try:
         print("ROLLOUT_SCENARIO_TASK", TASK, flush=True)
     from isaaclab_tasks.utils import parse_env_cfg
     import isaaclab.sim as sim_utils
-    from isaaclab.sensors import TiledCameraCfg
+    from isaaclab.sensors import CameraCfg, TiledCameraCfg
+    from npa.workflows.sim2real.camera_views import camera_rotation_for_isaac_lab
     try:
         from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
     except Exception:
         from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
     from rsl_rl.runners import OnPolicyRunner
-    env_cfg = parse_env_cfg(TASK, device="cuda:0", num_envs=N)
+    env_cfg = parse_env_cfg(TASK, device=SIM_DEVICE, num_envs=N)
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
+    print("ROLLOUT_ROBOT_USD_EFFECTIVE", remap_moved_franka_usd(env_cfg), flush=True)
+    if SIM_DEVICE == "cpu":
+        if N != 1:
+            raise RuntimeError("CPU physics camera fallback requires ROLLOUT_COUNT=1")
+        env_cfg.sim.use_fabric = False
+    print("ROLLOUT_SIM_DEVICE", SIM_DEVICE, flush=True)
     OBJECT_USD = os.environ.get("ROLLOUT_OBJECT_USD", "").strip()
     if OBJECT_USD:
         try:
@@ -348,15 +387,16 @@ try:
             raise RuntimeError("could not apply task-contract object USD: %r" % (e,)) from e
     def _camera_key(name):
         return "rollout_cam" if name == "primary" else "rollout_cam_" + name
+    CameraType = CameraCfg if SIM_DEVICE == "cpu" else TiledCameraCfg
     for view in CAMERA_VIEWS:
         setattr(
             env_cfg.scene,
             _camera_key(view["name"]),
-            TiledCameraCfg(
+            CameraType(
                 prim_path="{ENV_REGEX_NS}/rollout_cam_" + view["name"],
-                offset=TiledCameraCfg.OffsetCfg(
+                offset=CameraType.OffsetCfg(
                     pos=tuple(view["position"]),
-                    rot=tuple(view["rotation"]),
+                    rot=camera_rotation_for_isaac_lab(view["rotation"]),
                     convention="world",
                 ),
                 data_types=["rgb"],
@@ -370,6 +410,19 @@ try:
         )
     print("ROLLOUT_CAMERA_VIEWS", [view["name"] for view in CAMERA_VIEWS], flush=True)
     env = gym.make(TASK, cfg=env_cfg)
+    capture_annotators = {}
+    if SIM_DEVICE == "cpu":
+        # Physics remains on CPU for the compatibility route, but rendering is
+        # backed by the reserved RTX device. A CUDA annotator avoids Isaac
+        # Replicator's empty CPU render buffers while leaving simulation state
+        # and policy inference on the explicitly selected device.
+        import omni.replicator.core as rep
+        for view in CAMERA_VIEWS:
+            view_name = view["name"]
+            sensor = env.unwrapped.scene[_camera_key(view_name)]
+            annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cuda:0")
+            annotator.attach(sensor.render_product_paths)
+            capture_annotators[view_name] = annotator
     if OBJECT_USD:
         got_object_usd = getattr(env.unwrapped.scene["object"].cfg.spawn, "usd_path", None)
         if got_object_usd != OBJECT_USD:
@@ -391,8 +444,10 @@ try:
             print("cfg loader", loader, "failed:", repr(e), flush=True)
     if agent_cfg is None:
         raise RuntimeError("could not load rsl_rl_cfg_entry_point for task")
+    from npa.workflows.sim2real.isaac_assets_compat import migrate_rsl_rl_agent_cfg
+    agent_cfg = migrate_rsl_rl_agent_cfg(agent_cfg)
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
-    runner = OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")
+    runner = OnPolicyRunner(env, acfg, log_dir=None, device=SIM_DEVICE)
     trained = False
     if CKPT and os.path.isfile(CKPT):
         try:
@@ -402,7 +457,7 @@ try:
             raise RuntimeError("trained checkpoint failed to load: %r" % (e,)) from e
     else:
         print("ROLLOUT_UNTRAINED_POLICY (no checkpoint yet)", flush=True)
-    policy = runner.get_inference_policy(device="cuda:0")
+    policy = runner.get_inference_policy(device=SIM_DEVICE)
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
     try:
         reset_out = env.reset()
@@ -431,11 +486,32 @@ try:
         "ROLLOUT realN", realN, "DECISION_POINTS", STEPS,
         "HORIZON_STEPS", HORIZON_STEPS, flush=True,
     )
-    try:
-        from PIL import Image as _PILImage
-        _have_pil = True
-    except Exception:
-        _have_pil = False
+    def _write_rgb_png(path, rgb):
+        # Isaac runtime images do not guarantee Pillow.  Keep capture independent
+        # of optional packages so a valid sensor stream cannot be silently lost.
+        import binascii, struct, zlib
+        pixels = np.asarray(rgb, dtype=np.uint8)
+        if pixels.ndim != 3 or pixels.shape[2] < 3:
+            raise RuntimeError(
+                "camera rgb output must be HxWxC with at least three channels; "
+                "got shape=%r dtype=%s" % (pixels.shape, pixels.dtype)
+            )
+        pixels = np.ascontiguousarray(pixels[:, :, :3])
+        height, width = pixels.shape[:2]
+        raw = b"".join(b"\x00" + row.tobytes() for row in pixels)
+        def chunk(kind, payload):
+            body = kind + payload
+            return struct.pack(">I", len(payload)) + body + struct.pack(
+                ">I", binascii.crc32(body) & 0xFFFFFFFF
+            )
+        encoded = (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, PNG_COMPRESS_LEVEL))
+            + chunk(b"IEND", b"")
+        )
+        with open(path, "wb") as handle:
+            handle.write(encoded)
     rollout_ids = [f"rollout-{i:04d}" for i in range(N)]
     frame_names = {
         i: {view["name"]: [] for view in CAMERA_VIEWS}
@@ -450,25 +526,69 @@ try:
     action_manager = uenv.action_manager
     action_terms = list(action_manager.active_terms)
     action_dims = list(action_manager.action_term_dim)
+    actual_action_dim = int(sum(action_dims))
+    _robot_spec = json.loads(os.environ.get("NPA_BYO_ROBOT_SPEC_JSON", "{}") or "{}")
+    expected_action_dim = int(_robot_spec.get("expected_action_dim") or 0)
+    expected_observation_dim = int(_robot_spec.get("expected_observation_dim") or 0)
+    _policy_obs = obs if torch.is_tensor(obs) else obs.get("policy")
+    actual_observation_dim = int(_policy_obs.shape[-1])
+    dimensions = {
+        "embodiment_digest": str(_robot_spec.get("embodiment_digest") or "stock_franka"),
+        "action": actual_action_dim,
+        "observation": actual_observation_dim,
+        "expected_action": expected_action_dim,
+        "expected_observation": expected_observation_dim,
+    }
+    print("ROLLOUT_ROBOT_DIMENSIONS " + json.dumps(dimensions, sort_keys=True), flush=True)
+    if expected_action_dim and actual_action_dim != expected_action_dim:
+        raise RuntimeError("rollout action dimension disagrees with RobotSpec")
+    if expected_observation_dim and actual_observation_dim != expected_observation_dim:
+        raise RuntimeError("rollout observation dimension disagrees with RobotSpec")
     if "gripper_action" not in action_terms:
         raise RuntimeError("policy rollout requires a named gripper_action term")
     gripper_term_index = action_terms.index("gripper_action")
     gripper_start = sum(action_dims[:gripper_term_index])
     previous_goal_distance = np.full(N, np.nan)
     previous_ee_distance = np.full(N, np.nan)
-    initial_object_z = None
+    initial_object_z = uenv.scene["object"].data.root_pos_w[:, 2].detach().cpu().numpy().copy()
     stable_grasp_steps = np.zeros(N, dtype=np.int64)
     stable_place_steps = np.zeros(N, dtype=np.int64)
+    from npa.workflows.sim2real.episode_boundaries import EpisodeBoundaries
+    episode_boundaries = EpisodeBoundaries(N)
     def capture(step):
-        if not _have_pil:
-            return
         if step % CAPTURE_STRIDE != 0 and step != HORIZON_STEPS:
             return
         for view in CAMERA_VIEWS:
             view_name = view["name"]
             try:
-                rgb = env.unwrapped.scene[_camera_key(view_name)].data.output["rgb"]
-                arr = rgb.detach().cpu().numpy()
+                sensor = env.unwrapped.scene[_camera_key(view_name)]
+                if SIM_DEVICE == "cpu":
+                    output = capture_annotators[view_name].get_data()
+                    raw = output["data"] if isinstance(output, dict) else output
+                    if hasattr(raw, "detach"):
+                        arr = raw.detach().cpu().numpy()
+                    elif isinstance(raw, np.ndarray):
+                        arr = raw
+                    else:
+                        import warp as wp
+                        arr = wp.to_torch(raw).cpu().numpy()
+                    pixels = CAPTURE_HEIGHT * CAPTURE_WIDTH
+                    if arr.size == pixels and arr.dtype.itemsize >= 4:
+                        # Replicator may expose packed RGBA pixels as uint32.
+                        arr = arr.view(np.uint8)
+                    if arr.size % pixels:
+                        raise RuntimeError("camera rgb buffer size is not image-shaped")
+                    arr = arr.reshape(1, CAPTURE_HEIGHT, CAPTURE_WIDTH, arr.size // pixels)
+                else:
+                    rgb = sensor.data.output["rgb"]
+                    arr = rgb.detach().cpu().numpy()
+                # A single non-tiled Camera returns HxWxC, while TiledCamera
+                # returns NxHxWxC. Normalize both sensor contracts before the
+                # per-environment writer loop.
+                if arr.ndim == 3:
+                    arr = arr[None, ...]
+                if arr.ndim != 4:
+                    raise RuntimeError("camera rgb output must be HxWxC or NxHxWxC")
                 for i in range(min(N, arr.shape[0])):
                     d = os.path.join(FRAMES_DIR, rollout_ids[i]); os.makedirs(d, exist_ok=True)
                     index = len(frame_names[i][view_name])
@@ -477,17 +597,16 @@ try:
                         if view_name == "primary"
                         else "camera-%s-%03d.png" % (view_name, index)
                     )
-                    _PILImage.fromarray(arr[i, :, :, :3].astype(np.uint8)).save(
-                        os.path.join(d, name), compress_level=PNG_COMPRESS_LEVEL
-                    )
+                    _write_rgb_png(os.path.join(d, name), arr[i])
                     frame_names[i][view_name].append(name)
                     frame_metadata[i][view_name].append({
                         "path": name,
                         "view_name": view_name,
                         "frame_index": index,
                         "sim_step": int(step),
-                        "timestamp_seconds": round(float(step) / CAPTURE_FPS, 6),
+                        **simulation_clock.sample(),
                         "episode_id": rollout_ids[i],
+                        "simulator_episode_id": episode_boundaries.frame_episode(i),
                         "isaac_env_index": i,
                         "width": CAPTURE_WIDTH,
                         "height": CAPTURE_HEIGHT,
@@ -495,6 +614,8 @@ try:
                     })
             except Exception as e:
                 print("capture_err", view_name, repr(e), flush=True)
+    from npa.workflows.sim2real.isaac_simulation_clock import SimulationClock
+    simulation_clock = SimulationClock(env.unwrapped.step_dt)
     for _step in range(HORIZON_STEPS):
         with torch.inference_mode():
             actions = policy(_batched_obs(obs))
@@ -502,20 +623,31 @@ try:
             print("STEP0 act_shape", tuple(getattr(actions, "shape", ())), flush=True)
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
-        if _step in SAMPLE_INDEX:
-            capture(_step)
         a_np = actions.detach().cpu().numpy()
         obs, _, dones, extras = env.step(actions)
+        simulation_clock.advance()
         done_np = dones.detach().cpu().numpy().astype(bool)
+        episode_boundaries.advance(done_np.tolist(), _step)
+        # Isaac has already reset completed environments. Their returned state
+        # cannot describe the terminal action or extend the prior episode.
+        previous_goal_distance[done_np] = np.nan
+        previous_ee_distance[done_np] = np.nan
+        stable_grasp_steps[done_np] = 0
+        stable_place_steps[done_np] = 0
+        # TiledCamera annotators need the first rendered simulation step before
+        # their initial read. Capture the post-action state, which also aligns
+        # each image with the simulator ground truth recorded below.
+        if _step in SAMPLE_INDEX:
+            capture(_step)
         obj = uenv.scene["object"].data.root_pos_w[:, :3]
         cmd = uenv.command_manager.get_command("object_pose")
         goal = cmd[:, :3] + uenv.scene.env_origins[:, :3]
         goal_distance = torch.linalg.norm(obj - goal, dim=1).detach().cpu().numpy()
         ee = uenv.scene["ee_frame"].data.target_pos_w[..., 0, :]
         ee_distance = torch.linalg.norm(obj - ee, dim=1).detach().cpu().numpy()
-        if initial_object_z is None:
-            initial_object_z = obj[:, 2].detach().cpu().numpy().copy()
-        lift_m = obj[:, 2].detach().cpu().numpy() - initial_object_z
+        object_z = obj[:, 2].detach().cpu().numpy()
+        initial_object_z[done_np] = object_z[done_np]
+        lift_m = object_z - initial_object_z
         obj_velocity = torch.linalg.norm(
             uenv.scene["object"].data.root_lin_vel_w, dim=1
         ).detach().cpu().numpy()
@@ -529,10 +661,10 @@ try:
         except Exception as e:
             print("ROLLOUT_CONTACT_SENSOR_FALLBACK", repr(e), flush=True)
         gripper_closed = a_np[:, gripper_start] < 0.0
-        stable_grasp_now = contact_now & gripper_closed & (lift_m > 0.01)
+        stable_grasp_now = contact_now & gripper_closed & (lift_m > 0.01) & ~done_np
         stable_grasp_steps = np.where(stable_grasp_now, stable_grasp_steps + 1, 0)
         stable_grasp_now = stable_grasp_steps >= 3
-        stable_place_now = (goal_distance < 0.05) & (obj_velocity < 0.03)
+        stable_place_now = (goal_distance < 0.05) & (obj_velocity < 0.03) & ~done_np
         stable_place_steps = np.where(stable_place_now, stable_place_steps + 1, 0)
         stable_place_now = stable_place_steps >= 3
         scenario_rows = getattr(uenv, "npa_scenario_rows", [])
@@ -547,6 +679,7 @@ try:
         decision_step = SAMPLE_INDEX[_step]
         for i in range(min(N, a_np.shape[0])):
             scenario = scenario_rows[int(scenario_cpu[i])] if scenario_rows else {}
+            boundary = episode_boundaries.sample(i)
             goal_change = (
                 0.0
                 if np.isnan(previous_goal_distance[i])
@@ -560,7 +693,9 @@ try:
             actions_log[i].append({
                 "step": decision_step,
                 "sim_step": _step,
+                **simulation_clock.sample(),
                 "action": [round(float(x), 5) for x in a_np[i].tolist()],
+                "episode_boundary": boundary,
                 "scenario_config_digest": str(scenario.get("scenario_config_digest") or ""),
                 "simulator_ground_truth": {
                     "object_goal_distance_m": round(float(goal_distance[i]), 6),
@@ -573,15 +708,18 @@ try:
                     "object_height_m": round(float(obj[i, 2].item()), 6),
                     "object_lift_m": round(float(lift_m[i]), 6),
                     "placement_stable": bool(stable_place_now[i]),
-                    "terminated": bool(done_np[i]),
-                    "termination_reason": "success" if stable_place_now[i] else (
-                        "task_or_timeout" if done_np[i] else "running"
+                    "terminated": bool(boundary["reset_events"]),
+                    "termination_reason": (
+                        "task_or_timeout" if boundary["reset_events"] else (
+                            "success" if stable_place_now[i] else "running"
+                        )
                     ),
                     "scenario_config_digest": str(scenario.get("scenario_config_digest") or ""),
                 },
             })
         previous_goal_distance = goal_distance.copy()
         previous_ee_distance = ee_distance.copy()
+        episode_boundaries.sampled()
     capture(HORIZON_STEPS)
     scenario_rows = getattr(uenv, "npa_scenario_rows", [])
     scenario_indices = getattr(uenv, "npa_scenario_indices", None)
@@ -665,11 +803,11 @@ def build_isaac_rollout_job_manifest(
 
     scenario_block = ""
     if scenarios_jsonl:
-        encoded_scenarios = base64.b64encode(scenarios_jsonl.encode()).decode()
-        scenario_block = (
-            '"$PY" -m npa.workflows.sim2real.isaac_job_io write-base64 '
-            f"--payload {_shlex.quote(encoded_scenarios)} "
-            "--destination /tmp/rollwork/scenarios.jsonl\n"
+        scenario_block = embedded_base64_file_block(
+            scenarios_jsonl,
+            destination="/tmp/rollwork/scenarios.jsonl",
+            marker="NPA_ROLLOUT_SCENARIOS_B64",
+        ) + (
             "export NPA_SIM2REAL_SCENARIOS_JSONL=/tmp/rollwork/scenarios.jsonl\n"
             "export NPA_SIM2REAL_TASK_CONTRACT_DIGEST="
             + _shlex.quote(_env("NPA_SIM2REAL_TASK_CONTRACT_DIGEST"))
@@ -679,6 +817,10 @@ def build_isaac_rollout_job_manifest(
 
     robot_block = ""
     if robot_spec:
+        from npa.workflows.sim2real.byo_isaac_trainer import (
+            robot_asset_preflight_script,
+        )
+
         robot_block = (
             "export NPA_BYO_ROBOT_SPEC_JSON="
             + _shlex.quote(json.dumps(robot_spec, sort_keys=True))
@@ -691,7 +833,13 @@ def build_isaac_rollout_job_manifest(
                 + "\n"
             )
         expected_usd = str(robot_spec.get("usd_path") or "").strip()
-        if robot_usd_uri and expected_usd:
+        asset_preflight = robot_asset_preflight_script(robot_spec)
+        if asset_preflight:
+            robot_block += asset_preflight
+            robot_block += (
+                "export NPA_EXPECTED_ROBOT_USD=" + _shlex.quote(expected_usd) + "\n"
+            )
+        elif robot_usd_uri and expected_usd:
             robot_block += (
                 '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
                 f"--uri {_shlex.quote(robot_usd_uri)} "
@@ -716,6 +864,7 @@ def build_isaac_rollout_job_manifest(
         f'ROLLOUT_CAPTURE_STRIDE="{capture["rollout_stride"]}" '
         f'ROLLOUT_PNG_COMPRESS_LEVEL="{capture["png_compress_level"]}" '
         f'ROLLOUT_CAPTURE_FPS="{capture["fps"]}" '
+        f"ROLLOUT_SIM_DEVICE={_shlex.quote(_env('NPA_SIM2REAL_ISAAC_DEVICE', 'cuda:0'))} "
         f"ROLLOUT_CKPT_URI={_shlex.quote(checkpoint_uri)} "
         f'ROLLOUT_CKPT_LOCAL="{ckpt_local}" '
         f"ROLLOUT_OUT_S3={_shlex.quote(out_s3_prefix)} "
@@ -756,9 +905,7 @@ def build_isaac_rollout_job_manifest(
                         "seccompProfile": {"type": "RuntimeDefault"},
                     },
                     "imagePullSecrets": [
-                        {"name": "agent-sa"},
                         {"name": "ngc-nvcr-imagepullsecret"},
-                        {"name": "npa-nebius-registry"},
                     ],
                     "containers": [
                         {
@@ -809,6 +956,38 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+def _expected_camera_frame_count(capture: dict[str, Any]) -> int:
+    """Return frames emitted by sampled decisions plus the terminal horizon.
+
+    The Isaac loop advances every simulation step but captures only at the evenly
+    spaced decision points, subject to the capture stride, and once more at the
+    terminal horizon. Counting every simulation step made reduced live proofs demand
+    301 frames after correctly producing eight decision frames plus the terminal one.
+    """
+
+    declared_count = int(capture.get("expected_frames_per_view") or 0)
+    if declared_count > 0:
+        return declared_count
+    horizon_steps = int(capture.get("horizon_steps") or 0)
+    decision_points = int(capture.get("decision_points") or 0)
+    capture_stride = max(1, int(capture.get("rollout_stride") or 1))
+    if horizon_steps <= 0 or decision_points <= 0:
+        return 0
+    declared = capture.get("sample_steps")
+    if isinstance(declared, list) and declared:
+        sample_steps = [int(step) for step in declared]
+    elif decision_points == 1:
+        sample_steps = [0]
+    else:
+        sample_steps = [
+            (index * (horizon_steps - 1)) // (decision_points - 1)
+            for index in range(decision_points)
+        ]
+    captured = {step for step in sample_steps if step % capture_stride == 0}
+    captured.add(horizon_steps)
+    return len(captured)
+
+
 def materialize_rollout_dirs(
     output_dir: Path,
     meta: dict[str, Any],
@@ -821,6 +1000,7 @@ def materialize_rollout_dirs(
 
     import boto3
     from urllib.parse import urlparse
+    from npa.workflows.sim2real.episode_boundaries import validate_episode_sequence
 
     s3 = boto3.client("s3", endpoint_url=s3_endpoint or None)
     u = urlparse(out_s3_prefix)
@@ -855,6 +1035,7 @@ def materialize_rollout_dirs(
     dirs: list[str] = []
     for roll in meta.get("rollouts", []) or []:
         action_rows = list(roll.get("actions") or [])
+        validate_episode_sequence(action_rows)
         expected_points = int(capture.get("decision_points") or 0)
         if expected_points and len(action_rows) != expected_points:
             raise RuntimeError(
@@ -867,7 +1048,7 @@ def materialize_rollout_dirs(
         ):
             raise RuntimeError("rollout lacks per-decision simulator ground truth")
         rid = roll["rollout_id"]
-        rdir = output_dir / rid
+        rdir = safe_s3_download_target(output_dir, rid, "")
         rdir.mkdir(parents=True, exist_ok=True)
         view_frames = {
             str(name): [str(frame) for frame in frames]
@@ -875,12 +1056,33 @@ def materialize_rollout_dirs(
         }
         if not view_frames:
             view_frames = {"primary": [str(name) for name in roll.get("frames", [])]}
+        expected_views = {
+            str(item.get("name") or "") for item in camera_meta if item.get("name")
+        }
+        expected_frame_count = _expected_camera_frame_count(capture)
+        missing_views = sorted(
+            name for name in expected_views if not view_frames.get(name)
+        )
+        wrong_counts = {
+            name: len(view_frames.get(name) or [])
+            for name in expected_views
+            if expected_frame_count
+            and len(view_frames.get(name) or []) != expected_frame_count
+        }
+        if missing_views or wrong_counts:
+            raise RuntimeError(
+                "real Isaac rollout camera coverage mismatch: "
+                f"missing={missing_views} counts={wrong_counts} "
+                f"expected_per_view={expected_frame_count}"
+            )
         all_frames = list(
             dict.fromkeys(frame for frames in view_frames.values() for frame in frames)
         )
         for name in all_frames:
+            target = safe_s3_download_target(rdir, name, "")
+            target.parent.mkdir(parents=True, exist_ok=True)
             try:
-                s3.download_file(u.netloc, f"{base}/{rid}/{name}", str(rdir / name))
+                s3.download_file(u.netloc, f"{base}/{rid}/{name}", str(target))
             except Exception as exc:  # pragma: no cover - network
                 print(
                     f"byo_isaac_policy_rollout: frame download failed {rid}/{name}: {exc!r}",
@@ -899,6 +1101,7 @@ def materialize_rollout_dirs(
             checkpoint_sha256=str(checkpoint.get("sha256") or ""),
             checkpoint_size_bytes=int(checkpoint.get("size_bytes") or 0),
             scenario=dict(roll.get("scenario") or {}),
+            simulation_device=str(meta.get("simulation_device") or "cuda:0"),
         )
         (rdir / "manifest.json").write_text(
             json.dumps(manifest, indent=2), encoding="utf-8"
@@ -928,7 +1131,7 @@ def run_isaac_rollout_job(
     rollout_count: int,
     steps_per_rollout: int,
 ) -> list[str]:
-    global _LAST_GPU_PROVENANCE
+    global _LAST_GPU_PROVENANCE, _LAST_EMBODIMENT_EVIDENCE
 
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
@@ -981,6 +1184,9 @@ def run_isaac_rollout_job(
         robot_spec_dict = robot_spec_payload(spec, usd_container_path=usd_dest)
     if robot_spec_dict is None:
         robot_spec_dict = {"robot_source": "stock_franka", "name": "franka"}
+    from npa.workflows.sim2real.byo_isaac_trainer import embodiment_evidence
+
+    _LAST_EMBODIMENT_EVIDENCE = embodiment_evidence(robot_spec_dict)
     task_config = None
     raw_task_config = _env("NPA_BYO_TASK_CONFIG_JSON")
     if raw_task_config:
@@ -1128,8 +1334,9 @@ def _download_rollout_metadata(out_s3: str, *, endpoint: str) -> dict[str, Any]:
 
 
 def main() -> int:
-    global _LAST_GPU_PROVENANCE
+    global _LAST_GPU_PROVENANCE, _LAST_EMBODIMENT_EVIDENCE
     _LAST_GPU_PROVENANCE = {}
+    _LAST_EMBODIMENT_EVIDENCE = {}
     output_json = _env("NPA_SIM2REAL_OUTPUT_JSON")
     if not output_json:
         print(
@@ -1176,6 +1383,12 @@ def main() -> int:
             else "dryrun",
             "gpu_provenance": _LAST_GPU_PROVENANCE,
         },
+    }
+    payload["embodiment"] = dict(_LAST_EMBODIMENT_EVIDENCE) or {
+        "embodiment_digest": "stock_franka",
+        "expected_action_dim": 8,
+        "expected_observation_dim": 36,
+        "runtime_dimension_validation": "passed",
     }
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)
     Path(output_json).write_text(json.dumps(payload, indent=2), encoding="utf-8")

@@ -12,6 +12,7 @@ import yaml
 
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
+    RESTRICTED_PUBLICATION_TOOLS,
     SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS,
     SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS,
 )
@@ -40,9 +41,67 @@ def _cmds(dockerfile_text: str) -> list[str]:
     return re.findall(r"(?im)^\s*CMD\s+(.+?)\s*$", dockerfile_text)
 
 
+def _named_provenance_source(options: str, source: str) -> str | None:
+    """Map one bound provenance-context source to its path beneath ``npa/``."""
+
+    if "--from=npa-source-provenance" not in options.split():
+        return None
+    if not source.startswith("/inputs/"):
+        return None
+    relative = source.removeprefix("/inputs/")
+    if not relative or ".." in Path(relative).parts:
+        return None
+    return relative
+
+
 def _runtime_commands(dockerfile_text: str) -> list[str]:
     """ENTRYPOINT preferred; bare CMD is accepted for service images."""
     return _entrypoints(dockerfile_text) or _cmds(dockerfile_text)
+
+
+def _build_contract_text(dockerfile: Path) -> str:
+    """Include common installers and explicitly copied runtime package locks."""
+
+    text = dockerfile.read_text(encoding="utf-8")
+    parts = [text]
+    common = WORKBENCH_DOCKER / "common"
+    for script in sorted(common.glob("*.sh")):
+        if script.name in text:
+            parts.append(script.read_text(encoding="utf-8"))
+    # A lock-driven install need not repeat package names in the Dockerfile.
+    # Only a COPY instruction counts: an adjacent lock or a comment is not
+    # evidence that its packages participate in constructing the image.
+    instructions = _normalize_dockerfile(text)
+    if re.search(
+        r"(?im)^COPY\s+(?:--\S+\s+)*\S*/apt-runtime\.lock\s+\S+\s*$",
+        instructions,
+    ):
+        parts.append(
+            (dockerfile.parent / "apt-runtime.lock").read_text(encoding="utf-8")
+        )
+    return "\n".join(parts)
+
+
+@pytest.mark.parametrize("copied", [True, False])
+def test_build_contract_includes_only_copied_runtime_lock(
+    tmp_path: Path, copied: bool
+) -> None:
+    dockerfile = tmp_path / "Dockerfile"
+    copy = "COPY --from=build /opt/build/apt-runtime.lock /tmp/runtime.lock\n"
+    dockerfile.write_text("FROM ubuntu\n" + (copy if copied else "# " + copy))
+    (tmp_path / "apt-runtime.lock").write_text(
+        "packages:\n  - {binary: openssh-server, version: pinned}\n"
+    )
+    assert ("openssh-server" in _build_contract_text(dockerfile)) is copied
+
+
+def test_build_contract_refuses_missing_copied_runtime_lock(tmp_path: Path) -> None:
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM ubuntu\nCOPY --from=build /opt/build/apt-runtime.lock /tmp/runtime.lock\n"
+    )
+    with pytest.raises(FileNotFoundError):
+        _build_contract_text(dockerfile)
 
 
 def _normalize_dockerfile(dockerfile_text: str) -> str:
@@ -215,6 +274,41 @@ def _base_image_refs(dockerfile_text: str) -> list[str]:
     return refs
 
 
+def _resolved_build_sources(dockerfile_text: str) -> list[str]:
+    """Resolve image sources used by FROM and external COPY instructions."""
+
+    defaults = dict(
+        re.findall(
+            r"(?m)^\s*ARG\s+([A-Za-z_][A-Za-z0-9_]*)=(\S+)",
+            dockerfile_text,
+        )
+    )
+    stages = set(
+        re.findall(
+            r"(?m)^\s*FROM\s+(?:--\S+\s+)*\S+\s+AS\s+(\S+)",
+            dockerfile_text,
+        )
+    )
+    raw_sources = re.findall(r"(?m)^\s*FROM\s+(?:--\S+\s+)*(\S+)", dockerfile_text)
+    # Dockerfile instructions in this tree are uppercase. Keeping this
+    # case-sensitive avoids treating Python heredoc lines (`from x import y`) as
+    # Dockerfile FROM instructions.
+    raw_sources.extend(re.findall(r"(?m)^\s*COPY\s+--from=(\S+)", dockerfile_text))
+
+    sources: list[str] = []
+    for raw in raw_sources:
+        variable = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", raw)
+        source = defaults.get(variable.group(1), raw) if variable else raw
+        if source == "scratch" or source in stages:
+            continue
+        sources.append(source)
+    return sources
+
+
+def _is_immutable_build_source(source: str) -> bool:
+    return bool(re.search(r"@sha256:[0-9a-f]{64}$", source))
+
+
 def _workbench_parents(dockerfile_text: str, contract_images: dict) -> set[str]:
     """Contract image names this Dockerfile inherits from (``npa-<name>`` refs)."""
     parents: set[str] = set()
@@ -251,9 +345,8 @@ def test_packaging_contract_file_exists() -> None:
 def test_images_that_install_npa_copy_forced_workflow_package_data() -> None:
     """Hatch metadata generation must see every force-included workflow YAML.
 
-    ``pyproject.toml`` force-includes files below ``workflows/``. A Dockerfile that
-    copies the project metadata and installs ``/opt/npa`` therefore cannot copy only
-    ``src/npa``: pip fails before it can build editable or regular package metadata.
+    The build hook includes the staged catalog below ``src/npa/workflows/``.
+    Dockerfiles installing ``/opt/npa`` must copy that package source directory.
     """
 
     missing: list[str] = []
@@ -271,7 +364,7 @@ def test_images_that_install_npa_copy_forced_workflow_package_data() -> None:
         if not installs_npa or "/opt/npa/pyproject.toml" not in instructions:
             continue
         if not re.search(
-            r"\bCOPY\b[^\n]*\b(?:npa/)?workflows\s+/opt/npa/workflows\b",
+            r"\bCOPY\b[^\n]*\b(?:npa/)?src(?:/npa)?\s+/opt/npa/src(?:/npa)?\b",
             instructions,
         ):
             missing.append(str(dockerfile.relative_to(ROOT)))
@@ -285,17 +378,44 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
         if not version:
             continue
         dockerfile = WORKBENCH_DOCKER / item["dockerfile"]
-        text = dockerfile.read_text(encoding="utf-8")
+        dockerfile_text = dockerfile.read_text(encoding="utf-8")
+        text = _build_contract_text(dockerfile)
         assert version == "skypilot-0.12.2-v1", name
-        assert f'org.nebius.npa.skypilot-bootstrap-contract="{version}"' in text, name
+        assert (
+            f'org.nebius.npa.skypilot-bootstrap-contract="{version}"' in dockerfile_text
+        ), name
         for package in ("openssh-server", "rsync", "sudo"):
             assert package in text, f"{name}: missing {package}"
         assert "NOPASSWD" in text or _final_user(text) in {None, "root", "0"}, name
-        entrypoints = _entrypoints(text)
+        entrypoints = _entrypoints(dockerfile_text)
         assert entrypoints, f"{name}: contract images need a forwarding entrypoint"
-        script_matches = re.findall(r'ENTRYPOINT\s+\["([^"]+)"\]', text)
+        script_matches = re.findall(r'ENTRYPOINT\s+\["([^"]+)"\]', dockerfile_text)
         assert script_matches, name
-        script = dockerfile.parent / Path(script_matches[-1]).name
+        entrypoint_path = script_matches[-1]
+        script = dockerfile.parent / Path(entrypoint_path).name
+        if not script.is_file():
+            copy_match = re.search(
+                rf"(?im)^COPY\s+(?P<options>(?:--\S+\s+)*)(?P<src>\S+)\s+"
+                rf"{re.escape(entrypoint_path)}\s*$",
+                _normalize_dockerfile(dockerfile_text),
+            )
+            if copy_match:
+                source_value = copy_match.group("src")
+                source = Path(
+                    _named_provenance_source(copy_match.group("options"), source_value)
+                    or source_value
+                )
+                assert not source.is_absolute() and ".." not in source.parts, name
+                # Workbench images use either npa/ or docker/workbench/ as
+                # their build context. Require one unambiguous source file.
+                candidates = [
+                    (context / source).resolve()
+                    for context in (ROOT / "npa", WORKBENCH_DOCKER)
+                    if (context / source).is_file()
+                ]
+                assert len(candidates) == 1, f"{name}: ambiguous or missing COPY source"
+                script = candidates[0]
+                assert script.is_relative_to(WORKBENCH_DOCKER.resolve()), name
         assert script.is_file(), f"{name}: entrypoint source not found: {script}"
         entrypoint_text = script.read_text(encoding="utf-8")
         assert (
@@ -311,6 +431,35 @@ def test_packaged_skypilot_attestation_inventory_matches_contract() -> None:
         if item.get("skypilot_bootstrap_contract")
     }
     assert SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS == declared
+
+
+def test_robomimic_is_public_neutral_with_release_quarantine() -> None:
+    entry = _load_contract()["images"]["robomimic"]
+    assert entry["dockerfile"] == "robomimic/Dockerfile"
+    assert entry["tier"] == "job"
+    assert entry["redistribution"] == "public"
+    assert entry["skypilot_bootstrap_contract"] == "skypilot-0.12.2-v1"
+    notes = entry["notes"].lower()
+    for boundary in (
+        "torch",
+        "cuda",
+        "weight",
+        "dataset",
+        "runtime cache",
+        "credential",
+        "output",
+        "read-only",
+        "quarantined",
+    ):
+        assert boundary in notes
+    declared_count = re.search(r"(\d+)-entry hash lock", notes)
+    assert declared_count is not None
+    lock = WORKBENCH_DOCKER / "robomimic" / "baked-requirements.lock"
+    observed_count = sum(
+        bool(re.match(r"^[A-Za-z0-9_.-]+==", line))
+        for line in lock.read_text(encoding="utf-8").splitlines()
+    )
+    assert int(declared_count.group(1)) == observed_count
 
 
 def test_runtime_probed_bootstrap_inventory_matches_exact_derived_sources() -> None:
@@ -441,6 +590,18 @@ def test_groot_passwordless_root_contract_is_mutation_sensitive() -> None:
         )
 
 
+def test_groot_uses_a_fixed_consistent_linux_headers_snapshot() -> None:
+    """GR00T must fix inherited headers without leaving dpkg inconsistent."""
+    text = (WORKBENCH_DOCKER / "groot" / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "ARG GROOT_UBUNTU_SNAPSHOT=20260827T000000Z" in text
+    assert "ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-190.200" in text
+    assert "NPA_UBUNTU_SNAPSHOT=${GROOT_UBUNTU_SNAPSHOT}" in text
+    assert "NPA_LINUX_LIBC_DEV_VERSION=${GROOT_LINUX_LIBC_DEV_VERSION}" in text
+    assert '"linux-libc-dev=${GROOT_LINUX_LIBC_DEV_VERSION}"' in text
+    assert "dpkg --purge --force-depends linux-libc-dev" not in text
+
+
 def test_sim2real_control_root_exception_is_finite_and_task_scoped() -> None:
     entry = _load_contract()["images"]["sim2real-control"]
     exception = entry["privilege_exception"]
@@ -537,6 +698,69 @@ def test_image_declares_redistribution_class(image_name: str) -> None:
     )
 
 
+def test_public_recipes_do_not_embed_operator_base_references_in_labels() -> None:
+    """Build provenance may record a profile, never a private registry coordinate."""
+
+    contract = _load_contract()
+    unsafe = re.compile(
+        r'npa\.(?:base[._]image(?:_digest)?|build_info)="[^"\n]*\$\{BASE_IMAGE'
+    )
+    for image_name, entry in contract["images"].items():
+        if entry.get("redistribution") != "public":
+            continue
+        dockerfile = WORKBENCH_DOCKER / entry["dockerfile"]
+        text = dockerfile.read_text(encoding="utf-8")
+        assert unsafe.search(text) is None, (
+            f"{image_name}: public OCI labels must not expose the operator's "
+            "BASE_IMAGE registry or digest"
+        )
+
+
+def test_public_recipes_use_immutable_external_build_sources() -> None:
+    """Every inherited/copied byte is tied to a digest before publication."""
+
+    contract = _load_contract()
+    checked: set[Path] = set()
+    offenders: list[str] = []
+    for image_name, entry in contract["images"].items():
+        if entry.get("redistribution") != "public":
+            continue
+        dockerfile = WORKBENCH_DOCKER / entry["dockerfile"]
+        if dockerfile in checked:
+            continue
+        checked.add(dockerfile)
+        for source in _resolved_build_sources(dockerfile.read_text(encoding="utf-8")):
+            if not _is_immutable_build_source(source):
+                offenders.append(f"{image_name}: {source}")
+
+    assert offenders == [], (
+        "public image build sources must use @sha256 (FROM and external COPY); "
+        f"unpinned sources: {offenders}"
+    )
+
+
+def test_robocasa_build_binds_the_exact_npa_source_revision() -> None:
+    dockerfile = (WORKBENCH_DOCKER / "robocasa/Dockerfile").read_text(encoding="utf-8")
+    build_script = (WORKBENCH_DOCKER / "robocasa/build.sh").read_text(encoding="utf-8")
+    assert '--build-arg NPA_SOURCE_SHA="${NPA_SOURCE_SHA}"' in build_script
+    assert "ARG NPA_SOURCE_SHA" in dockerfile
+    assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in dockerfile
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
+    assert 'test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40' in dockerfile
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("python:3.12-slim", False),
+        ("npa-genesis:release", False),
+        ("ghcr.io/example/tool@sha256:" + "a" * 64, True),
+    ],
+)
+def test_immutable_build_source_guard_mutations(source: str, expected: bool) -> None:
+    assert _is_immutable_build_source(source) is expected
+
+
 @pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))
 def test_dockerfiles_that_bake_omniverse_are_restricted(image_name: str) -> None:
     """An image that BAKES NVIDIA Omniverse Kit (Isaac Sim) is not freely
@@ -628,6 +852,14 @@ MUST_DETECT = {
     "bootstrap warm at build time": "RUN isaac_bootstrap.sh warm\n",
     "isaac shim invoked at build time": 'RUN /isaac-sim/python.sh -c "import isaaclab"\n',
     "isaac-python invoked at build time": "RUN isaac-python -m pip install foo\n",
+    "hash-locked OVRTX wheel install": (
+        "RUN uv pip install --python /opt/ovrtx/bin/python "
+        "-r pylock.ovrtx-runtime.toml --require-hashes --no-deps\n"
+    ),
+    "OVRTX provision-only bootstrap at build time": (
+        "RUN python -m world_understanding.functions.graphics.render_ovrtx "
+        "--provision-only\n"
+    ),
 }
 
 MUST_NOT_DETECT = {
@@ -705,6 +937,23 @@ def test_reintroducing_a_baked_install_fails_the_guard(image_name: str) -> None:
         )
 
 
+def test_content_agents_runtime_fetch_guard_is_mutation_tested() -> None:
+    contract = _load_contract()
+    entry = contract["images"]["content-agents"]
+    assert entry["ovrtx_runtime_fetch"] is True
+    patterns = contract["redistribution"]["omniverse_bake_patterns"]
+    text = (WORKBENCH_DOCKER / entry["dockerfile"]).read_text(encoding="utf-8")
+    assert not _bake_matches(text, patterns)
+
+    mutations = (
+        "RUN uv pip install -r pylock.ovrtx-runtime.toml --require-hashes\n",
+        "RUN python -m world_understanding.functions.graphics.render_ovrtx "
+        "--provision-only\n",
+    )
+    for mutation in mutations:
+        assert _bake_matches(text + mutation, patterns), mutation
+
+
 @pytest.mark.parametrize(
     "image_name",
     sorted(
@@ -764,19 +1013,73 @@ def test_no_image_bakes_eula_acceptance(image_name: str) -> None:
     )
 
 
-@pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))
-def test_no_image_builds_from_an_nvcr_base(image_name: str) -> None:
-    """No workbench image may pull from NVIDIA's credentialed registry.
+def _assert_restricted_nvcr_parent(
+    image_name: str,
+    entry: Mapping,
+    bases: list[str],
+    restricted_tools: frozenset[str] | set[str] = RESTRICTED_PUBLICATION_TOOLS,
+) -> None:
+    """Only reviewed, exact PAIDF parents may enter operator-private recipes."""
+    from npa.workflows.paidf_upstream import upstream_contract
 
-    An nvcr.io base both bakes proprietary content and makes the build depend on an NGC
-    login, so build-your-own stops working for anyone without NGC credentials.
-    """
+    roles = {
+        "paidf-detection-sky": "detection-and-tracking-rfdetr",
+        "paidf-captioning-sky": "captioning",
+        "paidf-visual-qa-sky": "visual-qa",
+        "paidf-attribute-search-sky": "event-and-person-attribute-search",
+    }
+    vendor_bases = [base for base in bases if "nvcr.io" in base]
+    declared = entry.get("restricted_parent_image")
+    if not vendor_bases and not declared:
+        return
+    assert image_name in roles, f"{image_name}: unreviewed NGC parent"
+    assert entry.get("redistribution") == "restricted", image_name
+    assert image_name in restricted_tools, f"{image_name}: missing restricted inventory"
+    parents = upstream_contract("event-video-generation")["npa_integration"][
+        "components"
+    ]["reference_runtime_images"]
+    expected = next(
+        ref
+        for ref in parents
+        if ref.startswith(f"nvcr.io/nvidia/paidf-{roles[image_name]}-service@")
+    )
+    assert re.fullmatch(r"nvcr\.io/[^@]+@sha256:[0-9a-f]{64}", expected)
+    assert declared == expected, f"{image_name}: unreviewed parent digest"
+    assert vendor_bases == [expected], f"{image_name}: parent differs from provenance"
+
+
+@pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))
+def test_nvcr_parents_require_exact_restricted_contract(image_name: str) -> None:
+    """Public recipes exclude NGC; private exceptions remain exact and inventoried."""
     contract = _load_contract()
     text = (WORKBENCH_DOCKER / contract["images"][image_name]["dockerfile"]).read_text(
         encoding="utf-8"
     )
-    for base in _base_image_refs(_normalize_dockerfile(text)):
-        assert "nvcr.io" not in base, f"{image_name}: builds FROM {base}"
+    _assert_restricted_nvcr_parent(
+        image_name,
+        contract["images"][image_name],
+        _base_image_refs(_normalize_dockerfile(text)),
+    )
+
+
+@pytest.mark.parametrize("mutation", ["wrong-digest", "public", "missing-inventory"])
+def test_restricted_nvcr_parent_rejects_unsafe_contract_mutations(
+    mutation: str,
+) -> None:
+    name = "paidf-detection-sky"
+    entry = deepcopy(_load_contract()["images"][name])
+    bases = [entry["restricted_parent_image"]]
+    restricted = set(RESTRICTED_PUBLICATION_TOOLS)
+    if mutation == "wrong-digest":
+        entry["restricted_parent_image"] = bases[0] = bases[0].split("@")[0] + (
+            "@sha256:" + "0" * 64
+        )
+    elif mutation == "public":
+        entry["redistribution"] = "public"
+    else:
+        restricted.remove(name)
+    with pytest.raises(AssertionError):
+        _assert_restricted_nvcr_parent(name, entry, bases, restricted)
 
 
 def test_packaging_doc_exists() -> None:
@@ -786,3 +1089,22 @@ def test_packaging_doc_exists() -> None:
     assert "Packaging tiers" in text
     assert "Security baseline" in text
     assert "packaging-contract.yaml" in text
+
+
+def test_sim2real_control_requirement_sets_have_consistent_shared_pins() -> None:
+    """The control image installs both exact requirement sets in one pip call."""
+
+    requirement_files = (
+        WORKBENCH_DOCKER / "common" / "sim2real-controller-requirements.txt",
+        WORKBENCH_DOCKER / "common" / "sim2real-control-requirements.txt",
+    )
+    versions: dict[str, set[str]] = {}
+    for path in requirement_files:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([^\s;]+)", line.strip())
+            if match:
+                name = match.group(1).lower().replace("_", "-")
+                versions.setdefault(name, set()).add(match.group(2))
+
+    conflicts = {name: pins for name, pins in versions.items() if len(pins) > 1}
+    assert not conflicts, f"Sim2Real control requirement pin conflicts: {conflicts}"

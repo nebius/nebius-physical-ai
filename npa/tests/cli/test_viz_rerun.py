@@ -22,7 +22,9 @@ def _skeleton(frames: int = 3, joints: int = 5) -> np.ndarray:
 
 
 def test_rerun_backend_requires_predictions_for_overlay(tmp_path: Path) -> None:
-    with pytest.raises(rerun_backend.RerunRenderError, match="predictions_data is required"):
+    with pytest.raises(
+        rerun_backend.RerunRenderError, match="predictions_data is required"
+    ):
         rerun_backend.render(
             _skeleton(),
             None,
@@ -40,7 +42,9 @@ def test_rerun_backend_rejects_predictions_longer_than_input(tmp_path: Path) -> 
     skeleton = _skeleton(frames=2)
     predictions = _skeleton(frames=3)
 
-    with pytest.raises(rerun_backend.RerunRenderError, match="frame count cannot exceed"):
+    with pytest.raises(
+        rerun_backend.RerunRenderError, match="frame count cannot exceed"
+    ):
         rerun_backend.render(
             skeleton,
             predictions,
@@ -79,14 +83,18 @@ def test_rerun_backend_orchestrates_capture_and_encode(tmp_path: Path, mocker) -
             paths.append(path)
         return paths
 
-    write = mocker.patch.object(rerun_backend, "_write_frame_recordings", side_effect=write_recordings)
+    write = mocker.patch.object(
+        rerun_backend, "_write_frame_recordings", side_effect=write_recordings
+    )
     capture = mocker.patch.object(rerun_backend, "_capture_rerun_frames")
 
     def encode(_ffmpeg, _frames_dir, encode_fps, encode_output):
         assert encode_fps == 12
         encode_output.write_bytes(b"mp4")
 
-    encode_mock = mocker.patch.object(rerun_backend, "_encode_png_sequence", side_effect=encode)
+    encode_mock = mocker.patch.object(
+        rerun_backend, "_encode_png_sequence", side_effect=encode
+    )
 
     rerun_backend.render(
         skeleton,
@@ -109,12 +117,16 @@ def test_rerun_backend_orchestrates_capture_and_encode(tmp_path: Path, mocker) -
     encode_mock.assert_called_once()
 
 
-def test_rerun_backend_writes_frame_recordings_with_mocked_rerun(tmp_path: Path, mocker) -> None:
+def test_rerun_backend_writes_frame_recordings_with_mocked_rerun(
+    tmp_path: Path, mocker
+) -> None:
     skeleton = _skeleton(frames=2)
     predictions = skeleton + np.array([0.03, 0.0, 0.0], dtype=np.float32)
     fake_rr = _FakeRerun()
     fake_rrb = _fake_blueprint_module()
-    mocker.patch.object(rerun_backend, "_import_rerun", return_value=(fake_rr, fake_rrb))
+    mocker.patch.object(
+        rerun_backend, "_import_rerun", return_value=(fake_rr, fake_rrb)
+    )
 
     recordings = rerun_backend._write_frame_recordings(
         skeleton,
@@ -134,15 +146,23 @@ def test_rerun_backend_writes_frame_recordings_with_mocked_rerun(tmp_path: Path,
     assert "world/input/bones" in logged_paths
     assert "world/predictions/joints" in logged_paths
     assert "world/predictions/bones" in logged_paths
-    assert any(entry["static"] for entry in fake_rr.logs if entry["path"] == "world/input/joints")
+    assert any(
+        entry["static"]
+        for entry in fake_rr.logs
+        if entry["path"] == "world/input/joints"
+    )
 
 
-def test_rerun_backend_logs_predictions_only_within_prediction_window(tmp_path: Path, mocker) -> None:
+def test_rerun_backend_logs_predictions_only_within_prediction_window(
+    tmp_path: Path, mocker
+) -> None:
     skeleton = _skeleton(frames=3)
     predictions = _skeleton(frames=1) + np.array([0.03, 0.0, 0.0], dtype=np.float32)
     fake_rr = _FakeRerun()
     fake_rrb = _fake_blueprint_module()
-    mocker.patch.object(rerun_backend, "_import_rerun", return_value=(fake_rr, fake_rrb))
+    mocker.patch.object(
+        rerun_backend, "_import_rerun", return_value=(fake_rr, fake_rrb)
+    )
 
     recordings = rerun_backend._write_frame_recordings(
         skeleton,

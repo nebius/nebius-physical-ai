@@ -32,6 +32,49 @@ class Cosmos3AccessError(RuntimeError):
     """Raised when Cosmos3 model access or fetch setup fails."""
 
 
+def _resolve_cache_dir(
+    cache_dir: Path | str | None, env: Mapping[str, str]
+) -> Path | str:
+    """Resolve where the framework checkout and checkpoint are cached.
+
+    Cosmos3 bakes no weights, so this directory decides whether the checkpoint
+    download is paid once or once per run. Precedence: an explicit caller value,
+    then ``NPA_COSMOS3_CACHE`` (which the workflow renderer points at the durable
+    model cache), then the operator's configured cache, then the ephemeral
+    default. A blank ``--cache-dir`` -- which Typer hands over as ``Path(".")`` --
+    means "use the configured cache", not "cache into the working directory".
+
+    The cost of that rule is that ``--cache-dir .`` cannot ask for the working
+    directory, because it is indistinguishable from the blank spelling (``Path``
+    collapses ``./`` to ``.`` too). Say so when it happens rather than silently
+    resolving elsewhere; an absolute path is the way to mean it.
+    """
+
+    explicit = str(cache_dir or "").strip()
+    if explicit and explicit != ".":
+        return cache_dir  # type: ignore[return-value]
+    if explicit == ".":
+        import sys
+
+        print(
+            "npa: --cache-dir '.' is treated as unset, because a blank value arrives "
+            "the same way; pass an absolute path to cache into a specific directory",
+            file=sys.stderr,
+        )
+    from npa.workbench.model_cache import (
+        RUNTIME_PREMOUNTED,
+        model_cache_env,
+        resolve_model_cache_root,
+    )
+
+    durable = model_cache_env(resolve_model_cache_root(env, runtime=RUNTIME_PREMOUNTED))
+    return (
+        env.get(DEFAULT_CACHE_ENV, "")
+        or durable.get(DEFAULT_CACHE_ENV, "")
+        or DEFAULT_CACHE_DIR
+    )
+
+
 @dataclass(frozen=True)
 class Cosmos3ServeConfig:
     """vLLM serving knobs carried through fetch config for Phase 2."""
@@ -101,7 +144,7 @@ class Cosmos3AccessConfig:
             source_repo_url=source_repo_url
             or env.get("NPA_COSMOS3_SOURCE_REPO", "")
             or DEFAULT_COSMOS3_SOURCE_REPO,
-            cache_dir=cache_dir or env.get(DEFAULT_CACHE_ENV, "") or DEFAULT_CACHE_DIR,
+            cache_dir=_resolve_cache_dir(cache_dir, env),
             github_token_env=resolved_github_env,
             hf_token_env=resolved_hf_env,
             ngc_api_key_env=resolved_ngc_env,

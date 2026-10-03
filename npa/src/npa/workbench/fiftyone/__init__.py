@@ -6,7 +6,7 @@ from typing import Any
 
 from npa._sdk import call_cli_callback, make_cli_wrapper
 
-DEFAULT_APP_ADDRESS = "0.0.0.0"
+DEFAULT_APP_ADDRESS = "127.0.0.1"
 DEFAULT_APP_PORT = 5151
 
 ensure_ingress = make_cli_wrapper(
@@ -27,7 +27,7 @@ def launch(
     address: str = DEFAULT_APP_ADDRESS,
     output: str = "text",
 ) -> Any:
-    """Launch FiftyOne with a configurable bind address and port."""
+    """Launch FiftyOne on loopback for authenticated forwarding."""
     from npa.cli.fiftyone import launch_cmd
 
     return call_cli_callback(
@@ -39,12 +39,19 @@ def launch(
 
 
 curate = make_cli_wrapper(
-    "npa.cli.fiftyone", "curate_cmd", "Curate and export a LeRobotDataset with FiftyOne."
+    "npa.cli.fiftyone",
+    "curate_cmd",
+    "Curate and export a LeRobotDataset with FiftyOne.",
 )
 curate_augmented = make_cli_wrapper(
     "npa.cli.fiftyone",
     "curate_augmented_cmd",
     "Run real FiftyOne Brain curation over a Physical AI Data Factory augmented set.",
+)
+review_augmented = make_cli_wrapper(
+    "npa.cli.fiftyone",
+    "review_augmented_cmd",
+    "Export all terminal PAIDF candidates as a portable real FiftyOneDataset.",
 )
 eval = make_cli_wrapper(
     "npa.cli.fiftyone", "eval_cmd", "Evaluate checkpoint outputs with FiftyOne."
@@ -69,6 +76,7 @@ __all__ = [
     "launch",
     "curate",
     "curate_augmented",
+    "review_augmented",
     "eval",
     "load_dataset",
     "restart",

@@ -1,25 +1,26 @@
-# NPA Solutions
+# NPA solutions
 
-Validation context: [docs/workbench/solutions-validation.md](../../../../docs/workbench/solutions-validation.md)
-documents the current solutions framework validation state.
+[Contributor guide](../../../../CONTRIBUTING.md) · [Solutions architecture](../../../../docs/architecture/solutions-model.md)
 
-A solution is a top-level product namespace on the NPA platform. It groups a
-related CLI surface, optional SDK namespace, workflows, containers, manifests,
-and agent skills around one implementation domain.
+A solution is a top-level NPA product namespace. It groups commands, optional
+Python clients, workflows, images, and agent skills for one domain. **Workbench**
+is the current reference: its commands start with `npa workbench`.
 
-Workbench is the reference implementation. It owns robotics and physical AI
-workflow tooling under `npa workbench`, with SDK clients under
-`npa.sdk.workbench`, workbench-specific CLI internals under
-`npa.cli.workbench`, and tool skills under `skills/tools/`.
+To add a robotics tool to Workbench, use
+[add a Workbench tool](../../../../skills/workflows/add-workbench-tool/SKILL.md).
+Create a new solution only when it needs its own top-level namespace.
 
-## Adding A Second Solution
+## Files to change for a new solution
 
-1. Add `npa/src/npa/cli/<solution>/__init__.py`.
-2. Register the solution CLI namespace in `npa/src/npa/cli/main.py`.
-3. Add a `[[solutions]]` entry in `npa/src/npa/solutions/solutions.toml`.
-4. Add an SDK namespace if applicable.
-5. Add `skills/tools/<solution>/` or `skills/workflows/<solution>/` skill files
-   and register them in `skills/index.yaml`.
+1. Implement `npa/src/npa/cli/<solution>/__init__.py` and register it in
+   [`npa.cli.main`](../cli/main.py).
+2. Add a `[[solutions]]` entry to [`solutions.toml`](solutions.toml).
+3. Add a Python namespace if the solution supports programmatic access.
+4. Add its root skill under `skills/tools/` or `skills/workflows/`, then register
+   it in [`skills/index.yaml`](../../../../skills/index.yaml).
+5. Document and test the supported commands and integration paths using the
+   [contribution checks](../../../../CONTRIBUTING.md).
 
-Future solution examples include `datalake` for dataset and storage workflows
-and `simfarm` for simulation fleet workflows.
+See [solutions validation](../../../../docs/workbench/solutions-validation.md)
+for what the framework has exercised. Names such as `datalake` and `simfarm`
+are design examples, not installed solutions.

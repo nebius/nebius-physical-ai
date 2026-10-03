@@ -1,0 +1,333 @@
+{
+  "experiments": [
+    {
+      "actor_parameter_delta_l2": 54.95499801635742,
+      "artifact_integrity": {
+        "audit_revision": "post-construction-config-v1",
+        "included_files_verified_locally": 888,
+        "independent_receipt_sha256": "3b810327c3b437647cb8eea76ddc6875522c77b4dd2fd00b599b12ee62f752c3",
+        "original_failed_audit_preserved": true,
+        "raw_rgb_arrays_retained_remotely": 32,
+        "review_bundle_sha256": "768e31dd8912d9804d657364e5875d9da2913832a9a44acbec7511a66d1e8f28",
+        "verified": true,
+        "viewer_episodes_verified": 32,
+        "viewer_errors": []
+      },
+      "artifact_sha256": {
+        "demo.mp4": "afa162af10665a3c878da2f46327388d3ced1abc1f0520e15002bccb8e495186",
+        "evaluation/evaluation.json": "a9f99dd37999610d51ab6babecfb79572f847112f5c6b5b6bdbf215d3afa4060",
+        "prepared/recipe.json": "57bcf20afe95527a9282bacb55f95ab06cad2b5d016d460b7351dd84b466691b",
+        "reports/report.json": "f70ad22b661d36605aa0b4c12dce609715403975af3bc305f10516fee29ac5b4",
+        "reports/visual-evaluation.json": "ebdd4a7c45db991e0935278af7acd2475dc916d4bbb1b6febfdb43ad1c6eb9bc",
+        "training/training.json": "381977344fd0ee12b24b711c25bb2988bf34f7ebf038a0a9e475d754ddb569d2"
+      },
+      "capture": {
+        "episodes": 32,
+        "fps": 50.0,
+        "frames": 7770,
+        "genuine_simulator_pixels": true
+      },
+      "duration_scope": "PPO and final export; excludes installation and simulator startup",
+      "embodiment": "franka",
+      "held_out_counts": {
+        "initial": {
+          "delay": {
+            "raw_height_events": 0,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "heavy": {
+            "raw_height_events": 0,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "nominal": {
+            "raw_height_events": 0,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "slippery": {
+            "raw_height_events": 0,
+            "raw_strict_successes": 0,
+            "trials": 128
+          }
+        },
+        "trained": {
+          "delay": {
+            "raw_height_events": 48,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "heavy": {
+            "raw_height_events": 71,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "nominal": {
+            "raw_height_events": 78,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "slippery": {
+            "raw_height_events": 69,
+            "raw_strict_successes": 0,
+            "trials": 128
+          }
+        }
+      },
+      "iterations": 1500,
+      "learning_profile": "adaptive-bounded-exploration",
+      "ppo_duration_seconds": 1463.5968969019996,
+      "qualification": {
+        "hardware_tested": false,
+        "physics_validity_verified": false,
+        "ready_for_robot_deployment": false,
+        "simulation_qualified": false
+      },
+      "selected_checkpoint_sha256": "31bef9539b1a2588a35837f4dfec378a3a6d8185301616a0bd6c05166b2d7259",
+      "selection": {
+        "iteration": 1499,
+        "selected_checkpoint_sha256": "31bef9539b1a2588a35837f4dfec378a3a6d8185301616a0bd6c05166b2d7259",
+        "selection_rule": "validation success, then closest distance, then earlier iteration",
+        "test_data_used": false
+      },
+      "source_commit": "8dcf36fbf61af1eb70164feb2898ab0cdde61c19",
+      "token_factory": {
+        "calibration_validated": false,
+        "invalid_responses": 4,
+        "judgments": 32,
+        "reference_limitation": "Frozen finite-only height proxy did not exclude invalid articulation physics"
+      },
+      "training_outcomes": {
+        "completed_episodes": 590261,
+        "difficulty": 0.25,
+        "evaluation_used": false,
+        "strict_successes": 0
+      },
+      "transitions": 147456000,
+      "validation_episodes": 640
+    },
+    {
+      "actor_parameter_delta_l2": 54.43552780151367,
+      "artifact_integrity": {
+        "audit_revision": "post-construction-config-v1",
+        "included_files_verified_locally": 888,
+        "independent_receipt_sha256": "af6ca6ea5e37acce735a9a90cb46272f24b047127948f1e6951627abc240a6a0",
+        "original_failed_audit_preserved": true,
+        "raw_rgb_arrays_retained_remotely": 32,
+        "review_bundle_sha256": "6e145c87d07aaa1a9f50ebe9481dd7c06e7a314a93ae00d3d2e1aed22de82bec",
+        "verified": true,
+        "viewer_episodes_verified": 32,
+        "viewer_errors": []
+      },
+      "artifact_sha256": {
+        "demo.mp4": "aa740738b4f49d190b930e1bd0ce80747cdc9cda692525d4b64d394dea3de0d3",
+        "evaluation/evaluation.json": "bee247ef72d73723506a034234aee0fbec2f93994ac316f759e674e0555b9fe3",
+        "prepared/recipe.json": "99020f7d292dc33fafc6e0b3d75bd07ba16e11785368e1566da9b15c819b3d61",
+        "reports/report.json": "f1027aa7d0413fb4249a7564bc2e3976f95258a5ffdc7b7c3f41c71bf5fafc79",
+        "reports/visual-evaluation.json": "eba0932fe4200fce8f97ab0d840dd2a0c171769d86755347e215484679300966",
+        "training/training.json": "3bbda38c8cf1f028e2d1d828eb772ddf7a482aa64f6ab178421e57154d5e1b22"
+      },
+      "capture": {
+        "episodes": 32,
+        "fps": 50.0,
+        "frames": 7984,
+        "genuine_simulator_pixels": true
+      },
+      "duration_scope": "PPO and final export; excludes installation and simulator startup",
+      "embodiment": "kinova_jaco7",
+      "held_out_counts": {
+        "initial": {
+          "delay": {
+            "raw_height_events": 0,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "heavy": {
+            "raw_height_events": 0,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "nominal": {
+            "raw_height_events": 0,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "slippery": {
+            "raw_height_events": 0,
+            "raw_strict_successes": 0,
+            "trials": 128
+          }
+        },
+        "trained": {
+          "delay": {
+            "raw_height_events": 33,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "heavy": {
+            "raw_height_events": 25,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "nominal": {
+            "raw_height_events": 40,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "slippery": {
+            "raw_height_events": 27,
+            "raw_strict_successes": 0,
+            "trials": 128
+          }
+        }
+      },
+      "iterations": 1500,
+      "learning_profile": "adaptive-bounded-exploration",
+      "ppo_duration_seconds": 1425.0263217970023,
+      "qualification": {
+        "hardware_tested": false,
+        "physics_validity_verified": false,
+        "ready_for_robot_deployment": false,
+        "simulation_qualified": false
+      },
+      "selected_checkpoint_sha256": "e5de02d29f17c61c30d5572e0dc12aac49972cee240925fe793ee25276f602d9",
+      "selection": {
+        "iteration": 1499,
+        "selected_checkpoint_sha256": "e5de02d29f17c61c30d5572e0dc12aac49972cee240925fe793ee25276f602d9",
+        "selection_rule": "validation success, then closest distance, then earlier iteration",
+        "test_data_used": false
+      },
+      "source_commit": "8dcf36fbf61af1eb70164feb2898ab0cdde61c19",
+      "token_factory": {
+        "calibration_validated": false,
+        "invalid_responses": 1,
+        "judgments": 32,
+        "reference_limitation": "Frozen finite-only height proxy did not exclude invalid articulation physics"
+      },
+      "training_outcomes": {
+        "completed_episodes": 589824,
+        "difficulty": 0.25,
+        "evaluation_used": false,
+        "strict_successes": 0
+      },
+      "transitions": 147456000,
+      "validation_episodes": 640
+    },
+    {
+      "actor_parameter_delta_l2": 59.81574630737305,
+      "artifact_integrity": {
+        "audit_revision": "post-construction-config-v1",
+        "included_files_verified_locally": 891,
+        "independent_receipt_sha256": "7c82f138c2bd977b266e9cf649a170395d73901d79cfbf204046292df4864078",
+        "original_failed_audit_preserved": true,
+        "raw_rgb_arrays_retained_remotely": 32,
+        "review_bundle_sha256": "adaf6356b28f16283704a39331e2511682c731c14090c76668ac40a4bdc53035",
+        "verified": true,
+        "viewer_episodes_verified": 32,
+        "viewer_errors": []
+      },
+      "artifact_sha256": {
+        "demo.mp4": "0d5b228d062e44e25dcb7ee04ba6de8de7aeda9eaf61545ddc81d6b564c08b2f",
+        "evaluation/evaluation.json": "4b19d108d8c1a3b8c7c9fd8888050f289fce607107d1125a03e944e3c7fbeb9c",
+        "prepared/recipe.json": "70def4ca4f5d14038c88ac1650ac9461d6fa4fcb1601a7bf2a550f8c3afff7de",
+        "reports/report.json": "15c38557e72bde57ced0f133fa61813097dad4bd8829d1415780a14176d74cf6",
+        "reports/visual-evaluation.json": "8e7e52a123078a4f4c1009bd1b4d2b794bd38c620a2a6dc564a153d731a06de0",
+        "training/training.json": "3317af89040b99f4e7de46956c6ed651a3d7e0a22dbb87bf944c32fa8f7e42a5"
+      },
+      "capture": {
+        "episodes": 32,
+        "fps": 50.0,
+        "frames": 7950,
+        "genuine_simulator_pixels": true
+      },
+      "duration_scope": "PPO and final export; excludes installation and simulator startup",
+      "embodiment": "ur10e_robotiq85",
+      "held_out_counts": {
+        "initial": {
+          "delay": {
+            "raw_height_events": 0,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "heavy": {
+            "raw_height_events": 0,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "nominal": {
+            "raw_height_events": 0,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "slippery": {
+            "raw_height_events": 0,
+            "raw_strict_successes": 0,
+            "trials": 128
+          }
+        },
+        "trained": {
+          "delay": {
+            "raw_height_events": 17,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "heavy": {
+            "raw_height_events": 11,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "nominal": {
+            "raw_height_events": 14,
+            "raw_strict_successes": 0,
+            "trials": 128
+          },
+          "slippery": {
+            "raw_height_events": 11,
+            "raw_strict_successes": 0,
+            "trials": 128
+          }
+        }
+      },
+      "iterations": 1500,
+      "learning_profile": "adaptive-bounded-exploration",
+      "ppo_duration_seconds": 2121.352435377001,
+      "qualification": {
+        "hardware_tested": false,
+        "physics_validity_verified": false,
+        "ready_for_robot_deployment": false,
+        "simulation_qualified": false
+      },
+      "selected_checkpoint_sha256": "8b3a2181b6bb6958288e879c1893b898b0994f8cf5eeae97faf620c865ddba41",
+      "selection": {
+        "iteration": 1499,
+        "selected_checkpoint_sha256": "8b3a2181b6bb6958288e879c1893b898b0994f8cf5eeae97faf620c865ddba41",
+        "selection_rule": "validation success, then closest distance, then earlier iteration",
+        "test_data_used": false
+      },
+      "source_commit": "8dcf36fbf61af1eb70164feb2898ab0cdde61c19",
+      "token_factory": {
+        "calibration_validated": false,
+        "invalid_responses": 1,
+        "judgments": 32,
+        "reference_limitation": "Frozen finite-only height proxy did not exclude invalid articulation physics"
+      },
+      "training_outcomes": {
+        "completed_episodes": 1107203,
+        "difficulty": 0.25,
+        "evaluation_used": false,
+        "strict_successes": 0
+      },
+      "transitions": 147456000,
+      "validation_episodes": 640
+    }
+  ],
+  "gpu_count_per_workflow": 1,
+  "gpu_product": "RTX PRO 6000",
+  "improved_strict_task_success_demonstrated": false,
+  "physics_counterexamples": "manipulation-physics-counterexamples.json",
+  "reproduction": "Use the recorded source commit and original sealed recipe, with a fresh private run prefix",
+  "schema": "npa.manipulation-bounded-experiment-integrity.v1",
+  "scope": "Historical frozen experiments before measured-state checks; artifact integrity is not physics validity",
+  "workflow": "workflows/testing/franka-rl-transfer.yaml"
+}

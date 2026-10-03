@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 import time
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -14,6 +16,76 @@ from npa.cli.isaac_lab.eval_runner import (
     resolve_success_metric,
     write_eval_summary,
 )
+
+
+@pytest.mark.parametrize("legacy_namespace", [False, True])
+def test_policy_loader_migrates_config_before_constructing_runner(
+    monkeypatch, tmp_path: Path, legacy_namespace: bool
+) -> None:
+    from npa.cli.isaac_lab import eval_runner
+
+    namespace = "omni.isaac.lab_rl" if legacy_namespace else "isaaclab_rl"
+    for name in ("omni", "omni.isaac", namespace, "rsl_rl", "isaaclab_tasks"):
+        module = ModuleType(name)
+        module.__path__ = []
+        monkeypatch.setitem(sys.modules, name, module)
+    if legacy_namespace:
+        monkeypatch.setitem(sys.modules, "isaaclab_rl", None)
+    raw_config = SimpleNamespace(
+        to_dict=lambda: {"actor": {"stochastic": True}}, clip_actions=0.5
+    )
+    migrated = SimpleNamespace(
+        to_dict=lambda: {"actor": {"distribution_cfg": {"class_name": "Gaussian"}}},
+        clip_actions=0.5,
+    )
+    observations = {}
+
+    def migrate(config, version):
+        assert config is raw_config
+        assert version == "5.0.1"
+        observations["migrated"] = True
+        return migrated
+
+    def wrap(env, **kwargs):
+        observations["wrapper"] = (env, kwargs)
+        return "wrapped"
+
+    class Runner:
+        def __init__(self, env, config, *, log_dir, device):
+            # Model construction in RSL-RL 5 rejects the legacy keyword.
+            if "stochastic" in config["actor"]:
+                raise TypeError("unexpected keyword argument 'stochastic'")
+            assert observations["migrated"]
+            assert env == "wrapped" and log_dir is None and device == "cuda:0"
+
+        def load(self, path):
+            observations["checkpoint"] = path
+
+        def get_inference_policy(self, *, device):
+            assert device == "cuda:0"
+            return "loaded-policy"
+
+    integration = ModuleType(namespace + ".rsl_rl")
+    integration.RslRlVecEnvWrapper = wrap
+    integration.handle_deprecated_rsl_rl_cfg = migrate
+    monkeypatch.setitem(sys.modules, integration.__name__, integration)
+    runners = ModuleType("rsl_rl.runners")
+    runners.OnPolicyRunner = Runner
+    monkeypatch.setitem(sys.modules, runners.__name__, runners)
+    registry = ModuleType("isaaclab_tasks.utils")
+    registry.load_cfg_from_registry = lambda *_: raw_config
+    monkeypatch.setitem(sys.modules, registry.__name__, registry)
+    monkeypatch.setattr("importlib.metadata.version", lambda _: "5.0.1")
+    checkpoint = tmp_path / "model.pt"
+
+    assert eval_runner.load_rsl_rl_policy(
+        "environment",
+        task="Isaac-Reach-Franka-v0",
+        checkpoint_file=checkpoint,
+        device="cuda:0",
+    ) == ("wrapped", "loaded-policy")
+    assert observations["checkpoint"] == str(checkpoint)
+    assert observations["wrapper"] == ("environment", {"clip_actions": 0.5})
 
 
 def test_resolve_checkpoint_prefers_portable_stable_weights(tmp_path: Path) -> None:
@@ -105,7 +177,9 @@ def test_resolve_success_metric_auto(episodes, expected: str) -> None:
     assert resolve_success_metric("auto", episodes) == expected
 
 
-def test_resolve_success_metric_auto_requires_native_success_for_every_episode() -> None:
+def test_resolve_success_metric_auto_requires_native_success_for_every_episode() -> (
+    None
+):
     episodes = [
         {"native_success": True, "min_goal_distance_m": 0.01},
         {"native_success": None, "min_goal_distance_m": 0.20},
@@ -153,6 +227,35 @@ def test_apply_goal_distance_and_survival_metrics() -> None:
         task="Isaac-Velocity-Flat-Anymal-C-v0",
     )
     assert [episode["success"] for episode in survival_episodes] == [True, False]
+
+
+@pytest.mark.parametrize("distance", [0.042, float("nan"), float("inf"), -0.1])
+def test_reach_distance_uses_pose_command_metric_without_frame_sensor(distance) -> None:
+    import numpy as np
+
+    from npa.cli.isaac_lab.eval_runner import _goal_distance
+
+    class Commands:
+        def get_command(self, name):
+            if name != "ee_pose":
+                raise KeyError(name)
+            return np.zeros((1, 7))
+
+        def get_term(self, name):
+            assert name == "ee_pose"
+            return SimpleNamespace(metrics={"position_error": np.array([distance])})
+
+    # Franka Reach has a robot and pose command, but no ee_frame sensor.
+    env = SimpleNamespace(
+        unwrapped=SimpleNamespace(command_manager=Commands(), scene={})
+    )
+    measured, source = _goal_distance(env, SimpleNamespace(as_tensor=np.asarray))
+
+    if np.isfinite(distance) and distance >= 0:
+        assert measured == pytest.approx(distance)
+        assert source == "ee_pose.position_error"
+    else:
+        assert measured is None and source == ""
 
 
 def test_eval_config_validates_quality_gate() -> None:

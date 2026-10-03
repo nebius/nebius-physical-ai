@@ -78,6 +78,14 @@ def provision_if_absent_cmd(
         "--gpu-driver-mode",
         help="GPU driver strategy (auto, managed-image, or operator), matching `npa cluster up`.",
     ),
+    gpu_workload_profile: str = typer.Option(
+        "",
+        "--gpu-workload-profile",
+        help=(
+            "Explicit GPU workload contract. 'rtx-rendering' selects RTX PRO 6000, "
+            "GPU Operator drivers, and mandatory GLX/EGL/Vulkan readiness."
+        ),
+    ),
     managed_driver_preset: str = typer.Option(
         "",
         "--managed-driver-preset",
@@ -119,6 +127,14 @@ def provision_if_absent_cmd(
         "",
         "--capacity-block-group",
         help="Runtime-only strict GPU capacity block selector.",
+    ),
+    infiniband_fabric: str = typer.Option(
+        "",
+        "--infiniband-fabric",
+        help=(
+            "InfiniBand fabric required by NVSwitch GPU clusters, matching "
+            "`npa cluster up`."
+        ),
     ),
     preemptible: bool | None = typer.Option(
         None,
@@ -175,6 +191,7 @@ def provision_if_absent_cmd(
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
         gpu_driver_mode=gpu_driver_mode,
+        gpu_workload_profile=gpu_workload_profile,
         managed_driver_preset=managed_driver_preset,
         allow_unsafe_nvswitch_operator=allow_unsafe_nvswitch_operator,
         gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,
@@ -185,6 +202,7 @@ def provision_if_absent_cmd(
         mig_strategy=mig_strategy,
         mig_config=mig_config,
         capacity_block_group=capacity_block_group,
+        infiniband_fabric=infiniband_fabric,
         preemptible=preemptible,
         accelerator=accelerator,
         gpu_readiness_timeout=gpu_readiness_timeout,

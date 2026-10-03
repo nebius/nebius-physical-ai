@@ -22,7 +22,10 @@ from typing import Any
 
 #: Everything this module creates carries it, so `--destroy` can find its own objects and only
 #: its own objects.
-MANAGED_BY_LABEL = {"app.kubernetes.io/managed-by": "npa", "app.kubernetes.io/part-of": "npa-workbench"}
+MANAGED_BY_LABEL = {
+    "app.kubernetes.io/managed-by": "npa",
+    "app.kubernetes.io/part-of": "npa-workbench",
+}
 
 DEFAULT_NAMESPACE = "default"
 
@@ -67,6 +70,28 @@ def service_endpoint(name: str, namespace: str, port: int) -> str:
     return f"http://{name}.{namespace}.svc.cluster.local:{port}"
 
 
+def _service_environment(
+    service_env: dict[str, str], storage_path: str
+) -> list[dict[str, Any]]:
+    """Bind the service path once and leave storage credentials to Secret refs."""
+
+    configured_storage = service_env.get("LANCEDB_STORAGE_PATH")
+    if configured_storage is not None and configured_storage != storage_path:
+        raise ServiceKubernetesError(
+            "service_env LANCEDB_STORAGE_PATH conflicts with storage_path"
+        )
+
+    manifest_env = {
+        key: value
+        for key, value in service_env.items()
+        if key not in STORAGE_SECRET_ENVS
+    }
+    manifest_env["LANCEDB_STORAGE_PATH"] = storage_path
+    return [
+        {"name": key, "value": value} for key, value in sorted(manifest_env.items())
+    ]
+
+
 def build_manifests(
     *,
     name: str,
@@ -88,12 +113,11 @@ def build_manifests(
 
     if not image.strip():
         raise ServiceKubernetesError("an image reference is required")
-
+    if not storage_path.strip():
+        raise ServiceKubernetesError("a storage path is required")
 
     labels = {"app": name, **MANAGED_BY_LABEL}
-    env: list[dict[str, Any]] = [
-        {"name": key, "value": value} for key, value in sorted(service_env.items())
-    ]
+    env = _service_environment(service_env, storage_path)
     if storage_endpoint_url:
         env.append({"name": "AWS_ENDPOINT_URL", "value": storage_endpoint_url})
         env.append({"name": "NEBIUS_S3_ENDPOINT", "value": storage_endpoint_url})
@@ -117,13 +141,13 @@ def build_manifests(
         # Readiness gates the Service's endpoints, so a stage never resolves the DNS name to a
         # pod that is still opening its storage.
         "readinessProbe": {
-            "httpGet": {"path": "/health", "port": port},
+            "httpGet": {"path": "/readyz", "port": port},
             "initialDelaySeconds": 5,
             "periodSeconds": 5,
             "failureThreshold": 12,
         },
         "livenessProbe": {
-            "httpGet": {"path": "/health", "port": port},
+            "httpGet": {"path": "/readyz", "port": port},
             "initialDelaySeconds": 30,
             "periodSeconds": 30,
             "failureThreshold": 6,
@@ -157,65 +181,6 @@ def build_manifests(
     return [deployment, service]
 
 
-#: Name of the pull secret this module maintains when the image lives in a private registry.
-MANAGED_PULL_SECRET = "npa-registry"
-
-
-def ensure_registry_secret(
-    secret_name: str,
-    namespace: str,
-    registry: str,
-    *,
-    runner: Any = None,
-) -> None:
-    """Create or refresh the image-pull secret from a freshly minted registry token.
-
-    A long-lived Deployment cannot borrow SkyPilot's trick of passing credentials per submit:
-    the kubelet pulls whenever it restarts a pod, using whatever the namespace holds. Reusing a
-    shared secret means the deploy silently depends on somebody else's refresh cron — live, the
-    first attempt sat in ImagePullBackOff with `401 Unauthorized` against a tag that exists.
-    """
-
-    from npa.lifecycle_intent import forbid_destructive_provisioning
-
-    forbid_destructive_provisioning("ensure_registry_secret")
-
-    from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token
-
-    try:
-        token = mint_nebius_registry_token()
-    except Exception as exc:  # pragma: no cover - depends on the operator's IAM setup
-        raise ServiceKubernetesError(
-            f"could not mint a registry token for {registry}: {exc}"
-        ) from exc
-
-    run = runner or _kubectl
-    built = run(
-        [
-            "create",
-            "secret",
-            "docker-registry",
-            secret_name,
-            f"--namespace={namespace}",
-            f"--docker-server={registry}",
-            "--docker-username=iam",
-            f"--docker-password={token}",
-            "--dry-run=client",
-            "-o",
-            "json",
-        ]
-    )
-    if built.returncode != 0:
-        raise ServiceKubernetesError(
-            f"could not build the registry secret: {(built.stderr or built.stdout).strip()}"
-        )
-    applied = run(["apply", "-f", "-"], stdin=built.stdout)
-    if applied.returncode != 0:
-        raise ServiceKubernetesError(
-            f"could not apply the registry secret: {(applied.stderr or applied.stdout).strip()}"
-        )
-
-
 def registry_host(image: str) -> str:
     """Return the registry host of an image reference, or "" for a bare/Docker Hub name."""
 
@@ -227,7 +192,9 @@ def registry_host(image: str) -> str:
     return head if ("." in head or ":" in head) else ""
 
 
-def _kubectl(args: list[str], *, stdin: str | None = None, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+def _kubectl(
+    args: list[str], *, stdin: str | None = None, timeout: int = 300
+) -> subprocess.CompletedProcess[str]:
     binary = os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
     return subprocess.run(
         [binary, *args],
@@ -331,7 +298,9 @@ def ensure_storage_secret(
             + ", ".join(missing)
         )
     run = runner or _kubectl
-    literals = [f"--from-literal={key}={credentials[key]}" for key in STORAGE_SECRET_ENVS]
+    literals = [
+        f"--from-literal={key}={credentials[key]}" for key in STORAGE_SECRET_ENVS
+    ]
     result = run(
         [
             "create",

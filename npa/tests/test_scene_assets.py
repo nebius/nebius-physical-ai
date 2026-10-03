@@ -92,6 +92,30 @@ def test_parse_scene_spec_byo_mesh_object() -> None:
     assert spec.source_uri == "s3://bucket/spec.json"
 
 
+def test_density_only_scene_spec_round_trips_without_null_mass() -> None:
+    doc = {
+        "objects": [
+            {
+                "name": "widget",
+                "asset_source": "byo_mesh",
+                "uri": "s3://bucket/object.usdz",
+                "density": 2700.0,
+                "friction": 0.47,
+                "friction_source": "dynamic_friction",
+                "dynamic_friction": 0.47,
+            }
+        ]
+    }
+
+    serialized = sa.parse_scene_spec(doc).to_dict()["objects"][0]
+
+    assert serialized["density"] == 2700.0
+    assert "mass" not in serialized
+    assert serialized["friction"] == 0.47
+    assert serialized["friction_source"] == "dynamic_friction"
+    assert serialized["dynamic_friction"] == 0.47
+
+
 def test_parse_scene_spec_supports_multiple_objects_and_target() -> None:
     doc = {
         "objects": [
@@ -116,6 +140,70 @@ def test_parse_scene_spec_supports_multiple_objects_and_target() -> None:
 
 
 @pytest.mark.parametrize(
+    ("role", "fixed", "expected"),
+    [
+        (sa.ROLE_MANIPULAND, None, False),
+        (sa.ROLE_TARGET, None, False),
+        (sa.ROLE_STATIC, None, True),
+        (sa.ROLE_MANIPULAND, False, False),
+        (sa.ROLE_TARGET, False, False),
+        (sa.ROLE_STATIC, False, False),
+        (sa.ROLE_MANIPULAND, True, True),
+        (sa.ROLE_TARGET, True, True),
+        (sa.ROLE_STATIC, True, True),
+    ],
+)
+def test_parse_scene_spec_fixed_defaults_and_overrides(
+    role: str, fixed: bool | None, expected: bool
+) -> None:
+    obj = {"name": "subject", "asset_source": "primitive", "role": role}
+    if fixed is not None:
+        obj["fixed"] = fixed
+    doc = {"objects": [obj]}
+    if role != sa.ROLE_MANIPULAND:
+        doc["objects"].insert(
+            0,
+            {
+                "name": "manipuland",
+                "asset_source": "primitive",
+                "role": sa.ROLE_MANIPULAND,
+            },
+        )
+
+    parsed = sa.parse_scene_spec(doc)
+
+    assert parsed.objects[-1].fixed is expected
+
+
+@pytest.mark.parametrize(
+    "fixed",
+    [
+        pytest.param("false", id="string"),
+        pytest.param(0, id="integer"),
+        pytest.param(1.5, id="float"),
+        pytest.param(None, id="null"),
+        pytest.param([], id="collection"),
+        pytest.param({}, id="mapping"),
+    ],
+)
+def test_parse_scene_spec_rejects_non_boolean_fixed(fixed: object) -> None:
+    doc = {
+        "objects": [
+            {
+                "name": "subject",
+                "asset_source": "primitive",
+                "fixed": fixed,
+            }
+        ]
+    }
+
+    with pytest.raises(
+        sa.SceneSpecError, match=r"object\[0\]\.fixed must be a JSON boolean"
+    ):
+        sa.parse_scene_spec(doc)
+
+
+@pytest.mark.parametrize(
     "doc",
     [
         {},  # no objects
@@ -125,9 +213,7 @@ def test_parse_scene_spec_supports_multiple_objects_and_target() -> None:
         {"objects": [{"name": "x", "asset_source": "genesis_builtin"}]},  # missing path
         {"objects": [{"name": "x", "asset_source": "primitive", "primitive": "cone"}]},
         {
-            "objects": [
-                {"name": "t", "asset_source": "primitive", "role": "target"}
-            ]
+            "objects": [{"name": "t", "asset_source": "primitive", "role": "target"}]
         },  # no manipuland
         {
             "objects": [{"name": "x", "asset_source": "primitive"}],
@@ -516,9 +602,12 @@ def test_camera_names_defaults_and_custom() -> None:
                 }
             ],
             "cameras": {
-                "overhead": {"placement": "custom", "pos": [0, 0, 2], "look_at": [0, 0, 0]}
+                "overhead": {
+                    "placement": "custom",
+                    "pos": [0, 0, 2],
+                    "look_at": [0, 0, 0],
+                }
             },
         }
     )
     assert sa.camera_names(scene) == ("overhead",)
-

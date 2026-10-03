@@ -1,0 +1,61 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "dc6bbbdb81639fac75a89e811a2875b41f54517e92d5f3a83fa20feb4bc430d9",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and accepted/rejected plans passed on September 17, 2026. Custom-profile and native CFG-normalization forwarding into the real sampler, plus rejection of invalid config overrides, have regression coverage. The accepted plan ends at finalize; the rejected plan ends at reject-quality.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/main/paidf-cosmos3.yaml --json",
+        "npa workbench workflow plan-spec workflows/main/paidf-cosmos3.yaml --run-id paidf-quality-contract --assume-decision loop_back --json",
+        "npa workbench workflow plan-spec workflows/main/paidf-cosmos3.yaml --run-id paidf-quality-contract --assume-decision promote_checkpoint --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "unverified",
+      "reason": "The pinned battery high and left-wrist episode-zero inputs passed full normalization (12 seconds, 288 frames at 24 fps). Fresh caption frames cover the complete episode. Nineteen real high-camera GPU outputs passed decoded alignment; all nine completed paired evaluator batches rejected both candidates, including matched native CFG-normalization comparisons that established no realism benefit. Explicit material profiles with zero original first-frame conditioning produced visible surface edits, including with RGB hint weight 0.25, but fine gripper/controller details still differed and required temporal checks failed. No battery recipe is quality-qualified; runtime execution, visible edit strength and earlier starter evidence do not establish task fidelity.",
+      "evidence": [
+        "docs/workbench/guides/paidf-realistic-augmentation.md#validation-status",
+        "npa/tests/workflows/test_data_factory_appearance.py",
+        "npa/tests/orchestration/npa_workflow/test_paidf_cosmos3_workflow.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The committed workflow retains example-bucket. Each future run must provide a writable operator-owned bucket and a fresh run prefix.",
+      "evidence": [
+        "docs/workbench/guides/paidf-cosmos3.md#inputs-and-configuration"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Live checks proved the pinned H.264 starter and battery high/left-wrist episode-zero preparation. Each future video or LeRobot selection still requires independent staging and integrity validation.",
+      "evidence": [
+        "docs/workbench/guides/paidf-cosmos3.md#inputs-and-configuration"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Each operator must independently pass Nebius, object-storage, Token Factory, Hugging Face, NGC, model-access, and applicable terms preflights before submission.",
+      "evidence": [
+        "docs/workbench/guides/paidf-cosmos3.md#inputs-and-configuration"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "This workflow stages the submitted NPA source and selects it over pinned workbench images. Each submission must verify the staged revision, image pullability, model access and pinned Cosmos runtime.",
+      "evidence": [
+        "workflows/guides/paidf-cosmos3.md#validation"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The manipulation recipes executed on RTX PRO 6000 Blackwell and B200, but their reviewed candidates were rejected. Every future target must independently prove project access, Kubernetes readiness, supported GPU discovery, image pullability and sufficient per-node resources; runtime execution alone does not qualify generated data.",
+      "evidence": [
+        "workflows/guides/paidf-cosmos3.md#validation"
+      ]
+    }
+  }
+}

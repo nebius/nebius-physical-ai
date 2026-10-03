@@ -1,8 +1,7 @@
 # Container safety review & golden evals
 
-This document is the safety + Physical AI usefulness review for every Workbench
-container image, and the contract for each container's **golden eval** — the
-minimal "does this container actually work" / "hello world" tested rerun.
+This page describes container safety requirements and golden evaluations:
+the repeatable checks defined for each Workbench image.
 
 The machine-readable source of truth is
 [`npa/src/npa/smoke/golden_evals.yaml`](../../npa/src/npa/smoke/golden_evals.yaml).
@@ -15,19 +14,35 @@ and enforced by `npa/docker/workbench/packaging-contract.yaml`.
 
 ## How it is enforced
 
-- **Completeness/consistency gate** —
+- **Manifest checks:**
   `npa/tests/smoke/test_golden_eval_manifest.py` runs in the standard unit suite
   and fails CI if any container in `npa.deploy.images.CONTAINER_IMAGE_NAMES` is
   missing an entry, references a missing Dockerfile, an unimportable smoke
   module, or omits a safety / Physical AI field.
-- **Nightly run** — the workflow at `docs/ci/golden-evals-nightly.yml` runs at
-  04:00 UTC once installed to `.github/workflows/` (it ships under `docs/ci/`
-  because the author credential lacked the GitHub `workflow` scope). The
-  `validate-manifest` and `cpu-evals` jobs run on GitHub-hosted runners; the GPU
-  golden evals run on a self-hosted GPU runner via `workflow_dispatch`
-  (`run_gpu_evals: true`).
-- **Image CVE / config scanning** — handled separately by the weekly
-  `image-security-scan.yml` (Trivy config scan + base-image CVE matrix).
+- **Nightly template:** `docs/ci/golden-evals-nightly.yml` is staged documentation,
+  not an active GitHub Actions workflow. It defines scheduled CPU checks and
+  an optional GPU job. Its presence does not establish nightly GPU validation.
+- **Image CVE / config scanning:** handled separately by the weekly
+  `image-security-scan.yml` (Trivy config scan + complete base-image CVE inventory).
+
+The active [GPU e2e preflight](../../.github/workflows/e2e.yml) collects tests
+and checks shell syntax. It does not execute GPU workloads.
+
+The RoboTwin Phase A golden eval is deliberately narrower than a simulator
+smoke: `robotwin-runtime assert-refusal` runs on CPU and proves the real
+missing-authorization gate creates no source, asset, cache, or output paths.
+The candidate is unbuilt and publication-quarantined, so this definition is not
+a recorded container pass and never establishes SAPIEN, Vulkan, task-success,
+HDF5/video, or RTX capability.
+Gymnasium-Robotics appears in the machine-readable manifest as an internal
+development-candidate record with `needs-image-update`. This records the future real
+MuJoCo/EGL gate without registering a supported image. The neutral candidate
+must contain no upstream source, Shadow asset, MuJoCo/Python workload runtime,
+or populated cache; its Dockerfile refuses before package network access when
+the exact signed-snapshot bootstrap or corresponding-source locks differ. An
+owner-only reference build supplied exact config and ordered-layer scanner
+anchors but did not complete the product scan or leave an accepted artifact. No
+golden evaluation, accepted image, or public availability is claimed.
 
 ## CLI
 
@@ -39,6 +54,8 @@ npa workbench golden-eval run cosmos        # print the eval command (dry run)
 npa workbench golden-eval run cosmos --execute       # run locally (needs runtime)
 npa workbench golden-eval run lerobot --serverless   # run on a Nebius GPU
 npa workbench golden-eval run genesis --serverless --gpu h100
+npa workbench golden-eval run wan2-2 --serverless \
+  --registry registry.example.invalid/team --tag candidate-full-sha
 ```
 
 ## Running on Nebius Serverless
@@ -46,20 +63,30 @@ npa workbench golden-eval run genesis --serverless --gpu h100
 `--serverless` submits the golden eval as a **Nebius Serverless AI Job** that
 pulls the tool's real container image (resolved via
 `npa.deploy.images.container_image_for_tool`) and runs the eval command on a
-GPU, then waits for the PASS/FAIL result. This is the path the nightly GPU job
-uses — no self-hosted GPU runner required, only Nebius + storage credentials.
+GPU, then waits for the PASS/FAIL result. This CLI mode requires Nebius and
+storage credentials. It does not require a self-hosted GitHub runner or activate
+the staged nightly workflow.
 
-Each eval's GPU is taken from `golden_eval.serverless_gpu` in the manifest
-(falling back to `l40s`, since Nebius Jobs always require a GPU preset) and can
-be overridden with `--gpu`. Implementation: `npa.smoke.serverless_runner`.
+Each eval's GPU and cardinality come from `golden_eval.serverless_gpu` and
+`golden_eval.serverless_gpu_count` in the manifest (falling back to one H200,
+since Nebius Jobs always require a GPU preset). The GPU type can be overridden
+with `--gpu`; the count remains part of the capability contract. Implementation:
+`npa.smoke.serverless_runner`.
+
+Use `--registry` and/or `--tag` with `--serverless` to prove a candidate image
+before promoting its canonical tag. Candidate overrides fail closed in dry-run
+and local-execute modes because those modes do not resolve a container image.
 
 The same logic is available as a script for CI:
 `python npa/scripts/run_golden_evals.py {validate,list,run}`.
 
 ## Golden-eval capability chart
 
-Each container's golden eval proves specific **capabilities** (not just `--help` or
-import). Registry tags come from ``pyproject.toml`` → ``[tool.npa.supported-tools]``.
+The manifest defines tests with different scopes: import and CLI checks,
+service checks, and GPU capability tests. A definition is not a recorded pass.
+Use the [image and GPU matrix](../workbench/image-gpu-compatibility-matrix.md)
+for dated hardware results. Registry tags come from
+`pyproject.toml` under `[tool.npa.supported-tools]`.
 
 ```bash
 npa/.venv/bin/python npa/scripts/run_golden_evals.py list --capabilities
@@ -82,13 +109,17 @@ flowchart TB
     policy["lerobot-policy: short train + eval"]
     vlm["lerobot-vlm-rl: VLM signal RL step"]
     genesis["genesis: scene build + step"]
-    isaac["isaac-lab: headless env + step"]
+    isaac["isaac-lab: headless env + RTX render"]
+    content["content-agents: rigid physics + OVRTX validation"]
     cosmos["cosmos: model load + infer"]
-    transfer["cosmos2-transfer: CUDA venv probe"]
+    transfer["cosmos2-transfer: real 4-step transfer"]
     c3["cosmos3: real text2image generation"]
     sonic["sonic: entrypoint smoke artifact"]
     s2r["envgen / reference-policy / loop-eval rollouts"]
     groot["groot: GR00T inference"]
+  end
+  subgraph unvalidated["Unvalidated / publication-quarantined"]
+    habitat["habitat-sim: unvalidated/quarantined; strict RTX-only route pending"]
   end
   subgraph blocked["blocked-on-upstream"]
     b300["base-cuda13-b300: flash_attn + CUDA13"]
@@ -99,31 +130,53 @@ flowchart TB
 | container | registry tag | eval kind | capabilities tested | gpu | status |
 | --- | --- | --- | --- | --- | --- |
 | `base-cuda13-b300` | *(foundation)* | build-import | torch+CUDA; flash_attn import | required | blocked-on-upstream |
+| `diffusers` | `0.38.0-rtfetch-20260916` | container-smoke | native CogVideoX generation; decoded MP4 and hashes; separate workflows qualify Mochi, Wan and depth | required | gpu-gated |
+| `lingbot-world` | `a43bec7-rtfetch-20260916` | container-smoke | native camera-conditioned generation; positive attention/all-to-all on four ranks; decoded MP4 | required | gpu-gated |
+| `sam3` | `3.1-unbuilt` | container-smoke | SAM 3.1 text-prompted video masks; aligned decoded overlay; exact provenance; GPU proof pending | required | gpu-gated |
+| `sam2` | `2.1-rtfetch-20260916` | container-smoke | native video-mask propagation; retained arrays; color-checked, decoded overlay | required | gpu-gated |
 | `groot` | `0.1.0` | container-smoke | GR00T repo; uv; standalone inference | required | gpu-gated |
 | `lerobot` | `0.5.1` (default) | container-smoke | version; 50-step PushT train; checkpoint; eval; output | required | gpu-gated |
 | `lerobot` | `0.6.0` (additional) | container-smoke | same suite with `NPA_LEROBOT_VERSION=0.6.0` / `npa-lerobot:0.6.0` | optional | gpu-gated |
 | `lerobot-policy` | `0.1.1` | container-smoke | short train; short eval on checkpoint | optional | gpu-gated |
 | `lerobot-vlm-rl` | `0.1.1` | container-smoke | CUDA; VLM signal parse + RL step | required | gpu-gated |
 | `genesis` | `0.4.6` | container-smoke | import; Franka scene; step; body state | required | gpu-gated |
-| `isaac-lab` | `2.3.2.post1` | container-smoke | version; runtime; manipulation env; step | required | gpu-gated |
+| `isaac-lab` | `3.0.0b2.post1-sim2real-coherent-20260904` | container-smoke | version; runtime; vectorized environment steps and replay; separately validated RTX/Vulkan render | required | gpu-gated |
+| `habitat-sim` | `0.3.3-public-unbuilt` | container-smoke | runtime-hashed official Skokloster scene; distinct RGB/depth frames; Bullet time and displacement; NVIDIA EGL; exact digest and storage readback | exactly one RTX PRO 6000 Blackwell; never B200 | unvalidated |
+| `content-agents` | `0.5.2-npa2` | container-smoke | exact OVRTX runtime fetch; real rigid-physics authoring; upstream validation + render | required | gpu-gated |
 | `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
-| `cosmos2-transfer` | `2.5.1-golden-eval-smoke-*` | container-smoke | venv torch; CUDA; GPU matmul probe | required | gpu-gated |
-| `cosmos3` | `1.2.2-cu130-r2` | container-smoke | real Cosmos 3 text2image generation; decodable image; guardrails on | required | gpu-gated |
+| `cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | container-smoke | procedural input; four real diffusion steps; decoded, numerically validated output MP4; guardrails enabled | required | gpu-gated |
+| `cosmos3` | `1.2.2-cu130-r7` | container-smoke | real Cosmos3-Nano text2image generation; decodable image; Blocklist, Qwen3Guard, and generated-media safety execution attested | required | gpu-gated |
+| `cosmos3-nano-video` | operator-controlled immutable image | container-smoke | real BF16 TP=1 diffusion; three-chunk rollout with V2V continuations; four fully decoded MP4s; 30-second 480p result and measured memory/latency | required | gpu-gated |
 | `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
 | `retargeting` | `0.1.1` | container-smoke | validate_motion_lib on synthetic motion | none | ready |
-| `fiftyone` | `1.15.0.post1` | container-smoke | import+version; CLI; app config (env smoke) | none | ready |
+| `fiftyone` | `1.21.0-skypilot-v1-20260915` | container-smoke | version; dataset creation/query; Brain curation; loopback App launch (functional smoke) | none | ready |
 | `lancedb` | `0.30.3` | server-smoke | server start; create table; vector query; list | optional | ready |
 | `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
-| `sim2real-control` | `0.1.2` | workflow-smoke | stage adapter import; 1-through-14 CLI contract; exact-source guard | none | ready |
-| `envgen` | `0.1.2` | container-smoke | raw envgen JSONL; Genesis CUDA step | optional | gpu-gated |
+| `sim2real-control` | `0.1.2-sim2real-coherent-20260904` | container-smoke | load canonical graph; expand promote and loop-back plans across all 14 stages; exact-source guard | none | ready |
+| `envgen` | `0.1.2-sim2real-coherent-20260904` | container-smoke | raw envgen JSONL; Genesis CUDA physics step | optional | gpu-gated |
 | `reference-policy` | `0.1.2` | container-smoke | policy contract (envgen functional delegate) | optional | gpu-gated |
 | `loop-eval` | `cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
-| `rerun-viewer` | `0.31.4` | build-import | rerun SDK import + version | none | ready |
+| `rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | container-smoke | robotics trace → RRD; CLI verify/read; HTTP viewer serve/read | none | ready |
 | `foxglove-embed` | `0.58.0` | server-smoke | health + pinned SDK version; real `@foxglove/embed` (FoxgloveViewer + embed handshake); NPA glue module; host page; `/data` 206 byte range; Range CORS preflight | none | ready |
 
 Machine-readable probes: ``npa/src/npa/smoke/capabilities.py`` (enforced by
 ``npa/tests/smoke/test_golden_eval_capabilities.py``).
+
+The FiftyOne source golden now selects the standalone CPU functional smoke.
+The historical env-smoke result below remains evidence for that older check.
+The candidate implements the source annex and image validator. The rebuilt
+image still needs its source-delivery, bootstrap, dependency and functional
+gates before publication; see the
+[candidate release requirements](../../npa/docker/workbench/fiftyone/RELEASE.md).
+The validator's ASGI root-response CORS check and the smoke's TCP App
+readiness are separate checks; they do not establish media-route CORS coverage.
+
+The Habitat-Sim definition is a candidate contract, not a pass record. It keeps
+the pinned MIT simulator source in the image and fetches only the attributed CC
+BY 4.0 Skokloster test scene at runtime behind archive and member SHA-256
+checks. Publication stays quarantined until a rebuilt exact digest passes the
+complete byte scan and the genuine one-RTX renderer workflow.
 
 ## Golden-eval kinds
 
@@ -136,9 +189,12 @@ Machine-readable probes: ``npa/src/npa/smoke/capabilities.py`` (enforced by
 | `build-import` | import/compile proof that the heavy deps resolve |
 
 `status` is one of `ready` (runs on a normal runner), `gpu-gated` (needs a GPU
-host/serverless with the image), `blocked-on-upstream` (B300/CUDA13 family), or
-`needs-image-update` (the published image cannot run its eval yet — see the
-validation results below).
+host/serverless with the image), `blocked-on-upstream` (B300/CUDA13 family),
+`unvalidated` (the candidate is unbuilt or publication-quarantined, so no
+published image is implied), or `needs-image-update` (a published image exists
+but cannot run its eval yet — see the validation results below). Default batch
+runs exclude both blocked and needs-update entries; use the matching explicit
+include flag when validating a candidate.
 
 ## Validation results
 
@@ -156,6 +212,42 @@ re-verified by building the images from source and running the eval:
 | `fiftyone` | **PASS 3/3** | local rebuild + run | import + version + CLI + app config (env smoke) |
 | `genesis` | fix verified | `_versions` unit test | py3.10 import fix; full GPU run still pending |
 | `isaac-lab` | command fixed | static + manifest | standalone-script command; GPU run pending |
+
+### Coherent Sim2Real release (2026-09-04)
+
+The controller, Cosmos Transfer, EnvGen, Isaac Lab, and Rerun viewer were built
+from the one reviewed source SHA
+`c164fd3480f8a9ea8f9df9ccb9509502fd527996`. Each exact development digest
+passed the mandatory build, SBOM, provenance, vulnerability, secret, license,
+payload/history, and anonymous-pull gates before it was functionally validated
+and promoted byte-for-byte to its additive supported tag.
+
+Real validation passed for all five roles: both complete controller decision
+branches over the canonical 14 stages; guarded four-step Transfer inference
+with a decoded 93-frame, 1280×720 MP4; 16 EnvGen records and a Genesis CUDA
+physics step; three distinct nondegenerate 512×512 Isaac RayTracedLighting
+frames over Vulkan on RTX PRO 6000; and Rerun conversion, independent reopen,
+serve, and read of an actual robotics trace. Empty-config checks resolved all
+five development digests twice and all five release tags once with identical
+digests. The controller digest additionally passed a real Kubernetes
+rootless-bootstrap pod start with UID 1000, runtime-generated SSH host keys,
+ready `sshd`, `rsync`, and worker-argument forwarding. This validates the image
+set and its individual capabilities; the complete 14-stage run remains open
+because the required hosted Cosmos3 model returned an upstream stopped-model
+response before any workflow task launched.
+
+### OpenArm dual-simulator release (2026-09-15)
+
+The exact `npa-openarm:2.2.0-isaac0.1.0-rtfetch` release digest passed the
+complete public-image byte, vulnerability, secret, license, SBOM, provenance,
+and anonymous-pull gates. The image's ordinary golden evaluation executed a
+real 500-step OpenArm v2 MuJoCo rollout; the release qualification additionally
+ran the upstream Isaac Lab reach environment and upstream RSL-RL trainer on RTX
+PRO 6000, producing finite traces, a fully decoded simulator-rendered video,
+and a serialized checkpoint. The final workflow stage and a separate
+read-after-run validation agreed on all artifact hashes. Isaac Sim/Lab remained
+an operator-authorized runtime fetch and no vendor runtime or cache bytes were
+published.
 
 ### Bugs the golden evals surfaced (now fixed)
 
@@ -228,16 +320,18 @@ pipeline. Key safety notes are condensed below.
 | `lerobot-vlm-rl` | VLM-reward RL step for sim-to-real | `workflow-smoke` | optional | gpu-gated |
 | `genesis` | Genesis physics sim + RL teacher + demos | `container-smoke` | required | gpu-gated |
 | `isaac-lab` | Isaac Lab RL sim (headless train/eval) | `container-smoke` | required | gpu-gated |
+| `content-agents` | rigid-object material/physics/render/validation pipeline | `container-smoke` | required | gpu-gated |
 | `cosmos` | Cosmos world-model serving (text2world) | `container-smoke` | required | gpu-gated |
 | `cosmos2-transfer` | Cosmos-Transfer2 video-to-video for synthetic data | `container-smoke` | required | gpu-gated |
 | `cosmos3` | Cosmos 3 omni-model generation (image/video) | `container-smoke` | required | gpu-gated |
+| `cosmos3-nano-video` | Chunked Cosmos3-Nano diffusion video generation | `container-smoke` | required | gpu-gated |
 | `cosmos3-reason` | Cosmos-Reason1 VLM reasoning stage | `workflow-smoke` | optional | blocked-on-upstream |
 | `sonic` | SONIC whole-body humanoid locomotion | `entrypoint-smoke` | required | gpu-gated |
 | `retargeting` | CPU motion retargeting for SONIC locomotion | `build-import` | none | ready |
 | `fiftyone` | dataset curation/visualization (CPU) | `container-smoke` | none | ready |
 | `lancedb` | vector store for AV/perception data | `server-smoke` | optional | ready |
 | `detection-training` | object-detection train/eval service | `server-smoke` | optional | ready |
-| `sim2real-control` | canonical compositional Sim2Real stage adapter | `workflow-smoke` | none | ready |
+| `sim2real-control` | canonical compositional Sim2Real stage adapter | `container-smoke` | none | ready |
 | `envgen` | randomized Genesis env generation | `workflow-smoke` | optional | gpu-gated |
 | `reference-policy` | reference policy contract | `workflow-smoke` | optional | gpu-gated |
 | `loop-eval` | sim-to-real full-loop evaluation | `workflow-smoke` | optional | gpu-gated |
@@ -270,29 +364,47 @@ pipeline. Key safety notes are condensed below.
   `/bin/bash`; sshd is not enabled by default. SkyPilot may generate ephemeral
   host keys and start SSH inside a submitted task. The packaging contract must
   record this exemption whenever a public image carries `NOPASSWD:ALL`.
+- **`robomimic` Phase A refusal** — the unbuilt neutral candidate is intended to
+  run as uid 1000, start no sshd, and contain no CUDA/PyTorch runtime, data,
+  weights, populated cache, credentials, or outputs. Its `entrypoint-smoke` is
+  a planned/static refusal contract; the unbuilt candidate has not executed, so
+  refusal without mutation is not yet execution evidence or capability proof.
+  The real four-step held-out checkpoint-reload
+  gate and any public-image claim remain blocked on a customer-created,
+  run/manifest-bound runtime authorization, separate transaction authorization,
+  built-byte/security/SBOM/provenance checks, and an exact-digest run on exactly
+  one STRICT-reserved B200 with authenticated run/Pod/node/provider allocation
+  observation.
 - **Runtime user** — npa-built images (`groot`, `lerobot*`, `genesis`, `cosmos`,
   `cosmos3`, `cosmos3-reason`, `fiftyone`, `envgen`, `reference-policy`,
-  `loop-eval`, and the runtime-fetch `isaac-lab`) run as the unprivileged
+  `loop-eval`, `robocasa`, and the runtime-fetch `isaac-lab`) run as the unprivileged
   `ubuntu` user. Both the canonical standard-workflow Isaac states and retained
   standalone BYO Job builders preserve uid/gid 1000; neither may override
-  `runAsUser: 0`. `sonic`, `lancedb`, and `detection-training` retain root from
-  their upstream bases. `foxglove-embed` runs as `nobody` on a digest-pinned
-  caddy base. The remaining root images are candidates for a separate non-root
-  hardening pass.
+  `runAsUser: 0`. The LanceDB image also runs as `ubuntu`; its narrow
+  passwordless-sudo exemption exists only for SkyPilot's in-pod bootstrap and
+  does not enable sshd by default. The 2026-09-05 anonymous OCI config audit
+  found the accepted `sonic` Kubernetes release still declares `root`; the
+  other 31 current releases, including `detection-training`, declare non-root
+  users. `foxglove-embed` runs as `nobody` on a digest-pinned Caddy base.
+  SONIC remains a candidate for a separate non-root hardening pass; its current
+  Dockerfile does not retroactively change historical released bytes.
 - **Network exposure** — services that open ports (`lerobot` :8080, `cosmos`
-  :8080, `lancedb` :8686, `detection-training` :8790, `fiftyone` :5151,
+  :8080, `lancedb` :8686, `detection-training` :8790, `robocasa` :8791, `fiftyone` :5151,
   `foxglove-embed` :8099) must be
   deployed in the `workbench` namespace behind controlled access, never bound to
   public ingress without auth. `lancedb` and `detection-training` ship a token
   auth mode and warn loudly when started with `auth_mode=none` (the golden eval
   uses `none` against a throwaway store/port only).
+  FiftyOne binds its App to loopback and uses authenticated SSH or Kubernetes
+  port-forwarding for operator access.
 - **Content safety** — `cosmos` ships a content-safety guardrail.
   `COSMOS_DISABLE_SAFETY` must remain `"0"` in production; the functional smoke
   keeps safety enabled by default.
-- **External fetches** — `isaac-lab` and `sonic` pull from `nvcr.io` (NGC auth
-  required); `groot`/`sonic` clone pinned Git refs; several images fetch from
-  Hugging Face. Base images are digest-pinned and tracked by the weekly Trivy
-  CVE scan.
+- **External fetches** — `isaac-lab` and `sonic` fetch hash-pinned Isaac wheels
+  from `pypi.nvidia.com` only after run-scoped EULA acceptance; no Isaac/Kit
+  payload is baked into their public layers. `groot`/`sonic` clone pinned Git
+  refs, and several images fetch model weights from Hugging Face at runtime.
+  Base images are digest-pinned and tracked by the weekly Trivy CVE scan.
 - **B300 / CUDA13 family** — `base-cuda13-b300`, `cosmos3-reason`, LeRobot,
   LanceDB, Genesis, and the Sim2Real children have physical B300 capability
   evidence recorded in `blackwell-dc-images.json`. Keep per-image blockers
@@ -311,17 +423,33 @@ Run these inside the corresponding built image (or via
 - `genesis` — `python -m npa.smoke.test_genesis_functional` (env: `test_genesis_env`)
 - `isaac-lab` — `python -m npa.smoke.test_isaac_lab_functional` (env: `test_isaac_lab_env`)
 - `cosmos` — `python -m npa.smoke.test_cosmos_functional` (env: `test_cosmos_env`)
-- `cosmos2-transfer` — `bash /opt/cosmos2-transfer/smoke_functional.sh` (venv CUDA probe)
+- `cosmos2-transfer` — `bash /opt/cosmos2-transfer/smoke_functional.sh` (procedural input and four-step transfer inference)
 - `cosmos3` — `npa workbench cosmos3 generate --help` (job entrypoint; the eval
   itself runs a real text2image generation and needs an operator HF token, since
   the image bakes no weights)
+- `cosmos3-nano-video` — `python -m npa.workbench.cosmos.nano_video_golden` inside its
+  restricted image on an NPA mk8s B200. It requires the pinned BF16 weights and
+  verified `READY.json` on a read-only model-cache mount selected by
+  `NPA_COSMOS3_MODEL_PATH`, starts the real
+  diffusion runtime with guardrails off, generates
+  three chunks, and fully decodes all four MP4s. The default result index is
+  `/tmp/cosmos3-nano-video-golden/result.json`; set
+  `NPA_COSMOS3_GOLDEN_OUTPUT_ROOT` to retain it on mounted storage. Reruns keep
+  separate artifact directories. Stage the cache separately before GPU execution;
+  this golden command never downloads weights. `timeout_seconds: unlimited` removes the local
+  golden-eval deadline while preserving the server's `--init-timeout 1800`.
+  This entry requires local execution because the serverless runner imposes job
+  deadlines. The deployment acceptance additionally requires 16 Ray replicas
+  and eight concurrent complete generation requests; this catalog entry does
+  not claim that fanout has passed.
 - `cosmos3-reason` — `python -m npa.workflows.sim2real_loop inner-loop --help`
 - `sonic` — `/entrypoint.sh smoke` (artifact: `sonic_smoke_result.json`)
 - `retargeting` — `python -c "import npa.workbench.retargeting"`
-- `fiftyone` — `python -m npa.smoke.test_fiftyone_functional` (env: `test_fiftyone_env`)
+- `fiftyone` — `python /opt/npa/docker/workbench/fiftyone/smoke_functional.py` (standalone CPU smoke with bundled MongoDB; lighter env check: `smoke_env.py`)
 - `lancedb` — `python -m npa.smoke.test_lancedb_functional`
 - `detection-training` — `python -m npa.smoke.test_detection_training_functional`
-- `sim2real-control` — `python -m npa.workflows.sim2real.workflow_stage --help`
+- `sim2real-control` — `python -m npa.smoke.test_sim2real_control_functional`
+- `rerun-viewer` — `python -m npa.smoke.test_rerun_viewer_functional`
 - `envgen` — `python -m npa.workflows.sim2real_envgen --help`
 - `reference-policy` — `python -m npa.workflows.sim2real_envgen policy-contract --help`
 - `loop-eval` — `python -m npa.workflows.sim2real_loop full-loop --help`

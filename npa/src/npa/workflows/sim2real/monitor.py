@@ -12,8 +12,12 @@ from typing import Any
 import yaml
 
 from npa.clients.storage import StorageClient
-from npa.workflows.sim2real.config import artifact_uris, build_config_from_env
-from npa.workflows.sim2real.constants import DEFAULT_PREFIX, DEFAULT_S3_ENDPOINT
+from npa.workflows.sim2real.config import artifact_uris_for_run
+from npa.workflows.sim2real.constants import (
+    DEFAULT_OUTER_ITERATIONS,
+    DEFAULT_PREFIX,
+    DEFAULT_S3_ENDPOINT,
+)
 
 
 @dataclass(frozen=True)
@@ -204,7 +208,7 @@ def load_operator_config() -> OperatorConfig:
     the tenant or cluster implicitly.
     """
 
-    from npa.deploy.images import registry_from_env
+    from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
     explicit = os.environ.get("NPA_SIM2REAL_OPERATOR_CONFIG", "").strip()
     if explicit:
@@ -218,19 +222,28 @@ def load_operator_config() -> OperatorConfig:
         raise ValueError(f"missing operator config {location} — run: npa configure")
     if not path.is_file():
         raise ValueError(f"operator config is not a regular file: {path}")
-    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        config_text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"unable to read operator config: {path}") from exc
+    cfg = yaml.safe_load(config_text) or {}
     storage = cfg.get("storage") or {}
     bucket = str(storage.get("bucket", "")).replace("s3://", "").split("/", 1)[0]
     endpoint = str(storage.get("endpoint_url") or DEFAULT_S3_ENDPOINT)
-    # ``container_registry`` / NPA_REGISTRY is the repository-wide canonical
-    # image source. ``storage.registry`` is a legacy operator-pack field and can
-    # legitimately point at a retired region; only use it as a compatibility
-    # fallback after the canonical settings.
+    # An explicitly selected operator pack is run-local intent, so preserve its
+    # historical registry fields. The implicit ~/.npa config is ambient/global
+    # state and must not repoint repository-owned workload defaults.
+    legacy_operator_registry = ""
+    if explicit:
+        legacy_operator_registry = str(
+            cfg.get("container_registry")
+            or storage.get("registry")
+            or cfg.get("registry", "")
+        ).strip()
     registry = str(
-        registry_from_env()
-        or cfg.get("container_registry")
-        or storage.get("registry")
-        or cfg.get("registry", "")
+        os.environ.get("NPA_SIM2REAL_REGISTRY")
+        or legacy_operator_registry
+        or DEFAULT_CONTAINER_REGISTRY
     ).rstrip("/")
     k8s_context = str(storage.get("k8s_context") or "")
     if not k8s_context:
@@ -599,14 +612,14 @@ def _stage_states(
     run_id: str,
     s3_prefix: str,
     endpoint: str,
+    outer_iterations: int = DEFAULT_OUTER_ITERATIONS,
 ) -> dict[str, dict[str, Any]]:
-    config = build_config_from_env(
+    uris = artifact_uris_for_run(
         run_id=run_id,
         s3_bucket=bucket,
         s3_prefix=s3_prefix,
-        s3_endpoint=endpoint,
+        outer_iterations=outer_iterations,
     )
-    uris = artifact_uris(config)
     client = StorageClient.from_environment(endpoint_url=endpoint)
     run_prefix = f"{s3_prefix.rstrip('/')}/{run_id}"
     workflow_state: dict[str, Any] | None = None
@@ -971,6 +984,9 @@ def get_sim2real_workflow_status(
         run_id=run_id,
         s3_prefix=s3_prefix,
         endpoint=endpoint,
+        outer_iterations=int(
+            os.environ.get("OUTER_ITERATIONS", DEFAULT_OUTER_ITERATIONS)
+        ),
     )
     k8s = _missing_k8s_status(run_id)
     siblings: list[dict[str, Any]] = []

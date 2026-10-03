@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NPA_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 REGISTRY="${REGISTRY:-}"
-BASE_IMAGE="${COSMOS3_BASE_IMAGE:-nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04}"
+BASE_IMAGE="${COSMOS3_BASE_IMAGE:-nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01}"
 COSMOS3_REF="${COSMOS3_REF:-}"
 NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_ROOT}" rev-parse HEAD)}"
 PUSH=0
@@ -59,6 +59,7 @@ if [[ -n "${COSMOS3_REF}" ]]; then
 fi
 
 echo "=== build ${LOCAL_REF} (base=${BASE_IMAGE}) ==="
+"${NPA_ROOT}/.venv/bin/python" "${NPA_ROOT}/src/npa/workflow_build.py" --stage-catalog --package-root "${NPA_ROOT}"
 docker build --platform linux/amd64 \
   -f "${SCRIPT_DIR}/Dockerfile" \
   "${BUILD_ARGS[@]}" \

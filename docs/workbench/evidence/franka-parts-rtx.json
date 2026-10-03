@@ -1,0 +1,3708 @@
+{
+  "artifact_audit": {
+    "all_checks_passed": true,
+    "audit_source_commit": "d5a096fc31311b653fc3b655d27e70f8daf7d1ba",
+    "audit_source_fingerprint": "f8946271b1ce1e102be46af79803517e7e6395449f99c6ad1250fa09ea4646c4",
+    "audit_worker_stages_verified": [
+      "visual-evaluate",
+      "report"
+    ],
+    "completed_ppo_updates": 1500,
+    "decoded_videos": [
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.21024997428711,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-000.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "8ac0bab1b3b637d4bffe14df390b08238a509f2691c4f1d18d8a2ff218dcd2c0",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.96415263098095,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-001.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "52a29d25902581999dd0cf427e61d9b892437f5f92eb694ebecce24cafdb50d5",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.93917161096,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-002.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "eded4b43501a202462e063c94f79b3a400adafe3acf3d5c0c50a82e730019158",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.92727125386977,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-003.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "ae666190fdc2a8f947d143200470b91ce08c577dcbf2c77452a0f915fbd7305b",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.21876523830681,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-004.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "0b93d4041fb4685e00482cd8cdb311d1783e7db0dfd4d44ed18f7b6722146f9b",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 34.05084919961396,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-005.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "1d86ed363f54e140390a903b775e4473926a5892a4106027198d9cb5135019d4",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.93759906529898,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-006.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "6c2d2bf35f0bf41f26c614d2567bf9dd1929e751ce2be4543ec17d844f0a80b2",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.97979669984813,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-007.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "a20f058767ea077357f994775fff37eece818602286cabf2727a1035c7925778",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.249061227471145,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-008.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "1e931990e006dce63779627277874ab25b7dbf7b03b8f14eadcb7063db185399",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.97039500016641,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-009.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "60b0249392fd4377fa79ed5e3e9ae459f6cbed059bd8b79a08e321d034bbfab6",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.92869340017611,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-010.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "50dd3376fa998f96a152dc79d19f549a84ffda8d606165a877bb7121347efcfb",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.899690333599445,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-011.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "76adaf4f447e76b652e82e904a00d26407a0982a28362d5a03847cb6f7f5d402",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.23990197517419,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-012.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "634013509af26a2868830045132e6cb296f0f76994335d40906dec5b95fb4fab",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.98122781587776,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-013.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "4c4be71a275d5316758dfeefa8618edbcaed2d3434078303c101b1faaccc7100",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.925975023128046,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-014.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "d428c304644a87d4bf95408ef55a5ffe709c64601033facd250aa1197c658ae1",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.907670660911386,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-015.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "70ad8ea3413fdfda2e313a43e4be258500669471f240f0d2e648817566e5525b",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 34.11133525799529,
+        "nb_read_frames": "141",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-016.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "70512b246c3f80fd05201bd9882b8555d5c149865fd4dc8938b562cd483bf8de",
+        "source_rgb_checked_indices": [
+          0,
+          70,
+          140
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.9773547251569,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-017.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "9414bf6429b5932ec2a6d2b02c90e27546d177acd335ab029ced7e479dc57e30",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 34.03644854561764,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-018.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "df4c374646b69c00daf07ac5b33c7ec946eeed8369e9298f3ebbc766d50eea2b",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.89126266890523,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-019.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "190c90965cb3eb19caefed04c628a1f159bdfd242a723ac0383832f9de04dc9a",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.263917932963615,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-020.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "cae3257281997f75a7bccbdd06975108bd036a3ddbec65826410979c17a7dfbf",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.84567877784809,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-021.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "c4ead9c6f301da9dd42e2c0c800963ee552473f46bde9886bc2cc4f9d9e1e763",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.82031097231096,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-022.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "2811f398a32ac81959e5b4283ad2defeab7072d259c5006e175da46b7b321786",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.91449856179835,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-023.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "79080eb3dd3f05cbbf8dfccd5037de5eefa1ef52363f1d7579daf46ce84ad04e",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.200158805826675,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-024.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "e0f3de7588942e4c13af9df275ecfe28ab82f712e471366ad5eb7621ea02e844",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.87300666292422,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-025.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "c7000b19441d944dd60ab37db1cb7735bc1d8486ad22a77bfb733d74486ed7fd",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.915437158127325,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-026.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "6e9ba4fa12f0b1f8e38e37620f872baff40d5d9e16008a3e7349cf009c6ed1c1",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.78114359133792,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-027.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "11cc1cf3991c0d7947119eba7d75810de7098ae54d35a377a04616b3f9c1deb6",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 35.36426463050573,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-028.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "7f8d7865c967927cce62a0db07d3982e16fee8aa7a280f32739cfef5d7394217",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.887263902014595,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-029.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "e17cebeb66dede988ab0e21f4b8d182c93d6b69222b53cd39b507241845b334c",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.91462421983869,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-030.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "4b5764365a2953b292952c09d2a7071eaab1c501759218d48dbc11b9ac528c0b",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      },
+      {
+        "height": 480,
+        "minimum_source_rgb_psnr_db": 33.82341718210472,
+        "nb_read_frames": "250",
+        "path": "reports/lerobot/videos/observation.images.workspace/chunk-000/file-031.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "a84bf5cf6d4be8ac4a8e179e2e8cebf5bedfe12a8286d1410d97c61e18d4ef12",
+        "source_rgb_checked_indices": [
+          0,
+          125,
+          249
+        ],
+        "width": 640
+      }
+    ],
+    "invalid_visual_responses": 2,
+    "lerobot_rows": 7891,
+    "native_logs_without_physics_errors": 11,
+    "paired_test_trials": 1024,
+    "physical_robot_tested": false,
+    "physics_capacity_verified": {
+      "gpu_total_aggregate_pairs_capacity": 2097152
+    },
+    "physics_receipts_checked": 46,
+    "replayed_first_responses": 22,
+    "rerun_dynamic_entities": 576,
+    "rerun_recording_id_matches_run": true,
+    "rerun_timelines_match_frame_and_time": true,
+    "sealed_asset_hashes_verified": true,
+    "selected_checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+    "source_commit": "4562205959aae042937663a8e190cc067a2e1405",
+    "source_fingerprint": "ba15cc7ecb9421d8d7716e131fadb2b77f99aac118b89388983ba2376d07dd6e",
+    "source_modules_verified": 15,
+    "source_worker_stages_verified": [
+      "train",
+      "evaluate",
+      "visual-evaluate"
+    ],
+    "verified_stage_files": {
+      "evaluation": 210,
+      "prepared": 5,
+      "reports": 44,
+      "training": 14,
+      "visual": 578
+    },
+    "visual_judgments_verified": 32,
+    "visual_lift_confusion_recomputed": {
+      "negative_no": 16,
+      "positive_invalid": 2,
+      "positive_yes": 14
+    }
+  },
+  "artifact_sha256": {
+    "demo.mp4": "3dcc3ede34bde8a37fdbf37e6e3863007447c02223a4dfdf947f042ace71d8d1",
+    "evaluation/evaluation.json": "940b4b81872c663eec0337f646bb34dea47b1d9449a101141b8fde56c01e694e",
+    "reports/franka.rrd": "548c439eb36b9262db6b00cad9b37dfa142f9d392431f06c96a3794321c9954d",
+    "reports/report.json": "d6ff48e42e56913dfb60ab08e2b0d2405364b008982f16be4dc4340b492ca51c",
+    "training/training.json": "8c3367e413fe2d47047c9d2774bf2075b14a6c58d456084ceb483b34de615ca1",
+    "visual/visual-evaluation.json": "fa255ca630365587f82ef1987640dfff04ad0e17e1927a527c9be66b7ee040c6"
+  },
+  "audit_source_verification": {
+    "commit": "d5a096fc31311b653fc3b655d27e70f8daf7d1ba",
+    "module_sha256": {
+      "src/npa/adapter/isaac_lab_lerobot.py": "50dfb32a06377e14397da57ca72016b285016c16ee0dfe720c5e6d2f6ee525c5",
+      "src/npa/viz/adapters/lerobot_to_rerun.py": "41fbf06502f7db8253371516729d0e18bd7bb8350bb51da107427b7be8712a5d",
+      "src/npa/workbench/vlm_eval/temporal.py": "002c907a023c43bb4f216c10eefb95e35638111829d195f4cd557a873aeac02f",
+      "src/npa/workflows/franka_rl.py": "04d1907be3d2bed6d768560d06b7396c955dc4309bbbb1c27987e6d3b5a3281d",
+      "src/npa/workflows/franka_rl_assets.py": "c981d8132b7a5d0aa7516d392a0a2be2362180e48a7faae225b19ed47bb46fd5",
+      "src/npa/workflows/franka_rl_capture.py": "e473eef27e11ac5dd2218463976b4e3f591563507ab06a7bab2895e02405edbe",
+      "src/npa/workflows/franka_rl_capture_merge.py": "89d4d1f039c9dfb7454dee7447c3dd7510cf331043717040cc7eda523edd34ac",
+      "src/npa/workflows/franka_rl_environment.py": "9f8ed71007595e6d3e5fe4e6d39d8ee9f4d3c631125d35717582c05be39eb3fa",
+      "src/npa/workflows/franka_rl_eval.py": "4bf5fc030b200e138d0f9a4d5476c3fd093554644d68498bb0498c1699d78030",
+      "src/npa/workflows/franka_rl_metrics.py": "4571d1fe503e93fd95c29692b57bf4d746ee8632b29c32c35eb2b9f4126da13f",
+      "src/npa/workflows/franka_rl_recording.py": "54501330daa762b1b4940a94697dc708937db8428cefdb5c560cb28b7498d8f6",
+      "src/npa/workflows/franka_rl_report.py": "abd78c74c0ad0f3a1c5bac72aa546913221b06c15ce2d7888de3baaf1ce36faa",
+      "src/npa/workflows/franka_rl_runtime.py": "f129d33ecca615e3059112e71b8d63355ee8351d4bdf76eee165ef1c38935f27",
+      "src/npa/workflows/franka_rl_vlm.py": "d108b238dba7ddced90433914f0eadd94ad0f274b35cf8e26bcba8b216c96e3d",
+      "src/npa/workflows/lerobot_transfer_data.py": "9ac3d701b7bf2112872cacd37da853d16439e68fdd28bcc110d99b62790c998c"
+    },
+    "scope": "Published source bytes and CPU audit worker overlay checked against exact checkout.",
+    "source_fingerprint": "f8946271b1ce1e102be46af79803517e7e6395449f99c6ad1250fa09ea4646c4",
+    "stage": "visual-evaluate",
+    "staged_and_worker_modules_match_checkout": true
+  },
+  "capture": {
+    "action_names": [
+      "panda_joint1_normalized_target",
+      "panda_joint2_normalized_target",
+      "panda_joint3_normalized_target",
+      "panda_joint4_normalized_target",
+      "panda_joint5_normalized_target",
+      "panda_joint6_normalized_target",
+      "panda_joint7_normalized_target",
+      "gripper_open_close"
+    ],
+    "action_semantics": "Isaac joint position: default offset + 0.5 * arm action; binary gripper",
+    "episode_lengths": [
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      141,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250
+    ],
+    "fps": 50.0,
+    "num_episodes": 32,
+    "state_names": [
+      "panda_joint1",
+      "panda_joint2",
+      "panda_joint3",
+      "panda_joint4",
+      "panda_joint5",
+      "panda_joint6",
+      "panda_joint7",
+      "panda_finger_joint1",
+      "panda_finger_joint2"
+    ],
+    "total_frames": 7891
+  },
+  "lift_counts": {
+    "initial": {
+      "delay": 0,
+      "heavy": 0,
+      "nominal": 0,
+      "slippery": 0
+    },
+    "trained": {
+      "delay": 126,
+      "heavy": 128,
+      "nominal": 128,
+      "slippery": 126
+    }
+  },
+  "limitations": [
+    "Privileged simulator-state policy; physical perception and control remain unvalidated.",
+    "One training seed; uncertainty covers reset variability only.",
+    "Task is lift and hold at a commanded goal, not released placement."
+  ],
+  "paired_delta_95ci": [
+    0.0,
+    0.009765625
+  ],
+  "physical_robot_tested": false,
+  "physics_qualified": false,
+  "preview": {
+    "arm": "trained",
+    "capture_index": 0,
+    "condition": "nominal",
+    "episode_index": 24,
+    "frame_index": 100,
+    "image": "franka-parts-rtx-preview.png",
+    "image_sha256": "ce686c54d0352274433ce0c68b0587eeac6711176485901b5fc9cfb7d3ffc0c6",
+    "source_video_sha256": "e0f3de7588942e4c13af9df275ecfe28ab82f712e471366ad5eb7621ea02e844",
+    "timestamp_seconds": 2
+  },
+  "ready_for_robot_deployment": false,
+  "recipe": {
+    "assets": {
+      "description": "orange spool with two wide flanges and a narrow waist",
+      "distractor_positions_m": {
+        "bottle": [
+          0.7549999999999999,
+          0.38,
+          0.05
+        ],
+        "hex_nut": [
+          0.69,
+          0.38,
+          0.03
+        ]
+      },
+      "files": {
+        "assets/bottle.usda": "7caf59359b3ecae0da92efd0a63f652641fe6595968c7531af9d7230d38f8adf",
+        "assets/fixture.usda": "d2f5257ac924440d6af4ddca6c7726b560c4a7cf5cb5c9376190bf03745b6f74",
+        "assets/hex_nut.usda": "a11cc5f3e3a713acbcbd66e7c5c3eabc6e9a69efe4cb722f6ddddaf5b87405b1",
+        "assets/spool.usda": "2c3b300466cffcb044754400431728e1b165885accdc2bcb18cfca8baffbb67d"
+      },
+      "fixture_position_m": [
+        0.72,
+        0.34,
+        0.0
+      ],
+      "license": "Apache-2.0",
+      "nominal_mass_kg": 0.08,
+      "schema": "npa.franka-rl.assets.v1",
+      "source": "npa_original_procedural_usd",
+      "target": "spool",
+      "units": "metres"
+    },
+    "capture_episodes": 4,
+    "capture_seed": 300000,
+    "checkpoint_interval": 500,
+    "conditions": {
+      "delay": {
+        "action_delay": 1,
+        "friction": 1.0,
+        "mass_scale": 1.0
+      },
+      "heavy": {
+        "action_delay": 0,
+        "friction": 1.0,
+        "mass_scale": 2.0
+      },
+      "nominal": {
+        "action_delay": 0,
+        "friction": 1.0,
+        "mass_scale": 1.0
+      },
+      "slippery": {
+        "action_delay": 0,
+        "friction": 0.25,
+        "mass_scale": 1.0
+      }
+    },
+    "episode_steps": 250,
+    "eval_episodes": 128,
+    "iterations": 1500,
+    "maximum_object_speed_m_s": 0.03,
+    "minimum_object_height_m": 0.1,
+    "minimum_success": 0.7,
+    "num_envs": 4096,
+    "physical_robot_tested": false,
+    "physics_capacity": {
+      "gpu_total_aggregate_pairs_capacity": 2097152
+    },
+    "reference_workflow": "workflows/main/sim2real.yaml",
+    "schema": "npa.franka-rl.recipe.v1",
+    "seed": 42,
+    "stable_steps": 20,
+    "steps_per_env": 24,
+    "success_distance_m": 0.05,
+    "task": "Isaac-Lift-Cube-Franka-v0",
+    "test_seed": 200000,
+    "train_friction_range": [
+      0.5,
+      1.5
+    ],
+    "train_mass_range": [
+      0.7,
+      1.3
+    ],
+    "validation_seed": 100000,
+    "visual_eval": {
+      "arms": [
+        "initial",
+        "trained"
+      ],
+      "conditions": [
+        "nominal",
+        "heavy",
+        "slippery",
+        "delay"
+      ],
+      "frame_count": 16,
+      "minimum_lift_agreement": 0.8,
+      "model": "MiniMaxAI/MiniMax-M3",
+      "role": "independent_capture_audit",
+      "rubric_sha256": "1a1f951084d2e7b35d81e8c5c4198e729aa03108b537bce7ba07e332a6710bcc",
+      "rubric_version": "manipulation-visible-events-v2"
+    }
+  },
+  "runtime": {
+    "compute_capability": [
+      12,
+      0
+    ],
+    "cuda": "12.8",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "isaaclab": "3.0.0b2.post1",
+    "rsl_rl": "5.0.1",
+    "torch": "2.11.0+cu128"
+  },
+  "schema": "npa.franka-rl.parts-evidence.v1",
+  "selection": {
+    "iteration": 1499,
+    "selected_checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+    "selection_rule": "validation success, then closest distance, then earlier iteration",
+    "test_data_used": false
+  },
+  "simulation_qualified": false,
+  "source_verification": {
+    "commit": "4562205959aae042937663a8e190cc067a2e1405",
+    "module_sha256": {
+      "src/npa/adapter/isaac_lab_lerobot.py": "50dfb32a06377e14397da57ca72016b285016c16ee0dfe720c5e6d2f6ee525c5",
+      "src/npa/viz/adapters/lerobot_to_rerun.py": "41fbf06502f7db8253371516729d0e18bd7bb8350bb51da107427b7be8712a5d",
+      "src/npa/workbench/vlm_eval/temporal.py": "b4fa2f4a29f7fb9ce58708f0a7b49ddd3ffd724858a3a9338e486e32d32ca9a7",
+      "src/npa/workflows/franka_rl.py": "97d6ad8e00c7a826a90ec94768fd94e1472e233ecd4dd17eacff3bb35a4ee0d8",
+      "src/npa/workflows/franka_rl_assets.py": "c981d8132b7a5d0aa7516d392a0a2be2362180e48a7faae225b19ed47bb46fd5",
+      "src/npa/workflows/franka_rl_capture.py": "e473eef27e11ac5dd2218463976b4e3f591563507ab06a7bab2895e02405edbe",
+      "src/npa/workflows/franka_rl_capture_merge.py": "89d4d1f039c9dfb7454dee7447c3dd7510cf331043717040cc7eda523edd34ac",
+      "src/npa/workflows/franka_rl_environment.py": "9f8ed71007595e6d3e5fe4e6d39d8ee9f4d3c631125d35717582c05be39eb3fa",
+      "src/npa/workflows/franka_rl_eval.py": "4bf5fc030b200e138d0f9a4d5476c3fd093554644d68498bb0498c1699d78030",
+      "src/npa/workflows/franka_rl_metrics.py": "4571d1fe503e93fd95c29692b57bf4d746ee8632b29c32c35eb2b9f4126da13f",
+      "src/npa/workflows/franka_rl_recording.py": "54501330daa762b1b4940a94697dc708937db8428cefdb5c560cb28b7498d8f6",
+      "src/npa/workflows/franka_rl_report.py": "96a76229cb34bf821f4031dd7c4a02b1e68e8bade51232217bb268ed712f7a8a",
+      "src/npa/workflows/franka_rl_runtime.py": "f129d33ecca615e3059112e71b8d63355ee8351d4bdf76eee165ef1c38935f27",
+      "src/npa/workflows/franka_rl_vlm.py": "d6e7d7cce872e631122c9eaaec1c27e19d66b0afe56fed40bfe664494f6bdede",
+      "src/npa/workflows/lerobot_transfer_data.py": "9ac3d701b7bf2112872cacd37da853d16439e68fdd28bcc110d99b62790c998c"
+    },
+    "scope": "Published source bytes and training worker overlay checked against the exact checkout.",
+    "source_fingerprint": "ba15cc7ecb9421d8d7716e131fadb2b77f99aac118b89388983ba2376d07dd6e",
+    "staged_and_worker_modules_match_checkout": true
+  },
+  "success_counts": {
+    "initial": {
+      "delay": 0,
+      "heavy": 0,
+      "nominal": 0,
+      "slippery": 0
+    },
+    "trained": {
+      "delay": 0,
+      "heavy": 2,
+      "nominal": 0,
+      "slippery": 0
+    }
+  },
+  "success_rates": {
+    "initial": {
+      "delay": 0.0,
+      "heavy": 0.0,
+      "nominal": 0.0,
+      "slippery": 0.0
+    },
+    "trained": {
+      "delay": 0.0,
+      "heavy": 0.015625,
+      "nominal": 0.0,
+      "slippery": 0.0
+    }
+  },
+  "test_episodes": 1024,
+  "training": {
+    "checkpoints": {
+      "checkpoints/model_0.pt": "c1efc51aaf3e2b40044af60f7dd7b3fbef75d4a63429936d39a8efa62d005f38",
+      "checkpoints/model_1000.pt": "593dbd38cb2a1f64a2396aabd996e1160145d6cc40858146bd73926eee9a31a7",
+      "checkpoints/model_1499.pt": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+      "checkpoints/model_1500.pt": "261a02b29ab3986d61f82f9ff0898d0c187792e2b334016e7081f5d7d937fefd",
+      "checkpoints/model_500.pt": "b9c4719e31f2e6986559f19e3ee072e0327c3b4b04da9607dd1b921295badb28",
+      "initial.pt": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6"
+    },
+    "duration_seconds": 1490.6119424810004,
+    "physics": {
+      "dynamic_friction": {
+        "max": 1.455479621887207,
+        "min": 0.55937260389328
+      },
+      "mass_kg": {
+        "max": 0.10398687422275543,
+        "min": 0.05601782351732254
+      },
+      "physics_capacity": {
+        "gpu_total_aggregate_pairs_capacity": 2097152
+      },
+      "restitution": {
+        "max": 0.0,
+        "min": 0.0
+      },
+      "startup_terms": [
+        "npa_object_mass",
+        "npa_object_material"
+      ],
+      "static_friction": {
+        "max": 1.4811253547668457,
+        "min": 0.5162026882171631
+      }
+    },
+    "policy_parameter_delta_l2": 38.9880256652832,
+    "transitions": 147456000
+  },
+  "training_duration_scope": "PPO learning and final checkpoint export; excludes installation and renderer startup.",
+  "validation_episodes": 640,
+  "visual": {
+    "episode_outcomes": [
+      {
+        "arm": "initial",
+        "capture_index": 0,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "delay",
+        "episode_index": 0,
+        "geometry_sha256": "be619641efb7132efbcdb953ab6ef0c25d658da53cc8c95c9ebf6897e28116fd",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "3848d041b9b44cf54e2c6c253141a29edae2ceea187b68bd013078dde32ee39d",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245, 249), the orange spool is still resting on the table and is not grasped by the gripper.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never visibly elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves but the gripper never reaches or grasps the orange spool. The spool remains stationary on the table for the entire episode, so the lift and hold criteria are not met.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 1,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "delay",
+        "episode_index": 1,
+        "geometry_sha256": "ab45f624851ab666f47ca21e858ed8d0398894b646f59b3b5a854a76b913b46c",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "bf43f996c61229bd411f72b62160b3a71b7638c651fb4f7daf37de0b56f9d5b3",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames, the orange spool is still sitting on the table and is not grasped by the gripper. The gripper is positioned above and to the left of the spool without holding it.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains resting on the table surface in the same position across all supplied frames. It is never visibly elevated above its initial support, and the gripper never makes contact with it.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves but never descends to or contacts the orange spool. The spool stays on the table for the entire episode, so neither a lift nor a hold occurs. The scene itself is undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 2,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "delay",
+        "episode_index": 2,
+        "geometry_sha256": "2db3d5c2026b191782db689bb9510ae9b8f0afd9174c3e27c5ea29dae1d4b849",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "63235e80a7bb8bcef96bbd3e4b036f32cb53bbbd4c08f9ef438529de66cb0929",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames the orange spool is still resting on the table and is not grasped by the gripper. No hold is established.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in every supplied frame. It is never visibly elevated above its initial support. The gripper moves but never makes contact with or lifts the spool.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves toward the workspace but the gripper never reaches or grasps the orange spool. The spool stays on the table for the entire episode, so neither lift nor hold is achieved. No scene disturbance occurs.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 3,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "delay",
+        "episode_index": 3,
+        "geometry_sha256": "d749da64e43f3ef1d788b1c39bea8e12bfd7dfaa09123385a6c8595d6a4d9ccf",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "39485276bf32fe2ea27c0af0fa58ab44186378fa2a41ace68711e8007bcd6893",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames, the orange spool is still resting on the table and is not grasped by the gripper.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. The gripper moves but never descends to grasp the spool, and the spool is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves but never reaches or grasps the orange spool. The spool stays on the table for the entire episode, so neither lifting nor holding occurs.",
+          "scene_disturbed": {
+            "explanation": "The tray, other objects, and the spool remain in their initial positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 0,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "heavy",
+        "episode_index": 4,
+        "geometry_sha256": "ef2c1363969242f8a564c15177ed08efe29eede887fed0e66b408775e3a4f03f",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "8eb170bb0f8163b8f3a7b60cee210adbe64d785a14597070803425f68025988e",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames (245, 249), the orange spool is still sitting on the table and is not grasped by the gripper.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains resting on the table surface in every supplied frame. The gripper moves but never descends to grasp the spool, and the spool is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves its gripper near the workspace but never approaches or grasps the orange spool. The spool stays on the table for the entire episode, so the lift and hold requirements are not met.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 1,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "heavy",
+        "episode_index": 5,
+        "geometry_sha256": "cc26f4e0f74c18ef28d554229cd619319915e770e5cf7c150538980ce137f193",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "71b62190095a03b06cfe50df86e2ae2e4a9dc9b53a0bbfbe61eee91463f860cd",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "The orange spool is resting on the table, not grasped by the gripper, in the final frames. The gripper is empty and stationary above the table.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves slightly but never descends to grasp the orange spool. The spool remains untouched on the table for the entire episode, so no lift or hold occurs.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 2,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "heavy",
+        "episode_index": 6,
+        "geometry_sha256": "7983cdd578f5f939d911081bf3abc5c2189206af14a4969755bebc4cd443b4d7",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "5bb24983d8d2547d9fafb86d8282b816024896aeda4bea1fb8623e8dca9969d5",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames (245, 249), the orange spool is sitting on the table and is not grasped by the gripper. No hold is established.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains resting on the table surface in every supplied frame. The gripper moves but never descends to grasp the spool, and the spool is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves above the workspace but never attempts to grasp the orange spool. The spool stays on the table for the entire episode, so neither lift nor hold occurs. The scene is otherwise undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 3,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "heavy",
+        "episode_index": 7,
+        "geometry_sha256": "e258e4922b488973da0bbc21a99ea6ebd661ebc461da66fc3de70584df420b86",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "a29f273347bd83ee536c047fa617f4b04af6f1fec0c9df7aff2f5e5a3bf7bd67",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp",
+            "wrong_object"
+          ],
+          "held_at_end": {
+            "explanation": "The orange spool is not grasped by the gripper in the final frames; it remains resting on the table while the gripper hovers nearby.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot never approaches or grasps the orange spool. The gripper remains positioned away from the target across all frames, and the spool stays on the table surface without being lifted or held.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain stationary throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 0,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "nominal",
+        "episode_index": 8,
+        "geometry_sha256": "be619641efb7132efbcdb953ab6ef0c25d658da53cc8c95c9ebf6897e28116fd",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "526f8567c84e0d17bc901ab9f74df489773a336a6f653e6c43d041f107df917e",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp",
+            "wrong_object"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames the gripper is empty and the orange spool is still resting on the table, not grasped or held.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. The gripper moves but never descends to or contacts the spool, and the spool is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves but never approaches or grasps the orange spool. The spool stays on the table throughout the episode, so the lift and hold criteria are not met. No scene disturbance occurred.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions; no unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 1,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "nominal",
+        "episode_index": 9,
+        "geometry_sha256": "ab45f624851ab666f47ca21e858ed8d0398894b646f59b3b5a854a76b913b46c",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "cc0962fcecb1883a39d0781608e46c27c4553593cbe32843aa094a4d54d40f3b",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames, the orange spool is still resting on the table and is not grasped by the gripper.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves slightly but never descends to or contacts the orange spool. The spool remains untouched on the table for the entire episode, so no grasp, lift, or hold occurs.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain stationary throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 2,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "nominal",
+        "episode_index": 10,
+        "geometry_sha256": "2db3d5c2026b191782db689bb9510ae9b8f0afd9174c3e27c5ea29dae1d4b849",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "74c10c23d757a6ae6db27cfd04a5a76694cc9a21b217de549d6bf9e188d354e9",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames the orange spool is still sitting on the table, not grasped by the gripper. There is no held object at the end of the episode.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains resting on the table surface in every supplied frame. The gripper moves slightly but never descends to grasp the spool, and the spool is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot never approaches or grasps the orange spool. Across all 15 frames the spool stays on the table, so the lift and hold criteria both fail. The scene is otherwise undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other parts remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 3,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "nominal",
+        "episode_index": 11,
+        "geometry_sha256": "d749da64e43f3ef1d788b1c39bea8e12bfd7dfaa09123385a6c8595d6a4d9ccf",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "0109ee43e0f0cb51dab749a88d9697f9e54e45f82840774fa19653e86adedacf",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames, the orange spool is still resting on the table and is not grasped by the gripper. The gripper is positioned away from the spool.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool with two wide flanges and a narrow waist remains on the table surface in the same position across all supplied frames. It is never visibly elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves slightly but never approaches or grasps the orange spool. The spool remains stationary on the table throughout the entire episode, indicating a missed grasp with no lift or hold achieved.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects (blue/white bottles, small clear object) remain in their original positions throughout all frames. No unintended contact or disturbance is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 0,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "slippery",
+        "episode_index": 12,
+        "geometry_sha256": "be619641efb7132efbcdb953ab6ef0c25d658da53cc8c95c9ebf6897e28116fd",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "0d6f755cffe4359c7d5b85cb27e0a339d865b8dc3194cb6207df4560cdc372fe",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "The orange spool is not grasped by the gripper in the final frames; it remains resting on the table. The gripper is empty and positioned away from the spool.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. The gripper moves but never descends to grasp or lift the spool. No elevation of the target is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves but never approaches or grasps the orange spool. The spool stays on the table for the entire episode, so neither lifting nor holding occurred. No scene disturbance was caused.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 1,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "slippery",
+        "episode_index": 13,
+        "geometry_sha256": "ab45f624851ab666f47ca21e858ed8d0398894b646f59b3b5a854a76b913b46c",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "fec41f8ec4774709a55343197c45beb429407109dd66e2baaa9287c917a928ea",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames the orange spool is still resting on the table, not grasped by the gripper. No hold is established.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in every supplied frame. The gripper never descends to grasp it, and the spool is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves but never reaches or grasps the orange spool. The spool stays on the table for the entire episode, so neither lift nor hold occurs. The scene itself is undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is visible.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 2,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "slippery",
+        "episode_index": 14,
+        "geometry_sha256": "2db3d5c2026b191782db689bb9510ae9b8f0afd9174c3e27c5ea29dae1d4b849",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "7820ceba4f466deb63eca4e22f410016ab679707c625c874de00b9fdcfbcc9d7",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245, 249), the orange spool is still resting on the table and is not grasped by the gripper.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never elevated above its initial support, and the gripper never makes contact with it.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves slightly but never approaches or attempts to grasp the orange spool. The spool remains untouched on the table for the entire episode, so the lift and hold criteria are not met.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "initial",
+        "capture_index": 3,
+        "checkpoint_sha256": "f28177af37383574de47cb61cfbd9b43a41df246bdcb757c7e53387f4c06d5a6",
+        "condition": "slippery",
+        "episode_index": 15,
+        "geometry_sha256": "d749da64e43f3ef1d788b1c39bea8e12bfd7dfaa09123385a6c8595d6a4d9ccf",
+        "lifted": false,
+        "longest_stable_steps": 0,
+        "reference_lifted": false,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "c05d418f44b9633b443cc187376415a28f4d866df46dbdc5ac9d8d94ae51e932",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "missed_grasp"
+          ],
+          "held_at_end": {
+            "explanation": "The orange spool is not grasped by the gripper in the last two supplied frames; it remains resting on the table while the gripper hovers nearby.",
+            "frames": [
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool remains on the table surface in the same position across all supplied frames. It is never elevated above its initial support.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          },
+          "rationale": "The robot arm moves but never descends to grasp the orange spool. The spool stays on the table in all frames, so neither a lift nor a hold occurs. No scene disturbance is present.",
+          "scene_disturbed": {
+            "explanation": "The tray, fixture, and other objects remain in their original positions throughout the episode. No unintended contact or disturbance is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 0,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "delay",
+        "episode_index": 16,
+        "geometry_sha256": "35d6c068cc7d18f98c532a81ff6312ee498947ea76698a713c89349a84f1d9b7",
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          20,
+          40,
+          60,
+          80,
+          100,
+          115,
+          118,
+          120,
+          122,
+          125,
+          129,
+          132,
+          136,
+          140
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "2fcdabe5fa0cf70c7a0068743268016953712f712601a9582496909060e4f62f",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "slip_or_drop",
+            "unstable_hold"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (136, 140), the orange spool is no longer in the gripper; it has fallen off the table edge. The gripper is empty and the spool is not visibly grasped or steady.",
+            "frames": [
+              129,
+              132,
+              136,
+              140
+            ],
+            "verdict": "no"
+          },
+          "lifted": {
+            "explanation": "The orange spool is clearly elevated above the table surface in multiple frames (e.g., 60, 80, 100, 115, 118, 120, 122), held by the gripper well above its initial support position.",
+            "frames": [
+              60,
+              80,
+              100,
+              115,
+              118,
+              120,
+              122
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully lifted the orange spool off the table (frames 60-122), but failed to retain it. The spool slipped or was dropped from the gripper, falling off the table edge by the end of the episode (frames 129-140). The tray and other objects on the table appear undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The orange spool falls off the front edge of the table (visible in frames 129, 132, 136, 140), indicating the scene was disturbed by the spool being dropped/lost from the gripper.",
+            "frames": [
+              129,
+              132,
+              136,
+              140
+            ],
+            "verdict": "yes"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 1,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "delay",
+        "episode_index": 17,
+        "geometry_sha256": "1248b9fef283d36ae80fcd7e93dd3893e3500ff9e66c9b709ff83e16766ad934",
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "d68a2b578f1da631fb8510deda3e307970ae8a8f82770e90a91e836af4836e57",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames (245 and 249), the orange spool is visibly grasped by the gripper and remains approximately steady in position, held above the table.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "The orange spool is clearly elevated above the table surface in frames 71 through 249, held by the gripper well above its initial support position on the table.",
+            "frames": [
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool with two wide flanges and a narrow waist, lifted it clearly above the table, and held it steady at the end of the episode. The tray and other parts were left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with its contents (blue and yellow objects) and the black fixture remain undisturbed throughout the episode. No unintended contact with the tray or fixture is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 2,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "delay",
+        "episode_index": 18,
+        "geometry_sha256": "326c2d84059587e1d4d42a959fce21da4fac5ebcbe2325a60a78551fff500846",
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "f6c3ffd5d2359638f84e549c24573127745f262bff81aff1e5d8349dbb91b727",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245 and 249), the orange spool is still visibly grasped by the gripper and held in a steady, approximately stationary position above the table.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "The orange spool is initially on the table in frame 0. From frame 35 onward, the spool is clearly grasped by the gripper and held elevated above the table surface, well above its initial support position. The elevation is maintained consistently across all subsequent frames.",
+            "frames": [
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool with two wide flanges and a narrow waist, lifted it clearly above the table, and held it steady through the end of the episode. The tray and other objects were left untouched.",
+          "scene_disturbed": {
+            "explanation": "The tray with the blue and yellow objects remains undisturbed throughout all frames. No unintended contact with the tray or fixture is observed, and no other distractors are moved.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 3,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "delay",
+        "episode_index": 19,
+        "geometry_sha256": "aa621dadb3e051f42430d48168626591678d5c29aaae0005ae1dda8be55b8da1",
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "305447de4b9b2123951f90e2739eda64a29f50e7ac2a6d67aeddbe8879d43c38",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames (245 and 249), the orange spool remains visibly grasped by the gripper and is approximately steady in position, held above the table.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "The orange spool is clearly elevated above the table surface in frames 177 through 249, held by the gripper well above its initial support position on the table.",
+            "frames": [
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool (identified by its two wide flanges and narrow waist), lifted it clearly above the table surface, and held it steady at the end of the episode. The tray and other objects were left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with its contents (blue and yellow objects) and the black fixture remain stationary throughout all frames. No unintended contact with the tray or fixture is observed, and no distractors are moved.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 0,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "heavy",
+        "episode_index": 20,
+        "geometry_sha256": "1c5e90f6fc91aac25bd69aedd815ee9142df8dcacdfe76fbdb76af82c6cb3ca4",
+        "lifted": true,
+        "longest_stable_steps": 2,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "ac6f1fb47adee717bf79e1b17742427adfc0997af1c3c93774aabad0224fb2e4",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245 and 249), the orange spool remains visibly grasped by the gripper and is approximately steady in position.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "The orange spool is clearly elevated above the table surface in frames 71 through 249, held in the gripper well above its initial support position on the table.",
+            "frames": [
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool (identified by its orange color and spool shape with wide flanges and narrow waist), lifted it clearly above the table, and held it steady at the end of the episode. The tray and other parts were left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with blue and yellow objects and the black fixture remain stationary throughout all frames. No unintended contact with the tray/fixture or movement of distractors is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 1,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "heavy",
+        "episode_index": 21,
+        "geometry_sha256": "18e1a8e58ffc6aab2520b21502b02e69bda22853d697b6c7a84a850bef0093a0",
+        "lifted": true,
+        "longest_stable_steps": 2,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "15be24a48ae6e28d17732a50948f294e782f42bf8e8eea9b8879ad20d4f5c336",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245 and 249), the orange spool is still visibly grasped by the gripper and held in a steady, approximately stationary position above the table.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "The orange spool is initially on the table in frame 0. By frame 35, the gripper has grasped the spool and lifted it off the table surface. The spool remains clearly elevated above the table in all subsequent frames through frame 249.",
+            "frames": [
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool with two wide flanges and a narrow waist, lifted it clearly above the table surface, and held it steady through the final frames. The tray and other objects were left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with the blue and yellow objects remains undisturbed throughout all frames. No unintended contact with the tray or fixture is observed, and no other objects are moved.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 2,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "heavy",
+        "episode_index": 22,
+        "geometry_sha256": "3cd9c4fe8bd6d1f3f6604e600981b7e8ebe4ec2f474b2e48583b53945b9ed06d",
+        "lifted": true,
+        "longest_stable_steps": 1,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "23e3b12c35343b365dcc65f0ba37a7f1f6790e83289057cb2416ed36ff344dbc",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245 and 249), the orange spool is still visibly grasped by the gripper and held in approximately the same elevated position, indicating a steady hold at the end of the episode.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "In frame 0, the orange spool is resting on the table surface. From frame 35 onward, the spool is visibly grasped by the gripper and held elevated above the table, well above its initial support position. The elevation is maintained consistently across all subsequent frames.",
+            "frames": [
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool with two wide flanges and a narrow waist, lifted it clearly above the table surface, and held it steady through the end of the episode. The tray and other objects were left undisturbed. No failure modes are observed.",
+          "scene_disturbed": {
+            "explanation": "The tray with the blue and yellow objects remains undisturbed throughout all frames. No unintended contact with the tray or fixture is visible, and no other objects on the table are moved.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 3,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "heavy",
+        "episode_index": 23,
+        "geometry_sha256": "35c97cb44d13156bb6880740f7c2911149965c3f2a69f0986dd4c475c5b00c1f",
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "fd242b851f0f78ccbbf0b123be37e95468b3f011773ef132d0ac60ee7bdb312d",
+        "status": "invalid_response",
+        "success": false,
+        "validation_error": {
+          "message": "Visual hold requires lift and both final sampled frames",
+          "type": "evidence_contract"
+        },
+        "verdict": null
+      },
+      {
+        "arm": "trained",
+        "capture_index": 0,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "nominal",
+        "episode_index": 24,
+        "geometry_sha256": "c58e1c14c61e3cd707e3d8f0692baf1f5801ce8c7f2287a6b2ed523dcb5cc61c",
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "live",
+        "rgb_sha256": "e732d270dfe07cdd4db68e4d084f3d4a4dc21590f4ed2d9b751e4da335e0c955",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245 and 249), the orange spool remains visibly grasped by the gripper and is approximately steady in position.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "The orange spool is clearly elevated above the table surface in frames 106 through 249, held by the gripper well above its initial support position seen in frame 0.",
+            "frames": [
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool (identified by its two wide flanges and narrow waist), lifted it clearly above the table, and held it steady at the end of the episode. The tray and other parts were left untouched.",
+          "scene_disturbed": {
+            "explanation": "The tray with its contents and the fixture remain undisturbed throughout the episode. No unintended contact with the tray or movement of distractors is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 1,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "nominal",
+        "episode_index": 25,
+        "geometry_sha256": "6858240ea12c0c2419a035b5e3b0ddbfbfba0f6f4c4d404d29e1fcb3f1eba941",
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "242c13dd989d10f9ec963356e55b478a6a09cb038843f53f2ebb07cfff08af59",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two frames (245 and 249), the orange spool remains visibly grasped by the gripper and is held in a steady, approximately unchanged position above the table.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "In frame 0, the orange spool is resting on the table surface. From frame 35 onward, the spool is visibly grasped by the gripper and held clearly above the table surface, elevated well above its initial support position across all subsequent frames.",
+            "frames": [
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool with two wide flanges and a narrow waist, lifted it clearly above the table, and held it steady through the final frames. The tray and other objects were left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with blue and yellow objects remains stationary throughout all frames. No unintended contact with the tray or fixture is observed, and no other distractors are moved.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 2,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "nominal",
+        "episode_index": 26,
+        "geometry_sha256": "bf4c069146e5432de646be11221545a42f05e99e3ef7c2f8947acc722deb66b9",
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "ab58efb8435c36799d2a191d93264b93f7b5841a82f772ea7686a2a99e312c6b",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245 and 249), the orange spool is visibly grasped by the gripper and remains approximately steady in position with no signs of slipping or dropping.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "In frame 0, the orange spool rests on the table surface. From frame 35 onward, the spool is clearly elevated above the table, held in the gripper well above its initial support position, and remains elevated through the final frame 249.",
+            "frames": [
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool with two wide flanges and a narrow waist, lifted it clearly above the table surface, and held it steady through the end of the episode. The tray and other objects were left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with the blue and yellow objects remains stationary throughout all frames. No unintended contact with the tray or fixture is observed, and no other distractors are disturbed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 3,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "nominal",
+        "episode_index": 27,
+        "geometry_sha256": "14d13498e94cdebd63b2773c4e3818ecabb606267aa67e68a10725550aad5cf9",
+        "lifted": true,
+        "longest_stable_steps": 1,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "c92db9a5950ca4441c61fe350b0cc8d11edf815ff809f54f76aeeaa59cad66d3",
+        "status": "invalid_response",
+        "success": false,
+        "validation_error": {
+          "message": "Visual hold requires lift and both final sampled frames",
+          "type": "evidence_contract"
+        },
+        "verdict": null
+      },
+      {
+        "arm": "trained",
+        "capture_index": 0,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "slippery",
+        "episode_index": 28,
+        "geometry_sha256": "1994c9283a02fd17fec88f6978db706960007b42481c0b16b654e216b7e609c5",
+        "lifted": true,
+        "longest_stable_steps": 1,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "0b0c4ac224d69b333c20b62e9d290474d37df1f52cb9b88aa3fa13f00cded6e7",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames, the orange spool remains visibly grasped by the gripper and is approximately steady in position.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "The orange spool is clearly elevated above the table surface in the gripper from frame 71 onward, held well above its initial support position seen in frame 0.",
+            "frames": [
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool, lifted it clearly above the table, and held it steady at the end of the episode. The tray and other objects were left untouched.",
+          "scene_disturbed": {
+            "explanation": "The tray with blue and yellow objects and the black fixture remain undisturbed throughout the episode. No unintended contact with the tray or fixture is observed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 1,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "slippery",
+        "episode_index": 29,
+        "geometry_sha256": "96f5f2447c9e416487365857a7831cb932c935fe6d700df87122aeec77701569",
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "8a7c91e389e6893ae3cdb27185a18fa2ed2a12ea5144d3753a5697ba3af12ef9",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245 and 249), the orange spool remains visibly grasped by the gripper and is approximately steady in position, held above the table.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "In frame 0, the orange spool rests on the table surface. From frame 35 onward, the spool is visibly grasped by the gripper and held elevated above the table, clearly above its initial support position in all subsequent frames.",
+            "frames": [
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool (identified by its two wide flanges and narrow waist) from the table, lifted it clearly above its initial support, and held it steady through the final frames. The tray and other parts were left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with blue and yellow objects remains stationary throughout all frames. No unintended contact with the tray or fixture is observed, and no other objects are disturbed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 2,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "slippery",
+        "episode_index": 30,
+        "geometry_sha256": "702ff66918577fdd5fcc86d1c075ceae765b24489b7086a0b80955ddb834349f",
+        "lifted": true,
+        "longest_stable_steps": 0,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "f6aa59f487dcc35640cab3d414b64ea386d84d94f8a98f8507bbb8b24fbc5f0d",
+        "status": "valid",
+        "success": false,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245 and 249), the orange spool is still visibly grasped by the gripper and held in approximately the same steady position above the table.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "In frame 0, the orange spool is resting on the table surface. From frame 35 onward, the spool is visibly grasped by the gripper and held elevated above the table surface, clearly above its initial support position in all subsequent frames.",
+            "frames": [
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool with two wide flanges and a narrow waist, lifted it above the table, and held it steady through the end of the episode. The tray and other objects were left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with the blue and yellow objects remains stationary throughout all frames. No unintended contact with the tray or fixture is observed, and no other distractors are disturbed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      },
+      {
+        "arm": "trained",
+        "capture_index": 3,
+        "checkpoint_sha256": "d9b989c6f50801e738cd59459899a9ad03f6bc2eeca73df9ad0e7616e6a69092",
+        "condition": "slippery",
+        "episode_index": 31,
+        "geometry_sha256": "5a1a8e78ba36aeb6e51893570ce79156fd26a55d1ff9bef3eaae4b6513b00dba",
+        "lifted": true,
+        "longest_stable_steps": 145,
+        "reference_lifted": true,
+        "reference_sample_indices": [
+          0,
+          35,
+          71,
+          106,
+          142,
+          177,
+          213,
+          224,
+          227,
+          231,
+          234,
+          238,
+          241,
+          245,
+          249
+        ],
+        "response_source": "replayed",
+        "rgb_sha256": "9c8c1aab987ff9762f45c1af7a053f92be7daf91a834c2918a9bc3212c556660",
+        "status": "valid",
+        "success": true,
+        "validation_error": null,
+        "verdict": {
+          "failure_modes": [
+            "none"
+          ],
+          "held_at_end": {
+            "explanation": "In the last two supplied frames (245 and 249), the orange spool is visibly grasped by the gripper and held in approximately the same position, appearing steady.",
+            "frames": [
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "lifted": {
+            "explanation": "The orange spool is clearly elevated above the table surface in frames 71 through 249. In frame 0 it rests on the table; by frame 71 the gripper has lifted it and it remains suspended in the air in all subsequent frames.",
+            "frames": [
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "yes"
+          },
+          "rationale": "The robot successfully grasped the orange spool with two wide flanges and a narrow waist, lifted it clearly above the table surface, and held it steady at the end of the episode. The tray and other objects were left undisturbed.",
+          "scene_disturbed": {
+            "explanation": "The tray with the blue and yellow objects remains stationary throughout all frames. No unintended contact with the tray or fixture is observed, and no other objects are disturbed.",
+            "frames": [
+              0,
+              35,
+              71,
+              106,
+              142,
+              177,
+              213,
+              224,
+              227,
+              231,
+              234,
+              238,
+              241,
+              245,
+              249
+            ],
+            "verdict": "no"
+          }
+        }
+      }
+    ],
+    "latency_seconds": {
+      "available_requests": 31,
+      "max": 4.548061,
+      "median": 4.136394,
+      "min": 3.980435,
+      "sum": 129.050053,
+      "unavailable_requests": 1
+    },
+    "model": "MiniMaxAI/MiniMax-M3",
+    "provider_cost_reported_for_all_requests": false,
+    "rubric_version": "manipulation-visible-events-v2",
+    "summary": {
+      "calibrated_on_independent_human_labels": false,
+      "episodes": 32,
+      "invalid_responses": 2,
+      "lift_balanced_accuracy": 0.9375,
+      "lift_confusion": {
+        "negative_no": 16,
+        "positive_invalid": 2,
+        "positive_yes": 14
+      },
+      "lift_sensitivity": 0.875,
+      "lift_specificity": 1.0,
+      "limitations": [
+        "Sampled monocular frames cannot verify exact speed, force, goal distance, or continuous stability.",
+        "Agreement uses object height in the same supplied frames as an elevation proxy; it does not verify grasp or strict lift-and-hold success.",
+        "Capture episodes are independent of held-out test episodes; their denominators differ."
+      ],
+      "outcomes": {
+        "initial": {
+          "delay": {
+            "episodes": 4,
+            "failure_modes": {
+              "missed_grasp": 4
+            },
+            "held_at_end_rate": 0.0,
+            "invalid_count": 0,
+            "lifted_rate": 0.0,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          },
+          "heavy": {
+            "episodes": 4,
+            "failure_modes": {
+              "missed_grasp": 4,
+              "wrong_object": 1
+            },
+            "held_at_end_rate": 0.0,
+            "invalid_count": 0,
+            "lifted_rate": 0.0,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          },
+          "nominal": {
+            "episodes": 4,
+            "failure_modes": {
+              "missed_grasp": 4,
+              "wrong_object": 1
+            },
+            "held_at_end_rate": 0.0,
+            "invalid_count": 0,
+            "lifted_rate": 0.0,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          },
+          "slippery": {
+            "episodes": 4,
+            "failure_modes": {
+              "missed_grasp": 4
+            },
+            "held_at_end_rate": 0.0,
+            "invalid_count": 0,
+            "lifted_rate": 0.0,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          }
+        },
+        "trained": {
+          "delay": {
+            "episodes": 4,
+            "failure_modes": {
+              "none": 3,
+              "slip_or_drop": 1,
+              "unstable_hold": 1
+            },
+            "held_at_end_rate": 0.75,
+            "invalid_count": 0,
+            "lifted_rate": 1.0,
+            "scene_disturbed_count": 1,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          },
+          "heavy": {
+            "episodes": 4,
+            "failure_modes": {
+              "none": 3
+            },
+            "held_at_end_rate": 0.75,
+            "invalid_count": 1,
+            "lifted_rate": 0.75,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          },
+          "nominal": {
+            "episodes": 4,
+            "failure_modes": {
+              "none": 3
+            },
+            "held_at_end_rate": 0.75,
+            "invalid_count": 1,
+            "lifted_rate": 0.75,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          },
+          "slippery": {
+            "episodes": 4,
+            "failure_modes": {
+              "none": 4
+            },
+            "held_at_end_rate": 1.0,
+            "invalid_count": 0,
+            "lifted_rate": 1.0,
+            "scene_disturbed_count": 0,
+            "scene_uncertain_count": 0,
+            "uncertain_count": 0
+          }
+        }
+      },
+      "quality_role": "Additional gate; cannot override failed simulator success",
+      "visual_audit_passed": false,
+      "visual_task_passed": false
+    },
+    "usage_totals": {
+      "completion_tokens": 10195,
+      "prompt_tokens": 220352,
+      "total_tokens": 230547
+    }
+  },
+  "workflow": "workflows/testing/franka-rl-transfer.yaml"
+}

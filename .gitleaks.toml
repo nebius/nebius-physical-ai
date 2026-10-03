@@ -23,7 +23,7 @@ tags = ["nebius", "location"]
 
 [[rules]]
 id = "nebius-private-registry-location"
-description = "Task-specific private Nebius registry location"
+description = "Legacy task-specific Nebius registry location"
 regex = '''(?i)\bcr\.[a-z0-9-]+\.nebius\.cloud/[a-z0-9][a-z0-9._-]*-(?:[0-9a-f]{8,}|(?:19|20)[0-9]{6})(?:[/:\s`'"]|$)'''
 tags = ["nebius", "location"]
 
@@ -69,9 +69,32 @@ regexes = [
     # Public content-addressable digest of the pinned SymPy 1.14.0 wheel. The
     # custom Nebius identifier rule matches it only because the hash starts e09.
     '''e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5''',
+    # Historical public Gymnasium neutral-verifier content digest pinned at solution commit 03cc6d87;
+    # retained solely so the full-range scan does not classify that non-secret byte as a Nebius ID.
+    '''e0095400ccd21ea89d8ed1e1a591cc529b9c6e52e6c999e4456f28392e278d48''',
+    # Public wheel hashes in the generated Cosmos3 serving requirements lock.
+    # The custom Nebius identifier rule matches only their coincidental e00 prefix.
+    '''e00820e192c8dbebcafb383ebbf99030895f09905e7a0eb2e0340a0bcc2bc825''',
+    '''e006d3a974c4ee19512e5f058abedb6eef36a5e553c14812bdeba1758d812e6d''',
+    # Public vhacdx 0.0.10 wheel SHA-256, verified against PyPI metadata and
+    # downloaded bytes; the e00 prefix coincides with the identifier rule.
+    '''e000a107aa02484572b533ca9e8a42ff96c78baa54b19dd65077a2867684377d''',
+    # Public dataset LFS SHA-256 from flex-pi/sort_utensils at
+    # 0780dd0a0b281df91abcef9434c4b3ac2757448c, left-wrist depth episode 107.
+    # Verified against anonymous immutable upstream metadata; coincidental e00.
+    '''e00cc33ab9e0dfdd4fb8cfc32fdc36afc9e34f30e080bc32bef287a5bf6003c2''',
     # Public Hugging Face revision of nvidia/Cosmos3-Super. The custom Nebius
     # identifier rule matches it only because the Git SHA happens to start e02.
     '''e0262be9d8f7586bc24c069a2aed2b665bdff266''',
+    # SHA-256 of the committed sixteen-GPU WAM visual quality.json. Verified
+    # against those public bytes; its e00 prefix coincides with the ID rule.
+    '''e00752fa8ed6d27305f3eca3ad90f100ae18894dfc699e4f6cdae8ce81974202''',
+    # Public Comet12 checkpoint Git blob SHA-1, independently verified from its
+    # 45-byte Hugging Face payload. Its e00 prefix matches the identifier rule.
+    '''e00367cf5293b1e5680e76ff36f2e01c4c23a415''',
+    # Public Comet50 checkpoint Git blob SHA-1, independently verified from its
+    # 19,663-byte Hugging Face payload. Its e00 prefix matches the identifier rule.
+    '''e00923ccf417486f96b4c7f41bb400e8f9651274''',
 ]
 paths = [
     '''SECURITY\.md''',

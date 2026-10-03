@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from npa.deploy.images import registry_from_env
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_ENV_COUNT,
@@ -20,7 +19,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_PREFIX,
     DEFAULT_REFERENCE_VLM_MODEL,
     DEFAULT_REASON2_MODEL,
-    DEFAULT_REASON3_MODEL,
+    DEFAULT_COSMOS3_MODEL,
     DEFAULT_ROLLOUT_COUNT,
     DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
@@ -43,7 +42,6 @@ from npa.workflows.sim2real.models import (
     new_run_id,
 )
 from npa.workflows.sim2real.utils import (
-    _artifact_root_uri,
     _bool_value,
     _serviceaccount_namespace,
     _split_csv,
@@ -63,7 +61,9 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         or os.environ.get("S3_BUCKET")
         or ""
     )
-    registry = registry_from_env()
+    registry = str(
+        overrides.get("registry") or os.environ.get("NPA_SIM2REAL_REGISTRY") or ""
+    ).strip()
     if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
         s3_prefix = str(overrides["s3_prefix"])
     elif "NPA_SIM2REAL_PREFIX" in os.environ:
@@ -217,9 +217,10 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("VLM_IMAGE")
             or default_vlm_image(registry=registry or None)
         ),
-        vlm_reason3_image=str(
-            overrides.get("vlm_reason3_image")
-            or os.environ.get("VLM_REASON3_IMAGE")
+        vlm_cosmos3_image=str(
+            overrides.get("vlm_cosmos3_image")
+            or overrides.get("vlm_reason3_image")  # archived config compatibility
+            or os.environ.get("VLM_COSMOS3_IMAGE")
             or os.environ.get("VLM_IMAGE")
             or default_vlm_image(registry=registry or None)
         ),
@@ -256,16 +257,19 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("VLM_MODEL")
             or DEFAULT_REASON2_MODEL
         ),
-        vlm_reason3_model=str(
-            overrides.get("vlm_reason3_model")
-            or os.environ.get("VLM_REASON3_MODEL")
-            or os.environ.get("NPA_COSMOS_REASON3_MODEL_ID")
-            or DEFAULT_REASON3_MODEL
+        vlm_cosmos3_model=str(
+            overrides.get("vlm_cosmos3_model")
+            or overrides.get("vlm_reason3_model")  # archived key compatibility
+            or os.environ.get("VLM_COSMOS3_MODEL")
+            or DEFAULT_COSMOS3_MODEL
         ),
-        vlm_dual_reason=_bool_value(
+        vlm_two_evaluator=_bool_value(
             overrides.get(
-                "vlm_dual_reason",
-                os.environ.get("NPA_SIM2REAL_VLM_DUAL_REASON", "1"),
+                "vlm_two_evaluator",
+                overrides.get(
+                    "vlm_dual_reason",  # archived config compatibility
+                    os.environ.get("NPA_SIM2REAL_VLM_TWO_EVALUATOR", "1"),
+                ),
             )
         ),
         threshold=float(
@@ -389,7 +393,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         k8s_image_pull_secrets=str(
             overrides.get("k8s_image_pull_secrets")
             or os.environ.get("NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS")
-            or "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
+            or "ngc-nvcr-imagepullsecret"
         ),
         k8s_env_secret_names=str(
             overrides.get("k8s_env_secret_names")
@@ -462,12 +466,37 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
 def artifact_uris(config: Sim2RealLoopConfig) -> dict[str, str]:
     """Return canonical S3 artifact URIs for the full 14-stage workflow."""
 
-    if not config.s3_bucket:
+    return artifact_uris_for_run(
+        s3_bucket=config.s3_bucket,
+        s3_prefix=config.s3_prefix,
+        run_id=config.run_id,
+        trigger_dataset_uri=config.trigger_dataset_uri,
+        outer_iterations=config.outer_iterations,
+    )
+
+
+def artifact_uris_for_run(
+    *,
+    s3_bucket: str,
+    s3_prefix: str,
+    run_id: str,
+    trigger_dataset_uri: str = "",
+    outer_iterations: int = DEFAULT_OUTER_ITERATIONS,
+) -> dict[str, str]:
+    """Return artifact URIs without resolving execution-only image defaults.
+
+    Status and artifact discovery are read-only operations over an existing run.
+    They must remain available when a previously used public runtime is later
+    quarantined, so this path deliberately accepts only artifact coordinates.
+    """
+
+    if not s3_bucket:
         return {}
-    root = _artifact_root_uri(config)
+    parts = [part for part in (s3_prefix.strip("/"), run_id) if part]
+    root = f"s3://{s3_bucket}/{'/'.join(parts)}"
     return {
         "root": f"{root}/",
-        "trigger_dataset": config.trigger_dataset_uri,
+        "trigger_dataset": trigger_dataset_uri,
         "stage_01_trigger": f"{root}/stage_01_trigger/trigger.json",
         "task_contract": f"{root}/stage_02_assets/task-contract.json",
         "stage_02_assets": f"{root}/stage_02_assets/consumed_scene_spec.json",
@@ -487,7 +516,7 @@ def artifact_uris(config: Sim2RealLoopConfig) -> dict[str, str]:
         "validation_selection": f"{root}/checkpoints/validation-selection/",
         "inner_loop": f"{root}/inner_loop/",
         "stage_10_eval_heldout": (
-            f"{root}/eval/gold-heldout/outer-{config.outer_iterations:02d}/report.json"
+            f"{root}/eval/gold-heldout/outer-{outer_iterations:02d}/report.json"
         ),
         "stage_11_outer_loop": f"{root}/outer_loop/decision.json",
         "candidate_checkpoint": f"{root}/checkpoints/candidate/",

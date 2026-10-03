@@ -54,8 +54,8 @@ def _queue(payload: dict[str, Any]) -> dict[str, Any]:
     import sky
 
     job_id = int(payload["job_id"])
-    refresh = bool(payload.get("refresh", True))
-    skip_finished = bool(payload.get("skip_finished", False))
+    refresh = _json_boolean(payload, "refresh", default=True)
+    skip_finished = _json_boolean(payload, "skip_finished", default=False)
     stream = io.StringIO()
     with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
         request_id = sky.jobs.queue(
@@ -76,14 +76,17 @@ def _logs(payload: dict[str, Any]) -> dict[str, Any]:
     import sky
 
     job_id = int(payload["job_id"])
-    follow = bool(payload.get("follow", False))
-    refresh = bool(payload.get("refresh", True))
+    follow = _json_boolean(payload, "follow", default=False)
+    refresh = _json_boolean(payload, "refresh", default=True)
     tail = payload.get("tail")
     if tail is not None:
         tail = int(tail)
     stream = io.StringIO()
     status_stream = io.StringIO()
-    with contextlib.redirect_stdout(status_stream), contextlib.redirect_stderr(status_stream):
+    with (
+        contextlib.redirect_stdout(status_stream),
+        contextlib.redirect_stderr(status_stream),
+    ):
         exit_code = sky.jobs.tail_logs(
             job_id=job_id,
             follow=follow,
@@ -96,6 +99,18 @@ def _logs(payload: dict[str, Any]) -> dict[str, Any]:
         "output": status_stream.getvalue(),
         "exit_code": exit_code,
     }
+
+
+def _json_boolean(payload: dict[str, Any], key: str, *, default: bool) -> bool:
+    if key not in payload:
+        return default
+    value = payload[key]
+    # This file runs directly in SkyPilot's venv, where npa is not installed.
+    # Keep this standalone adapter aligned with literal_values.require_boolean;
+    # the contract test covers both decoders without adding an NPA dependency.
+    if type(value) is not bool:
+        raise ValueError(f"{key} must be a JSON boolean")
+    return value
 
 
 def _json_default(value: Any) -> Any:

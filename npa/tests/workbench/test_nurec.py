@@ -15,11 +15,13 @@ import pytest
 from click.utils import strip_ansi
 from typer.testing import CliRunner
 
+from npa.cli import nurec as nurec_cli
 from npa.cli.main import app
 from npa.workbench.nurec import nurec as mod
 from npa.workbench.nurec.nurec import (
     DEFAULT_CONFIG_NAME,
     DEFAULT_DATASET_ID,
+    DEFAULT_GT_FRAME_STEP_CAMERA,
     DEFAULT_NRE_ENTRYPOINT,
     DEFAULT_NRE_IMAGE,
     NO_LIDAR_SENTINEL,
@@ -42,7 +44,9 @@ from npa.workbench.nurec.nurec import (
     redact,
     reconstruct_scene,
     render_novel_views,
+    derive_scene_variant_from_dir,
     resolve_nre_run_dir,
+    validate_fetch_provenance,
 )
 
 runner = CliRunner()
@@ -54,14 +58,16 @@ def _json_payload(result) -> dict:
     CliRunner merges stderr into ``result.output`` on this click version, so a
     human-facing note on stderr lands in the same string as the machine-readable
     payload. Production keeps them separate (asserted by
-    ``test_reconstruct_note_goes_to_stderr_leaving_stdout_pure_json``).
+    ``test_reconstruct_keeps_stdout_pure_json``).
     """
     text = strip_ansi(result.output)
     start = text.index("{")
     return json.loads(text[start:])
 
 
-def _completed(returncode: int = 0, stdout: str = "") -> subprocess.CompletedProcess[str]:
+def _completed(
+    returncode: int = 0, stdout: str = ""
+) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(["nre"], returncode, stdout, "")
 
 
@@ -83,6 +89,7 @@ def test_config_defaults_are_the_ga_container_and_ungated_dataset() -> None:
     # The GA channel is the one a standard NGC key can pull.
     assert config.image.endswith("-ga:26.04")
     assert config.dataset_id == DEFAULT_DATASET_ID
+    assert config.resolved_dataset_revision == mod.DEFAULT_DATASET_REVISION
     assert config.config_name == DEFAULT_CONFIG_NAME
     assert config.entrypoint == DEFAULT_NRE_ENTRYPOINT
     assert config.resolved_cache_dir.as_posix().startswith("/tmp/")
@@ -117,10 +124,21 @@ def test_config_rejects_unknown_input_frame_source() -> None:
 def test_scene_dir_name_tracks_the_variant_layout() -> None:
     # PPISP archives ship "<scene>/" (full exposure brackets) and "<scene>_auto/"
     # (the smaller auto-exposure re-processing, which is the default).
-    assert NurecConfig.from_env(environ={}, scene="toro", variant="auto").scene_dir_name == "toro_auto"
-    assert NurecConfig.from_env(environ={}, scene="toro", variant="standard").scene_dir_name == "toro"
+    assert (
+        NurecConfig.from_env(environ={}, scene="toro", variant="auto").scene_dir_name
+        == "toro_auto"
+    )
+    assert (
+        NurecConfig.from_env(
+            environ={}, scene="toro", variant="standard"
+        ).scene_dir_name
+        == "toro"
+    )
     # An unset variant resolves to the default rather than the full sequence.
-    assert NurecConfig.from_env(environ={}, scene="toro", variant="").scene_dir_name == "toro_auto"
+    assert (
+        NurecConfig.from_env(environ={}, scene="toro", variant="").scene_dir_name
+        == "toro_auto"
+    )
 
 
 def test_image_repository_and_registry_are_split_for_registry_probes() -> None:
@@ -128,6 +146,14 @@ def test_image_repository_and_registry_are_split_for_registry_probes() -> None:
 
     assert config.image_registry == "nvcr.io"
     assert config.image_repository == "nvidia/nre/nre-ga"
+    assert config.image_manifest_reference == "26.04"
+
+    digest = NurecConfig.from_env(
+        environ={}, image="nvcr.io/nvidia/nre/nre-ga@sha256:abc123"
+    )
+    assert digest.image_registry == "nvcr.io"
+    assert digest.image_repository == "nvidia/nre/nre-ga"
+    assert digest.image_manifest_reference == "sha256:abc123"
 
 
 # ---------------------------------------------------------------------------------
@@ -207,7 +233,9 @@ def test_train_args_emit_overrides_when_configured() -> None:
 def test_train_args_support_forcing_an_empty_lidar_list() -> None:
     config = NurecConfig.from_env(environ={}, lidar_ids=[NO_LIDAR_SENTINEL])
 
-    assert "dataset.lidar_ids=[]" in build_nre_train_args(config, ncore_json="/d/s.json")
+    assert "dataset.lidar_ids=[]" in build_nre_train_args(
+        config, ncore_json="/d/s.json"
+    )
 
 
 def test_train_args_require_a_recipe_and_a_dataset() -> None:
@@ -283,14 +311,22 @@ def test_export_gt_args_match_the_real_subcommand_surface() -> None:
 
     assert args[0] == "export-ncore-benchmark-gt"
     assert "--dataset-path" in args and "/d/s.json" in args
-    assert "--frame-step-camera" in args
+    frame_step_index = args.index("--frame-step-camera")
+    assert args[frame_step_index : frame_step_index + 2] == [
+        "--frame-step-camera",
+        str(DEFAULT_GT_FRAME_STEP_CAMERA),
+    ]
     # There is no --camera-id on this sub-command.
     assert "--camera-id" not in args
 
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [("1,2,3", (1.0, 2.0, 3.0)), ("0 0.5 0", (0.0, 0.5, 0.0)), ([4, 5, 6], (4.0, 5.0, 6.0))],
+    [
+        ("1,2,3", (1.0, 2.0, 3.0)),
+        ("0 0.5 0", (0.0, 0.5, 0.0)),
+        ([4, 5, 6], (4.0, 5.0, 6.0)),
+    ],
 )
 def test_parse_offset_accepts_operator_friendly_forms(value, expected) -> None:
     assert parse_offset(value, (0.0, 0.0, 0.0)) == expected
@@ -382,6 +418,31 @@ def test_parse_metrics_yaml_flattens_the_test_metrics(tmp_path: Path) -> None:
     assert metrics["test/psnr"] == pytest.approx(28.5)
     assert metrics["test/ssim"] == pytest.approx(0.91)
     assert metrics["test/lpips"] == pytest.approx(0.12)
+
+
+def test_parse_metrics_yaml_flattens_the_aggregated_shape(tmp_path: Path) -> None:
+    """NRE 26.04 wraps validation numbers under ``aggregated_metrics`` with a
+    ``value`` leaf; those must surface as the bare test/psnr|ssim|lpips keys that
+    downstream gates (and the skill docs) read."""
+    path = tmp_path / "metrics.yaml"
+    path.write_text(
+        "aggregated_metrics:\n"
+        "  test/psnr:\n"
+        "    aggregation_method: mean\n"
+        "    value: 22.66\n"
+        "  test/ssim:\n"
+        "    aggregation_method: mean\n"
+        "    value: 0.6447\n"
+        "  test/lpips:\n"
+        "    aggregation_method: mean\n"
+        "    value: 0.3956\n"
+    )
+
+    metrics = parse_metrics_yaml(path)
+
+    assert metrics["test/psnr"] == pytest.approx(22.66)
+    assert metrics["test/ssim"] == pytest.approx(0.6447)
+    assert metrics["test/lpips"] == pytest.approx(0.3956)
 
 
 def test_parse_metrics_yaml_is_quiet_about_a_missing_file(tmp_path: Path) -> None:
@@ -492,7 +553,9 @@ class _Response:
         return self._payload
 
 
-def _patch_http(monkeypatch: pytest.MonkeyPatch, *, ngc: int = 200, hf: int = 206) -> None:
+def _patch_http(
+    monkeypatch: pytest.MonkeyPatch, *, ngc: int = 200, hf: int = 206
+) -> None:
     import httpx
 
     def fake_get(url, **_kwargs):
@@ -503,6 +566,63 @@ def _patch_http(monkeypatch: pytest.MonkeyPatch, *, ngc: int = 200, hf: int = 20
         return _Response(hf)
 
     monkeypatch.setattr(httpx, "get", fake_get)
+
+
+@pytest.mark.parametrize(
+    ("image", "manifest_url"),
+    (
+        (
+            "nvcr.io/nvidia/nre/nre-ga:26.04",
+            "https://nvcr.io/v2/nvidia/nre/nre-ga/manifests/26.04",
+        ),
+        (
+            "nvcr.io/nvidia/nre/nre-ga@sha256:abc123",
+            "https://nvcr.io/v2/nvidia/nre/nre-ga/manifests/sha256:abc123",
+        ),
+    ),
+)
+def test_ngc_access_probes_the_exact_selected_manifest(
+    monkeypatch: pytest.MonkeyPatch, image: str, manifest_url: str
+) -> None:
+    import httpx
+
+    calls: list[tuple[str, dict]] = []
+
+    def fake_get(url, **kwargs):
+        calls.append((str(url), kwargs))
+        if "proxy_auth" in str(url):
+            return _Response(200, {"token": "registry-token"})
+        return _Response(200)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    assert mod.check_ngc_image_access("operator-key", image=image) == "reachable"
+    assert calls[0][0] == "https://nvcr.io/proxy_auth"
+    assert calls[0][1]["params"] == {"scope": "repository:nvidia/nre/nre-ga:pull"}
+    assert calls[1][0] == manifest_url
+    assert calls[1][1]["headers"]["Authorization"] == "Bearer registry-token"
+    assert (
+        "application/vnd.oci.image.manifest.v1+json" in calls[1][1]["headers"]["Accept"]
+    )
+
+
+@pytest.mark.parametrize("status", (401, 403, 404))
+def test_ngc_access_rejects_non_success_for_the_exact_manifest(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    import httpx
+
+    def fake_get(url, **_kwargs):
+        if "proxy_auth" in str(url):
+            return _Response(200, {"token": "registry-token"})
+        return _Response(status)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    outcome = mod.check_ngc_image_access(
+        "operator-key", image="nvcr.io/nvidia/nre/nre-ga:26.04"
+    )
+    assert outcome == f"manifest-{status}"
 
 
 def test_check_is_ok_when_credentials_container_and_gpu_all_resolve(
@@ -516,7 +636,9 @@ def test_check_is_ok_when_credentials_container_and_gpu_all_resolve(
     result = check_nurec_access(
         config,
         environ={"NGC_API_KEY": "nvapi-secret-value", "HF_TOKEN": "hf_secret_value"},
-        runner=lambda *_a, **_k: _completed(0, "NVIDIA RTX PRO 6000 Blackwell Server Edition\n"),
+        runner=lambda *_a, **_k: _completed(
+            0, "NVIDIA RTX PRO 6000 Blackwell Server Edition\n"
+        ),
     )
 
     payload = result.as_dict()
@@ -529,7 +651,9 @@ def test_check_is_ok_when_credentials_container_and_gpu_all_resolve(
     assert payload["errors"] == []
 
 
-def test_check_flags_a_gated_dataset(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_check_flags_a_gated_dataset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     _patch_http(monkeypatch, hf=403)
     entrypoint = tmp_path / "run"
     entrypoint.write_text("x")
@@ -643,7 +767,9 @@ def test_reconstruct_failure_never_leaks_a_token(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------------
 # reconstruct / render orchestration
 # ---------------------------------------------------------------------------------
-def test_reconstruct_dry_run_reports_the_command_without_running_it(tmp_path: Path) -> None:
+def test_reconstruct_dry_run_reports_the_command_without_running_it(
+    tmp_path: Path,
+) -> None:
     calls: list[list[str]] = []
     config = NurecConfig.from_env(environ={}, out_dir=tmp_path / "out")
 
@@ -669,8 +795,12 @@ def test_reconstruct_collects_the_usdz_metrics_and_ground_truth(tmp_path: Path) 
     def fake_runner(command, **_kwargs):
         calls.append(list(command))
         if "export-ncore-benchmark-gt" in command:
-            (run_dir / "gt" / "camera_images" / "camera2").mkdir(parents=True, exist_ok=True)
-            (run_dir / "gt" / "camera_images" / "camera2" / "000000.jpg").write_text("x")
+            (run_dir / "gt" / "camera_images" / "camera2").mkdir(
+                parents=True, exist_ok=True
+            )
+            (run_dir / "gt" / "camera_images" / "camera2" / "000000.jpg").write_text(
+                "x"
+            )
             return _completed(0)
         (run_dir / "artifacts").mkdir(parents=True, exist_ok=True)
         (run_dir / "artifacts" / "030000.usdz").write_text("gaussians")
@@ -681,7 +811,13 @@ def test_reconstruct_collects_the_usdz_metrics_and_ground_truth(tmp_path: Path) 
         return _completed(0)
 
     config = NurecConfig.from_env(environ={}, out_dir=out)
-    result = reconstruct_scene(config, ncore_json="/d/s.json", environ={}, runner=fake_runner)
+    result = reconstruct_scene(
+        config,
+        ncore_json="/d/s.json",
+        environ={},
+        runner=fake_runner,
+        gt_frame_step=7,
+    )
 
     assert result.ok is True
     assert result.usdz_path.endswith("030000.usdz")
@@ -689,13 +825,46 @@ def test_reconstruct_collects_the_usdz_metrics_and_ground_truth(tmp_path: Path) 
     assert result.metrics["test/psnr"] == pytest.approx(27.75)
     assert result.gt_dir.endswith("gt")
     assert len(calls) == 2
+    export_command = calls[1]
+    frame_step_index = export_command.index("--frame-step-camera")
+    assert export_command[frame_step_index : frame_step_index + 2] == [
+        "--frame-step-camera",
+        "7",
+    ]
+
+
+def test_reconstruct_ignores_an_optional_ground_truth_export_failure(
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "out"
+    run_dir = out / "nre"
+
+    def fake_runner(command, **_kwargs):
+        if "export-ncore-benchmark-gt" in command:
+            return _completed(1, "export unavailable")
+        (run_dir / "artifacts").mkdir(parents=True, exist_ok=True)
+        (run_dir / "artifacts" / "030000.usdz").write_text("gaussians")
+        return _completed(0)
+
+    config = NurecConfig.from_env(environ={}, out_dir=out)
+    result = reconstruct_scene(
+        config, ncore_json="/d/s.json", environ={}, runner=fake_runner
+    )
+
+    assert result.ok is True
+    assert result.usdz_path.endswith("030000.usdz")
+    assert result.gt_dir == ""
+    assert result.errors == ()
 
 
 def test_reconstruct_fails_loudly_without_an_artifact(tmp_path: Path) -> None:
     config = NurecConfig.from_env(environ={}, out_dir=tmp_path / "out")
 
     result = reconstruct_scene(
-        config, ncore_json="/d/s.json", environ={}, runner=lambda *_a, **_k: _completed(0)
+        config,
+        ncore_json="/d/s.json",
+        environ={},
+        runner=lambda *_a, **_k: _completed(0),
     )
 
     assert result.ok is False
@@ -760,6 +929,7 @@ def test_fetch_downloads_extracts_and_locates_the_sequence(tmp_path: Path) -> No
     member = cache / "hf" / config.ncore_member
 
     def fake_runner(command, **_kwargs):
+        assert command[command.index("--revision") + 1] == mod.DEFAULT_DATASET_REVISION
         # Stand in for the `hf download` CLI by materializing the archive.
         member.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(member, "w") as bundle:
@@ -775,7 +945,9 @@ def test_fetch_downloads_extracts_and_locates_the_sequence(tmp_path: Path) -> No
                     }
                 ),
             )
-            bundle.writestr("struktur28_auto/struktur28_auto.ncore4-camera1.zarr.itar", "d")
+            bundle.writestr(
+                "struktur28_auto/struktur28_auto.ncore4-camera1.zarr.itar", "d"
+            )
         return _completed(0)
 
     result = mod.fetch_nurec_dataset(
@@ -788,6 +960,19 @@ def test_fetch_downloads_extracts_and_locates_the_sequence(tmp_path: Path) -> No
     assert result.lidar_ids == ("virtual_lidar",)
     assert result.shard_count == 1
     assert result.bytes_downloaded > 0
+    assert result.dataset_revision == mod.DEFAULT_DATASET_REVISION
+    assert result.archive_sha256 == mod._file_sha256(member)
+
+
+def test_revision_pin_does_not_apply_to_an_unrelated_dataset():
+    config = NurecConfig.from_env(environ={}, dataset_id="example/reference")
+    assert config.resolved_dataset_revision == "main"
+    selected = NurecConfig.from_env(environ={"NPA_NUREC_DATASET_REVISION": "reference"})
+    assert selected.resolved_dataset_revision == "reference"
+    explicit = NurecConfig.from_env(
+        environ={"NPA_NUREC_DATASET_REVISION": "reference"}, dataset_revision="a" * 40
+    )
+    assert explicit.resolved_dataset_revision == "a" * 40
 
 
 def test_fetch_surfaces_a_download_failure_with_redaction(tmp_path: Path) -> None:
@@ -828,7 +1013,13 @@ def test_status_summarizes_a_local_run_tree(tmp_path: Path) -> None:
     assert result.has_rrd is True
     assert result.has_usdz is True
     assert result.has_novel_views is True
-    assert set(result.stages) == {"ncore", "input", "reconstruction", "novel_views", "reports"}
+    assert set(result.stages) == {
+        "ncore",
+        "input",
+        "reconstruction",
+        "novel_views",
+        "reports",
+    }
 
 
 def test_status_requires_a_run_uri() -> None:
@@ -843,7 +1034,15 @@ def test_cli_exposes_every_stage_verb() -> None:
 
     output = strip_ansi(result.output)
     assert result.exit_code == 0, output
-    for verb in ("check", "fetch", "reconstruct", "render", "visualize", "finalize", "status"):
+    for verb in (
+        "check",
+        "fetch",
+        "reconstruct",
+        "render",
+        "visualize",
+        "finalize",
+        "status",
+    ):
         assert verb in output
     # The GPU routing constraint belongs in the help text, not just the docs.
     assert "RT-core" in output
@@ -900,7 +1099,9 @@ def test_cli_check_emits_json_and_exits_non_zero_on_failure(
     assert payload["hf_dataset"] == "gated"
 
 
-def test_cli_reconstruct_dry_run_prints_the_resolved_nre_command(tmp_path: Path) -> None:
+def test_cli_reconstruct_dry_run_prints_the_resolved_nre_command(
+    tmp_path: Path,
+) -> None:
     ncore = tmp_path / "scene.json"
     ncore.write_text("{}")
 
@@ -929,6 +1130,50 @@ def test_cli_reconstruct_dry_run_prints_the_resolved_nre_command(tmp_path: Path)
     command = " ".join(payload["command"])
     assert "dataset.poses_component_group=npa_rig" in command
     assert "checkpoint.artifact.enabled=true" in command
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_frame_step"),
+    [
+        ([], DEFAULT_GT_FRAME_STEP_CAMERA),
+        (["--gt-frame-step", "7"], 7),
+    ],
+)
+def test_cli_reconstruct_forwards_the_ground_truth_frame_step(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    extra_args: list[str],
+    expected_frame_step: int,
+) -> None:
+    ncore = tmp_path / "scene.json"
+    ncore.write_text("{}")
+    observed: list[int] = []
+    original_reconstruct_scene = mod.reconstruct_scene
+
+    def recording_reconstruct_scene(config, **kwargs):
+        observed.append(kwargs["gt_frame_step"])
+        return original_reconstruct_scene(config, **kwargs)
+
+    monkeypatch.setattr(nurec_cli, "reconstruct_scene", recording_reconstruct_scene)
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--dry-run",
+            "--output",
+            "json",
+            *extra_args,
+        ],
+    )
+
+    assert result.exit_code == 0, strip_ansi(result.output)
+    assert observed == [expected_frame_step]
 
 
 def test_cli_reconstruct_without_a_sequence_fails_with_guidance(tmp_path: Path) -> None:
@@ -1002,7 +1247,10 @@ def test_cli_reconstruct_blanks_the_lidar_list_when_the_capture_has_none(
     ncore = tmp_path / "scene.json"
     ncore.write_text(
         json.dumps(
-            {"version": "v4", "component_stores": [{"components": {"cameras": {"camera1": {}}}}]}
+            {
+                "version": "v4",
+                "component_stores": [{"components": {"cameras": {"camera1": {}}}}],
+            }
         )
     )
 
@@ -1059,7 +1307,9 @@ def test_cli_reconstruct_respects_an_explicit_lidar_id(tmp_path: Path) -> None:
     assert "dataset.lidar_ids=['lidar_top']" in command
 
 
-def test_cli_reconstruct_replaces_the_recipe_placeholder_cameras(tmp_path: Path) -> None:
+def test_cli_reconstruct_replaces_the_recipe_placeholder_cameras(
+    tmp_path: Path,
+) -> None:
     """The shipped recipes default to AV camera ids.
 
     On a real object-centric capture NRE aborts with "Requested cameras not present
@@ -1103,7 +1353,9 @@ def test_cli_reconstruct_replaces_the_recipe_placeholder_cameras(tmp_path: Path)
     assert "camera_front_wide_120fov" not in command
 
 
-def test_cli_reconstruct_respects_explicit_cameras_over_discovery(tmp_path: Path) -> None:
+def test_cli_reconstruct_respects_explicit_cameras_over_discovery(
+    tmp_path: Path,
+) -> None:
     ncore = tmp_path / "scene.json"
     ncore.write_text(
         json.dumps(
@@ -1191,17 +1443,23 @@ def _ncore_with_cameras(path: Path, cameras: list[str], lidars: list[str] = []) 
     path.write_text(json.dumps({"version": "v4", "component_stores": stores}))
 
 
-def test_derived_rig_sequence_trains_on_the_reference_camera_only(tmp_path: Path) -> None:
-    """SfM point-cloud initialization supports exactly one camera.
+def test_derived_rig_sequence_plans_all_cameras(tmp_path: Path, monkeypatch) -> None:
+    """The native accumulated initializer keeps both derived-rig cameras."""
+    from types import SimpleNamespace
+    from npa.workbench.nurec import ncore_initialization
 
-    Live failure: "AssertionError / Only one camera sensor is currently supported
-    for sfm-point-cloud initialization" once discovery started passing both
-    cameras. The rig IS the reference camera, so that is the coherent choice.
-    """
     ncore = tmp_path / "scene.json"
     _ncore_with_cameras(ncore, ["camera1", "camera2"], ["virtual_lidar"])
     _sidecar(ncore, "camera2", ["camera1", "camera2"])
-
+    monkeypatch.setattr(
+        ncore_initialization,
+        "_point_readers",
+        lambda _: {
+            "sfm_points": SimpleNamespace(
+                pcs_count=1, get_pc_xyz=lambda _: [[1, 2, 3]]
+            ),
+        },
+    )
     result = runner.invoke(
         app,
         [
@@ -1217,10 +1475,11 @@ def test_derived_rig_sequence_trains_on_the_reference_camera_only(tmp_path: Path
             "json",
         ],
     )
-
+    assert result.exit_code == 0, result.output
     command = " ".join(_json_payload(result)["command"])
-    assert "dataset.camera_ids=['camera2']" in command
-    assert "camera1" not in command
+    assert "dataset.camera_ids=['camera1','camera2']" in command
+    assert "=accumulated_point_cloud" in command
+    assert not (tmp_path / "out").exists()
 
 
 def test_sequence_without_a_derived_rig_keeps_all_cameras(tmp_path: Path) -> None:
@@ -1357,7 +1616,9 @@ def test_latest_usdz_tie_breaks_on_the_step_not_the_name(tmp_path: Path) -> None
     assert found.name == "30000.usdz"
 
 
-def test_latest_usdz_still_prefers_a_newer_mtime_over_a_higher_step(tmp_path: Path) -> None:
+def test_latest_usdz_still_prefers_a_newer_mtime_over_a_higher_step(
+    tmp_path: Path,
+) -> None:
     """mtime stays the primary key; the step only breaks ties."""
     import os
 
@@ -1373,7 +1634,7 @@ def test_latest_usdz_still_prefers_a_newer_mtime_over_a_higher_step(tmp_path: Pa
     assert latest_usdz(tmp_path).name == "1000.usdz"
 
 
-def test_reconstruct_note_goes_to_stderr_leaving_stdout_pure_json(tmp_path: Path) -> None:
+def test_reconstruct_keeps_stdout_pure_json(tmp_path: Path) -> None:
     """The workflow pipes stdout into a JSON parser, so it must stay pure.
 
     Run as a real subprocess rather than through CliRunner, which merges the two
@@ -1398,6 +1659,8 @@ def test_reconstruct_note_goes_to_stderr_leaving_stdout_pure_json(tmp_path: Path
             str(ncore),
             "--out-dir",
             str(tmp_path / "out"),
+            "--override",
+            "model.layers.background.initialization.name=custom",
             "--dry-run",
             "--output",
             "json",
@@ -1410,10 +1673,8 @@ def test_reconstruct_note_goes_to_stderr_leaving_stdout_pure_json(tmp_path: Path
     assert proc.returncode == 0, proc.stderr
     # stdout parses as JSON on its own -- nothing else is written to it.
     payload = json.loads(proc.stdout)
-    assert "dataset.camera_ids=['camera2']" in " ".join(payload["command"])
-    # ...and the operator still gets told which camera was dropped.
-    assert "camera1" in proc.stderr
-    assert "reference camera" in proc.stderr
+    assert "dataset.camera_ids=['camera1','camera2']" in " ".join(payload["command"])
+    assert "restricting training" not in proc.stderr
 
 
 def test_reconstruct_is_silent_when_there_is_nothing_to_drop(tmp_path: Path) -> None:
@@ -1427,9 +1688,19 @@ def test_reconstruct_is_silent_when_there_is_nothing_to_drop(tmp_path: Path) -> 
 
     proc = sp.run(
         [
-            sys.executable, "-m", "npa.cli.main", "workbench", "nurec", "reconstruct",
-            "--ncore-json", str(ncore), "--out-dir", str(tmp_path / "out"),
-            "--dry-run", "--output", "json",
+            sys.executable,
+            "-m",
+            "npa.cli.main",
+            "workbench",
+            "nurec",
+            "reconstruct",
+            "--ncore-json",
+            str(ncore),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--dry-run",
+            "--output",
+            "json",
         ],
         capture_output=True,
         text=True,
@@ -1440,7 +1711,9 @@ def test_reconstruct_is_silent_when_there_is_nothing_to_drop(tmp_path: Path) -> 
     assert "restricting training" not in proc.stderr
 
 
-def test_publish_merges_into_a_local_directory_without_deleting_it(tmp_path: Path) -> None:
+def test_publish_merges_into_a_local_directory_without_deleting_it(
+    tmp_path: Path,
+) -> None:
     """A mistyped --output-uri must not wipe a populated directory."""
     from npa.cli.nurec import _publish
 
@@ -1458,3 +1731,89 @@ def test_publish_merges_into_a_local_directory_without_deleting_it(tmp_path: Pat
     assert precious.is_file(), "pre-existing content was destroyed"
     assert precious.read_text() == "do not delete me"
     assert (destination / "new.txt").read_text() == "new"
+
+
+# ------------------------------------------------------------------------------
+# provenance gate (finding: never trust echoed request args)
+# ------------------------------------------------------------------------------
+
+
+def test_derive_scene_variant_from_dir_parses_variant_suffix() -> None:
+    assert derive_scene_variant_from_dir("toro_auto") == ("toro", "auto")
+    assert derive_scene_variant_from_dir("toro") == ("toro", "standard")
+    assert derive_scene_variant_from_dir("struktur28_auto") == ("struktur28", "auto")
+
+
+def test_provenance_gate_passes_when_observed_matches_requested() -> None:
+    fetched = {
+        "dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+        "scene": "toro",
+        "variant": "standard",
+        "observed_scene": "toro",
+        "observed_variant": "standard",
+    }
+    ok, errors = validate_fetch_provenance(
+        fetched,
+        requested_scene="toro",
+        requested_variant="standard",
+        requested_dataset_id="nvidia/PhysicalAI-NuRec-PPISP",
+    )
+    assert ok and not errors
+
+
+def test_provenance_gate_fails_when_fetch_echoes_labels_but_content_disagrees() -> None:
+    # A buggy/malicious fetch returns the *requested* scene/variant in the
+    # top-level (echoed request args) but independently observed content that
+    # disagrees. The gate must catch it rather than trust the echo.
+    fetched = {
+        "dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+        "scene": "toro",
+        "variant": "standard",
+        # Observed unpacked content is actually struktur28/standard.
+        "observed_scene": "struktur28",
+        "observed_variant": "standard",
+    }
+    ok, errors = validate_fetch_provenance(
+        fetched,
+        requested_scene="toro",
+        requested_variant="standard",
+        requested_dataset_id="nvidia/PhysicalAI-NuRec-PPISP",
+    )
+    assert not ok
+    assert any("scene observed" in e for e in errors)
+
+
+def test_provenance_gate_fails_on_missing_observed_content() -> None:
+    # Older fetch output that only echoes request args carries no observed
+    # content; the gate must fail closed rather than assume correctness.
+    fetched = {
+        "dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+        "scene": "toro",
+        "variant": "standard",
+    }
+    ok, errors = validate_fetch_provenance(
+        fetched,
+        requested_scene="toro",
+        requested_variant="standard",
+        requested_dataset_id="nvidia/PhysicalAI-NuRec-PPISP",
+    )
+    assert not ok
+    assert any("no observed unpacked content" in e for e in errors)
+
+
+def test_provenance_gate_fails_on_dataset_id_mismatch() -> None:
+    fetched = {
+        "dataset_id": "wrong/dataset",
+        "scene": "toro",
+        "variant": "standard",
+        "observed_scene": "toro",
+        "observed_variant": "standard",
+    }
+    ok, errors = validate_fetch_provenance(
+        fetched,
+        requested_scene="toro",
+        requested_variant="standard",
+        requested_dataset_id="nvidia/PhysicalAI-NuRec-PPISP",
+    )
+    assert not ok
+    assert any("dataset_id mismatch" in e for e in errors)

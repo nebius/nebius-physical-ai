@@ -48,6 +48,13 @@ npa convert lerobot-to-rrd \
 trajectory, which is how you see *where* a policy diverges rather than only that
 it scored badly. `--duration` caps the recording; the default is the adapter cap.
 
+The SDK entrypoint is `npa.convert.lerobot_to_rrd(input_path=...,
+output_path=..., predictions_path=...)`. Pass an S3 destination as a string:
+the SDK uploads the recording and returns the unchanged URI. Local destinations
+return a `Path`. Constructing `Path("s3://...")` removes a slash and changes the
+destination into a local path. Verify uploaded bytes and decode the recording
+before treating its returned reference as an artifact handoff.
+
 ## LeRobotDataset → MP4
 
 ```bash
@@ -73,6 +80,10 @@ silently truncated unless you set `--duration`.
 ## Sharing a recording
 
 ```bash
+# One-time bucket-admin setup (read-only plan, then explicit apply).
+npa storage bucket cors --project <alias>
+npa storage bucket cors --project <alias> --apply
+
 npa rerun host <path.rrd> --ttl-hours 1
 npa rerun share <path.rrd> --label <name> --workspace <ws> --ttl-hours 168
 npa rerun list-shares --output json
@@ -89,6 +100,20 @@ alias whose principal **reads** an `s3://` input, `--target-project` is the alia
 whose principal **writes** the upload, and `--target-bucket` overrides the
 destination (default: configured project storage). `--allow-host-creds` falls back
 to host credentials for the S3 operation — an explicit opt-in, not a default.
+
+The hosted viewer fetches the presigned object cross-origin and requests byte
+ranges. A bucket administrator must therefore configure CORS once. The setup
+command uses the active Nebius control-plane profile, preserves unrelated CORS
+rules, and adds only the `https://app.rerun.io` origin with `GET` and `Range`.
+The scoped object key created by `npa configure` remains object-only and cannot
+perform this operation. Running the setup command without `--apply` is a
+read-only plan.
+
+`host` and `share` exercise a real `OPTIONS` preflight against the presigned URL
+before returning it. A failed preflight exits nonzero with the bucket-admin
+setup command and does not print the signed URL. After applying the policy,
+retry the share. If bucket policy changes are not available, download the `.rrd`
+and open it locally with `rerun <recording.rrd>`.
 
 Revoke by label or sha256 when the work is no longer for sharing. `list-shares`
 is the only way to find what you left behind; presigned links do not appear in
@@ -118,6 +143,9 @@ rather than a dataset.
 - **These commands do not clean up after themselves.** Uploaded shares live in the
   bucket until revoked and count toward storage; include them in the audit in
   `skills/atomic/teardown-and-cost/SKILL.md`.
+- **Object access is not bucket administration.** Do not grant `PutBucketCORS`
+  to the workload key or use `--allow-host-creds` as a substitute for the
+  control-plane setup command.
 
 ## Verify
 

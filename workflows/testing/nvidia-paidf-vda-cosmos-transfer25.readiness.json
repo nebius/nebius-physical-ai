@@ -1,0 +1,57 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "7033c5f566dcaa34aee5e6c46ebce86d284349a18a261fbd19ca1ecab3c9801b",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation plus accepted and rejected static plans completed on September 18, 2026; the direct NVIDIA-derived VDA starts with the pinned upstream contract and both quality dispositions resolve to terminal paths.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml --run-id paidf-vda-review --assume-decision promote_checkpoint --json",
+        "npa workbench workflow plan-spec workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml --run-id paidf-vda-review --assume-decision loop_back --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "unverified",
+      "reason": "The separately named workflow has not yet completed its representative standard-runtime acceptance run.",
+      "evidence": []
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The committed workflow retains example-bucket. Each run must provide writable operator-owned storage and a fresh run prefix.",
+      "evidence": [
+        "docs/workbench/guides/physical-ai-data-factory-deploy.md"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Each run must independently prepare and hash its selected real source video or LeRobot input before provisioning.",
+      "evidence": [
+        "docs/workbench/guides/physical-ai-data-factory-deploy.md#select-the-starter-input"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Each operator must independently pass Nebius, object-storage, Token Factory, Hugging Face, and exact PAIDF access preflights.",
+      "evidence": [
+        "docs/workbench/guides/physical-ai-data-factory-deploy.md"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Each submission must verify staged NPA source identity and pullability of the unchanged immutable workbench images.",
+      "evidence": [
+        "docs/workbench/guides/physical-ai-data-factory-deploy.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Every target must independently prove Kubernetes readiness, supported accelerator discovery, image pullability, and sufficient CPU/GPU resources.",
+      "evidence": [
+        "docs/workbench/guides/physical-ai-data-factory-deploy.md"
+      ]
+    }
+  }
+}

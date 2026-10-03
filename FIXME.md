@@ -15,23 +15,6 @@ work lives).
 
 ### High
 
-#### [H] Agent VM S3 credentials are readable from its cloud-init user data
-
-- **Surfaced by**: third README-path walkthrough report on 2026-07-30.
-- **Status**: Active. The argv half is fixed (`npa.deploy.provisioner` passes
-  secret Terraform variables through a 0600 var-file instead of `-var`, so they
-  no longer appear in `ps`); the user-data half is not.
-- **Current issue**: `npa agent deploy` bakes the S3 access key and secret into
-  the VM's `cloud_init_user_data`, which anyone with read access to the project
-  can retrieve with `nebius compute instance get`. The IAM token was already
-  removed from the VM (the attached `npa-agent` service account self-mints one),
-  but the S3 keys still ride along in plaintext.
-- **Next step**: have the VM obtain S3 credentials at boot through its attached
-  service account (mint or read an access key with the token it already
-  self-mints) instead of receiving them in user data; until then, treat the keys
-  staged onto an agent VM as project-readable and rotate them when the VM is
-  destroyed.
-
 ### Medium
 
 #### [M] SkyPilot's runtime bootstrap stalled once in npa-cosmos-curate
@@ -49,43 +32,127 @@ work lives).
   completing all ten stages. Downgraded from high because the observed impact is now
   a one-off stall rather than a reproducible block, and left open because the cause
   was never identified.
-- **Leading hypothesis if it returns**: the image puts its venv first on PATH and
-  `cosmos-xenna` pulls in ray, so `which ray` resolves to
-  `/opt/cosmos-curate/venv/bin/ray` (2.56.1) ahead of the ray in `~/skypilot-runtime`
-  that SkyPilot just installed. A version-mismatched ray on PATH is a known cause of
-  its bootstrap stalling, and the evaluator image, which has no ray, has never
-  stalled. Confirm by running the bootstrap with the venv off PATH before changing
-  anything.
+- **Mechanism confirmed statically, 2026-09-18.** The PATH hypothesis was right,
+  but not in the shape it was written, and the corrected version explains the one
+  observation that did not fit. Read from SkyPilot 0.12.2's
+  `sky/skylet/constants.py` and the published image, with no cluster:
+  - `RAY_INSTALLATION_COMMANDS` version-checks with
+    `SKY_UV_PIP_CMD list | grep "ray " | grep $SKY_REMOTE_RAY_VERSION`, which runs
+    against SkyPilot's **own** venv (`VIRTUAL_ENV=~/skypilot-runtime`). The image
+    venv's ray is invisible to that check, so it is not what skips the install.
+  - When that check fails — which it does on a fresh pod, before SkyPilot has
+    installed anything — the next clause is
+    `|| RAY_STATUS ||`, and `RAY_STATUS` is
+    `RAY_ADDRESS=127.0.0.1:6380 $SKY_RAY_CMD status`.
+  - `SKY_RAY_CMD` is
+    `$SKY_PYTHON_CMD $([ -s ~/.sky/ray_path ] && cat ~/.sky/ray_path || which ray)`,
+    and `~/.sky/ray_path` is only written by the *last* clause of the same
+    command. So on a fresh pod the fallback fires and **bare `which ray` is
+    resolved against the container's PATH**.
+  - The published `npa-cosmos-curate:0.1.2-skypilot-v1-20260813T164700Z` config
+    sets `PATH=/opt/cosmos-curate/venv/bin:...` first
+    (`npa/docker/workbench/cosmos-curate/Dockerfile:63`), and that venv contains
+    `ray` **2.57.0**, verified from the image layers. SkyPilot 0.12.2 pins
+    `SKY_REMOTE_RAY_VERSION = '2.9.3'`, so the mismatch is 2.57.0 against 2.9.3,
+    not the patch-level difference originally guessed.
+  - Net: SkyPilot's python executes the *cosmos-curate* ray script and asks a
+    non-existent GCS on 127.0.0.1:6380 for status, before any install has run.
+    That also resolves the observation that looked like a contradiction — there
+    was "no ray, pip, or uv child process" because the process is
+    `$SKY_PYTHON_CMD` running ray's entry script, so it is named `python`.
+  - The evaluator image never stalling is consistent: it has no `ray` on PATH, so
+    `which ray` finds nothing and the clause fails fast into the install.
+- **Not yet reproduced.** This is a static read of the two artifacts, so it
+  establishes the mechanism, not the hang. Confirm by running
+  `RAY_ADDRESS=127.0.0.1:6380 ray status` inside the image with the venv on PATH
+  and timing it, which needs a pod and is cheap once there.
+- **Next step, once reproduced**: three candidate fixes, none applied, because an
+  image change needs a rebuild plus live validation and catalog reconciliation:
+  1. Drop the unused `ray` console script from the image venv. `cosmos-xenna`
+     imports ray as a library and never shells out to it, so `which ray` would
+     find nothing and the clause would fail fast, exactly like the evaluator
+     image. Smallest change; verify no stage calls the `ray` CLI first.
+  2. Move the venv off the baked `ENV PATH` and activate it in
+     `entrypoint.sh` (`COSMOS_CURATE_VENV` is already exported). This leaves
+     SkyPilot's bootstrap shell clean, but SkyPilot's `run` block does not go
+     through the entrypoint, so every stage command would have to activate the
+     venv itself.
+  3. Pre-seed a non-empty `~/.sky/ray_path` so the `[ -s ... ]` branch wins.
+     Rejected unless something else changes: the only ray to point it at is the
+     2.57.0 one, which is the problem.
 
-
-#### [M] Add standalone LeRobot library validation test
-
-- **Surfaced by**: CC review of commit `2956b72` on 2026-05-10.
-- **Status**: Still active.
-- **Current issue**: Adapter tests validate parquet via pyarrow directly, which
-  misses failures that real `LeRobotDataset` loading would catch.
-- **Next step**: Add an optional `pytest.importorskip("lerobot")` smoke test that
-  loads an exported dataset with the LeRobot library and inspects one sample.
 
 #### [M] Lift remote-env upload pattern to shared storage module
 
 - **Surfaced by**: CC review on 2026-05-10.
-- **Status**: Still active when a third caller appears.
+- **Status**: Still active; the trigger condition is **not** met, and the proposed
+  signature is now known to be insufficient.
 - **Current issue**: Cosmos and Isaac Lab duplicate the remote-env upload pattern
   based on `set -a; . env_file; python3 - <<PY`.
-- **Next step**: Extract `upload_via_remote_env(host, local_path, s3_uri,
-  env_file_path)` into `npa.clients.storage` when another tool needs it.
+- **Re-checked 2026-09-18**: still two tools, so the "another tool needs it"
+  trigger has not fired. But they hold *three* helpers with three different
+  payload shapes, not two copies of one:
+  `_upload_local_directory_via_remote_env` and
+  `_upload_existing_remote_directory_via_remote_env`
+  (`npa/src/npa/cli/isaac_lab/__init__.py`) and `_upload_remote_file_via_env`
+  (`npa/src/npa/cli/cosmos/__init__.py`), each with its own tool-specific
+  `env_file` default. What actually repeats is the env-sourcing preamble and the
+  boto3-client-from-env construction; the payload walk differs every time.
+  (`set -a` in `npa/src/npa/clients/ssh.py` is a separate concern — sourcing
+  tokens for an arbitrary command, not uploading.)
+- **Next step**: the originally proposed
+  `upload_via_remote_env(host, local_path, s3_uri, env_file_path)` serves only
+  the local-directory case, so extracting it would add a fourth shape rather
+  than remove duplication. Extract the shared preamble plus client construction
+  and keep the three payload walks, or cover all three shapes in one signature.
+  Still wait for a third tool.
+
+## Resolved (recent)
 
 #### [M] SDK_PUBLIC_SURFACE
 
-- **Surfaced by**: Architecture doc follow-up.
-- **Status**: Still active.
-- **Current issue**: `npa/__init__.py` does not expose a clean public SDK surface
-  even though the architecture docs describe one as roadmap.
-- **Next step**: Decide public versus internal methods, add re-exports,
-  document the API, and cover imports/behavior in tests.
+- **Resolved**: 2026-09-18. `npa.__all__` is the public surface and `dir()`
+  reports exactly that, for `npa`, `npa.sdk`, `npa.sdk.workbench`, and
+  `npa.workbench`; the surface and its v0 stability are documented in
+  `docs/sdk/README.md`. Three defects the audit found are fixed: `npa.sdk` was
+  absent from the top-level lazy list, so the documented `npa.sdk.workbench.<tool>`
+  entrypoint raised `AttributeError` after a plain `import npa`; both SDK
+  namespaces imported eagerly, so `import npa.sdk` pulled 349 npa modules plus
+  pyarrow and boto3 where it now pulls two and no third-party dependency; and
+  `npa.sdk.workbench.lancedb` resolved to either the implementation module or the
+  SDK client depending on import order. `npa/tests/test_sdk_surface.py` covers
+  each, and fails on any public SDK module left out of `__all__`.
 
-## Resolved (recent)
+#### [M] Add standalone LeRobot library validation test
+
+- **Resolved**: 2026-09-18. `npa/tests/test_adapter.py::TestLeRobotLibraryLoad`
+  loads a converted dataset with the real `LeRobotDataset` and inspects a
+  sample — loaded metadata, state/action shapes, and both video-backed cameras
+  decoding to normalized channels-first frames with non-zero variance, which is
+  the mp4 path the 25 parquet tests never touch. A third case downgrades the
+  exported `codebase_version` to `v2.1` and asserts the loader refuses it, which
+  pins that field as load-bearing. Skips unless `lerobot` is installed (it pulls
+  in torch and is not a test dependency), with the `importorskip` in an autouse
+  fixture so a skip costs 0.4s rather than three discarded conversions. Verified
+  against `lerobot==0.5.1`: 3 passed in 51s. `skills/atomic/testing-conventions/SKILL.md`
+  records how to run it.
+
+- 2026-09-23 - The Sim-to-LeRobot adapter has an optional native-reader smoke
+  that exports a compact synthetic dataset, loads the real directory through
+  `LeRobotDataset`, and checks native metadata, task and vector fields, and
+  decoded cameras. Environments without the optional `lerobot` dependency skip
+  this smoke and do not provide native-compatibility evidence.
+
+#### [H] Agent VM S3 credentials were readable from cloud-init user data
+
+- **Resolved**: 2026-08-27. Terraform/cloud-init no longer receives or renders
+  S3 access or secret keys for any workbench type. NPA verifies the created VM
+  and SSH channel, then stages scoped runtime credentials into owner-only files;
+  the attached service-account metadata identity remains the rotating
+  control-plane authentication path. Rendered-template tests cover every
+  workbench variant, and ingress is independently fail-closed.
+- **Migration**: redeploy affected VMs and rotate keys retained in historical
+  provider user-data. See `docs/security/workbench-service-boundaries.md`.
 
 #### [H] npa-cosmos2-transfer's inference venv was unusable as its own non-root user
 

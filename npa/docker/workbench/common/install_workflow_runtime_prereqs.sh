@@ -3,39 +3,34 @@
 
 set -euo pipefail
 
-snapshot="${1:?usage: install_workflow_runtime_prereqs.sh UBUNTU_SNAPSHOT}"
+snapshot="${1:?usage: install_workflow_runtime_prereqs.sh UBUNTU_SNAPSHOT [LINUX_LIBC_DEV_VERSION]}"
+linux_libc_dev_override="${2:-}"
 if [ "$(id -u)" -ne 0 ]; then
   echo "workflow runtime prerequisites must be installed as root" >&2
   exit 1
 fi
 
-# The Genesis-derived Sim2Real images currently inherit Ubuntu 22.04. Keep the
-# mapping explicit and fail closed if their base changes: silently pointing an
-# unknown release at a moving mirror would make the supposedly immutable image
-# depend on build time.
+/usr/local/bin/configure-ubuntu-snapshot "${snapshot}"
+
+# The Genesis-derived Sim2Real images currently inherit Ubuntu 22.04, while
+# LanceDB inherits Ubuntu 24.04. Keep the userspace-header version tied to the
+# release selected by the shared snapshot configurator.
 . /etc/os-release
 case "${ID}:${VERSION_ID}" in
   ubuntu:22.04)
-    suites="jammy jammy-updates jammy-backports jammy-security"
+    linux_libc_dev_version="5.15.0-190.200"
     ;;
   ubuntu:24.04)
-    suites="noble noble-updates noble-backports noble-security"
+    linux_libc_dev_version="6.8.0-139.139"
     ;;
   *)
     echo "unsupported workflow runtime base: ${ID}:${VERSION_ID}" >&2
     exit 1
     ;;
 esac
-
-rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
-  /etc/apt/sources.list.d/*.sources
-printf '%s\n' \
-  'Types: deb' \
-  "URIs: https://snapshot.ubuntu.com/ubuntu/${snapshot}/" \
-  "Suites: ${suites}" \
-  'Components: main restricted universe multiverse' \
-  'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
-  > /etc/apt/sources.list.d/ubuntu.sources
+if [ -n "${linux_libc_dev_override}" ]; then
+  linux_libc_dev_version="${linux_libc_dev_override}"
+fi
 
 apt-get update
 # NVIDIA's Genesis-derived base contains development packages whose declared
@@ -44,9 +39,16 @@ apt-get update
 # graph is broken.  Repair it from the same immutable snapshot first; this is
 # deliberately fail-closed and never falls back to a moving mirror.
 apt-get --fix-broken install -y --no-install-recommends
+# The inherited bases retain older linux-libc-dev builds. These are userspace
+# development headers rather than the cluster's kernel, but the fixed builds
+# are available in the immutable per-release snapshot. Keep the version tied to
+# /etc/os-release: a Jammy kernel-header version does not exist in Noble and
+# made clean LanceDB builds fail before installing any runtime prerequisites.
 apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
+  ffmpeg \
+  "linux-libc-dev=${linux_libc_dev_version}" \
   netcat-openbsd \
   openssh-client \
   openssh-server \
@@ -56,6 +58,8 @@ apt-get install -y --no-install-recommends \
   sudo \
   wget
 rm -rf /var/lib/apt/lists/*
+rm -f /etc/ssh/ssh_host_*
+test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)"
 
 id -u ubuntu >/dev/null 2>&1
 printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' \

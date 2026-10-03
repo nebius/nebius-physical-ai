@@ -43,9 +43,7 @@ def _upload_failed(code: str) -> S3UploadFailedError:
     try:
         raise client_error
     except ClientError as exc:
-        err = S3UploadFailedError(
-            f"Failed to upload local to bucket/key: {exc}"
-        )
+        err = S3UploadFailedError(f"Failed to upload local to bucket/key: {exc}")
         err.__context__ = exc
         return err
 
@@ -95,9 +93,13 @@ def test_infer_remote_upload_error_is_clean(injected, mocker) -> None:
     result = runner.invoke(
         app,
         [
-            "workbench", "cosmos", "infer",
-            "--prompt", "a red cube on a table",
-            "--output-path", OUTPUT_URI,
+            "workbench",
+            "cosmos",
+            "infer",
+            "--prompt",
+            "a red cube on a table",
+            "--output-path",
+            OUTPUT_URI,
         ],
     )
 
@@ -113,9 +115,13 @@ def test_infer_inline_upload_error_is_clean(mocker) -> None:
     result = runner.invoke(
         app,
         [
-            "workbench", "cosmos", "infer",
-            "--prompt", "a red cube on a table",
-            "--output-path", "s3://bucket/results/out.json",
+            "workbench",
+            "cosmos",
+            "infer",
+            "--prompt",
+            "a red cube on a table",
+            "--output-path",
+            "s3://bucket/results/out.json",
         ],
     )
 
@@ -132,9 +138,13 @@ def test_infer_allow_host_creds_does_not_fall_back_for_managed_upload(mocker) ->
     result = runner.invoke(
         app,
         [
-            "workbench", "cosmos", "infer",
-            "--prompt", "a red cube on a table",
-            "--output-path", OUTPUT_URI,
+            "workbench",
+            "cosmos",
+            "infer",
+            "--prompt",
+            "a red cube on a table",
+            "--output-path",
+            OUTPUT_URI,
             "--allow-host-creds",
         ],
     )

@@ -24,10 +24,12 @@ def _reader(values):
             name: QuotaObservation(
                 name=name,
                 used=values.get(
-                    name, (0, 20 * 1024 * GIB if name == NETWORK_SSD_BYTES_QUOTA else 20)
+                    name,
+                    (0, 20 * 1024 * GIB if name == NETWORK_SSD_BYTES_QUOTA else 20),
                 )[0],
                 limit=values.get(
-                    name, (0, 20 * 1024 * GIB if name == NETWORK_SSD_BYTES_QUOTA else 20)
+                    name,
+                    (0, 20 * 1024 * GIB if name == NETWORK_SSD_BYTES_QUOTA else 20),
                 )[1],
                 state="known",
             )
@@ -195,6 +197,24 @@ def test_rbac_failure_is_unknown_for_plan_and_closed_for_mutation() -> None:
         mutation.assert_mutation_ready()
 
 
+def test_strict_reservation_backed_pool_skips_ordinary_gpu_quota() -> None:
+    topology = resolve_topology(
+        capacity_block_group="capacityblockgroup-1", gpu_nodes=2
+    )
+    requirements = topology.quota_requirements()
+    # Hard instance/disk/IP arithmetic is unchanged.
+    assert requirements[INSTANCE_QUOTA] == 3  # 2 GPU + 1 CPU node
+    assert requirements[DISK_QUOTA] == 3
+    # The bound STRICT reservation replaces the ordinary GPU-family allowance.
+    assert "compute.instance.gpu.rtx6000" not in requirements
+
+
+def test_on_demand_non_preemptible_pool_keeps_gpu_quota() -> None:
+    topology = resolve_topology(gpu_nodes=2, gpu_preset="1gpu-24vcpu-218gb")
+    requirements = topology.quota_requirements()
+    assert requirements.get("compute.instance.gpu.rtx6000") == 2
+
+
 def test_preemptible_nodes_still_consume_hard_quotas() -> None:
     topology = resolve_topology(preemptible=True)
     requirements = topology.quota_requirements()
@@ -256,8 +276,7 @@ def test_preemptible_does_not_change_disk_byte_requirement() -> None:
     on_demand = resolve_topology(cpu_nodes=2, gpu_nodes=3, preemptible=False)
     preemptible = resolve_topology(cpu_nodes=2, gpu_nodes=3, preemptible=True)
     assert (
-        preemptible.required_network_ssd_bytes
-        == on_demand.required_network_ssd_bytes
+        preemptible.required_network_ssd_bytes == on_demand.required_network_ssd_bytes
     )
 
 

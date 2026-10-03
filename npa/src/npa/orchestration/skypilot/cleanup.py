@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,6 +23,8 @@ from npa.orchestration.skypilot._bin import (
     SkyBin,
     ensure_skypilot_version,
     resolve_config,
+    resolve_isolated_config_dir,
+    resolve_skypilot_kubeconfig_path,
 )
 from npa.orchestration.skypilot.controller import (
     DEFAULT_CONTROLLER_BACKEND,
@@ -60,13 +65,34 @@ class CleanupResult:
         self.commands.extend(other.commands)
 
 
-NONTERMINAL_JOB_STATUSES = {
-    "PENDING",
-    "STARTING",
-    "RUNNING",
-    "RECOVERING",
-    "CANCELLING",
-}
+_TERMINAL_MANAGED_JOB_STATUSES = frozenset(
+    {
+        "SUCCEEDED",
+        "CANCELLED",
+        "FAILED",
+        "FAILED_SETUP",
+        "FAILED_PRECHECKS",
+        "FAILED_NO_RESOURCE",
+        "FAILED_CONTROLLER",
+    }
+)
+
+
+def is_terminal_managed_job_status(value: object) -> bool:
+    """Return true only for terminal states in the pinned SkyPilot contract.
+
+    Args:
+        value: Managed-job status returned by SkyPilot or durable state.
+    Returns:
+        Whether the status authoritatively proves terminal completion.
+    Raises:
+        None.
+    """
+
+    status = str(value or "").strip().upper()
+    return status in _TERMINAL_MANAGED_JOB_STATUSES
+
+
 JOBS_CONTROLLER_PATTERN = "sky-jobs-controller-*"
 RUN_ID_MIN_LENGTH = 12
 _RUN_ID_ALLOWED_RE = re.compile(r"^[A-Za-z0-9-]+$")
@@ -79,6 +105,9 @@ _RUN_ID_ALLOWED_RE = re.compile(r"^[A-Za-z0-9-]+$")
 DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS = 300
 DEFAULT_JOB_DRAIN_INTERVAL_SECONDS = 5.0
 _IN_PROGRESS_JOBS_MARKERS = ("in-progress managed jobs", "in progress managed jobs")
+_TRANSACTION_ENVIRONMENTS: ContextVar[dict[str, dict[str, str]]] = ContextVar(
+    "npa_controller_transaction_environments", default={}
+)
 
 
 class InvalidRunIdError(ValueError):
@@ -151,6 +180,8 @@ def cleanup_jobs_controller(
     project_id: str = "",
     cluster_id: str = "",
     cluster_name: str = "",
+    recover_orphan_controller: bool = False,
+    attest_no_active_jobs: bool = False,
 ) -> CleanupResult:
     """Transactionally remove the controller for one verified NPA cluster.
 
@@ -170,6 +201,13 @@ def cleanup_jobs_controller(
             else "live_configuration"
         ),
     )
+    if recover_orphan_controller != attest_no_active_jobs:
+        cleanup.outcome = "unsafe"
+        cleanup.errors.append(
+            "orphan controller recovery requires both recover_orphan_controller "
+            "and attest_no_active_jobs"
+        )
+        return cleanup
     from npa.cluster.identity import (
         ClusterIdentityError,
         resolve_verified_cluster_identity,
@@ -334,6 +372,7 @@ def cleanup_jobs_controller(
         _record_controller_result(identity, cleanup, "verified_absent")
         return cleanup
 
+    isolated_config_dir = resolve_isolated_config_dir(isolated_config_dir)
     remote_pods: list[tuple[str, str, str]] = []
     if not identity.cluster_absent:
         remote_pods, remote_error = _kubernetes_controller_pods(
@@ -367,6 +406,40 @@ def cleanup_jobs_controller(
         or _cluster_name(item) in remote_names
     ]
     if remote_names and not context_clusters:
+        if recover_orphan_controller and attest_no_active_jobs:
+            commands, delete_error = _delete_orphan_controller_pods(
+                remote_pods,
+                kubeconfig=identity.kubeconfig,
+                context=identity.context,
+            )
+            cleanup.commands.extend(commands)
+            if delete_error:
+                cleanup.errors.append(delete_error)
+                _record_controller_result(
+                    identity, cleanup, "verification_failed", remote_pods=remote_pods
+                )
+                return cleanup
+            remaining, verify_error = _wait_for_controller_pods_absent(
+                remote_names,
+                kubeconfig=identity.kubeconfig,
+                context=identity.context,
+            )
+            if verify_error or remaining:
+                cleanup.errors.append(
+                    "orphan controller pod deletion was not verified: "
+                    + (verify_error or "controller pod was recreated")
+                )
+                _record_controller_result(
+                    identity, cleanup, "verification_failed", remote_pods=remaining
+                )
+                return cleanup
+            if not _record_remote_controller_absence(identity, cleanup):
+                return cleanup
+            cleanup.resources_removed.extend(sorted(remote_names))
+            cleanup.verified = True
+            cleanup.outcome = "cleaned"
+            _record_controller_result(identity, cleanup, "verified_deleted")
+            return cleanup
         cleanup.errors.append(
             "The verified context contains controller pod(s) "
             + ", ".join(sorted(remote_names))
@@ -376,6 +449,8 @@ def cleanup_jobs_controller(
         _record_controller_result(identity, cleanup, "verification_failed")
         return cleanup
     controller_clusters = context_clusters
+    remote_pods = _controller_pods_for_clusters(remote_pods, controller_clusters)
+    remote_names = {item[2] for item in remote_pods if item[2]}
     # Unrelated controller rows are deliberately ignored; they are neither
     # targets nor cleanup results for this exact project/context transaction.
     if controller_clusters:
@@ -433,24 +508,44 @@ def cleanup_jobs_controller(
         )
         return cleanup
 
-    with _cloned_skypilot_state(isolated_config_dir) as remote_state:
-        for controller_cluster in controller_clusters:
-            controller_name = _cluster_name(controller_cluster)
-            remote_result = _down_jobs_controller(
-                controller_name,
-                isolated_config_dir=remote_state,
-                config_path=config_path,
-                sky_bin=sky_bin,
-                job_drain_timeout=job_drain_timeout,
-                env_extra={"KUBECONFIG": str(identity.kubeconfig)},
-            )
-            cleanup.commands.extend(remote_result.commands)
-            if remote_result.errors:
-                cleanup.errors.extend(remote_result.errors)
-                _record_controller_result(
-                    identity, cleanup, "verification_failed", remote_pods=remote_pods
+    try:
+        with _cloned_skypilot_state(
+            isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+            env_extra={"KUBECONFIG": str(identity.kubeconfig)},
+            controller_names=[_cluster_name(item) for item in controller_clusters],
+            context=identity.context,
+        ) as remote_state:
+            for controller_cluster in controller_clusters:
+                controller_name = _cluster_name(controller_cluster)
+                remote_result = _down_jobs_controller(
+                    controller_name,
+                    isolated_config_dir=remote_state,
+                    config_path=config_path,
+                    sky_bin=sky_bin,
+                    job_drain_timeout=job_drain_timeout,
+                    env_extra={"KUBECONFIG": str(identity.kubeconfig)},
                 )
-                return cleanup
+                cleanup.commands.extend(remote_result.commands)
+                if remote_result.errors:
+                    cleanup.errors.extend(remote_result.errors)
+                    _record_controller_result(
+                        identity,
+                        cleanup,
+                        "verification_failed",
+                        remote_pods=remote_pods,
+                    )
+                    return cleanup
+    except (OSError, RuntimeError, ValueError) as exc:
+        cleanup.errors.append(
+            "controller transaction could not complete safely; original metadata "
+            f"was preserved: {redact_text(str(exc))}"
+        )
+        _record_controller_result(
+            identity, cleanup, "verification_failed", remote_pods=remote_pods
+        )
+        return cleanup
 
     remaining, verify_error = _wait_for_controller_pods_absent(
         remote_names,
@@ -501,6 +596,16 @@ def cleanup_jobs_controller(
         remote_pods=[],
     )
     return cleanup
+
+
+def _controller_pods_for_clusters(
+    remote_pods: Sequence[tuple[str, str, str]],
+    controller_clusters: Sequence[dict[str, Any]],
+) -> list[tuple[str, str, str]]:
+    """Keep only remote pods owned by the selected controller metadata rows."""
+
+    target_names = {_cluster_name(item) for item in controller_clusters}
+    return [item for item in remote_pods if item[2] in target_names]
 
 
 def _record_remote_controller_absence(identity: Any, cleanup: CleanupResult) -> bool:
@@ -811,7 +916,7 @@ def _verify_managed_job_convergence(
     if evidence.outcome == "unavailable":
         return f"unavailable:{evidence.error or 'provider unavailable'}"
     status = str(evidence.status or "").strip().upper()
-    if status and status not in NONTERMINAL_JOB_STATUSES and status != "UNKNOWN":
+    if is_terminal_managed_job_status(status):
         return "terminal"
     return status or "UNKNOWN"
 
@@ -849,7 +954,7 @@ def cleanup_all_for_run(
         )
         return cleanup
     for job in matching_jobs:
-        if str(job.get("status", "")).upper() in NONTERMINAL_JOB_STATUSES:
+        if not is_terminal_managed_job_status(job.get("status")):
             job_id = str(job.get("job_id") or job.get("id"))
             cleanup.extend(
                 _cancel_job(
@@ -1023,7 +1128,7 @@ def wait_for_jobs_terminal(
         still_running = [
             job_id
             for job_id, status in _job_statuses(snapshot.jobs).items()
-            if job_id in wanted and status in NONTERMINAL_JOB_STATUSES
+            if job_id in wanted and not is_terminal_managed_job_status(status)
         ]
         if not still_running:
             return True, []
@@ -1043,7 +1148,7 @@ def _job_statuses(jobs: Sequence[dict[str, Any]]) -> dict[str, str]:
         status = str(job.get("status") or "").upper()
         # A job group reports one row per task; the job is only terminal once
         # every one of its rows is.
-        if job_id in statuses and statuses[job_id] in NONTERMINAL_JOB_STATUSES:
+        if job_id in statuses and not is_terminal_managed_job_status(statuses[job_id]):
             continue
         statuses[job_id] = status
     return statuses
@@ -1063,7 +1168,7 @@ def _nonterminal_job_ids(
     return sorted(
         job_id
         for job_id, status in _job_statuses(snapshot.jobs).items()
-        if status in NONTERMINAL_JOB_STATUSES
+        if not is_terminal_managed_job_status(status)
     )
 
 
@@ -1394,19 +1499,258 @@ def _controller_belongs_to_context(cluster: dict[str, Any], context: str) -> boo
 
 
 @contextmanager
-def _cloned_skypilot_state(source_root: Path | None) -> Iterator[Path]:
-    """Yield an isolated clone so remote deletion cannot erase real metadata."""
+def _cloned_skypilot_state(
+    source_root: Path | None,
+    *,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    env_extra: dict[str, str] | None = None,
+    controller_names: Sequence[str] = (),
+    context: str = "",
+) -> Iterator[Path]:
+    """Use a separate owned API with the original controller identity and state."""
 
-    source_env = sky_environment(source_root)
+    from npa.orchestration.skypilot import local_api
+
+    runtime = resolve_config(
+        sky_bin=sky_bin, global_config_path=config_path, isolated_config_dir=source_root
+    )
+    source_root = runtime.isolated_config_dir
+    executable = str(ensure_skypilot_version(runtime.sky_bin))
+    owned_source = bool(
+        source_root
+        and (Path(source_root) / "local-api" / "server-config.yaml").is_file()
+    )
+    if owned_source:
+        source_env = local_api.owned_daemon_environment(source_root)
+        record = local_api._read(Path(source_root).absolute() / "local-api")
+        if (
+            not record
+            or str(Path(executable).absolute().parent / "python")
+            != record["interpreter"]
+        ):
+            raise local_api.IsolatedApiError(
+                "controller transaction requires the original managed Sky executable"
+            )
+        config_path = Path(source_env["SKYPILOT_GLOBAL_CONFIG"])
+    else:
+        source_env = sky_environment(source_root)
+        config_path = runtime.global_config_path
     source_home = Path(source_env.get("HOME") or Path.home())
-    with tempfile.TemporaryDirectory(prefix="npa-controller-transaction-") as raw:
-        clone_root = Path(raw)
+    # Sky 0.12.2 stores server databases under SKY_RUNTIME_DIR, while HOME
+    # still holds client identity and SSH metadata. Resolve tilde using the
+    # source daemon's home, never this caller's unrelated ambient home.
+    runtime_value = source_env.get("SKY_RUNTIME_DIR", "~")
+    if runtime_value == "~":
+        source_runtime = source_home
+    elif runtime_value.startswith("~/"):
+        source_runtime = source_home / runtime_value[2:]
+    else:
+        source_runtime = Path(runtime_value)
+    if not runtime_value or not source_runtime.is_absolute():
+        raise local_api.IsolatedApiError(
+            "controller transaction requires an absolute source runtime directory"
+        )
+    if source_runtime.resolve() != source_runtime:
+        raise local_api.IsolatedApiError(
+            "controller transaction cannot isolate linked source runtime metadata"
+        )
+    user_file = source_home / ".sky" / "user_hash"
+    # Before owned APIs existed, Sky stored its stable identity in this file;
+    # a new root-derived default must not replace that legacy controller owner.
+    user_id = (
+        source_env.get("SKYPILOT_USER_ID")
+        if owned_source
+        else os.environ.get("SKYPILOT_USER_ID")
+    ) or (user_file.read_text().strip() if user_file.is_file() else "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id):
+        raise local_api.IsolatedApiError(
+            "controller transaction requires the original saved Sky user identity"
+        )
+    if user_file.is_file() and user_file.read_text().strip() != user_id:
+        raise local_api.IsolatedApiError(
+            "controller transaction source client and server identities disagree"
+        )
+    for key, value in (env_extra or {}).items():
+        previous = source_env.get(key)
+        if (
+            key == "KUBECONFIG"
+            and not previous
+            and (source_home / ".kube/config").is_file()
+        ):
+            previous = str(source_home / ".kube/config")
+        if owned_source and not previous and value:
+            raise local_api.IsolatedApiError(
+                "controller transaction cannot infer a missing source execution setting"
+            )
+        if (
+            previous
+            and previous != value
+            and (
+                key != "KUBECONFIG" or Path(previous).resolve() != Path(value).resolve()
+            )
+        ):
+            raise local_api.IsolatedApiError(
+                "controller transaction differs from the original executing identity"
+            )
+        source_env[key] = value
+    parent = None
+    if source_root:
+        parent = Path(source_root) / "controller-transactions"
+        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    clone_root = Path(
+        tempfile.mkdtemp(prefix="npa-controller-transaction-", dir=parent)
+    )
+    token = None
+    try:
         clone_home = clone_root / "home"
-        clone_home.mkdir(parents=True, exist_ok=True)
+        clone_home.mkdir(mode=0o700, parents=True, exist_ok=True)
         source_sky = source_home / ".sky"
-        if source_sky.is_dir() and not source_sky.is_symlink():
-            shutil.copytree(source_sky, clone_home / ".sky", symlinks=True)
+        if source_sky.is_symlink():
+            raise local_api.IsolatedApiError(
+                "controller transaction cannot isolate linked source metadata"
+            )
+        if source_sky.is_dir():
+            _snapshot_skypilot_state(source_sky, clone_home / ".sky")
+        clone_runtime = clone_root / "sky-runtime"
+        clone_runtime.mkdir(mode=0o700)
+        runtime_sky = source_runtime / ".sky"
+        if runtime_sky.is_symlink():
+            raise local_api.IsolatedApiError(
+                "controller transaction cannot isolate linked source runtime metadata"
+            )
+        if runtime_sky.is_dir():
+            _snapshot_skypilot_state(runtime_sky, clone_runtime / ".sky")
+        for name in (".aws", ".nebius", ".kube"):
+            path = source_home / name
+            if path.exists():
+                (clone_home / name).symlink_to(
+                    path.resolve(), target_is_directory=path.is_dir()
+                )
+        environment = dict(source_env)
+        for key in (
+            "SKYPILOT_API_SERVER_ENDPOINT",
+            "SKYPILOT_SERVER_PLUGINS_CONFIG",
+            "NPA_OWNED_SKYPILOT_API_ID",
+            "IS_SKYPILOT_SERVER",
+            "NPA_SKYPILOT_ISOLATED_API_DIR",
+        ):
+            environment.pop(key, None)
+        environment.update(
+            HOME=str(clone_home),
+            SKY_RUNTIME_DIR=str(clone_runtime),
+            SKYPILOT_USER_ID=user_id,
+        )
+        environment = local_api.isolated_api_environment(clone_root, environment)
+        config = (
+            local_api._yaml_document(config_path.read_bytes())
+            if config_path and config_path.is_file()
+            else {}
+        )
+        if config.get("db") or environment.get("SKYPILOT_DB_CONNECTION_URI"):
+            raise local_api.IsolatedApiError(
+                "controller transaction cannot use a shared external database"
+            )
+        if (config.get("api_server") or {}).get("endpoint"):
+            config["api_server"]["endpoint"] = environment[
+                "SKYPILOT_API_SERVER_ENDPOINT"
+            ]
+        import yaml
+
+        temporary_config = clone_root / "transaction-config.yaml"
+        temporary_config.write_text(yaml.safe_dump(config))
+        temporary_config.chmod(0o600)
+        environment["SKYPILOT_GLOBAL_CONFIG"] = str(temporary_config)
+        if controller_names:
+            manifest_path = clone_root / "controller-clone.json"
+            with open(
+                manifest_path, "w", opener=lambda p, flags: os.open(p, flags, 0o600)
+            ) as manifest:
+                json.dump(
+                    {
+                        "clone_root": str(clone_root),
+                        "source_home": str(source_home),
+                        "controller_names": list(controller_names),
+                        "context": context,
+                    },
+                    manifest,
+                )
+            prepared = subprocess.run(
+                [
+                    str(Path(executable).absolute().parent / "python"),
+                    str(Path(__file__).with_name("controller_clone.py")),
+                    str(manifest_path),
+                ],
+                env=environment,
+                cwd=clone_root,
+                capture_output=True,
+                check=False,
+            )
+            if prepared.returncode:
+                raise local_api.IsolatedApiError(
+                    "controller transaction could not verify its copied controller metadata"
+                )
+        local_api.ensure_isolated_api(
+            isolated_dir=clone_root,
+            sky_executable=executable,
+            environment=environment,
+            cwd=str(clone_root),
+        )
+        restored_user = clone_home / ".sky" / "user_hash"
+        if restored_user.is_file() and restored_user.read_text().strip() != user_id:
+            raise local_api.IsolatedApiError(
+                "cloned controller database restored a different server identity"
+            )
+        token = _TRANSACTION_ENVIRONMENTS.set(
+            {
+                **_TRANSACTION_ENVIRONMENTS.get(),
+                str(clone_root.resolve()): environment,
+            }
+        )
         yield clone_root
+    finally:
+        if token is not None:
+            _TRANSACTION_ENVIRONMENTS.reset(token)
+        # Never remove live API/queue ownership evidence. A failed stop leaves
+        # the transaction under the source runtime for explicit recovery.
+        local_api.stop_isolated_api(clone_root)
+        shutil.rmtree(clone_root)
+
+
+def _snapshot_skypilot_state(
+    source: Path,
+    destination: Path,
+    *,
+    relative: Path = Path(),
+) -> None:
+    """Back up open SQLite databases including committed WAL rows consistently."""
+    destination.mkdir(mode=0o700)
+    for entry in source.iterdir():
+        target = destination / entry.name
+        if relative / entry.name == Path("api_server"):
+            # This transaction needs controller metadata, never a replay of
+            # another API server's pending launch/cancel requests (Sky 0.12.2).
+            continue
+        if entry.is_symlink():
+            from npa.orchestration.skypilot.local_api import IsolatedApiError
+
+            raise IsolatedApiError(
+                "controller transaction cannot isolate linked source metadata"
+            )
+        elif entry.is_dir():
+            _snapshot_skypilot_state(entry, target, relative=relative / entry.name)
+        elif not entry.name.endswith(("-wal", "-shm", "-journal")):
+            with entry.open("rb") as handle:
+                sqlite_database = handle.read(16) == b"SQLite format 3\x00"
+            if sqlite_database:
+                with sqlite3.connect(
+                    entry.resolve().as_uri() + "?mode=ro", uri=True
+                ) as original:
+                    with sqlite3.connect(target) as backup:
+                        original.backup(backup)
+                target.chmod(0o600)
+            else:
+                shutil.copy2(entry, target)
 
 
 def _controller_name_from_pod(item: dict[str, Any]) -> str:
@@ -1488,6 +1832,53 @@ def _kubernetes_controller_pods(
     return matches, ""
 
 
+def _delete_orphan_controller_pods(
+    pods: Sequence[tuple[str, str, str]],
+    *,
+    kubeconfig: Path,
+    context: str,
+) -> tuple[list[list[str]], str]:
+    """Delete exact orphan controller pods after explicit terminal attestation."""
+
+    from npa.cluster.drain import _noninteractive_kubeconfig_env
+
+    commands: list[list[str]] = []
+    with _noninteractive_kubeconfig_env(str(kubeconfig)) as (env, issue):
+        if issue is not None:
+            return commands, issue.summary
+        for namespace, pod, _controller in pods:
+            if not namespace or not pod:
+                return commands, "orphan controller pod identity is incomplete"
+            cmd = [
+                "kubectl",
+                "--context",
+                context,
+                "delete",
+                "pod",
+                pod,
+                "--namespace",
+                namespace,
+                "--wait=true",
+                "--timeout=180s",
+            ]
+            commands.append(cmd)
+            try:
+                result = subprocess.run(
+                    cmd,
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=240,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                return commands, f"orphan controller pod deletion failed: {exc}"
+            if result.returncode != 0:
+                return commands, _format_command_error(cmd, result)
+    return commands, ""
+
+
 def _wait_for_controller_pods_absent(
     controller_names: set[str],
     *,
@@ -1520,6 +1911,11 @@ def _run(
     input_text: str | None = None,
     env_extra: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    transaction = _TRANSACTION_ENVIRONMENTS.get().get(
+        str(Path(isolated_config_dir).resolve()) if isolated_config_dir else ""
+    )
+    if transaction is not None:
+        config_path = Path(transaction["SKYPILOT_GLOBAL_CONFIG"])
     effective_cmd = list(cmd)
     if config_path is not None and "--config" not in effective_cmd:
         command_name_index = (
@@ -1571,12 +1967,27 @@ def _run(
         progress.finish(outcome, "attempt=1")
 
 
-def sky_environment(isolated_config_dir: Path | None = None) -> dict[str, str]:
+def sky_environment(
+    isolated_config_dir: Path | None = None,
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
     """Return an environment that keeps SkyPilot state inside a run directory."""
 
-    env = os.environ.copy()
+    from npa.orchestration.skypilot.storage_context import _apply_storage_context
+
+    env = dict(os.environ if environment is None else environment)
+    if environment is None:
+        env = _apply_storage_context(env)
     if isolated_config_dir is None:
         return env
+    transaction = _TRANSACTION_ENVIRONMENTS.get().get(
+        str(Path(isolated_config_dir).resolve())
+    )
+    if transaction is not None:
+        from npa.orchestration.skypilot.local_api import isolated_api_environment
+
+        return isolated_api_environment(Path(isolated_config_dir), transaction)
     root = Path(isolated_config_dir)
     home = root / "home"
     runtime = root / "sky-runtime"
@@ -1596,12 +2007,43 @@ def sky_environment(isolated_config_dir: Path | None = None) -> dict[str, str]:
         and not isolated_provider_config.is_symlink()
     ):
         isolated_provider_config.symlink_to(provider_config, target_is_directory=True)
+    # SkyPilot 0.12.2's Kubernetes region validator calls
+    # ``list_kube_config_contexts()`` without a ``config_file`` argument.  The
+    # Kubernetes client therefore ignores KUBECONFIG and reads only
+    # ``~/.kube/config``.  In an isolated HOME that produces ``contexts: []``
+    # even though every other probe sees the exact selected NPA kubeconfig.
+    # Link the first (highest-precedence) KUBECONFIG into the isolated default
+    # location.  This keeps auth live and operator-owned without copying a
+    # credential-bearing file into run state.
+    selected_kubeconfig = resolve_skypilot_kubeconfig_path(env)
+    if selected_kubeconfig.is_file():
+        isolated_kubeconfig = home / ".kube" / "config"
+        isolated_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
+        selected_target = selected_kubeconfig.resolve()
+        if isolated_kubeconfig.is_symlink():
+            if isolated_kubeconfig.resolve(strict=False) != selected_target:
+                isolated_kubeconfig.unlink()
+        if not isolated_kubeconfig.exists() and not isolated_kubeconfig.is_symlink():
+            isolated_kubeconfig.symlink_to(selected_target)
     env["HOME"] = str(home)
     env["SKY_RUNTIME_DIR"] = str(runtime)
+    # SkyPilot otherwise derives its user hash from the unchanged operator and
+    # hostname, so two isolated homes still target the same jobs-controller
+    # name.  Give each isolated state root a stable identity while honoring an
+    # explicit operator-selected identity.
+    if not str(env.get("SKYPILOT_USER_ID") or "").strip():
+        state_digest = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:12]
+        env["SKYPILOT_USER_ID"] = f"npa-{state_digest}"
     env["PYTHONUNBUFFERED"] = "1"
     repo_src = Path(__file__).resolve().parents[3]
     env["PYTHONPATH"] = str(repo_src) + os.pathsep + env.get("PYTHONPATH", "")
-    return env
+    from npa.clients.config import NPA_CONFIG_DIR
+    from npa.orchestration.skypilot.local_api import isolated_api_environment
+
+    # The isolated child's HOME must not move NPA credential/config resolution
+    # away from the source already selected by this client process.
+    env.setdefault("NPA_CONFIG_DIR", str(NPA_CONFIG_DIR))
+    return isolated_api_environment(root, env)
 
 
 def _sanitize_name(value: str) -> str:

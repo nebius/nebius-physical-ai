@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import threading
 import time
@@ -42,10 +43,8 @@ from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submi
 #: being retired. `--yaml` still accepts a customer's own SkyPilot YAML (see `--spec`).
 DEFAULT_SPEC = (
     Path(__file__).resolve().parents[2]
-    / "npa"
     / "workflows"
-    / "workbench"
-    / "npa-workflows"
+    / "testing"
     / "bdd100k-pipeline.yaml"
 )
 DEFAULT_BUCKET = os.environ.get("NPA_S3_BUCKET", "your-bucket-name")
@@ -58,7 +57,9 @@ EVAL_URI_KEYS = {
     "distant_eval_uri": "bdd100k_distant_person_train",
 }
 DEFAULT_LANCEDB_ENDPOINT = "http://npa-lancedb.workbench.svc.cluster.local:8686"
-DEFAULT_DETECTION_ENDPOINT = "http://npa-detection-training.workbench.svc.cluster.local:8790"
+DEFAULT_DETECTION_ENDPOINT = (
+    "http://npa-detection-training.workbench.svc.cluster.local:8790"
+)
 TERMINAL_STATUSES = {
     "SUCCEEDED",
     "CANCELLED",
@@ -76,7 +77,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.mock_endpoints:
             return _run_mock_endpoint_validation(args)
         return _submit_and_wait(args)
-    except (SkyPilotNotInstalledError, SkyPilotConfigError, SkyPilotVersionError) as exc:
+    except (
+        SkyPilotNotInstalledError,
+        SkyPilotConfigError,
+        SkyPilotVersionError,
+    ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         print(
             "For a no-infrastructure validation, add --mock-endpoints. "
@@ -149,7 +154,9 @@ def prepare_pipeline(
     """
 
     render_options = (
-        SkypilotRenderOptions() if resolve_images else SkypilotRenderOptions(image_overrides={"*": ""})
+        SkypilotRenderOptions()
+        if resolve_images
+        else SkypilotRenderOptions(image_overrides={"*": ""})
     )
     return prepare_npa_workflow_for_submit(
         spec_path,
@@ -237,7 +244,9 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             )
             return 0
 
-        sky_bin = str(resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN")))
+        sky_bin = str(
+            resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"))
+        )
         teardown_guard = SignalTeardown(
             run_id=run_id,
             isolated_config_dir=args.isolated_config_dir,
@@ -258,7 +267,11 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 timeout=args.submit_timeout,
                 secret_envs=_resolve_secret_envs(args),
             )
-            config_path = Path(result.log_paths["config"]) if result.log_paths.get("config") else None
+            config_path = (
+                Path(result.log_paths["config"])
+                if result.log_paths.get("config")
+                else None
+            )
             teardown_guard.mark_launched(config_path=config_path)
             summary = {
                 "run_id": run_id,
@@ -303,6 +316,31 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         prepared.temp_dir.cleanup()
 
 
+def _mock_stage_env() -> dict[str, str]:
+    """Environment for a locally executed plan step.
+
+    A step's argv starts with the bare ``npa`` console script, which resolves in a
+    task pod but not when this runner is driven by an interpreter whose ``bin/``
+    directory is absent from ``PATH`` -- exactly what
+    ``<venv>/bin/python -m pytest`` does. Put the running interpreter's scripts
+    directory first so the stage runs the same ``npa`` that imported this module.
+
+    Handing this to ``subprocess`` is sufficient: it resolves a bare program name
+    against the ``PATH`` in the mapping it is given, not the parent's.
+
+    ``sysconfig`` is the lookup that stays correct for a venv whose ``python`` is a
+    symlink to the system interpreter: resolving ``sys.executable`` there would
+    escape the venv and land in ``/usr/bin``.
+    """
+
+    env = os.environ.copy()
+    scripts_dir = sysconfig.get_path("scripts") or str(Path(sys.executable).parent)
+    path = env.get("PATH", "")
+    if scripts_dir not in path.split(os.pathsep):
+        env["PATH"] = f"{scripts_dir}{os.pathsep}{path}" if path else scripts_dir
+    return env
+
+
 def _run_mock_endpoint_validation(args: argparse.Namespace) -> int:
     run_id = args.run_id or _default_run_id()
     state = _MockState()
@@ -335,13 +373,14 @@ def _run_mock_endpoint_validation(args: argparse.Namespace) -> int:
             # document's `run:` bash with that document's `envs`; a spec has no such bash, so
             # the unit of execution is the stage's resolved command. That is also a stronger
             # check: it is exactly what the engine will run in a pod.
+            stage_env = _mock_stage_env()
             for step in prepared.plan.steps:
                 if not step.argv:
                     continue
                 result = subprocess.run(
                     step.argv,
                     cwd=cwd,
-                    env=os.environ.copy(),
+                    env=stage_env,
                     text=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -359,7 +398,11 @@ def _run_mock_endpoint_validation(args: argparse.Namespace) -> int:
                 )
                 if result.returncode != 0:
                     failures.append(
-                        {"name": step.state, "stderr": result.stderr, "stdout": result.stdout}
+                        {
+                            "name": step.state,
+                            "stderr": result.stderr,
+                            "stdout": result.stdout,
+                        }
                     )
                     break
     finally:
@@ -379,25 +422,30 @@ def _run_mock_endpoint_validation(args: argparse.Namespace) -> int:
         "failures": failures,
     }
     if args.output_json:
-        args.output_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        args.output_json.write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0 if not failures and _mock_request_sequence_ok(summary) else 1
 
 
 #: The exact LanceDB write sequence the pipeline must produce: one import, five CPU UDF
 #: backfills plus the CLIP one, then the three failure-mode views.
-EXPECTED_LANCEDB_POSTS = (
-    ["/import-bdd100k"] + ["/backfill"] * 6 + ["/create-mv"] * 3
-)
+EXPECTED_LANCEDB_POSTS = ["/import-bdd100k"] + ["/backfill"] * 6 + ["/create-mv"] * 3
 #: Three trainings then three evaluations.
 EXPECTED_DETECTION_POSTS = ["/train"] * 3 + ["/eval"] * 3
 
 
 def _mock_request_sequence_ok(summary: dict[str, Any]) -> bool:
-    lancedb_posts = [item["path"] for item in summary["lancedb_requests"] if item["method"] == "POST"]
+    lancedb_posts = [
+        item["path"] for item in summary["lancedb_requests"] if item["method"] == "POST"
+    ]
     detection = summary["detection_requests"]
     detection_posts = [item["path"] for item in detection if item["method"] == "POST"]
-    if lancedb_posts != EXPECTED_LANCEDB_POSTS or detection_posts != EXPECTED_DETECTION_POSTS:
+    if (
+        lancedb_posts != EXPECTED_LANCEDB_POSTS
+        or detection_posts != EXPECTED_DETECTION_POSTS
+    ):
         return False
     return _detection_call_order_ok(detection)
 
@@ -533,7 +581,9 @@ class _MockHandler(BaseHTTPRequestHandler):
             run_id = f"train-{view.replace('_', '-')}"
             output_uri = str(payload.get("output_uri", "s3://mock/out"))
             epochs = int(payload.get("epochs", 1))
-            checkpoint_uri_pattern = f"{output_uri}/{run_id}/checkpoints/epoch_{{epoch}}.pt"
+            checkpoint_uri_pattern = (
+                f"{output_uri}/{run_id}/checkpoints/epoch_{{epoch}}.pt"
+            )
             metrics_uri = f"{output_uri}/{run_id}/metrics.json"
             state.runs[run_id] = {
                 "run_id": run_id,
@@ -587,7 +637,9 @@ class _MockHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def _record(state: _MockState, kind: str, method: str, path: str, payload: dict[str, Any] | None) -> None:
+def _record(
+    state: _MockState, kind: str, method: str, path: str, payload: dict[str, Any] | None
+) -> None:
     item = {"method": method, "path": path, "payload": payload}
     if kind == "lancedb":
         state.lancedb_requests.append(item)
@@ -618,12 +670,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="npa.workflow spec to render and submit (default: the shipped BDD100K spec).",
     )
     # Deprecated alias kept so existing invocations keep working; it now names a spec.
-    parser.add_argument("--yaml-path", "--yaml", dest="spec_path", type=Path, default=DEFAULT_SPEC)
+    parser.add_argument(
+        "--yaml-path", "--yaml", dest="spec_path", type=Path, default=DEFAULT_SPEC
+    )
     parser.add_argument("--run-id", default="")
     parser.add_argument("--bucket", default=DEFAULT_BUCKET)
     parser.add_argument("--source-uri", default=DEFAULT_SOURCE)
     parser.add_argument("--bdd100k-limit", type=int, default=10000)
-    parser.add_argument("--synthetic-rows", "--synthetic", dest="synthetic_rows", type=int, default=0)
+    parser.add_argument(
+        "--synthetic-rows", "--synthetic", dest="synthetic_rows", type=int, default=0
+    )
     parser.add_argument("--lancedb-endpoint", default=DEFAULT_LANCEDB_ENDPOINT)
     parser.add_argument("--detection-endpoint", default=DEFAULT_DETECTION_ENDPOINT)
     parser.add_argument("--lancedb-token", default="")

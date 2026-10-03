@@ -16,6 +16,7 @@ has to distinguish Kit payload from our own 40-line shell script.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -68,6 +69,10 @@ PAYLOAD_PATHS = [
     "opt/leisaac-cache/assets/runtime/robots/arbitrary-version/robot.usda",
     "opt/leisaac/assets/scenes/future-release/task.usdc",
     "opt/venv/lib/python3.11/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2",
+    "opt/cache/lib/python3.12/site-packages/ovrtx/bin/libovrtx.so",
+    "opt/cache/lib/python3.12/site-packages/ovrtx-0.3.dist-info/METADATA",
+    "opt/content-agents/.ovrtx_venv/bin/python",
+    "opt/vendor/libovrtx-render.so",
 ]
 
 # Paths the re-architected images legitimately DO ship.
@@ -116,6 +121,217 @@ def test_leisaac_dockerfile_removes_parent_imageio_ffmpeg_payload() -> None:
     assert "FROM ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab" not in dockerfile
     assert 'rm -rf /root/.cache /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile
     assert 'test ! -e /home/"${NPA_RUNTIME_USER}"/.cache' in dockerfile
+
+
+def test_shared_isaac_runtime_uses_system_ffmpeg_without_bundled_payload() -> None:
+    installer = (
+        REPO_ROOT
+        / "npa"
+        / "docker"
+        / "workbench"
+        / "common"
+        / "install_isaac_runtime_base.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "  ffmpeg \\\n" in installer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in installer
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in installer
+    assert "--no-binary imageio-ffmpeg" in installer
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in installer
+    assert '!= "/usr/bin/ffmpeg"' in installer
+
+
+def test_lerobot_uses_system_ffmpeg_without_bundled_payload() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "lerobot" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert "      ffmpeg \\\n" in dockerfile
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
+    assert "-delete" in dockerfile
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in dockerfile
+    assert "= /usr/bin/ffmpeg" in dockerfile
+
+
+def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> None:
+    paths = (
+        REPO_ROOT
+        / "npa"
+        / "docker"
+        / "workbench"
+        / "base"
+        / "cuda13-blackwell"
+        / "Dockerfile",
+        REPO_ROOT / "npa" / "docker" / "workbench" / "genesis" / "Dockerfile.sm120",
+        REPO_ROOT / "npa" / "docker" / "workbench" / "sim2real-envgen" / "Dockerfile",
+    )
+    for path in paths:
+        dockerfile = path.read_text(encoding="utf-8")
+        assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+        assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
+        assert "get_ffmpeg_exe()" in dockerfile
+        assert '== "/usr/bin/ffmpeg"' in dockerfile
+    envgen = paths[-1].read_text(encoding="utf-8")
+    assert "python -m pip uninstall -y npa" in envgen
+    assert "pip install --no-deps -e /opt/npa" not in envgen
+
+
+def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
+    openpi_dir = REPO_ROOT / "npa" / "docker" / "workbench" / "openpi"
+    dockerfile = (openpi_dir / "Dockerfile").read_text(encoding="utf-8")
+    gcs_lock = (openpi_dir / "gcs-requirements.txt").read_text(encoding="utf-8")
+
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    assert "      ca-certificates ffmpeg git" in dockerfile
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
+    assert "-delete" in dockerfile
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in dockerfile
+    assert "= /usr/bin/ffmpeg" in dockerfile
+    assert "imageio_ffmpeg.write_frames" in dockerfile
+    assert "imageio_ffmpeg.read_frames" in dockerfile
+    assert 'm["size"] == (2,2) and len(f) == 12' in dockerfile
+    assert "linux-libc-dev" in dockerfile
+    assert "'boto3==1.42.91'" in dockerfile
+    for pin in (
+        "'botocore==1.42.91'",
+        "'jmespath==1.1.0'",
+        "'python-dateutil==2.9.0.post0'",
+        "'s3transfer==0.16.0'",
+        "'six==1.17.0'",
+        "'urllib3==2.7.0'",
+    ):
+        assert pin in dockerfile
+    assert '"boto3":"1.42.91"' in dockerfile
+    assert "boto3.session.Session()" in dockerfile
+    assert "'deepdiff==8.6.2'" in dockerfile
+    assert "WANDB_MODE=disabled" in dockerfile
+    assert (
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in dockerfile
+    )
+    assert (
+        "rm -f /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core"
+        in dockerfile
+    )
+    assert "import boto3, importlib.metadata as m, numpy, os, tensorflow" in dockerfile
+    assert "import importlib.metadata as m, numpy, rerun" in dockerfile
+    assert "rm -rf /opt/nvidia/nsight-compute" in dockerfile
+    assert "test ! -e /opt/nvidia/nsight-compute" in dockerfile
+    for pin in (
+        "'jax==0.6.2'",
+        "'jaxlib==0.6.2'",
+        "'jax-cuda12-plugin==0.6.2'",
+        "'jax-cuda12-pjrt==0.6.2'",
+        "'ml-dtypes==0.5.1'",
+        "'nvidia-cudnn-cu12==9.10.2.21'",
+        "'nvidia-nccl-cu12==2.27.5'",
+        "'nvidia-nvshmem-cu12==3.2.5'",
+    ):
+        assert pin in dockerfile
+    assert "pi05-full-droid-rlds-cu128-jax062-nccl2275-rerun0381" in dockerfile
+    assert "'rerun-sdk==0.38.1'" in dockerfile
+    assert "'numpy==1.26.4'" in dockerfile
+    assert "from transformers import GemmaForCausalLM" in dockerfile
+    assert "NPA_OPENPI_RERUN_PYTHON=/opt/rerun-venv/bin/python" in dockerfile
+    assert "/opt/rerun-venv/bin/rerun rrd --help" in dockerfile
+    assert '"pip","check","--python","/opt/venv/bin/python"' in dockerfile
+    assert "actual == expected" in dockerfile
+    assert "unexpected" in dockerfile and "missing" in dockerfile
+    assert "pip check --python /opt/rerun-venv/bin/python" in dockerfile
+    assert 'config.get_config("pi05_droid")' in dockerfile
+    assert "multihost_utils.broadcast_one_to_all" in dockerfile
+    assert "JAX_PLATFORMS=cpu /opt/venv/bin/python -c" in dockerfile
+    assert "    JAX_PLATFORMS=" not in dockerfile
+    assert "nccl/lib/libnccl.so.2" in dockerfile
+    assert "nvshmem/lib/libnvshmem_host.so.3" in dockerfile
+    dependency_layer = dockerfile.split("RUN python3 -m venv /opt/uv", 1)[1].split(
+        "\n\nRUN printf", 1
+    )[0]
+    trainer_addons, rerun_addons = dependency_layer.split(
+        "&& /opt/uv/bin/uv venv --python 3.11 /opt/rerun-venv", 1
+    )
+    assert "'numpy==1.26.4'" in trainer_addons
+    assert "rerun-sdk" not in trainer_addons
+    assert "'pyyaml==6.0.3'" in rerun_addons
+    assert "'rerun-sdk==0.38.1'" in rerun_addons
+    assert "pip check --python /opt/rerun-venv/bin/python" in rerun_addons
+    assert "google-cloud-storage==3.13.1" in gcs_lock
+    assert "--hash=sha256:" in gcs_lock
+    assert not any(
+        name in gcs_lock for name in ("gsutil==", "httplib2==", "pyopenssl==")
+    )
+    assert "--no-deps --require-hashes -r /tmp/gcs-requirements.txt" in rerun_addons
+    assert "pip check --python /opt/gcs-venv/bin/python" in rerun_addons
+    assert "/usr/local/bin/npa-openpi-gcs --version" in rerun_addons
+    assert "COPY src/npa/workflows/byof/openpi_gcs.py" in dockerfile
+    assert dependency_layer.index("uv sync --active") < dependency_layer.index(
+        "&& cd / \\"
+    )
+    assert dependency_layer.index("&& cd / \\") < dependency_layer.index("'jax==0.6.2'")
+    assert dependency_layer.index("'jax==0.6.2'") < dependency_layer.index(
+        "*/imageio_ffmpeg/binaries/ffmpeg*"
+    )
+    assert "imageio_ffmpeg.write_frames" in dependency_layer
+    assert "rm -rf /tmp/uv-cache" in dependency_layer
+
+
+def test_openpi_bakes_skypilot_core_bootstrap_closure() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "openpi" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    install_layer = dockerfile.split("apt-get install -y --no-install-recommends", 1)[
+        1
+    ].split("&& rm -f /etc/ssh/ssh_host_", 1)[0]
+
+    # SkyPilot 0.12.2 treats these as mandatory Kubernetes bootstrap packages.
+    # If any are absent it runs apt concurrently in every GPU pod; a mirror
+    # failure then terminates the container before the JAX rendezvous starts.
+    for package in (
+        "curl",
+        "fuse",
+        "gcc",
+        "netcat-openbsd",
+        "openssh-server",
+        "patch",
+        "pciutils",
+        "rsync",
+        "wget",
+    ):
+        assert package in install_layer
+
+    # The build runs uv as root while HOME points at the eventual runtime
+    # user's home. SkyPilot installs its own uv there during bootstrap, so all
+    # build-created state under that home must be handed back before USER.
+    assert "chown -R ubuntu:ubuntu /home/ubuntu /workspace /opt/byof" in dockerfile
+
+
+def test_isaac_lab_dockerfile_excludes_bundled_imageio_ffmpeg_payload() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "isaac-lab" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    runtime_base_layer = dockerfile.split(
+        "COPY --chmod=0755 docker/workbench/isaac-lab/npa_cli.sh", 1
+    )[0].rsplit("RUN ", 1)[1]
+    assert "apt-get install -y --no-install-recommends ffmpeg" in runtime_base_layer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in runtime_base_layer
+    assert "-delete" in runtime_base_layer
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in runtime_base_layer
+
+
+def test_mjlab_removes_bundled_ffmpeg_before_the_dependency_layer_commits() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "mjlab" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    dependency_layer = dockerfile.split("COPY pyproject.toml", 1)[0].rsplit("RUN ", 1)[
+        1
+    ]
+    assert "pip install --no-cache-dir --require-hashes" in dependency_layer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*' -delete" in dependency_layer
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in dependency_layer
+    assert "imageio_ffmpeg.write_frames" in dependency_layer
+    assert "imageio_ffmpeg.read_frames" in dependency_layer
 
 
 @pytest.mark.parametrize("path", PAYLOAD_PATHS)
@@ -168,6 +384,8 @@ HISTORY_BAKING = [
     "FROM nvcr.io/nvidia/isaac-lab:2.3.2",
     "RUN /opt/npa/bin/isaac-bootstrap ensure",
     "RUN isaac_bootstrap.sh warm",
+    "RUN uv pip install -r pylock.ovrtx-runtime.toml --require-hashes",
+    "RUN python -m world_understanding.functions.graphics.render_ovrtx --provision-only",
     "ENV OMNI_KIT_ACCEPT_EULA=YES",
     "ENV ISAACSIM_ACCEPT_EULA=YES PRIVACY_CONSENT=Y",
 ]
@@ -237,12 +455,191 @@ def test_scanner_is_executable_and_self_documenting() -> None:
     assert "python.sh" in text and "allowlist" in text.lower()
 
 
-def test_oci_layout_tarball_scans_root_level_blob_layers(tmp_path: Path) -> None:
-    """Docker's containerd image store saves layers as ``blobs/sha256/*``.
+def _tar_bytes(members):
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w") as archive:
+        for name, payload in members.items():
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+    return stream.getvalue()
 
-    The root-level form must be opened as a nested tar, not counted as one opaque
-    outer member and incorrectly declared clean.
-    """
+
+def _saved_image_members(format_name):
+    layer = _tar_bytes({"opt/example/readme.txt": b"example"})
+    config = json.dumps(
+        {"architecture": "amd64", "rootfs": {"type": "layers"}}
+    ).encode()
+    if format_name == "docker":
+        manifest = [{"Config": "config.json", "Layers": ["example/layer.tar"]}]
+        return {
+            "example/layer.tar": layer,
+            "config.json": config,
+            "manifest.json": json.dumps(manifest).encode(),
+        }
+    members = {}
+
+    def add_blob(payload):
+        digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+        members["blobs/" + digest.replace(":", "/")] = payload
+        return {"digest": digest, "size": len(payload)}
+
+    manifest = {
+        "schemaVersion": 2,
+        "config": add_blob(config),
+        "layers": [add_blob(layer)],
+    }
+    descriptor = add_blob(json.dumps(manifest).encode())
+    members["index.json"] = json.dumps(
+        {"schemaVersion": 2, "manifests": [descriptor]}
+    ).encode()
+    members["oci-layout"] = b'{"imageLayoutVersion":"1.0.0"}'
+    return members
+
+
+def _attested_saved_image_members(artifact, mutation):
+    members = {}
+
+    def blob(value, media_type):
+        raw = value if isinstance(value, bytes) else json.dumps(value).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        members["blobs/sha256/" + digest] = raw
+        return {"mediaType": media_type, "digest": "sha256:" + digest, "size": len(raw)}
+
+    manifest_type = "application/vnd.oci.image.manifest.v1+json"
+    config_type = "application/vnd.oci.image.config.v1+json"
+    layer = blob(
+        _tar_bytes({"opt/example/readme.txt": b"example"}),
+        "application/vnd.oci.image.layer.v1.tar",
+    )
+    config = blob(
+        {
+            "architecture": "amd64",
+            "os": "linux",
+            "rootfs": {"type": "layers", "diff_ids": [layer["digest"]]},
+        },
+        config_type,
+    )
+    runtime = blob(
+        {
+            "schemaVersion": 2,
+            "mediaType": manifest_type,
+            "config": config,
+            "layers": [layer],
+        },
+        manifest_type,
+    )
+    statement = {
+        "_type": "https://in-toto.io/Statement/v0.1",
+        "subject": [{"name": "fixture", "digest": {"sha256": runtime["digest"][7:]}}],
+        "predicateType": "https://slsa.dev/provenance/v0.2",
+        "predicate": {},
+    }
+    if mutation == "subject":
+        statement["subject"][0]["digest"]["sha256"] = "0" * 64
+    elif mutation == "schema":
+        statement["_type"] = "unsupported"
+    elif mutation == "predicate":
+        statement["predicate"] = "not an object"
+    raw_statement = (
+        _tar_bytes({"isaac-sim/kit/libcarb.so": b"payload"})
+        if mutation == "runtime-tar"
+        else statement
+    )
+    predicate = blob(raw_statement, "application/vnd.in-toto+json")
+    predicate["annotations"] = {"in-toto.io/predicate-type": statement["predicateType"]}
+    if mutation == "media-type":
+        predicate["mediaType"] = "application/octet-stream"
+    att_config = blob(
+        {}
+        if artifact
+        else {
+            "architecture": "unknown",
+            "os": "unknown",
+            "rootfs": {"type": "layers", "diff_ids": [predicate["digest"]]},
+        },
+        "application/vnd.oci.empty.v1+json" if artifact else config_type,
+    )
+    if mutation == "runtime-config":
+        att_config = config
+    attestation = {
+        "schemaVersion": 2,
+        "mediaType": manifest_type,
+        "config": att_config,
+        "layers": [predicate],
+    }
+    if artifact:
+        attestation.update(
+            artifactType="application/vnd.docker.attestation.manifest.v1+json",
+            subject=runtime.copy(),
+        )
+    descriptor = blob(attestation, manifest_type)
+    descriptor.update(
+        platform={"os": "unknown", "architecture": "unknown"},
+        annotations={
+            "vnd.docker.reference.type": "attestation-manifest",
+            "vnd.docker.reference.digest": runtime["digest"],
+        },
+    )
+    if mutation == "runtime-platform":
+        descriptor["platform"] = {"os": "linux", "architecture": "amd64"}
+    runtime["platform"] = {"os": "linux", "architecture": "amd64"}
+    members["index.json"] = json.dumps(
+        {"schemaVersion": 2, "manifests": [runtime, descriptor]}
+    ).encode()
+    members["oci-layout"] = b'{"imageLayoutVersion":"1.0.0"}'
+    if mutation == "missing":
+        del members["blobs/sha256/" + predicate["digest"][7:]]
+    return members
+
+
+@pytest.mark.parametrize("artifact", [False, True])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "missing",
+        "subject",
+        "schema",
+        "predicate",
+        "media-type",
+        "runtime-tar",
+        "runtime-config",
+        "runtime-platform",
+    ],
+)
+def test_saved_attestation_requires_metadata_schema_and_runtime_subject(
+    artifact, mutation
+):
+    members = _attested_saved_image_members(artifact, mutation)
+    if mutation:
+        with pytest.raises(RuntimeError, match="image archive"):
+            list(scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*"))
+    else:
+        paths = list(
+            scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*")
+        )
+        assert "opt/example/readme.txt" in paths
+
+
+@pytest.mark.parametrize("format_name", ["docker", "oci"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_saved_image_scans_all_layers_without_seeking(format_name, reverse) -> None:
+    members = _saved_image_members(format_name)
+    if reverse:
+        members = dict(reversed(list(members.items())))
+
+    class Pipe(io.BytesIO):
+        def seek(self, *args):
+            pytest.fail("saved image streaming must not seek")
+
+    paths = list(scanner._iter_saved_image(Pipe(_tar_bytes(members)), mode="r|*"))
+
+    assert "opt/example/readme.txt" in paths
+
+
+def test_oci_layout_tarball_scans_root_level_blob_layers(tmp_path: Path) -> None:
+    members = _saved_image_members("oci")
     layer_stream = io.BytesIO()
     with tarfile.open(fileobj=layer_stream, mode="w") as layer:
         payload = b"kit"
@@ -250,16 +647,150 @@ def test_oci_layout_tarball_scans_root_level_blob_layers(tmp_path: Path) -> None
         member.size = len(payload)
         layer.addfile(member, io.BytesIO(payload))
     outer_path = tmp_path / "image.tar"
-    with tarfile.open(outer_path, mode="w") as outer:
-        payload = layer_stream.getvalue()
-        member = tarfile.TarInfo("blobs/sha256/exact-layer")
-        member.size = len(payload)
-        outer.addfile(member, io.BytesIO(payload))
+    # An additional layer still receives the existing payload classification.
+    members["blobs/sha256/exact-layer"] = layer_stream.getvalue()
+    outer_path.write_bytes(_tar_bytes(members))
 
     paths = list(scanner._iter_tarball(outer_path))
 
     assert "isaac-sim/kit/libcarb.so" in paths
-    assert scanner.classify_path(paths[0])
+    assert scanner.classify_path("isaac-sim/kit/libcarb.so")
+
+
+@pytest.mark.parametrize("format_name", ["docker", "oci"])
+@pytest.mark.parametrize("missing", ["config", "layer", "manifest"])
+def test_saved_image_rejects_missing_referenced_members(tmp_path, format_name, missing):
+    members = _saved_image_members(format_name)
+    if format_name == "docker":
+        names = {
+            "config": "config.json",
+            "layer": "example/layer.tar",
+            "manifest": "manifest.json",
+        }
+    else:
+        names = dict(zip(("config", "layer", "manifest"), members))
+    del members[names[missing]]
+    archive = tmp_path / "incomplete.tar"
+    archive.write_bytes(_tar_bytes(members))
+    report = tmp_path / "report.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCANNER),
+            "--tarball",
+            str(archive),
+            "--json",
+            str(report),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "Incomplete image archive" in result.stderr
+    assert "VERDICT:" not in result.stdout
+    assert not report.exists()
+
+
+@pytest.mark.parametrize("format_name", ["docker", "oci"])
+def test_saved_image_rejects_unreadable_referenced_layer(format_name):
+    members = _saved_image_members(format_name)
+    layer_name = "example/layer.tar" if format_name == "docker" else list(members)[1]
+    members[layer_name] = b"ordinary non-archive bytes".ljust(
+        len(members[layer_name]), b" "
+    )
+
+    with pytest.raises(RuntimeError, match="missing or unreadable layer"):
+        list(scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*"))
+
+
+def test_saved_image_requires_a_manifest_even_when_layers_are_readable():
+    members = {"example/layer.tar": _tar_bytes({"opt/example.txt": b"example"})}
+    with pytest.raises(RuntimeError, match="no Docker or OCI manifest"):
+        list(scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*"))
+
+
+def test_docker_export_success_does_not_accept_missing_image_objects(monkeypatch):
+    members = _saved_image_members("docker")
+    members.pop("config.json")
+    monkeypatch.setattr(scanner, "_require", lambda name: name)
+    process = SimpleNamespace(stdout=io.BytesIO(_tar_bytes(members)), wait=lambda: 0)
+    monkeypatch.setattr(scanner.subprocess, "Popen", lambda *args, **kwargs: process)
+
+    with pytest.raises(RuntimeError, match="missing or invalid config"):
+        list(scanner._iter_docker_save("example:local"))
+
+    assert process.stdout.closed
+
+
+def test_saved_oci_nested_index_requires_child_manifest():
+    members = _saved_image_members("oci")
+    child = members["index.json"]
+    digest = hashlib.sha256(child).hexdigest()
+    members["blobs/sha256/" + digest] = child
+    members["index.json"] = json.dumps(
+        {
+            "schemaVersion": 2,
+            "manifests": [{"digest": "sha256:" + digest, "size": len(child)}],
+        }
+    ).encode()
+    paths = list(scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*"))
+    assert "opt/example/readme.txt" in paths
+
+    del members["blobs/sha256/" + digest]
+    with pytest.raises(RuntimeError, match="missing referenced member"):
+        list(scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*"))
+
+
+@pytest.mark.parametrize("missing", ["oci-layout", "index.json"])
+def test_saved_oci_requires_layout_and_index(missing):
+    members = _saved_image_members("oci")
+    del members[missing]
+    with pytest.raises(RuntimeError, match="Incomplete image archive"):
+        list(scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*"))
+
+
+def test_local_docker_scan_combines_streamed_layers_and_history(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scanner,
+        "_iter_docker_save",
+        lambda image, **_kwargs: iter(["isaac-sim/kit/libcarb.so"]),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "_local_image_history",
+        lambda image: ["RUN pip install isaacsim==6.0.1.0"],
+    )
+
+    report = scanner.scan(None, None, docker_image="local:test")
+
+    assert report.source == "local-docker-stream"
+    assert report.entries_scanned == 1
+    assert report.payload_hits
+    assert report.history_hits
+
+
+def test_local_docker_history_only_skips_filesystem_export(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scanner,
+        "_iter_docker_save",
+        lambda image: pytest.fail("history-only must not run docker save"),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "_local_image_history",
+        lambda image: ["RUN pip install isaacsim==6.0.1.0"],
+    )
+
+    report = scanner.scan(None, None, docker_image="local:test", history_only=True)
+
+    assert report.source == "local-docker-stream"
+    assert report.history_only is True
+    assert report.entries_scanned == 0
+    assert report.history_hits
+    assert not report.clean
 
 
 # --------------------------------------------------------------------------------------
@@ -534,19 +1065,63 @@ def test_registry_export_failure_is_fatal_after_a_valid_partial_tar(
     """A truncated export must never become a clean redistribution report."""
 
     class FailedExport:
-        stdout = _empty_tar_stream()
+        def __init__(self) -> None:
+            self.stdout = _empty_tar_stream()
 
         @staticmethod
         def wait() -> int:
             return 17
 
     monkeypatch.setattr(scanner, "_require", lambda _tool: "/usr/bin/crane")
-    monkeypatch.setattr(
-        scanner.subprocess, "Popen", lambda *_args, **_kwargs: FailedExport()
-    )
+    calls = 0
+
+    def failed_export(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return FailedExport()
+
+    monkeypatch.setattr(scanner.subprocess, "Popen", failed_export)
+    monkeypatch.setattr(scanner.time, "sleep", lambda _seconds: None)
 
     with pytest.raises(subprocess.CalledProcessError, match="exit status 17"):
         list(scanner._iter_crane_export("registry.example/image:tag"))
+    assert calls == 4
+
+
+def test_registry_export_retry_deduplicates_partial_paths(monkeypatch) -> None:
+    partial = io.BytesIO()
+    with tarfile.open(fileobj=partial, mode="w") as archive:
+        member = tarfile.TarInfo("opt/shared")
+        member.size = 0
+        archive.addfile(member)
+    partial.seek(0)
+
+    complete = io.BytesIO()
+    with tarfile.open(fileobj=complete, mode="w") as archive:
+        for name in ("opt/shared", "opt/final"):
+            member = tarfile.TarInfo(name)
+            member.size = 0
+            archive.addfile(member)
+    complete.seek(0)
+
+    processes = iter(
+        (
+            SimpleNamespace(stdout=partial, wait=lambda: 17),
+            SimpleNamespace(stdout=complete, wait=lambda: 0),
+        )
+    )
+    monkeypatch.setattr(scanner, "_require", lambda _tool: "/usr/bin/crane")
+    monkeypatch.setattr(
+        scanner.subprocess, "Popen", lambda *_args, **_kwargs: next(processes)
+    )
+    monkeypatch.setattr(scanner.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        scanner, "_image_history", lambda _image: ([], "sha256:" + "a" * 64)
+    )
+
+    report = scanner.scan("registry.example/image:tag", None)
+
+    assert report.entries_scanned == 2
 
 
 def test_registry_config_failure_is_fatal(monkeypatch) -> None:
@@ -591,3 +1166,81 @@ def test_registry_digest_must_be_a_sha256(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="invalid linux/amd64 image digest"):
         scanner._image_history("registry.example/image:tag")
+
+
+@pytest.mark.parametrize("artifact", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_scan_reports_only_bound_metadata_descriptors(tmp_path, artifact, reverse):
+    members = _attested_saved_image_members(artifact, None)
+    index = json.loads(members["index.json"])
+    attestation = json.loads(
+        members["blobs/sha256/" + index["manifests"][1]["digest"][7:]]
+    )
+    statement = attestation["layers"][0]
+    # A nested image index must preserve reporting through recursive traversal.
+    inner = members["index.json"]
+    inner_digest = hashlib.sha256(inner).hexdigest()
+    members["blobs/sha256/" + inner_digest] = inner
+    members["index.json"] = json.dumps(
+        {
+            "schemaVersion": 2,
+            "manifests": [{"digest": "sha256:" + inner_digest, "size": len(inner)}],
+        }
+    ).encode()
+    if reverse:
+        members = dict(reversed(list(members.items())))
+    archive = tmp_path / "attested.tar"
+    archive.write_bytes(_tar_bytes(members))
+
+    report = scanner.scan(None, tarball=archive)
+
+    assert report.clean
+    assert report.entries_scanned > 0
+    assert report.to_dict()["validated_metadata_layers"] == [
+        {
+            "member": "blobs/sha256/" + statement["digest"][7:],
+            "media_type": "application/vnd.in-toto+json",
+            "statement_type": "https://in-toto.io/Statement/v0.1",
+        }
+    ]
+
+
+def test_filesystem_scan_does_not_claim_metadata_validation(tmp_path):
+    archive = tmp_path / "runtime.tar"
+    archive.write_bytes(_tar_bytes(_saved_image_members("oci")))
+    assert (
+        scanner.scan(None, tarball=archive).to_dict()["validated_metadata_layers"] == []
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["schema", "subject", "predicate", "runtime-platform", "media-type"]
+)
+def test_invalid_metadata_is_not_reported_as_validated(mutation):
+    records = []
+    members = _attested_saved_image_members(False, mutation)
+    with pytest.raises(RuntimeError, match="image archive"):
+        list(
+            scanner._iter_saved_image(
+                io.BytesIO(_tar_bytes(members)), mode="r|*", attestations=records
+            )
+        )
+    assert records == []
+
+
+@pytest.mark.parametrize(
+    "source,history_only,expected",
+    [
+        ("registry", False, "not-inspected"),
+        ("local-docker-stream", True, "not-inspected"),
+        ("local-docker-stream", False, "saved-image-manifests"),
+        ("tarball", False, "saved-image-manifests"),
+    ],
+)
+def test_metadata_scope_distinguishes_uninspected_manifests(
+    source, history_only, expected
+):
+    report = scanner.ScanReport(
+        image="example", source=source, history_only=history_only
+    )
+    assert report.to_dict()["metadata_validation_scope"] == expected

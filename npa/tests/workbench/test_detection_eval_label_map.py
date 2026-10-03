@@ -44,7 +44,9 @@ def test_the_request_carries_it_through() -> None:
         "workbench.detection_training.eval_distant",
     ],
 )
-def test_every_eval_toolref_passes_the_same_map_the_training_stages_use(tool_ref: str) -> None:
+def test_every_eval_toolref_passes_the_same_map_the_training_stages_use(
+    tool_ref: str,
+) -> None:
     argv = [str(part) for part in TOOL_CATALOG[tool_ref].argv_template]
 
     assert "--label-map" in argv, tool_ref
@@ -59,7 +61,7 @@ def test_the_bdd100k_spec_defines_that_config_key() -> None:
     spec = yaml.safe_load(
         (
             Path(__file__).resolve().parents[3]
-            / "npa/workflows/workbench/npa-workflows/bdd100k-pipeline.yaml"
+            / "workflows/testing/bdd100k-pipeline.yaml"
         ).read_text(encoding="utf-8")
     )
     label_map = spec["config"]["detection_label_map"]

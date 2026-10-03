@@ -1521,6 +1521,7 @@ def evaluate(
     run_id: str,
     phase: str,
     *,
+    robot_embodiment: str,
     base_model: str = "",
     baseline_checkpoint_uri: str = "",
     action_horizon: int = 16,
@@ -1544,7 +1545,12 @@ def evaluate(
         raise GrootVisualizationError(
             "evaluation refuses a split without leakage proof"
         )
-    embodiment = str(split.get("source", {}).get("embodiment") or "")
+    source_embodiment = str(split.get("source", {}).get("embodiment") or "")
+    embodiment = str(robot_embodiment or "").strip()
+    if not embodiment:
+        raise GrootVisualizationError(
+            "evaluation requires the workflow's explicit robot embodiment"
+        )
     with tempfile.TemporaryDirectory(prefix=f"npa-groot-{phase}-eval-") as tmp:
         root = Path(tmp)
         train_path = root / "train"
@@ -1680,6 +1686,10 @@ def evaluate(
         "checkpoint": checkpoint_artifact,
         "checkpoint_uri": resolved_checkpoint_uri,
         "engine": "NVIDIA Isaac-GR00T Gr00tPolicy.get_action",
+        "embodiment": {
+            "configured": embodiment,
+            "source": source_embodiment,
+        },
         "real_model_forward": True,
         "model_forward_calls": raw["forward_calls"],
         "episodes": raw["episode_count"],
@@ -1726,6 +1736,7 @@ def baseline_eval(
     baseline_checkpoint_uri: str,
     run_id: str,
     base_model: str,
+    robot_embodiment: str,
     **kwargs: Any,
 ) -> dict[str, Any]:
     return evaluate(
@@ -1735,6 +1746,7 @@ def baseline_eval(
         arrays_uri,
         run_id,
         "baseline",
+        robot_embodiment=robot_embodiment,
         base_model=base_model,
         baseline_checkpoint_uri=baseline_checkpoint_uri,
         **kwargs,
@@ -1747,6 +1759,7 @@ def posttrain_eval(
     output_uri: str,
     arrays_uri: str,
     run_id: str,
+    robot_embodiment: str,
     **kwargs: Any,
 ) -> dict[str, Any]:
     client = _s3_client(kwargs.get("s3_client"))
@@ -1782,6 +1795,7 @@ def posttrain_eval(
         arrays_uri,
         run_id,
         "posttrain",
+        robot_embodiment=robot_embodiment,
         expected_checkpoint_sha256=checkpoint_sha256,
         expected_checkpoint_step=checkpoint_step,
         **kwargs,
@@ -3460,6 +3474,22 @@ def verify_agent_ui_handoff(
     the required artifacts, load both native viewers, or serve byte ranges.
     Authentication is read only from ``NPA_AGENT_BASIC_AUTH`` and is never
     persisted or printed.
+
+    Args:
+        agent_url: Authenticated Agent HTTP or HTTPS origin.
+        report_uri: Expected learning-report artifact URI.
+        rrd_uri: Expected Rerun recording artifact URI.
+        mcap_uri: Expected MCAP recording artifact URI.
+        output_uri: S3 destination for the sanitized verification result.
+        run_id: Exact workflow run identity to discover.
+        s3_client: Optional storage client used for result publication.
+
+    Returns:
+        Verified discovery, viewer readiness, and byte-range evidence.
+
+    Raises:
+        GrootVisualizationError: If authentication, discovery, loading, or
+            readback does not satisfy the exact-source contract.
     """
 
     client = _s3_client(s3_client)
@@ -3524,11 +3554,71 @@ def verify_agent_ui_handoff(
     health = request_json("/api/health")
     selector = urllib.parse.quote(run_id, safe="")
     inventory = request_json(f"/api/artifacts/run/{selector}")
-    if str(inventory.get("run_id") or "") != run_id:
-        raise GrootVisualizationError("agent loaded a different run identity")
-    artifacts = [
-        item for item in inventory.get("artifacts") or [] if isinstance(item, dict)
-    ]
+
+    def source_tuple(payload: Mapping[str, Any]) -> tuple[str, str, str, str]:
+        run_ref = str(payload.get("run_ref") or "").strip()
+        project_id = str(payload.get("project_id") or "").strip()
+        bucket = str(
+            payload.get("resource_bucket") or payload.get("bucket") or ""
+        ).strip()
+        if (
+            str(payload.get("run_id") or "").strip() != run_id
+            or not run_ref
+            or not project_id
+            or not bucket
+            or "resolved_prefix" not in payload
+            or payload.get("source_selected") is not True
+        ):
+            raise GrootVisualizationError(
+                "agent inventory lacks one exact server-selected run source"
+            )
+        if str(payload.get("bucket") or "").strip() not in {"", bucket}:
+            raise GrootVisualizationError(
+                "agent inventory returned conflicting source buckets"
+            )
+        return (
+            run_ref,
+            project_id,
+            bucket,
+            str(payload.get("resolved_prefix") or "").strip(),
+        )
+
+    source = source_tuple(inventory)
+    run_ref, project_id, resource_bucket, resolved_prefix = source
+    artifacts: list[dict[str, Any]] = []
+    seen_cursors: set[str] = set()
+    while True:
+        if source_tuple(inventory) != source:
+            raise GrootVisualizationError(
+                "agent artifact pagination changed the selected run source"
+            )
+        artifacts.extend(
+            item for item in inventory.get("artifacts") or [] if isinstance(item, dict)
+        )
+        cursor = str(inventory.get("next_cursor") or "")
+        if not cursor:
+            if inventory.get("truncated") is True:
+                raise GrootVisualizationError(
+                    "agent artifact inventory ended before pagination completed"
+                )
+            break
+        if cursor in seen_cursors:
+            raise GrootVisualizationError(
+                "agent artifact inventory repeated its cursor"
+            )
+        seen_cursors.add(cursor)
+        query = urllib.parse.urlencode(
+            {
+                "project_id": project_id,
+                "resource_bucket": resource_bucket,
+                "resolved_prefix": resolved_prefix,
+                "source_selected": "1",
+                "cursor": cursor,
+            }
+        )
+        inventory = request_json(
+            f"/api/artifacts/run/{urllib.parse.quote(run_ref, safe='')}?{query}"
+        )
     required = {
         "report": report_uri,
         "rrd": rrd_uri,
@@ -3551,9 +3641,12 @@ def verify_agent_ui_handoff(
             "/api/sim-viz/load-artifact",
             body={
                 "run_id": run_id,
-                "run_ref": str(inventory.get("run_ref") or ""),
+                "run_ref": run_ref,
                 "key": str(item.get("key") or ""),
-                "s3_uri": str(item.get("s3_uri") or ""),
+                "project_id": project_id,
+                "resource_bucket": resource_bucket,
+                "resolved_prefix": resolved_prefix,
+                "source_selected": True,
             },
         )
         sim_viz_value = loaded.get("sim_viz")
@@ -3565,7 +3658,16 @@ def verify_agent_ui_handoff(
             if label == "rrd"
             else sim_viz.get("lichtblick_ready") is True
         )
-        if not ready:
+        exact_loaded_source = bool(
+            str(sim_viz.get("run_id") or "") == run_id
+            and str(sim_viz.get("artifact_key") or "") == str(item.get("key") or "")
+            and str(sim_viz.get("artifact_run_ref") or "") == run_ref
+            and str(sim_viz.get("project_id") or "") == project_id
+            and str(sim_viz.get("bucket") or "") == resource_bucket
+            and "resolved_prefix" in sim_viz
+            and str(sim_viz.get("resolved_prefix") or "") == resolved_prefix
+        )
+        if not ready or not exact_loaded_source:
             raise GrootVisualizationError(f"agent {label} viewer did not become ready")
         download_path = str(sim_viz.get("artifact_download_url") or "")
         ranges[label] = bool(download_path) and range_ok(download_path)
@@ -3649,6 +3751,7 @@ def build_parser() -> argparse.ArgumentParser:
     baseline.add_argument("--arrays-uri", required=True)
     baseline.add_argument("--baseline-checkpoint-uri", required=True)
     baseline.add_argument("--base-model", required=True)
+    baseline.add_argument("--robot-embodiment", required=True)
     baseline.add_argument("--run-id", required=True)
     baseline.add_argument("--action-horizon", type=int, default=16)
     baseline.add_argument("--evaluation-repeats", type=int, default=5)
@@ -3658,6 +3761,7 @@ def build_parser() -> argparse.ArgumentParser:
     posttrain.add_argument("--checkpoint-ref-uri", required=True)
     posttrain.add_argument("--output-uri", required=True)
     posttrain.add_argument("--arrays-uri", required=True)
+    posttrain.add_argument("--robot-embodiment", required=True)
     posttrain.add_argument("--run-id", required=True)
     posttrain.add_argument("--action-horizon", type=int, default=16)
     posttrain.add_argument("--evaluation-repeats", type=int, default=5)

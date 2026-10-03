@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import resources
 from importlib.util import find_spec
+import math
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,38 @@ VALID_KINDS = {
 }
 VALID_GPU = {"required", "optional", "none"}
 VALID_STATUS = {"ready", "gpu-gated", "blocked-on-upstream", "needs-image-update"}
+UNLIMITED_SERVERLESS_ERROR = (
+    "Unlimited golden evaluations require local --execute with the container runtime "
+    "on an existing NPA mk8s deployment; the serverless path has fixed job and "
+    "polling deadlines."
+)
+
+
+def _parse_timeout_seconds(value: Any) -> int | float:
+    """Only the explicit manifest literal enables an unbounded evaluation."""
+
+    if isinstance(value, str) and value == "unlimited":
+        return math.inf
+    if isinstance(value, bool) or (
+        isinstance(value, float) and not math.isfinite(value)
+    ):
+        raise ValueError("golden_eval.timeout_seconds must be finite or 'unlimited'")
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            "golden_eval.timeout_seconds must be an integer or 'unlimited'"
+        ) from exc
+
+
+def _parse_classification_flag(value: Any, *, container: str, field_name: str) -> bool:
+    """Reject ambiguous values for a container classification flag."""
+
+    if not isinstance(value, bool):
+        raise ValueError(
+            f"Container {container!r} field {field_name!r} must be a boolean"
+        )
+    return value
 
 
 @dataclass(frozen=True)
@@ -43,12 +76,21 @@ class GoldenEval:
     kind: str
     command: str
     gpu: str
-    timeout_seconds: int
+    # Positive infinity is the internal representation of the explicit YAML
+    # literal "unlimited"; it is never passed to subprocess or emitted as JSON.
+    timeout_seconds: int | float
     status: str
     module: str | None = None
     env_module: str | None = None
     artifact: str | None = None
     serverless_gpu: str | None = None
+    serverless_gpu_count: int = 1
+
+    @property
+    def execution_timeout(self) -> int | float | None:
+        """Return the subprocess deadline, including its native unbounded value."""
+
+        return None if self.timeout_seconds == math.inf else self.timeout_seconds
 
     @property
     def runnable_in_ci(self) -> bool:
@@ -141,12 +183,13 @@ def load_manifest() -> dict[str, ContainerSpec]:
             kind=str(eval_raw.get("kind", "")),
             command=str(eval_raw.get("command", "")),
             gpu=str(eval_raw.get("gpu", "")),
-            timeout_seconds=int(eval_raw.get("timeout_seconds", 0)),
+            timeout_seconds=_parse_timeout_seconds(eval_raw.get("timeout_seconds", 0)),
             status=str(eval_raw.get("status", "")),
             module=eval_raw.get("module"),
             env_module=eval_raw.get("env_module"),
             artifact=eval_raw.get("artifact"),
             serverless_gpu=eval_raw.get("serverless_gpu"),
+            serverless_gpu_count=eval_raw.get("serverless_gpu_count", 1),
         )
         specs[name] = ContainerSpec(
             name=name,
@@ -155,10 +198,22 @@ def load_manifest() -> dict[str, ContainerSpec]:
             physical_ai=dict(raw.get("physical_ai") or {}),
             safety=dict(raw.get("safety") or {}),
             golden_eval=golden_eval,
-            foundation=bool(raw.get("foundation", False)),
-            internal=bool(raw.get("internal", False)),
+            foundation=_parse_classification_flag(
+                raw.get("foundation", False),
+                container=name,
+                field_name="foundation",
+            ),
+            internal=_parse_classification_flag(
+                raw.get("internal", False),
+                container=name,
+                field_name="internal",
+            ),
             default_tag=raw.get("default_tag"),
-            external_build=bool(raw.get("external_build", False)),
+            external_build=_parse_classification_flag(
+                raw.get("external_build", False),
+                container=name,
+                field_name="external_build",
+            ),
             variant_of=raw.get("variant_of"),
             image_variant=raw.get("image_variant"),
         )
@@ -222,10 +277,25 @@ def validate_manifest(
             report.add(name, f"invalid golden_eval.gpu: {ge.gpu!r}")
         if ge.status not in VALID_STATUS:
             report.add(name, f"invalid golden_eval.status: {ge.status!r}")
+        if (
+            isinstance(ge.serverless_gpu_count, bool)
+            or not isinstance(ge.serverless_gpu_count, int)
+            or ge.serverless_gpu_count <= 0
+        ):
+            report.add(
+                name, "golden_eval.serverless_gpu_count must be a positive integer"
+            )
         if not ge.command:
             report.add(name, "golden_eval.command is empty")
-        if ge.timeout_seconds <= 0:
-            report.add(name, "golden_eval.timeout_seconds must be > 0")
+        if (
+            isinstance(ge.timeout_seconds, bool)
+            or not isinstance(ge.timeout_seconds, (int, float))
+            or ge.timeout_seconds <= 0
+            or (
+                isinstance(ge.timeout_seconds, float) and math.isnan(ge.timeout_seconds)
+            )
+        ):
+            report.add(name, "golden_eval.timeout_seconds must be > 0 or 'unlimited'")
 
         if check_modules:
             if not _module_exists(ge.module):

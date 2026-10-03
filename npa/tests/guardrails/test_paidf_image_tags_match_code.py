@@ -63,14 +63,14 @@ def test_the_guide_points_at_the_image_preflight() -> None:
 @pytest.mark.parametrize("tool", PAIDF_TOOLS)
 def test_a_missing_image_yields_a_build_command_for_the_pinned_tag(tool: str) -> None:
     image_name = CONTAINER_IMAGE_NAMES[tool]
-    reference = f"cr.eu-north1.nebius.cloud/e000/{image_name}:whatever-was-requested"
+    reference = f"registry.example/e000/{image_name}:whatever-was-requested"
 
     command = build_and_push_command(reference)
 
     assert f"npa/docker/workbench/{tool}/Dockerfile" in command
     # The remedy names the tag the code pins, not the one that was missing.
     assert command.endswith(
-        f"-t cr.eu-north1.nebius.cloud/e000/{image_name}:{supported_tool_version(tool)} npa"
+        f"-t registry.example/e000/{image_name}:{supported_tool_version(tool)} npa"
     )
 
 
@@ -138,40 +138,34 @@ def test_no_build_command_when_the_dockerfile_is_not_where_we_would_say() -> Non
         assert build_and_push_command(f"cr.example/p/{image}:t") == ""
 
 
-def test_a_missing_image_offers_a_server_side_copy_before_a_rebuild() -> None:
-    # These images run to tens of GB; a 25 GB push through the local machine was
-    # killed, while a registry-side retag succeeded.
+def test_a_missing_image_does_not_invent_a_registry_copy_source() -> None:
     from npa.orchestration.skypilot.registry_preflight import (
         _missing_image_remedy,
         parse_image_reference,
     )
 
     remedy = _missing_image_remedy(
-        parse_image_reference(
-            "cr.us-central1.nebius.cloud/u00proj/npa-cosmos-curate:0.1.2"
-        )
+        parse_image_reference("registry-us.example/u00proj/npa-cosmos-curate:0.1.2")
     )
 
-    assert "crane copy" in remedy
-    assert "server-side" in remedy
-    # The copy is offered ahead of the local build.
-    assert remedy.index("crane copy") < remedy.index("docker buildx build")
+    assert "crane copy" not in remedy
+    assert "docker buildx build" in remedy
 
 
-def test_the_copy_hint_never_suggests_copying_a_ref_onto_itself() -> None:
-    from npa.deploy.images import primary_container_registry
+def test_the_copy_hint_is_empty_for_official_images_too() -> None:
+    from npa.deploy.images import public_container_registry
     from npa.orchestration.skypilot.registry_preflight import (
         _missing_image_remedy,
         parse_image_reference,
     )
 
-    same = f"{primary_container_registry()}/npa-cosmos-curate:0.1.2"
+    same = f"{public_container_registry()}/npa-cosmos-curate:0.1.2"
     remedy = _missing_image_remedy(parse_image_reference(same))
 
-    assert f"crane copy {same} {same}" not in remedy
+    assert "crane copy" not in remedy
 
 
-def test_the_deploy_guide_selects_the_public_mirror_before_preflight() -> None:
+def test_the_deploy_guide_selects_the_public_release_before_preflight() -> None:
     """Building three multi-GB images is avoidable: the mirror already has them."""
 
     from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY

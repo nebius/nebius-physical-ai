@@ -1,0 +1,1223 @@
+package main
+
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/rs/zerolog"
+	"github.com/zricethezav/gitleaks/v8/config"
+	"github.com/zricethezav/gitleaks/v8/detect"
+	"github.com/zricethezav/gitleaks/v8/regexp"
+)
+
+var fixtureConfig config.Config
+var fixtureReady ready
+
+func memoryFixture() map[string]string {
+	return map[string]string{
+		"/proc/self/cgroup":                   "0::/batch/worker\n",
+		"/proc/self/mountinfo":                "30 20 0:28 / /cgroup rw - cgroup2 cgroup rw\n",
+		"/cgroup/batch/worker/memory.max":     "1000\n",
+		"/cgroup/batch/worker/memory.current": "100\n",
+		"/cgroup/batch/memory.max":            "max\n",
+	}
+}
+
+func memoryReader(files map[string]string) func(string) ([]byte, error) {
+	return func(path string) ([]byte, error) {
+		if data, present := files[path]; present {
+			return []byte(data), nil
+		}
+		return nil, os.ErrNotExist
+	}
+}
+
+func TestCgroupMemoryHierarchyAndCurrentUsage(t *testing.T) {
+	for _, test := range []struct {
+		name, parentMax, parentCurrent string
+		want                           int64
+	}{
+		{"leaf", "max", "", 810},
+		{"ancestor-limit", "800", "100", 630},
+		{"ancestor-siblings", "3000", "2500", 450},
+		{"looser-parent", "3000", "100", 810},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			files := memoryFixture()
+			files["/cgroup/batch/memory.max"] = test.parentMax
+			files["/cgroup/batch/memory.current"] = test.parentCurrent
+			got, code := cgroupMemoryLimit(memoryReader(files), 0)
+			if got != test.want || code != "" {
+				t.Fatalf("limit=%d code=%q", got, code)
+			}
+		})
+	}
+}
+
+func TestCgroupMemoryMissingAndUnlimited(t *testing.T) {
+	for _, test := range []struct{ path, value string }{
+		{"/proc/self/cgroup", "2:memory:/batch/worker\n"},
+		{"/proc/self/mountinfo", "30 20 0:28 / /cgroup rw - cgroup cgroup rw\n"},
+		{"/cgroup/batch/worker/memory.max", "max\n"},
+		{"/cgroup/batch/worker/memory.max", "18446744073709551615\n"},
+		{"/proc/self/cgroup", "0::/batch/../outside\n"},
+	} {
+		files := memoryFixture()
+		files[test.path] = test.value
+		got, code := cgroupMemoryLimit(memoryReader(files), 0)
+		if got != 0 || code != "" {
+			t.Fatalf("unexpected finite limit or code: %d %q", got, code)
+		}
+	}
+	for _, path := range []string{"/proc/self/cgroup", "/proc/self/mountinfo", "/cgroup/batch/worker/memory.max"} {
+		files := memoryFixture()
+		delete(files, path)
+		got, code := cgroupMemoryLimit(memoryReader(files), 0)
+		if got != 0 || code != "" {
+			t.Fatalf("unavailable metadata: %d %q", got, code)
+		}
+	}
+}
+
+func TestCgroupMemoryInvalidFiniteLimitFailsClosed(t *testing.T) {
+	for _, value := range []string{"", "-1", "+1000", "1.5", "18446744073709551616", "secret-input"} {
+		files := memoryFixture()
+		files["/cgroup/batch/worker/memory.max"] = value
+		got, code := cgroupMemoryLimit(memoryReader(files), 0)
+		if got != 0 || code != "cgroup_memory_limit_invalid" {
+			t.Fatalf("unexpected response %d %q", got, code)
+		}
+	}
+	for _, value := range []string{"", "-1", "max", "18446744073709551616"} {
+		files := memoryFixture()
+		files["/cgroup/batch/worker/memory.current"] = value
+		got, code := cgroupMemoryLimit(memoryReader(files), 0)
+		if got != 0 || code != "cgroup_memory_usage_unavailable" {
+			t.Fatalf("unexpected response %d %q", got, code)
+		}
+	}
+	files := memoryFixture()
+	delete(files, "/cgroup/batch/worker/memory.current")
+	if got, code := cgroupMemoryLimit(memoryReader(files), 0); got != 0 || code != "" {
+		t.Fatal(code)
+	}
+}
+
+func TestCgroupMemoryExhaustionAndOverflow(t *testing.T) {
+	for _, maximum := range []string{"0", "100", "99"} {
+		files := memoryFixture()
+		files["/cgroup/batch/worker/memory.max"] = maximum
+		if got, code := cgroupMemoryLimit(memoryReader(files), 0); got != 0 || code != "" {
+			t.Fatal(code)
+		}
+	}
+	files := memoryFixture()
+	files["/cgroup/batch/worker/memory.max"] = "9223372036854775807"
+	files["/cgroup/batch/worker/memory.current"] = "0"
+	want := int64(math.MaxInt64 - math.MaxInt64/10)
+	if got, code := cgroupMemoryLimit(memoryReader(files), 0); got != want || code != "" {
+		t.Fatalf("%d %q", got, code)
+	}
+}
+
+func TestCgroupMemoryTransientPressurePreservesUsableAncestors(t *testing.T) {
+	for _, test := range []struct {
+		name, leafCurrent, parentCurrent string
+		want                             int64
+	}{
+		{"exhausted-parent", "100", "1000", 810},
+		{"exhausted-leaf", "1000", "100", 810},
+		{"small-parent", "100", "999", 810},
+		{"small-leaf", "999", "100", 810},
+		{"all-exhausted", "1000", "1000", 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			files := memoryFixture()
+			files["/cgroup/batch/worker/memory.current"] = test.leafCurrent
+			files["/cgroup/batch/memory.max"] = "1000"
+			files["/cgroup/batch/memory.current"] = test.parentCurrent
+			if got, code := cgroupMemoryLimit(memoryReader(files), 80); got != test.want || code != "" {
+				t.Fatalf("limit=%d code=%q", got, code)
+			}
+		})
+	}
+}
+
+func TestCgroupMemoryVanishedUsagePreservesOtherLimit(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		failure error
+		code    string
+	}{
+		{"disappeared", os.ErrNotExist, ""},
+		{"device-removed", syscall.ENODEV, ""},
+		{"permission-denied", os.ErrPermission, "cgroup_memory_usage_unavailable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			files := memoryFixture()
+			files["/cgroup/batch/memory.max"] = "1000"
+			read := memoryReader(files)
+			reader := func(path string) ([]byte, error) {
+				if path == "/cgroup/batch/memory.current" {
+					return nil, &os.PathError{Op: "read", Path: path, Err: test.failure}
+				}
+				return read(path)
+			}
+			got, code := cgroupMemoryLimit(reader, 80)
+			if code != test.code || (code == "" && got != 810) {
+				t.Fatalf("limit=%d code=%q", got, code)
+			}
+		})
+	}
+}
+
+func TestCgroupMemoryMountNamespacesAndAliases(t *testing.T) {
+	for _, test := range []struct{ membership, mounts, leaf, boundary string }{
+		{"0::/\n", "30 20 0:28 / /cgroup rw - cgroup2 cgroup rw", "/cgroup", "/cgroup"},
+		{"0::/tenant/work\n", "30 20 0:28 /tenant /cgroup rw - cgroup2 cgroup rw", "/cgroup/work", "/cgroup"},
+		{"0::/tenant/work\n", "30 20 0:28 /other /cgroup rw - cgroup2 cgroup rw", "", ""},
+		{"0::/work\n", `30 20 0:28 / /cgroup\040mount rw - cgroup2 cgroup rw`, "/cgroup mount/work", "/cgroup mount"},
+		{"0::/tenant/work\n", "30 20 0:28 /tenant /subtree rw - cgroup2 cgroup rw\n31 20 0:28 / /all rw - cgroup2 cgroup rw", "/all/tenant/work", "/all"},
+		{"0::/work\n", "30 20 0:28 / /cgroup/../outside rw - cgroup2 cgroup rw", "", ""},
+	} {
+		leaf, boundary := cgroupDirectory([]byte(test.membership), []byte(test.mounts))
+		if leaf != test.leaf || boundary != test.boundary {
+			t.Fatalf("got %q %q", leaf, boundary)
+		}
+	}
+}
+
+func TestCgroupMemoryAppliesOnlyTighterUsableLimit(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		owned     uint64
+		previous  int64
+		wantCalls []int64
+		code      string
+	}{
+		{"default", 80, math.MaxInt64, []int64{-1, 810}, ""},
+		{"explicit-stricter", 80, 400, []int64{-1}, ""},
+		{"already-too-small", 810, math.MaxInt64, nil, ""},
+		{"too-small-preserves-explicit", 810, 400, nil, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var calls []int64
+			set := func(value int64) int64 { calls = append(calls, value); return test.previous }
+			code := applyCgroupMemoryLimit(memoryReader(memoryFixture()), test.owned, set)
+			if code != test.code || !reflect.DeepEqual(calls, test.wantCalls) {
+				t.Fatalf("calls=%v code=%q", calls, code)
+			}
+		})
+	}
+}
+
+func TestMain(m *testing.M) {
+	zerolog.SetGlobalLevel(zerolog.Disabled)
+	var code string
+	fixtureConfig, fixtureReady, code = configuration(configFixturePath())
+	if code != "" {
+		os.Stderr.WriteString("test_configuration_failed\n")
+		os.Exit(2)
+	}
+	os.Exit(m.Run())
+}
+
+func scanner() *detect.Detector {
+	d := detect.NewDetector(fixtureConfig)
+	d.MaxTargetMegaBytes = 0
+	d.IgnoreGitleaksAllow = true
+	d.Redact = 100
+	return d
+}
+
+func framed(values ...[]byte) []byte {
+	var output bytes.Buffer
+	for _, value := range values {
+		var header [8]byte
+		binary.BigEndian.PutUint64(header[:], uint64(len(value)))
+		output.Write(header[:])
+		output.Write(value)
+	}
+	return output.Bytes()
+}
+
+func protocol(t *testing.T, payload []byte) (int, []map[string]any, string) {
+	t.Helper()
+	var output, errors bytes.Buffer
+	exit := process(bytes.NewReader(payload), &output, &errors, scanner(), fixtureReady)
+	rows := make([]map[string]any, 0)
+	decoder := json.NewDecoder(&output)
+	for {
+		var row map[string]any
+		if err := decoder.Decode(&row); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal("invalid output JSON")
+		}
+		rows = append(rows, row)
+	}
+	return exit, rows, errors.String()
+}
+
+func syntheticPAT() string { return "gh" + "p_" + "aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hI6" }
+
+func syntheticJWT() string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"synthetic":"` + strings.Repeat("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 6000) + `"}`))
+	signature := base64.RawURLEncoding.EncodeToString([]byte("synthetic-not-cryptographically-valid-signature"))
+	return header + "." + payload + "." + signature
+}
+
+func syntheticPrivateKey() string {
+	return "-----BEGIN " + "PRIVATE KEY-----\n" + strings.Repeat("aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hI6+/\n", 6000) + "-----END " + "PRIVATE KEY-----\n"
+}
+
+func hasRule(rows []map[string]any, id string) bool {
+	for _, row := range rows {
+		matches, ok := row["findings"].([]any)
+		if !ok {
+			continue
+		}
+		for _, match := range matches {
+			if match.(map[string]any)["rule_id"] == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestWholeFileAdversarialPayloads(t *testing.T) {
+	cases := []struct {
+		name, rule string
+		data       []byte
+	}{
+		{"binary", "github-pat", append(append([]byte{0, 255, 128, 0}, []byte(syntheticPAT())...), 0, 255)},
+		{"boundary", "github-pat", []byte(strings.Repeat("\x00", 99990) + syntheticPAT() + strings.Repeat("\x00", 99990))},
+		{"unbounded_jwt", "jwt", []byte(strings.Repeat("\x00", 80000) + syntheticJWT() + "\n")},
+		{"multiline_private_key", "private-key", []byte(syntheticPrivateKey())},
+		{"inline_allow_ignored", "github-pat", []byte(syntheticPAT() + " # gitleaks:allow\n")},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			exit, rows, errors := protocol(t, framed(test.data))
+			if exit != 1 || errors != "" || !hasRule(rows, test.rule) {
+				t.Fatalf("detection failed: exit=%d expected_rule=%s", exit, test.rule)
+			}
+			encoded, _ := json.Marshal(rows)
+			if bytes.Contains(encoded, test.data) || bytes.Contains(encoded, []byte(syntheticPAT())) {
+				t.Fatal("raw fragment appeared in protocol")
+			}
+			if rows[1]["bytes"] != float64(len(test.data)) || rows[2]["bytes"] != float64(len(test.data)) {
+				t.Fatal("byte coverage mismatch")
+			}
+			for _, item := range rows[1]["findings"].([]any) {
+				match := item.(map[string]any)
+				if len(match) != 3 || match["rule_id"] == nil || match["start_line"] == nil || match["end_line"] == nil {
+					t.Fatal("unexpected finding disclosure fields")
+				}
+			}
+		})
+	}
+}
+
+func TestEmptyAndMultipleRecords(t *testing.T) {
+	exit, rows, errors := protocol(t, framed(nil, []byte("ordinary data"), []byte(syntheticPAT()), []byte("final plain data")))
+	if exit != 1 || errors != "" || len(rows) != 6 {
+		t.Fatal("multiple record protocol failed")
+	}
+	if rows[0]["type"] != "ready" || rows[5]["type"] != "summary" || rows[5]["files"] != float64(4) {
+		t.Fatal("missing ready/summary")
+	}
+	for index, row := range rows[1:5] {
+		if row["ordinal"] != float64(index+1) {
+			t.Fatal("ordinal mismatch")
+		}
+	}
+}
+
+func TestCleanEOFAndNoFindings(t *testing.T) {
+	for _, data := range [][]byte{nil, framed([]byte{0, 255, 128, 0}), framed(nil)} {
+		exit, rows, errors := protocol(t, data)
+		if exit != 0 || errors != "" || rows[len(rows)-1]["findings"] != float64(0) {
+			t.Fatal("clean stream failed")
+		}
+	}
+}
+
+func TestIncompleteProtocol(t *testing.T) {
+	cases := [][]byte{{1}, {0, 0, 0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0, 3, 1}, {255, 255, 255, 255, 255, 255, 255, 255}}
+	for _, input := range cases {
+		exit, rows, errors := protocol(t, input)
+		if exit != 2 || errors == "" || len(rows) != 1 {
+			t.Fatal("invalid stream was not rejected before result")
+		}
+		if rows[0]["type"] != "ready" {
+			t.Fatal("unexpected protocol output")
+		}
+	}
+}
+
+func TestUnknownArgumentsRejected(t *testing.T) {
+	for _, args := range [][]string{nil, {"--other", "value"}, {"--config", "file", "extra"}} {
+		var output, errors bytes.Buffer
+		if run(args, bytes.NewReader(nil), &output, &errors) != 2 || output.Len() != 0 || !strings.Contains(errors.String(), "invalid_arguments") {
+			t.Fatal("invalid arguments accepted")
+		}
+	}
+}
+
+type brokenWriter struct{}
+
+func (brokenWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestOutputFailureIsBlocking(t *testing.T) {
+	var errors bytes.Buffer
+	if process(bytes.NewReader(nil), brokenWriter{}, &errors, scanner(), fixtureReady) != 2 || !strings.Contains(errors.String(), "output_error") {
+		t.Fatal("output failure ignored")
+	}
+}
+
+func TestInlineSuppressionControl(t *testing.T) {
+	d := scanner()
+	d.IgnoreGitleaksAllow = false
+	fragment := detect.Fragment{Raw: syntheticPAT() + " # gitleaks:allow", FilePath: "record-00000000000000000001"}
+	if len(d.Detect(fragment)) != 0 {
+		t.Fatal("control did not exercise inline suppression")
+	}
+	d.IgnoreGitleaksAllow = true
+	if len(d.Detect(fragment)) == 0 {
+		t.Fatal("inline suppression was honored")
+	}
+}
+
+func TestReviewedContentRulesRemainActiveWithoutExtensions(t *testing.T) {
+	cases := []struct{ id, content string }{
+		{"freemius-secret-key", `"secret_key" => "` + "sk_" + "aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC" + `"`},
+		{"hashicorp-tf-password", `password = "` + "x7k2p9m" + "4a6t1q8" + `"`},
+		{"kubernetes-secret-yaml", "kind: Secret\ndata:\n  fixture: eDdLMnA5TTRhNlQxcTg=\n"},
+		{"nuget-config-password", `<add key="Password" value="x7K2p9M4a6T1q8" />`},
+	}
+	for _, test := range cases {
+		t.Run(test.id, func(t *testing.T) {
+			exit, rows, errors := protocol(t, framed([]byte(test.content)))
+			if exit != 1 || errors != "" || !hasRule(rows, test.id) {
+				t.Fatalf("reviewed rule inactive: %s", test.id)
+			}
+			if fixtureConfig.Rules[test.id].Path != nil {
+				t.Fatal("content path prerequisite remains")
+			}
+		})
+	}
+	if fixtureConfig.Rules["pkcs12-file"].Path.String() != pkcs12Selector || fixtureConfig.Rules["pkcs12-file"].Regex != nil {
+		t.Fatal("path-only policy changed")
+	}
+	if len(fixtureReady.RemovedContentPathRules) != 4 || fixtureReady.PolicyBeforeSHA256 == fixtureReady.PolicyAfterSHA256 {
+		t.Fatal("policy delta not recorded")
+	}
+}
+
+func TestPolicyDigestIncludesActualPatterns(t *testing.T) {
+	serialized, err := json.Marshal(fixtureConfig)
+	if err != nil || !bytes.Contains(serialized, []byte(`"Regex":"ghp_[0-9a-zA-Z]{36}"`)) {
+		t.Fatal("policy snapshot lost regexp semantics")
+	}
+}
+
+func TestPolicyDeltaOnlyRemovesReviewedPrerequisites(t *testing.T) {
+	original := fixtureConfig
+	original.Rules = make(map[string]config.Rule)
+	for id, rule := range fixtureConfig.Rules {
+		if selector, ok := authorizedContentPaths[id]; ok {
+			rule.Path = regexp.MustCompile(selector)
+		}
+		original.Rules[id] = rule
+	}
+	before, err := policyDigest(original)
+	if err != nil || before != fixtureReady.PolicyBeforeSHA256 {
+		t.Fatal("before policy digest mismatch")
+	}
+	originalRules := make(map[string]config.Rule)
+	for id, rule := range original.Rules {
+		originalRules[id] = rule
+	}
+	if _, code := strengthenContentRules(&original); code != "" {
+		t.Fatal(code)
+	}
+	after, err := policyDigest(original)
+	if err != nil || after != fixtureReady.PolicyAfterSHA256 {
+		t.Fatal("after policy digest mismatch")
+	}
+	for id, rule := range originalRules {
+		if _, approved := authorizedContentPaths[id]; approved {
+			rule.Path = nil
+		}
+		if !reflect.DeepEqual(rule, original.Rules[id]) {
+			t.Fatal("policy changed beyond approved Path field")
+		}
+	}
+}
+
+func TestConfigPathCollisionIsBlocking(t *testing.T) {
+	d := scanner()
+	d.Config.Path = "record-00000000000000000001"
+	var output, errors bytes.Buffer
+	if process(bytes.NewReader(framed([]byte(syntheticPAT()))), &output, &errors, d, fixtureReady) != 2 || !strings.Contains(errors.String(), "controlled_path_matches_config") {
+		t.Fatal("configuration path silently skipped fragment")
+	}
+}
+
+// rawProtocol returns the exact protocol bytes so concurrency can be compared
+// byte for byte rather than through a decoded and reordered view.
+func rawProtocol(t *testing.T, payload []byte) (int, []byte, string) {
+	t.Helper()
+	var output, errors bytes.Buffer
+	exit := process(bytes.NewReader(payload), &output, &errors, scanner(), fixtureReady)
+	return exit, output.Bytes(), errors.String()
+}
+
+// mixedCorpus builds records of several sizes and contents, including empty and
+// secret-bearing ones, so ordering bugs cannot hide behind uniform records.
+func mixedCorpus() [][]byte {
+	records := [][]byte{nil, []byte("plain"), []byte(syntheticPAT())}
+	for index := 0; index < 24; index++ {
+		size := 1 + index*4096
+		body := bytes.Repeat([]byte{byte(index), 'a', 0, 255}, size/4+1)[:size]
+		if index%5 == 0 {
+			body = append(body, []byte(syntheticPAT())...)
+		}
+		records = append(records, body)
+	}
+	return append(records, []byte(syntheticPrivateKey()), nil)
+}
+
+func TestConcurrentDetectionIsByteIdenticalToSequential(t *testing.T) {
+	payload := framed(mixedCorpus()...)
+	restore := runtime.GOMAXPROCS(1)
+	sequentialExit, sequentialOutput, sequentialErrors := rawProtocol(t, payload)
+	runtime.GOMAXPROCS(restore)
+	if sequentialErrors != "" {
+		t.Fatalf("sequential run failed: %s", sequentialErrors)
+	}
+	for _, procs := range []int{2, 4, 8} {
+		t.Run(fmt.Sprintf("procs-%d", procs), func(t *testing.T) {
+			previous := runtime.GOMAXPROCS(procs)
+			defer runtime.GOMAXPROCS(previous)
+			exit, output, errors := rawProtocol(t, payload)
+			if exit != sequentialExit || errors != sequentialErrors {
+				t.Fatalf("exit or stderr changed: exit=%d errors=%q", exit, errors)
+			}
+			if !bytes.Equal(output, sequentialOutput) {
+				t.Fatal("concurrent output differs from sequential output")
+			}
+		})
+	}
+}
+
+func TestRecordsAdmittedBeforeTruncationAreStillEmitted(t *testing.T) {
+	// A sequential scanner emits every complete record before reporting the
+	// truncation. Overlapping detection must not swallow that earlier output.
+	complete := framed([]byte(syntheticPAT()), []byte("second record"))
+	truncated := append(append([]byte(nil), complete...), 0, 0, 0, 0, 0, 0, 0, 9, 'x')
+	for _, procs := range []int{1, 8} {
+		previous := runtime.GOMAXPROCS(procs)
+		exit, output, errors := rawProtocol(t, truncated)
+		runtime.GOMAXPROCS(previous)
+		if exit != 2 || !strings.Contains(errors, "truncated_payload") {
+			t.Fatalf("truncation was not fail-closed at procs=%d", procs)
+		}
+		rows := bytes.Count(bytes.TrimRight(output, "\n"), []byte("\n")) + 1
+		if rows != 3 {
+			t.Fatalf("expected ready plus two results at procs=%d, got %d rows", procs, rows)
+		}
+		if bytes.Contains(output, []byte(`"type":"summary"`)) {
+			t.Fatal("a failed stream produced a summary")
+		}
+	}
+}
+
+func TestControlledPathGuardStopsAfterEarlierRecords(t *testing.T) {
+	detector := scanner()
+	detector.Config.Path = recordPath(2)
+	var output, errors bytes.Buffer
+	previous := runtime.GOMAXPROCS(8)
+	exit := process(bytes.NewReader(framed([]byte("first"), []byte("second"))), &output, &errors, detector, fixtureReady)
+	runtime.GOMAXPROCS(previous)
+	if exit != 2 || !strings.Contains(errors.String(), "controlled_path_matches_config") {
+		t.Fatal("configuration path collision was not fail-closed")
+	}
+	if !bytes.Contains(output.Bytes(), []byte(`"ordinal":1`)) {
+		t.Fatal("the record preceding the collision was not emitted")
+	}
+	if bytes.Contains(output.Bytes(), []byte(`"ordinal":2`)) {
+		t.Fatal("the colliding record was scanned anyway")
+	}
+}
+
+func TestByteBudgetAdmitsOversizedRecordAlone(t *testing.T) {
+	budget := newByteBudget(1024)
+	reserved, granted := budget.acquire(4096)
+	if !granted || reserved != 1024 {
+		t.Fatalf("oversized reservation was not clamped to capacity: %d %v", reserved, granted)
+	}
+	admitted := make(chan int64)
+	go func() {
+		amount, _ := budget.acquire(512)
+		admitted <- amount
+	}()
+	select {
+	case <-admitted:
+		t.Fatal("budget admitted a second record while it was fully reserved")
+	case <-time.After(50 * time.Millisecond):
+	}
+	budget.release(reserved)
+	select {
+	case second := <-admitted:
+		if second != 512 {
+			t.Fatalf("unexpected second reservation: %d", second)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("released budget did not wake the waiting record")
+	}
+}
+
+func TestCancelledByteBudgetStopsAWaitingReader(t *testing.T) {
+	budget := newByteBudget(1024)
+	if _, granted := budget.acquire(1024); !granted {
+		t.Fatal("the whole capacity was not reservable")
+	}
+	waited := make(chan bool)
+	go func() {
+		_, granted := budget.acquire(512)
+		waited <- granted
+	}()
+	select {
+	case <-waited:
+		t.Fatal("budget admitted a record while it was fully reserved")
+	case <-time.After(50 * time.Millisecond):
+	}
+	budget.cancel()
+	select {
+	case granted := <-waited:
+		if granted {
+			t.Fatal("a cancelled budget granted a reservation")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelling the budget did not release the waiting reader")
+	}
+}
+
+// openInput serves a fixed prefix and then parks, like a producer that is
+// waiting for a response before sending its next record. Tests use it to prove
+// the helper stops on its own rather than on end of input.
+type openInput struct {
+	data    []byte
+	mutex   sync.Mutex
+	offset  int
+	release chan struct{}
+}
+
+func (r *openInput) Read(destination []byte) (int, error) {
+	r.mutex.Lock()
+	if r.offset < len(r.data) {
+		count := copy(destination, r.data[r.offset:])
+		r.offset += count
+		r.mutex.Unlock()
+		return count, nil
+	}
+	r.mutex.Unlock()
+	<-r.release
+	return 0, io.EOF
+}
+
+func (r *openInput) consumed() int {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	return r.offset
+}
+
+// brokenOutput accepts a fixed number of writes and then fails, which is how a
+// closed consumer looks to the helper.
+type brokenOutput struct{ remaining int }
+
+func (w *brokenOutput) Write(data []byte) (int, error) {
+	if w.remaining <= 0 {
+		return 0, errors.New("output closed")
+	}
+	w.remaining--
+	return len(data), nil
+}
+
+// runWhileInputStaysOpen runs one scan whose producer never sends EOF, and
+// fails the test if the scan does not return on its own.
+func runWhileInputStaysOpen(t *testing.T, detector *detect.Detector, output io.Writer) (int, string) {
+	t.Helper()
+	previous := runtime.GOMAXPROCS(4)
+	defer runtime.GOMAXPROCS(previous)
+	input := &openInput{
+		data:    framed([]byte(syntheticPAT()), []byte("second record")),
+		release: make(chan struct{}),
+	}
+	defer close(input.release)
+	var errors bytes.Buffer
+	finished := make(chan int, 1)
+	go func() { finished <- process(input, output, &errors, detector, fixtureReady) }()
+	select {
+	case exit := <-finished:
+		return exit, errors.String()
+	case <-time.After(60 * time.Second):
+		t.Fatal("a contained failure waited for the producer to close its input")
+		return 0, ""
+	}
+}
+
+func TestOutputFailureStopsWhileProducerInputStaysOpen(t *testing.T) {
+	// The ready line is written, then the first record's result fails. A serial
+	// producer is still holding its input open awaiting that result, so the
+	// helper has to end the scan itself.
+	exit, errors := runWhileInputStaysOpen(t, scanner(), &brokenOutput{remaining: 1})
+	if exit != 2 || !strings.Contains(errors, "output_error") {
+		t.Fatalf("output failure was not fail-closed: exit=%d errors=%q", exit, errors)
+	}
+}
+
+func TestContainedWorkerPanicStopsWhileProducerInputStaysOpen(t *testing.T) {
+	detector := scanner()
+	// A nil allowlist is ignored by the admission path's PathAllowed check and
+	// dereferenced inside Detect, so exactly one detection worker panics.
+	detector.Config.Allowlists = append(detector.Config.Allowlists, nil)
+	var output bytes.Buffer
+	exit, errors := runWhileInputStaysOpen(t, detector, &output)
+	if exit != 2 || !strings.Contains(errors, "internal_panic") {
+		t.Fatalf("worker panic was not fail-closed: exit=%d errors=%q", exit, errors)
+	}
+	if bytes.Contains(output.Bytes(), []byte(`"type":"summary"`)) {
+		t.Fatal("a panicking scan produced a summary")
+	}
+}
+
+func TestAdmissionReservesBeforeReadingTheNextPayload(t *testing.T) {
+	// Nothing detects the admitted job, so its reservation stays held and the
+	// budget is exhausted while the reader looks at the next record.
+	const size = 64
+	budget := newByteBudget(size)
+	input := &openInput{
+		data:    framed(bytes.Repeat([]byte("a"), size), bytes.Repeat([]byte("b"), size)),
+		release: make(chan struct{}),
+	}
+	defer close(input.release)
+	dispatch := make(chan *scanJob, 4)
+	ordered := make(chan *scanJob, 4)
+	stopped := make(chan string, 1)
+	go func() {
+		stopped <- admitRecords(input, scanner(), budget, dispatch, ordered, make(chan struct{}))
+	}()
+	select {
+	case job := <-ordered:
+		if job.ordinal != 1 || len(job.payload) != size {
+			t.Fatalf("first record was not admitted whole: ordinal=%d bytes=%d", job.ordinal, len(job.payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first record was never admitted")
+	}
+	// The reader may have taken the second header, but must not have taken the
+	// second payload, which it has no room to allocate.
+	time.Sleep(200 * time.Millisecond)
+	if consumed := input.consumed(); consumed > 8+size+8 {
+		t.Fatalf("the next payload was read into memory while the budget was exhausted: %d bytes", consumed)
+	}
+	budget.cancel()
+	select {
+	case code := <-stopped:
+		if code != "" {
+			t.Fatalf("a cancelled budget reported a scan failure: %q", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelling the budget did not stop the reader")
+	}
+}
+
+func TestAdjacentOversizedRecordsRunAloneAndStayCovered(t *testing.T) {
+	// Each record is larger than the whole budget, so each is admitted alone and
+	// neither is skipped or truncated for its size.
+	const size = 128
+	budget := newByteBudget(size / 4)
+	first := bytes.Repeat([]byte("a"), size)
+	second := bytes.Repeat([]byte("b"), size)
+	dispatch := make(chan *scanJob, 4)
+	ordered := make(chan *scanJob, 4)
+	stopped := make(chan string, 1)
+	go func() {
+		input := bytes.NewReader(framed(first, second))
+		stopped <- admitRecords(input, scanner(), budget, dispatch, ordered, make(chan struct{}))
+	}()
+	for ordinal, expected := range [][]byte{first, second} {
+		var job *scanJob
+		select {
+		case job = <-ordered:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("record %d was never admitted", ordinal+1)
+		}
+		if !bytes.Equal(job.payload, expected) {
+			t.Fatalf("record %d was not admitted whole", ordinal+1)
+		}
+		select {
+		case <-ordered:
+			t.Fatalf("an oversized record was admitted alongside record %d", ordinal+1)
+		case <-time.After(100 * time.Millisecond):
+		}
+		budget.release(job.reserved)
+	}
+	select {
+	case code := <-stopped:
+		if code != "" {
+			t.Fatalf("oversized records reported a scan failure: %q", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the reader did not finish the stream")
+	}
+}
+
+func TestFailedAdmissionReturnsItsReservation(t *testing.T) {
+	const capacity = 256
+	budget := newByteBudget(capacity)
+	truncated := append(framed(bytes.Repeat([]byte("a"), 8)), 0, 0, 0, 0, 0, 0, 0, 64, 'x')
+	dispatch := make(chan *scanJob, 4)
+	ordered := make(chan *scanJob, 4)
+	input := bytes.NewReader(truncated)
+	stopped := make(chan string, 1)
+	go func() {
+		stopped <- admitRecords(input, scanner(), budget, dispatch, ordered, make(chan struct{}))
+	}()
+	first := <-ordered
+	budget.release(first.reserved)
+	if code := <-stopped; code != "truncated_payload" {
+		t.Fatalf("truncation was not fail-closed: %q", code)
+	}
+	// Only a reader that released the truncated record's reservation leaves the
+	// whole capacity free.
+	reclaimed := make(chan int64, 1)
+	go func() {
+		amount, _ := budget.acquire(capacity)
+		reclaimed <- amount
+	}()
+	select {
+	case amount := <-reclaimed:
+		if amount != capacity {
+			t.Fatalf("unexpected reservation after truncation: %d", amount)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the truncated record's reservation was never returned")
+	}
+}
+
+// reclaimsWholeCapacity reports whether the budget has nothing outstanding,
+// which is only true when every reservation taken so far was released.
+func reclaimsWholeCapacity(budget *byteBudget, capacity int64) bool {
+	reclaimed := make(chan int64, 1)
+	go func() {
+		amount, _ := budget.acquire(capacity)
+		reclaimed <- amount
+	}()
+	select {
+	case amount := <-reclaimed:
+		return amount == capacity
+	case <-time.After(5 * time.Second):
+		return false
+	}
+}
+
+func TestControlledPathFailureReturnsItsReservation(t *testing.T) {
+	const capacity = 256
+	budget := newByteBudget(capacity)
+	detector := scanner()
+	// The second record's controlled label collides with the configuration
+	// path, so admission fails after its reservation has already been taken.
+	detector.Config.Path = recordPath(2)
+	dispatch := make(chan *scanJob, 4)
+	ordered := make(chan *scanJob, 4)
+	input := bytes.NewReader(framed(bytes.Repeat([]byte("a"), 8), bytes.Repeat([]byte("b"), 8)))
+	stopped := make(chan string, 1)
+	go func() {
+		stopped <- admitRecords(input, detector, budget, dispatch, ordered, make(chan struct{}))
+	}()
+	first := <-ordered
+	budget.release(first.reserved)
+	if code := <-stopped; code != "controlled_path_matches_config" {
+		t.Fatalf("controlled path collision was not fail-closed: %q", code)
+	}
+	if !reclaimsWholeCapacity(budget, capacity) {
+		t.Fatal("the rejected record's reservation was never returned")
+	}
+}
+
+func TestDetectionReturnsItsReservation(t *testing.T) {
+	const capacity = 32
+	budget := newByteBudget(capacity)
+	job := &scanJob{ordinal: 1, length: capacity, payload: bytes.Repeat([]byte("a"), capacity), done: make(chan struct{})}
+	reserved, granted := budget.acquire(capacity)
+	if !granted {
+		t.Fatal("a fresh budget refused the whole capacity")
+	}
+	job.reserved = reserved
+	detectRecord(job, scanner(), budget)
+	<-job.done
+	// Only a worker that released the detected record's reservation leaves the
+	// whole capacity free for the next one.
+	if !reclaimsWholeCapacity(budget, capacity) {
+		t.Fatal("the detected record's reservation was never returned")
+	}
+}
+
+func TestEmptyRecordFloodStaysBounded(t *testing.T) {
+	// Empty records consume no byte budget, so only the job bound stops an
+	// unbounded number of them from being admitted at once.
+	empties := make([][]byte, 5000)
+	previous := runtime.GOMAXPROCS(8)
+	exit, output, errors := rawProtocol(t, framed(empties...))
+	runtime.GOMAXPROCS(previous)
+	if exit != 0 || errors != "" {
+		t.Fatalf("empty record flood failed: exit=%d errors=%s", exit, errors)
+	}
+	if !bytes.Contains(output, []byte(`"files":5000`)) {
+		t.Fatal("empty record flood lost records")
+	}
+}
+
+func TestFingerprintSetCanonicalizationPreservesActualPolicy(t *testing.T) {
+	allow := &config.Allowlist{Commits: []string{"second", "first"}, StopWords: []string{"zulu", "alpha"}, RegexTarget: "match", Regexes: []*regexp.Regexp{regexp.MustCompile("first-pattern"), regexp.MustCompile("second-pattern")}}
+	rule := config.Rule{RuleID: "synthetic", Regex: regexp.MustCompile("synthetic-pattern"), Entropy: 3, Allowlists: []*config.Allowlist{allow}}
+	cfg := config.Config{Rules: map[string]config.Rule{"synthetic": rule}, Allowlists: []*config.Allowlist{allow}}
+	original, _ := json.Marshal(cfg)
+	first, err := policyDigest(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unchanged, _ := json.Marshal(cfg)
+	if !bytes.Equal(original, unchanged) {
+		t.Fatal("fingerprinting mutated active policy")
+	}
+	allow.Commits[0], allow.Commits[1] = allow.Commits[1], allow.Commits[0]
+	allow.StopWords[0], allow.StopWords[1] = allow.StopWords[1], allow.StopWords[0]
+	second, _ := policyDigest(cfg)
+	if first != second {
+		t.Fatal("semantic set ordering changed digest")
+	}
+	allow.Regexes[0], allow.Regexes[1] = allow.Regexes[1], allow.Regexes[0]
+	orderedChange, _ := policyDigest(cfg)
+	if second == orderedChange {
+		t.Fatal("ordered regexp policy was silently canonicalized")
+	}
+	allow.StopWords = append(allow.StopWords, "new-stopword")
+	changed, _ := policyDigest(cfg)
+	if changed == orderedChange {
+		t.Fatal("changed allowlist semantics did not change digest")
+	}
+	rule.Entropy += 1
+	cfg.Rules["synthetic"] = rule
+	entropyChange, _ := policyDigest(cfg)
+	if entropyChange == changed {
+		t.Fatal("changed entropy did not change digest")
+	}
+}
+
+func TestReadinessChild(t *testing.T) {
+	if os.Getenv("NPA_PRIVATE_SCANNER_READY_CHILD") != "1" {
+		return
+	}
+	data, err := json.Marshal(fixtureReady)
+	if err != nil {
+		t.Fatal("ready marshal failed")
+	}
+	os.Stdout.Write(append(data, '\n'))
+}
+
+func TestFreshProcessReadyPolicyStability(t *testing.T) {
+	var reference []byte
+	for index := 0; index < 5; index++ {
+		command := exec.Command(os.Args[0], "-test.run=^TestReadinessChild$")
+		command.Env = append(os.Environ(), "NPA_PRIVATE_SCANNER_READY_CHILD=1")
+		result, err := command.Output()
+		if err != nil {
+			t.Fatal("fresh readiness child failed")
+		}
+		line := bytes.SplitN(result, []byte("\n"), 2)[0]
+		var decoded ready
+		if err := json.Unmarshal(line, &decoded); err != nil {
+			t.Fatal("fresh readiness malformed")
+		}
+		if index == 0 {
+			reference = append([]byte(nil), line...)
+		} else if !bytes.Equal(reference, line) {
+			t.Fatal("fresh-process ready policy changed")
+		}
+	}
+}
+
+func configFixturePath() string {
+	if configured := os.Getenv("NPA_IMAGE_BYTE_TEST_CONFIG"); configured != "" {
+		return configured
+	}
+	return filepath.Join("..", "..", "..", "..", ".gitleaks.toml")
+}
+
+func TestDescriptorPathExactPolicyAndProtocolParity(t *testing.T) {
+	file, err := os.Open(configFixturePath())
+	if err != nil {
+		t.Fatal("fixture open failed")
+	}
+	defer file.Close()
+	parsed, info, code := configurationFD(int(file.Fd()))
+	if code != "" || !reflect.DeepEqual(info, fixtureReady) {
+		t.Fatal("descriptor changed exact ready policy")
+	}
+	if position, err := file.Seek(0, io.SeekCurrent); err != nil || position != 0 {
+		t.Fatal("caller descriptor closed or position changed")
+	}
+	left, _ := policyDigest(parsed)
+	right, _ := policyDigest(fixtureConfig)
+	if left != right {
+		t.Fatal("descriptor changed policy semantics")
+	}
+	// Upstream config.Translate retains a process-global extension-depth guard.
+	// The bridge configures exactly once per process. Compare both real CLI
+	// modes in independent children rather than accumulating config loads.
+	outputs := make([][]byte, 0, 2)
+	for _, mode := range []string{"path", "descriptor"} {
+		command := exec.Command(os.Args[0], "-test.run=^TestInheritedDescriptorChild$")
+		command.ExtraFiles = []*os.File{file}
+		command.Env = append(os.Environ(), "PRIVATE_CONFIG_DESCRIPTOR_CHILD=1",
+			"PRIVATE_CONFIG_PAYLOAD=1", "PRIVATE_CONFIG_MODE="+mode)
+		body, err := command.Output()
+		exitError, ok := err.(*exec.ExitError)
+		if !ok || exitError.ExitCode() != 1 || len(exitError.Stderr) != 0 {
+			t.Fatal("real config mode did not preserve finding exit status")
+		}
+		outputs = append(outputs, body)
+	}
+	if !bytes.Equal(outputs[0], outputs[1]) {
+		t.Fatal("path and descriptor full protocol differs")
+	}
+
+}
+
+func TestDescriptorModeRejectsAmbiguousOrInvalidArguments(t *testing.T) {
+	cases := [][]string{
+		{"--config-fd", "-1"}, {"--config-fd", "0"}, {"--config-fd", "1"}, {"--config-fd", "2"},
+		{"--config-fd", "invalid"}, {"--config-fd", "18446744073709551616"},
+		{"--config", configFixturePath(), "--config-fd", "3"},
+		{"--config", "", "--config-fd", "3"}, {"--config-fd", "3", "extra"},
+	}
+	for _, args := range cases {
+		var out, diagnostic bytes.Buffer
+		if run(args, bytes.NewReader(nil), &out, &diagnostic) != 2 || out.Len() != 0 ||
+			diagnostic.String() != "{\"error\":\"invalid_arguments\"}\n" {
+			t.Fatal("ambiguous or invalid descriptor arguments accepted")
+		}
+	}
+}
+
+func TestDescriptorClosedNonregularAndPositionRejected(t *testing.T) {
+	for _, fd := range []int{-1, 0, 1, 2} {
+		if _, _, code := configurationFD(fd); code != "config_descriptor_invalid" {
+			t.Fatal("standard descriptor accepted")
+		}
+	}
+	file, err := os.Open(configFixturePath())
+	if err != nil {
+		t.Fatal("fixture open failed")
+	}
+	closed := int(file.Fd())
+	file.Close()
+	if _, _, code := configurationFD(closed); code != "config_descriptor_invalid" {
+		t.Fatal("closed descriptor accepted")
+	}
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal("pipe setup failed")
+	}
+	defer read.Close()
+	defer write.Close()
+	if _, _, code := configurationFD(int(read.Fd())); code != "config_not_regular" {
+		t.Fatal("unseekable pipe accepted")
+	}
+	directory, err := os.Open(t.TempDir())
+	if err != nil {
+		t.Fatal("directory setup failed")
+	}
+	defer directory.Close()
+	if _, _, code := configurationFD(int(directory.Fd())); code != "config_not_regular" {
+		t.Fatal("directory descriptor accepted")
+	}
+	positioned, err := os.Open(configFixturePath())
+	if err != nil {
+		t.Fatal("fixture open failed")
+	}
+	defer positioned.Close()
+	if _, err := positioned.Seek(1, io.SeekStart); err != nil {
+		t.Fatal("seek setup failed")
+	}
+	if _, _, code := configurationFD(int(positioned.Fd())); code != "config_position_invalid" {
+		t.Fatal("nonzero descriptor start accepted")
+	}
+	// Linux O_PATH opens regular inode metadata while denying seek/read access.
+	fd, err := syscall.Open(configFixturePath(), 0x200000, 0)
+	if err != nil {
+		t.Fatal("metadata descriptor setup failed")
+	}
+	defer syscall.Close(fd)
+	if _, _, code := configurationFD(fd); code != "config_position_invalid" {
+		t.Fatal("unreadable regular metadata descriptor accepted")
+	}
+}
+
+func TestStableConfigReadRejectsMutation(t *testing.T) {
+	for _, name := range []string{"grow", "shrink", "same_size_restore_mtime", "mode"} {
+		t.Run(name, func(t *testing.T) {
+			file, err := os.CreateTemp(t.TempDir(), "config-")
+			if err != nil {
+				t.Fatal("temporary config failed")
+			}
+			defer file.Close()
+			original := []byte("synthetic immutable configuration")
+			if _, err := file.WriteAt(original, 0); err != nil {
+				t.Fatal("fixture write failed")
+			}
+			before, _ := file.Stat()
+			read := func(reader io.Reader) ([]byte, error) {
+				body, err := io.ReadAll(reader)
+				if err != nil {
+					return nil, err
+				}
+				switch name {
+				case "grow":
+					_, err = file.WriteAt([]byte("x"), int64(len(original)))
+				case "shrink":
+					err = file.Truncate(1)
+				case "same_size_restore_mtime":
+					// Prove the fixture changed ctime; a short sleep alone does not
+					// establish an observable tick on every filesystem.
+					changed := false
+					for attempt := 0; attempt < 100; attempt++ {
+						_, err = file.WriteAt([]byte("X"), 0)
+						if err == nil {
+							err = os.Chtimes(file.Name(), before.ModTime(), before.ModTime())
+						}
+						if err != nil {
+							break
+						}
+						current, statErr := file.Stat()
+						if statErr != nil {
+							t.Fatal("mutation stat failed")
+						}
+						if current.Sys().(*syscall.Stat_t).Ctim != before.Sys().(*syscall.Stat_t).Ctim {
+							changed = true
+							break
+						}
+						time.Sleep(time.Millisecond)
+					}
+					if err == nil && !changed {
+						t.Fatal("fixture did not produce observable ctime change")
+					}
+				case "mode":
+					err = file.Chmod(0400)
+				}
+				if err != nil {
+					t.Fatal("mutation setup failed")
+				}
+				return body, nil
+			}
+			if _, code := readConfigData(file, read); code != "config_changed" {
+				t.Fatal("config mutation not rejected")
+			}
+		})
+	}
+}
+
+func TestConfigReadErrorAndPathGuardsRemain(t *testing.T) {
+	file, err := os.Open(configFixturePath())
+	if err != nil {
+		t.Fatal("fixture open failed")
+	}
+	defer file.Close()
+	if _, code := readConfigData(file, func(io.Reader) ([]byte, error) { return nil, io.ErrUnexpectedEOF }); code != "config_read_error" {
+		t.Fatal("config read error accepted")
+	}
+	directory := t.TempDir()
+	link := filepath.Join(directory, "link")
+	target, _ := filepath.Abs(configFixturePath())
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal("symlink setup failed")
+	}
+	fifo := filepath.Join(directory, "fifo")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal("fifo setup failed")
+	}
+	for _, path := range []string{link, fifo, directory} {
+		if _, _, code := configuration(path); code != "config_not_regular" {
+			t.Fatal("existing path guard weakened")
+		}
+	}
+}
+
+func TestInheritedDescriptorChild(t *testing.T) {
+	if os.Getenv("PRIVATE_CONFIG_DESCRIPTOR_CHILD") != "1" {
+		return
+	}
+	args := []string{"--config-fd", "3"}
+	if os.Getenv("PRIVATE_CONFIG_MODE") == "path" {
+		args = []string{"--config", configFixturePath()}
+	}
+	var input []byte
+	if os.Getenv("PRIVATE_CONFIG_PAYLOAD") == "1" {
+		input = framed([]byte("public fixture"), []byte(syntheticPAT()))
+	}
+	var output, diagnostic bytes.Buffer
+	exit := run(args, bytes.NewReader(input), &output, &diagnostic)
+	os.Stdout.Write(output.Bytes())
+	os.Stderr.Write(diagnostic.Bytes())
+	os.Exit(exit)
+}
+
+func TestActualInheritedDescriptorProtocol(t *testing.T) {
+	file, err := os.Open(configFixturePath())
+	if err != nil {
+		t.Fatal("fixture open failed")
+	}
+	defer file.Close()
+	command := exec.Command(os.Args[0], "-test.run=^TestInheritedDescriptorChild$")
+	command.ExtraFiles = []*os.File{file}
+	command.Env = append(os.Environ(), "PRIVATE_CONFIG_DESCRIPTOR_CHILD=1")
+	body, err := command.Output()
+	if err != nil {
+		t.Fatal("inherited descriptor child failed")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	var actual ready
+	if decoder.Decode(&actual) != nil || !reflect.DeepEqual(actual, fixtureReady) {
+		t.Fatal("child inherited ready policy differs")
+	}
+	var totals summary
+	if decoder.Decode(&totals) != nil || totals.Type != "summary" || totals.Files != 0 {
+		t.Fatal("child summary malformed")
+	}
+	if decoder.Decode(&totals) != io.EOF {
+		t.Fatal("unexpected child output")
+	}
+}

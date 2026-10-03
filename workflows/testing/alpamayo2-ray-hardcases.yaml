@@ -1,0 +1,61 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: alpamayo2-ray-hardcases
+  description: >-
+    Measure a multi-scenario Alpamayo baseline with Ray, select all scenarios
+    above a mean displacement-error threshold, and rerun those scenarios with
+    the same random seeds and additional diffusion steps. Compare measured
+    error changes without assuming that more steps improve a trajectory.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/alpamayo2-ray-hardcases"
+  sample_indices: "0,1"
+  seeds: "42,43"
+  diffusion_steps: "10"
+  refinement_steps: "20,30"
+  minimum_ade: "2.0"
+  workers: "1"
+
+  baseline_uri: "s3://{{config.bucket}}/{{config.prefix}}/baseline/"
+  refined_uri: "s3://{{config.bucket}}/{{config.prefix}}/refined/"
+  output_uri: "{{config.baseline_uri}}"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 16
+    memory: 128Gi
+
+initial: baseline
+
+states:
+  baseline:
+    description: Establish per-scenario baseline errors across explicit random seeds.
+    toolRef: workbench.alpamayo2_super.sweep
+    resources: gpu
+    outputs:
+      - uri: "{{config.baseline_uri}}report.json"
+        schema: npa.alpamayo.ray-sweep.v1
+    next: refine
+
+  refine:
+    description: Refine every selected hard scenario and compare matched seeds.
+    toolRef: workbench.alpamayo2_super.sweep
+    resources: gpu
+    params:
+      input_uri: "{{config.baseline_uri}}report.json"
+      output_uri: "{{config.refined_uri}}"
+      diffusion_steps: "{{config.refinement_steps}}"
+    inputs:
+      - uri: "{{config.baseline_uri}}report.json"
+        schema: npa.alpamayo.ray-sweep.v1
+    outputs:
+      - uri: "{{config.refined_uri}}report.json"
+        schema: npa.alpamayo.ray-sweep.v1
+      - uri: "{{config.refined_uri}}SHA256SUMS"
+        schema: npa.checksums.sha256.v1
+    terminal: true

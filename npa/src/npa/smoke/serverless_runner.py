@@ -18,7 +18,7 @@ import yaml
 
 from npa.clients.credentials import load_credentials
 from npa.clients.serverless import ServerlessClient, ServerlessClientError
-from npa.deploy.images import container_image_for_tool, primary_container_registry
+from npa.deploy.images import container_image_for_tool, execution_container_registry
 from npa.serverless_common.env import ISAAC_EULA_VARS, isaac_eula_env  # noqa: F401 (re-exported)
 from npa.serverless_common import (
     build_serverless_job_env,
@@ -28,11 +28,13 @@ from npa.serverless_common import (
     split_serverless_env,
 )
 
-from npa.smoke.manifest import container
+from npa.smoke.manifest import UNLIMITED_SERVERLESS_ERROR, container
 
-# Nebius AI Jobs always require a GPU preset, even for CPU-only workloads, so a
-# small default is used when a golden eval does not pin its own serverless GPU.
-DEFAULT_SERVERLESS_GPU = "l40s"
+# Nebius AI Jobs always require a GPU preset, even for CPU-only workloads. L40S
+# is a valid public CLI target but is not offered in the shared golden-eval
+# project; H200 is its smallest generally compatible preset. Manifest entries
+# should still pin a different offered accelerator when their runtime needs one.
+DEFAULT_SERVERLESS_GPU = "h200"
 _TERMINAL_OK = {"completed", "succeeded", "success"}
 
 
@@ -43,7 +45,7 @@ def resolve_golden_image(
 
     spec = container(tool)
     if spec.internal:
-        resolved_registry = (registry or primary_container_registry()).rstrip("/")
+        resolved_registry = (registry or execution_container_registry()).rstrip("/")
         resolved_tag = tag or spec.default_tag
         if not resolved_tag:
             raise RuntimeError(
@@ -110,6 +112,8 @@ def submit_golden_eval(
     """
 
     spec = container(tool)
+    if spec.golden_eval.execution_timeout is None:
+        raise RuntimeError(UNLIMITED_SERVERLESS_ERROR)
     command = spec.golden_eval.command
     gpu = gpu_type or spec.golden_eval.serverless_gpu or DEFAULT_SERVERLESS_GPU
 
@@ -122,7 +126,9 @@ def submit_golden_eval(
 
     run_id = f"golden-{tool}-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     output_path = f"{bucket}/golden-evals/{run_id}/"
-    platform, preset, gpu_count = resolve_gpu_platform(gpu, 1)
+    platform, preset, gpu_count = resolve_gpu_platform(
+        gpu, spec.golden_eval.serverless_gpu_count
+    )
     subnet_id = resolve_subnet(resolved_project)
 
     s3_credentials = {
@@ -137,6 +143,14 @@ def submit_golden_eval(
         # pyarrow/lancedb/fiftyone deps missing from slim tool images.
         "NPA_SKIP_EAGER_IMPORTS": "1",
     }
+    # cosmos3-ray-serve requires a bearer token for its authenticated API.
+    # Generate an ephemeral token; the smoke_functional.sh start/stop cycle
+    # is self-contained so the token never leaves the job.
+    if tool == "cosmos3-ray-serve":
+        extra_env["NPA_COSMOS3_RAY_TOKEN"] = "golden-eval-ephemeral-token"
+        # The light-import mode only exposes the cosmos3 CLI when
+        # NPA_LIGHT_WORKBENCH_TOOL is cosmos3-ray-serve.
+        extra_env["NPA_LIGHT_WORKBENCH_TOOL"] = "cosmos3-ray-serve"
     full_env = build_serverless_job_env(
         output_path=output_path,
         hf_token=cfg.hf_token,

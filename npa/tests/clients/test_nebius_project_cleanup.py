@@ -183,53 +183,6 @@ def test_delete_project_uses_only_supported_exact_id_adapter(monkeypatch) -> Non
     assert calls == [["iam", "v2", "project", "delete", "--id", "project-a"]]
 
 
-def test_registry_identity_is_exact_and_project_scoped(monkeypatch) -> None:
-    monkeypatch.setattr(nebius, "_iam_profile_args", lambda _profile: ([], "test"))
-    monkeypatch.setattr(
-        nebius,
-        "_run_json",
-        lambda args: {
-            "metadata": {
-                "id": args[-1],
-                "parent_id": "project-a",
-                "name": "registry-demo",
-            }
-        },
-    )
-
-    identity = nebius.get_registry_identity("registry-a")
-
-    assert identity == nebius.RegistryIdentity(
-        "registry-a", "registry-demo", "project-a", "test"
-    )
-
-
-def test_registry_artifact_inventory_orders_tagged_roots_first(monkeypatch) -> None:
-    monkeypatch.setattr(nebius, "_iam_profile_args", lambda _profile: ([], "test"))
-    monkeypatch.setattr(
-        nebius,
-        "_run_json",
-        lambda _args: {
-            "items": [
-                {"id": "config", "tags": []},
-                {"id": "root", "tags": ["validation"]},
-            ]
-        },
-    )
-
-    assert nebius.list_registry_image_ids("registry-a") == ("root", "config")
-
-
-def test_registry_artifact_inventory_fails_closed_without_immutable_id(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(nebius, "_iam_profile_args", lambda _profile: ([], "test"))
-    monkeypatch.setattr(nebius, "_run_json", lambda _args: {"items": [{"tags": []}]})
-
-    with pytest.raises(nebius.NebiusError, match="without immutable identity"):
-        nebius.list_registry_image_ids("registry-a")
-
-
 def test_project_dependency_inventory_keeps_projects_isolated(monkeypatch) -> None:
     monkeypatch.setattr(nebius, "_iam_profile_args", lambda _profile: ([], "test"))
     calls: list[list[str]] = []

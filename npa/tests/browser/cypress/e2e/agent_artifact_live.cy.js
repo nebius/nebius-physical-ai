@@ -14,6 +14,7 @@ describe("recording-independent artifacts against the live GR00T run", () => {
   });
 
   it("selects the run and previews JSON, YAML, log, image, video, and checkpoint metadata", () => {
+    let inventoryRequests = 0;
     cy.visitLiveAgent();
     cy.get("#statusBar", { timeout: 30000 }).should("exist");
     cy.get("#tabRerun").click();
@@ -24,7 +25,11 @@ describe("recording-independent artifacts against the live GR00T run", () => {
     });
 
     cy.intercept("POST", "/api/sim-viz/load-run").as("loadTrainingRun");
-    cy.intercept("GET", `/api/artifacts/run/${RUN_ID}*`).as("liveArtifactList");
+    // Continuations address the server's opaque run_ref rather than run_id.
+    cy.intercept("GET", "/api/artifacts/run/**", (request) => {
+      inventoryRequests += 1;
+      request.continue();
+    }).as("liveArtifactList");
     cy.intercept("GET", "/api/artifacts/content*", (req) => {
       const key = new URL(req.url).searchParams.get("key") || "";
       if (key === `${RUN_ID}/manifest.json`) req.alias = "liveManifest";
@@ -36,6 +41,14 @@ describe("recording-independent artifacts against the live GR00T run", () => {
     cy.get("#runIdInput").clear().type(RUN_ID, { delay: 0 });
     cy.get("#loadRunData").click();
     cy.wait("@loadTrainingRun", { timeout: 120000 }).its("response.statusCode").should("eq", 200);
+    cy.wait("@liveArtifactList", { timeout: 120000 }).its("response.statusCode").should("eq", 200);
+
+    // A selected run renders its first native S3 page immediately. It cannot
+    // declare that no recording exists until the operator completes the
+    // inventory explicitly.
+    cy.get("#artifactRunSummary .no-recording").should("not.exist");
+    cy.then(() => expect(inventoryRequests, "one lazy inventory page").to.eq(1));
+    cy.get("#artifactLoadRunArtifacts").click();
     cy.wait("@liveArtifactList", { timeout: 120000 }).its("response.statusCode").should("eq", 200);
 
     cy.get("#artifactRunSummary", { timeout: 60000 })
@@ -84,6 +97,7 @@ describe("recording-independent artifacts against the live GR00T run", () => {
       });
 
     cy.get("#artifactRoleFilter").select("");
+    cy.then(() => expect(inventoryRequests, "role filter reuses completed inventory").to.eq(2));
     cy.get(`#artifactList button[data-action='preview-artifact'][data-key='${VIDEO_KEY}']`, {
       timeout: 60000,
     }).click();

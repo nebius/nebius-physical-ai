@@ -33,9 +33,9 @@ Real NPA setup surfaces are:
   and parser-setting validation.
 - `npa workbench cosmos fetch` for source plus checkpoint staging in a temporary
   runtime cache.
-- `npa/workflows/workbench/npa-workflows/cosmos-fetch.yaml` for a workflow fetch
+- `workflows/testing/cosmos-fetch.yaml` for a workflow fetch
   workflow that runs those real commands.
-- `npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml` for the H100
+- `workflows/testing/cosmos3-text-to-image.yaml` for the H100
   text-to-image smoke workflow.
 
 ## Setup Flow

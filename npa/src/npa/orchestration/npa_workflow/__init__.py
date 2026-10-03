@@ -5,6 +5,7 @@ from npa.orchestration.npa_workflow.interpreter import (
     ExecutionPlan,
     RunContext,
     build_plan,
+    build_reachability_plan,
     run_workflow,
 )
 from npa.orchestration.npa_workflow.spec import (
@@ -14,15 +15,38 @@ from npa.orchestration.npa_workflow.spec import (
     load_spec,
     validate_spec,
 )
+from npa.orchestration.npa_workflow.supervisor import (
+    AttemptIdentity,
+    BackendObservation,
+    CheckpointValidation,
+    FailureClass,
+    RecoveryAction,
+    RecoveryContext,
+    ServerlessSupervisorAdapter,
+    SkyPilotSupervisorAdapter,
+    SupervisorLedger,
+    WorkflowRunSupervisor,
+)
 
 __all__ = [
     "API_VERSION",
     "API_VERSION_BETA",
     "ExecutionPlan",
+    "AttemptIdentity",
+    "BackendObservation",
+    "CheckpointValidation",
+    "FailureClass",
     "NpaWorkflowError",
     "NpaWorkflowSpec",
     "RunContext",
+    "RecoveryAction",
+    "RecoveryContext",
+    "ServerlessSupervisorAdapter",
+    "SkyPilotSupervisorAdapter",
+    "SupervisorLedger",
+    "WorkflowRunSupervisor",
     "build_plan",
+    "build_reachability_plan",
     "load_spec",
     "run_workflow",
     "validate_spec",

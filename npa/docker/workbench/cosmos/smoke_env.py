@@ -57,7 +57,9 @@ def check_import_cosmos() -> CheckResult:
                 False,
                 f"expected version: {EXPECTED_COSMOS_VERSION}; found: {version}",
             )
-        return CheckResult("import cosmos", True, f"module: {module.__name__}; version: {version}")
+        return CheckResult(
+            "import cosmos", True, f"module: {module.__name__}; version: {version}"
+        )
     except Exception as exc:
         return CheckResult("import cosmos", False, _format_exception(exc))
 
@@ -66,7 +68,9 @@ def check_cuda_gpu() -> CheckResult:
     try:
         torch = importlib.import_module("torch")
         if not torch.cuda.is_available():
-            return CheckResult("check CUDA/GPU access", False, "torch.cuda.is_available() is false")
+            return CheckResult(
+                "check CUDA/GPU access", False, "torch.cuda.is_available() is false"
+            )
         before = torch.cuda.memory_allocated(0)
         tensor = torch.ones((512, 512), device="cuda")
         allocated = torch.cuda.memory_allocated(0) - before
@@ -112,21 +116,35 @@ def check_core_dependencies() -> CheckResult:
             "; ".join(versions) + f"; pipeline: {pipeline_name}",
         )
     except Exception as exc:
-        return CheckResult("import core Cosmos dependencies", False, _format_exception(exc))
+        return CheckResult(
+            "import core Cosmos dependencies", False, _format_exception(exc)
+        )
 
 
 def check_server_script() -> CheckResult:
     try:
         py_compile.compile(str(SERVER_PATH), doraise=True)
-        spec = importlib.util.spec_from_file_location("npa_cosmos_smoke_server", SERVER_PATH)
+        spec = importlib.util.spec_from_file_location(
+            "npa_cosmos_smoke_server", SERVER_PATH
+        )
         if spec is None or spec.loader is None:
-            return CheckResult("load Cosmos server script", False, f"unable to load spec for {SERVER_PATH}")
+            return CheckResult(
+                "load Cosmos server script",
+                False,
+                f"unable to load spec for {SERVER_PATH}",
+            )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         app = getattr(module, "app", None)
         if app is None:
-            return CheckResult("load Cosmos server script", False, "server module has no app")
-        return CheckResult("load Cosmos server script", True, f"server: {SERVER_PATH}; app: {type(app).__name__}")
+            return CheckResult(
+                "load Cosmos server script", False, "server module has no app"
+            )
+        return CheckResult(
+            "load Cosmos server script",
+            True,
+            f"server: {SERVER_PATH}; app: {type(app).__name__}",
+        )
     except Exception as exc:
         return CheckResult("load Cosmos server script", False, _format_exception(exc))
 
@@ -134,7 +152,9 @@ def check_server_script() -> CheckResult:
 def check_model_download_tooling() -> CheckResult:
     path = shutil.which("huggingface-cli")
     if path is None:
-        return CheckResult("check model download tooling", False, "huggingface-cli not found on PATH")
+        return CheckResult(
+            "check model download tooling", False, "huggingface-cli not found on PATH"
+        )
     try:
         result = subprocess.run(
             [path, "--help"],
@@ -145,7 +165,9 @@ def check_model_download_tooling() -> CheckResult:
             check=False,
         )
     except Exception as exc:
-        return CheckResult("check model download tooling", False, _format_exception(exc))
+        return CheckResult(
+            "check model download tooling", False, _format_exception(exc)
+        )
     if result.returncode != 0:
         output = (result.stderr or result.stdout).strip()
         return CheckResult(
@@ -161,13 +183,21 @@ def check_model_weights_mount() -> CheckResult:
     model_dir = Path(os.environ.get("COSMOS_MODEL_DIR", str(DEFAULT_MODEL_DIR)))
     try:
         if not model_dir.is_dir():
-            return CheckResult("model weights directory is mounted", False, f"missing {model_dir}")
+            return CheckResult(
+                "model weights directory is mounted", False, f"missing {model_dir}"
+            )
         model_path = model_dir / _model_slug(model)
         if not model_path.is_dir():
-            return CheckResult("model weights directory is mounted", False, f"missing model {model_path}")
+            return CheckResult(
+                "model weights directory is mounted",
+                False,
+                f"missing model {model_path}",
+            )
         return CheckResult("model weights directory is mounted", True, str(model_path))
     except Exception as exc:
-        return CheckResult("model weights directory is mounted", False, _format_exception(exc))
+        return CheckResult(
+            "model weights directory is mounted", False, _format_exception(exc)
+        )
 
 
 def _print_result(result: CheckResult) -> None:

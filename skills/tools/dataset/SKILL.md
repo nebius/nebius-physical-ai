@@ -70,7 +70,7 @@ that populates the LanceDB query index runs on H100 (general training class).
 ## SkyPilot + workflow
 
 - Declarative pipeline (ingest -> validate quality gate -> curate -> register
-  queryable version): `npa/workflows/workbench/npa-workflows/dataset-ingest-curate.yaml`.
+  queryable version): `workflows/testing/dataset-ingest-curate.yaml`.
   The raw SkyPilot twin is retired.
 - The `register` stage needs the LanceDB service reachable from a pod:
   `npa workbench lancedb deploy --runtime kubernetes --namespace workbench --storage-path s3://<bucket>/lancedb/`
@@ -87,3 +87,9 @@ toolRefs: `workbench.dataset.ingest`, `workbench.dataset.validate`,
 - Curated child versions are content-addressed (`<parent>.curated-<hash>`); a
   workflow that queries a curated version wires the concrete manifest URI at
   runtime.
+- The service defaults to token authentication and an empty request storage
+  scope. Set `DATASET_TOKEN`, plus the narrow `DATASET_ALLOWED_S3_ROOTS` and/or
+  `DATASET_ALLOWED_LOCAL_ROOTS` boundary. These allowlists apply to deployed
+  FastAPI requests, not default embedded CLI, SDK, or workflow toolRef
+  execution. `DATASET_AUTH_MODE=none` is an explicit local/test service opt-in
+  only; see `docs/security/workbench-service-boundaries.md`.

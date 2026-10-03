@@ -8,7 +8,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = ROOT / "npa" / "scripts" / "run_byof_datagen.py"
-YAML_PATH = ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles" / "byof-datagen-rtxpro-smoke.yaml"
+YAML_PATH = (
+    ROOT
+    / "npa"
+    / "src"
+    / "npa"
+    / "workflows"
+    / "byof"
+    / "profiles"
+    / "byof-datagen-rtxpro-smoke.yaml"
+)
 
 
 def _load_module():
@@ -28,7 +37,7 @@ def test_render_workflow_sets_datagen_envs() -> None:
         task="LeIsaac-SO101-PickOrange-v0",
         num_envs=8,
         num_demos=20,
-        image="cr.example.nebius.cloud/proj/npa-byof:test",
+        image="registry.example/proj/npa-byof:test",
     )
     envs = next(doc["envs"] for doc in docs[1:] if isinstance(doc.get("envs"), dict))
     assert envs["NPA_BYOF_RUN_ID"] == "byof-datagen-test"
@@ -36,8 +45,10 @@ def test_render_workflow_sets_datagen_envs() -> None:
     assert envs["BYOF_NUM_ENVS"] == "8"
     assert envs["BYOF_NUM_DEMOS"] == "20"
     assert envs["BYOF_REPO_ROOT"] == "/opt/byof"
-    resources = next(doc["resources"] for doc in docs[1:] if isinstance(doc.get("resources"), dict))
-    assert resources["image_id"] == "docker:cr.example.nebius.cloud/proj/npa-byof:test"
+    resources = next(
+        doc["resources"] for doc in docs[1:] if isinstance(doc.get("resources"), dict)
+    )
+    assert resources["image_id"] == "docker:registry.example/proj/npa-byof:test"
 
 
 def test_main_render_only_writes_yaml(capsys) -> None:

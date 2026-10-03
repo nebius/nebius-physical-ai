@@ -69,3 +69,14 @@ def test_ssh_wait_reports_progress_and_bounds_its_window() -> None:
     # A port that never opens is reported as reachability, not as a key problem.
     assert "never opened from this machine" in script
     assert "never authenticated" in script
+
+
+def test_terraform_verifies_provider_host_identity_before_ssh() -> None:
+    script = dict(_provisioner_scripts())["wait_for_cloud_init"]
+    assert "StrictHostKeyChecking=no" not in script
+    assert "StrictHostKeyChecking=yes" in script
+    assert "UserKnownHostsFile=$known_hosts" in script
+    assert script.index("-m npa.deploy.ssh_trust") < script.index("ssh_cmd=(ssh")
+    assert '--instance-id "$NPA_SSH_TRUST_INSTANCE"' in script
+    assert '--project-id "$NPA_SSH_TRUST_PROJECT"' in script
+    assert '--nonce "$NPA_SSH_TRUST_NONCE"' in script

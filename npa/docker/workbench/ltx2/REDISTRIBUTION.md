@@ -61,8 +61,8 @@ satisfy:
   an anonymous puller.
 
 Had we baked `ltx-core`, this image would have been `restricted` /
-build-your-own for exactly the reason `cosmos3-serving` is: a derived-container
-grant whose conditions anonymous distribution does not establish. Baking nothing
+build-your-own for the same reason the retired Cosmos3-serving parent was: a
+derived-container grant whose conditions anonymous distribution does not establish. Baking nothing
 makes the question moot instead of arguable, which is the stronger position and
 the one the Isaac re-architecture already set as this repo's precedent. Prefer
 arguments that survive the vendor changing their mind.
@@ -135,12 +135,16 @@ human legal approval.
 
 ## Status
 
-**Not yet built or GPU-validated.** No accepted-image manifest exists, no tag has
-been published, and `ltx2` is absent from the Blackwell/GPU compatibility
-manifests on purpose: those record physical evidence, and inventing entries for
-an unbuilt image would be the kind of unearned claim those files exist to
-prevent. `docs/workbench/ltx2.md` carries the dev-VM runbook that produces the
-evidence, and `npa/tests/e2e/test_ltx2_live_e2e.py` is the gated live check.
+**Built, byte-scanned, GPU-validated, and released.** The exact zero-payload
+digest recorded in `npa/src/npa/deploy/ltx2_image_manifest.json` completed a
+real text-to-video generation and decoded-MP4 validation on one RTX PRO 6000.
+The accepted manifest also binds the source/weight revisions and zero-finding
+payload scan. `blackwell-dc-images.json` records the image as CPU-only at rest:
+the GPU runtime is fetched into operator-owned storage, so that physical run
+does not assert an in-image B200/B300 architecture. The shared submit matrix is
+still plan-only because its generic credential presence check cannot establish
+that a given operator's `HF_TOKEN` has the gated Lightricks entitlement;
+`npa/tests/e2e/test_ltx2_live_e2e.py` owns that entitled live path.
 
 One consequence of delegating installation to upstream's own `uv sync` is that
 the transitive dependency closure is **not** hash-locked the way
@@ -149,7 +153,7 @@ ref and upstream's own constraints. That is a deliberate trade — a lockfile we
 invented and could not resolve or verify here would be fiction — and the
 bootstrap captures the real resolved closure to
 `npa_resolved_inventory.txt` in the cache on first sync. Hardening that captured
-resolution into a checked-in hash lock is the follow-up once a real build exists.
+resolution into a checked-in hash lock remains follow-up work.
 
 The container starts as UID 1000 with the runtime and model caches owned by that
 user. As elsewhere in this workbench that is an ownership boundary, not a

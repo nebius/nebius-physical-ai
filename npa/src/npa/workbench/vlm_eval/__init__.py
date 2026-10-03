@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 from itertools import product
@@ -57,18 +57,140 @@ RESULT_FILENAME = "vlm_eval_stub.json"
 LOOP_REPORT_FILENAME = "task_success_report.json"
 BENCHMARK_RESULT_FILENAME = "vlm_eval_benchmark.json"
 BENCHMARK_DATASET_FORMAT = "npa_vlm_eval_benchmark_v1"
+EVIDENCE_SCHEMA_VERSION = "npa_vlm_eval_evidence_v1"
+HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_hosted_json_v1"
+SELF_HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_compatible_json_v1"
+MARKDOWN_FENCE_PARSER_SUFFIX = "+markdown-fence-v1"
 DEFAULT_BENCHMARK_THRESHOLDS = (0.5, 0.8, 0.9)
 DEFAULT_SAMPLE_BENCHMARK_PATH = (
     Path(__file__).resolve().parent / "fixtures" / "sample_benchmark" / "benchmark.json"
 )
 SUPPORTED_BACKENDS = ("self-hosted", "api", "stub")
 SUPPORTED_FRAME_SELECTIONS = ("final", "keyframes", "sequence")
+CANONICAL_HOSTED_MODELS = frozenset(
+    {
+        "MiniMaxAI/MiniMax-M3",
+        "google/gemma-3-27b-it",
+        "nvidia/Nemotron-3_5-Lightning",
+        "openbmb/MiniCPM-V-4_5",
+    }
+)
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".ppm", ".webp"}
 VIDEO_SUFFIXES = {".avi", ".mov", ".mp4", ".mpeg", ".mpg", ".webm"}
 
 
 class VlmEvalError(ValueError):
     """Raised when a VLM evaluation request is invalid."""
+
+
+@dataclass(frozen=True)
+class VlmFrameEvidence:
+    """Identify the exact normalized frame bytes submitted to a VLM.
+
+    Args:
+        label: Stable source-relative label for the selected frame.
+        media_type: MIME type used in the multimodal request.
+        sha256: Digest of the exact submitted bytes.
+        byte_count: Size of the submitted bytes.
+        width: Submitted image width in pixels.
+        height: Submitted image height in pixels.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    label: str
+    media_type: str
+    sha256: str
+    byte_count: int
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
+class VlmRequestEvidence:
+    """Retain a secret-free manifest of one multimodal judge request.
+
+    Args:
+        requested_at: UTC timestamp immediately before provider invocation.
+        endpoint_role: Hosted API or self-hosted endpoint classification.
+        prompt_sha256: Digest of the exact judge prompt.
+        rubric_sha256: Digest of the exact visual rubric.
+        request_manifest_sha256: Digest of the sanitized request manifest.
+        request_manifest: Secret-free generation and frame metadata.
+        frames: Exact submitted-frame identities.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    requested_at: str
+    endpoint_role: str
+    prompt_sha256: str
+    rubric_sha256: str
+    request_manifest_sha256: str
+    request_manifest: dict[str, Any]
+    frames: tuple[VlmFrameEvidence, ...]
+
+
+@dataclass(frozen=True)
+class VlmProviderEvidence:
+    """Retain exact provider completion metadata and response bytes.
+
+    Args:
+        provider_request_id: Provider-returned request identity when available.
+        returned_model: Provider-returned model identity when available.
+        finish_reason: Provider completion reason when available.
+        latency_s: End-to-end request latency in seconds.
+        status_code: HTTP status code when transport metadata is available.
+        usage: Provider-returned usage object when available.
+        raw_response: Exact HTTP response body, or canonical mocked response.
+        raw_response_sha256: Digest of ``raw_response``.
+        parser_version: Parser contract applied to the response.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    provider_request_id: str | None
+    returned_model: str | None
+    finish_reason: str | None
+    latency_s: float
+    status_code: int | None
+    usage: dict[str, Any] | None
+    raw_response: str
+    raw_response_sha256: str
+    parser_version: str
+
+
+@dataclass(frozen=True)
+class VlmEvaluationEvidence:
+    """Bind request and provider evidence to one parsed VLM verdict.
+
+    Args:
+        schema_version: Evaluation evidence schema identifier.
+        request: Sanitized multimodal request provenance.
+        provider: Provider completion provenance.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    schema_version: str
+    request: VlmRequestEvidence
+    provider: VlmProviderEvidence
 
 
 @dataclass(frozen=True)
@@ -87,6 +209,8 @@ class VlmEvalResult:
     frame_selection: str = DEFAULT_FRAME_SELECTION
     frame_count: int = 0
     rationale: str = ""
+    served_model: str | None = None
+    evidence: VlmEvaluationEvidence | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +218,9 @@ class VlmStructuredResponse:
     success: bool
     score: float
     rationale: str
+    served_model: str | None = None
+    evidence: VlmEvaluationEvidence | None = None
+    parser_version: str = SELF_HOSTED_RESPONSE_PARSER_VERSION
 
 
 @dataclass(frozen=True)
@@ -101,6 +228,15 @@ class SelectedFrame:
     label: str
     media_type: str
     data: bytes
+
+
+@dataclass(frozen=True)
+class _VlmBackendResponse:
+    data: dict[str, Any]
+    raw_body: str
+    status_code: int | None
+    request_id_header: str | None
+    latency_s: float
 
 
 @dataclass(frozen=True)
@@ -159,6 +295,7 @@ class VlmBenchmarkCaseResult:
     rationale: str
     frame_count: int
     score_source: str
+    evidence: VlmEvaluationEvidence | None = None
 
 
 @dataclass(frozen=True)
@@ -189,7 +326,11 @@ __all__ = [
     "VlmBenchmarkItem",
     "VlmBenchmarkMetrics",
     "VlmBenchmarkReport",
+    "VlmEvaluationEvidence",
     "VlmEvalResult",
+    "VlmFrameEvidence",
+    "VlmProviderEvidence",
+    "VlmRequestEvidence",
     "VlmStructuredResponse",
     "benchmark_result_uri_for",
     "benchmark_vlm_eval",
@@ -289,7 +430,9 @@ def benchmark_vlm_eval(
             metrics=result.metrics,
             results=result.results,
         )
-        for index, result in enumerate(sorted(config_results, key=_benchmark_rank_key), start=1)
+        for index, result in enumerate(
+            sorted(config_results, key=_benchmark_rank_key), start=1
+        )
     ]
     if not ranked:
         raise VlmEvalError("benchmark sweep produced no configurations")
@@ -327,7 +470,9 @@ def load_benchmark_dataset(
         try:
             payload = json.loads(local_manifest.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise VlmEvalError(f"benchmark dataset is not valid JSON: {local_manifest}") from exc
+            raise VlmEvalError(
+                f"benchmark dataset is not valid JSON: {local_manifest}"
+            ) from exc
 
     if isinstance(payload, list):
         raw_items = payload
@@ -338,7 +483,9 @@ def load_benchmark_dataset(
         raw_items = payload.get("items") or payload.get("rollouts")
         dataset_format = str(payload.get("format") or BENCHMARK_DATASET_FORMAT)
         rubrics = _coerce_rubric_map(payload.get("rubrics", {}))
-        rollout_base_path = str(payload.get("rollout_base_path") or payload.get("base_path") or "")
+        rollout_base_path = str(
+            payload.get("rollout_base_path") or payload.get("base_path") or ""
+        )
     else:
         raise VlmEvalError("benchmark dataset JSON must be an object or an item list")
 
@@ -413,7 +560,9 @@ def evaluate_vlm(
         # The job that started the vLLM server records which model it serves, so
         # the client asks for that one instead of the 7B default (a mismatch is a
         # 404 from the server). See `_vllm_serve_preamble` in the workflow render.
-        effective_model = os.environ.get(SELF_HOSTED_MODEL_ENV, "").strip() or effective_model
+        effective_model = (
+            os.environ.get(SELF_HOSTED_MODEL_ENV, "").strip() or effective_model
+        )
     if backend == "api" and effective_model == DEFAULT_MODEL:
         # DEFAULT_MODEL is the self-hosted (vLLM) default. The hosted Token
         # Factory API does not serve it (requests 404); use the vision model
@@ -451,6 +600,7 @@ def evaluate_vlm(
                 endpoint_url=endpoint_url,
                 api_key_env=api_key_env,
                 prompt=prompt,
+                rubric=effective_rubric,
                 frames=frames,
                 timeout_s=timeout_s,
             )
@@ -489,7 +639,9 @@ def evaluate_stub(
         max_frames=DEFAULT_MAX_FRAMES,
         timeout_s=DEFAULT_TIMEOUT_S,
     )
-    effective_score = _deterministic_score(input_path, task, model) if score is None else score
+    effective_score = (
+        _deterministic_score(input_path, task, model) if score is None else score
+    )
     _validate_score_override(effective_score)
     passed = effective_score >= success_threshold
     return VlmEvalResult(
@@ -523,15 +675,21 @@ def select_rollout_frames(
         raise VlmEvalError("--max-frames must be positive")
 
     path = Path(input_path)
-    image_frames = _frames_from_images(path, frame_selection=frame_selection, max_frames=max_frames)
+    image_frames = _frames_from_images(
+        path, frame_selection=frame_selection, max_frames=max_frames
+    )
     if image_frames:
         return image_frames
 
-    numpy_frames = _frames_from_numpy(path, frame_selection=frame_selection, max_frames=max_frames)
+    numpy_frames = _frames_from_numpy(
+        path, frame_selection=frame_selection, max_frames=max_frames
+    )
     if numpy_frames:
         return numpy_frames
 
-    video_frames = _frames_from_videos(path, frame_selection=frame_selection, max_frames=max_frames)
+    video_frames = _frames_from_videos(
+        path, frame_selection=frame_selection, max_frames=max_frames
+    )
     if video_frames:
         return video_frames
 
@@ -543,7 +701,7 @@ def select_rollout_frames(
 def parse_structured_response(text: str) -> VlmStructuredResponse:
     """Parse a VLM JSON response and clamp its score into [0, 1]."""
 
-    payload = _load_json_object(text)
+    payload, deframed = _load_json_object(text)
     if "score" not in payload:
         raise VlmEvalError("VLM response JSON must include score")
     if "rationale" not in payload:
@@ -554,6 +712,62 @@ def parse_structured_response(text: str) -> VlmStructuredResponse:
         success=success,
         score=score,
         rationale=str(payload["rationale"]),
+        parser_version=_parser_version(SELF_HOSTED_RESPONSE_PARSER_VERSION, deframed),
+    )
+
+
+def _parse_api_structured_response(
+    text: Any, *, served_model: str
+) -> VlmStructuredResponse:
+    """Validate the complete hosted judge output without repairing its verdict."""
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise VlmEvalError("Hosted VLM response JSON contains duplicate keys")
+            result[key] = value
+        return result
+
+    def reject_constant(_value: str) -> None:
+        raise VlmEvalError("Hosted VLM response JSON contains a non-finite number")
+
+    if not isinstance(text, str):
+        raise VlmEvalError("Hosted VLM response content must be a JSON string")
+    deframed_text, deframed = _deframe_json_text(text)
+    try:
+        payload = json.loads(
+            deframed_text,
+            object_pairs_hook=unique_object,
+            parse_constant=reject_constant,
+        )
+    except json.JSONDecodeError as exc:
+        raise VlmEvalError(
+            "Hosted VLM response JSON could not be parsed in full"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise VlmEvalError("Hosted VLM response JSON must be an object")
+    if not isinstance(payload.get("success"), bool):
+        raise VlmEvalError("Hosted VLM response success must be a boolean")
+    score = payload.get("score")
+    if (
+        isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or not 0 <= score <= 1
+        or not math.isfinite(score)
+    ):
+        raise VlmEvalError(
+            "Hosted VLM response score must be a finite number in [0, 1]"
+        )
+    rationale = payload.get("rationale")
+    if not isinstance(rationale, str) or not rationale.strip():
+        raise VlmEvalError("Hosted VLM response rationale must be a nonempty string")
+    return VlmStructuredResponse(
+        success=payload["success"],
+        score=float(score),
+        rationale=rationale,
+        served_model=served_model,
+        parser_version=_parser_version(HOSTED_RESPONSE_PARSER_VERSION, deframed),
     )
 
 
@@ -665,7 +879,9 @@ def evaluate_rollout_set(
         rollout_id = _rollout_id_for(rollout_uri)
         result = evaluate_vlm(
             input_path=rollout_uri,
-            output_path=_join_uri(output_path.rstrip("/") + "/", f"rollouts/{rollout_id}/"),
+            output_path=_join_uri(
+                output_path.rstrip("/") + "/", f"rollouts/{rollout_id}/"
+            ),
             task=task,
             backend=backend,
             model=model,
@@ -836,6 +1052,8 @@ def _result_from_structured(
         frame_selection=frame_selection,
         frame_count=frame_count,
         rationale=structured.rationale,
+        served_model=structured.served_model,
+        evidence=structured.evidence,
     )
 
 
@@ -848,7 +1066,11 @@ def _run_benchmark_case(
     timeout_s: float,
     use_fixture_score: bool,
 ) -> VlmBenchmarkCaseResult:
-    score = item.fixture_score if use_fixture_score and item.fixture_score is not None else None
+    score = (
+        item.fixture_score
+        if use_fixture_score and item.fixture_score is not None
+        else None
+    )
     try:
         result = evaluate_vlm(
             input_path=item.rollout,
@@ -884,17 +1106,30 @@ def _run_benchmark_case(
         rationale=result.rationale,
         frame_count=result.frame_count,
         score_source="fixture" if score is not None else result.backend,
+        evidence=result.evidence,
     )
 
 
-def _benchmark_metrics(results: Sequence[VlmBenchmarkCaseResult]) -> VlmBenchmarkMetrics:
+def _benchmark_metrics(
+    results: Sequence[VlmBenchmarkCaseResult],
+) -> VlmBenchmarkMetrics:
     total = len(results)
     if total == 0:
         raise VlmEvalError("benchmark dataset must include at least one item")
-    tp = sum(1 for result in results if result.expected_label and result.predicted_label)
-    tn = sum(1 for result in results if not result.expected_label and not result.predicted_label)
-    fp = sum(1 for result in results if not result.expected_label and result.predicted_label)
-    fn = sum(1 for result in results if result.expected_label and not result.predicted_label)
+    tp = sum(
+        1 for result in results if result.expected_label and result.predicted_label
+    )
+    tn = sum(
+        1
+        for result in results
+        if not result.expected_label and not result.predicted_label
+    )
+    fp = sum(
+        1 for result in results if not result.expected_label and result.predicted_label
+    )
+    fn = sum(
+        1 for result in results if result.expected_label and not result.predicted_label
+    )
     correct = tp + tn
     precision = _safe_ratio(tp, tp + fp)
     recall = _safe_ratio(tp, tp + fn)
@@ -946,7 +1181,9 @@ def _materialized_benchmark_manifest(dataset: str) -> Iterator[Path]:
     if dataset.startswith("s3://"):
         from npa.clients.storage import StorageClient
 
-        with tempfile.TemporaryDirectory(prefix="npa-vlm-eval-benchmark-dataset-") as tmp:
+        with tempfile.TemporaryDirectory(
+            prefix="npa-vlm-eval-benchmark-dataset-"
+        ) as tmp:
             local = Path(StorageClient.from_environment().download_path(dataset, tmp))
             yield _find_benchmark_manifest(local)
         return
@@ -977,7 +1214,11 @@ def _parse_benchmark_item(
 ) -> VlmBenchmarkItem:
     if not isinstance(raw_item, dict):
         raise VlmEvalError(f"benchmark item {index} must be an object")
-    rollout = raw_item.get("rollout") or raw_item.get("rollout_path") or raw_item.get("input_path")
+    rollout = (
+        raw_item.get("rollout")
+        or raw_item.get("rollout_path")
+        or raw_item.get("input_path")
+    )
     if not rollout:
         raise VlmEvalError(f"benchmark item {index} must include rollout or input_path")
     if "expected_label" in raw_item:
@@ -992,7 +1233,9 @@ def _parse_benchmark_item(
         fixture_score = _clamp_score(raw_item["fixture_score"])
         _validate_score_override(fixture_score)
 
-    item_id = str(raw_item.get("id") or raw_item.get("name") or f"item-{index:03d}").strip()
+    item_id = str(
+        raw_item.get("id") or raw_item.get("name") or f"item-{index:03d}"
+    ).strip()
     if not item_id:
         item_id = f"item-{index:03d}"
 
@@ -1284,10 +1527,90 @@ def _call_openai_compatible(
     endpoint_url: str,
     api_key_env: str,
     prompt: str,
+    rubric: str = DEFAULT_RUBRIC,
     frames: list[SelectedFrame],
     timeout_s: float,
 ) -> VlmStructuredResponse:
-    url = _chat_completions_url(_resolve_endpoint_url(backend=backend, endpoint_url=endpoint_url))
+    url = _chat_completions_url(
+        _resolve_endpoint_url(backend=backend, endpoint_url=endpoint_url)
+    )
+    request = _build_openai_request(
+        backend=backend, model=model, prompt=prompt, frames=frames
+    )
+    headers = {"Content-Type": "application/json"}
+    api_key = _resolve_api_key(backend=backend, api_key_env=api_key_env)
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    request_evidence = _build_request_evidence(
+        backend=backend,
+        model=model,
+        prompt=prompt,
+        rubric=rubric,
+        request=request,
+        frames=frames,
+    )
+    started_at = time.monotonic()
+    raw_response = _post_with_readiness_retry(
+        url=url,
+        headers=headers,
+        request=request,
+        backend=backend,
+        timeout_s=timeout_s,
+    )
+    response = _coerce_backend_response(
+        raw_response, fallback_latency_s=time.monotonic() - started_at
+    )
+    choice, message = _response_choice_and_content(response.data)
+    result = _parse_backend_verdict(
+        backend=backend,
+        requested_model=model,
+        data=response.data,
+        choice=choice,
+        message=message,
+    )
+    evidence = _build_evaluation_evidence(
+        request_evidence,
+        response,
+        choice,
+        parser_version=result.parser_version,
+    )
+    return replace(result, evidence=evidence)
+
+
+def _parse_backend_verdict(
+    *,
+    backend: str,
+    requested_model: str,
+    data: dict[str, Any],
+    choice: dict[str, Any],
+    message: Any,
+) -> VlmStructuredResponse:
+    served_model = data.get("model")
+    if backend != "api":
+        result = parse_structured_response(str(message))
+        if served_model is None:
+            return result
+        if not isinstance(served_model, str) or not served_model.strip():
+            raise VlmEvalError(
+                "Self-hosted VLM response model must be a nonempty string"
+            )
+        return replace(result, served_model=served_model)
+    if choice.get("finish_reason") != "stop":
+        raise VlmEvalError(
+            "Hosted VLM response did not complete with finish_reason=stop"
+        )
+    if not isinstance(served_model, str) or not served_model.strip():
+        raise VlmEvalError("Hosted VLM response must identify the served model")
+    if requested_model in CANONICAL_HOSTED_MODELS and served_model != requested_model:
+        raise VlmEvalError(
+            "Hosted VLM response model does not match the requested model"
+        )
+    return _parse_api_structured_response(message, served_model=served_model)
+
+
+def _build_openai_request(
+    *, backend: str, model: str, prompt: str, frames: Sequence[SelectedFrame]
+) -> dict[str, Any]:
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
     for frame in frames:
         encoded = base64.b64encode(frame.data).decode("ascii")
@@ -1297,27 +1620,147 @@ def _call_openai_compatible(
                 "image_url": {"url": f"data:{frame.media_type};base64,{encoded}"},
             }
         )
-
-    headers = {"Content-Type": "application/json"}
-    api_key = _resolve_api_key(backend=backend, api_key_env=api_key_env)
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    request = {
+    request: dict[str, Any] = {
         "model": model,
         "temperature": 0,
         "response_format": {"type": "json_object"},
         "messages": [{"role": "user", "content": content}],
     }
-    data = _post_with_readiness_retry(
-        url=url, headers=headers, request=request, backend=backend, timeout_s=timeout_s
+    if backend != "api":
+        return request
+    from npa.clients.token_factory import default_chat_extra
+
+    request.update(default_chat_extra(model))
+    if model == "MiniMaxAI/MiniMax-M3":
+        request.pop("response_format")
+    return request
+
+
+def _build_request_evidence(
+    *,
+    backend: str,
+    model: str,
+    prompt: str,
+    rubric: str,
+    request: dict[str, Any],
+    frames: Sequence[SelectedFrame],
+) -> VlmRequestEvidence:
+    frame_evidence = tuple(_frame_evidence(frame) for frame in frames)
+    prompt_sha256 = _sha256_text(prompt)
+    rubric_sha256 = _sha256_text(rubric)
+    generation_parameters = {
+        key: request[key]
+        for key in ("temperature", "response_format", "chat_template_kwargs")
+        if key in request
+    }
+    manifest = {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "endpoint_role": "hosted-api" if backend == "api" else "self-hosted",
+        "requested_model": model,
+        "generation_parameters": generation_parameters,
+        "prompt_sha256": prompt_sha256,
+        "rubric_sha256": rubric_sha256,
+        "frames": [asdict(frame) for frame in frame_evidence],
+    }
+    return VlmRequestEvidence(
+        requested_at=datetime.now(timezone.utc).isoformat(),
+        endpoint_role=manifest["endpoint_role"],
+        prompt_sha256=prompt_sha256,
+        rubric_sha256=rubric_sha256,
+        request_manifest_sha256=_sha256_json(manifest),
+        request_manifest=manifest,
+        frames=frame_evidence,
     )
 
-    try:
-        message = data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise VlmEvalError("VLM backend response missing choices[0].message.content") from exc
-    return parse_structured_response(str(message))
+
+def _response_choice_and_content(data: dict[str, Any]) -> tuple[dict[str, Any], Any]:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise VlmEvalError("VLM backend response missing choices[0]")
+    choice = choices[0]
+    message = choice.get("message")
+    if not isinstance(message, dict) or "content" not in message:
+        raise VlmEvalError("VLM backend response missing choices[0].message.content")
+    refusal = message.get("refusal")
+    if isinstance(refusal, str) and refusal.strip():
+        raise VlmEvalError("VLM backend refused the evaluation request")
+    return choice, message["content"]
+
+
+def _build_evaluation_evidence(
+    request: VlmRequestEvidence,
+    response: _VlmBackendResponse,
+    choice: dict[str, Any],
+    *,
+    parser_version: str,
+) -> VlmEvaluationEvidence:
+    provider_id, returned_model, finish_reason, usage = _provider_metadata(
+        response, choice
+    )
+    provider = VlmProviderEvidence(
+        provider_request_id=provider_id,
+        returned_model=returned_model,
+        finish_reason=finish_reason,
+        latency_s=round(response.latency_s, 6),
+        status_code=response.status_code,
+        usage=usage,
+        raw_response=response.raw_body,
+        raw_response_sha256=_sha256_text(response.raw_body),
+        parser_version=parser_version,
+    )
+    return VlmEvaluationEvidence(
+        schema_version=EVIDENCE_SCHEMA_VERSION,
+        request=request,
+        provider=provider,
+    )
+
+
+def _provider_metadata(
+    response: _VlmBackendResponse,
+    choice: dict[str, Any],
+) -> tuple[str | None, str | None, str | None, dict[str, Any] | None]:
+    usage = response.data.get("usage")
+    if usage is not None and not isinstance(usage, dict):
+        raise VlmEvalError("VLM backend response usage must be an object when present")
+    provider_id = response.data.get("id") or response.request_id_header
+    if provider_id is not None and not isinstance(provider_id, str):
+        raise VlmEvalError(
+            "VLM backend response request id must be a string when present"
+        )
+    returned_model = response.data.get("model")
+    if returned_model is not None and not isinstance(returned_model, str):
+        raise VlmEvalError("VLM backend response model must be a string when present")
+    finish_reason = choice.get("finish_reason")
+    if finish_reason is not None and not isinstance(finish_reason, str):
+        raise VlmEvalError(
+            "VLM backend response finish_reason must be a string when present"
+        )
+    return provider_id or None, returned_model or None, finish_reason, usage
+
+
+def _frame_evidence(frame: SelectedFrame) -> VlmFrameEvidence:
+    with Image.open(BytesIO(frame.data)) as image:
+        width, height = image.size
+    return VlmFrameEvidence(
+        label=frame.label,
+        media_type=frame.media_type,
+        sha256=hashlib.sha256(frame.data).hexdigest(),
+        byte_count=len(frame.data),
+        width=width,
+        height=height,
+    )
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _sha256_json(value: Any) -> str:
+    return _sha256_text(_canonical_json(value))
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def _post_with_readiness_retry(
@@ -1327,7 +1770,7 @@ def _post_with_readiness_retry(
     request: dict[str, Any],
     backend: str,
     timeout_s: float,
-) -> Any:
+) -> _VlmBackendResponse:
     """POST to an OpenAI-compatible endpoint, tolerating self-hosted warmup.
 
     A self-hosted vLLM server started alongside the eval job needs minutes to
@@ -1341,6 +1784,7 @@ def _post_with_readiness_retry(
     is_self_hosted = backend == "self-hosted"
     ready_timeout = _ready_timeout_s()
     deadline = time.monotonic() + (ready_timeout if is_self_hosted else 0.0)
+    started_at = time.monotonic()
     delay = 2.0
     last_conn_error = ""
     while True:
@@ -1348,7 +1792,20 @@ def _post_with_readiness_retry(
             with httpx.Client(timeout=timeout_s) as client:
                 response = client.post(url, headers=headers, json=request)
                 response.raise_for_status()
-                return response.json()
+                data = response.json()
+                if not isinstance(data, dict):
+                    raise VlmEvalError(
+                        "VLM backend returned a non-object JSON response"
+                    )
+                raw_body = getattr(response, "text", "") or _canonical_json(data)
+                response_headers = getattr(response, "headers", {})
+                return _VlmBackendResponse(
+                    data=data,
+                    raw_body=raw_body,
+                    status_code=getattr(response, "status_code", None),
+                    request_id_header=_request_id_from_headers(response_headers),
+                    latency_s=time.monotonic() - started_at,
+                )
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             last_conn_error = str(exc) or exc.__class__.__name__
             if is_self_hosted and time.monotonic() < deadline:
@@ -1374,6 +1831,34 @@ def _post_with_readiness_retry(
             raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
         except json.JSONDecodeError as exc:
             raise VlmEvalError("VLM backend returned non-JSON response") from exc
+
+
+def _coerce_backend_response(
+    response: _VlmBackendResponse | dict[str, Any],
+    *,
+    fallback_latency_s: float,
+) -> _VlmBackendResponse:
+    if isinstance(response, _VlmBackendResponse):
+        return response
+    if not isinstance(response, dict):
+        raise VlmEvalError("VLM backend returned a non-object JSON response")
+    return _VlmBackendResponse(
+        data=response,
+        raw_body=_canonical_json(response),
+        status_code=None,
+        request_id_header=None,
+        latency_s=fallback_latency_s,
+    )
+
+
+def _request_id_from_headers(headers: Any) -> str | None:
+    if not hasattr(headers, "get"):
+        return None
+    for name in ("x-request-id", "x-nebius-request-id", "request-id"):
+        value = headers.get(name)
+        if value:
+            return str(value)
+    return None
 
 
 def _resolve_endpoint_url(*, backend: str, endpoint_url: str) -> str:
@@ -1411,9 +1896,21 @@ def _resolve_api_key(*, backend: str, api_key_env: str) -> str:
             or os.environ.get("OPENAI_API_KEY", "")
         )
         if not key:
+            from npa.clients.token_factory import resolve_config
+
+            try:
+                key = resolve_config(
+                    api_key_env=api_key_env or DEFAULT_API_KEY_ENV,
+                    require_api_key=False,
+                ).api_key
+            except ValueError as exc:
+                raise VlmEvalError(
+                    f"Unable to load Token Factory credentials: {exc}"
+                ) from exc
+        if not key:
             raise VlmEvalError(
                 f"--backend api requires an API key in {api_key_env or DEFAULT_API_KEY_ENV}, "
-                "NEBIUS_TOKEN_FACTORY_KEY, or OPENAI_API_KEY"
+                "NEBIUS_TOKEN_FACTORY_KEY, OPENAI_API_KEY, or ~/.npa/credentials.yaml"
             )
     return key
 
@@ -1436,15 +1933,23 @@ def _frames_from_images(
     image_paths = _discover_image_paths(path)
     if not image_paths:
         return []
-    indices = _selected_indices(len(image_paths), frame_selection=frame_selection, max_frames=max_frames)
+    indices = _selected_indices(
+        len(image_paths), frame_selection=frame_selection, max_frames=max_frames
+    )
     return [
         SelectedFrame(
-            label=image_paths[index].name,
+            label=_image_frame_label(path, image_paths[index]),
             media_type="image/png",
             data=_image_file_to_png(image_paths[index]),
         )
         for index in indices
     ]
+
+
+def _image_frame_label(root: Path, frame_path: Path) -> str:
+    if root.is_dir():
+        return frame_path.relative_to(root).as_posix()
+    return frame_path.name
 
 
 def _discover_image_paths(path: Path) -> list[Path]:
@@ -1471,7 +1976,9 @@ def _frames_from_numpy(
     for label, array in arrays:
         if array.ndim != 4 or array.shape[-1] != 3 or array.shape[0] == 0:
             continue
-        indices = _selected_indices(array.shape[0], frame_selection=frame_selection, max_frames=max_frames)
+        indices = _selected_indices(
+            array.shape[0], frame_selection=frame_selection, max_frames=max_frames
+        )
         return [
             SelectedFrame(
                 label=f"{label}:{index}",
@@ -1537,7 +2044,9 @@ def _frames_from_videos(
         output_dir = Path(tmp)
         count = _video_frame_count(video_path)
         if count:
-            indices = _selected_indices(count, frame_selection=frame_selection, max_frames=max_frames)
+            indices = _selected_indices(
+                count, frame_selection=frame_selection, max_frames=max_frames
+            )
             _extract_video_indices(video_path, output_dir, indices)
         elif frame_selection == "final":
             _extract_final_video_frame(video_path, output_dir)
@@ -1545,7 +2054,7 @@ def _frames_from_videos(
             _extract_video_sample(video_path, output_dir, max_frames=max_frames)
         return [
             SelectedFrame(
-                label=frame.name,
+                label=f"{video_path.name}:{frame.name}",
                 media_type="image/png",
                 data=_image_file_to_png(frame),
             )
@@ -1558,7 +2067,11 @@ def _discover_video_paths(path: Path) -> list[Path]:
         return [path]
     if not path.is_dir():
         return []
-    return sorted(file for file in path.rglob("*") if file.is_file() and file.suffix.lower() in VIDEO_SUFFIXES)
+    return sorted(
+        file
+        for file in path.rglob("*")
+        if file.is_file() and file.suffix.lower() in VIDEO_SUFFIXES
+    )
 
 
 def _video_frame_count(video_path: Path) -> int | None:
@@ -1598,7 +2111,9 @@ def _video_frame_count(video_path: Path) -> int | None:
     return None
 
 
-def _extract_video_indices(video_path: Path, output_dir: Path, indices: list[int]) -> None:
+def _extract_video_indices(
+    video_path: Path, output_dir: Path, indices: list[int]
+) -> None:
     if not indices:
         return
     expression = "+".join(f"eq(n\\,{index})" for index in indices)
@@ -1635,7 +2150,9 @@ def _extract_final_video_frame(video_path: Path, output_dir: Path) -> None:
     _run_ffmpeg(cmd)
 
 
-def _extract_video_sample(video_path: Path, output_dir: Path, *, max_frames: int) -> None:
+def _extract_video_sample(
+    video_path: Path, output_dir: Path, *, max_frames: int
+) -> None:
     cmd = [
         "ffmpeg",
         "-v",
@@ -1661,7 +2178,9 @@ def _run_ffmpeg(cmd: list[str]) -> None:
         raise VlmEvalError(f"ffmpeg frame extraction failed: {proc.stderr[-500:]}")
 
 
-def _selected_indices(count: int, *, frame_selection: str, max_frames: int) -> list[int]:
+def _selected_indices(
+    count: int, *, frame_selection: str, max_frames: int
+) -> list[int]:
     if count <= 0:
         return []
     if frame_selection == "final":
@@ -1695,11 +2214,8 @@ def _pil_image_to_png(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
-def _load_json_object(text: str) -> dict[str, Any]:
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
-        stripped = re.sub(r"\s*```$", "", stripped)
+def _load_json_object(text: str) -> tuple[dict[str, Any], bool]:
+    stripped, deframed = _deframe_json_text(text)
     try:
         payload = json.loads(stripped)
     except json.JSONDecodeError:
@@ -1712,7 +2228,25 @@ def _load_json_object(text: str) -> dict[str, Any]:
             raise VlmEvalError("VLM response JSON could not be parsed") from exc
     if not isinstance(payload, dict):
         raise VlmEvalError("VLM response JSON must be an object")
-    return payload
+    return payload, deframed
+
+
+def _deframe_json_text(text: str) -> tuple[str, bool]:
+    stripped = text.strip()
+    match = re.fullmatch(
+        r"```(?:json)?\s*(?P<body>.*?)\s*```",
+        stripped,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if match is None:
+        return stripped, False
+    return match.group("body").strip(), True
+
+
+def _parser_version(base_version: str, deframed: bool) -> str:
+    if deframed:
+        return base_version + MARKDOWN_FENCE_PARSER_SUFFIX
+    return base_version
 
 
 def _coerce_bool(value: Any) -> bool:

@@ -15,7 +15,7 @@ Usage: build.sh [--registry REGISTRY] [--push] [--tag TAG]
 Builds the GR00T runtime image as npa-groot:<gr00t-runtime-version>.
 When --registry is provided, also tags REGISTRY/npa-groot:<tag>.
 When --tag is provided, it overrides the final image tag.
-Use --registry cr.eu-north1.nebius.cloud/<your-registry-id> --push to publish.
+Use --registry <your-registry>/<namespace> --push to publish.
 
   --tag is what lets you validate a candidate without overwriting a canonical tag that
   running workloads resolve. --push streams straight to the registry via buildx instead
@@ -137,6 +137,7 @@ if [ "$PUSH" -eq 1 ]; then
     docker buildx rm "$BUILDX_BUILDER" >/dev/null 2>&1 || true
     docker buildx create --name "$BUILDX_BUILDER" --driver docker-container --bootstrap >/dev/null
   fi
+  "${NPA_ROOT}/.venv/bin/python" "${NPA_ROOT}/src/npa/workflow_build.py" --stage-catalog --package-root "${NPA_ROOT}"
   docker buildx build --builder "$BUILDX_BUILDER" --push "${BUILD_ARGS[@]}" \
     -t "$REGISTRY_IMAGE" "$NPA_ROOT"
   echo "Built and pushed: $REGISTRY_IMAGE"
@@ -148,6 +149,7 @@ if [ -n "$REGISTRY_IMAGE" ]; then
   BUILD_ARGS+=(-t "$REGISTRY_IMAGE")
 fi
 
+"${NPA_ROOT}/.venv/bin/python" "${NPA_ROOT}/src/npa/workflow_build.py" --stage-catalog --package-root "${NPA_ROOT}"
 docker build "${BUILD_ARGS[@]}" "$NPA_ROOT"
 
 SIZE_BYTES="$(docker image inspect "$LOCAL_IMAGE" --format '{{.Size}}')"

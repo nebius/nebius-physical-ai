@@ -31,7 +31,9 @@ SUPPORTED_SOURCE_FORMATS = (
     "bvh",
 )
 SUPPORTED_EMBODIMENTS = ("unitree-g1", "g1", "unitree-g1-sonic")
-ROBOT_MOTION_FIELDS = frozenset({"root_trans_offset", "pose_aa", "dof", "root_rot", "fps"})
+ROBOT_MOTION_FIELDS = frozenset(
+    {"root_trans_offset", "pose_aa", "dof", "root_rot", "fps"}
+)
 SOMA_MOTION_FIELDS = frozenset({"soma_joints", "soma_root_quat", "fps", "joint_names"})
 METADATA_FILE_NAME = "retargeting_result.json"
 
@@ -117,8 +119,14 @@ def run_retargeting(
 
     metadata_uri = metadata_uri_for(output_path)
     generated_at = datetime.now(timezone.utc).isoformat()
-    artifact_kind = "soma_skeleton" if normalized_format == "bvh" else "robot_motion_lib"
-    backend = "sonic-bvh-soma-extractor" if normalized_format == "bvh" else "sonic-motion-lib-converter"
+    artifact_kind = (
+        "soma_skeleton" if normalized_format == "bvh" else "robot_motion_lib"
+    )
+    backend = (
+        "sonic-bvh-soma-extractor"
+        if normalized_format == "bvh"
+        else "sonic-motion-lib-converter"
+    )
 
     if dry_run:
         command = _planned_command(
@@ -171,7 +179,11 @@ def run_retargeting(
 
         if normalized_format == "motion-lib":
             _copy_motion_lib(local_input, local_output)
-            command: list[str] = ["copy-motion-lib", str(local_input), str(local_output)]
+            command: list[str] = [
+                "copy-motion-lib",
+                str(local_input),
+                str(local_output),
+            ]
         else:
             upstream_root = _resolve_upstream_root(sonic_home, work_dir)
             command = _run_upstream_preprocess(
@@ -187,12 +199,18 @@ def run_retargeting(
 
         inspect_root = local_output if local_output.is_dir() else local_output.parent
         if max_frames:
-            _truncate_motion_files(inspect_root, max_frames=max_frames, artifact_kind=artifact_kind)
-        motion_count, output_files = validate_motion_lib(inspect_root, artifact_kind=artifact_kind)
+            _truncate_motion_files(
+                inspect_root, max_frames=max_frames, artifact_kind=artifact_kind
+            )
+        motion_count, output_files = validate_motion_lib(
+            inspect_root, artifact_kind=artifact_kind
+        )
         artifact_uri = _publish_output(local_output, output_path, storage_client)
 
         result = RetargetingResult(
-            status="retargeted" if artifact_kind == "robot_motion_lib" else "soma_extracted",
+            status="retargeted"
+            if artifact_kind == "robot_motion_lib"
+            else "soma_extracted",
             backend=backend,
             artifact_kind=artifact_kind,
             input_path=input_path,
@@ -216,8 +234,12 @@ def run_retargeting(
             generated_at=generated_at,
         )
         payload = _as_payload(result)
-        metadata_written_uri = write_metadata(payload, result_uri=metadata_uri, storage_client=storage_client)
-        return RetargetingResult(**{**payload, "metadata_written_uri": metadata_written_uri})
+        metadata_written_uri = write_metadata(
+            payload, result_uri=metadata_uri, storage_client=storage_client
+        )
+        return RetargetingResult(
+            **{**payload, "metadata_written_uri": metadata_written_uri}
+        )
 
 
 def metadata_uri_for(output_path: str) -> str:
@@ -278,21 +300,31 @@ def write_result(
     return write_metadata(payload, result_uri=result_uri, storage_client=storage_client)
 
 
-def validate_motion_lib(path: str | Path, *, artifact_kind: str = "robot_motion_lib") -> tuple[int, list[str]]:
+def validate_motion_lib(
+    path: str | Path, *, artifact_kind: str = "robot_motion_lib"
+) -> tuple[int, list[str]]:
     """Validate generated SONIC motion PKLs and return motion count plus files."""
 
     root = Path(path)
-    files = [root] if root.is_file() and root.suffix == ".pkl" else sorted(root.rglob("*.pkl"))
+    files = (
+        [root]
+        if root.is_file() and root.suffix == ".pkl"
+        else sorted(root.rglob("*.pkl"))
+    )
     if not files:
         raise RetargetingError(f"SONIC preprocess produced no PKL files under {root}")
 
-    required = SOMA_MOTION_FIELDS if artifact_kind == "soma_skeleton" else ROBOT_MOTION_FIELDS
+    required = (
+        SOMA_MOTION_FIELDS if artifact_kind == "soma_skeleton" else ROBOT_MOTION_FIELDS
+    )
     motion_count = 0
     rel_files: list[str] = []
     for file_path in files:
         data = _load_joblib(file_path)
         if not isinstance(data, dict) or not data:
-            raise RetargetingError(f"Invalid motion PKL {file_path}: expected non-empty dict")
+            raise RetargetingError(
+                f"Invalid motion PKL {file_path}: expected non-empty dict"
+            )
         for motion_name, entry in data.items():
             if not isinstance(entry, dict):
                 raise RetargetingError(
@@ -305,7 +337,9 @@ def validate_motion_lib(path: str | Path, *, artifact_kind: str = "robot_motion_
                     f"Invalid motion PKL {file_path}: {motion_name!r} missing {joined}"
                 )
             motion_count += 1
-        rel_files.append(str(file_path.relative_to(root if root.is_dir() else root.parent)))
+        rel_files.append(
+            str(file_path.relative_to(root if root.is_dir() else root.parent))
+        )
 
     return motion_count, rel_files
 
@@ -409,7 +443,9 @@ def _local_output_target(
     return path
 
 
-def _combined_pkl_output(source_format: str, individual: bool, input_is_file: bool) -> bool:
+def _combined_pkl_output(
+    source_format: str, individual: bool, input_is_file: bool
+) -> bool:
     """Return True when the converter should emit a single combined motion-lib PKL.
 
     Upstream SONIC's ``--individual`` mode is Bones-SEED-only (it feeds every CSV
@@ -462,7 +498,9 @@ def _detect_source_format(local_input: Path) -> str:
         )
 
     if not local_input.is_dir():
-        raise RetargetingError(f"staged input path is neither a file nor a directory: {local_input}")
+        raise RetargetingError(
+            f"staged input path is neither a file nor a directory: {local_input}"
+        )
 
     if _has_soma_csv_layout(local_input):
         return "soma-csv"
@@ -547,7 +585,9 @@ def _publish_output(
 def _copy_motion_lib(source: Path, destination: Path) -> None:
     if source.is_dir():
         if destination.exists() and destination.is_file():
-            raise RetargetingError("--output-path must be a directory when copying a motion-lib directory")
+            raise RetargetingError(
+                "--output-path must be a directory when copying a motion-lib directory"
+            )
         destination.mkdir(parents=True, exist_ok=True)
         for item in source.iterdir():
             target = destination / item.name
@@ -581,7 +621,9 @@ def _resolve_upstream_root(explicit_home: str, work_dir: Path) -> Path:
     candidates.extend([cwd, cwd.parent])
 
     for candidate in candidates:
-        if (candidate / CONVERTER_SCRIPT).exists() or (candidate / BVH_SOMA_SCRIPT).exists():
+        if (candidate / CONVERTER_SCRIPT).exists() or (
+            candidate / BVH_SOMA_SCRIPT
+        ).exists():
             return candidate
 
     if not _env_truthy("NPA_RETARGETING_AUTO_FETCH", default=True):
@@ -604,7 +646,9 @@ def _resolve_upstream_root(explicit_home: str, work_dir: Path) -> Path:
     _run_checked(["git", "checkout", _upstream_ref()], cwd=target)
     for script in (CONVERTER_SCRIPT, BVH_SOMA_SCRIPT):
         if not (target / script).exists():
-            raise RetargetingError(f"Upstream SONIC script missing after fetch: {script}")
+            raise RetargetingError(
+                f"Upstream SONIC script missing after fetch: {script}"
+            )
     return target
 
 
@@ -714,7 +758,9 @@ def _run_checked(command: list[str], *, cwd: Path) -> subprocess.CompletedProces
             check=False,
         )
     except FileNotFoundError as exc:
-        raise RetargetingError(f"Required command is not available: {command[0]}") from exc
+        raise RetargetingError(
+            f"Required command is not available: {command[0]}"
+        ) from exc
     if completed.returncode != 0:
         stderr = completed.stderr.strip()
         stdout = completed.stdout.strip()
@@ -742,10 +788,16 @@ def _python_executable() -> str:
 
 
 def _truncate_motion_files(root: Path, *, max_frames: int, artifact_kind: str) -> None:
-    files = [root] if root.is_file() and root.suffix == ".pkl" else sorted(root.rglob("*.pkl"))
+    files = (
+        [root]
+        if root.is_file() and root.suffix == ".pkl"
+        else sorted(root.rglob("*.pkl"))
+    )
     if not files:
         return
-    required = SOMA_MOTION_FIELDS if artifact_kind == "soma_skeleton" else ROBOT_MOTION_FIELDS
+    required = (
+        SOMA_MOTION_FIELDS if artifact_kind == "soma_skeleton" else ROBOT_MOTION_FIELDS
+    )
     for file_path in files:
         data = _load_joblib(file_path)
         changed = False

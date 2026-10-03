@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 from npa.workflows.sim2real import byo_isaac_trainer as tr
 from npa.workflows.sim2real import byo_isaac_eval as ev
+from npa.workflows.sim2real import byo_isaac_policy_rollout as rollout
 from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
 
 
@@ -83,6 +84,68 @@ def test_payload_carries_retarget_and_gripper_fields():
     assert p["n_gripper_joints"] == 2
     assert p["gripper_open"] == 0.04
     assert p["gripper_close"] == 0.0
+
+
+def test_prepare_asset_preflight_defers_conversion_to_rollout_app(monkeypatch):
+    spec = {
+        "source_format": "urdf",
+        "resolved_usd_uri": "s3://private-run/resolved/robot.usd",
+    }
+    monkeypatch.setenv("NPA_SIM2REAL_ROBOT_ASSET_OPERATION", "prepare")
+
+    script = tr.robot_asset_preflight_script(spec)
+
+    assert "isaac_robot_asset prepare" not in script
+    assert "isaac_robot_asset fetch" not in script
+    assert "export NPA_PREPARE_ROBOT_ASSET_IN_APP=1" in script
+
+
+def test_fetch_asset_preflight_does_not_repeat_download(monkeypatch):
+    spec = {
+        "source_format": "urdf",
+        "resolved_usd_uri": "s3://private-run/resolved/robot.usd",
+    }
+    monkeypatch.setenv("NPA_SIM2REAL_ROBOT_ASSET_OPERATION", "fetch")
+
+    script = tr.robot_asset_preflight_script(spec)
+
+    assert "isaac_robot_asset prepare" not in script
+    assert script.count("npa.workflows.sim2real.isaac_robot_asset fetch") == 1
+
+
+def test_rollout_prepares_urdf_inside_running_app(monkeypatch):
+    monkeypatch.setenv("NPA_SIM2REAL_ROBOT_ASSET_OPERATION", "prepare")
+    spec = {
+        "source_format": "urdf",
+        "resolved_usd_uri": "s3://private-run/resolved/robot.usd",
+        "usd_path": "/tmp/npa_robot/resolved/robot.usd",
+    }
+    manifest = rollout.build_isaac_rollout_job_manifest(
+        job_name="s2r-byo-isaac-roll-x",
+        run_id="x",
+        image="img",
+        task="Isaac-Lift-Cube-Franka-v0",
+        rollout_count=1,
+        steps_per_rollout=1,
+        checkpoint_uri="",
+        out_s3_prefix="s3://private-run/rollouts",
+        s3_endpoint="https://s3.example",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="GPU",
+        robot_spec=spec,
+    )
+    script = decode_compressed_bash_args(
+        manifest["spec"]["template"]["spec"]["containers"][0]["args"]
+    )
+
+    assert "export NPA_PREPARE_ROBOT_ASSET_IN_APP=1" in script
+    assert "isaac_robot_asset prepare" not in script
+    source = rollout.ISAAC_ROLLOUT_SCRIPT
+    assert source.index("AppLauncher(") < source.index("prepare_with_running_app()")
+    assert source.index("prepare_with_running_app()") < source.index(
+        "import isaaclab_tasks"
+    )
 
 
 def test_payload_ur_preset_carries_no_gripper():

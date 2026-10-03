@@ -10,7 +10,7 @@ Factory inference* (zero-GPU on the client side):
 2. **rollout-judge (kubernetes).** A LeRobot eval rollout renders videos on a
    Nebius **Managed Kubernetes GPU**; ``vlm-eval --backend api`` then scores the
    rollout with a hosted VLM, with no local VLM serving stage. Workflow:
-   ``npa/workflows/workbench/npa-workflows/tokenfactory-rollout-judge-combo.yaml``.
+   ``workflows/testing/tokenfactory-rollout-judge-combo.yaml``.
 3. **sim-sweep (serverless fan-out).** A hosted text model designs an experiment
    sweep, a deterministic grid launches one LeRobot **serverless GPU Job** per
    variant, and a hosted text model ranks the completed runs from their real
@@ -18,7 +18,7 @@ Factory inference* (zero-GPU on the client side):
 4. **scene-to-rollout-judge (kubernetes).** A hosted reasoner extracts a plan
    from scene images, a Nebius **Managed Kubernetes GPU** rolls out a policy, and
    a hosted VLM judges the rollout against that plan. Workflow:
-   ``npa/workflows/workbench/npa-workflows/tokenfactory-scene-to-rollout-judge.yaml``.
+   ``workflows/testing/tokenfactory-scene-to-rollout-judge.yaml``.
 
 This module holds only pure logic (digesting artifacts, building prompts,
 deriving run IDs / job names / URIs / variant grids) so it is unit-testable
@@ -156,7 +156,9 @@ def summarize_run_artifacts(
             continue
         snippet = raw.strip()
         if len(snippet.encode("utf-8")) > max_file_bytes:
-            snippet = snippet.encode("utf-8")[:max_file_bytes].decode("utf-8", errors="ignore")
+            snippet = snippet.encode("utf-8")[:max_file_bytes].decode(
+                "utf-8", errors="ignore"
+            )
             snippet = snippet.rstrip() + "\n... [truncated]"
         if not snippet:
             continue
@@ -301,9 +303,13 @@ def build_sweep_design_prompt(
     ]
     for variant in variants:
         extras = ", ".join(
-            f"{key}={value}" for key, value in variant.items() if key not in {"index", "id"}
+            f"{key}={value}"
+            for key, value in variant.items()
+            if key not in {"index", "id"}
         )
-        lines.append(f"  - {variant['id']}: {extras}" if extras else f"  - {variant['id']}")
+        lines.append(
+            f"  - {variant['id']}: {extras}" if extras else f"  - {variant['id']}"
+        )
     lines.append("")
     lines.append("Write the per-variant hypotheses described in your instructions.")
     return "\n".join(lines) + "\n"

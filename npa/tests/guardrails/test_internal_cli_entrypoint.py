@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import json
+import pytest
 import yaml
 
 from npa.cli.invocation import internal_cli_argv
@@ -16,9 +17,7 @@ from npa.project_destroy import _internal_command_argv
 def _without_npa_on_path() -> dict[str, str]:
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join(
-        value
-        for value in ("/usr/bin", "/bin")
-        if Path(value).is_dir()
+        value for value in ("/usr/bin", "/bin") if Path(value).is_dir()
     )
     return env
 
@@ -84,7 +83,13 @@ def test_internal_invocation_is_always_active_interpreter_module() -> None:
 
 def test_real_destroy_cli_executes_registered_phases_without_npa_on_path(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # A caller's config directory must not hide this subprocess's fixture or
+    # let it read operator configuration, even when HOME is already isolated.
+    ambient_config = tmp_path / "ambient-config"
+    ambient_config.mkdir()
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(ambient_config))
     home = tmp_path / "home"
     config = home / ".npa" / "config.yaml"
     config.parent.mkdir(parents=True)
@@ -107,6 +112,7 @@ def test_real_destroy_cli_executes_registered_phases_without_npa_on_path(
     env.update(
         {
             "HOME": str(home),
+            "NPA_CONFIG_DIR": str(config.parent),
             "NPA_TEARDOWN_RECEIPT_DIR": str(tmp_path / "receipts"),
             "NPA_OPERATION_JOURNAL_DIR": str(tmp_path / "operations"),
         }
@@ -161,7 +167,5 @@ def test_real_destroy_cli_executes_registered_phases_without_npa_on_path(
         }
     ]
     assert by_phase["local_cleanup"]["status"] == "completed"
-    assert by_phase["local_cleanup"]["evidence"]["command_results"][0][
-        "exit_code"
-    ] == 0
+    assert by_phase["local_cleanup"]["evidence"]["command_results"][0]["exit_code"] == 0
     assert by_phase["controller"]["blocked_by"] == ["workflows"]

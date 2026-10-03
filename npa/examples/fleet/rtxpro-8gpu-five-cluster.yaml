@@ -1,0 +1,60 @@
+apiVersion: npa.fleet/v0.0.1
+name: rtx-render-fleet
+tenant_id: "" # resolve from the runtime profile; never commit a live tenant ID
+region: uk-south2
+profile: "" # set to an owner-configured profile at runtime
+project_prefix: rtx-render-fleet-
+defaults:
+  gpu_workload_profile: rtx-rendering
+  # Match these repositories to the verified Ubuntu 24.04 driver image.
+  # HTTPS also works where outbound HTTP package traffic is unavailable.
+  gpu_driver_package_repositories:
+    ubuntu.sources: |
+      Types: deb
+      URIs: https://archive.ubuntu.com/ubuntu/
+      Suites: noble noble-updates noble-backports
+      Components: main universe restricted multiverse
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+      Types: deb
+      URIs: https://security.ubuntu.com/ubuntu/
+      Suites: noble-security
+      Components: main universe restricted multiverse
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+  gpu_nodes:
+    count: 2
+    # uk-south2 exposes the exact zonal RTX platform name below. Other regions
+    # may expose the unsuffixed gpu-rtx6000 catalog name instead.
+    platform: gpu-rtx6000-a
+    preset: 8gpu-192vcpu-1744gb
+    # Replace only in the owner-private runtime copy. Fleet renders STRICT and
+    # never falls back to ordinary on-demand capacity.
+    capacity_block_group: capacityblockgroup-REPLACE_AT_RUNTIME
+  cpu_nodes: {count: 3, platform: cpu-d3, preset: 48vcpu-192gb}
+  enable_gpu_cluster: false
+  enable_filestore: true
+  filestore_disk_size_gibibytes: 5120
+  filestore_mount_path: /mnt/data
+  filestore_mount_tag: npa-shared-fs
+  # Supply the approved chart source only in owner-private runtime config.
+  filesystem_csi_chart_repository: ""
+projects:
+  - name: large
+    object_storage: {storage_class: enhanced, size_gibibytes: 6144}
+    clusters:
+      - name: render
+        gpu_nodes: {count: 3}
+        filestore_disk_size_gibibytes: 7168
+  - name: medium-a
+    object_storage: {storage_class: enhanced, size_gibibytes: 3072}
+  - name: medium-b
+    object_storage: {storage_class: enhanced, size_gibibytes: 3072}
+  - name: medium-c
+    object_storage: {storage_class: enhanced, size_gibibytes: 3072}
+  - name: small
+    object_storage: {storage_class: enhanced, size_gibibytes: 1024}
+    clusters:
+      - name: render
+        gpu_nodes: {count: 1}
+        cpu_nodes: {count: 1}
+        filestore_disk_size_gibibytes: 2048

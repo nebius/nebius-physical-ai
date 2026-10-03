@@ -846,6 +846,12 @@ def _simulation_launch() -> tuple[list[str], dict[str, str]]:
     environment.update(
         {
             "LEISAAC_ASSETS_ROOT": str(ASSETS_ROOT),
+            "NPA_LEISAAC_SOURCE_COMMIT": SOURCE_COMMIT,
+            "NPA_LEISAAC_SOURCE_VERSION": SOURCE_VERSION,
+            "NPA_LEISAAC_ISAAC_SIM_VERSION": ISAAC_SIM_VERSION,
+            "NPA_LEISAAC_ISAAC_LAB_VERSION": ISAAC_LAB_VERSION,
+            "NPA_LEISAAC_IMAGE": os.environ.get("NPA_LEISAAC_IMAGE", ""),
+            "NPA_LEISAAC_REGISTRY_FINGERPRINT": REGISTRY_FINGERPRINT,
             "NPA_LEISAAC_READY_PATH": str(READY_PATH),
             "NPA_LEISAAC_INPUT_COUNTER": str(INPUT_COUNTER_PATH),
             "NPA_LEISAAC_APPLIED_COUNTER": str(APPLIED_COUNTER_PATH),

@@ -1,0 +1,64 @@
+{
+  "schema": "npa.sim2real.model_agent_benchmark.models.v1",
+  "models": [
+    {
+      "repository": "zai-org/GLM-5.2",
+      "revision": "b4734de4facf877f85769a911abafc5283eab3d9",
+      "license": "MIT",
+      "quantization": "repository checkpoint",
+      "server": "sglang",
+      "server_version": "0.5.17-cu130",
+      "server_image": "docker.io/lmsysorg/sglang@sha256:16aba8925507e631e1dc1e23d95d026533602591775f6a8db68b74ee99746155",
+      "tool_call_parser": "glm47",
+      "reasoning_parser": "glm45",
+      "context_limit": 262144,
+      "tensor_parallel_size": 16,
+      "pipeline_parallel_size": 1,
+      "server_arguments": [
+        "--trust-remote-code",
+        "--mem-fraction-static=0.9",
+        "--enforce-disable-flashinfer-allreduce-fusion",
+        "--kv-cache-dtype=bfloat16",
+        "--dsa-prefill-backend=flashmla_sparse",
+        "--dsa-decode-backend=flashmla_kv",
+        "--random-seed=20260820"
+      ]
+    },
+    {
+      "repository": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+      "revision": "003f183a92fbe5b9a8325aaa8b2ae797c91dd90f",
+      "license": "Apache-2.0",
+      "quantization": "fine-grained FP8 block-128",
+      "server": "sglang",
+      "server_version": "0.5.13.post1-cu130",
+      "server_image": "docker.io/lmsysorg/sglang@sha256:1c64fde976bdf0d56474a30bccbcfc19667e5b3ab34c826a534c9d6aaca41212",
+      "tool_call_parser": "qwen3_coder",
+      "reasoning_parser": null,
+      "context_limit": 262144,
+      "tensor_parallel_size": 8,
+      "pipeline_parallel_size": 1,
+      "server_arguments": [
+        "--mem-fraction-static=0.9",
+        "--random-seed=20260820"
+      ]
+    },
+    {
+      "repository": "openai/gpt-oss-120b",
+      "revision": "b5c939de8f754692c1647ca79fbf85e8c1e70f8a",
+      "license": "Apache-2.0",
+      "quantization": "native MXFP4",
+      "server": "vllm",
+      "server_version": "0.27.1",
+      "server_image": "docker.io/vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967",
+      "tool_call_parser": "openai",
+      "reasoning_parser": null,
+      "context_limit": 131072,
+      "tensor_parallel_size": 1,
+      "pipeline_parallel_size": 1,
+      "server_arguments": [
+        "--enable-auto-tool-choice",
+        "--seed=20260820"
+      ]
+    }
+  ]
+}

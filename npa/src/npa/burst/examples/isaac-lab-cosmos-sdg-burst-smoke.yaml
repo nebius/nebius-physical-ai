@@ -5,16 +5,15 @@
 #   npa burst submit-yaml npa/src/npa/burst/examples/isaac-lab-cosmos-sdg-burst-smoke.yaml \
 #     --name <run-id> \
 #     --var NPA_RUN_ID=<run-id> \
-#     --var ISAAC_LAB_IMAGE=<registry>/npa-isaac-lab:2.3.2.post1 \
+#     --var ISAAC_LAB_IMAGE=<registry>/npa-isaac-lab:3.0.0b2.post1 \
 #     --var NPA_OUTPUT_URI=s3://<your-bucket>/<prefix>/<run-id>/
 #
 # This YAML is intentionally one executable SkyPilot task so it can run through
 # the burst Python-API path. Multi-stage workbench pipelines should use
 # `npa workbench workflow submit`.
 #
-# `npa burst submit-yaml` injects SkyPilot Docker-login secrets for private
-# Nebius Container Registry image pulls when the submitter can mint a Nebius IAM
-# token.
+# `npa burst submit-yaml` forwards explicit exact-host SkyPilot Docker-login
+# secrets for private images. Public GHCR release images need no registry auth.
 name: isaac-lab-cosmos-sdg-burst-smoke
 resources:
   cloud: nebius
@@ -71,12 +70,16 @@ run: |
       echo "Isaac Lab train script not found: ${TRAIN_SCRIPT}" >&2
       exit 3
     fi
+    VISUALIZER_ARGS=(--visualizer none)
+    case "${ISAAC_LAB_VERSION:-}" in
+      2.*) VISUALIZER_ARGS=(--headless) ;;
+    esac
     cd "${OUTPUT_DIR}"
     "${PYTHON_BIN}" "${TRAIN_SCRIPT}" \
       --task "${ISAAC_LAB_TASK}" \
       --num_envs "${ISAAC_LAB_NUM_ENVS}" \
       --max_iterations "${ISAAC_LAB_ITERATIONS}" \
-      --headless \
+      "${VISUALIZER_ARGS[@]}" \
       --experiment_name npa_burst_isaac_cosmos_sdg \
       --run_name "${NPA_RUN_ID}" \
       agent.save_interval=1

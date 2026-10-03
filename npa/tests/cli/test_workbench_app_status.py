@@ -13,7 +13,9 @@ from npa.clients.ssh import SSHError
 
 
 runner = CliRunner()
-TERRAFORM_PLAN_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "terraform_plans"
+TERRAFORM_PLAN_FIXTURES = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "terraform_plans"
+)
 
 
 @pytest.fixture()
@@ -176,7 +178,9 @@ def test_cosmos_skip_infra_retries_install_failed_workbench(
     )
     mocker.patch("npa.cli.cosmos.health_check_auto", return_value=(True, ""))
     mocker.patch("npa.cli.cosmos.write_manifest")
-    mocker.patch("npa.cli.cosmos.provisioner.working_dir_path", return_value=tmp_path / "missing")
+    mocker.patch(
+        "npa.cli.cosmos.provisioner.working_dir_path", return_value=tmp_path / "missing"
+    )
     apply = mocker.patch("npa.cli.cosmos.provisioner.apply")
 
     result = runner.invoke(

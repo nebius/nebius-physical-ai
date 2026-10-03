@@ -18,6 +18,7 @@ from npa.cluster_backends.mk8s_model import (
     as_mk8s_desired,
 )
 from npa.cluster_backends.mk8s_render import render_tfvars
+from npa.cluster_backends.kuberay import validate_recipe_kuberay_compatibility
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class MK8sApplyRequest:
     log_path: Path | None = None
     provider_env: dict[str, str] | None = None
     provider_preflight: bool = False
+    repair_stopped_placeholder: bool = False
     # Legacy-state compatibility only. New standalone targets use the native
     # one-target request below; existing deploy/cluster state must continue to
     # reconcile in place rather than being silently orphaned.
@@ -107,6 +109,7 @@ def desired_state(cluster: MK8sDesired) -> dict[str, Any]:
     )
     return {
         "backend": "mk8s",
+        **({"kuberay": cluster.kuberay.plan()} if cluster.kuberay else {}),
         "name": cluster.name,
         "cpu_nodes": cluster.cpu_count(),
         "cpu_platform": cluster.cpu_nodes.platform if cluster.cpu_nodes else "",
@@ -128,10 +131,17 @@ def desired_state(cluster: MK8sDesired) -> dict[str, Any]:
         "gpu_health_timeout_minutes": cluster.gpu_health_timeout_minutes,
         "gpu_cuda_smoke": cluster.gpu_cuda_smoke,
         "gpu_cuda_smoke_image": cluster.gpu_cuda_smoke_image,
+        "gpu_workload_profile": cluster.gpu_workload_profile,
+        "gpu_graphics_smoke": cluster.gpu_graphics_smoke,
+        "gpu_graphics_smoke_image": cluster.gpu_graphics_smoke_image,
+        "gpu_driver_repositories_configured": bool(
+            cluster.gpu_driver_package_repositories
+        ),
         "enable_filestore": cluster.enable_filestore,
         "filestore_disk_size_gibibytes": cluster.filestore_disk_size_gibibytes,
         "filestore_mount_path": cluster.filestore_mount_path,
         "filestore_mount_tag": cluster.filestore_mount_tag,
+        "filesystem_csi_enabled": bool(cluster.filesystem_csi_chart_repository),
         "k8s_version": cluster.resolved_k8s_version() or "backend-default",
         "mig": (
             {"strategy": cluster.mig.strategy, "config": cluster.mig.config}
@@ -162,6 +172,23 @@ class MK8sBackend:
         self, desired: MK8sDesired, request: MK8sApplyRequest
     ) -> dict[str, Any]:
         desired = as_mk8s_desired(desired)
+        recipe = request.recipe_dir or (
+            request.recipe_root / "k8s-training" if request.recipe_root else None
+        )
+        if desired.kuberay and desired.kuberay.enabled:
+            if recipe is None:
+                raise ValueError("KubeRay preflight requires the selected recipe")
+            validate_recipe_kuberay_compatibility(desired, recipe)
+        if request.fleet_root is not None and request.project is not None:
+            from npa.cluster_backends.mk8s_execution import (
+                validate_kuberay_installation,
+            )
+
+            validate_kuberay_installation(
+                desired,
+                request.fleet_root / request.project.key() / desired.name,
+                recipe_dir=recipe,
+            )
         result: dict[str, Any] = {
             "backend": self.name,
             "required": True,
@@ -238,9 +265,27 @@ class MK8sBackend:
     def apply(self, desired: MK8sDesired, request: MK8sApplyRequest) -> dict[str, Any]:
         desired = as_mk8s_desired(desired)
         if request.terraform_command:
+            if desired.kuberay and desired.kuberay.enabled:
+                raise ValueError(
+                    "KubeRay requires native mk8s recipe execution; legacy "
+                    "standalone Terraform state cannot honor this policy"
+                )
             if request.terraform_cwd is None or request.terraform_env is None:
                 raise ValueError(
                     "mk8s Terraform apply requires terraform_cwd and terraform_env"
+                )
+            from npa.cluster_backends.mk8s_execution import (
+                validate_kuberay_installation,
+            )
+
+            guarded = validate_kuberay_installation(
+                desired,
+                request.terraform_cwd.parent,
+                environ=request.terraform_env,
+            )
+            if guarded.kuberay and guarded.kuberay.enabled:
+                raise ValueError(
+                    "A KubeRay-managed installation requires native mk8s recipe execution"
                 )
             from npa.cluster_backends.process import run_stream
 
@@ -296,6 +341,7 @@ class MK8sBackend:
             validation_policy=request.post_deploy_validation,
             basic_validation_timeout_minutes=request.basic_validation_timeout_minutes,
             kubectl_bin=request.kubectl_bin,
+            repair_stopped_placeholder=request.repair_stopped_placeholder,
         )
         if request.standalone_context and result.get("status") == "deployed":
             result = self._adopt_standalone_result(desired, request, result)

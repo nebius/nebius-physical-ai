@@ -8,9 +8,15 @@ description: Use when authoring, validating, or reviewing NPA workflow specs (ap
 ## When To Use
 
 Load when creating or editing **NPA workflow YAML** under
-`npa/workflows/workbench/npa-workflows/`, wiring tool stages, loops, or
+`workflows/`, wiring tool stages, loops, or
 transitions, or when helping agents/users convert SkyPilot bash pipelines into
 specs.
+
+Keep `workflows/main/` limited to `sim2real.yaml`, `paidf-cosmos3.yaml`, and
+`nurec-reconstruct.yaml`.
+Add partner integrations under `workflows/partners/<partner>/` and other
+reference specs under `workflows/testing/`; keep catalog documentation in
+`workflows/README.md`.
 
 For **new creative pipelines**, also load `skills/workflows/generate-npa-workflow/SKILL.md`.
 
@@ -34,9 +40,34 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
   one `toolRef` and still differ.
 - **Trigger:** `trigger: {uri, pollSeconds, maxPolls, minObjects}` makes the runtime
   driver wait for data before that state runs (the state must also do work).
+  Numeric config expressions are resolved again after `--var` overrides;
+  `pollSeconds` and `minObjects` must be positive, while `maxPolls: 0` retains
+  the supported unbounded setting. Exercise the submitted configuration through
+  the actual watcher when validating overrides: check observed object counts
+  and polling behavior as well as successful spec parsing.
 - **Decision states:** `writesDecision: true` when the state writes `config.decision_uri`.
 - **needs:** ordering hints only (validated acyclic; not enforced at runtime).
 - **I/O:** `inputs` / `outputs` with `uri` + optional `schema`.
+  Every declared output is required on runtime success. Declare success
+  artifacts under `outputs`; publish failure-only diagnostics from the failure
+  handler and return a nonzero exit code. Requiring both mutually exclusive
+  artifacts makes a successful job fail durable-output validation. Exercise
+  the output check against each execution path's actual artifact set; syntax
+  and render checks cannot establish that contract.
+
+### Strict YAML types
+
+The v0.0.1 parser does not coerce convenient-but-ambiguous YAML values. Omit an
+optional field instead of setting it to `null`; collection fields such as
+`inputs`, `outputs`, `params`, `parallel`, and `sequence` must retain their
+declared mapping/list shape. Integer fields reject booleans and every YAML float,
+including `1.0`. Boolean fields accept only YAML `true` or `false`, never strings
+such as `"yes"`. State names are unique; a duplicate key is rejected rather than
+silently overwriting an earlier state. Quote `{{config.*}}` tokens where YAML
+scalar parsing could otherwise assign a type before token resolution.
+
+Always run `validate-spec` on generator output and again with the intended
+`--var` overrides before planning or submission.
 
 ## Validation Hardening (v0.0.1)
 
@@ -45,15 +76,59 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 | Unknown `toolRef` / predicate | `validate-spec` |
 | Unbounded transition cycles | `validate-spec` (loops do **not** whitelist cycles) |
 | Missing `{{config.*}}`, bad loop max | `validate-spec` via token resolution |
+| Null collections, floating-point counts, truthy strings, duplicate states | `validate-spec` |
 | Forward `{{state.*}}` refs | Allowed at validate; resolved during plan/execute |
 | Execution depth | Guarded at `--execute` (no stack blowups) |
 | `run.shell` | Resolves config tokens; spec authors are trusted (injection risk if config is untrusted) |
 
 ## Commands
 
+### Validation and execution readiness
+
+For planning-only work, preserve the requested operation in the workflow without
+executing it. A restriction on provider calls during authoring does not require
+replacing a planned inference step with a fixed answer. Use mocks only when the
+user requests a mock or fixture, and label them as such.
+
+Inspect the resolved plan against the task: do its tools or commands consume the
+intended input, perform the requested operation, and produce the stated output?
+Valid syntax alone cannot establish this. Report a mismatch as incomplete work,
+not success, even when validation and planning commands pass.
+
+Preserve failures in authoring and validation commands as well as workflow steps.
+Run checks separately, or stop the command group at the first failure and return
+that exit code. A later successful command must not hide an earlier failure.
+If a search tool is unavailable, report its failure before using an available
+alternative in a separate command.
+
+Check input content with the consuming tool's local reader when available, not
+just file existence or YAML validation. For a step that creates its own input,
+check the generated format and prompt content without executing inference.
+Keep an unchecked input unverified in the readiness record; do not claim task
+fidelity from the workflow hash or planned command alone.
+
+When saving a workflow, read [the readiness template](references/readiness-record.md)
+and save `<workflow-stem>.readiness.json` beside it, within the authorized write
+scope. Bind the record to the final workflow bytes. Record planning results and
+each execution prerequisite separately; unverified prerequisites do not make a
+correct planning-only task fail. Keep out-of-scope checks unverified.
+For read-only reviews, report the same fields inline without creating files.
+The final response can link the record and summarize the unresolved prerequisites.
+Completeness does not establish execution readiness; verified claims need evidence.
+
+An example bucket is a placeholder, not a writable destination. A local input
+on the authoring machine is not automatically available to a remote worker;
+identify its explicit staging, mount, or worker-readable URI. For a planning-only
+task, list those unresolved prerequisites without creating storage, transferring
+inputs, or submitting the workflow. Use
+`skills/atomic/submit-workflow/SKILL.md` for the existing live-submit checks
+when execution is requested.
+
+### CLI commands
+
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json
-npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id demo --json
+npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id demo --check-render --json
 npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --scheduler-plan --json
 npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo --plan-only
 npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo
@@ -63,6 +138,11 @@ npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo
 For npa.workflow specs it plans → renders serial SkyPilot YAML → `sky jobs launch`.
 Use `--plan-only` to inspect the rendered YAML without launching. Dynamic
 branches still need `--assume-decision`.
+
+Use `plan-spec --check-render` during authoring. It exercises the production
+SkyPilot renderer locally with registry-secret materialization disabled, so pod
+configuration and first-party image startup-contract failures surface before
+provider preflight or submission.
 
 Live infra (required before merge):
 

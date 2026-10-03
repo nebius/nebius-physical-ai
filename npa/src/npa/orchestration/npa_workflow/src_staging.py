@@ -212,12 +212,57 @@ def iter_source_files(root: Path) -> Iterable[Path]:
             yield relative
 
 
+def staged_source_files(root: Path) -> dict[Path, Path]:
+    """Map staged package-relative destinations to their local source files.
+
+    The supported catalog is a sibling of the Python project in a checkout.
+    Include main/testing and partner YAMLs at packaged fallback paths so worker
+    editable installs remain self-contained. Apply the same secret, symlink,
+    and git-ignore filters as the package source itself.
+    """
+
+    files = {relative: root / relative for relative in iter_source_files(root)}
+    catalog = root.parent / "workflows"
+    if (
+        catalog.is_dir()
+        and not catalog.is_symlink()
+        and any((catalog / tier).is_dir() for tier in ("main", "testing", "partners"))
+    ):
+        # Exported checkouts have no git-ignore filtering. Do not upload stale
+        # generated copies beside a newer authoritative source catalog.
+        files = {
+            relative: path
+            for relative, path in files.items()
+            if relative.parts[:4]
+            not in {
+                ("src", "npa", "workflows", "main"),
+                ("src", "npa", "workflows", "testing"),
+                ("src", "npa", "workflows", "partners"),
+            }
+        }
+        for relative in iter_source_files(catalog):
+            if (
+                (
+                    (
+                        len(relative.parts) == 2
+                        and relative.parts[0] in {"main", "testing"}
+                    )
+                    or (len(relative.parts) == 3 and relative.parts[0] == "partners")
+                )
+                and relative.suffix == ".yaml"
+                and _is_safe_regular_source(root.parent, Path("workflows") / relative)
+            ):
+                files[Path("src/npa/workflows") / relative] = catalog / relative
+    return dict(sorted(files.items()))
+
+
 def source_fingerprint(root: Path, files: Iterable[Path] | None = None) -> str:
     """Return a stable digest of paths, modes, and contents in the source tree."""
 
     digest = hashlib.sha256()
-    for relative in files if files is not None else iter_source_files(root):
-        path = root / relative
+    sources = staged_source_files(root)
+    for relative in files if files is not None else sources:
+        path = sources[relative]
         digest.update(relative.as_posix().encode("utf-8"))
         digest.update(b"\0")
         digest.update(b"x" if os.access(path, os.X_OK) else b"-")
@@ -354,7 +399,7 @@ def ensure_npa_source(
             f"{root} does not look like the npa package (no pyproject.toml)"
         )
 
-    files = list(iter_source_files(root))
+    files = staged_source_files(root)
     if not files:
         raise SrcStagingError(f"No source files found under {root}")
     fingerprint = source_fingerprint(root, files)
@@ -399,7 +444,7 @@ def ensure_npa_source(
     # upload with a small pool. Order does not matter (the worker syncs the
     # whole prefix before installing).
     def _upload(relative: Path) -> None:
-        client.upload_file(str(root / relative), f"{destination}{relative.as_posix()}")
+        client.upload_file(str(files[relative]), f"{destination}{relative.as_posix()}")
 
     # Both callers only handle SrcStagingError; an unconfigured bucket, expired
     # keys or AccessDenied would otherwise surface as a bare "Unexpected error"

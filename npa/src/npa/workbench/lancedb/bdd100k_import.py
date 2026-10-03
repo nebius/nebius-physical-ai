@@ -155,7 +155,9 @@ def import_bdd100k(
     if limit is not None and limit < 1:
         raise BDD100KValidationError("limit must be a positive integer when provided")
     if synthetic is not None and synthetic < 0:
-        raise BDD100KValidationError("synthetic must be a non-negative integer when provided")
+        raise BDD100KValidationError(
+            "synthetic must be a non-negative integer when provided"
+        )
     if synthetic == 0:
         # 0 means "no synthetic rows -> read the real source", so a pipeline can
         # carry a single `--synthetic {{config.synthetic_rows}}` arg and toggle
@@ -204,7 +206,9 @@ def import_bdd100k(
                 )
             )
         if write:
-            arrow_table = pa.Table.from_batches([payload.batch], schema=bdd100k_schema())
+            arrow_table = pa.Table.from_batches(
+                [payload.batch], schema=bdd100k_schema()
+            )
             if table_obj is None:
                 table_obj, table_version_before = _open_or_create_table(
                     db,
@@ -251,7 +255,9 @@ def validate_splits(splits: Iterable[str] | None) -> list[str]:
         value = str(split).strip().lower()
         if value not in VALID_SPLITS:
             valid = ", ".join(VALID_SPLITS)
-            raise BDD100KValidationError(f"invalid split {split!r}; expected one of {valid}")
+            raise BDD100KValidationError(
+                f"invalid split {split!r}; expected one of {valid}"
+            )
         if value not in normalized:
             normalized.append(value)
     return normalized
@@ -319,11 +325,17 @@ def source_batches(
     if not source_value:
         raise BDD100KSourceError("source is required")
     if source_value.startswith(("http://", "https://")):
-        raise BDD100KSourceError("HTTP BDD100K bundles are not supported yet; use a local path or s3:// URI")
+        raise BDD100KSourceError(
+            "HTTP BDD100K bundles are not supported yet; use a local path or s3:// URI"
+        )
     if source_value.startswith("s3://"):
-        yield from _s3_source_batches(source_value, splits=split_values, limit=limit, batch_size=batch_size)
+        yield from _s3_source_batches(
+            source_value, splits=split_values, limit=limit, batch_size=batch_size
+        )
         return
-    yield from _local_source_batches(source_value, splits=split_values, limit=limit, batch_size=batch_size)
+    yield from _local_source_batches(
+        source_value, splits=split_values, limit=limit, batch_size=batch_size
+    )
 
 
 def manifest_checksum(entries: Iterable[tuple[str, str, str]]) -> str:
@@ -351,7 +363,9 @@ def _distribute_rows(total_rows: int, splits: list[str]) -> dict[str, int]:
     exact = {split: total_rows * weights[split] / total_weight for split in splits}
     counts = {split: int(exact[split]) for split in splits}
     remainder = total_rows - sum(counts.values())
-    for split in sorted(splits, key=lambda value: exact[value] - counts[value], reverse=True)[:remainder]:
+    for split in sorted(
+        splits, key=lambda value: exact[value] - counts[value], reverse=True
+    )[:remainder]:
         counts[split] += 1
     return counts
 
@@ -420,26 +434,27 @@ def _local_source_batches(
     if not root.is_dir():
         raise BDD100KSourceError(f"source must be a BDD100K directory: {source}")
     image_index = _local_image_index(root)
-    rows: list[dict[str, Any]] = []
-    for split in splits:
-        labels_path = _find_local_label_file(root, split)
-        labels = _load_json_array(labels_path.read_bytes(), str(labels_path))
-        emitted = 0
-        for entry in labels:
-            row = _row_from_label_entry(
-                entry,
-                split=split,
-                image_lookup=lambda image_id, index=image_index: _read_local_image_bytes(index, image_id),
-            )
-            rows.append(row)
-            emitted += 1
-            if len(rows) >= batch_size:
-                yield _batch_from_rows(rows)
-                rows = []
-            if limit is not None and emitted >= limit:
-                break
-    if rows:
-        yield _batch_from_rows(rows)
+    label_paths = {split: _find_local_label_file(root, split) for split in splits}
+    label_groups = {
+        split: _limited_labels(_load_json_array(path.read_bytes(), str(path)), limit)
+        for split, path in label_paths.items()
+    }
+    yield from _label_batches(
+        label_groups,
+        image_lookup=lambda image_id: _read_local_image_bytes(image_index, image_id),
+        batch_size=batch_size,
+    )
+
+
+def _load_s3_labels(
+    client: Any,
+    location: _S3Location,
+    label_key: str,
+    limit: int | None,
+) -> list[Any]:
+    raw = _read_s3_bytes(client, location.bucket, label_key)
+    label_uri = f"s3://{location.bucket}/{label_key}"
+    return _limited_labels(_load_json_array(raw, label_uri), limit)
 
 
 def _s3_source_batches(
@@ -453,32 +468,41 @@ def _s3_source_batches(
     client = _s3_client()
     keys = _list_s3_keys(client, location)
     image_index = {
-        Path(key).name: key
-        for key in keys
-        if key.lower().endswith((".jpg", ".jpeg"))
+        Path(key).name: key for key in keys if key.lower().endswith((".jpg", ".jpeg"))
     }
+    label_keys = {split: _find_s3_label_key(keys, split) for split in splits}
+    label_groups = {
+        split: _load_s3_labels(client, location, label_key, limit)
+        for split, label_key in label_keys.items()
+    }
+    yield from _label_batches(
+        label_groups,
+        image_lookup=lambda image_id: _read_s3_bytes(
+            client, location.bucket, _require_image_key(image_index, image_id)
+        ),
+        batch_size=batch_size,
+    )
+
+
+def _label_batches(
+    label_groups: dict[str, list[Any]],
+    *,
+    image_lookup,
+    batch_size: int,
+) -> Iterable[_BatchPayload]:
+    _validate_occlusion_values(label_groups.values())
     rows: list[dict[str, Any]] = []
-    for split in splits:
-        label_key = _find_s3_label_key(keys, split)
-        labels = _load_json_array(_read_s3_bytes(client, location.bucket, label_key), f"s3://{location.bucket}/{label_key}")
-        emitted = 0
+    for split, labels in label_groups.items():
         for entry in labels:
             row = _row_from_label_entry(
                 entry,
                 split=split,
-                image_lookup=lambda image_id, index=image_index: _read_s3_bytes(
-                    client,
-                    location.bucket,
-                    _require_image_key(index, image_id),
-                ),
+                image_lookup=image_lookup,
             )
             rows.append(row)
-            emitted += 1
             if len(rows) >= batch_size:
                 yield _batch_from_rows(rows)
                 rows = []
-            if limit is not None and emitted >= limit:
-                break
     if rows:
         yield _batch_from_rows(rows)
 
@@ -496,7 +520,7 @@ def _row_from_label_entry(
     if image_bytes is None:
         raise BDD100KSourceError(f"image not found for BDD100K label entry: {image_id}")
     width, height = _image_size(image_bytes, entry)
-    categories, bboxes, occluded = _annotations_from_entry(entry)
+    categories, bboxes, occluded = _annotations_from_entry(entry, image_id=image_id)
     attrs = entry.get("attributes") if isinstance(entry.get("attributes"), dict) else {}
     return {
         "image_id": image_id,
@@ -522,25 +546,91 @@ def _image_id_from_entry(entry: dict[str, Any]) -> str:
     raise BDD100KSourceError("label entry is missing image_id/name/file_name")
 
 
-def _annotations_from_entry(entry: dict[str, Any]) -> tuple[list[str], list[list[float]], list[bool]]:
+def _annotations_from_entry(
+    entry: dict[str, Any],
+    *,
+    image_id: str,
+) -> tuple[list[str], list[list[float]], list[bool]]:
     categories: list[str] = []
     bboxes: list[list[float]] = []
     occluded: list[bool] = []
     labels = entry.get("labels") or entry.get("annotations") or []
     if not isinstance(labels, list):
         return categories, bboxes, occluded
-    for label in labels:
+    for annotation_index, label in enumerate(labels):
         if not isinstance(label, dict):
             continue
         category = label.get("category") or label.get("label") or label.get("name")
         bbox = _bbox_from_label(label)
         if category is None or bbox is None:
             continue
-        attrs = label.get("attributes") if isinstance(label.get("attributes"), dict) else {}
         categories.append(str(category))
         bboxes.append(bbox)
-        occluded.append(bool(attrs.get("occluded", label.get("occluded", False))))
+        occluded.append(
+            _occluded_from_label(
+                label,
+                image_id=image_id,
+                annotation_index=annotation_index,
+            )
+        )
     return categories, bboxes, occluded
+
+
+def _occluded_from_label(
+    label: dict[str, Any],
+    *,
+    image_id: str,
+    annotation_index: int,
+) -> bool:
+    attributes = label.get("attributes")
+    if isinstance(attributes, dict) and "occluded" in attributes:
+        value = attributes["occluded"]
+    elif "occluded" in label:
+        value = label["occluded"]
+    else:
+        return False
+    if type(value) is not bool:
+        raise BDD100KValidationError(
+            f"annotation {annotation_index} for image {image_id!r} has invalid "
+            f"occluded value {value!r}; expected a boolean"
+        )
+    return value
+
+
+def _validate_occlusion_values(
+    label_groups: Iterable[list[Any]],
+) -> None:
+    for labels in label_groups:
+        for entry in labels:
+            _validate_entry_occlusion(entry)
+
+
+def _validate_entry_occlusion(entry: Any) -> None:
+    if not isinstance(entry, dict):
+        return
+    annotations = entry.get("labels") or entry.get("annotations") or []
+    if not isinstance(annotations, list):
+        return
+    image_id = _entry_identifier(entry)
+    for annotation_index, label in enumerate(annotations):
+        if isinstance(label, dict):
+            _occluded_from_label(
+                label,
+                image_id=image_id,
+                annotation_index=annotation_index,
+            )
+
+
+def _entry_identifier(entry: dict[str, Any]) -> str:
+    for key in ("image_id", "name", "file_name", "filename"):
+        value = entry.get(key)
+        if value:
+            return str(value)
+    return "<unknown>"
+
+
+def _limited_labels(labels: list[Any], limit: int | None) -> list[Any]:
+    return labels if limit is None else labels[:limit]
 
 
 def _bbox_from_label(label: dict[str, Any]) -> list[float] | None:
@@ -581,7 +671,11 @@ def _timestamp_from_entry(entry: dict[str, Any]) -> datetime | None:
 
 def _parse_timestamp(value: Any) -> datetime | None:
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+        return (
+            value.astimezone(timezone.utc).replace(tzinfo=None)
+            if value.tzinfo
+            else value
+        )
     if isinstance(value, (int, float)):
         seconds = float(value) / 1000.0
         return datetime.fromtimestamp(seconds, tz=timezone.utc).replace(tzinfo=None)
@@ -597,7 +691,11 @@ def _parse_timestamp(value: Any) -> datetime | None:
             parsed = datetime.fromisoformat(stripped.replace("Z", "+00:00"))
         except ValueError:
             return None
-        return parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo else parsed
+        return (
+            parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            if parsed.tzinfo
+            else parsed
+        )
     return None
 
 
@@ -615,7 +713,9 @@ def _find_local_label_file(root: Path, split: str) -> Path:
         if matches:
             return matches[0]
     names = ", ".join(pattern.format(split=split) for pattern in LABEL_FILE_CANDIDATES)
-    raise BDD100KSourceError(f"no BDD100K label file found for split {split}; expected {names}")
+    raise BDD100KSourceError(
+        f"no BDD100K label file found for split {split}; expected {names}"
+    )
 
 
 def _find_s3_label_key(keys: list[str], split: str) -> str:
@@ -625,7 +725,9 @@ def _find_s3_label_key(keys: list[str], split: str) -> str:
         if matches:
             return matches[0]
     names = ", ".join(pattern.format(split=split) for pattern in LABEL_FILE_CANDIDATES)
-    raise BDD100KSourceError(f"no BDD100K label object found for split {split}; expected {names}")
+    raise BDD100KSourceError(
+        f"no BDD100K label object found for split {split}; expected {names}"
+    )
 
 
 def _local_image_index(root: Path) -> dict[str, Path]:
@@ -665,7 +767,9 @@ def _s3_client():
         import boto3
     except ImportError as exc:
         raise BDD100KSourceError("Reading s3:// sources requires boto3") from exc
-    endpoint_url = os.environ.get("AWS_ENDPOINT_URL_S3") or os.environ.get("AWS_ENDPOINT_URL")
+    endpoint_url = os.environ.get("AWS_ENDPOINT_URL_S3") or os.environ.get(
+        "AWS_ENDPOINT_URL"
+    )
     return boto3.client("s3", endpoint_url=endpoint_url)
 
 
@@ -678,7 +782,9 @@ def _list_s3_keys(client: Any, location: _S3Location) -> list[str]:
     for page in paginator.paginate(Bucket=location.bucket, Prefix=prefix):
         keys.extend(obj["Key"] for obj in page.get("Contents", []))
     if not keys:
-        raise BDD100KSourceError(f"S3 source contains no objects: s3://{location.bucket}/{location.prefix}")
+        raise BDD100KSourceError(
+            f"S3 source contains no objects: s3://{location.bucket}/{location.prefix}"
+        )
     return keys
 
 
@@ -689,7 +795,9 @@ def _read_s3_bytes(client: Any, bucket: str, key: str) -> bytes:
 def _require_image_key(index: dict[str, str], image_id: str) -> str:
     key = index.get(Path(image_id).name)
     if key is None:
-        raise BDD100KSourceError(f"image object not found for BDD100K label entry: {image_id}")
+        raise BDD100KSourceError(
+            f"image object not found for BDD100K label entry: {image_id}"
+        )
     return key
 
 
@@ -697,14 +805,20 @@ def _connect_lancedb(lance_uri: str):
     try:
         import lancedb
     except ImportError as exc:
-        raise BDD100KWriteError("Writing BDD100K imports requires the lancedb package") from exc
+        raise BDD100KWriteError(
+            "Writing BDD100K imports requires the lancedb package"
+        ) from exc
     try:
         return lancedb.connect(lance_uri)
     except Exception as exc:
-        raise BDD100KWriteError(f"failed to connect to LanceDB URI {lance_uri}: {exc}") from exc
+        raise BDD100KWriteError(
+            f"failed to connect to LanceDB URI {lance_uri}: {exc}"
+        ) from exc
 
 
-def _open_or_create_table(db: Any, table_name: str, data: pa.Table) -> tuple[Any, int | None]:
+def _open_or_create_table(
+    db: Any, table_name: str, data: pa.Table
+) -> tuple[Any, int | None]:
     try:
         exists = table_name in _list_tables(db)
         if exists:
@@ -715,7 +829,9 @@ def _open_or_create_table(db: Any, table_name: str, data: pa.Table) -> tuple[Any
         table_obj = db.create_table(table_name, data=data, mode="create")
         return table_obj, None
     except Exception as exc:
-        raise BDD100KWriteError(f"failed to write LanceDB table {table_name}: {exc}") from exc
+        raise BDD100KWriteError(
+            f"failed to write LanceDB table {table_name}: {exc}"
+        ) from exc
 
 
 def _table_version(table_obj: Any) -> int | None:
@@ -729,10 +845,13 @@ def _table_version(table_obj: Any) -> int | None:
 
 
 def _list_tables(db: Any) -> list[str]:
-    table_names = getattr(db, "table_names", None)
-    if callable(table_names):
-        return _normalize_table_names(table_names())
-    return _normalize_table_names(db.list_tables())
+    list_tables = getattr(db, "list_tables", None)
+    if not callable(list_tables):
+        raise BDD100KWriteError(
+            "LanceDB connection does not expose the required list_tables API"
+        )
+    values = list_tables()
+    return _normalize_table_names(getattr(values, "tables", values))
 
 
 def _normalize_table_names(values: Any) -> list[str]:

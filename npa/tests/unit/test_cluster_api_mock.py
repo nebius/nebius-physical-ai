@@ -11,6 +11,13 @@ from npa.cluster.config import ClusterConfig
 from npa.cluster.exceptions import ClusterError, ClusterNotFoundError
 
 
+@pytest.fixture(autouse=True)
+def _isolate_nebius_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep command-shape mocks independent of the operator's live profile."""
+    monkeypatch.delenv("NPA_NEBIUS_PROFILE", raising=False)
+    monkeypatch.delenv("NEBIUS_PROFILE", raising=False)
+
+
 def _result(payload: dict | None = None, *, returncode: int = 0, stderr: str = ""):
     return subprocess.CompletedProcess(
         args=["nebius"],
@@ -106,6 +113,8 @@ def test_create_cluster_creates_cluster_then_node_group() -> None:
     assert info.id == "mk8scluster-a"
     assert info.node_group_id == "mk8snodegroup-a"
     assert calls[2][1:4] == ["mk8s", "cluster", "create"]
+    assert "--control-plane-endpoints-public-endpoint=true" in calls[2]
+    assert "--control-plane-endpoints-public-endpoint" not in calls[2]
     assert calls[3][1:4] == ["mk8s", "node-group", "create"]
     assert "--template-resources-platform" in calls[3]
     assert "--template-resources-preset" in calls[3]

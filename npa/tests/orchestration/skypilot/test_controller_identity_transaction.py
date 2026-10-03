@@ -7,6 +7,7 @@ import pytest
 
 from npa.cluster.identity import ClusterIdentityError
 from npa.orchestration.skypilot import cleanup as controller
+from npa.orchestration.skypilot import local_api
 from npa.orchestration.skypilot.cleanup import CleanupResult
 from npa import teardown_receipts
 
@@ -42,6 +43,9 @@ def identity_fixture(monkeypatch, tmp_path: Path):  # noqa: ANN001
         lambda **kwargs: identity,
     )
     monkeypatch.setattr(controller, "_nonterminal_job_ids", lambda **kwargs: [])
+    # This is a cloned-state control-flow fixture. Host-policy rejection has
+    # dedicated coverage and is not part of its remote-deletion contract.
+    monkeypatch.setattr(local_api, "_require_linux_host", lambda: None)
     return identity
 
 
@@ -157,9 +161,31 @@ def test_remote_absence_receipt_precedes_real_local_state_removal(
     )
 
 
+@pytest.mark.parametrize("selection", ["explicit", "environment", "saved_config"])
 def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
-    monkeypatch, identity_fixture, tmp_path: Path
+    monkeypatch, identity_fixture, tmp_path: Path, selection: str
 ) -> None:  # noqa: ANN001
+    # The process/socket lifecycle is covered by test_local_api; this case
+    # exercises the receipt and independent cloud-absence ordering.
+    import json
+    import subprocess
+    from npa.orchestration.skypilot import _bin, local_api
+
+    selected_root = tmp_path if selection == "explicit" else None
+    if selection == "environment":
+        monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(tmp_path))
+    elif selection == "saved_config":
+        monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "npa-config.yaml")
+        _bin.CONFIG_PATH.write_text(f"skypilot:\n  isolated_config_dir: {tmp_path}\n")
+
+    source_sky = tmp_path / "home/.sky"
+    source_sky.mkdir(parents=True)
+    (source_sky / "user_hash").write_text("fixture-controller-owner")
+    sky_bin = tmp_path / "sky"
+    sky_bin.touch()
+    sky_bin.chmod(0o700)
+    monkeypatch.setattr(controller, "ensure_skypilot_version", lambda value: value)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_: {"healthy": True})
     name = "sky-jobs-controller-demo"
     other = "sky-jobs-controller-unrelated"
     monkeypatch.setattr(
@@ -170,6 +196,7 @@ def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
     status_calls = {"count": 0}
 
     def status(**kwargs):  # noqa: ANN001
+        assert kwargs["isolated_config_dir"] == tmp_path
         status_calls["count"] += 1
         if status_calls["count"] == 1:
             return [_row(name), _row(other, context="other-context")], ""
@@ -180,6 +207,23 @@ def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
         controller, "_wait_for_controller_pods_absent", lambda *args, **kwargs: ([], "")
     )
     downs: list[tuple[str, Path | None, str]] = []
+    prepared: list[str] = []
+
+    def prepare(argv, **kwargs):  # noqa: ANN001
+        # Metadata relocation has its own real runtime regressions. This test
+        # isolates successful preparation before checking deletion ordering.
+        assert Path(argv[1]).name == "controller_clone.py"
+        manifest_path = Path(argv[2])
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest_path.stat().st_mode & 0o777 == 0o600
+        assert manifest["controller_names"] == [name]
+        assert manifest["context"] == "verified-context"
+        assert Path(manifest["clone_root"]) != tmp_path
+        assert not downs
+        prepared.extend(manifest["controller_names"])
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr(controller.subprocess, "run", prepare)
 
     def down(target, **kwargs):  # noqa: ANN001
         latest = teardown_receipts.latest_phase_states(project_alias="demo")[
@@ -191,12 +235,16 @@ def test_remote_delete_uses_cloned_state_then_verifies_then_mutates_real_state(
     monkeypatch.setattr(controller, "_down_jobs_controller", down)
 
     result = controller.cleanup_jobs_controller(
-        project="demo", context="verified-context", isolated_config_dir=tmp_path
+        project="demo",
+        context="verified-context",
+        isolated_config_dir=selected_root,
+        sky_bin=sky_bin,
     )
 
     assert result.ok
     assert result.verified is True
     assert result.remote_absence_verified is True
+    assert prepared == [name]
     assert [item[0] for item in downs] == [name, name]
     assert downs[0][1] != tmp_path
     assert downs[0][2] == "in_progress"

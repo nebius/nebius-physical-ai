@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 from npa.deploy.images import CONTAINER_IMAGE_NAMES
-from npa.smoke.batch import iter_containers, run_all, run_container_eval
+from npa.smoke.batch import run_all, run_container_eval, select_containers
 from npa.smoke.manifest import container, load_manifest, validate_manifest
 
 
@@ -52,9 +52,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
             tag = supported_tool_version(name) if name in CONTAINER_IMAGE_NAMES else "-"
             checks = GOLDEN_EVAL_CAPABILITIES.get(name, [])
             cap = "; ".join(checks)
-            print(
-                f"{name:<{width}}  {tag:<42} {ge.kind:<16} {ge.status:<18} {cap}"
-            )
+            print(f"{name:<{width}}  {tag:<42} {ge.kind:<16} {ge.status:<18} {cap}")
         return 0
     if args.json:
         payload = {
@@ -62,6 +60,8 @@ def _cmd_list(args: argparse.Namespace) -> int:
                 "image": spec.image,
                 "kind": spec.golden_eval.kind,
                 "gpu": spec.golden_eval.gpu,
+                "serverless_gpu": spec.golden_eval.serverless_gpu,
+                "serverless_gpu_count": spec.golden_eval.serverless_gpu_count,
                 "status": spec.golden_eval.status,
                 "command": spec.golden_eval.command,
             }
@@ -72,11 +72,22 @@ def _cmd_list(args: argparse.Namespace) -> int:
     width = max(len(name) for name in specs)
     for name, spec in specs.items():
         ge = spec.golden_eval
-        print(f"{name:<{width}}  {ge.kind:<16} gpu={ge.gpu:<8} {ge.status:<18} {ge.command}")
+        print(
+            f"{name:<{width}}  {ge.kind:<16} gpu={ge.gpu:<8} {ge.status:<18} {ge.command}"
+        )
     return 0
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    if (
+        getattr(args, "registry", None) or getattr(args, "tag", None)
+    ) and not args.serverless:
+        print(
+            "--registry/--tag require --serverless; local and dry-run commands "
+            "do not resolve candidate images",
+            file=sys.stderr,
+        )
+        return 2
     try:
         spec = container(args.container)
     except KeyError as exc:
@@ -96,7 +107,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
             tag=getattr(args, "tag", None),
             on_state_change=lambda job: print(f"  -> {getattr(job, 'status', '?')}"),
         )
-        payload = result.detail if result.detail else {"ok": result.ok, "name": result.name}
+        payload = (
+            result.detail if result.detail else {"ok": result.ok, "name": result.name}
+        )
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0 if result.ok else 1
 
@@ -104,7 +117,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 0
     try:
         completed = subprocess.run(
-            shlex.split(ge.command), timeout=ge.timeout_seconds, check=False
+            shlex.split(ge.command), timeout=ge.execution_timeout, check=False
         )
     except FileNotFoundError as exc:
         print(f"command not runnable here: {exc}", file=sys.stderr)
@@ -116,17 +129,21 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_run_all(args: argparse.Namespace) -> int:
-    names = iter_containers(
+    selection = select_containers(
         include_blocked=args.include_blocked,
+        include_needs_image_update=args.include_needs_image_update,
         include_foundation=not args.tools_only,
         tools_only=args.tools_only,
     )
+    names = selection.included
     if args.containers:
         wanted = set(args.containers)
         names = [name for name in names if name in wanted]
         missing = sorted(wanted - set(names))
         if missing:
-            print(f"unknown or filtered containers: {', '.join(missing)}", file=sys.stderr)
+            print(
+                f"unknown or filtered containers: {', '.join(missing)}", file=sys.stderr
+            )
             return 2
 
     mode = "dry-run"
@@ -134,7 +151,9 @@ def _cmd_run_all(args: argparse.Namespace) -> int:
         mode = "serverless"
     elif args.execute:
         mode = "execute"
-    print(f"golden-eval run-all: mode={mode} parallel={args.parallel} count={len(names)}")
+    print(
+        f"golden-eval run-all: mode={mode} parallel={args.parallel} count={len(names)}"
+    )
 
     def _on_progress(result: object) -> None:
         from npa.smoke.batch import ContainerRunResult
@@ -152,6 +171,9 @@ def _cmd_run_all(args: argparse.Namespace) -> int:
         parallel=args.parallel,
         on_progress=_on_progress if args.serverless or args.execute else None,
     )
+    if not args.containers:
+        batch.results.extend(selection.excluded)
+        batch.results.sort(key=lambda result: result.name)
     if args.json_out:
         Path(args.json_out).write_text(batch.to_json() + "\n", encoding="utf-8")
     print(batch.to_json())
@@ -162,7 +184,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_validate = sub.add_parser("validate", help="Offline manifest validation (CI gate).")
+    p_validate = sub.add_parser(
+        "validate", help="Offline manifest validation (CI gate)."
+    )
     p_validate.set_defaults(func=_cmd_validate)
 
     p_list = sub.add_parser("list", help="List golden evals.")
@@ -230,6 +254,11 @@ def main(argv: list[str] | None = None) -> int:
         "--include-blocked",
         action="store_true",
         help="Include blocked-on-upstream containers.",
+    )
+    p_all.add_argument(
+        "--include-needs-image-update",
+        action="store_true",
+        help="Include containers whose image must be rebuilt or promoted.",
     )
     p_all.add_argument(
         "--tools-only",

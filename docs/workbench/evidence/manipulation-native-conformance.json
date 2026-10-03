@@ -1,0 +1,114 @@
+{
+  "schema": "npa.manipulation-native-diagnostic.public.v1",
+  "source_commit": "519cc166916b5bb1ce4055bd1b91e6d0007c9a66",
+  "embodiment": "ur10e_robotiq85",
+  "native_workflow_status": "FAILED",
+  "physics_qualified": false,
+  "task_success_evaluated": false,
+  "diagnostic_only": true,
+  "retained_native_rgb_frames": 813,
+  "missing_original_case_receipts": 4,
+  "original_native_receipts_reconstructed": false,
+  "all_retained_arrays_finite": true,
+  "initial_states_match_sealed_fixture": true,
+  "initial_state_sha256": "d40a49d86ac6e7b6963e55088e2a35877ef6abe7d08e50ad2ca875c72d9d96a4",
+  "replay_stimulus_sha256": "192d937b4347f28b8b9949d921022caf6d26cc5aaa6c1c71d2e68b9161d11e58",
+  "matrix_sha256": "e760fe3ce6edfd22f6383bb575f6b2405556e48e4dfa8e1ec23148777adc494f",
+  "evidence_sha256": {
+    "verified_manifest": "47644ae22ee7733d29444ab0c54e7ffa7c74a64073678fe4b082789d8e7aaa47",
+    "independent_posthoc_audit": "843450af6854b32353a2902ae891330c4d72804226c8436c908e262d736b8622",
+    "independent_raw_verification": "f96f3ed370f92efd01b570a730f403c254e6ef259f3e15aba85f3b6a69cc12cf"
+  },
+  "cases": {
+    "legacy_gripper": {
+      "samples": 250,
+      "pre_control_samples": 250,
+      "maximum_absolute_joint_position_rad": 1.607243299484253,
+      "maximum_absolute_joint_velocity_rad_s": 0.9888050556182861,
+      "maximum_mimic_residual_rad": 0.05517420172691345,
+      "maximum_object_height_m": 0.05999999865889549,
+      "rgb_frames": 250,
+      "samples_sha256": "f8d6fc3243714ac69fa0af850cfe014d1c1a7e91d381c21a58bb85cf3c8a6a8d",
+      "rgb_sha256": "35eb3e47e6d30eab04561c7b3ccbc0350284e92cf7cc8ea4558c51a0209840ee",
+      "derived_video_sha256": "4420f635cccd3f9cfc2dbf86ae335356fe20e14fc4292066ade02c9019a6338a",
+      "physically_qualified": false
+    },
+    "legacy_replay": {
+      "samples": 251,
+      "pre_control_samples": 250,
+      "maximum_absolute_joint_position_rad": 263572512.0,
+      "maximum_absolute_joint_velocity_rad_s": 12552627200.0,
+      "maximum_mimic_residual_rad": 273411584.0,
+      "maximum_object_height_m": 0.864112913608551,
+      "rgb_frames": 250,
+      "samples_sha256": "f62b6d8200ca223cdb4cc5b77b0e13b3fcda9f565f85f479a3a1a7f008878d75",
+      "rgb_sha256": "4a6738c3cf9acecf958bb09479b61dd29f78436d83e1f87d313bffa948155c90",
+      "derived_video_sha256": "c44f30112c15e54b701059f0626e6ed8cf6e7f2094ee9dc2f589a7518f70078a",
+      "physically_qualified": false,
+      "retained_first_fault": {
+        "channel": "joint_velocity",
+        "constraint": "native_limit_exceeded",
+        "joint_name": "shoulder_pan_joint",
+        "measured": -2.0943968296051025,
+        "native_velocity_limit": 2.094395160675049,
+        "velocity_allowance": 9.986854365706677e-07,
+        "control_step": 12
+      }
+    },
+    "candidate_gripper": {
+      "samples": 64,
+      "pre_control_samples": 63,
+      "maximum_absolute_joint_position_rad": 1.5708644390106201,
+      "maximum_absolute_joint_velocity_rad_s": 2.556319236755371,
+      "maximum_mimic_residual_rad": 1.7881393432617188e-07,
+      "maximum_object_height_m": 0.05999999865889549,
+      "rgb_frames": 63,
+      "samples_sha256": "0817f2fcd7425274137e26182d760c8a7f2c1695267dbcb1c901e0d7b60882b7",
+      "rgb_sha256": "8d18391e3b0239267d5485e7e3f4afad8bf7809b4cad2a5ab28afdd92278a5fa",
+      "derived_video_sha256": "119f46e5bee5325dbd24bd00f16c50ef13516764f55a3ef32f0639f8371c89cf",
+      "physically_qualified": false,
+      "retained_first_fault": {
+        "channel": "joint_velocity",
+        "constraint": "native_limit_exceeded",
+        "joint_name": "finger_joint",
+        "measured": 2.5562117099761963,
+        "native_velocity_limit": 2.5562093257904053,
+        "velocity_allowance": 1.218895590682223e-06,
+        "control_step": 63
+      }
+    },
+    "candidate_replay": {
+      "samples": 251,
+      "pre_control_samples": 250,
+      "maximum_absolute_joint_position_rad": 3.663994789123535,
+      "maximum_absolute_joint_velocity_rad_s": 285.6611328125,
+      "maximum_mimic_residual_rad": 0.8975018262863159,
+      "maximum_object_height_m": 0.05999999865889549,
+      "rgb_frames": 250,
+      "samples_sha256": "aba19c2d8de472a8a11446abed0746137a9ab18398f846e9ae9622294da2bdc6",
+      "rgb_sha256": "1fe6e78ab32385a053fb4562c29a2f256c8776390e1244cca9d56b8ddfd31d59",
+      "derived_video_sha256": "83a4aa3ff315707c928dab3d9daefbc83c3a84af5329a58a5a60e1ecccd74190",
+      "physically_qualified": false,
+      "retained_first_fault": {
+        "channel": "joint_velocity",
+        "constraint": "native_limit_exceeded",
+        "joint_name": "shoulder_pan_joint",
+        "measured": -2.0943965911865234,
+        "native_velocity_limit": 2.094395160675049,
+        "velocity_allowance": 9.986854365706677e-07,
+        "control_step": 9
+      }
+    }
+  },
+  "limits": [
+    "Measurements are independently recomputed from retained native arrays and first-fault files; all four original diagnostic.json summaries remain missing.",
+    "Case summaries, complete fault histories, initialized limit arrays, composed object-property readbacks and runtime-version receipts were not recovered.",
+    "Full replay disables episode resets and termination to observe failure; these diagnostics are excluded from training, held-out scoring and VLM calibration.",
+    "Sampling covers control boundaries, first faults and final state, not every physics substep.",
+    "The candidate avoided extreme angle divergence in this single paired replay but retained velocity, gripper-driver position and mimic-relation violations. This establishes neither valid physics nor improved task success.",
+    "The legacy replay reproduces joint divergence, not the exact historical object-launch trajectory.",
+    "Tiny first speed-bound overages are retained as contract failures but alone do not prove catastrophic instability; later replay deviations are material."
+  ],
+  "verified_retained_files": 59,
+  "legacy_source_commit": "4c1babdfd3e5b9ef92ce9f4b794ef6fb6b5c3a61"
+}

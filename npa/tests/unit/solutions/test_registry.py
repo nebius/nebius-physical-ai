@@ -19,8 +19,7 @@ CONFIGURED_SOLUTIONS = [
         "description": "Generic sim-to-real pipeline tools within the Workbench solution",
         # The canonical 14-stage path is an ordinary npa.workflow graph.
         "cli_command": (
-            "npa workbench workflow submit "
-            "npa/workflows/workbench/npa-workflows/sim2real.yaml --runtime"
+            "npa workbench workflow submit workflows/main/sim2real.yaml --runtime"
         ),
     },
     {
@@ -30,17 +29,17 @@ CONFIGURED_SOLUTIONS = [
     },
     {
         "name": "mjlab",
-        "description": "MJLab locomotion evaluation Workbench tool",
+        "description": "MJLab training, measured evaluation and ONNX export Workbench tool",
         "cli_command": "npa workbench mjlab",
     },
     {
         "name": "sonic-locomotion-finetuning",
         "description": (
-            "SONIC locomotion fine-tuning workflow (retarget -> train -> MJLab eval)"
+            "SONIC locomotion fine-tuning workflow (retarget -> train -> export -> SONIC eval)"
         ),
         "cli_command": (
             "npa workbench workflow submit "
-            "npa/workflows/workbench/npa-workflows/sonic-locomotion-finetuning.yaml"
+            "workflows/testing/sonic-locomotion-finetuning.yaml"
         ),
     },
 ]

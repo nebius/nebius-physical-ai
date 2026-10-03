@@ -1,4 +1,6 @@
-# Rerun Adapters
+# Rerun adapters
+
+[Viewer and sharing guide](../../../../../docs/workbench/rerun-sharing.md) · [Workbench docs](../../../../../docs/workbench/README.md)
 
 This package contains standalone Rerun `.rrd` exporters for Unitree G1
 LeRobotDataset artifacts and GR00T prediction artifacts.
@@ -6,6 +8,15 @@ LeRobotDataset artifacts and GR00T prediction artifacts.
 The adapters are intentionally separate from `npa convert lerobot-to-mp4 --renderer rerun`.
 The MP4 renderer creates quick-review videos; these adapters create reusable
 Rerun recordings for customer artifacts, handoff, and post-demo inspection.
+
+## Before you start
+
+Install NPA using the [installation guide](../../../../../docs/install.md).
+Run the Python examples in that environment. Provide a Unitree G1 dataset with
+its canonical 43D state layout; these skeleton adapters do not infer arbitrary
+robot kinematics. GR00T overlays also need predictions aligned with that input.
+For local-only conversion, replace the S3 URI with your dataset directory.
+For S3 inputs or outputs, configure credentials for the exact bucket first.
 
 ## LeRobotDataset to Rerun
 
@@ -56,12 +67,14 @@ state layout before logging.
 Local outputs are written directly. For `s3://...` outputs, the adapter first
 writes a local temporary `.rrd`, then uploads it to the requested object path.
 
-Both adapters apply a default 5 second duration cap and evenly subsample longer
-sources. Pass `duration_s` to request a shorter cap.
+Both skeleton adapters default to at most five seconds and evenly subsample
+longer sources. `duration_s` can shorten that preview; it cannot extend the
+built-in five-second maximum. The recording is a sampled trajectory preview,
+not a full-length replay. Both functions return `None`; inspect the written file.
 
 ## Viewer
 
-Open a recording locally with:
+Open the file created by the corresponding example:
 
 ```bash
 rerun /tmp/isaac-lab-trajectory.rrd

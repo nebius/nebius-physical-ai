@@ -18,7 +18,9 @@ SKYPILOT_LAUNCH_RE = re.compile(r"\bsubmit_workflow\b|\bsky\s+(jobs\s+launch|lau
 #: that installs SIGTERM/SIGINT handlers running the idempotent teardown path; matching only
 #: the literal word "SIGTERM" flagged three runners that *do* call it and cleared one that
 #: merely mentions it in a comment, which trains readers to ignore the warning.
-SIGTERM_HOOK_RE = re.compile(r"\bSIGTERM\b|\btrap \b|\binstall_teardown_signal_handlers\b")
+SIGTERM_HOOK_RE = re.compile(
+    r"\bSIGTERM\b|\btrap \b|\binstall_teardown_signal_handlers\b"
+)
 ENV_REF_RE = re.compile(r"\$\{([A-Z0-9_]+)(?::-[^}]*)?\}")
 PY_ENV_REF_RE = re.compile(
     r"os\.environ(?:\.get)?\(\s*[\"']([A-Z0-9_]+)[\"']|"
@@ -77,9 +79,13 @@ def scan_for_forbidden_teardown(paths: list[Path]) -> list[TextHit]:
     for path in paths:
         if not path.is_file():
             continue
-        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
             if FORBIDDEN_TEARDOWN_RE.search(line):
-                hits.append(TextHit(path=path, line_number=line_number, line=line.strip()))
+                hits.append(
+                    TextHit(path=path, line_number=line_number, line=line.strip())
+                )
     return hits
 
 
@@ -134,10 +140,10 @@ def unresolved_image_placeholders(image: str) -> bool:
     return "<" in image or ">" in image or "${" in image
 
 
-def resolve_workflow_image(image: str, *, registry_id: str) -> str:
-    """Resolve the standard registry-id placeholder for local registry checks."""
+def resolve_workflow_image(image: str, *, registry: str) -> str:
+    """Resolve the generic operator-registry placeholder for local checks."""
 
-    return image.replace("<your-registry-id>", registry_id)
+    return image.replace("<your-registry>", registry.rstrip("/"))
 
 
 def inspect_image_exists(image: str, *, timeout_s: int = 30) -> bool:

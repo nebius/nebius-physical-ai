@@ -24,7 +24,7 @@ def test_pod_config_failure_is_named_with_a_bootstrap_remedy() -> None:
 
 def test_registry_403_is_named_with_a_preflight_remedy() -> None:
     line = (
-        'Failed to pull image "cr.us-central1.nebius.cloud/u000/npa-cosmos2-transfer:2.5.1": '
+        'Failed to pull image "registry-us.example/u000/npa-cosmos2-transfer:2.5.1": '
         "failed to resolve reference: unexpected status from HEAD request: 403 Forbidden"
     )
 
@@ -53,7 +53,10 @@ def test_accelerator_precheck_failure_points_at_the_gpus_command() -> None:
 
 
 def test_ordinary_progress_output_is_not_diagnosed() -> None:
-    assert diagnose_skypilot_output("Launching a new cluster 'sky-jobs-controller'") is None
+    assert (
+        diagnose_skypilot_output("Launching a new cluster 'sky-jobs-controller'")
+        is None
+    )
     assert diagnose_skypilot_output("") is None
     assert diagnose_skypilot_output("   ") is None
 

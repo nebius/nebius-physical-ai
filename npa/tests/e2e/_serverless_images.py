@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 
-_PLACEHOLDER_REGISTRY = "cr.eu-north1.nebius.cloud/your-registry-id"
+_PLACEHOLDER_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 
 # Platforms available on the shared us-central1 rtxpro project (verified live).
 # Default to RTX6000: tenant H200 quota is often exhausted (limit 2).
@@ -14,16 +14,12 @@ _RT_CORE_SERVERLESS_GPU = "gpu-rtx6000"
 
 
 def resolve_registry() -> str:
-    """Return the live Nebius registry prefix, or the placeholder when unset."""
-    return (
-        os.environ.get("NPA_E2E_REGISTRY", "").strip()
-        or os.environ.get("NPA_REGISTRY", "").strip()
-        or _PLACEHOLDER_REGISTRY
-    )
+    """Return the configured live registry prefix, or the placeholder when unset."""
+    return os.environ.get("NPA_E2E_REGISTRY", "").strip() or _PLACEHOLDER_REGISTRY
 
 
 def resolve_image(image_or_repo_tag: str) -> str:
-    """Rewrite placeholder registry images to ``NPA_REGISTRY`` / ``NPA_E2E_REGISTRY``.
+    """Rewrite public placeholders only through explicit ``NPA_E2E_REGISTRY``.
 
     Accepts either a full image reference or ``npa-<tool>:<tag>``.
     """
@@ -34,8 +30,6 @@ def resolve_image(image_or_repo_tag: str) -> str:
     if value.startswith(_PLACEHOLDER_REGISTRY):
         suffix = value[len(_PLACEHOLDER_REGISTRY) :].lstrip("/")
         return f"{registry}/{suffix}"
-    if "your-registry-id" in value:
-        return value.replace("your-registry-id", registry.rsplit("/", 1)[-1])
     if value.startswith("npa-") and ":" in value and "/" not in value:
         return f"{registry}/{value}"
     return value

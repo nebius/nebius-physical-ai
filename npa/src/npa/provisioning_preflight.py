@@ -63,6 +63,7 @@ class ResolvedTopology:
     gpu_preset: str = DEFAULT_GPU_PRESET
     gpu_disk_gib: int = DEFAULT_GPU_DISK_GIB
     gpu_preemptible: bool = False
+    capacity_block_group: str = ""
     public_node_ips: bool = False
     accelerator: str = "RTXPRO6000:1"
 
@@ -128,7 +129,20 @@ class ResolvedTopology:
         quota_name = gpu_quota_name(self.gpu_platform)
         # Preemptible capacity can change the GPU capacity pool.  It never
         # changes the hard instance/disk/IP arithmetic above.
-        if quota_name and self.required_gpus and not self.gpu_preemptible:
+        #
+        # A STRICT capacity-block-backed pool consumes the named reservation,
+        # not the ordinary GPU-family allowance. This mirrors the fleet path
+        # (cluster_backends/quotas.py: required_quotas skips a bound GPU pool)
+        # and the existing MIG STRICT carve-out in `cluster up`. The reservation
+        # itself is validated (owner/region/platform/remaining capacity) by the
+        # provisioning preflight before apply, so skipping here never weakens
+        # the gate; it only stops double-charging reservation-backed GPUs.
+        if (
+            quota_name
+            and self.required_gpus
+            and not self.gpu_preemptible
+            and not self.capacity_block_group
+        ):
             requirements[quota_name] = self.required_gpus
         return requirements
 
@@ -282,6 +296,12 @@ def current_resolved_plan() -> WholePathPreflightPlan | None:
 QuotaReader = Callable[[str, str, Sequence[str]], Mapping[str, QuotaObservation]]
 
 
+PROJECT_QUOTA_RBAC_FALLBACK_REASON = (
+    "tenant-wide quota query unavailable due to RBAC; "
+    "project-scoped quota allowances verified"
+)
+
+
 def resolve_topology(
     *,
     cluster_name: str = "npa-cluster",
@@ -297,6 +317,7 @@ def resolve_topology(
     gpu_platform: str = "",
     gpu_preset: str = "",
     preemptible: bool | None = None,
+    capacity_block_group: str = "",
     public_node_ips: bool = False,
     control_plane_instances: int = 0,
     control_plane_disks: int = 0,
@@ -316,9 +337,7 @@ def resolve_topology(
         control_plane_instances=max(0, int(control_plane_instances)),
         control_plane_disks=max(0, int(control_plane_disks)),
         control_plane_disk_gib=max(0, int(control_plane_disk_gib)),
-        agent_root_disk_gib=_positive_gib(
-            agent_root_disk_gib, "agent_root_disk_gib"
-        ),
+        agent_root_disk_gib=_positive_gib(agent_root_disk_gib, "agent_root_disk_gib"),
         cpu_nodes=DEFAULT_CPU_NODES
         if cpu_nodes is None or cpu_nodes < 0
         else int(cpu_nodes),
@@ -336,6 +355,7 @@ def resolve_topology(
         gpu_preset=str(gpu_preset or inferred_preset or DEFAULT_GPU_PRESET).strip(),
         gpu_disk_gib=_positive_gib(gpu_disk_gib, "gpu_disk_gib"),
         gpu_preemptible=bool(preemptible) if preemptible is not None else False,
+        capacity_block_group=str(capacity_block_group or "").strip(),
         public_node_ips=bool(public_node_ips),
         accelerator=requested_accelerator or "RTXPRO6000:1",
     )
@@ -626,6 +646,33 @@ def read_provider_quotas(
     )
 
 
+def read_project_quota_observations(
+    project_id: str, region: str, names: Sequence[str]
+) -> Mapping[str, QuotaObservation]:
+    """Read exact-project quota constraints after tenant scope is denied.
+
+    Project allowances are an additional provider-enforced boundary. An absent
+    row does not establish that a quota is unconstrained, so it remains unknown
+    and blocks a mutation until the provider returns explicit allowance data.
+    """
+    from npa.clients.nebius import list_quota_allowances
+
+    payload = list_quota_allowances(str(project_id or "").strip())
+    parsed = parse_quota_allowances(payload, region=region, names=names)
+    return {
+        name: (
+            QuotaObservation(
+                name=name,
+                state="unknown",
+                reason="project quota response has no allowance for this resource",
+            )
+            if observation.state == "unsupported"
+            else observation
+        )
+        for name, observation in parsed.items()
+    }
+
+
 def discover_existing_capacity(
     *,
     project_id: str,
@@ -758,6 +805,7 @@ __all__ = [
     "PUBLIC_IP_QUOTA",
     "PreflightBlockedError",
     "PreflightCheck",
+    "PROJECT_QUOTA_RBAC_FALLBACK_REASON",
     "QuotaDecision",
     "QuotaObservation",
     "ResolvedTopology",
@@ -768,6 +816,7 @@ __all__ = [
     "discover_existing_capacity",
     "parse_quota_allowances",
     "read_provider_quotas",
+    "read_project_quota_observations",
     "resolved_plan_context",
     "resolve_topology",
 ]

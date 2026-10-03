@@ -1,0 +1,23 @@
+{
+  "status": "operator-cancelled-wrong-topology",
+  "requested_topology": {
+    "nodes": 4,
+    "gpus_per_node": 8,
+    "gpus": 32
+  },
+  "executed_topology": {
+    "nodes": 1,
+    "active_gpus": 4,
+    "provisioned_gpus": 8
+  },
+  "last_observed_update": 535,
+  "completed_schedule": false,
+  "excluded_from_requested_scaling_comparison": true,
+  "checkpoints_retained": [
+    "iter_000000500"
+  ],
+  "evidence_bundle_sha256": "c123a0d4f2fb88c227174cb585e52efc952d09a46353414d0f341e47ed59669c",
+  "owned_slurm_jobs_cancelled": 16,
+  "queue_empty_after_cancellation": true,
+  "owned_workers_stopped": 2
+}

@@ -1,4 +1,4 @@
-"""Unit tests for workbench-hosted Cosmos Reason2/3 helpers."""
+"""Unit tests for workbench-hosted Cosmos Reason2/Cosmos3 helpers."""
 
 from __future__ import annotations
 
@@ -6,24 +6,33 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from npa.workbench.cosmos import reason as reason_module
 
 from npa.workbench.cosmos.reason import (
+    CosmosReasonError,
     DEFAULT_REASON2_CACHE,
     DEFAULT_REASON2_MODEL,
     DEFAULT_REASON3_CACHE,
-    DEFAULT_REASON3_MODEL,
+    DEFAULT_COSMOS3_MODEL,
     DEFAULT_REASON_EVENT_FRAMES,
     DEFAULT_REASON_MAX_NEW_TOKENS,
     apply_cosmos_reason_kubernetes_env,
     cosmos_reason_k8s_shell_preamble,
     cosmos_reason_runtime_env,
     default_reason_cache_dir,
+    cosmos_reason_family,
+    merge_reason_evaluations,
     merge_dual_reason_evaluations,
     prepare_cosmos_reason_cache,
     resolve_cosmos_reason_model_id,
     task_description_from_manifest,
+    run_token_factory_rollout_vlm,
+    select_hosted_event_frames,
     vlm_k8s_component,
 )
 
@@ -54,7 +63,7 @@ def test_default_reason_cache_dir_uses_writable_tmp_hf_home(monkeypatch) -> None
     monkeypatch.delenv("NPA_COSMOS_REASON2_CACHE", raising=False)
     monkeypatch.delenv("NPA_COSMOS_REASON3_CACHE", raising=False)
     assert default_reason_cache_dir(DEFAULT_REASON2_MODEL) == DEFAULT_REASON2_CACHE
-    assert default_reason_cache_dir(DEFAULT_REASON3_MODEL) == DEFAULT_REASON3_CACHE
+    assert default_reason_cache_dir("nvidia/Cosmos-Reason2-2B") == DEFAULT_REASON3_CACHE
     assert DEFAULT_REASON2_CACHE.startswith("/tmp/hf_home/")
 
 
@@ -62,6 +71,33 @@ def test_cosmos_reason_runtime_env_defaults_to_writable_cache() -> None:
     runtime = cosmos_reason_runtime_env()
     assert runtime["HF_HOME"] == "/tmp/hf_home"
     assert runtime["NPA_COSMOS_REASON2_CACHE"] == DEFAULT_REASON2_CACHE
+
+
+def test_cosmos_reason_runtime_env_prefers_the_durable_cache(monkeypatch) -> None:
+    # The Reason checkpoints are gated, so no image may bake them and every Job
+    # downloads them; /tmp means paying for that download once per Job.
+    for name in (
+        "HF_HOME",
+        "NPA_COSMOS_REASON_CACHE",
+        "NPA_COSMOS_REASON2_CACHE",
+        "NPA_COSMOS_REASON3_CACHE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    # The renderer exports the resolved root into the container; a claim name is
+    # meaningless to code that cannot mount anything itself.
+    monkeypatch.setenv("NPA_MODEL_CACHE_DIR", "/opt/npa-model-cache")
+
+    runtime = cosmos_reason_runtime_env()
+
+    assert runtime["HF_HOME"] == "/opt/npa-model-cache/huggingface"
+    assert (
+        runtime["NPA_COSMOS_REASON2_CACHE"]
+        == "/opt/npa-model-cache/huggingface/cosmos-reason2"
+    )
+    assert (
+        runtime["NPA_COSMOS_REASON3_CACHE"]
+        == "/opt/npa-model-cache/huggingface/cosmos-reason2-2b"
+    )
 
 
 def test_reason_defaults_cover_every_canonical_decision_event() -> None:
@@ -95,6 +131,7 @@ def test_vlm_k8s_shell_preamble_creates_hf_home() -> None:
     assert 'export HF_HOME="${HF_HOME:-/tmp/hf_home}"' in preamble
     assert "mkdir -p" in preamble
     assert vlm_k8s_component("vlm_eval_reason2")
+    assert vlm_k8s_component("vlm_eval_cosmos3")
     assert not vlm_k8s_component("policy_actions")
 
 
@@ -108,9 +145,217 @@ def test_engine_vlm_job_script_prepares_hf_cache(monkeypatch) -> None:
 
     script = _component_job_script("vlm_eval_reason2")
     assert 'export HF_HOME="${HF_HOME:-/tmp/hf_home}"' in script
-    safe = _kubernetes_component_env({}, Sim2RealLoopConfig(run_id="r"))
+    operator_image = "registry.example.invalid/operator/npa-sim2real:test"
+    safe = _kubernetes_component_env(
+        {},
+        Sim2RealLoopConfig(
+            run_id="r",
+            augment_image=operator_image,
+            envgen_image=operator_image,
+            policy_image=operator_image,
+            trainer_image=operator_image,
+            vlm_image=operator_image,
+            eval_image=operator_image,
+            isaac_image=operator_image,
+        ),
+    )
     assert safe["HF_HOME"] == "/tmp/hf_home"
     assert safe["NPA_COSMOS_REASON3_CACHE"] == DEFAULT_REASON3_CACHE
+
+
+def test_model_family_distinguishes_real_cosmos3_edge_from_reason2() -> None:
+    assert cosmos_reason_family(DEFAULT_REASON2_MODEL) == "reason2"
+    assert cosmos_reason_family(DEFAULT_COSMOS3_MODEL) == "cosmos3"
+    assert cosmos_reason_family("nvidia/Cosmos-Reason2-2B") == "reason2"
+
+
+def test_hosted_frame_selection_is_bounded_and_rollout_wide() -> None:
+    frames = [Path(f"camera-{index:03d}.png") for index in range(32)]
+    selected = select_hosted_event_frames(frames)
+    assert len(selected) == 8
+    assert selected[0] == frames[0]
+    assert selected[-1] == frames[-1]
+    assert selected == select_hosted_event_frames(frames)
+
+
+@pytest.mark.parametrize(
+    ("model", "family"),
+    [(DEFAULT_COSMOS3_MODEL, "cosmos3"), ("MiniMaxAI/MiniMax-M3", "minimax_m3")],
+)
+def test_token_factory_rollout_evaluator_returns_event_local_contract(
+    tmp_path, model, family
+) -> None:
+    frames = []
+    for index in range(10):
+        frame = tmp_path / f"camera-{index:03d}.png"
+        frame.write_bytes(b"public-synthetic-frame")
+        frames.append(frame)
+
+    class Client:
+        last_request_metrics = {"latency_seconds": 1.25, "retries": 1}
+
+        def chat_completion(self, **kwargs):
+            assert kwargs["model"] == model
+            assert kwargs["response_format"]["type"] == "json_schema"
+            assert kwargs["response_format"]["json_schema"]["strict"] is True
+            prompt = kwargs["messages"][0]["content"][0]["text"]
+            bindings = json.loads(
+                next(
+                    line.removeprefix("Visual bindings by action: ")
+                    for line in prompt.splitlines()
+                    if line.startswith("Visual bindings by action: ")
+                )
+            )
+            assert ("You are NVIDIA" in prompt) is (family == "cosmos3")
+            images = kwargs["messages"][0]["content"][1:]
+            assert len(images) == 8
+            assert all(
+                item["image_url"]["url"].startswith("data:image/png;base64,")
+                for item in images
+            )
+            return {
+                "id": "request-public-1",
+                "model": model,
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "success": True,
+                                    "score": 0.9,
+                                    "summary": "stable cube grasp",
+                                    "per_step": [
+                                        {
+                                            "step": binding["action_step"],
+                                            "critique_text": (
+                                                f"event {binding['action_step']} stable"
+                                                if binding["supported"]
+                                                else f"Insufficient visual evidence for step {binding['action_step']}."
+                                            ),
+                                            "error_tags": ["ok"],
+                                            "confidence": 0.8
+                                            if binding["supported"]
+                                            else 0,
+                                            "camera_observation": binding[
+                                                "camera_observation"
+                                            ],
+                                        }
+                                        for binding in bindings
+                                    ],
+                                }
+                            )
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                    "total_tokens": 150,
+                },
+            }
+
+    result = run_token_factory_rollout_vlm(
+        model_id=model,
+        image_paths=frames,
+        actions=[
+            {
+                "step": index,
+                "sim_step": index,
+                "action": [0.0],
+                "episode_boundary": _no_reset_boundary(),
+            }
+            for index in range(10)
+        ],
+        frame_metadata=_frame_metadata(
+            [frame.name for frame in frames], "rollout-0000"
+        ),
+        task_description="strict cube grasp",
+        rollout_id="rollout-0000",
+        threshold=0.5,
+        client=Client(),
+    )
+    assert len(result["per_step"]) == 10
+    assert result["schema"] == "npa.sim2real.vlm_eval.v5"
+    assert result["backend"] == "token_factory"
+    assert result["model"] == model
+    assert result["reason_family"] == family
+    assert result["component_source"] == "token_factory_rollout_vlm"
+    assert result["request"] == {
+        "request_id": "request-public-1",
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "total_tokens": 150,
+        "latency_seconds": 1.25,
+        "retries": 1,
+        "cost_usd": None,
+        "cost_source": "unavailable",
+    }
+
+
+def test_cosmos3_success_cannot_bypass_the_fixed_threshold() -> None:
+    payload = reason_module._parse_cosmos_reason_output(
+        json.dumps(
+            {
+                "success": True,
+                "score": 0.49,
+                "summary": "model claimed success below the workflow threshold",
+                "per_step": [
+                    {
+                        "step": 0,
+                        "critique_text": "cube remains unstable",
+                        "error_tags": ["unstable"],
+                    }
+                ],
+            }
+        ),
+        actions=[{"step": 0, "action": [0.0]}],
+        rollout_id="rollout-threshold",
+        threshold=0.5,
+        family="cosmos3",
+    )
+    assert payload["schema"] == "npa.sim2real.vlm_eval.v3"
+    assert payload["success"] is False
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [(True, True), (False, False), (pytest.param(None, True, id="omitted"))],
+)
+def test_cosmos_reason_success_accepts_booleans_or_uses_score(
+    verdict, expected
+) -> None:
+    model_payload = {
+        "score": 0.9,
+        "summary": "stable grasp",
+        "per_step": [
+            {"step": 0, "critique_text": "cube is stable", "error_tags": ["ok"]}
+        ],
+    }
+    if verdict is not None:
+        model_payload["success"] = verdict
+
+    payload = reason_module._parse_cosmos_reason_output(
+        json.dumps(model_payload),
+        actions=[{"step": 0, "action": [0.0]}],
+        rollout_id="rollout-verdict",
+        threshold=0.5,
+        family="cosmos3",
+    )
+
+    assert payload["success"] is expected
+
+
+@pytest.mark.parametrize("verdict", ["false", "true", 0, 1, None, [], {}])
+def test_cosmos_reason_rejects_malformed_explicit_success(verdict) -> None:
+    with pytest.raises(CosmosReasonError, match="success must be a JSON boolean"):
+        reason_module._parse_cosmos_reason_output(
+            json.dumps({"success": verdict, "score": 0.9}),
+            actions=[],
+            rollout_id="rollout-malformed-verdict",
+            threshold=0.5,
+            family="cosmos3",
+        )
 
 
 def test_task_description_from_manifest_prefers_task_description() -> None:
@@ -125,23 +370,27 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
         "rollout_id": "rollout-0000",
         "model": DEFAULT_REASON2_MODEL,
         "success": True,
-        "score": 0.8,
+        "score": 0.9,
         "per_step": [
             {
                 "step": 0,
                 "critique_text": "aligned",
                 "error_tags": ["ok"],
                 "action": [0.0, 0.0, 0.0],
+                "simulator_ground_truth": {
+                    "object_goal_distance_m": 0.2,
+                    "scenario_config_digest": "cfg",
+                },
                 "camera_observation": "camera-000.ppm",
             }
         ],
         "summary": "reason2 ok",
     }
-    reason3 = {
+    cosmos3 = {
         "rollout_id": "rollout-0000",
-        "model": DEFAULT_REASON3_MODEL,
+        "model": DEFAULT_COSMOS3_MODEL,
         "success": False,
-        "score": 0.4,
+        "score": 0.8,
         "per_step": [
             {
                 "step": 0,
@@ -151,18 +400,81 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
                 "camera_observation": "camera-000.ppm",
             }
         ],
-        "summary": "reason3 miss",
+        "summary": "cosmos3 miss",
     }
 
-    merged = merge_dual_reason_evaluations(reason2, reason3, threshold=0.75)
+    merged = merge_reason_evaluations(reason2, cosmos3, threshold=0.75)
 
-    assert merged["dual_reason"] is True
-    assert merged["component_source"] == "cosmos_dual_reason_vlm"
-    assert merged["score"] == 0.6
+    assert merged["two_evaluator"] is True
+    assert merged["schema"] == "npa.sim2real.vlm_eval.v2"
+    assert merged["component_source"] == "cosmos_reason2_cosmos3_vlm"
+    assert merged["score"] == 0.85
     assert merged["success"] is False
     assert merged["per_step"][0]["error_tags"] == ["ok", "late_grasp"]
     assert "reason2_critique" in merged["per_step"][0]
-    assert "reason3_critique" in merged["per_step"][0]
+    assert merged["per_step"][0]["simulator_ground_truth"] == {
+        "object_goal_distance_m": 0.2,
+        "scenario_config_digest": "cfg",
+    }
+    assert merged["per_step"][0]["scenario_config_digest"] == "cfg"
+    assert "cosmos3_critique" in merged["per_step"][0]
+    assert "cosmos3_tags" in merged["per_step"][0]
+    assert merged["cosmos3"]["model"] == DEFAULT_COSMOS3_MODEL
+
+    archived_alias = merge_dual_reason_evaluations(reason2, cosmos3, threshold=0.75)
+    assert archived_alias["score"] == 0.85
+    assert archived_alias["success"] is False
+
+
+@pytest.mark.parametrize("lane", ["reason2", "cosmos3"])
+def test_legacy_dual_merge_rejects_malformed_lane_verdict(lane) -> None:
+    reason2 = {"score": 0.9, "success": True}
+    cosmos3 = {"score": 0.9, "success": True}
+    (reason2 if lane == "reason2" else cosmos3)["success"] = "false"
+
+    with pytest.raises(CosmosReasonError, match="success must be a JSON boolean"):
+        merge_dual_reason_evaluations(reason2, cosmos3, threshold=0.5)
+
+
+@pytest.mark.parametrize(
+    "merge", [merge_reason_evaluations, merge_dual_reason_evaluations]
+)
+@pytest.mark.parametrize("missing", ["reason2", "cosmos3", "both"])
+def test_archived_merge_does_not_promote_omitted_verdicts(merge, missing) -> None:
+    lanes = [{"score": 0.9, "success": True}, {"score": 0.8, "success": True}]
+    for index, name in enumerate(("reason2", "cosmos3")):
+        if missing in (name, "both"):
+            lanes[index].pop("success")
+    archived = json.loads(json.dumps(lanes))
+
+    merged = merge(*archived, threshold=0.5)
+
+    assert merged["score"] == 0.85
+    assert merged["success"] is False
+    assert json.loads(json.dumps(merged))["success"] is False
+    assert archived == lanes
+
+
+@pytest.mark.parametrize(
+    "merge", [merge_reason_evaluations, merge_dual_reason_evaluations]
+)
+@pytest.mark.parametrize("threshold", [0.5, 0.95])
+def test_archived_merge_preserves_verdicts_under_a_new_threshold(
+    merge, threshold
+) -> None:
+    archived = json.loads(
+        json.dumps(
+            [
+                {"score": 0.49, "success": True},
+                {"score": 0.9, "success": True},
+            ]
+        )
+    )
+
+    merged = merge(*archived, threshold=threshold)
+
+    assert merged["score"] == 0.695
+    assert json.loads(json.dumps(merged))["success"] is True
 
 
 def test_summary_only_output_is_rejected_without_temporal_broadcast() -> None:
@@ -197,6 +509,9 @@ def test_summary_only_output_is_rejected_without_temporal_broadcast() -> None:
         "The rollout missed the target" not in row["critique_text"]
         for row in payload["per_step"]
     )
+    assert [row["simulator_ground_truth"] for row in payload["per_step"]] == [
+        {"secret": step} for step in range(4)
+    ]
 
 
 def test_single_array_wrapped_evaluation_preserves_event_local_critiques() -> None:
@@ -214,7 +529,7 @@ def test_single_array_wrapped_evaluation_preserves_event_local_critiques() -> No
         ],
         rollout_id="rollout-array-wrapper",
         threshold=0.5,
-        family="reason3",
+        family="cosmos3",
     )
 
     assert payload["summary"] == "no stable grasp"
@@ -279,7 +594,7 @@ def test_malformed_step_is_rejected_instead_of_copying_summary() -> None:
         actions=[{"step": 0, "action": [0.0]}],
         rollout_id="rollout-0002",
         threshold=0.5,
-        family="reason3",
+        family="cosmos3",
     )
 
     step = payload["per_step"][0]
@@ -334,9 +649,9 @@ def test_dual_reason_rejects_missing_local_model_label() -> None:
             }
         ],
     }
-    reason3 = {
+    cosmos3 = {
         **base,
-        "model": DEFAULT_REASON3_MODEL,
+        "model": DEFAULT_COSMOS3_MODEL,
         "per_step": [
             {
                 "step": 0,
@@ -348,7 +663,537 @@ def test_dual_reason_rejects_missing_local_model_label() -> None:
         ],
     }
 
-    merged = merge_dual_reason_evaluations(reason2, reason3, threshold=0.5)
+    merged = merge_reason_evaluations(reason2, cosmos3, threshold=0.5)
 
     assert merged["per_step"][0]["critique_source"] == "model_missing"
     assert merged["per_step"][0]["confidence"] == 0.0
+
+
+@pytest.mark.parametrize(
+    "model", ["nvidia/Cosmos-Reason2-8B", "vendor/not-a-Cosmos3-Super-Reasoner"]
+)
+def test_hosted_evaluator_rejects_unsupported_model_before_request(model, tmp_path):
+    with pytest.raises(CosmosReasonError, match="unsupported hosted rollout evaluator"):
+        run_token_factory_rollout_vlm(
+            model_id=model,
+            image_paths=[],
+            actions=[],
+            task_description="task",
+            rollout_id="rollout-public",
+            threshold=0.5,
+        )
+
+
+@pytest.mark.parametrize(
+    "model_payload",
+    [
+        {},
+        {"model": None},
+        {"model": ""},
+        {"model": 17},
+        {"model": []},
+        {"model": DEFAULT_COSMOS3_MODEL},
+    ],
+)
+def test_hosted_evaluator_rejects_missing_or_substituted_provider_model(
+    tmp_path, model_payload
+):
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"synthetic-frame")
+
+    class Client:
+        def chat_completion(self, **_kwargs):
+            return {**model_payload, "choices": []}
+
+    with pytest.raises(CosmosReasonError, match="different model identity"):
+        run_token_factory_rollout_vlm(
+            model_id="MiniMaxAI/MiniMax-M3",
+            image_paths=[frame],
+            actions=[
+                {"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary()}
+            ],
+            frame_metadata=_frame_metadata([frame.name], "rollout-public"),
+            task_description="task",
+            rollout_id="rollout-public",
+            threshold=0.5,
+            client=Client(),
+        )
+
+
+def _frame_metadata(names, rollout_id="synthetic"):
+    return [
+        {
+            "path": name,
+            "sim_step": index,
+            "view_name": "primary",
+            "episode_id": rollout_id,
+            "simulator_episode_id": 0,
+        }
+        for index, name in enumerate(names)
+    ]
+
+
+def _single_frame_binding():
+    return {
+        0: {
+            "schema": "npa.sim2real.visual_grounding.v2",
+            "action_step": 0,
+            "action_sim_step": 0,
+            "frame_sim_step": 0,
+            "camera_observation": "frame.png",
+            "supported": True,
+            "episode_boundary": _no_reset_boundary(),
+            "frame_simulator_episode_id": 0,
+        }
+    }
+
+
+def _complete_hosted_payload() -> dict:
+    return {
+        "success": True,
+        "score": 0.9,
+        "summary": "red square is inside green outline",
+        "per_step": [
+            {
+                "step": 0,
+                "critique_text": "red square finishes inside outline",
+                "error_tags": ["ok"],
+                "confidence": 0.8,
+                "camera_observation": "frame.png",
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize("tags", [[], ["invented"], "ok", ["ok", "invented"]])
+def test_hosted_response_schema_rejects_invalid_error_tags(tags):
+    import jsonschema
+
+    response_format = reason_module._hosted_rollout_response_format(
+        [{"step": 0}],
+        ["frame.png"],
+        visual_bindings=_single_frame_binding(),
+    )
+    schema = response_format["json_schema"]["schema"]
+    payload = _complete_hosted_payload()
+    jsonschema.validate(payload, schema)
+    payload["per_step"][0]["error_tags"] = tags
+
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(payload, schema)
+
+
+def test_hosted_response_schema_uses_selected_frames_and_actual_action_indices():
+    import jsonschema
+
+    response_format = reason_module._hosted_rollout_response_format(
+        [{"step": 4}, {"step": 19}],
+        ["first.png", "last.png"],
+        visual_bindings={
+            step: {
+                **_single_frame_binding()[0],
+                "action_step": step,
+                "camera_observation": frame,
+            }
+            for step, frame in [(4, "first.png"), (19, "last.png")]
+        },
+    )
+    schema = response_format["json_schema"]["schema"]
+    payload = _complete_hosted_payload()
+    template = payload["per_step"][0]
+    payload["per_step"] = [
+        {**template, "step": step, "camera_observation": frame}
+        for step, frame in [(4, "first.png"), (19, "last.png")]
+    ]
+    jsonschema.validate(payload, schema)
+    payload["per_step"].pop()
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(payload, schema)
+
+
+@pytest.mark.parametrize(
+    "score", [-0.1, 1.01, 9, float("nan"), float("inf"), True, "0.9", None]
+)
+def test_hosted_scores_are_rejected_without_clamping_or_coercion(score):
+    payload = _complete_hosted_payload()
+    payload["score"] = score
+    with pytest.raises(CosmosReasonError, match="score must be a finite number"):
+        reason_module._parse_hosted_rollout_output(
+            json.dumps(payload),
+            actions=[
+                {
+                    "step": 0,
+                    "sim_step": 0,
+                    "episode_boundary": _no_reset_boundary(),
+                    "action": [0.0],
+                }
+            ],
+            rollout_id="synthetic",
+            threshold=0.5,
+            family="minimax_m3",
+            frame_names=["frame.png"],
+            visual_bindings=_single_frame_binding(),
+        )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"score":0.9,"success":true,"summary":"test", "per_step":[',
+        "score: 0.9 success: true",
+        'prefix {"score":0.9,"success":true,"per_step":[]}',
+        '```json\n{"score":0.9,"success":true,"per_step":[]}\n```',
+        '[{"score":0.9,"success":true,"per_step":[]}]',
+        '{"score":0.1,"score":0.9,"success":true,"per_step":[]}',
+    ],
+)
+def test_hosted_parser_does_not_recover_truncated_or_ambiguous_json(text):
+    with pytest.raises(CosmosReasonError, match="hosted evaluator contract rejected"):
+        reason_module._parse_hosted_rollout_output(
+            text,
+            actions=[
+                {"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary()}
+            ],
+            rollout_id="synthetic",
+            threshold=0.5,
+            family="minimax_m3",
+            frame_names=["frame.png"],
+            visual_bindings=_single_frame_binding(),
+        )
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing_event",
+        "duplicate_event",
+        "wrong_index",
+        "boolean_index",
+        "blank_critique",
+        "unknown_camera",
+        "missing_confidence",
+        "invalid_confidence",
+        "unknown_tag",
+        "synthetic_critique",
+        "wrong_rollout",
+        "non_boolean_success",
+        "blank_summary",
+    ],
+)
+def test_hosted_requires_complete_model_local_event_contract(corruption):
+    payload = _complete_hosted_payload()
+    event = payload["per_step"][0]
+    if corruption == "missing_event":
+        payload["per_step"] = []
+    elif corruption == "duplicate_event":
+        payload["per_step"].append(dict(event))
+    elif corruption == "wrong_index":
+        event["step"] = 999
+    elif corruption == "boolean_index":
+        event["step"] = False
+    elif corruption == "blank_critique":
+        event["critique_text"] = ""
+    elif corruption == "unknown_camera":
+        event["camera_observation"] = "unrelated.png"
+    elif corruption == "missing_confidence":
+        event.pop("confidence")
+    elif corruption == "invalid_confidence":
+        event["confidence"] = float("nan")
+    elif corruption == "unknown_tag":
+        event["error_tags"] = ["invented"]
+    elif corruption == "synthetic_critique":
+        event["critique_source"] = "model_missing"
+    elif corruption == "wrong_rollout":
+        payload["rollout_id"] = "unrelated"
+    elif corruption == "non_boolean_success":
+        payload["success"] = "false"
+    elif corruption == "blank_summary":
+        payload["summary"] = ""
+    with pytest.raises(CosmosReasonError, match="hosted evaluator contract rejected"):
+        reason_module._parse_hosted_rollout_output(
+            json.dumps(payload),
+            actions=[
+                {"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary()}
+            ],
+            rollout_id="synthetic",
+            threshold=0.5,
+            family="minimax_m3",
+            frame_names=["frame.png"],
+            visual_bindings=_single_frame_binding(),
+        )
+
+
+@pytest.mark.parametrize(
+    "finish_reason", [None, "length", "content_filter", "tool_calls"]
+)
+def test_hosted_evaluator_rejects_unfinished_completions_even_with_parseable_json(
+    tmp_path, finish_reason
+):
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"synthetic-frame")
+
+    class Client:
+        def chat_completion(self, **kwargs):
+            return {
+                "model": kwargs["model"],
+                "choices": [
+                    {
+                        "finish_reason": finish_reason,
+                        "message": {"content": json.dumps(_complete_hosted_payload())},
+                    }
+                ],
+            }
+
+    with pytest.raises(CosmosReasonError, match="incomplete completion"):
+        run_token_factory_rollout_vlm(
+            model_id="MiniMaxAI/MiniMax-M3",
+            image_paths=[frame],
+            actions=[
+                {"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary()}
+            ],
+            frame_metadata=_frame_metadata([frame.name]),
+            task_description="task",
+            rollout_id="synthetic",
+            threshold=0.5,
+            client=Client(),
+        )
+
+
+def test_complete_hosted_output_retains_original_score_and_ground_truth():
+    payload = _complete_hosted_payload()
+    actions = [
+        {
+            "step": 0,
+            "sim_step": 0,
+            "episode_boundary": _no_reset_boundary(),
+            "action": [0.0],
+            "simulator_ground_truth": {"placement_stable": True},
+        }
+    ]
+    result = reason_module._parse_hosted_rollout_output(
+        json.dumps(payload),
+        actions=actions,
+        rollout_id="synthetic",
+        threshold=0.5,
+        family="minimax_m3",
+        frame_names=["frame.png"],
+        visual_bindings=_single_frame_binding(),
+    )
+    assert result["score"] == payload["score"] and result["success"] is True
+    assert result["per_step"][0]["critique_source"] == "model_per_step"
+    assert (
+        result["per_step"][0]["simulator_ground_truth"]
+        == actions[0]["simulator_ground_truth"]
+    )
+
+
+@pytest.mark.parametrize("model", [DEFAULT_COSMOS3_MODEL, "MiniMaxAI/MiniMax-M3"])
+def test_hosted_prompt_and_strict_output_cover_actions_beyond_legacy_preview(
+    tmp_path, model
+):
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"synthetic-frame")
+    actions = [
+        {
+            "step": index,
+            "sim_step": index * 5,
+            "episode_boundary": _no_reset_boundary(),
+            "action": [index / 100],
+        }
+        for index in range(65)
+    ]
+
+    class Client:
+        def chat_completion(self, **kwargs):
+            prompt = kwargs["messages"][0]["content"][0]["text"]
+            lines = prompt.splitlines()
+            sent_actions = json.loads(
+                next(
+                    line.removeprefix("Actions by step: ")
+                    for line in lines
+                    if line.startswith("Actions by step: ")
+                )
+            )
+            indices = json.loads(
+                next(
+                    line.removeprefix("Required per_step indices: ")
+                    for line in lines
+                    if line.startswith("Required per_step indices: ")
+                )
+            )
+            assert sent_actions == actions
+            assert indices == list(range(65))
+            payload = _complete_hosted_payload()
+            payload["per_step"] = [
+                {
+                    **payload["per_step"][0],
+                    "step": index,
+                    "critique_text": f"Insufficient visual evidence for step {index}.",
+                    "camera_observation": None,
+                    "confidence": 0,
+                }
+                if index
+                else {**payload["per_step"][0], "step": index}
+                for index in indices
+            ]
+            return {
+                "model": kwargs["model"],
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": json.dumps(payload)},
+                    }
+                ],
+            }
+
+    result = run_token_factory_rollout_vlm(
+        model_id=model,
+        image_paths=[frame],
+        actions=actions,
+        frame_metadata=_frame_metadata([frame.name]),
+        task_description="synthetic event sequence",
+        rollout_id="synthetic",
+        threshold=0.5,
+        client=Client(),
+    )
+    assert result["action_count"] == len(result["per_step"]) == 65
+    assert [event["step"] for event in result["per_step"]] == list(range(65))
+
+
+def test_self_hosted_prompt_retains_legacy_action_preview():
+    actions = [{"step": index, "action": [0.0]} for index in range(65)]
+    prompt = reason_module._cosmos_reason_prompt(
+        family="cosmos3",
+        actions=actions,
+        task_description="synthetic",
+        frame_names=["frame.png"],
+    )
+    indices = json.loads(
+        next(
+            line.removeprefix("Required per_step indices: ")
+            for line in prompt.splitlines()
+            if line.startswith("Required per_step indices: ")
+        )
+    )
+    assert indices == list(range(64))
+
+
+def _no_reset_boundary():
+    return {
+        "schema": "npa.sim2real.episode_boundary.v1",
+        "simulator_episode_id": 0,
+        "action_episode_id": 0,
+        "reset_events": [],
+        "reset_on_current_step": False,
+        "action_outcome_valid": True,
+        "temporal_credit_valid": True,
+    }
+
+
+class _ReasonInputs(dict):
+    input_ids = [[10]]
+
+    def to(self, _device):
+        return self
+
+
+class _ReasonProcessor:
+    def __init__(self, model_payload):
+        self.model_payload = model_payload
+
+    def apply_chat_template(self, messages, **_kwargs):
+        assert messages[0]["content"][1]["type"] == "image"
+        return "synthetic rollout prompt"
+
+    def __call__(self, **_kwargs):
+        return _ReasonInputs(input_ids=self.input_ids)
+
+    @property
+    def input_ids(self):
+        return _ReasonInputs.input_ids
+
+    def batch_decode(self, generated, **_kwargs):
+        assert generated == [[20]]
+        return [json.dumps(self.model_payload)]
+
+
+class _ReasonModel:
+    def parameters(self):
+        return iter([SimpleNamespace(device="cpu")])
+
+    def generate(self, **kwargs):
+        assert kwargs["input_ids"] == [[10]]
+        return [[10, 20]]
+
+
+def _install_reason_model_double(monkeypatch, model_payload):
+    """Replace external model execution while retaining the public inference path."""
+    import torch
+
+    processor = _ReasonProcessor(model_payload)
+    transformer = SimpleNamespace(
+        AutoProcessor=SimpleNamespace(
+            from_pretrained=lambda *_args, **_kwargs: processor
+        ),
+        AutoModelForImageTextToText=SimpleNamespace(
+            from_pretrained=lambda *_args, **_kwargs: _ReasonModel()
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "transformers", transformer)
+    monkeypatch.setitem(
+        sys.modules,
+        "qwen_vl_utils",
+        SimpleNamespace(process_vision_info=lambda _messages: ([], [])),
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
+
+
+@pytest.fixture
+def self_hosted_reason(monkeypatch, tmp_path):
+    """A decoded local frame plus external model doubles; no live inference."""
+    from PIL import Image
+
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (2, 2)).save(frame)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+    monkeypatch.setenv("NPA_COSMOS_REASON2_CACHE", str(tmp_path / "cache"))
+
+    def run(model_payload):
+        _install_reason_model_double(monkeypatch, model_payload)
+        return reason_module.run_cosmos_reason_vlm(
+            model_id=DEFAULT_REASON2_MODEL,
+            image_paths=[frame],
+            actions=[{"step": 0, "action": [0.0]}],
+            task_description="Hold the cube.",
+            rollout_id="review-rollout",
+            threshold=0.5,
+        )
+
+    return run
+
+
+@pytest.mark.parametrize("verdict", ["false", 1, None])
+def test_self_hosted_inference_rejects_malformed_verdict_before_completion(
+    self_hosted_reason, capsys, verdict
+):
+    with pytest.raises(CosmosReasonError, match="success must be a JSON boolean"):
+        self_hosted_reason({"score": 0.9, "success": verdict})
+
+    events = [
+        json.loads(line)["event"] for line in capsys.readouterr().out.splitlines()
+    ]
+    assert events == ["cosmos_reason_inference_start"]
+
+
+@pytest.mark.parametrize("verdict,expected", [(True, True), (False, False)])
+def test_self_hosted_inference_preserves_explicit_boolean_verdict(
+    self_hosted_reason, capsys, verdict, expected
+):
+    result = self_hosted_reason({"score": 0.9, "success": verdict})
+
+    assert result["success"] is expected
+    assert result["component_source"] == "cosmos_reason_vlm"
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert events[-1]["event"] == "cosmos_reason_inference_complete"
+    assert events[-1]["success"] is expected

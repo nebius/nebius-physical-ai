@@ -304,7 +304,9 @@ def add_cpu_cmd(
             boot_disk_size_gib=boot_disk_size_gib,
             k8s_version=_node_group_k8s_version(cluster, local_state),
             subnet_id=(
-                subnet_id.strip() or (local_state.subnet_id if local_state else "")
+                subnet_id.strip()
+                or (local_state.subnet_id if local_state else "")
+                or cluster_subnet_id(cluster)
             ),
         )
 

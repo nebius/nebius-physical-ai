@@ -115,10 +115,10 @@ RUN printf '%s\n' \
       "fastapi==0.136.1" \
       "uvicorn[standard]==0.46.0" \
       "huggingface_hub==0.36.2" \
-      "pillow==11.1.0" \
+      "pillow==12.3.0" \
       "imageio[ffmpeg]==2.37.0" \
       "pydantic==2.13.4" \
-      "python-multipart==0.0.27" \
+      "python-multipart==0.0.31" \
       "typer==0.24.1" \
       "httpx==0.28.1" \
       "paramiko==5.0.0" \

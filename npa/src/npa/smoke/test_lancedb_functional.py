@@ -1,8 +1,9 @@
 """LanceDB container functional golden eval.
 
 Starts the LanceDB FastAPI wrapper against a throwaway storage path, then proves
-the core vector-store contract end to end: health, create table, vector query,
-and table listing. No external data or S3 access is required.
+the core vector-store contract end to end: the BDD100K dHash dependency path,
+health, create table, vector query, and table listing. No external data or S3
+access is required.
 
 Run inside the npa-lancedb image with:
     python -m npa.smoke.test_lancedb_functional
@@ -10,6 +11,8 @@ Run inside the npa-lancedb image with:
 
 from __future__ import annotations
 
+import importlib
+import io
 import json
 import os
 import shutil
@@ -79,19 +82,67 @@ def _base_url(state: SmokeState) -> str:
     return f"http://127.0.0.1:{state.port}"
 
 
+def check_bdd100k_dhash_runtime(_state: SmokeState | None = None) -> CheckResult:
+    """Exercise the copied UDF against the image's inherited Pillow runtime."""
+
+    module_name = os.environ.get(
+        "LANCEDB_SMOKE_UDF_MODULE", "npa.workbench.lancedb.bdd100k_udfs"
+    ).strip()
+    try:
+        module = importlib.import_module(module_name)
+        from PIL import Image, __version__ as pillow_version
+
+        encoded = io.BytesIO()
+        Image.new("L", (9, 8), color=0).save(encoded, format="PNG")
+        value = module._dhash_bytes(encoded.getvalue())
+    except Exception as exc:
+        return CheckResult("BDD100K dHash runtime", False, _format_exception(exc))
+    if value != 0:
+        return CheckResult(
+            "BDD100K dHash runtime", False, f"uniform image returned dHash {value}"
+        )
+    return CheckResult(
+        "BDD100K dHash runtime",
+        True,
+        f"module={module_name}; Pillow={pillow_version}; dhash={value}",
+    )
+
+
 def check_start_server(state: SmokeState) -> CheckResult:
-    uvicorn = shutil.which("uvicorn")
-    if uvicorn is None:
-        return CheckResult("start LanceDB server", False, "uvicorn not found on PATH")
+    smoke_entrypoint = os.environ.get("LANCEDB_SMOKE_ENTRYPOINT", "").strip()
+    if smoke_entrypoint:
+        entrypoint = Path(smoke_entrypoint)
+        if not entrypoint.is_file() or not os.access(entrypoint, os.R_OK | os.X_OK):
+            return CheckResult(
+                "start LanceDB server",
+                False,
+                f"entrypoint is not readable and executable: {entrypoint}",
+            )
+        command = [str(entrypoint)]
+    else:
+        uvicorn = shutil.which("uvicorn")
+        if uvicorn is None:
+            return CheckResult(
+                "start LanceDB server", False, "uvicorn not found on PATH"
+            )
+        command = [
+            uvicorn,
+            SERVER_TARGET,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(state.port),
+        ]
 
     env = {
         **os.environ,
         "LANCEDB_STORAGE_PATH": str(state.storage_path),
         "LANCEDB_AUTH_MODE": "none",
+        "LANCEDB_PORT": str(state.port),
     }
     log_handle = state.server_log.open("w")
     state.process = subprocess.Popen(
-        [uvicorn, SERVER_TARGET, "--host", "127.0.0.1", "--port", str(state.port)],
+        command,
         env=env,
         stdout=log_handle,
         stderr=subprocess.STDOUT,
@@ -108,13 +159,20 @@ def check_start_server(state: SmokeState) -> CheckResult:
                 f"server exited with {state.process.returncode}; log:\n{_tail(state.server_log)}",
             )
         try:
+            readiness = _request_json("GET", f"{_base_url(state)}/readyz", timeout=5)
             health = _request_json("GET", f"{_base_url(state)}/health", timeout=5)
-            return CheckResult("start LanceDB server", True, json.dumps(health, sort_keys=True))
+            return CheckResult(
+                "start LanceDB server",
+                True,
+                json.dumps({"readiness": readiness, "health": health}, sort_keys=True),
+            )
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = _format_exception(exc)
             time.sleep(1)
     return CheckResult(
-        "start LanceDB server", False, f"timed out waiting for /health; last error: {last_error}"
+        "start LanceDB server",
+        False,
+        f"timed out waiting for /health; last error: {last_error}",
     )
 
 
@@ -194,6 +252,7 @@ def main() -> int:
     print(f"Smoke workspace: {root}")
 
     checks: list[Callable[[SmokeState], CheckResult]] = [
+        check_bdd100k_dhash_runtime,
         check_start_server,
         check_create_table,
         check_vector_query,

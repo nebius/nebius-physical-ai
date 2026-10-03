@@ -1,0 +1,79 @@
+{
+  "schema": "npa.lerobot.agent_ui_video_capture.v1",
+  "source": {
+    "path": "lerobot-video-subtasks.rrd",
+    "sha256": "c6ea539976f254eec55da12d7ac2674272c74b06fa676ffd1fdcac8c392e3218",
+    "recording_id": "lerobot-real-video-subtasks-20260916",
+    "embedded_mp4_sha256": "803cc4e2bbf2260838354f7475ced9ab9417ab54a99ff62d3e4532e51b894a2b"
+  },
+  "capture": {
+    "method": "Playwright browser screen recording of the deployed NPA Agent Rerun tab",
+    "page_title": "NPA Agent",
+    "viewer": "fullscreen embedded Rerun 0.31.4",
+    "playback_speed": 1.0,
+    "timeline": "episode_time",
+    "viewport": {
+      "width": 1680,
+      "height": 1120
+    },
+    "editing": "Private setup footage trimmed; fullscreen viewer capture transcoded from WebM to H.264. No synthetic camera frames or recreated viewer screenshots.",
+    "limitations": "Browser capture is 25 FPS and may omit or repeat displayed source frames; use the embedded/direct 30 FPS MP4 and frame-level RRD for exact source-frame alignment. Labels are demonstration annotations, not upstream ground truth. This is playback, not FiftyOne label-authoring UI."
+  },
+  "video": {
+    "path": "agent-ui-playback.mp4",
+    "sha256": "bb40ff8e03c8a193c548f25d54790c1e8cf3b31f61c28ce1d2002875d7088836",
+    "bytes": 7562864,
+    "codec": "h264",
+    "width": 1680,
+    "height": 1120,
+    "fps": 25,
+    "duration_seconds": 18.76,
+    "decoded_frame_count": 469,
+    "observed_phases": [
+      {
+        "label": "ready",
+        "capture_frame": 0
+      },
+      {
+        "label": "approach",
+        "capture_frame": 56
+      },
+      {
+        "label": "grasp",
+        "capture_frame": 130
+      },
+      {
+        "label": "transfer",
+        "capture_frame": 158
+      },
+      {
+        "label": "place",
+        "capture_frame": 209
+      },
+      {
+        "label": "release",
+        "capture_frame": 240
+      },
+      {
+        "label": "retract",
+        "capture_frame": 260
+      },
+      {
+        "label": "complete",
+        "capture_frame": 316
+      }
+    ]
+  },
+  "validation": {
+    "rrd_verify": "1 file verified without error.",
+    "rrd_print_sha256": "3c105abcec3b2c2f40236403b97dec099c3740fd6a31aef89a98036a0b2df303",
+    "decoded_rrd_rows": 454,
+    "decoded_rrd_video_references": 454,
+    "embedded_mp4_exact_byte_match": true,
+    "source_camera_pixel_match": {
+      "method": "Compare concatenated decoded RGB24 bytes for all 454 frames of each original pinned camera and its remuxed episode clip",
+      "top_sha256": "86d2be0a093822ac78afe0051161069c353c3903d8ada742aebdd7a1cebe1be1",
+      "wrist_sha256": "2775cd0a1e2b5ee3a5906ae738eaa7eec93f628a8d4606dcd61ef285fa45d1be"
+    }
+  }
+}

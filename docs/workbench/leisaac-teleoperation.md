@@ -1,11 +1,13 @@
 # LeIsaac browser teleoperation
 
+[Workbench docs](README.md)
+
 For the measured split control/video transport, fallback behavior, latency
 instrumentation, and security model, see
 [LeIsaac low-latency browser transport](guides/leisaac-transport-latency.md).
 
 NPA exposes [LightwheelAI/LeIsaac](https://github.com/LightwheelAI/leisaac)
-as a persistent agent-UI tab for a selected session. Live controls report an
+as an optional agent-UI tab for a selected session. Live controls report an
 explicit unavailable/reconnect state, while the immutable S3 episode browser
 remains usable without a running simulator. The integration runs upstream
 LeIsaac v0.4.0 at commit
@@ -52,13 +54,41 @@ parallel control routing.
 
 ## What makes the tab appear
 
-The browser mounts the `LeIsaac` tab and its readiness panel as soon as the UI
-is wired, before remote capability or artifact discovery. With no registered
-runtime, session-only configuration, livestream, motion/orbit, and recorder
-widgets are not rendered. The available **Retry readiness** action is safe and
-does not launch infrastructure; the panel instead shows the non-secret
-operator prerequisites and a placeholder Workbench CLI launch template. It
-never accepts an EULA or creates a session from browser state.
+LeIsaac is disabled by default. Only the operator configuration flag
+`projects.<project-alias>.agents.<agent-name>.ui.leisaac_enabled` enables its
+UI. In the operator machine's `~/.npa/config.yaml` (or
+`$NPA_CONFIG_DIR/config.yaml`), merge this into the existing agent record:
+
+```yaml
+projects:
+  my-project:
+    agents:
+      agent:
+        ui:
+          leisaac_enabled: true
+```
+
+Only YAML boolean `true` enables LeIsaac. Missing or `false` values, quoted
+strings such as `"true"`, numbers, and malformed UI sections leave it disabled.
+There is no browser enable/disable control, localStorage opt-in, or URL override.
+While disabled, the page renders no LeIsaac navigation and makes no LeIsaac
+capability requests.
+
+Apply a config change with
+`npa agent bootstrap --project my-project --name agent`, then reload any open
+browser pages. Bootstrap refreshes the same agent's static HTML and restarts
+its services. Editing config, restarting the backend/nginx, or rebooting alone
+does not regenerate the HTML. To disable the UI, set the flag to `false` or
+remove it, bootstrap again, and reload. The setting survives ordinary agent
+record updates; it does not start or stop a simulator or change access grants.
+
+When enabled, the `LeIsaac` tab and its readiness panel mount before
+remote capability or artifact discovery. With no registered runtime,
+session-only configuration, livestream, motion/orbit, and recorder widgets are
+not rendered. The available **Retry readiness** action is safe and does not
+launch infrastructure; the panel instead shows the non-secret operator
+prerequisites and a placeholder Workbench CLI launch template. It never
+accepts an EULA or creates a session from browser state.
 
 A live simulator is optional; an agent-relay launch registers its run through
 the agent's authenticated, certificate-pinned HTTPS API. The browser checks
@@ -79,6 +109,13 @@ and recording are not available in this state.
 Selecting another live LeIsaac run
 updates the registered capability; switching unrelated artifact runs does not
 discard it.
+
+Run selection loads the first bounded artifact page so large frame inventories
+do not block run details. **List artifacts** resumes from that page's opaque
+cursor and merges the remaining pages before choosing a run-wide preferred
+recording or declaring that no recording exists. Type, stage, role, and sort
+changes reuse whichever source-qualified pages are already loaded and do not
+repeat artifact inventory requests.
 
 The browser receives no service nonce or agent credential. The live Isaac Sim
 5.1 path returns same-origin, authenticated `/api/leisaac/frame.jpg`,
@@ -298,13 +335,13 @@ curl -sk -u "${AGENT_USER}:${AGENT_PASSWORD}" "${AGENT_URL}/api/health"
 
 ```bash
 # ACCEPT_EULA defaults to Y for Isaac-backed routes. To opt out, set it to N.
-# On shared operator hosts, select the registry-authorized identity separately
-# from the Nebius/Kubernetes access profile used by the rest of the command.
+# On shared operator hosts, select the Nebius/Kubernetes access profile used by
+# the command. The repository-selected public GHCR image needs no pull secret.
 export NPA_NEBIUS_PROFILE=agent-sa
 
 npa workbench leisaac launch \
   --run-id leisaac-teleop-example \
-  --image cr.us-central1.nebius.cloud/REGISTRY/npa-leisaac@sha256:DIGEST \
+  --image ghcr.io/nebius/nebius-physical-ai/npa-leisaac@sha256:DIGEST \
   --context YOUR_KUBECTL_CONTEXT \
   --source-range OPERATOR_PUBLIC_IP/32 \
   --transport agent-relay \
@@ -397,8 +434,9 @@ stage, so it is intentionally launched and destroyed through the Workbench
 lifecycle command, not represented as an `npa.workflow` step that would report
 completion while the browser session still needs to remain alive.
 
-Reload the agent UI after launch, open `LeIsaac`, and choose **Connect
-teleoperation**. No run-ID entry is required. Click the simulation to focus it.
+After applying the operator UI flag above, reload the agent UI after launch,
+open `LeIsaac`, and choose **Connect teleoperation**. No
+run-ID entry is required. Click the simulation to focus it.
 Controls are the upstream bindings: `W/S`, `A/D`, `Q/E` translate; `J/L`,
 `K/I` rotate; `U/O` open/close the gripper. Episode state is explicit: **Start
 episode**, **Mark success** or **Mark failure**, then **Finalize & upload**.
@@ -487,6 +525,11 @@ overview tracks from the same capture groups. Older one-camera commits show an
 explicit single-camera fallback. Unrecognized committed artifacts remain
 visible as downloads instead of disappearing.
 
+Timeline `success`, `terminated`, `truncated`, and `done` values must be JSON
+booleans. Older records that omit these flags retain their false defaults.
+Explicit non-boolean values reject episode detail and timeline requests with
+HTTP 502 instead of displaying inferred outcome evidence.
+
 **Describe this frame** captures the pixels from the video element currently
 displayed in the episode player and submits them with the visible episode and
 timeline metadata. If capture fails or the frame is blank, the UI reports that
@@ -541,7 +584,7 @@ npa workbench leisaac export-paidf \
 ```
 
 The result reports the exact runnable
-`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml` command with
+`workflows/testing/physical-ai-data-factory.yaml` command with
 `NPA_COSMOS_CONDITION_ON_INPUT=1`. The workflow invokes the real
 `workbench.cosmos2.transfer_execute` toolRef with
 `--condition-on-input --execute`; a manifest-only stub is not accepted.

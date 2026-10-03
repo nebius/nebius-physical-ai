@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import ast
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -151,7 +154,9 @@ def test_resolve_environment_returns_none_when_absent(isolated_config: Path) -> 
     assert config.resolve_environment() is None
 
 
-def test_resolve_terraform_state_reads_project_backend_credentials(isolated_config: Path) -> None:
+def test_resolve_terraform_state_reads_project_backend_credentials(
+    isolated_config: Path,
+) -> None:
     _write_full_config(isolated_config)
 
     resolved = config.resolve_terraform_state("proj-a")
@@ -168,13 +173,17 @@ def test_resolve_terraform_state_missing_returns_empty(isolated_config: Path) ->
     assert config.resolve_terraform_state("missing") == config.TerraformStateConfig()
 
 
-def test_alias_has_terraform_state_for_saved_managed_alias(isolated_config: Path) -> None:
+def test_alias_has_terraform_state_for_saved_managed_alias(
+    isolated_config: Path,
+) -> None:
     _write_full_config(isolated_config)
 
     assert config.alias_has_terraform_state("proj-a", "wb-a") is True
 
 
-def test_alias_has_terraform_state_false_for_missing_alias(isolated_config: Path) -> None:
+def test_alias_has_terraform_state_false_for_missing_alias(
+    isolated_config: Path,
+) -> None:
     _write_full_config(isolated_config)
 
     assert config.alias_has_terraform_state("proj-a", "missing") is False
@@ -193,8 +202,12 @@ def test_alias_has_terraform_state_false_for_byovm_alias(isolated_config: Path) 
 # ── teardown helpers: clear_terraform_state_for_bucket / forget_project ───────
 
 
-def test_clear_terraform_state_for_bucket_removes_matching_state(isolated_config: Path) -> None:
-    _write_full_config(isolated_config)  # proj-a.terraform_state.bucket == "state-bucket"
+def test_clear_terraform_state_for_bucket_removes_matching_state(
+    isolated_config: Path,
+) -> None:
+    _write_full_config(
+        isolated_config
+    )  # proj-a.terraform_state.bucket == "state-bucket"
 
     # A bucket URI must normalize to the bare name before comparing.
     cleared = config.clear_terraform_state_for_bucket("s3://state-bucket/")
@@ -207,7 +220,9 @@ def test_clear_terraform_state_for_bucket_removes_matching_state(isolated_config
     assert saved["projects"]["proj-a"]["workbenches"]["wb-a"]
 
 
-def test_clear_terraform_state_for_bucket_no_match_leaves_config(isolated_config: Path) -> None:
+def test_clear_terraform_state_for_bucket_no_match_leaves_config(
+    isolated_config: Path,
+) -> None:
     _write_full_config(isolated_config)
 
     assert config.clear_terraform_state_for_bucket("some-other-bucket") == []
@@ -215,7 +230,9 @@ def test_clear_terraform_state_for_bucket_no_match_leaves_config(isolated_config
     assert saved["projects"]["proj-a"]["terraform_state"]["access_key"] == "state-key"
 
 
-def test_forget_project_removes_stanza_and_repoints_default(isolated_config: Path) -> None:
+def test_forget_project_removes_stanza_and_repoints_default(
+    isolated_config: Path,
+) -> None:
     _write_full_config(isolated_config)  # default_project == "proj-a"
 
     assert config.forget_project("proj-a") is True
@@ -247,6 +264,308 @@ def test_clear_skypilot_bin_removes_only_that_key(isolated_config: Path) -> None
     assert config.clear_skypilot_bin() is False
 
 
+# ── stale-read/write races ─────────────────────────────────────────────────
+#
+# Every mutation below must compute its change from the document that
+# ``update_private_yaml`` reads *after* acquiring the config lock, never from
+# a ``_load_yaml()`` snapshot taken before it. A snapshot taken before the
+# lock can already be stale by the time the lock is acquired; writing it back
+# verbatim silently reverts whatever a concurrent command committed in
+# between -- a classic lost update, and in the IAM-residue case, evidence
+# loss with no error raised.
+
+
+def _inject_concurrent_write(
+    monkeypatch: pytest.MonkeyPatch, config_path: Path, mutate
+) -> None:
+    """Make the next lock-protected read observe *mutate* applied to disk first.
+
+    Models a second process committing its own change in the instant this
+    call acquires the config lock and reads the current document -- the
+    narrowest window in which a stale-read/write bug can lose an update.
+    Patches the read used by every caller of ``update_config_document``
+    (``update_private_yaml`` -> ``_read_credentials_document``), so the same
+    test works whether or not the target function still keeps a pre-lock
+    ``_load_yaml()`` call of its own. Fires once.
+    """
+    real_read = credentials._read_credentials_document
+    state = {"fired": False}
+
+    def racy_read(path: Path):
+        if not state["fired"] and path == config_path:
+            state["fired"] = True
+            live = yaml.safe_load(config_path.read_text()) or {}
+            mutate(live)
+            config_path.write_text(yaml.safe_dump(live, sort_keys=False))
+        return real_read(path)
+
+    monkeypatch.setattr(credentials, "_read_credentials_document", racy_read)
+
+
+def test_clear_terraform_state_for_bucket_preserves_concurrent_write(
+    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_full_config(isolated_config)
+    _inject_concurrent_write(
+        monkeypatch,
+        isolated_config,
+        lambda live: live["projects"]["proj-b"].update(tenant_id="tenant-2-concurrent"),
+    )
+
+    cleared = config.clear_terraform_state_for_bucket("s3://state-bucket/")
+
+    assert cleared == ["proj-a"]
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert "terraform_state" not in saved["projects"]["proj-a"]
+    # A write committed by another process during the race window must survive.
+    assert saved["projects"]["proj-b"]["tenant_id"] == "tenant-2-concurrent"
+
+
+def test_clear_skypilot_bin_preserves_concurrent_write(
+    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated_config.parent.mkdir(parents=True)
+    isolated_config.write_text(
+        yaml.safe_dump({"skypilot": {"sky_bin": "/x/bin/sky"}, "default_project": "p"})
+    )
+    _inject_concurrent_write(
+        monkeypatch,
+        isolated_config,
+        lambda live: live.update(default_workbench="concurrent-wb"),
+    )
+
+    assert config.clear_skypilot_bin() is True
+
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert "skypilot" not in saved
+    assert saved["default_workbench"] == "concurrent-wb"
+
+
+def test_mark_storage_iam_residue_preserves_concurrent_write(
+    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_full_config(isolated_config)
+    _inject_concurrent_write(
+        monkeypatch,
+        isolated_config,
+        lambda live: live["projects"]["proj-b"].update(tenant_id="tenant-2-concurrent"),
+    )
+
+    persisted = config.mark_storage_iam_residue(
+        "proj-a",
+        {"status": "present_owned", "ownership": "npa", "service_account_id": "sa-x"},
+    )
+
+    assert persisted["service_account_id"] == "sa-x"
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert (
+        saved["projects"]["proj-a"][config.STORAGE_IAM_RESIDUE_KEY][
+            "service_account_id"
+        ]
+        == "sa-x"
+    )
+    assert saved["projects"]["proj-b"]["tenant_id"] == "tenant-2-concurrent"
+
+
+def test_clear_storage_iam_residue_preserves_concurrent_marker_for_other_alias(
+    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_full_config(isolated_config)
+    config.mark_storage_iam_residue(
+        "proj-a",
+        {"status": "present_owned", "ownership": "npa", "service_account_id": "sa-a"},
+    )
+
+    def concurrent_marker(live: dict) -> None:
+        live["projects"]["proj-b"][config.STORAGE_IAM_RESIDUE_KEY] = {
+            "schema_version": config.STORAGE_IAM_RESIDUE_SCHEMA,
+            "status": "present_owned",
+            "ownership_state": "owned",
+            "service_account_id": "sa-b-race",
+        }
+
+    _inject_concurrent_write(monkeypatch, isolated_config, concurrent_marker)
+
+    assert config.clear_storage_iam_residue("proj-a") is True
+
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert config.STORAGE_IAM_RESIDUE_KEY not in saved["projects"]["proj-a"]
+    # A different project's marker committed during the race must survive --
+    # the buggy implementation replaced the whole document with a stale
+    # snapshot and silently erased it.
+    assert (
+        saved["projects"]["proj-b"][config.STORAGE_IAM_RESIDUE_KEY][
+            "service_account_id"
+        ]
+        == "sa-b-race"
+    )
+
+
+def test_forget_project_preserves_concurrent_write(
+    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_full_config(isolated_config)  # default_project == "proj-a"
+    _inject_concurrent_write(
+        monkeypatch,
+        isolated_config,
+        lambda live: live["projects"]["proj-b"].update(tenant_id="tenant-2-concurrent"),
+    )
+
+    assert config.forget_project("proj-a") is True
+
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert "proj-a" not in saved["projects"]
+    assert saved["default_project"] == "proj-b"
+    assert saved["projects"]["proj-b"]["tenant_id"] == "tenant-2-concurrent"
+
+
+def test_forget_project_refuses_when_iam_marker_arrives_concurrently(
+    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An in-flight IAM residue write must not be raced past and deleted.
+
+    If ``forget_project`` checked a stale, pre-lock snapshot for unresolved
+    IAM evidence, a marker committed by a concurrent
+    ``mark_storage_iam_residue`` call would go unnoticed: the project -- and
+    the only record of the unresolved IAM residue -- would be deleted
+    outright, with no error raised.
+    """
+    _write_full_config(isolated_config)  # proj-a has no residue marker yet
+
+    def concurrent_marker(live: dict) -> None:
+        live["projects"]["proj-a"][config.STORAGE_IAM_RESIDUE_KEY] = {
+            "schema_version": config.STORAGE_IAM_RESIDUE_SCHEMA,
+            "status": "present_owned",
+            "ownership_state": "owned",
+            "service_account_id": "sa-race",
+        }
+
+    _inject_concurrent_write(monkeypatch, isolated_config, concurrent_marker)
+
+    with pytest.raises(config.ConfigError, match="unresolved storage IAM"):
+        config.forget_project("proj-a")
+
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert "proj-a" in saved["projects"]
+    assert (
+        saved["projects"]["proj-a"][config.STORAGE_IAM_RESIDUE_KEY][
+            "service_account_id"
+        ]
+        == "sa-race"
+    )
+
+
+def test_concurrent_processes_do_not_lose_terraform_state_removals(
+    isolated_config: Path,
+) -> None:
+    """Real OS-process stress test backing the deterministic races above.
+
+    N real, independently-launched interpreters each clear a distinct
+    project's ``terraform_state`` at (as close as the OS scheduler allows)
+    the same time. OS scheduling may serialize even an unlocked implementation,
+    so this stress test can pass on the buggy code. The deterministic
+    interleaving tests above provide the reliable regression checks; this case
+    additionally exercises real process and file-lock behavior. All N removals
+    must survive regardless of ordering.
+    """
+    process_count = 8
+    projects = {
+        f"proc-{i}": {
+            "project_id": f"project-{i}",
+            "terraform_state": {"bucket": f"bucket-{i}"},
+        }
+        for i in range(process_count)
+    }
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(yaml.safe_dump({"projects": projects}, sort_keys=False))
+
+    env = dict(os.environ)
+    src_root = str(PACKAGE_ROOT / "src")
+    env["PYTHONPATH"] = os.pathsep.join([src_root, env.get("PYTHONPATH", "")])
+    env["NPA_CONFIG_DIR"] = str(isolated_config.parent)
+    script = (
+        "import sys\n"
+        "from npa.clients import config\n"
+        "config.clear_terraform_state_for_bucket(sys.argv[1])\n"
+    )
+
+    procs = []
+    try:
+        for i in range(process_count):
+            procs.append(
+                subprocess.Popen([sys.executable, "-c", script, f"bucket-{i}"], env=env)
+            )
+        returncodes = [proc.wait(timeout=60) for proc in procs]
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=60)
+    assert returncodes == [0] * process_count
+
+    saved = yaml.safe_load(isolated_config.read_text())
+    still_present = sorted(
+        alias for alias, proj in saved["projects"].items() if "terraform_state" in proj
+    )
+    assert still_present == []
+
+
+# ── cleanup helpers must stay a true no-op with no config on disk ──────────
+#
+# These helpers only ever remove a stanza; they must never be the reason
+# ``~/.npa/config.yaml`` (or the ``~/.npa`` directory) starts existing.
+# ``update_private_yaml``'s ``skip_if_unchanged`` only skips the write when
+# the file already exists (a real creator like ``write_config`` must still be
+# able to create it on first use), so routing these through
+# ``update_config_document`` without an explicit existence guard would make
+# every one of them fabricate an empty ``{}`` config on a machine that has
+# never run ``npa configure``.
+
+
+def test_clear_terraform_state_for_bucket_is_a_noop_without_a_config_file(
+    isolated_config: Path,
+) -> None:
+    assert not isolated_config.exists()
+
+    assert config.clear_terraform_state_for_bucket("some-bucket") == []
+
+    assert not isolated_config.exists()
+    assert not isolated_config.parent.exists()
+
+
+def test_clear_skypilot_bin_is_a_noop_without_a_config_file(
+    isolated_config: Path,
+) -> None:
+    assert not isolated_config.exists()
+
+    assert config.clear_skypilot_bin() is False
+
+    assert not isolated_config.exists()
+    assert not isolated_config.parent.exists()
+
+
+def test_clear_storage_iam_residue_is_a_noop_without_a_config_file(
+    isolated_config: Path,
+) -> None:
+    assert not isolated_config.exists()
+
+    assert config.clear_storage_iam_residue("proj-a") is False
+
+    assert not isolated_config.exists()
+    assert not isolated_config.parent.exists()
+
+
+def test_forget_project_is_a_noop_without_a_config_file(
+    isolated_config: Path,
+) -> None:
+    assert not isolated_config.exists()
+
+    assert config.forget_project("proj-a") is False
+
+    assert not isolated_config.exists()
+    assert not isolated_config.parent.exists()
+
+
 def test_resolve_project_storage_reads_object_storage(isolated_config: Path) -> None:
     isolated_config.parent.mkdir(parents=True)
     isolated_config.write_text(
@@ -276,7 +595,9 @@ def test_resolve_project_storage_reads_object_storage(isolated_config: Path) -> 
     )
 
 
-def test_resolve_project_storage_falls_back_to_terraform_state(isolated_config: Path) -> None:
+def test_resolve_project_storage_falls_back_to_terraform_state(
+    isolated_config: Path,
+) -> None:
     _write_full_config(isolated_config)
 
     resolved = config.resolve_project_storage("proj-a")
@@ -340,11 +661,15 @@ def test_resolve_project_storage_uses_credentials_file_fallback(
     )
 
 
-def test_resolve_container_registry_uses_project_override(isolated_config: Path) -> None:
+def test_resolve_container_registry_uses_project_override(
+    isolated_config: Path,
+) -> None:
     _write_full_config(isolated_config)
 
     assert config.resolve_container_registry("proj-a") == "registry.example/npa"
-    assert config.resolve_container_registry("proj-b") == config.DEFAULT_CONTAINER_REGISTRY
+    assert (
+        config.resolve_container_registry("proj-b") == config.DEFAULT_CONTAINER_REGISTRY
+    )
 
 
 def test_resolve_config_uses_default_project_and_workbench(
@@ -816,32 +1141,12 @@ def test_resolve_ssh_config_guard_allows_matching_tool(isolated_config: Path) ->
     assert resolved.workbench_type == "groot"
 
 
-# ── resolve_container_registry honors NPA_REGISTRY_ID ─────────────────────
-
-
-def test_resolve_container_registry_honors_registry_id(
-    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # A project section with no container_registry override falls through to env.
-    isolated_config.parent.mkdir(parents=True, exist_ok=True)
-    isolated_config.write_text(
-        yaml.safe_dump({"projects": {"proj": {"workbenches": {}}}})
-    )
-    monkeypatch.delenv("NPA_REGISTRY", raising=False)
-    monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
-    assert (
-        config.resolve_container_registry("proj")
-        == "cr.eu-north1.nebius.cloud/myregid123"
-    )
-
-
-def test_resolve_container_registry_prefers_project_override(
+def test_resolve_container_registry_prefers_environment_override(
     isolated_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_full_config(isolated_config)
-    monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
-    # proj-a has an explicit container_registry, which wins over env.
-    assert config.resolve_container_registry("proj-a") == "registry.example/npa"
+    monkeypatch.setenv("NPA_REGISTRY", "registry-env.example/npa")
+    assert config.resolve_container_registry("proj-a") == "registry-env.example/npa"
 
 
 def test_write_config_locks_down_file_and_directory(tmp_path, monkeypatch) -> None:
@@ -906,17 +1211,13 @@ def test_config_mutations_do_not_bypass_the_schema_validating_gateway() -> None:
             if name in {"update_private_yaml", "write_private_yaml"} and (
                 "CONFIG_PATH" in target
             ):
-                offenders.add(
-                    (str(path.relative_to(PACKAGE_ROOT)), node.lineno, name)
-                )
+                offenders.add((str(path.relative_to(PACKAGE_ROOT)), node.lineno, name))
             if (
                 name in {"open", "write_text", "write_bytes"}
                 and isinstance(node.func, ast.Attribute)
                 and "CONFIG_PATH" in ast.unparse(node.func.value)
             ):
-                offenders.add(
-                    (str(path.relative_to(PACKAGE_ROOT)), node.lineno, name)
-                )
+                offenders.add((str(path.relative_to(PACKAGE_ROOT)), node.lineno, name))
 
     assert offenders == set()
 
@@ -994,9 +1295,7 @@ def test_forget_project_converges_when_cleanup_receipt_persistence_fails(
 
     monkeypatch.setattr(teardown_receipts, "record_teardown_event", flaky_record)
 
-    result = CliRunner().invoke(
-        app, ["configure", "--forget-project", "target"]
-    )
+    result = CliRunner().invoke(app, ["configure", "--forget-project", "target"])
 
     assert result.exit_code == 0, result.output
     saved = yaml.safe_load(isolated_config.read_text(encoding="utf-8"))
@@ -1039,7 +1338,9 @@ def test_config_permissions_warning_flags_a_world_readable_file(
     assert "chmod 600" in warning
 
 
-def test_config_permissions_warning_is_quiet_without_a_file(tmp_path, monkeypatch) -> None:
+def test_config_permissions_warning_is_quiet_without_a_file(
+    tmp_path, monkeypatch
+) -> None:
     from npa.clients import config as config_module
 
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "missing.yaml")

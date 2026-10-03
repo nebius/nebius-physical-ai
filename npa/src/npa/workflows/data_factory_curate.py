@@ -28,6 +28,8 @@ report-only path -- so the pipeline never regresses when the image is absent.
 from __future__ import annotations
 
 import logging
+import json
+import os
 from typing import Any, Callable
 
 _log = logging.getLogger(__name__)
@@ -47,6 +49,116 @@ DEFAULT_REDUNDANT_QUANTILE = 0.15
 
 class FiftyoneUnavailable(RuntimeError):
     """Raised when FiftyOne (or its curation deps) cannot be imported."""
+
+
+def export_terminal_review_dataset(
+    *,
+    candidates: list[dict[str, Any]],
+    dataset_name: str,
+    download_key: Callable[[str, str], str],
+    export_dir: str,
+    workdir: str,
+    run_disposition: str,
+) -> dict[str, Any]:
+    """Export a portable real-FiftyOne dataset for every terminal candidate.
+
+    This is deliberately separate from Brain curation. A rejected candidate is
+    reviewable, but it is never selected, promoted, or represented as curated
+    training data. The portable ``FiftyOneDataset`` archive includes its media and
+    can be loaded into a durable Voxel51 deployment after the workflow pod exits.
+    """
+
+    try:
+        import fiftyone as fo  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        raise FiftyoneUnavailable(str(exc)) from exc
+
+    if not candidates:
+        raise FiftyoneUnavailable("no terminal PAIDF candidates to review")
+    normalized_name = str(dataset_name or "").strip()
+    if not normalized_name:
+        raise ValueError("dataset_name is required")
+    os.makedirs(workdir, exist_ok=True)
+    os.makedirs(export_dir, exist_ok=False)
+    dataset = fo.Dataset(name=f"{normalized_name}-export", persistent=False)
+    try:
+        for candidate in candidates:
+            candidate_id = str(candidate.get("candidate_id") or "").strip()
+            media_key = str(candidate.get("media_key") or "").strip()
+            if not candidate_id or not media_key:
+                raise ValueError("review candidate is missing identity or media")
+            destination = os.path.join(workdir, candidate_id.replace("/", "__"))
+            os.makedirs(destination, exist_ok=True)
+            media_path = download_key(media_key, destination)
+            sample = fo.Sample(
+                filepath=media_path,
+                tags=[
+                    "paidf-terminal-review",
+                    "accepted" if run_disposition == "accepted" else "rejected",
+                    "promotion-eligible"
+                    if candidate.get("promotion_eligible") is True
+                    else "review-only",
+                ],
+            )
+            sample["candidate_id"] = candidate_id
+            sample["iteration"] = int(candidate.get("iteration") or 0)
+            sample["clip_id"] = str(candidate.get("clip_id") or "")
+            sample["quality_disposition"] = run_disposition
+            sample["candidate_passed"] = candidate.get("candidate_passed") is True
+            sample["promotion_eligible"] = candidate.get("promotion_eligible") is True
+            sample["score"] = float(candidate.get("score") or 0.0)
+            sample["hard_checks_passed"] = candidate.get("hard_checks_passed") is True
+            sample["failed_attributes"] = [
+                str(value) for value in candidate.get("failed_attributes", [])
+            ]
+            sample["hallucination_status"] = str(
+                candidate.get("hallucination_status") or "unavailable"
+            )
+            # FiftyOne fields remain queryable while the complete evaluator
+            # structures stay losslessly inspectable as JSON text.
+            sample["attribute_results_json"] = json.dumps(
+                candidate.get("attribute_results", []), sort_keys=True
+            )
+            sample["hard_check_results_json"] = json.dumps(
+                candidate.get("hard_check_results", {}), sort_keys=True
+            )
+            dataset.add_sample(sample)
+
+        dataset.info = {
+            "schema": "npa.paidf.fiftyone-terminal-review/v1",
+            "dataset_name": normalized_name,
+            "quality_disposition": run_disposition,
+            "review_only": run_disposition != "accepted",
+            "promotion_semantics": (
+                "Only independently hard-passing candidates from an accepted run "
+                "are promotion eligible; rejected candidates are review-only."
+            ),
+            "candidate_count": len(candidates),
+        }
+        dataset.save()
+        dataset.export(
+            export_dir=export_dir,
+            dataset_type=fo.types.FiftyOneDataset,
+            export_media=True,
+        )
+        return {
+            "engine": "fiftyone",
+            "fiftyone_version": str(getattr(fo, "__version__", "")),
+            "dataset_name": normalized_name,
+            "candidate_count": len(dataset),
+            "quality_disposition": run_disposition,
+            "review_only": run_disposition != "accepted",
+            "promotion_eligible_count": sum(
+                candidate.get("promotion_eligible") is True for candidate in candidates
+            ),
+            "fields": sorted(dataset.get_field_schema()),
+            "export_format": "FiftyOneDataset",
+        }
+    finally:
+        try:
+            dataset.delete()
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("failed to delete exported review dataset: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +182,9 @@ def _quantile(values: list[float], q: float) -> float:
     return ordered[lo] * (1 - frac) + ordered[hi] * frac
 
 
-def _cluster_ids(sample_ids: list[str], duplicate_pairs: list[tuple[str, str]]) -> list[list[str]]:
+def _cluster_ids(
+    sample_ids: list[str], duplicate_pairs: list[tuple[str, str]]
+) -> list[list[str]]:
     """Union-find the ids into near-duplicate clusters (singletons included)."""
     valid = set(sample_ids)
     parent = {sid: sid for sid in sample_ids}
@@ -149,7 +263,11 @@ def select_curated(
                 }
             )
         near_dupe_clusters.append(
-            {"representative": rep, "members": sorted(members), "dropped": sorted(losers)}
+            {
+                "representative": rep,
+                "members": sorted(members),
+                "dropped": sorted(losers),
+            }
         )
 
     kept = sorted(kept)
@@ -161,7 +279,9 @@ def select_curated(
         "dropped": sorted(dropped, key=lambda d: d["id"]),
         "kept_count": len(kept),
         "dropped_count": len(dropped),
-        "near_duplicate_clusters": sorted(near_dupe_clusters, key=lambda c: c["representative"]),
+        "near_duplicate_clusters": sorted(
+            near_dupe_clusters, key=lambda c: c["representative"]
+        ),
         "near_duplicate_count": len(dropped),
         "redundant": redundant,
         "redundant_count": len(redundant),
@@ -300,14 +420,16 @@ def _embedding_novelty(order: list[str], emb: Any) -> dict[str, float]:
     return {order[i]: round(float(vals[i]), 6) for i in range(n)}
 
 
-def _augmented_representatives(keys: list[str], augment_prefix: str) -> dict[str, dict[str, Any]]:
+def _augmented_representatives(
+    keys: list[str], augment_prefix: str
+) -> dict[str, dict[str, Any]]:
     """Map clip-id -> {frame_key, meta_key} for the augmented variants."""
     by_clip: dict[str, dict[str, Any]] = {}
     selected_attempt = ""
     for key in keys:
         if not key.startswith(augment_prefix):
             continue
-        rel = key[len(augment_prefix):]
+        rel = key[len(augment_prefix) :]
         parts = rel.split("/")
         if len(parts) < 2 or not parts[0]:
             continue
@@ -331,7 +453,10 @@ def _augmented_representatives(keys: list[str], augment_prefix: str) -> dict[str
     reps: dict[str, dict[str, Any]] = {}
     for clip, entry in by_clip.items():
         if entry["frames"]:
-            reps[clip] = {"frame_key": sorted(entry["frames"])[0], "meta_key": entry["meta"]}
+            reps[clip] = {
+                "frame_key": sorted(entry["frames"])[0],
+                "meta_key": entry["meta"],
+            }
     return reps
 
 
@@ -410,13 +535,17 @@ def run_curation(
         uniqueness: dict[str, float] = {}
         for sample in dataset:
             raw = sample["uniqueness"]
-            uniqueness[str(sample["clip_id"])] = float(raw) if _is_finite(raw) else float("nan")
+            uniqueness[str(sample["clip_id"])] = (
+                float(raw) if _is_finite(raw) else float("nan")
+            )
         # FiftyOne's uniqueness can be NaN / degenerate for tiny sample sets. Fall
         # back to a deterministic embedding-based novelty so the report stays
         # meaningful and JSON-valid (NaN is not legal JSON).
         finite = [v for v in uniqueness.values() if _is_finite(v)]
         distinct = {round(v, 9) for v in finite}
-        if len(finite) != len(uniqueness) or (len(uniqueness) > 1 and len(distinct) <= 1):
+        if len(finite) != len(uniqueness) or (
+            len(uniqueness) > 1 and len(distinct) <= 1
+        ):
             uniqueness = _embedding_novelty(order, emb)
             uniqueness_method = "embedding-fallback"
         else:
@@ -451,7 +580,9 @@ def run_curation(
             if points is not None:
                 pts = np.asarray(points, dtype=np.float64)
                 for clip, row in zip(order, pts):
-                    visualization.append({"id": clip, "point": [round(float(x), 4) for x in row[:2]]})
+                    visualization.append(
+                        {"id": clip, "point": [round(float(x), 4) for x in row[:2]]}
+                    )
         except Exception as exc:  # noqa: BLE001 - visualization is best-effort
             warn = (warn + "; " if warn else "") + f"visualization failed: {exc}"
 

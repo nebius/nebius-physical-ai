@@ -1,0 +1,4 @@
+interface:
+  display_name: "Runtime Fetch Onboard"
+  short_description: "Package restricted artifacts without public payloads"
+  default_prompt: "Use $runtime-fetch-onboard to choose a verified operator-authorized runtime fetch or a private operator build for non-redistributable artifacts."

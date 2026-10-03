@@ -1,0 +1,47 @@
+{
+  "status": "passed",
+  "lerobot_version": "0.5.1",
+  "native_episodes": 6,
+  "native_frames": 1110,
+  "decoded_camera_frames": 2220,
+  "aligned_camera_samples": 36,
+  "training_batch_shapes": {
+    "observation.images.workspace": [
+      4,
+      3,
+      360,
+      480
+    ],
+    "observation.images.wrist": [
+      4,
+      3,
+      360,
+      480
+    ],
+    "action": [
+      4,
+      4
+    ],
+    "episode_index": [
+      4
+    ],
+    "frame_index": [
+      4
+    ],
+    "index": [
+      4
+    ],
+    "observation.state": [
+      4,
+      9
+    ],
+    "task_index": [
+      4
+    ],
+    "timestamp": [
+      4
+    ]
+  },
+  "task_labels_preserved": true,
+  "state_action_samples_match": true
+}

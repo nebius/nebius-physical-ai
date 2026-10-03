@@ -205,7 +205,7 @@ def _accepted_container_argv(
         f"type=bind,src={config.cache_dir},dst=/root/.cache/openpi,readonly",
         "--health-cmd",
         (
-            "/opt/venv/bin/python -c \"import socket; "
+            '/opt/venv/bin/python -c "import socket; '
             "s=socket.create_connection(('127.0.0.1',8000),2); s.close()\""
         ),
         "--health-interval",
@@ -308,9 +308,7 @@ def _scenario_run_id(payload: Mapping[str, Any]) -> str:
     for key in ("items", "runs", "scenario_runs"):
         value = payload.get(key)
         if isinstance(value, list) and value and isinstance(value[0], Mapping):
-            candidates.extend(
-                [value[0].get("scenario_run_id"), value[0].get("id")]
-            )
+            candidates.extend([value[0].get("scenario_run_id"), value[0].get("id")])
     for candidate in candidates:
         if isinstance(candidate, str) and candidate:
             return candidate
@@ -423,7 +421,9 @@ def validate_run_output(output: str, *, expected_chunks: int) -> dict[str, objec
     """Validate the measured output of a direct ``antioch run`` Pi loop."""
 
     if "FAIL:" in output or "ALL GATES PASSED" not in output:
-        raise OpenPIAntiochError("direct Antioch run did not emit its all-gates verdict")
+        raise OpenPIAntiochError(
+            "direct Antioch run did not emit its all-gates verdict"
+        )
     chunk_matches = re.findall(
         r"^chunk\s+(\d+):\s+([0-9.]+)\s+ms\s+shape=\(15,\s*8\)",
         output,

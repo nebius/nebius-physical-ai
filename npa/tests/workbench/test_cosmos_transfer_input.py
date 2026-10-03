@@ -9,9 +9,15 @@ No GPU / cosmos runtime is touched; the inference subprocess is mocked.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import sys
+import types
 from pathlib import Path
 
+import numpy as np
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -35,6 +41,7 @@ def _fake_env(monkeypatch, repo: Path):
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda r: Path("/usr/bin/python3"))
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
 
     def fake_run(cmd, *args, **kwargs):
         cwd = Path(kwargs["cwd"])
@@ -47,6 +54,211 @@ def _fake_env(monkeypatch, repo: Path):
     monkeypatch.setattr(tx.subprocess, "run", fake_run)
 
 
+def test_guardrail_nltk_cache_links_are_safely_materialized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = tmp_path / "hub"
+    package = hub / "models--nvidia--Cosmos-Guardrail1"
+    snapshot = package / "snapshots" / tx.GUARDRAIL_REVISION
+    tokenizer = snapshot / "blocklist" / "nltk_data" / "tokenizers" / "punkt_tab"
+    blob = package / "blobs" / "tokenizer-data"
+    tokenizer.mkdir(parents=True)
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"pinned tokenizer data")
+    link = tokenizer / "collocations.tab"
+    link.symlink_to(blob)
+
+    calls: list[dict[str, object]] = []
+
+    def fake_snapshot_download(**kwargs):
+        calls.append(kwargs)
+        return str(snapshot)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=fake_snapshot_download),
+    )
+    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
+
+    assert tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path)) == 1
+    assert link.is_file() and link.is_symlink()
+    assert link.read_bytes() == b"pinned tokenizer data"
+    safe = (
+        tmp_path
+        / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR
+        / tx.GUARDRAIL_REVISION
+        / "tokenizers"
+        / "punkt_tab"
+        / "collocations.tab"
+    )
+    assert safe.is_file() and not safe.is_symlink()
+    assert safe.read_bytes() == b"pinned tokenizer data"
+    marker = safe.parents[2] / tx.GUARDRAIL_NLTK_READY_MARKER
+    manifest = json.loads(marker.read_text(encoding="utf-8"))
+    assert manifest["repo_id"] == tx.GUARDRAIL_REPO
+    assert manifest["revision"] == tx.GUARDRAIL_REVISION
+    assert manifest["file_count"] == 1
+    assert calls == [
+        {
+            "repo_id": tx.GUARDRAIL_REPO,
+            "revision": tx.GUARDRAIL_REVISION,
+            "allow_patterns": ["blocklist/nltk_data/**"],
+            "cache_dir": hub,
+            "token": "unit-test-placeholder",
+        }
+    ]
+
+    # Verified regular-file materialization is reusable during a transient Hub
+    # outage. NLTK consumes this tree and never needs the snapshot/blob links.
+    def unavailable_snapshot_download(**_kwargs):
+        raise AssertionError("verified cache reuse must not touch Hugging Face")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=unavailable_snapshot_download),
+    )
+    assert tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path)) == 1
+
+
+@pytest.mark.parametrize(
+    ("exception", "category", "message"),
+    [
+        (type("RateLimitError", (Exception,), {})(), "rate_limited", "retry later"),
+        (
+            type("RevisionNotFoundError", (Exception,), {})(),
+            "revision_unavailable",
+            "do not substitute another revision",
+        ),
+        (type("OfflineError", (Exception,), {})(), "network_unavailable", "prewarm"),
+    ],
+)
+def test_guardrail_nltk_download_failures_are_typed_and_leave_no_partial_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception: Exception,
+    category: str,
+    message: str,
+) -> None:
+    def failed_snapshot_download(**_kwargs):
+        raise exception
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=failed_snapshot_download),
+    )
+
+    with pytest.raises(tx.GuardrailNLTKDataError, match=message) as caught:
+        tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
+
+    assert caught.value.category == category
+    destination = tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
+    assert not destination.exists()
+    assert not list(destination.parent.glob(f".{tx.GUARDRAIL_REVISION}.*"))
+
+
+def test_guardrail_nltk_rate_limit_http_status_is_actionable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class HubError(Exception):
+        response = types.SimpleNamespace(status_code=429)
+
+    def failed_snapshot_download(**_kwargs):
+        raise HubError("secret-bearing upstream response must not be repeated")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=failed_snapshot_download),
+    )
+    with pytest.raises(tx.GuardrailNLTKDataError, match="rate-limited") as caught:
+        tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
+    assert caught.value.category == "rate_limited"
+    assert "secret-bearing" not in str(caught.value)
+
+
+def test_guardrail_nltk_copy_failure_is_atomic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = tmp_path / "hub"
+    snapshot = (
+        hub / "models--nvidia--Cosmos-Guardrail1" / "snapshots" / tx.GUARDRAIL_REVISION
+    )
+    tokenizer = snapshot / "blocklist" / "nltk_data" / "tokenizers" / "punkt_tab"
+    tokenizer.mkdir(parents=True)
+    (tokenizer / "a.tab").write_bytes(b"first")
+    (tokenizer / "b.tab").write_bytes(b"second")
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=lambda **_kwargs: str(snapshot)),
+    )
+    real_copy = shutil.copyfileobj
+    copies = 0
+
+    def interrupted_copy(source, destination):  # noqa: ANN001
+        nonlocal copies
+        copies += 1
+        if copies == 2:
+            raise OSError("simulated interrupted copy")
+        return real_copy(source, destination)
+
+    monkeypatch.setattr(tx.shutil, "copyfileobj", interrupted_copy)
+    with pytest.raises(tx.GuardrailNLTKDataError, match="no partial cache") as caught:
+        tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
+    assert caught.value.category == "materialization_failed"
+
+    destination = tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
+    assert not destination.exists()
+    assert not list(destination.parent.glob(f".{tx.GUARDRAIL_REVISION}.*"))
+
+
+def test_guardrail_nltk_corrupt_or_mismatched_cache_fails_closed_before_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = tmp_path / "hub"
+    snapshot = (
+        hub / "models--nvidia--Cosmos-Guardrail1" / "snapshots" / tx.GUARDRAIL_REVISION
+    )
+    tokenizer = snapshot / "blocklist" / "nltk_data" / "tokenizers" / "punkt_tab"
+    tokenizer.mkdir(parents=True)
+    (tokenizer / "collocations.tab").write_bytes(b"verified")
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=lambda **_kwargs: str(snapshot)),
+    )
+    assert tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path)) == 1
+
+    destination = tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
+    payload = destination / "tokenizers" / "punkt_tab" / "collocations.tab"
+    payload.chmod(0o644)
+    payload.write_bytes(b"corrupt")
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(
+            snapshot_download=lambda **_kwargs: pytest.fail(
+                "an invalid cache must fail closed before network access"
+            )
+        ),
+    )
+    with pytest.raises(tx.GuardrailNLTKDataError, match="does not match") as caught:
+        tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
+    assert caught.value.category == "cache_invalid"
+
+    marker = destination / tx.GUARDRAIL_NLTK_READY_MARKER
+    manifest = json.loads(marker.read_text(encoding="utf-8"))
+    manifest["revision"] = "renamed-revision"
+    marker.chmod(0o644)
+    marker.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(tx.GuardrailNLTKDataError, match="identity") as identity:
+        tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
+    assert identity.value.category == "cache_invalid"
+
+
 def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -56,17 +268,21 @@ def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
         repo,
         input_video=str(clip),
         prompt="rainy night, wet asphalt",
+        negative_prompt="cyan cast, warped objects, repeated action",
         control="edge",
         control_weight=0.8,
         guidance=4,
         name="run-1",
+        seed=1234,
     )
     assert modality == "edge"
     spec = json.loads((repo / rel).read_text())
     assert spec["video_path"] == str(clip.resolve())
     assert spec["prompt"] == "rainy night, wet asphalt"
+    assert spec["negative_prompt"] == "cyan cast, warped objects, repeated action"
     assert spec["edge"] == {"control_weight": 0.8}
     assert spec["guidance"] == 4
+    assert spec["seed"] == 1234
     # Depth is precomputed-only: this path must never fetch Video Depth Anything.
     depth = tmp_path / "depth.mp4"
     depth.write_bytes(b"depth")
@@ -81,6 +297,380 @@ def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
         control_asset=str(depth),
     )
     assert modality2 == "depth"
+
+
+def test_parse_protected_regions_accepts_labeled_normalized_rectangles() -> None:
+    assert tx._parse_protected_regions(
+        '[{"id":"identity-bearing-material","bounds":[0.1,0.2,0.8,0.9]}]'
+    ) == [(0.1, 0.2, 0.8, 0.9)]
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "{}", "[]", "[[0,0,2,1]]", '[{"bounds":[0,0,1]}]'],
+)
+def test_parse_protected_regions_fails_closed_on_invalid_input(value: str) -> None:
+    with pytest.raises(tx.ProtectedChromaError):
+        tx._parse_protected_regions(value)
+
+
+def test_preserve_source_chroma_records_effective_provenance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    generated = tmp_path / "generated.mp4"
+    source.write_bytes(b"source")
+    generated.write_bytes(b"generated")
+
+    def fake_run(command, **kwargs):  # noqa: ANN001
+        assert kwargs["check"] is True
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"corrected-video")
+            return tx.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        decoder = command[2]
+        assert decoder.count("rect_alpha = np.maximum.reduce(masks)") == 1
+        assert decoder.index("rect_alpha = np.maximum.reduce(masks)") < decoder.index(
+            "for aug_frame in aug_frames:"
+        )
+        return tx.subprocess.CompletedProcess(
+            command, 0, stdout='{"frames": 7, "fps": 30.0}\n', stderr=""
+        )
+
+    monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: tmp_path)
+    monkeypatch.setattr(tx.subprocess, "run", fake_run)
+    result = tx.preserve_source_chroma(
+        {"video_path": str(generated), "video_bytes": generated.stat().st_size},
+        source_video=str(source),
+        regions_json="[[0.1,0.1,0.9,0.9]]",
+    )
+    assert Path(result["video_path"]).read_bytes() == b"corrected-video"
+    assert result["protected_chroma"] == {
+        "mode": "source-chroma",
+        "method": "feathered-per-pixel-source-chroma",
+        "region_count": 1,
+        "feather_pixels": 12,
+        "luma_max_delta": 32,
+        "frame_count": 7,
+        "output_color": {
+            "range": "tv",
+            "space": "bt709",
+            "primaries": "bt709",
+            "transfer": "bt709",
+        },
+    }
+
+
+def test_preserve_source_chroma_accepts_frame_aligned_sam2_masks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    generated = tmp_path / "generated.mp4"
+    masks = tmp_path / "masks"
+    masks.mkdir()
+    source.write_bytes(b"source")
+    generated.write_bytes(b"generated")
+    (masks / "mask-000000.png").write_bytes(b"mask")
+
+    def fake_run(command, **kwargs):  # noqa: ANN001
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"corrected-video")
+            return tx.subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        assert str(masks) in command
+        return tx.subprocess.CompletedProcess(
+            command, 0, stdout='{"frames": 1, "fps": 30.0}\n', stderr=""
+        )
+
+    monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: tmp_path)
+    monkeypatch.setattr(tx.subprocess, "run", fake_run)
+    result = tx.preserve_source_chroma(
+        {"video_path": str(generated), "video_bytes": generated.stat().st_size},
+        source_video=str(source),
+        masks_dir=str(masks),
+        segmentation={"engine": "meta-sam2-upstream", "manifest_uri": "s3://x"},
+    )
+
+    assert result["protected_chroma"]["method"].startswith("sam2-mask-")
+    assert result["protected_chroma"]["region_count"] == 0
+    assert result["protected_chroma"]["segmentation"]["engine"] == "meta-sam2-upstream"
+
+
+def test_preserve_source_chroma_decodes_encoded_video_and_keeps_generated_luma(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is required for the encoded-video integration test")
+    source = tmp_path / "source.mp4"
+    generated = tmp_path / "generated.mp4"
+    for path, color in ((source, "0x3c78b4"), (generated, "0x28140a")):
+        subprocess.run(
+            [
+                ffmpeg,
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c={color}:size=64x48:rate=6:duration=1",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                str(path),
+            ],
+            check=True,
+        )
+    monkeypatch.setattr(tx, "_venv_python", lambda _repo: Path(sys.executable))
+    result = tx.preserve_source_chroma(
+        {"video_path": str(generated), "video_bytes": generated.stat().st_size},
+        source_video=str(source),
+        regions_json="[[0,0,1,1]]",
+        feather_pixels=1,
+    )
+
+    def first_rgb(path: Path) -> np.ndarray:
+        raw = subprocess.check_output(
+            [
+                ffmpeg,
+                "-loglevel",
+                "error",
+                "-i",
+                str(path),
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-",
+            ]
+        )
+        return np.frombuffer(raw, dtype=np.uint8).reshape(48, 64, 3).astype(np.float32)
+
+    def ycbcr_means(frame: np.ndarray) -> tuple[float, float, float]:
+        red, green, blue = frame[..., 0], frame[..., 1], frame[..., 2]
+        y = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        cb = 128.0 - 0.114572 * red - 0.385428 * green + 0.5 * blue
+        cr = 128.0 + 0.5 * red - 0.454153 * green - 0.045847 * blue
+        return float(y.mean()), float(cb.mean()), float(cr.mean())
+
+    source_y, source_cb, source_cr = ycbcr_means(first_rgb(source))
+    generated_y, generated_cb, generated_cr = ycbcr_means(first_rgb(generated))
+    restored_y, restored_cb, restored_cr = ycbcr_means(
+        first_rgb(Path(result["video_path"]))
+    )
+    assert abs(source_cb - generated_cb) > 10
+    assert abs(source_cr - generated_cr) > 10
+    assert abs(restored_cb - source_cb) < 5
+    assert abs(restored_cr - source_cr) < 5
+    assert abs(restored_y - generated_y) > 40
+    assert 20 < abs(restored_y - source_y) < 37
+    probe = subprocess.run(
+        [
+            ffmpeg.replace("ffmpeg", "ffprobe"),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=color_range,color_space,color_transfer,color_primaries",
+            "-of",
+            "json",
+            str(result["video_path"]),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    color = json.loads(probe.stdout)["streams"][0]
+    assert color == {
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+    }
+
+
+def test_frame_aligned_masks_protect_only_the_selected_pixels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is required for the encoded-video integration test")
+    from PIL import Image
+
+    source = tmp_path / "source.mp4"
+    generated = tmp_path / "generated.mp4"
+    masks = tmp_path / "masks"
+    masks.mkdir()
+    for path, color in ((source, "0x3c78b4"), (generated, "0x28140a")):
+        subprocess.run(
+            [
+                ffmpeg,
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c={color}:size=64x48:rate=6:duration=1",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                str(path),
+            ],
+            check=True,
+        )
+    for index in range(6):
+        mask = Image.new("L", (64, 48), 0)
+        mask.paste(255, (0, 0, 32, 48))
+        mask.save(masks / f"mask-{index:06d}.png")
+
+    monkeypatch.setattr(tx, "_venv_python", lambda _repo: Path(sys.executable))
+    result = tx.preserve_source_chroma(
+        {"video_path": str(generated), "video_bytes": generated.stat().st_size},
+        source_video=str(source),
+        masks_dir=str(masks),
+        segmentation={"engine": "meta-sam2-upstream"},
+        feather_pixels=8,
+    )
+
+    def first_rgb(path: Path) -> np.ndarray:
+        raw = subprocess.check_output(
+            [
+                ffmpeg,
+                "-loglevel",
+                "error",
+                "-i",
+                str(path),
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-",
+            ]
+        )
+        return np.frombuffer(raw, dtype=np.uint8).reshape(48, 64, 3).astype(np.float32)
+
+    source_frame = first_rgb(source)
+    generated_frame = first_rgb(generated)
+    restored = first_rgb(Path(result["video_path"]))
+    protected_error = np.abs(restored[:, :28] - source_frame[:, :28]).mean()
+    protected_baseline_error = np.abs(
+        generated_frame[:, :28] - source_frame[:, :28]
+    ).mean()
+    unprotected_error = np.abs(restored[:, 36:] - generated_frame[:, 36:]).mean()
+    assert protected_error < protected_baseline_error * 0.55
+    assert unprotected_error < 5.0
+    assert result["protected_chroma"]["frame_count"] == 6
+
+
+def test_load_refinement_validates_numeric_settings(tmp_path: Path) -> None:
+    from npa.workflows import data_factory_stages as dfs
+
+    policy = tmp_path / "refinement.json"
+    committed = dfs.prepare_refinement(
+        str(tmp_path / "grade"),
+        str(policy),
+        base_control_weight=1.0,
+        base_guidance=2,
+    )
+    loaded = cosmos2._load_refinement(str(policy))
+    assert committed["attempt"] == loaded["attempt"] == 0
+    assert loaded["settings"] == {"control_weight": 1.0, "guidance": 2}
+
+
+def test_refinement_prompt_emphasizes_only_exact_failed_attributes() -> None:
+    combo = {
+        "prompt": "Preserve the scene and change its appearance.",
+        "lighting": "soft diffuse daylight",
+        "background": "solid gray backdrop",
+        "surface_finish": "matte",
+    }
+
+    adapted = cosmos2._apply_refinement_prompt(
+        combo,
+        {
+            "failed_attributes": [
+                "lighting",
+                "background",
+                "not-a-configured-variable",
+            ]
+        },
+    )
+
+    assert "lighting is unambiguously soft diffuse daylight" in adapted["prompt"]
+    assert "background is unambiguously solid gray backdrop" in adapted["prompt"]
+    assert "not-a-configured-variable" not in adapted["prompt"]
+    assert combo == {
+        "prompt": "Preserve the scene and change its appearance.",
+        "lighting": "soft diffuse daylight",
+        "background": "solid gray backdrop",
+        "surface_finish": "matte",
+    }
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"control_weight": 1.1, "guidance": 2},
+        {"control_weight": 0.8, "guidance": 2.5},
+    ],
+)
+def test_load_refinement_rejects_values_cosmos_cannot_load(
+    tmp_path: Path, settings: dict[str, float]
+) -> None:
+    from npa.workflows import data_factory_stages as dfs
+
+    policy = tmp_path / "refinement.json"
+    pointer = dfs.prepare_refinement(
+        str(tmp_path / "grade"),
+        str(policy),
+        base_control_weight=1.0,
+        base_guidance=2,
+    )
+    immutable = dict(pointer)
+    immutable.pop("policy_sha256")
+    immutable["settings"] = settings
+    digest = dfs._payload_sha256(immutable)
+    Path(str(immutable["history_uri"])).write_bytes(
+        dfs._canonical_json_bytes(immutable)
+    )
+    Path(str(immutable["commit_uri"])).write_bytes(
+        dfs._canonical_json_bytes(
+            {
+                "schema": "npa.data_factory.refinement.commit.v1",
+                "attempt": immutable["attempt"],
+                "history_uri": immutable["history_uri"],
+                "policy_sha256": digest,
+            }
+        )
+    )
+    policy.write_bytes(
+        dfs._canonical_json_bytes({**immutable, "policy_sha256": digest})
+    )
+    with pytest.raises(typer.BadParameter):
+        cosmos2._load_refinement(str(policy))
+
+
+def test_load_refinement_rejects_an_uncommitted_policy(tmp_path: Path) -> None:
+    policy = tmp_path / "refinement.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "schema": "npa.data_factory.refinement.v1",
+                "attempt": 0,
+                "settings": {"control_weight": 1.0, "guidance": 3},
+            }
+        )
+    )
+
+    with pytest.raises(typer.BadParameter, match="policy digest"):
+        cosmos2._load_refinement(str(policy))
 
 
 def test_run_cosmos_transfer_conditions_on_input(tmp_path: Path, monkeypatch) -> None:
@@ -149,6 +739,7 @@ def test_run_cosmos_transfer_accepts_small_guardrailed_video(
     (repo / "examples").mkdir(parents=True)
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
 
     def fake_run(cmd, *_args, **kwargs):
@@ -165,6 +756,75 @@ def test_run_cosmos_transfer_accepts_small_guardrailed_video(
     assert result["video_path"].endswith("small.mp4")
 
 
+def test_run_cosmos_transfer_names_gated_access_denial_without_leaking_prompt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "examples").mkdir(parents=True)
+    monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
+    monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    # Keep inference-denial setup hermetic when the optional Hub client is installed.
+    monkeypatch.setitem(sys.modules, "huggingface_hub", None)
+    monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
+    secret_prompt = "a secret prompt that must never reach the raised message"
+    reached: list[str] = []
+
+    def prepared_guardrail_data(**_kwargs):
+        reached.append("guardrail-prepared")
+        return 0
+
+    # This test exercises inference denial, after the separately tested tokenizer
+    # preparation. It must reach that boundary without a real download or cache.
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", prepared_guardrail_data)
+
+    def fake_run(cmd, *_args, **kwargs):
+        reached.append("inference")
+        assert secret_prompt not in " ".join(cmd)
+        kwargs["stdout"].write(
+            (
+                f"generating for prompt: {secret_prompt}\n"
+                "Error: Access denied. This repository requires approval.\n"
+            ).encode("utf-8")
+        )
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(tx.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError) as raised:
+        tx.run_cosmos_transfer(
+            run_id="denied", spec="assets/custom.json", prompt=secret_prompt
+        )
+
+    message = str(raised.value)
+    assert "gated Hugging Face repository access denied" in message
+    assert "exit 1" in message
+    assert secret_prompt not in message
+    assert reached == ["guardrail-prepared", "inference"]
+
+
+@pytest.mark.parametrize(
+    ("vendor_output", "classification"),
+    [
+        ("GatedRepoError", "Hugging Face authentication/authorization failed"),
+        ("torch.cuda.OutOfMemoryError", "CUDA out of memory"),
+        ("OSError: No space left on device", "no space left on device"),
+        ("CUDA driver version is insufficient", "CUDA/GPU error"),
+        (
+            "unexpected internal vendor failure",
+            "unrecognized vendor failure; inspect GPU/model access and retry",
+        ),
+    ],
+)
+def test_vendor_failure_classification_is_fixed_and_path_free(
+    vendor_output: str, classification: str
+) -> None:
+    result = tx._classify_vendor_failure(
+        f"/operator/private/input.mp4: {vendor_output}\nprompt: confidential example"
+    )
+
+    assert result == classification
+
+
 def test_run_cosmos_transfer_content_guardrail_opt_out_is_explicit(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -172,6 +832,7 @@ def test_run_cosmos_transfer_content_guardrail_opt_out_is_explicit(
     (repo / "examples").mkdir(parents=True)
     monkeypatch.setattr(tx, "cosmos_transfer_repo", lambda: repo)
     monkeypatch.setattr(tx, "ensure_env", lambda _repo: Path("/usr/bin/python3"))
+    monkeypatch.setattr(tx, "prepare_guardrail_nltk_data", lambda **_kwargs: 0)
     monkeypatch.setenv("HF_TOKEN", "unit-test-placeholder")
     seen: list[list[str]] = []
 
@@ -219,7 +880,12 @@ def test_publish_marks_real_gpu_mode_and_conditioning(
             "input_video": "/tmp/robot_input.mp4",
             "conditioning_clip_uri": "s3://bkt/run1/input/conditioning.mp4",
             "control": "edge",
+            "negative_prompt": "cyan cast, warped objects",
             "content_guardrails_enabled": False,
+            "protected_chroma": {"mode": "source-chroma", "region_count": 2},
+            "refinement": {"attempt": 1},
+            "effective_control_weight": 1.5,
+            "effective_guidance": 2.25,
         },
         "s3://bkt/run1/cosmos_augmented/",
         run_id="run1",
@@ -231,6 +897,8 @@ def test_publish_marks_real_gpu_mode_and_conditioning(
     assert manifest["conditioned_input"] == "robot_input.mp4"
     assert manifest["conditioning_clip_uri"] == "s3://bkt/run1/input/conditioning.mp4"
     assert manifest["control"] == "edge"
+    assert manifest["negative_prompt"] == "cyan cast, warped objects"
+    assert manifest["variants"][0]["negative_prompt"] == ("cyan cast, warped objects")
     assert manifest["content_guardrails_enabled"] is False
     meta = json.loads(recorded["metadata"])
     assert meta["mode"] == "cosmos_transfer2.5_gpu"
@@ -238,6 +906,185 @@ def test_publish_marks_real_gpu_mode_and_conditioning(
     assert meta["conditioned_input"] == "robot_input.mp4"
     assert meta["content_guardrails_enabled"] is False
     assert meta["conditioning_clip_uri"] == "s3://bkt/run1/input/conditioning.mp4"
+    assert meta["negative_prompt"] == "cyan cast, warped objects"
+    assert meta["protected_chroma"]["mode"] == "source-chroma"
+    assert meta["refinement"]["attempt"] == 1
+    assert meta["effective_control_weight"] == 1.5
+    assert meta["effective_guidance"] == 2.25
+
+
+@pytest.mark.parametrize(
+    ("provenance", "expected_conditioning", "expected_guardrails"),
+    [
+        ({}, False, True),
+        (
+            {"input_conditioned": False, "content_guardrails_enabled": False},
+            False,
+            False,
+        ),
+        (
+            {"input_conditioned": True, "content_guardrails_enabled": True},
+            True,
+            True,
+        ),
+    ],
+)
+def test_publish_transfer_clip_preserves_exact_provenance_booleans(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provenance: dict[str, bool],
+    expected_conditioning: bool,
+    expected_guardrails: bool,
+) -> None:
+    video = tmp_path / "out.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(tx, "extract_frames", lambda *_args, **_kwargs: [])
+    metadata: list[dict[str, object]] = []
+
+    class FakeStorage:
+        def upload_file(self, local: str, uri: str) -> str:
+            if uri.endswith("metadata.json"):
+                metadata.append(json.loads(Path(local).read_text(encoding="utf-8")))
+            return uri
+
+    clip = tx.publish_transfer_clip(
+        {"video_path": str(video), **provenance},
+        "s3://bucket/run/augment/",
+        storage_client=FakeStorage(),
+    )
+
+    assert clip["input_conditioned"] is expected_conditioning
+    assert clip["content_guardrails_enabled"] is expected_guardrails
+    assert metadata[-1]["input_conditioned"] is expected_conditioning
+    assert metadata[-1]["content_guardrails_enabled"] is expected_guardrails
+
+
+@pytest.mark.parametrize("field", ["input_conditioned", "content_guardrails_enabled"])
+@pytest.mark.parametrize("malformed", ["false", 0, 1.0])
+def test_publish_transfer_clip_rejects_malformed_provenance_before_upload(
+    field: str, malformed: object
+) -> None:
+    uploads: list[str] = []
+
+    class FakeStorage:
+        def upload_file(self, _local: str, uri: str) -> str:
+            uploads.append(uri)
+            return uri
+
+    with pytest.raises(ValueError, match=rf"^{field} must be a boolean$"):
+        tx.publish_transfer_clip(
+            {field: malformed},
+            "s3://bucket/run/augment/",
+            storage_client=FakeStorage(),
+        )
+
+    assert uploads == []
+
+
+@pytest.mark.parametrize(
+    ("provenance", "expected_conditioning", "expected_guardrails"),
+    [
+        ({}, False, True),
+        (
+            {"input_conditioned": False, "content_guardrails_enabled": False},
+            False,
+            False,
+        ),
+        (
+            {"input_conditioned": True, "content_guardrails_enabled": True},
+            True,
+            True,
+        ),
+    ],
+)
+def test_build_run_manifest_preserves_exact_provenance_booleans(
+    provenance: dict[str, bool],
+    expected_conditioning: bool,
+    expected_guardrails: bool,
+) -> None:
+    manifest = tx.build_run_manifest([{"clip": "aug-0", **provenance}])
+
+    assert manifest["input_conditioned"] is expected_conditioning
+    assert manifest["content_guardrails_enabled"] is expected_guardrails
+
+
+@pytest.mark.parametrize("field", ["input_conditioned", "content_guardrails_enabled"])
+@pytest.mark.parametrize("malformed", ["false", 0, 1.0])
+def test_write_run_manifest_rejects_malformed_provenance_before_upload(
+    field: str, malformed: object
+) -> None:
+    uploads: list[str] = []
+
+    class FakeStorage:
+        def upload_file(self, _local: str, uri: str) -> str:
+            uploads.append(uri)
+            return uri
+
+    with pytest.raises(ValueError, match=rf"^{field} must be a boolean$"):
+        tx.write_run_manifest(
+            [{"clip": "aug-0", field: malformed}],
+            "s3://bucket/run/augment/",
+            storage_client=FakeStorage(),
+        )
+
+    assert uploads == []
+
+
+@pytest.mark.parametrize("field", ["input_conditioned", "content_guardrails_enabled"])
+def test_write_run_manifest_checks_provenance_on_later_clips(field: str) -> None:
+    class NoUploadStorage:
+        def upload_file(self, _local: str, _uri: str) -> str:
+            pytest.fail("invalid later-clip provenance reached publication")
+
+    with pytest.raises(ValueError, match=rf"^{field} must be a boolean$"):
+        tx.write_run_manifest(
+            [{"clip": "aug-0", field: False}, {"clip": "aug-1", field: "false"}],
+            "s3://bucket/run/augment/",
+            storage_client=NoUploadStorage(),
+        )
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_build_run_manifest_summarizes_all_variants(reverse: bool) -> None:
+    clips = [
+        {"clip": "aug-0"},
+        {
+            "clip": "aug-1",
+            "input_conditioned": True,
+            "content_guardrails_enabled": False,
+        },
+    ]
+    if reverse:
+        clips.reverse()
+    manifest = tx.build_run_manifest(clips)
+
+    assert manifest["variant_count"] == 2
+    assert manifest["input_conditioned"] is False
+    assert manifest["content_guardrails_enabled"] is False
+    variants = {variant["clip"]: variant for variant in manifest["variants"]}
+    assert variants["aug-0"]["input_conditioned"] is False
+    assert variants["aug-0"]["content_guardrails_enabled"] is True
+    assert variants["aug-1"]["input_conditioned"] is True
+    assert variants["aug-1"]["content_guardrails_enabled"] is False
+
+
+def test_build_run_manifest_requires_evidence_for_positive_run_provenance() -> None:
+    empty = tx.build_run_manifest([])
+    assert empty["input_conditioned"] is False
+    assert empty["content_guardrails_enabled"] is False
+
+    manifest = tx.build_run_manifest(
+        [
+            {
+                "clip": name,
+                "input_conditioned": True,
+                "content_guardrails_enabled": True,
+            }
+            for name in ("aug-0", "aug-1")
+        ]
+    )
+    assert manifest["input_conditioned"] is True
+    assert manifest["content_guardrails_enabled"] is True
 
 
 def test_multi_variant_publish_writes_one_clip_per_combo(
@@ -617,6 +1464,245 @@ def test_transfer_cli_reports_storage_failure_without_secret(monkeypatch) -> Non
     assert inference_called is False
 
 
+def test_augmentation_manifest_read_failure_is_sanitized_and_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "private-object-name"
+
+    def fail_read(_uri: str) -> dict:
+        raise PermissionError(f"denied object={secret}")
+
+    monkeypatch.setattr("npa.workflows.data_factory_stages._download_json", fail_read)
+
+    with pytest.raises(typer.BadParameter, match="augmentation manifest") as exc:
+        cosmos2._all_augmentations("s3://redacted/configs/")
+
+    assert secret not in str(exc.value)
+
+
+def test_augmentation_manifest_requires_real_variants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "npa.workflows.data_factory_stages._download_json",
+        lambda _uri: {"augmentations": []},
+    )
+
+    with pytest.raises(typer.BadParameter, match="no augmentation variants"):
+        cosmos2._all_augmentations("s3://redacted/configs/")
+
+
+def test_paidf_transfer_invokes_optional_sam2_once_and_reuses_masks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.cli.workbench import cosmos2
+    from npa.workbench.cosmos import sam2_masks
+
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"video")
+    generated = tmp_path / "generated.mp4"
+    generated.write_bytes(b"generated")
+    calls: dict[str, object] = {"generate": 0, "protected": []}
+
+    monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
+    monkeypatch.setattr(
+        cosmos2,
+        "_materialize_conditioning_input",
+        lambda *_args, **_kwargs: str(source),
+    )
+    monkeypatch.setattr(
+        cosmos2,
+        "_all_augmentations",
+        lambda _uri: [{"prompt": "generic-a"}, {"prompt": "generic-b"}],
+    )
+    monkeypatch.setattr(
+        cosmos2,
+        "_persist_generated_conditioning_clip",
+        lambda *_args, **_kwargs: "s3://b/input.mp4",
+    )
+
+    def fake_generate(_video, output_dir, *, config, run_id):  # noqa: ANN001
+        calls["generate"] = int(calls["generate"]) + 1
+        assert run_id == "run"
+        masks = Path(output_dir) / "masks"
+        masks.mkdir()
+        (masks / "mask-000000.png").write_bytes(b"mask")
+        manifest = Path(output_dir) / "manifest.json"
+        manifest.write_text("{}", encoding="utf-8")
+        return sam2_masks.Sam2MaskResult({}, manifest, masks)
+
+    monkeypatch.setattr(sam2_masks, "generate_sam2_video_masks", fake_generate)
+    monkeypatch.setattr(
+        sam2_masks,
+        "load_published_sam2_masks",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
+        sam2_masks,
+        "publish_sam2_masks",
+        lambda *_args, **_kwargs: {
+            "engine": sam2_masks.SAM2_ENGINE,
+            "component": "Meta Segment Anything Model 2",
+            "component_version": "1.0",
+            "component_source": "https://github.com/facebookresearch/sam2",
+            "component_revision": sam2_masks.SAM2_SOURCE_REVISION,
+            "license": {"spdx": "Apache-2.0"},
+            "config": {"mode": "sam2-auto"},
+            "frame_count": 1,
+            "object_count": 1,
+            "mask_coverage": {"mean": 0.25},
+            "runtime": {"device": "cuda", "seconds": 1.0},
+            "manifest_uri": "s3://b/run/segmentation/manifest.json",
+            "masks_uri": "s3://b/run/segmentation/masks/",
+        },
+    )
+    monkeypatch.setattr(
+        tx,
+        "run_cosmos_transfer",
+        lambda **_kwargs: {
+            "video_path": str(generated),
+            "video_bytes": generated.stat().st_size,
+            "spec": "conditioned.json",
+        },
+    )
+
+    def fake_protect(result, **kwargs):  # noqa: ANN001
+        calls["protected"].append(kwargs)
+        return result
+
+    monkeypatch.setattr(tx, "preserve_source_chroma", fake_protect)
+    monkeypatch.setattr(
+        tx,
+        "publish_transfer_clip",
+        lambda *_args, **_kwargs: {"name": "aug-run-0", "frame_count": 1},
+    )
+    monkeypatch.setattr(
+        tx,
+        "write_run_manifest",
+        lambda *_args, **_kwargs: {
+            "augmented_video_uri": "s3://b/run/augment/video.mp4",
+            "augmented_videos": ["s3://b/run/augment/video.mp4"],
+            "frame_count": 1,
+            "variant_count": 1,
+            "multiply_mode": "single-variant",
+            "variant_parallelism": 1,
+            "clips": ["aug-run-0"],
+            "conditioning_clip_uri": "s3://b/input.mp4",
+            "control_spec": "conditioned.json",
+            "control": "edge",
+            "control_weight": 1.0,
+            "control_prompt": "",
+            "mask_prompt": "",
+            "control_uris": {},
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-uri",
+            "s3://b/run/input/",
+            "--output-uri",
+            "s3://b/run/augment/",
+            "--configs-uri",
+            "s3://b/run/configs/",
+            "--run-id",
+            "run",
+            "--execute",
+            "--condition-on-input",
+            "--segmentation-mode",
+            "sam2-auto",
+            "--segmentation-uri",
+            "s3://b/run/segmentation/",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert calls["generate"] == 1
+    assert len(calls["protected"]) == 2
+    assert calls["protected"][0]["masks_dir"]
+    assert payload["segmentation"]["engine"] == sam2_masks.SAM2_ENGINE
+    assert "prompt" not in payload
+    assert "manifest_uri" not in json.dumps(payload)
+
+
+def test_paidf_transfer_rejects_invalid_or_conflicting_sam2_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.cli.workbench import cosmos2
+
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
+    monkeypatch.setattr(
+        cosmos2,
+        "_materialize_conditioning_input",
+        lambda *_args, **_kwargs: str(source),
+    )
+
+    invalid = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-uri",
+            "s3://b/input/",
+            "--output-uri",
+            "s3://b/output/",
+            "--configs-uri",
+            "s3://b/configs/",
+            "--run-id",
+            "run",
+            "--execute",
+            "--condition-on-input",
+            "--segmentation-mode",
+            "sam2-auto",
+            "--segmentation-uri",
+            "s3://b/segmentation/",
+            "--sam2-points-per-side",
+            "2",
+        ],
+    )
+    assert invalid.exit_code != 0
+    assert "points_per_side" in invalid.output
+
+    conflict = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-uri",
+            "s3://b/input/",
+            "--output-uri",
+            "s3://b/output/",
+            "--configs-uri",
+            "s3://b/configs/",
+            "--run-id",
+            "run",
+            "--execute",
+            "--condition-on-input",
+            "--segmentation-mode",
+            "sam2-auto",
+            "--segmentation-uri",
+            "s3://b/segmentation/",
+            "--protected-regions-json",
+            "[[0.1,0.1,0.2,0.2]]",
+        ],
+    )
+    assert conflict.exit_code != 0
+    assert "mutually" in conflict.output and "exclusive" in conflict.output
+
+
 def test_detect_gpu_count_from_cuda_visible_devices(monkeypatch) -> None:
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
     assert cosmos2._detect_gpu_count() == 4
@@ -634,6 +1720,13 @@ def test_variant_parallelism_env_override_and_cap(monkeypatch) -> None:
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
     assert cosmos2._variant_parallelism(6) == 4
     assert cosmos2._variant_parallelism(1) == 1
+
+
+def test_candidate_inference_seed_is_optional_and_validated() -> None:
+    assert cosmos2._inference_seed({}) is None
+    assert cosmos2._inference_seed({"inference_seed": 123}) == 123
+    with pytest.raises(typer.BadParameter, match="inference_seed"):
+        cosmos2._inference_seed({"inference_seed": "not-a-number"})
 
 
 def test_run_cosmos_transfer_pins_gpu_and_unique_spec(
@@ -657,6 +1750,7 @@ def test_run_cosmos_transfer_pins_gpu_and_unique_spec(
         outdir.mkdir(parents=True, exist_ok=True)
         (outdir / "result.mp4").write_bytes(b"y" * 200_001)
         seen_env["CUDA_VISIBLE_DEVICES"] = kwargs["env"].get("CUDA_VISIBLE_DEVICES", "")
+        seen_env["NLTK_DATA"] = kwargs["env"].get("NLTK_DATA", "")
         return None
 
     monkeypatch.setattr(tx.subprocess, "run", fake_run)
@@ -667,8 +1761,16 @@ def test_run_cosmos_transfer_pins_gpu_and_unique_spec(
         prompt="a red cloth",
         cuda_visible_devices="2",
         variant_tag="run1-v2",
+        hf_home=str(tmp_path / "model-cache"),
     )
     assert seen_env["CUDA_VISIBLE_DEVICES"] == "2"
+    assert seen_env["NLTK_DATA"] == str(
+        tmp_path
+        / "model-cache"
+        / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR
+        / tx.GUARDRAIL_REVISION
+    )
+    assert "/hub/" not in seen_env["NLTK_DATA"]
     # Variant-tagged patched spec keeps concurrent siblings from clobbering.
     assert "run1-v2" in res["spec"]
     assert Path(res["video_path"]).exists()

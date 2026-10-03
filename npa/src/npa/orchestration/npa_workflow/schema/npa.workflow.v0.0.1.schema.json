@@ -14,6 +14,7 @@
       "properties": {
         "name": { "type": "string" },
         "description": { "type": "string" },
+        "executionMode": { "enum": ["runtime"] },
         "namespace": { "type": "string" },
         "labels": { "type": "object" }
       },
@@ -41,7 +42,8 @@
           "properties": {
             "shell": { "type": "string" },
             "argv": { "type": "array", "items": { "type": "string" } }
-          }
+          },
+          "additionalProperties": false
         },
         "toolRef": { "type": "string" },
         "sequence": { "type": "array", "items": { "type": "string" } },
@@ -82,8 +84,10 @@
         "inputs": { "$ref": "#/$defs/artifacts" },
         "outputs": { "$ref": "#/$defs/artifacts" },
         "resources": { "type": "string" },
-        "multiNodeMode": { "enum": ["sharded"] },
-        "terminal": { "type": "boolean" }
+        "multiNodeMode": { "enum": ["forbidden", "sharded"] },
+        "terminal": { "type": "boolean" },
+        "writesDecision": { "type": "boolean" },
+        "writes_decision": { "type": "boolean" }
       }
     },
     "artifacts": {
@@ -93,7 +97,8 @@
         "required": ["uri"],
         "properties": {
           "uri": { "type": "string" },
-          "schema": { "type": "string" }
+          "schema": { "type": "string" },
+          "kind": { "enum": ["file", "directory"] }
         }
       }
     }

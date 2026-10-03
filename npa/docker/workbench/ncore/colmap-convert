@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Fetch/verify the narrow closure, then exec NVIDIA's official Python module.
+unset PYTHONHOME PYTHONPATH
+exec /opt/venv/bin/python -I -B -m npa.workflows.ncore_runtime converter "$@"

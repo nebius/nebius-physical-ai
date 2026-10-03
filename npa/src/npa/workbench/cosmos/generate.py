@@ -6,9 +6,10 @@ instead of emitting a descriptor manifest.
 
 The runtime lives in the ``npa-cosmos3`` image at ``/opt/cosmos3/cosmos-framework``
 (framework source at a pinned commit + torch cu130 inference venv). This module
-shells out to that venv's ``cosmos_framework.scripts.inference`` so it stays
-import-safe on the default interpreter — no torch/CUDA import here — exactly like
-:mod:`npa.workbench.cosmos.transfer` does for Cosmos Transfer 2.5.
+shells out to that venv through :mod:`npa.workbench.cosmos.guarded_inference`,
+which instruments the native ``cosmos_framework.scripts.inference`` safety-model
+calls. The host process stays import-safe — no torch/CUDA import here — exactly
+like :mod:`npa.workbench.cosmos.transfer` does for Cosmos Transfer 2.5.
 
 No model weights ship in the image. Checkpoints resolve through the framework's
 checkpoint database to gated Hugging Face repos and download on first use, so
@@ -27,6 +28,14 @@ from pathlib import Path
 from typing import Any
 
 from npa.workbench.cosmos.cosmos3 import build_cosmos3_inference_args
+from npa.workbench.cosmos.guarded_inference import (
+    DEFAULT_INFERENCE_MODULE,
+    GUARDRAIL_RECEIPT_ENV,
+    GUARDRAIL_STATE_SCHEMA,
+    GUARDRAILS_REQUESTED_ENV,
+    INFERENCE_MODULE_ENV,
+)
+from npa.workbench.cosmos.structural_transfer import TransferSettings
 
 DEFAULT_REPO = "/opt/cosmos3/cosmos-framework"
 DEFAULT_REPO_ENV = "COSMOS3_REPO"
@@ -68,6 +77,7 @@ HF_HUB_DISABLE_XET_ENV = "HF_HUB_DISABLE_XET"
 
 _IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 _VIDEO_SUFFIXES = (".mp4", ".webm", ".mkv", ".mov")
+_GUARDRAIL_RECEIPT_NAME = ".npa-cosmos3-guardrail-state.json"
 
 
 class Cosmos3GenerateError(RuntimeError):
@@ -364,6 +374,7 @@ def generate_plan(
     no_guardrails: bool = False,
     parallelism_preset: str = DEFAULT_PARALLELISM_PRESET,
     environ: Mapping[str, str] | None = None,
+    transfer: TransferSettings | None = None,
 ) -> dict[str, Any]:
     """Resolve the input sample and inference argv without running the model.
 
@@ -381,6 +392,12 @@ def generate_plan(
         guidance=guidance,
     )
     resolved_output = _resolve_output_dir(output_dir, environ)
+    if transfer is not None:
+        from npa.workbench.cosmos.structural_transfer import transfer_sample
+
+        if no_guardrails:
+            raise Cosmos3GenerateError("Structural transfer requires model guardrails")
+        spec = transfer_sample(spec, transfer, resolved_output, int(seed))
     resolved_checkpoint = _resolve_checkpoint(checkpoint, environ)
     input_json = resolved_output / f"{spec['name']}.json"
     args = build_cosmos3_inference_args(
@@ -392,24 +409,82 @@ def generate_plan(
         parallelism_preset=str(parallelism_preset or DEFAULT_PARALLELISM_PRESET),
     )
     repo = cosmos3_repo(environ)
+    requested = not bool(no_guardrails)
+    inference_module = (
+        "npa.workbench.cosmos.structural_transfer_runner"
+        if transfer is not None
+        else DEFAULT_INFERENCE_MODULE
+    )
     return {
         "schema": GENERATE_SCHEMA,
         "mode": spec["model_mode"],
         "name": spec["name"],
         "checkpoint": resolved_checkpoint,
-        "guardrails": not bool(no_guardrails),
+        # Compatibility field: this is the requested posture only. The nested
+        # state remains pending until the native runtime proves execution.
+        "guardrails": requested,
+        "guardrail_state": {
+            "schema": GUARDRAIL_STATE_SCHEMA,
+            "requested": requested,
+            "discovered": None,
+            "evaluated": None,
+            "effective": False if not requested else None,
+            "status": "explicit_opt_out" if not requested else "pending",
+        },
         "seed": int(seed),
         "output_dir": str(resolved_output),
         "input_json": str(input_json),
         "input_spec": spec,
         "repo": str(repo),
+        "inference_module": inference_module,
         "argv": [
             str(_venv_python(repo)),
             "-m",
-            "cosmos_framework.scripts.inference",
+            "npa.workbench.cosmos.guarded_inference",
             *args,
         ],
     }
+
+
+def _read_guardrail_state(path: Path, *, requested: bool) -> dict[str, Any]:
+    """Load and structurally validate the native runtime's execution receipt."""
+
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise Cosmos3GenerateError(
+            "Cosmos 3 guardrail execution could not be proven: the native receipt "
+            "is missing or invalid"
+        ) from exc
+    if not isinstance(state, dict) or state.get("schema") != GUARDRAIL_STATE_SCHEMA:
+        raise Cosmos3GenerateError("Cosmos 3 guardrail receipt has an invalid schema")
+    if state.get("requested") is not requested:
+        raise Cosmos3GenerateError("Cosmos 3 guardrail receipt contradicts the request")
+    return state
+
+
+def _require_effective_guardrails(state: Mapping[str, Any]) -> None:
+    discovered = state.get("discovered")
+    evaluated = state.get("evaluated")
+    roles = ("prompt_input", "generated_media")
+    complete = all(
+        isinstance(discovered, dict)
+        and isinstance(evaluated, dict)
+        and isinstance(discovered.get(role), list)
+        and bool(discovered[role])
+        and evaluated.get(role) == discovered[role]
+        for role in roles
+    )
+    if (
+        state.get("effective") is not True
+        or state.get("status") != "passed"
+        or not complete
+    ):
+        reason = str(state.get("failure") or "incomplete_evaluation")
+        raise Cosmos3GenerateError(
+            "Cosmos 3 guardrails were requested but were not effective "
+            f"({reason}); refusing to report or publish generated media"
+        )
 
 
 def _artifact_for(
@@ -470,6 +545,7 @@ def run_cosmos3_generate(
     environ: Mapping[str, str] | None = None,
     runner: Any = None,
     version_probe_runner: Any = None,
+    transfer: TransferSettings | None = None,
 ) -> dict[str, Any]:
     """Run a real Cosmos 3 generation; return the artifact plus its metadata.
 
@@ -496,6 +572,7 @@ def run_cosmos3_generate(
         no_guardrails=no_guardrails,
         parallelism_preset=parallelism_preset,
         environ=env,
+        transfer=transfer,
     )
     if not cosmos3_generate_available(env):
         raise Cosmos3GenerateError(
@@ -533,9 +610,27 @@ def run_cosmos3_generate(
     env.setdefault("HF_HOME", str(Path(output_root).parent / "hf_home"))
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+    source_root = str(Path(__file__).resolve().parents[3])
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (source_root, env.get("PYTHONPATH", "")))
+    )
+    receipt_path = output_root / _GUARDRAIL_RECEIPT_NAME
+    receipt_path.unlink(missing_ok=True)
+    requested = bool(plan["guardrails"])
+    env[GUARDRAIL_RECEIPT_ENV] = str(receipt_path)
+    env[GUARDRAILS_REQUESTED_ENV] = "1" if requested else "0"
+    env[INFERENCE_MODULE_ENV] = str(plan["inference_module"])
+
     run = runner or subprocess.run
     completed = run(list(plan["argv"]), cwd=str(plan["repo"]), env=env, check=False)
     returncode = int(getattr(completed, "returncode", 0) or 0)
+    if requested:
+        guardrail_state = _read_guardrail_state(receipt_path, requested=True)
+        _require_effective_guardrails(guardrail_state)
+    elif receipt_path.is_file():
+        guardrail_state = _read_guardrail_state(receipt_path, requested=False)
+    else:
+        guardrail_state = dict(plan["guardrail_state"])
     if returncode != 0:
         raise Cosmos3GenerateError(
             f"cosmos-framework inference failed (exit {returncode}) for mode "
@@ -544,7 +639,14 @@ def run_cosmos3_generate(
 
     sample_dir = output_root / str(plan["name"])
     expected = "image" if plan["mode"] in IMAGE_MODES else "video"
-    artifact, kind = _artifact_for(sample_dir, expected_kind=expected)
+    transfer_evidence = None
+    if transfer is not None:
+        from npa.workbench.cosmos.structural_transfer import transfer_artifact
+
+        artifact, transfer_evidence = transfer_artifact(sample_dir)
+        kind = "video"
+    else:
+        artifact, kind = _artifact_for(sample_dir, expected_kind=expected)
     if artifact is None:
         raise Cosmos3GenerateError(
             f"cosmos-framework produced no image/video artifact in {sample_dir}"
@@ -559,6 +661,7 @@ def run_cosmos3_generate(
 
     result = dict(plan)
     result.pop("argv", None)
+    result["guardrail_state"] = guardrail_state
     result.update(
         {
             "status": "executed",
@@ -573,6 +676,8 @@ def run_cosmos3_generate(
             "weights_baked": False,
         }
     )
+    if transfer_evidence is not None:
+        result["structural_transfer"] = transfer_evidence
     sample_outputs = sample_dir / "sample_outputs.json"
     if sample_outputs.is_file():
         try:
@@ -710,6 +815,7 @@ def generate_and_publish(
     run_id: str = "",
     dry_run: bool = False,
     environ: Mapping[str, str] | None = None,
+    transfer: TransferSettings | None = None,
 ) -> dict[str, Any]:
     """Generate, then publish to S3 when ``output_path`` is an ``s3://`` prefix.
 
@@ -738,6 +844,7 @@ def generate_and_publish(
             no_guardrails=no_guardrails,
             parallelism_preset=parallelism_preset,
             environ=environ,
+            transfer=transfer,
         )
         plan.update({"status": "planned", "run_id": run_id, "weights_baked": False})
         if is_s3:
@@ -758,6 +865,7 @@ def generate_and_publish(
         no_guardrails=no_guardrails,
         parallelism_preset=parallelism_preset,
         environ=environ,
+        transfer=transfer,
     )
     result["run_id"] = run_id
     if is_s3:

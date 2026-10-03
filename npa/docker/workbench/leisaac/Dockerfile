@@ -103,7 +103,7 @@ RUN apt-get update \
     && /opt/npa/sim/venv/bin/python -c 'import ast; p="/opt/leisaac/source/leisaac/leisaac/devices/keyboard/so101_keyboard.py"; c=next(n for n in ast.parse(open(p, encoding="utf-8").read()).body if isinstance(n, ast.ClassDef) and n.name == "SO101Keyboard"); f={n.name:n for n in c.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}; m={k:ast.unparse(v) for k,v in f.items()}; assert "self._remote_pulses.clear()" in m["reset"]; assert "_remote_pulses" not in m["_add_device_control_description"]; assert ast.unparse(f["_on_keyboard_event"].body[0].test) == "self._browser_teleop" and isinstance(f["_on_keyboard_event"].body[0].body[0], ast.Return)' \
     && ! grep -q 'feetech-servo-sdk' /opt/leisaac/source/leisaac/pyproject.toml \
     && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir \
-      deepdiff==8.6.1 \
+      deepdiff==8.6.2 \
       osqp==1.0.4 \
       packaging==25.0 \
       pandas==2.3.3 \

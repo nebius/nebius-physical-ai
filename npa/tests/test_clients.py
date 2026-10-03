@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Callable
 
 import httpx
 import pytest
@@ -13,6 +16,7 @@ from npa.clients.http import HTTPClient, ServerError
 from npa.clients import nebius
 from npa.clients.nebius import NebiusError
 from npa.clients.ssh import SSHClient, SSHError, SSHTimeoutError, format_remote_failure
+from npa.clients import storage
 from npa.clients.storage import StorageClient, StorageError, _parse_bucket_uri
 
 
@@ -128,7 +132,7 @@ def test_storage_client_uploads_and_downloads_directories(
     (local / "nested" / "file.txt").write_text("data")
     paginator = mock_s3.get_paginator.return_value
     paginator.paginate.return_value = [
-        {"Contents": [{"Key": "prefix/nested/file.txt"}]},
+        {"Contents": [{"Key": "prefix/nested/file.txt"}]}
     ]
     client = StorageClient(
         endpoint_url="https://storage",
@@ -142,6 +146,7 @@ def test_storage_client_uploads_and_downloads_directories(
     download_dir = tmp_path / "download"
     downloaded = client.download_directory("s3://bucket/prefix", str(download_dir))
 
+    # A single-file directory takes the unpooled fast path: no Config kwarg.
     assert uploaded == "s3://bucket/base/run/"
     mock_s3.upload_file.assert_called_once_with(
         str(local / "nested" / "file.txt"),
@@ -154,6 +159,35 @@ def test_storage_client_uploads_and_downloads_directories(
         "prefix/nested/file.txt",
         str(download_dir / "nested" / "file.txt"),
     )
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "prefix/../../escape.txt",
+        "prefix/nested/../escape.txt",
+        "prefix/./escape.txt",
+        "prefix//tmp/escape.txt",
+        "prefix/nested\\escape.txt",
+        "other/escape.txt",
+    ],
+)
+def test_storage_client_rejects_unsafe_directory_object_keys(
+    tmp_path: Path, mock_s3, key: str
+) -> None:
+    paginator = mock_s3.get_paginator.return_value
+    paginator.paginate.return_value = [{"Contents": [{"Key": key}]}]
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    with pytest.raises(StorageError, match="outside|unsafe"):
+        client.download_directory("s3://bucket/prefix", str(tmp_path / "download"))
+
+    mock_s3.download_file.assert_not_called()
+    assert not (tmp_path / "escape.txt").exists()
 
 
 def test_storage_client_downloads_object_via_head_object_when_list_is_empty(
@@ -180,10 +214,13 @@ def test_storage_client_downloads_object_via_head_object_when_list_is_empty(
 
 
 def test_storage_client_downloads_exact_object_without_list_or_head(
-    tmp_path: Path, mock_s3
+    tmp_path: Path, mock_s3, mocker
 ) -> None:
-    body = mock_s3.get_object.return_value["Body"]
+    body = mocker.MagicMock()
     body.iter_chunks.return_value = [b"checkpoint", b"-bytes"]
+    # A real provider response is a dict; ContentLength (16 bytes here) is what
+    # download_file cross-checks against the bytes actually written.
+    mock_s3.get_object.return_value = {"Body": body, "ContentLength": 16}
     client = StorageClient(
         endpoint_url="https://storage",
         aws_access_key_id="key",
@@ -201,6 +238,329 @@ def test_storage_client_downloads_exact_object_without_list_or_head(
     body.close.assert_called_once_with()
     mock_s3.head_object.assert_not_called()
     mock_s3.get_paginator.assert_not_called()
+
+
+def test_download_file_preserves_prior_complete_file_on_interrupted_transport(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    """A transport failure mid-stream must not truncate an existing checkpoint."""
+
+    local = tmp_path / "model.pt"
+    local.write_bytes(b"previously-complete-checkpoint")
+
+    def _iter_chunks(chunk_size):
+        yield b"partial-"
+        raise ConnectionError("connection reset")
+
+    body = mocker.MagicMock()
+    body.iter_chunks.side_effect = _iter_chunks
+    mock_s3.get_object.return_value = {"Body": body, "ContentLength": 999}
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    with pytest.raises(ConnectionError):
+        client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+
+    assert local.read_bytes() == b"previously-complete-checkpoint"
+    assert list(local.parent.iterdir()) == [local]  # no leftover staging file
+    body.close.assert_called_once_with()
+
+
+def test_download_file_leaves_no_file_on_new_file_failure(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    local = tmp_path / "new-model.pt"
+
+    def _iter_chunks(chunk_size):
+        raise ConnectionError("connection reset")
+
+    body = mocker.MagicMock()
+    body.iter_chunks.side_effect = _iter_chunks
+    mock_s3.get_object.return_value = {"Body": body, "ContentLength": 10}
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    with pytest.raises(ConnectionError):
+        client.download_file("s3://bucket/checkpoints/new-model.pt", str(local))
+
+    assert not local.exists()
+    assert list(local.parent.iterdir()) == []
+
+
+def test_download_file_rejects_short_read_and_leaves_no_file(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    local = tmp_path / "model.pt"
+    body = mocker.MagicMock()
+    body.iter_chunks.return_value = [b"too-short"]
+    mock_s3.get_object.return_value = {"Body": body, "ContentLength": 999}
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    with pytest.raises(StorageError, match="Short read"):
+        client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+
+    assert not local.exists()
+    assert list(local.parent.iterdir()) == []
+
+
+def test_download_file_replaces_prior_file_atomically_on_success(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    local = tmp_path / "model.pt"
+    local.write_bytes(b"stale")
+    body = mocker.MagicMock()
+    body.iter_chunks.return_value = [b"fresh-checkpoint"]
+    mock_s3.get_object.return_value = {"Body": body, "ContentLength": 16}
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+
+    assert local.read_bytes() == b"fresh-checkpoint"
+    assert list(local.parent.iterdir()) == [local]
+
+
+def test_download_file_preserves_restrictive_permissions_on_replace(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    """Replacing a mode-0600 checkpoint must not widen it to the umask default."""
+
+    import os
+
+    local = tmp_path / "model.pt"
+    local.write_bytes(b"stale")
+    os.chmod(local, 0o600)
+    old_umask = os.umask(0o022)
+    try:
+        body = mocker.MagicMock()
+        body.iter_chunks.return_value = [b"fresh-checkpoint"]
+        mock_s3.get_object.return_value = {"Body": body, "ContentLength": 16}
+        client = StorageClient(
+            endpoint_url="https://storage",
+            aws_access_key_id="key",
+            aws_secret_access_key="secret",
+        )
+
+        client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+    finally:
+        os.umask(old_umask)
+
+    assert local.read_bytes() == b"fresh-checkpoint"
+    assert (local.stat().st_mode & 0o777) == 0o600
+
+
+def test_download_file_new_file_gets_umask_default_permissions(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    """A brand-new file (no prior mode to preserve) gets the normal umask default."""
+
+    import os
+
+    local = tmp_path / "model.pt"
+    old_umask = os.umask(0o022)
+    try:
+        body = mocker.MagicMock()
+        body.iter_chunks.return_value = [b"fresh-checkpoint"]
+        mock_s3.get_object.return_value = {"Body": body, "ContentLength": 16}
+        client = StorageClient(
+            endpoint_url="https://storage",
+            aws_access_key_id="key",
+            aws_secret_access_key="secret",
+        )
+
+        client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+    finally:
+        os.umask(old_umask)
+
+    assert (local.stat().st_mode & 0o777) == 0o644
+
+
+def test_download_file_skips_length_check_when_provider_omits_it(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    local = tmp_path / "model.pt"
+    body = mocker.MagicMock()
+    body.iter_chunks.return_value = [b"unknown-length-body"]
+    mock_s3.get_object.return_value = {"Body": body}
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+
+    assert local.read_bytes() == b"unknown-length-body"
+
+
+def test_directory_transfers_run_concurrently_not_serially(
+    tmp_path: Path, mock_s3
+) -> None:
+    """All 8 uploads must be in flight at once, proven deterministically.
+
+    A ``threading.Barrier(8)`` only releases once all 8 parties have called
+    ``wait()``. If uploads ran serially, the first call would block at the
+    barrier forever (no other party ever arrives) and this test would fail
+    with a deterministic ``BrokenBarrierError`` on timeout rather than a
+    flaky wall-clock measurement.
+    """
+
+    local = tmp_path / "local"
+    local.mkdir()
+    for index in range(8):
+        (local / f"file{index}.bin").write_bytes(b"x")
+
+    barrier = threading.Barrier(8, timeout=5)
+
+    def _rendezvous_upload_file(*_args, **_kwargs):
+        barrier.wait()
+
+    mock_s3.upload_file.side_effect = _rendezvous_upload_file
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    client.upload_directory(str(local), "s3://bucket/base")
+
+    assert mock_s3.upload_file.call_count == 8
+
+
+def test_adaptive_transfer_config_gives_one_file_near_boto_default() -> None:
+    """A directory with a single (large) file should not be throttled below
+    boto3's own default multipart concurrency, since nothing else competes
+    for the outer directory pool's slots.
+    """
+
+    config = storage._adaptive_transfer_config(1)
+    assert config.max_concurrency == storage._MAX_PER_FILE_TRANSFER_CONCURRENCY
+
+
+def test_adaptive_transfer_config_shrinks_as_file_count_grows() -> None:
+    one = storage._adaptive_transfer_config(1).max_concurrency
+    few = storage._adaptive_transfer_config(2).max_concurrency
+    many = storage._adaptive_transfer_config(
+        storage._DIRECTORY_TRANSFER_WORKERS
+    ).max_concurrency
+    beyond_pool = storage._adaptive_transfer_config(
+        storage._DIRECTORY_TRANSFER_WORKERS * 10
+    ).max_concurrency
+
+    assert one >= few >= many >= 1
+    # File counts already saturating the outer pool must not shrink further.
+    assert many == beyond_pool
+    # The worst case (every outer slot busy) must stay within the documented
+    # total thread budget.
+    assert (
+        storage._DIRECTORY_TRANSFER_WORKERS * many
+        <= storage._TOTAL_TRANSFER_THREAD_BUDGET
+    )
+
+
+def test_directory_download_bounds_in_flight_work(tmp_path: Path, mock_s3) -> None:
+    """No more than the configured worker count may be mid-transfer at once."""
+
+    paginator = mock_s3.get_paginator.return_value
+    paginator.paginate.return_value = [
+        {"Contents": [{"Key": f"prefix/file{i}.bin"} for i in range(40)]}
+    ]
+
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def _tracking_download_file(*_args, **_kwargs):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            time.sleep(0.01)
+        finally:
+            with lock:
+                active -= 1
+
+    mock_s3.download_file.side_effect = _tracking_download_file
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    client.download_directory("s3://bucket/prefix", str(tmp_path / "download"))
+
+    assert mock_s3.download_file.call_count == 40
+    assert max_active <= storage._DIRECTORY_TRANSFER_WORKERS
+
+
+def _barrier_gated_download(barrier, completed: list[str], lock) -> Callable:
+    """A ``download_file`` fake: rendezvous at ``barrier``, then fail or
+    write+record. Proves true concurrency (a serial caller would deadlock
+    here, failing with ``BrokenBarrierError`` on timeout) and, combined with
+    the bounded executor always joining in-flight work before propagating
+    an exception, that no sibling keeps running in the background after the
+    public method raises.
+    """
+
+    def _download_file(bucket, key, path, **_kwargs):
+        barrier.wait()
+        if key.endswith("fail.bin"):
+            raise RuntimeError("simulated transport failure")
+        Path(path).write_bytes(b"data-" + key.encode())
+        with lock:
+            completed.append(key)
+
+    return _download_file
+
+
+def test_download_directory_joins_concurrent_siblings_before_raising(
+    tmp_path: Path, mock_s3
+) -> None:
+    """A failing file must not leave concurrent siblings still writing in the
+    background once ``download_directory`` has raised to the caller.
+    """
+
+    barrier = threading.Barrier(3, timeout=5)
+    completed: list[str] = []
+    mock_s3.download_file.side_effect = _barrier_gated_download(
+        barrier, completed, threading.Lock()
+    )
+    paginator = mock_s3.get_paginator.return_value
+    paginator.paginate.return_value = [
+        {
+            "Contents": [
+                {"Key": k}
+                for k in ("prefix/fail.bin", "prefix/ok1.bin", "prefix/ok2.bin")
+            ]
+        }
+    ]
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+    download_dir = tmp_path / "download"
+
+    with pytest.raises(RuntimeError, match="simulated transport failure"):
+        client.download_directory("s3://bucket/prefix", str(download_dir))
+
+    assert sorted(completed) == ["prefix/ok1.bin", "prefix/ok2.bin"]
+    assert (download_dir / "ok1.bin").read_bytes() == b"data-prefix/ok1.bin"
+    assert (download_dir / "ok2.bin").read_bytes() == b"data-prefix/ok2.bin"
 
 
 def test_storage_client_uploads_and_downloads_files(tmp_path: Path, mock_s3) -> None:
@@ -242,6 +602,13 @@ def test_ssh_connect_uses_paramiko_config(mocker) -> None:
     SSHClient(SSHConfig(host="host", user="ubuntu", key_path="~/key"))._connect()
 
     paramiko_client.set_missing_host_key_policy.assert_called_once()
+    import paramiko
+
+    assert isinstance(
+        paramiko_client.set_missing_host_key_policy.call_args.args[0],
+        paramiko.RejectPolicy,
+    )
+    paramiko_client.load_system_host_keys.assert_called_once_with()
     paramiko_client.connect.assert_called_once_with(
         hostname="host",
         username="ubuntu",
@@ -249,6 +616,41 @@ def test_ssh_connect_uses_paramiko_config(mocker) -> None:
         timeout=15,
         look_for_keys=False,
     )
+
+
+def test_ssh_explicit_known_hosts_takes_precedence_over_ambient(
+    mocker, monkeypatch, tmp_path
+):
+    client = mocker.MagicMock()
+    mocker.patch("paramiko.SSHClient", return_value=client)
+    monkeypatch.setenv("NPA_SSH_KNOWN_HOSTS", str(tmp_path / "ambient"))
+    pinned = str(tmp_path / "verified")
+    SSHClient(
+        SSHConfig(host="host", user="ubuntu", key_path="~/key"), known_hosts=pinned
+    )._connect()
+    client.load_host_keys.assert_called_once_with(pinned)
+    client.load_system_host_keys.assert_not_called()
+
+
+def test_ssh_refuses_changed_host_before_credentials_are_staged(mocker):
+    import paramiko
+
+    client = mocker.MagicMock()
+    client.connect.side_effect = paramiko.SSHException("host key mismatch")
+    mocker.patch("paramiko.SSHClient", return_value=client)
+    ssh = SSHClient(
+        SSHConfig(
+            host="host",
+            user="ubuntu",
+            key_path="~/key",
+            tokens={"HF_TOKEN": "test-token"},
+        )
+    )
+    with pytest.raises(SSHError, match="Unknown or changed host keys are refused"):
+        ssh.run("true")
+    client.open_sftp.assert_not_called()
+    client.exec_command.assert_not_called()
+    client.close.assert_called_once()
 
 
 def test_ssh_connect_maps_errors(mocker) -> None:
@@ -422,6 +824,8 @@ def test_ssh_private_text_is_owner_only_before_secret_write(mocker) -> None:
             events.append("flush")
 
     sftp = mocker.MagicMock()
+    sftp.lstat.return_value.st_mode = 0o40700
+    sftp.mkdir.side_effect = lambda path, mode: events.append(("mkdir", path, mode))
     sftp.open.side_effect = lambda path, mode: (
         events.append(("open", path, mode)) or RemoteFile()
     )
@@ -435,11 +839,16 @@ def test_ssh_private_text_is_owner_only_before_secret_write(mocker) -> None:
         client.upload_private_text("SECRET-SENTINEL", "/tmp/private") == "/tmp/private"
     )
 
-    assert events[:3] == [
-        ("open", "/tmp/private", "wx"),
-        ("chmod", "/tmp/private", 0o600),
-        ("write", "SECRET-SENTINEL"),
+    directory = sftp.mkdir.call_args.args[0]
+    staged = directory + "/payload"
+    assert events[:4] == [
+        ("mkdir", directory, 0o700),
+        ("open", staged, "wx"),
+        ("chmod", staged, 0o600),
+        ("write", b"SECRET-SENTINEL"),
     ]
+    sftp.posix_rename.assert_called_once_with(staged, "/tmp/private")
+    sftp.rmdir.assert_called_once_with(directory)
     sftp.close.assert_called_once()
     paramiko_client.close.assert_called_once()
 
@@ -578,6 +987,24 @@ def test_workbench_credential_resolution_is_agent_independent(mocker, tmp_path) 
     assert nebius.get_iam_token() == "cli-profile-token"
 
 
+def test_encord_credentials_resolve_environment_over_file(tmp_path: Path) -> None:
+    from npa.clients.credentials import load_credentials
+
+    path = tmp_path / "credentials.yaml"
+    path.write_text(
+        "tokens:\n  ENCORD_SSH_KEY_B64: saved-value\n"
+        "  ENCORD_SSH_KEY_FILE: /private/local/key.pem\n",
+        encoding="utf-8",
+    )
+    credentials = load_credentials(
+        path=path,
+        environ={"ENCORD_SSH_KEY_B64": "environment-value"},
+    )
+
+    assert credentials.tokens["ENCORD_SSH_KEY_B64"] == "environment-value"
+    assert credentials.tokens["ENCORD_SSH_KEY_FILE"] == "/private/local/key.pem"
+
+
 def test_nebius_iam_token_from_env(mocker) -> None:
     mocker.patch("npa.clients.nebius._run", return_value="")
     mocker.patch("npa.clients.nebius._env_iam_token", return_value="env-token")
@@ -603,6 +1030,40 @@ def test_nebius_iam_token_from_metadata_fallback(mocker) -> None:
     mocker.patch("npa.clients.nebius._metadata_iam_token", return_value="meta-token")
 
     assert nebius.get_iam_token() == "meta-token"
+
+
+@pytest.mark.parametrize("source", ["environment", "file", "metadata"])
+def test_nebius_cli_compatibility_error_keeps_existing_token_fallbacks(
+    mocker, source: str, capsys
+) -> None:
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=nebius.NebiusCliCompatibilityError("Unsupported Nebius CLI"),
+    )
+    sentinel = "synthetic-private-token"
+    environment = mocker.patch(
+        "npa.clients.nebius._env_iam_token",
+        return_value=sentinel if source == "environment" else "",
+    )
+    mocker.patch(
+        "npa.clients.nebius._candidate_iam_token_files", return_value=["/token"]
+    )
+    file = mocker.patch(
+        "npa.clients.nebius._read_iam_token_file",
+        return_value=sentinel if source == "file" else "",
+    )
+    metadata = mocker.patch(
+        "npa.clients.nebius._metadata_iam_token",
+        return_value=sentinel,
+    )
+
+    assert nebius.get_iam_token() == sentinel
+
+    environment.assert_called_once()
+    assert file.call_count == (0 if source == "environment" else 1)
+    assert metadata.call_count == (1 if source == "metadata" else 0)
+    captured = capsys.readouterr()
+    assert sentinel not in captured.out + captured.err
 
 
 def test_nebius_service_account_reuses_existing(mocker) -> None:
@@ -692,7 +1153,12 @@ def test_nebius_bootstrap_returns_verifiable_storage_account_ownership(mocker) -
         "npa.clients.nebius.get_bucket_by_name",
         return_value={"metadata": {"id": "bucket-id"}},
     )
-    mocker.patch("npa.clients.nebius._existing_editors_binding", return_value=None)
+    mocker.patch(
+        "npa.clients.nebius._existing_editors_binding",
+        side_effect=nebius.NebiusError(
+            "PermissionDenied: tenant-wide editors inventory"
+        ),
+    )
     mocker.patch(
         "npa.clients.nebius.ensure_storage_capability_binding",
         return_value=nebius.StorageIamBindingEvidence(
@@ -754,13 +1220,18 @@ def test_nebius_bootstrap_stops_before_bucket_or_key_when_required_iam_fails(
         "npa.clients.nebius.get_bucket_by_name",
         return_value={"metadata": {"id": "bucket-id"}},
     )
-    mocker.patch("npa.clients.nebius._existing_editors_binding", return_value=None)
+    mocker.patch(
+        "npa.clients.nebius._existing_editors_binding",
+        side_effect=nebius.NebiusError(
+            "PermissionDenied: tenant-wide editors inventory"
+        ),
+    )
     key = mocker.patch(
         "npa.clients.nebius.ensure_access_key", return_value=("key", "secret")
     )
 
     messages: list[str] = []
-    with pytest.raises(nebius.NebiusError, match="Required storage IAM capability"):
+    with pytest.raises(nebius.NebiusError, match="project-scoped admin permission"):
         nebius.bootstrap_environment(
             "project", "tenant", "eu-north1", on_status=messages.append
         )
@@ -1230,6 +1701,8 @@ def test_nebius_bootstrap_uses_explicit_bucket_name(mocker) -> None:
         "chosen",
         max_size_bytes=123,
         default_storage_class="standard",
+        on_created=mocker.ANY,
+        allow_existing=True,
     )
 
 
@@ -1266,7 +1739,12 @@ def test_nebius_agent_bootstrap_reuses_verified_storage_without_access_key_iam(
         "npa.clients.nebius.ensure_service_account",
         return_value="serviceaccount-agent",
     )
-    mocker.patch("npa.clients.nebius.ensure_editors_membership")
+    mocker.patch("npa.clients.agent_iam_binding.verify_agent_project_scope")
+    tenant_grant = mocker.patch("npa.clients.nebius.ensure_editors_membership")
+    project_grant = mocker.patch(
+        "npa.clients.agent_iam_binding.ensure_agent_project_binding",
+        return_value={"agent_iam_scope_id": "project", "agent_iam_role": "editor"},
+    )
     mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam-token")
     full_bootstrap = mocker.patch("npa.clients.nebius.bootstrap_environment")
     list_keys = mocker.patch("npa.clients.nebius._list_access_key_metadata")
@@ -1282,6 +1760,12 @@ def test_nebius_agent_bootstrap_reuses_verified_storage_without_access_key_iam(
     assert result["service_account_id"] == "serviceaccount-agent"
     assert result["nebius_api_key"] == "configured-access"
     assert service_account.call_args.kwargs["allow_saved_fallback"] is False
+    assert result["agent_iam_scope_id"] == "project"
+    assert project_grant.call_args.kwargs["project_id"] == "project"
+    assert (
+        project_grant.call_args.kwargs["service_account_id"] == "serviceaccount-agent"
+    )
+    tenant_grant.assert_not_called()
     full_bootstrap.assert_not_called()
     list_keys.assert_not_called()
     create_key.assert_not_called()
@@ -1338,6 +1822,7 @@ def test_agent_bootstrap_removes_a_rolled_back_key_on_a_reused_account(
         raise NebiusError("provider failed after key creation")
 
     mocker.patch("npa.clients.nebius.bootstrap_environment", side_effect=bootstrap)
+    mocker.patch("npa.cli.agent_iam._verify_access_key_absent")
     delete_key = mocker.patch("npa.clients.nebius.delete_access_key")
     delete_account = mocker.patch("npa.clients.nebius.delete_service_account")
 
@@ -1505,13 +1990,20 @@ def test_nebius_bootstrap_agent_environment_falls_back_on_permission_denied(
 
 
 def test_nebius_bucket_exists(mocker) -> None:
-    mocker.patch(
+    run_json = mocker.patch(
         "npa.clients.nebius._run_json",
-        return_value={"items": [{"metadata": {"name": "npa-bucket-abc"}}]},
+        side_effect=[
+            {"metadata": {"name": "npa-bucket-abc", "parent_id": "project"}},
+            nebius.NebiusError("NotFound: bucket does not exist"),
+        ],
     )
 
     assert nebius.bucket_exists("project", "npa-bucket-abc") is True
     assert nebius.bucket_exists("project", "other") is False
+    assert all(
+        call.args[0][:3] == ["storage", "bucket", "get-by-name"]
+        for call in run_json.call_args_list
+    )
 
 
 def test_cli_env_strips_stale_iam_token(monkeypatch) -> None:
@@ -1576,23 +2068,17 @@ def test_is_permission_denied_matches_access_denied() -> None:
     assert not nebius.is_permission_denied("NotFound: bucket missing")
 
 
-def test_nebius_bucket_list_paginates_with_all(mocker) -> None:
-    """Bucket existence checks must page past the CLI default.
-
-    Regression: an unpaged ``storage bucket list`` dropped existing buckets
-    beyond the first page, so ``bucket_exists`` returned False for a real
-    bucket and ``npa configure`` wrongly prompted for new-bucket storage class.
-    Uses ``--all`` (true pagination) for consistency with the other listers.
-    """
+def test_nebius_bucket_exact_lookup_does_not_enumerate_project(mocker) -> None:
     run_json = mocker.patch(
         "npa.clients.nebius._run_json",
-        return_value={"items": [{"metadata": {"name": "npa-bucket-abc"}}]},
+        return_value={"metadata": {"name": "npa-bucket-abc", "parent_id": "project"}},
     )
 
     assert nebius.bucket_exists("project", "npa-bucket-abc") is True
     args = run_json.call_args.args[0]
-    assert args[:3] == ["storage", "bucket", "list"]
-    assert "--all" in args, args
+    assert args[:3] == ["storage", "bucket", "get-by-name"]
+    assert args[args.index("--name") + 1] == "npa-bucket-abc"
+    assert "--all" not in args
 
 
 def test_nebius_ensure_bucket_reuses_existing_without_create(mocker) -> None:
@@ -1634,6 +2120,25 @@ def test_nebius_ensure_bucket_reuses_on_already_exists_conflict(mocker) -> None:
     )
 
     assert nebius.ensure_bucket("project", "npa-bucket-abc") == "npa-bucket-abc"
+
+
+def test_nebius_ensure_bucket_refuses_generated_name_create_race(mocker) -> None:
+    mocker.patch("npa.clients.nebius.bucket_exists", return_value=False)
+    mocker.patch(
+        "npa.clients.nebius._run",
+        side_effect=nebius.NebiusError("AlreadyExists: bucket exists"),
+    )
+    mocker.patch(
+        "npa.clients.nebius.get_bucket_by_name",
+        return_value={"metadata": {"name": "npa-bucket-abc", "parent_id": "project"}},
+    )
+
+    with pytest.raises(nebius.NebiusError, match="refusing to adopt"):
+        nebius.ensure_bucket(
+            "project",
+            "npa-bucket-abc",
+            allow_existing=False,
+        )
 
 
 def test_nebius_ensure_bucket_reports_clear_conflict_when_name_taken_elsewhere(
@@ -1805,81 +2310,6 @@ def test_nebius_list_accessible_projects_spans_tenants(mocker) -> None:
     assert [p["id"] for p in result] == ["project-1", "project-2"]
 
 
-def test_nebius_discover_container_registry_builds_url(mocker) -> None:
-    mocker.patch(
-        "npa.clients.nebius._run_json",
-        return_value={
-            "items": [
-                {
-                    "metadata": {"id": "registry-e00abc"},
-                    "status": {"registry_fqdn": "cr.eu-north1.nebius.cloud"},
-                }
-            ]
-        },
-    )
-
-    assert (
-        nebius.discover_container_registry("project")
-        == "cr.eu-north1.nebius.cloud/e00abc"
-    )
-
-
-def test_nebius_discover_container_registry_prefers_eu_north1(mocker) -> None:
-    # A project with registries in several regions (unstable API order) must
-    # default to the eu-north1 registry, the main region.
-    mocker.patch(
-        "npa.clients.nebius._run_json",
-        return_value={
-            "items": [
-                {
-                    "metadata": {"id": "registry-u00usc"},
-                    "status": {"registry_fqdn": "cr.us-central1.nebius.cloud"},
-                },
-                {
-                    "metadata": {"id": "registry-e00eu"},
-                    "status": {"registry_fqdn": "cr.eu-north1.nebius.cloud"},
-                },
-            ]
-        },
-    )
-
-    assert (
-        nebius.discover_container_registry("project")
-        == "cr.eu-north1.nebius.cloud/e00eu"
-    )
-
-
-def test_nebius_discover_container_registry_falls_back_when_no_eu_north1(
-    mocker,
-) -> None:
-    mocker.patch(
-        "npa.clients.nebius._run_json",
-        return_value={
-            "items": [
-                {
-                    "metadata": {"id": "registry-u00usc"},
-                    "status": {"registry_fqdn": "cr.us-central1.nebius.cloud"},
-                }
-            ]
-        },
-    )
-
-    assert (
-        nebius.discover_container_registry("project")
-        == "cr.us-central1.nebius.cloud/u00usc"
-    )
-
-
-def test_nebius_discover_container_registry_empty_without_project() -> None:
-    assert nebius.discover_container_registry("") == ""
-
-
-def test_nebius_discover_container_registry_best_effort_on_error(mocker) -> None:
-    mocker.patch("npa.clients.nebius._run_json", side_effect=NebiusError("denied"))
-
-    assert nebius.discover_container_registry("project") == ""
-
-
 def test_nebius_get_project_region_reads_status(mocker) -> None:
     mocker.patch(
         "npa.clients.nebius._run_json",
@@ -1952,30 +2382,108 @@ def test_nebius_get_project_name_best_effort(mocker) -> None:
     assert nebius.get_project_name("project-abc") == ""
 
 
-def test_nebius_set_profile_project_writes_both_ids(mocker) -> None:
-    run = mocker.patch("npa.clients.nebius._run", return_value="")
+def _profile_config_runner(mocker, initial, failures=()):
+    values = dict(initial)
+    remaining_failures = list(failures)
+    calls = []
 
-    assert nebius.set_profile_project("project-abc", "tenant-xyz") is True
-    assert [call.args[0] for call in run.call_args_list] == [
-        ["config", "set", "parent-id", "project-abc"],
-        ["config", "set", "tenant-id", "tenant-xyz"],
-    ]
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if args in remaining_failures:
+            remaining_failures.remove(args)
+            raise NebiusError("synthetic profile write failure")
+        operation, key = args[1:3]
+        if operation == "get":
+            return values.get(key, "")
+        if operation == "set":
+            values[key] = args[3]
+        elif operation == "unset":
+            values.pop(key, None)
+        return ""
+
+    mocker.patch("npa.clients.nebius._run", side_effect=fake_run)
+    return values, calls
+
+
+def test_nebius_set_profile_project_writes_both_ids(mocker) -> None:
+    values, _calls = _profile_config_runner(
+        mocker, {"parent-id": "project-old", "tenant-id": "tenant-old"}
+    )
+
+    result = nebius.set_profile_project("project-new", "tenant-new")
+
+    assert result is nebius.ProfileMutationResult.UPDATED
+    assert values == {"parent-id": "project-new", "tenant-id": "tenant-new"}
 
 
 def test_nebius_set_profile_project_skips_empty_tenant(mocker) -> None:
-    run = mocker.patch("npa.clients.nebius._run", return_value="")
+    values, calls = _profile_config_runner(
+        mocker, {"parent-id": "project-old", "tenant-id": "tenant-old"}
+    )
 
-    assert nebius.set_profile_project("project-abc") is True
-    assert [call.args[0] for call in run.call_args_list] == [
-        ["config", "set", "parent-id", "project-abc"]
-    ]
+    result = nebius.set_profile_project("project-new")
+
+    assert result is nebius.ProfileMutationResult.UPDATED
+    assert values == {"parent-id": "project-new", "tenant-id": "tenant-old"}
+    assert not any(call[1:3] == ["set", "tenant-id"] for call in calls)
 
 
-def test_nebius_set_profile_project_is_best_effort(mocker) -> None:
+def test_nebius_set_profile_project_first_write_failure_is_unchanged(mocker) -> None:
+    initial = {"parent-id": "project-old", "tenant-id": "tenant-old"}
+    values, _calls = _profile_config_runner(
+        mocker,
+        initial,
+        failures=(["config", "set", "parent-id", "project-new"],),
+    )
+
+    result = nebius.set_profile_project("project-new", "tenant-new")
+
+    assert result is nebius.ProfileMutationResult.UNCHANGED
+    assert values == initial
+
+
+def test_nebius_set_profile_project_second_write_failure_restores_unset(mocker) -> None:
+    initial = {"tenant-id": "tenant-old"}
+    values, calls = _profile_config_runner(
+        mocker,
+        initial,
+        failures=(["config", "set", "tenant-id", "tenant-new"],),
+    )
+
+    result = nebius.set_profile_project("project-new", "tenant-new")
+
+    assert result is nebius.ProfileMutationResult.RESTORED
+    assert values == initial
+    assert ["config", "unset", "parent-id"] in calls
+
+
+def test_nebius_set_profile_project_rollback_failure_is_partial(mocker) -> None:
+    initial = {"tenant-id": "tenant-old"}
+    values, _calls = _profile_config_runner(
+        mocker,
+        initial,
+        failures=(
+            ["config", "set", "tenant-id", "tenant-new"],
+            ["config", "unset", "parent-id"],
+        ),
+    )
+
+    result = nebius.set_profile_project("project-new", "tenant-new")
+
+    assert result is nebius.ProfileMutationResult.PARTIAL
+    assert values["parent-id"] == "project-new"
+
+
+def test_nebius_set_profile_project_unreadable_or_empty_input_is_unchanged(
+    mocker,
+) -> None:
     mocker.patch("npa.clients.nebius._run", side_effect=NebiusError("no cli"))
 
-    assert nebius.set_profile_project("project-abc", "tenant-xyz") is False
-    assert nebius.set_profile_project("") is False
+    assert (
+        nebius.set_profile_project("project-new", "tenant-new")
+        is nebius.ProfileMutationResult.UNCHANGED
+    )
+    assert nebius.set_profile_project("") is nebius.ProfileMutationResult.UNCHANGED
 
 
 def _public_ip_quota_items() -> dict:
@@ -2022,6 +2530,61 @@ def test_nebius_public_ipv4_quota_best_effort_on_error(mocker) -> None:
 def test_nebius_public_ipv4_quota_requires_tenant_and_region() -> None:
     assert nebius.get_public_ipv4_quota("", "us-central1") == (None, None)
     assert nebius.get_public_ipv4_quota("tenant-x", "") == (None, None)
+
+
+def test_nebius_quota_reads_are_profile_scoped(mocker, monkeypatch) -> None:
+    """Quota reads must carry the selected profile like every other read here.
+
+    A tenant reachable only through a non-default profile answers
+    PermissionDenied without it. `list_quota_allowances` fails closed, so that
+    denial became "unverified mutation prerequisite" and blocked an agent deploy
+    the operator was entitled to make.
+    """
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "other-tenant")
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json", return_value=_public_ip_quota_items()
+    )
+
+    nebius.get_public_ipv4_quota("tenant-x", "us-central1")
+    nebius.get_compute_instance_quota("tenant-x", "us-central1")
+    nebius.list_quota_allowances("tenant-x")
+
+    assert run_json.call_count == 3
+    for call in run_json.call_args_list:
+        argv = call.args[0]
+        assert argv[:2] == ["--profile", "other-tenant"], argv
+        # The profile is a global flag, so it must precede the subcommand.
+        assert argv[2:5] == ["quotas", "quota-allowance", "list"], argv
+
+    # An explicit profile overrides the ambient one.
+    nebius.list_quota_allowances("tenant-x", profile="explicit")
+    assert run_json.call_args_list[-1].args[0][:2] == ["--profile", "explicit"]
+
+
+def test_nebius_quota_reads_omit_profile_flag_when_unset(mocker, monkeypatch) -> None:
+    monkeypatch.delenv("NPA_NEBIUS_PROFILE", raising=False)
+    monkeypatch.delenv("NEBIUS_PROFILE", raising=False)
+    run_json = mocker.patch(
+        "npa.clients.nebius._run_json", return_value=_public_ip_quota_items()
+    )
+
+    nebius.list_quota_allowances("tenant-x")
+
+    assert run_json.call_args_list[-1].args[0][0] == "quotas"
+
+
+def test_nebius_quota_allowances_accept_project_parent(mocker) -> None:
+    run_json = mocker.patch("npa.clients.nebius._run_json", return_value={"items": []})
+
+    nebius.list_quota_allowances("project-test")
+
+    assert run_json.call_args.args[0][-3:] == ["--parent-id", "project-test", "--all"]
+
+
+def test_nebius_unauthorized_single_is_permission_denied() -> None:
+    assert nebius.is_permission_denied(
+        "rpc error: code = Unknown desc = UnauthorizedSingle"
+    )
 
 
 def _compute_instance_quota_items() -> dict:

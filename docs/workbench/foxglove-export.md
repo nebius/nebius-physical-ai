@@ -1,5 +1,7 @@
 # Export MCAP and open it in Foxglove Web
 
+[Workbench docs](README.md)
+
 The NPA agent preserves two distinct operations over one canonical artifact:
 
 - **Download MCAP** resolves the active run's canonical S3 recording and downloads
@@ -122,8 +124,41 @@ CLI callers can convert/export locally with `npa workbench foxglove export-run`
 and build a web-only link for an already indexed recording with:
 
 ```bash
-npa workbench foxglove open --recording-id <recording-id>
+npa workbench foxglove open --recording-id "<recording-id>"
 ```
+
+## Real Isaac motion qualification
+
+A production robot-motion qualification must start from the canonical Sim2Real
+Isaac policy-rollout component, not from copied images or a synthetic MCAP. Run
+the component on a strictly reserved RT-capable GPU with a digest-pinned Isaac
+image, a pre-warmed read-only `NPA_SIM2REAL_ISAAC_CACHE_PVC`, and scenarios bound
+to `NPA_SIM2REAL_TASK_CONTRACT_DIGEST`. Keep `ACCEPT_EULA=Y`; leave privacy and
+telemetry consent unset. The selected rollout's `action_rollout.v1` manifest and
+camera frames are then the inputs to `npa workbench foxglove export-run`.
+
+For parity with the multi-camera motion reference, capture 32 decision samples
+over a 32-step horizon at stride 1. This yields 32 source action/ground-truth
+records and 33 source frames for each of the primary, side, and overhead views.
+The converter maps those physical views to `/camera`, `/camera/side`, and
+`/camera/workspace` and emits the `npa.foxglove.robot-motion.v3` contract. Report
+policy state honestly: a first-pass rollout without a checkpoint is a real Isaac
+execution, but it is not a trained-policy efficacy claim.
+
+The default physics device remains `cuda:0`. If a supported RT GPU renders
+cameras correctly but its PhysX GPU pipeline cannot initialize, set
+`NPA_SIM2REAL_ISAAC_DEVICE=cpu` for an explicit CPU-physics fallback. The Job
+still requests and attests its GPU, and the RTX camera renderer still uses that
+device; `simulation_device` in the source manifest records the fallback so it
+cannot be mistaken for GPU physics. This compatibility mode requires one
+rollout environment and uses ordinary Camera sensors with Fabric disabled;
+multi-environment tiled capture remains CUDA-only.
+
+Before handing off the run, inspect the canonical MCAP and require the expected
+per-topic counts, action-derived robot channels, valid MCAP magic, and a matching
+SHA-256 provenance sidecar. The live Cypress tier below then verifies the same
+S3-discovered recording through the deployed agent's SDK, transport, CORS, range,
+and download contracts.
 
 ## Cypress regression tiers
 
@@ -161,3 +196,12 @@ References: [Foxglove shareable links](https://docs.foxglove.dev/docs/visualizat
 [Foxglove importing data](https://docs.foxglove.dev/docs/data/importing-data),
 [Foxglove API](https://docs.foxglove.dev/api), and
 [Foxglove pricing](https://foxglove.dev/pricing).
+
+### Simulator ground-truth validation
+
+MCAP conversion validates every present simulator ground-truth flag and the
+ground-truth object before creating or truncating the output. Missing flags
+default to false; present null, strings, numbers, and containers fail with the
+source filename, action index, and flag name. Completion reasons still control
+the phase, while `success` retains its measured `placement_stable` meaning.
+Phase and status fields consume the same validated evidence.

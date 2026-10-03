@@ -1,0 +1,64 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "10fec3b0eac920781ddc9a79e047e78a669284844bbb157a662f264658f0ad62",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and plan-spec exited 0 for this exact workflow revision after source overlay, dataset revision pinning and offline preview were added. These checks did not launch GPU work. Earlier scheduler-preview and plan-only results apply to the historical revision only.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/main/nurec-reconstruct.yaml --json",
+        "npa workbench workflow plan-spec workflows/main/nurec-reconstruct.yaml --run-id preview --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The full public demo completed at source 39a662651f6b46db0ce57dbff5fb9828c9d22643: pinned NCore input, 30,000 checkpoint steps, USDZ, 38 rig-offset novel views, native metrics and decoded Rerun. All 216 published objects passed independent readback; actual demo view fetched byte-identical canonical native HTML with no presentation repair. Collision geometry and navigation readiness are outside this Gaussian reconstruction qualification.",
+      "evidence": [
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
+        "docs/workbench/evidence/public-demos/nurec.json"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The catalog uses example-bucket. A new run must supply a writable bucket and unique run prefix; historical S3 handoffs are proven only for the completed run.",
+      "evidence": [
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
+        "docs/workbench/evidence/public-demos/nurec.json"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The pinned public sample was freshly prepared and consumed by the full demo at source 39a662651. Its hashes and decoded outputs are qualified in the receipt. Future sample overrides require their own input checks.",
+      "evidence": [
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
+        "docs/workbench/evidence/public-demos/nurec.json"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Each operator must supply S3 credentials, NGC image access and the matching Kubernetes pull secret. HF access is needed only for gated or private dataset overrides; historical authorization does not verify a future operator.",
+      "evidence": [
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
+        "docs/workbench/evidence/public-demos/nurec.json"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The receipt binds actual native worker image digests and staged source to revision 39a662651. Each future run must verify its selected image and intended source before execution.",
+      "evidence": [
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
+        "docs/workbench/evidence/public-demos/nurec.json"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The full demo completed on RTX PRO 6000 Blackwell; process-bound GPU observations and complete output checks are recorded in the receipt. Every new target still needs its own GPU/runtime/scratch health checks; L40S was not qualified by this run.",
+      "evidence": [
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
+        "docs/workbench/evidence/public-demos/nurec.json"
+      ]
+    }
+  }
+}

@@ -1,0 +1,2 @@
+# Preserve the hash-pinned upstream license verbatim, including its final blank line.
+npa/scripts/image_byte_scan/LICENSE-pyahocorasick whitespace=-blank-at-eof

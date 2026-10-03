@@ -36,8 +36,8 @@ If the `npa` CLI is broken during a run, document the breakage as a structured p
 
 ## Autonomous Run Rhythm
 
-Use separate agents by phase: Build with Codex, verify with Codex in read-only mode, review with Claude Code for architecture, then cleanup with Codex in a scoped pass.
+Build the change, verify it in read-only mode, then perform scoped cleanup.
 
-Trigger a Claude Code review after 3 or more commits land. The CC agent must differ from the building agent.
+Run Claude Code reviews only when explicitly requested by the operator.
 
 Root `AGENTS.md` is a lightweight index; details belong in skill files.

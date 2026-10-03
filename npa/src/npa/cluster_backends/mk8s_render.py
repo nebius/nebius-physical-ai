@@ -10,6 +10,8 @@ its provider domain for the target region, and drive it with a rendered
 from __future__ import annotations
 
 from pathlib import Path
+import re
+import json
 from typing import Any, Final
 
 from npa.cluster.gpu_driver import (
@@ -21,6 +23,10 @@ from npa.cluster.gpu_driver import (
     recipe_driver_tfvars,
     resolve_gpu_driver_strategy,
 )
+from npa.cluster_backends.kuberay import (
+    validate_kuberay,
+    validate_recipe_kuberay_compatibility,
+)
 from npa.cluster_backends.mig import (
     GPU_DEVICE_PLUGIN_VERSION,
     GPU_DRIVER_VERSION,
@@ -28,6 +34,38 @@ from npa.cluster_backends.mig import (
     GPU_MIG_MANAGER_VERSION,
     GPU_OPERATOR_VERSION,
 )
+
+
+def patch_explicit_region_defaults(text: str) -> str:
+    """Allow explicit node selectors in regions absent from older recipes.
+
+    Preserve the upstream defaults for known regions. Unknown regions acquire
+    no inferred platform, preset, or fabric; inactive pools may remain null.
+    Only rewrite the legacy expressions whose semantics are known here.
+    """
+
+    text = re.sub(
+        r"(current_region_defaults\s*=\s*)local\.regions_default\[var\.region\]",
+        r"\1try(local.regions_default[var.region], {})",
+        text,
+    )
+    for field in (
+        "cpu_nodes_platform",
+        "cpu_nodes_preset",
+        "gpu_nodes_platform",
+        "gpu_nodes_preset",
+        "infiniband_fabric",
+    ):
+        expression = f"coalesce(var.{field}, local.current_region_defaults.{field})"
+        # Looking up a missing default must not discard an explicit value:
+        # Terraform eagerly evaluates function arguments before coalesce.
+        replacement = (
+            f"try(coalesce(var.{field}, "
+            f"try(local.current_region_defaults.{field}, null)), null)"
+        )
+        text = text.replace(expression, replacement)
+    return text
+
 
 _EU_DOMAIN = "api.eu.nebius.cloud:443"
 
@@ -61,6 +99,30 @@ def _tfstr(value: str) -> str:
     return f'"{escaped}"'
 
 
+def gpu_node_group_layout(cluster: Any) -> tuple[int, int]:
+    """Return ``(nodes_per_group, group_count)`` for the GPU pool.
+
+    Independent PCIe workers backed by strict reserved capacity use one node
+    per managed node group. This keeps each provider placement in its own
+    reconciliation unit; a scheduling timeout for one reservation slot can no
+    longer strand a healthy sibling behind a no-op group-level Terraform plan.
+    Fabric-coupled GPU clusters retain the single-group topology required for
+    their collective lifecycle.
+    """
+
+    gpu = cluster.gpu_nodes
+    count = gpu.count if gpu else 0
+    if count <= 0:
+        return 0, 0
+    if (
+        gpu.capacity_block_group
+        and count > 1
+        and not cluster.resolved_enable_gpu_cluster()
+    ):
+        return 1, count
+    return count, 1
+
+
 def validate_recipe_mig_compatibility(cluster: Any, recipe_dir: Path) -> None:
     """Fail before Terraform when an alternate recipe would drop MIG pins."""
 
@@ -77,6 +139,47 @@ def validate_recipe_mig_compatibility(cluster: Any, recipe_dir: Path) -> None:
         )
 
 
+def validate_recipe_rtx_compatibility(cluster: Any, recipe_dir: Path) -> None:
+    """Reject recipes that cannot bind the operator to the exact RTX pool."""
+
+    if not cluster.gpu_workload_profile:
+        return
+    variable = "gpu_operator_rtx_driver_profile"
+    module = recipe_dir.parent / "modules" / "gpu-operator"
+    required = [
+        (recipe_dir / "helm.tf", rf"rtx_driver_profile\s*=\s*var\.{variable}\b"),
+        (module / "variables.tf", r'variable\s+"rtx_driver_profile"'),
+        (module / "main.tf", r"values\s*=\s*local\.rtx_driver_values\b"),
+    ]
+    if cluster.gpu_driver_package_repositories:
+        required.extend(
+            [
+                (
+                    recipe_dir / "variables.tf",
+                    r"package_repositories\s*=\s*optional\(map\(string\)",
+                ),
+                (
+                    module / "variables.tf",
+                    r"package_repositories\s*=\s*optional\(map\(string\)",
+                ),
+                (
+                    module / "main.tf",
+                    r"data\s*=\s*var\.rtx_driver_profile\.package_repositories\b",
+                ),
+            ]
+        )
+    if variable not in inspect_recipe_declared_variables(recipe_dir) or any(
+        not path.is_file() or not re.search(pattern, path.read_text())
+        for path, pattern in required
+    ):
+        raise GpuDriverStrategyError(
+            "Selected k8s-training recipe cannot honor the exact RTX rendering "
+            "driver selector. Use the vendored recipe or a compatible "
+            "--k8s-training-ref/--k8s-training-dir with "
+            "gpu_operator_rtx_driver_profile wired to the GPU Operator."
+        )
+
+
 def render_tfvars(
     cluster: Any,
     *,
@@ -90,6 +193,7 @@ def render_tfvars(
     apply time; everything here maps to the recipe's own variable names.
     """
 
+    validate_kuberay(cluster)
     cpu = cluster.cpu_nodes
     gpu = cluster.gpu_nodes
     lines: list[str] = [
@@ -113,7 +217,26 @@ def render_tfvars(
     mig = cluster.mig
     mig_enabled = bool(mig and mig.enabled)
     if recipe_dir is not None:
+        validate_recipe_kuberay_compatibility(cluster, recipe_dir)
         validate_recipe_mig_compatibility(cluster, recipe_dir)
+        validate_recipe_rtx_compatibility(cluster, recipe_dir)
+    if cluster.gpu_workload_profile:
+        lines.append(
+            "gpu_operator_rtx_driver_profile = "
+            + json.dumps(
+                {
+                    "platform": gpu.platform,
+                    "preset": gpu.preset,
+                    **(
+                        {
+                            "package_repositories": cluster.gpu_driver_package_repositories
+                        }
+                        if cluster.gpu_driver_package_repositories
+                        else {}
+                    ),
+                }
+            )
+        )
     lines.append(
         f"mig_strategy                 = {_tfstr(mig.strategy if mig_enabled else 'none')}"
     )
@@ -165,9 +288,9 @@ def render_tfvars(
         cpu_disk = cpu.disk_size_gib if cpu.disk_size_gib > 0 else 128
         lines.append(f"cpu_disk_size = {_tfstr(str(cpu_disk))}")
 
-    gpu_count = gpu.count if gpu else 0
-    lines.append(f"gpu_nodes_fixed_count_per_group = {gpu_count}")
-    lines.append(f"gpu_node_groups = {1 if gpu_count > 0 else 0}")
+    gpu_nodes_per_group, gpu_group_count = gpu_node_group_layout(cluster)
+    lines.append(f"gpu_nodes_fixed_count_per_group = {gpu_nodes_per_group}")
+    lines.append(f"gpu_node_groups = {gpu_group_count}")
     if gpu and gpu.count > 0:
         lines.append(f"gpu_nodes_platform = {_tfstr(gpu.platform)}")
         if gpu.preset:
@@ -202,18 +325,37 @@ def render_tfvars(
     )
     lines.append(f"filestore_mount_path = {_tfstr(cluster.filestore_mount_path)}")
     lines.append(f"filestore_mount_tag = {_tfstr(cluster.filestore_mount_tag)}")
+    filesystem_csi_repository = (
+        f"chart_repository = {_tfstr(cluster.filesystem_csi_chart_repository)}, "
+        if cluster.filesystem_csi_chart_repository
+        else ""
+    )
     lines.append(
-        'filesystem_csi = { chart_version = "0.1.6", namespace = "kube-system", '
-        "make_default_storage_class = true, previous_default_storage_class_name = "
-        '"compute-csi-default-sc" }'
+        f'filesystem_csi = {{ {filesystem_csi_repository}chart_version = "0.1.6", '
+        'namespace = "kube-system", make_default_storage_class = true, '
+        'previous_default_storage_class_name = "compute-csi-default-sc" }'
     )
 
-    # Keep the fleet cheap and quiet: no observability/logging/ray/gatekeeper.
+    # Observability and applications remain opt-in.
     lines.append("enable_nebius_o11y_agent = false")
     lines.append("enable_grafana           = false")
     lines.append("enable_prometheus        = false")
     lines.append("collectK8sClusterMetrics = false")
-    lines.append("enable_kuberay_cluster   = false")
+    kuberay = cluster.kuberay
+    if kuberay is not None and kuberay.enabled:
+        lines.append("enable_kuberay_cluster   = true")
+        lines.append(
+            "kuberay_cpu_cluster = "
+            + json.dumps(
+                {
+                    "worker_replicas": kuberay.worker_replicas,
+                    "worker_cpus": kuberay.worker_cpus,
+                    "worker_memory_gib": kuberay.worker_memory_gib,
+                }
+            )
+        )
+    else:
+        lines.append("enable_kuberay_cluster   = false")
     lines.append("enable_kuberay_service   = false")
     lines.append("enable_opa_gatekeeper    = false")
     # loki has no default in the recipe; it must be set explicitly.

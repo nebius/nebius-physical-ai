@@ -32,7 +32,9 @@ def _workbench(host: str) -> WorkbenchConfig:
     return WorkbenchConfig(
         endpoint=f"http://{host}:8080",
         ssh=SSHConfig(host=host, user="ubuntu", key_path="key"),
-        storage=StorageConfig(checkpoint_bucket="s3://bucket/checkpoints/", endpoint_url="url"),
+        storage=StorageConfig(
+            checkpoint_bucket="s3://bucket/checkpoints/", endpoint_url="url"
+        ),
     )
 
 
@@ -64,7 +66,9 @@ def test_run_status_and_stage_logs_read_files(
     assert distill.get_stage_logs("run-1", "convert") == "convert logs"
 
 
-def test_run_status_and_logs_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_status_and_logs_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
 
     with pytest.raises(DistillationError, match="Run not found"):
@@ -141,7 +145,9 @@ def test_run_distillation_local_saves_failed_stage(
     monkeypatch.setitem(
         sys.modules,
         "npa.genesis.train_teacher",
-        SimpleNamespace(train_teacher=mocker.MagicMock(side_effect=RuntimeError("boom"))),
+        SimpleNamespace(
+            train_teacher=mocker.MagicMock(side_effect=RuntimeError("boom"))
+        ),
     )
 
     with pytest.raises(DistillationError, match="train_teacher"):
@@ -151,9 +157,7 @@ def test_run_distillation_local_saves_failed_stage(
     assert saved["stages"]["train_teacher"]["status"] == "failed"
 
 
-def test_run_remote_sequences_stages_and_cross_vm_s3(
-    tmp_path: Path, mocker
-) -> None:
+def test_run_remote_sequences_stages_and_cross_vm_s3(tmp_path: Path, mocker) -> None:
     cfg = RunConfig(
         run_id="run-1",
         project="proj",
@@ -188,7 +192,12 @@ def test_run_remote_sequences_stages_and_cross_vm_s3(
 
     assert result["status"] == "success"
     assert list(result["stages"]) == distill.STAGES
-    assert [call[0] for call in sync_calls] == ["upload", "download", "upload", "download"]
+    assert [call[0] for call in sync_calls] == [
+        "upload",
+        "download",
+        "upload",
+        "download",
+    ]
     assert any("train-teacher" in cmd for ssh in ssh_instances for cmd in ssh.commands)
     assert any("train-student" in cmd for ssh in ssh_instances for cmd in ssh.commands)
 
@@ -265,14 +274,15 @@ def test_two_vm_run_stage_returns_failure_on_nonzero_and_ssh_error() -> None:
 
     ssh_error = FakeSSH()
     ssh_error.run = lambda *_args, **_kwargs: (_ for _ in ()).throw(SSHError("down"))  # type: ignore[method-assign]
-    assert distill_two_vm._run_stage(
-        ssh_error, "genesis", "stage", "cmd", "/remote"
-    )["status"] == "failed"
+    assert (
+        distill_two_vm._run_stage(ssh_error, "genesis", "stage", "cmd", "/remote")[
+            "status"
+        ]
+        == "failed"
+    )
 
 
-def test_two_vm_pipeline_orders_stages_and_s3_handoffs(
-    tmp_path: Path, mocker
-) -> None:
+def test_two_vm_pipeline_orders_stages_and_s3_handoffs(tmp_path: Path, mocker) -> None:
     sim = FakeSSH("sim")
     train = FakeSSH("train")
     stage_calls: list[str] = []

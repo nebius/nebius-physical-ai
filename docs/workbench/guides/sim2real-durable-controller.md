@@ -1,5 +1,7 @@
 # Sim2Real durability: standard workflow runtime
 
+[Guides](README.md)
+
 The former Sim2Real-specific controller is retired from the canonical path.
 Durability now belongs to the standard `npa.workflow` runtime, not to a driver
 pod that creates and watches child Jobs.
@@ -15,8 +17,9 @@ and image identities uses `--resume` to:
 4. restart only incomplete work; and
 5. continue across nested-loop and finalization barriers.
 
-The Stage 8 Reason wave therefore commits both lane outputs before Stage 9 can
-consume them. Finalization similarly resumes from the last completed state and
+The single hosted Cosmos3 Stage 8 evaluator therefore commits its output before
+Stage 9 verifies that it covers exactly the authoritative Stage 7 rollout set.
+Finalization similarly resumes from the last completed state and
 retains the exact gold report/render lineage. Mutable image tags and mismatched
 source SHAs fail closed at the stage boundary.
 

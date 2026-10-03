@@ -24,6 +24,7 @@ MAX_IMAGE_DATA_URL_CHARS = 2_500_000
 
 VISUAL_KINDS = frozenset({"rerun", "foxglove", "video", "image", "data", "unknown"})
 
+
 def is_offline_groot_learning_context(
     visual_context: Mapping[str, Any] | None,
 ) -> bool:
@@ -61,6 +62,7 @@ def learning_visual_fact_block(visual_context: Mapping[str, Any] | None) -> str:
         "Any response contradicting these facts is incorrect."
     )
 
+
 # Token → operator-facing hint. Matched against joined metadata text only.
 _DOMAIN_HINT_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (
@@ -85,7 +87,16 @@ _DOMAIN_HINT_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
         "object, and task progress when visible.",
     ),
     (
-        ("genesis", "mujoco", "mjlab", "locomotion", "sonic", "g1", "trajectory", "skeleton"),
+        (
+            "genesis",
+            "mujoco",
+            "mjlab",
+            "locomotion",
+            "sonic",
+            "g1",
+            "trajectory",
+            "skeleton",
+        ),
         "Metadata suggests locomotion / humanoid trajectory imagery — expect dark 3D "
         "grids with colored skeleton/wireframe overlays; that is valid content, not a "
         "blank or uniform-gray frame. Describe gait, pose overlap, and contact cues.",
@@ -273,7 +284,10 @@ def learning_visual_reply_needs_correction(
     if not is_offline_groot_learning_context(meta):
         return False
     lowered = str(reply or "").lower()
-    return any(_contains_affirmative_phrase(lowered, phrase) for phrase in _LEARNING_REPLY_CONTRADICTIONS)
+    return any(
+        _contains_affirmative_phrase(lowered, phrase)
+        for phrase in _LEARNING_REPLY_CONTRADICTIONS
+    )
 
 
 def _contains_affirmative_phrase(text: str, phrase: str) -> bool:
@@ -293,10 +307,15 @@ def has_quality_captured_frame(meta: Mapping[str, Any] | None) -> bool:
     values = meta if isinstance(meta, Mapping) else {}
     quality = str(values.get("frame_quality") or "").strip().lower()
     capture = str(values.get("capture") or "").strip().lower()
-    blank = values.get("frame_blank") is True or quality in {"blank", "uniform", "unavailable"}
+    blank = values.get("frame_blank") is True or quality in {
+        "blank",
+        "uniform",
+        "unavailable",
+    }
     return (
         values.get("has_image") is True
-        and capture in {"frame", "captured-frame", "screenshot", "quality-captured-frame"}
+        and capture
+        in {"frame", "captured-frame", "screenshot", "quality-captured-frame"}
         and quality in {"captured", "rendered", "nonblank", "quality-captured"}
         and not blank
     )
@@ -374,7 +393,9 @@ def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> st
     provenance = str(meta.get("provenance") or "").strip()
     if provenance:
         lines.append("")
-        lines.append("Pipeline provenance (where this data came from + components that produced it):")
+        lines.append(
+            "Pipeline provenance (where this data came from + components that produced it):"
+        )
         for part in provenance.split("; "):
             if part.strip():
                 lines.append(f"- {part.strip()[:200]}")
@@ -451,7 +472,9 @@ def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> st
 def build_metadata_only_visual_reply(meta: Mapping[str, Any] | None) -> str:
     """Deterministic Describe-this reply when no frame is attached (0 tokens)."""
     meta = meta if isinstance(meta, Mapping) else {}
-    kind = normalize_visual_kind(str(meta.get("kind") or meta.get("visual_kind") or "unknown"))
+    kind = normalize_visual_kind(
+        str(meta.get("kind") or meta.get("visual_kind") or "unknown")
+    )
     run_id = str(meta.get("run_id") or "").strip() or "—"
     stage = str(meta.get("stage") or "").strip() or "—"
     camera = str(meta.get("camera") or "").strip() or "—"
@@ -541,7 +564,9 @@ def format_visual_context_block(meta: Mapping[str, Any] | None) -> str:
         if len(text) > limit:
             text = text[:limit] + "…"
         lowered = text.lower()
-        if any(token in lowered for token in ("password", "secret", "token=", "ak_", "sk-")):
+        if any(
+            token in lowered for token in ("password", "secret", "token=", "ak_", "sk-")
+        ):
             continue
         lines.append(f"- {key}: `{text}`")
     for hint in infer_visual_domain_hints(meta):
@@ -588,7 +613,9 @@ def has_image_parts(content: Any) -> bool:
     """Return True when content includes image parts or a data-URI image."""
     if isinstance(content, list):
         for part in content:
-            if isinstance(part, dict) and str(part.get("type") or "").startswith("image"):
+            if isinstance(part, dict) and str(part.get("type") or "").startswith(
+                "image"
+            ):
                 return True
         return False
     return isinstance(content, str) and "data:image/" in content
@@ -614,7 +641,8 @@ def is_visual_feedback_turn(
     if DESCRIBE_MARKER.lower() in lowered:
         return True
     if "describe this" in lowered and any(
-        token in lowered for token in ("visual", "viewer", "rerun", "video", "image", "frame")
+        token in lowered
+        for token in ("visual", "viewer", "rerun", "video", "image", "frame")
     ):
         return True
     return False
@@ -864,7 +892,9 @@ def compare_rollouts(
         delta = round(sr_b - sr_a, 6)
         if delta < 0:
             regressed = True
-            notes.append(f"{label_b} success_rate dropped {abs(delta):.4f} vs {label_a}")
+            notes.append(
+                f"{label_b} success_rate dropped {abs(delta):.4f} vs {label_a}"
+            )
         elif delta > 0:
             improved = True
             notes.append(f"{label_b} success_rate improved {delta:.4f} vs {label_a}")

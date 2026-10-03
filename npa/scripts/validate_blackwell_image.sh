@@ -2,7 +2,7 @@
 #
 # validate_blackwell_image.sh - check a workbench image against a Blackwell target.
 #
-# Runs npa/docker/workbench/base/cuda13-b300/scripts/check_torch_gpu_arch.py inside the image. Two modes:
+# Runs npa/docker/workbench/base/cuda13-blackwell/scripts/check_torch_gpu_arch.py inside the image. Two modes:
 #
 #   build-host mode (no GPU)  - proves the torch wheel ships SASS for the target
 #                               architecture. Enough to catch a cu124/cu126 wheel
@@ -18,6 +18,7 @@
 # USAGE
 #   validate_blackwell_image.sh <image> [--target b200|b300|rtx6000|hopper]
 #                                       [--gpu] [--python PATH] [--json]
+#   validate_blackwell_image.sh --current-container [the same options]
 #
 # EXAMPLES
 #   # On the dev VM, before pushing a tag:
@@ -30,13 +31,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Piped in over stdin rather than run from /npa inside the image, so this also
 # works against images that are not derived from npa-base.
-CHECKER="$SCRIPT_DIR/../docker/workbench/base/cuda13-b300/scripts/check_torch_gpu_arch.py"
+CHECKER="$SCRIPT_DIR/../docker/workbench/base/cuda13-blackwell/scripts/check_torch_gpu_arch.py"
 
 IMAGE=""
 TARGET="b200"
 USE_GPU=0
 IN_PYTHON="python"
 JSON=0
+CURRENT_CONTAINER=0
 
 usage() { grep -E '^#( |$)' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -46,6 +48,7 @@ while [ "$#" -gt 0 ]; do
     --gpu) USE_GPU=1; shift ;;
     --python) IN_PYTHON="${2:?--python requires a value}"; shift 2 ;;
     --json) JSON=1; shift ;;
+    --current-container) CURRENT_CONTAINER=1; shift ;;
     --help|-h) usage; exit 0 ;;
     -*) echo "ERROR: unknown argument: $1" >&2; usage >&2; exit 2 ;;
     *)
@@ -54,7 +57,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ -z "$IMAGE" ]; then
+if [ -z "$IMAGE" ] && [ "$CURRENT_CONTAINER" -eq 0 ]; then
   echo "ERROR: an image reference is required" >&2
   usage >&2
   exit 2
@@ -86,5 +89,10 @@ if [ "$JSON" -eq 1 ]; then
   ARGS+=(--json)
 fi
 
-echo "validating $IMAGE against target=$TARGET (require arch $REQUIRE_ARCH, capability $REQUIRE_CAP)"
-docker "${DOCKER_ARGS[@]}" --entrypoint "$IN_PYTHON" "$IMAGE" - "${ARGS[@]}" < "$CHECKER"
+if [ "$CURRENT_CONTAINER" -eq 1 ]; then
+  echo "validating current container against target=$TARGET (require arch $REQUIRE_ARCH, capability $REQUIRE_CAP)"
+  "$IN_PYTHON" - "${ARGS[@]}" < "$CHECKER"
+else
+  echo "validating $IMAGE against target=$TARGET (require arch $REQUIRE_ARCH, capability $REQUIRE_CAP)"
+  docker "${DOCKER_ARGS[@]}" --entrypoint "$IN_PYTHON" "$IMAGE" - "${ARGS[@]}" < "$CHECKER"
+fi

@@ -23,8 +23,13 @@ GLOBAL_CONFIG = "skypilot-kubernetes-rtxpro.yaml"
 EXPECTED_PROFILES = frozenset(
     {
         "byof-container-smoke-rtxpro.yaml",
+        "byof-solution-smoke-robomimic-b200-gpu.yaml",
         "byof-datagen-rtxpro-smoke.yaml",
+        "byof-solution-smoke-gymnasium-robotics-rtxpro-gpu.yaml",
+        "byof-solution-smoke-libero-b200-gpu.yaml",
+        "byof-solution-smoke-libero-customer-b200-gpu.yaml",
         "byof-solution-smoke-openpi-b200-gpu.yaml",
+        "byof-solution-smoke-robotwin-rtxpro-gpu.yaml",
         "byof-solution-smoke-wan22-rtxpro-gpu.yaml",
         "byof-solution-smoke-wan22-b200-4gpu.yaml",
         "byof-solution-smoke-ltx2-rtxpro-gpu.yaml",
@@ -49,7 +54,7 @@ def test_profile_set_is_pinned() -> None:
 
     assert on_disk == EXPECTED_PROFILES, (
         "BYOF profiles changed. A multi-stage pipeline is a workflow: author an "
-        "npa.workflow/v0.0.1 spec under npa/workflows/workbench/npa-workflows/ instead. "
+        "npa.workflow/v0.0.1 spec under workflows/testing/ instead. "
         f"expected {sorted(EXPECTED_PROFILES)}, found {sorted(on_disk)}"
     )
 
@@ -58,7 +63,7 @@ def test_global_config_contains_only_skypilot_config_fields() -> None:
     config = yaml.safe_load((PROFILES / GLOBAL_CONFIG).read_text(encoding="utf-8"))
 
     assert set(config) == {"kubernetes"}
-    assert config["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"]
+    assert config["kubernetes"] == {}
 
 
 @pytest.mark.parametrize("path", _task_profiles(), ids=lambda p: p.name)

@@ -12,10 +12,14 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from typing import Callable, Mapping, TextIO
+from typing import Callable, TextIO
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from npa.clients.nebius_auth import strip_ambient_token_env
+from npa.clients.nebius_auth import (
+    ProfileVerification,
+    strip_ambient_token_env,
+    verify_profile,
+)
 
 
 class VmAuthError(RuntimeError):
@@ -47,15 +51,6 @@ class AuthInstructions:
     browser_url: str
     callback_port: int
     ssh_command: str
-
-
-@dataclass(frozen=True)
-class ProfileVerification:
-    """Secret-free proof that a profile identifies and can mint an IAM token."""
-
-    profile: str
-    identity_verified: bool
-    iam_token_minted: bool
 
 
 def _clean_url(raw: str) -> str:
@@ -226,37 +221,6 @@ def _stop_process(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=2)
     except (subprocess.TimeoutExpired, TypeError):
         pass
-
-
-def verify_profile(
-    profile: str = "",
-    *,
-    nebius_cli: str = "nebius",
-    env: Mapping[str, str] | None = None,
-    timeout: int = 30,
-    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-) -> ProfileVerification:
-    """Verify identity and IAM minting while discarding both command outputs."""
-
-    clean_env = strip_ambient_token_env(env)
-    prefix = [nebius_cli, *(["--profile", profile] if profile else [])]
-    common = {
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-        "timeout": timeout,
-        "check": False,
-        "env": clean_env,
-    }
-    try:
-        identity = runner([*prefix, "iam", "whoami"], **common)
-        minted = runner([*prefix, "iam", "get-access-token"], **common)
-    except (OSError, subprocess.SubprocessError):
-        return ProfileVerification(profile, False, False)
-    return ProfileVerification(
-        profile,
-        getattr(identity, "returncode", 1) == 0,
-        getattr(minted, "returncode", 1) == 0,
-    )
 
 
 def run_vm_profile_auth(

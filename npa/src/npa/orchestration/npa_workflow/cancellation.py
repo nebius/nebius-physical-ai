@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
@@ -21,6 +22,7 @@ _NONTERMINAL = {
     "STARTING",
     "SUBMITTED",
     "RUNNING",
+    "WINDING_DOWN",
     "RECOVERING",
     "RETRYING",
     "CANCELLING",
@@ -77,20 +79,41 @@ class WorkflowJobRecord:
         }
 
 
+def _durable_unresolved_states(record: WorkflowJobRecord) -> list[str]:
+    states = sorted(
+        {normalize_workflow_state(item) for item in record.persisted_states if item}
+    )
+    if not states or all(is_terminal_workflow_state(state) for state in states):
+        return []
+    return states
+
+
 @dataclass
 class CancellationAssessment:
     """Cancellation decision made before any mutating SkyPilot call."""
 
     detected_state: str
+    run_id: str = ""
     jobs: list[WorkflowJobRecord] = field(default_factory=list)
     active_jobs: list[WorkflowJobRecord] = field(default_factory=list)
     terminal_jobs: list[WorkflowJobRecord] = field(default_factory=list)
     absent_jobs: list[WorkflowJobRecord] = field(default_factory=list)
+    absence_conflict_jobs: list[WorkflowJobRecord] = field(default_factory=list)
+    absence_conflict_errors: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     @property
     def no_cancellation_needed(self) -> bool:
         return not self.active_jobs and not self.errors
+
+    @property
+    def only_verified_absence_conflicts(self) -> bool:
+        """Return whether exact absence contradicts durable state exclusively."""
+
+        return (
+            bool(self.absence_conflict_jobs)
+            and self.errors == self.absence_conflict_errors
+        )
 
 
 LookupFn = Callable[..., ManagedJobEvidence]
@@ -101,14 +124,17 @@ def assess_run_cancellation(
     *,
     sky_bin: str = "",
     lookup: LookupFn | None = None,
+    exact_job_id: str = "",
+    isolated_config_dir: Path | None = None,
 ) -> CancellationAssessment:
     """Inspect every durable job/stage record and identify only active jobs.
 
     Root manifests predate runtime waves and may legitimately have no singular
     ``sky_job_id``.  The runtime ledger, per-step/per-stage records, and exact
     SkyPilot queue evidence are therefore considered together.  Provider/auth
-    unavailability remains an error; a successful exact lookup returning absence
-    is authoritative convergence.
+    unavailability remains an error. A successful exact lookup returning absence
+    is convergence only when durable state makes no contradictory non-terminal
+    claim for that identity.
     """
 
     records: dict[str, WorkflowJobRecord] = {}
@@ -125,6 +151,11 @@ def assess_run_cancellation(
         if not isinstance(wave, dict):
             errors.append(f"runtime wave {index} is malformed")
     runtime_waves = [item for item in raw_runtime_waves if isinstance(item, dict)]
+    failed_cancellations = {
+        str(wave.get("job_id") or wave.get("sky_job_id") or "")
+        for wave in runtime_waves
+        if (wave.get("cancellation") or {}).get("state") == "failed"
+    }
 
     def add_job(
         job_id: object,
@@ -142,7 +173,8 @@ def assess_run_cancellation(
                 and not runtime_waves
             )
             if (
-                cleaned_state in _NONTERMINAL
+                cleaned_state
+                and not is_terminal_workflow_state(cleaned_state)
                 and source != "root manifest"
                 and not child_uses_root_job
             ):
@@ -162,6 +194,11 @@ def assess_run_cancellation(
 
     manifest = resolution.manifest if isinstance(resolution.manifest, dict) else {}
     manifest_state = normalize_workflow_state(manifest.get("status"))
+    unresolved_manifest_state = (
+        manifest_state
+        if manifest_state and not is_terminal_workflow_state(manifest_state)
+        else ""
+    )
     root_job_id = str(manifest.get("sky_job_id") or "").strip()
     runtime_job_ids = {
         str(wave.get("job_id") or wave.get("sky_job_id") or "").strip()
@@ -181,8 +218,11 @@ def assess_run_cancellation(
     for index, step in enumerate(manifest.get("steps") or []):
         if not isinstance(step, dict):
             continue
-        step_state = normalize_workflow_state(
-            step.get("sky_status") or step.get("status") or step.get("state")
+        step_state = (
+            normalize_workflow_state(
+                step.get("sky_status") or step.get("status") or step.get("state")
+            )
+            or unresolved_manifest_state
         )
         step_job_id = str(step.get("job_id") or step.get("sky_job_id") or "").strip()
         if not runtime_waves or (
@@ -212,8 +252,11 @@ def assess_run_cancellation(
                 else:
                     if isinstance(persisted, dict):
                         info.update(persisted)
-            stage_state = normalize_workflow_state(
-                info.get("state") or info.get("status") or info.get("sky_status")
+            stage_state = (
+                normalize_workflow_state(
+                    info.get("state") or info.get("status") or info.get("sky_status")
+                )
+                or unresolved_manifest_state
             )
             if stage_state:
                 stage_states.append(stage_state)
@@ -238,12 +281,18 @@ def assess_run_cancellation(
     runtime_state = normalize_workflow_state(runtime.get("status"))
     if is_terminal_workflow_state(runtime_state):
         terminal_candidates.append(runtime_state)
+    unresolved_runtime_state = (
+        runtime_state
+        if runtime_state and not is_terminal_workflow_state(runtime_state)
+        else ""
+    )
     waves = runtime_waves
     if isinstance(waves, list):
         wave_states: list[str] = []
         for index, wave in enumerate(waves):
-            wave_state = normalize_workflow_state(
-                wave.get("sky_status") or wave.get("status")
+            wave_state = (
+                normalize_workflow_state(wave.get("sky_status") or wave.get("status"))
+                or unresolved_runtime_state
             )
             if wave_state:
                 wave_states.append(wave_state)
@@ -263,7 +312,7 @@ def assess_run_cancellation(
         add_job(
             launch.get("sky_job_id") or launch.get("job_id"),
             job_name=launch.get("job_name") or resolution.run_id,
-            state=launch.get("status"),
+            state=launch.get("status") or unresolved_manifest_state,
             source="submission receipt",
         )
     resolved_job_id = str(resolution.job_id or "").strip()
@@ -279,6 +328,13 @@ def assess_run_cancellation(
             ),
             source=f"run resolution ({resolution.source or 'exact sources'})",
         )
+    explicit_job_id = str(exact_job_id or "").strip()
+    if explicit_job_id:
+        add_job(
+            explicit_job_id,
+            job_name=resolution.job_name or resolution.run_id,
+            source="explicit exact job id",
+        )
 
     # A terminal authoritative run state is sufficient when it carries no job
     # identity. If identities do exist, verify any record not itself terminal so
@@ -288,24 +344,68 @@ def assess_run_cancellation(
     active: list[WorkflowJobRecord] = []
     terminal: list[WorkflowJobRecord] = []
     absent: list[WorkflowJobRecord] = []
+    absence_conflicts: list[WorkflowJobRecord] = []
+    absence_conflict_errors: list[str] = []
     for record in records.values():
-        if record.terminal_in_durable_state:
+        # A recovered controller may reuse a small numeric managed-job ID after
+        # its local database is recreated.  When run resolution already proved
+        # that this exact ID is live and nonterminal, that provider evidence
+        # must outrank an older durable terminal row carrying the same number.
+        # Do not perform a fresh lookup for ordinary terminal records: only the
+        # exact cached evidence from resolution is allowed to reopen one.
+        force_live_lookup = bool(explicit_job_id) and record.job_id == explicit_job_id
+        evidence = (
+            lookup_fn(
+                record.job_name or resolution.run_id,
+                job_id=record.job_id,
+                sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
+            )
+            if force_live_lookup
+            else _cached_evidence(resolution, record.job_id)
+        )
+        cached_live = (
+            evidence is not None
+            and evidence.outcome == "found"
+            and not is_terminal_workflow_state(evidence.status)
+        )
+        if (
+            record.terminal_in_durable_state
+            and not force_live_lookup
+            and not cached_live
+            and record.job_id not in failed_cancellations
+        ):
             record.live_outcome = "durable_terminal"
             record.live_status = _aggregate_terminal_states(record.persisted_states)
             terminal.append(record)
             continue
-        evidence = _cached_evidence(resolution, record.job_id)
         if evidence is None:
             evidence = lookup_fn(
                 record.job_name or resolution.run_id,
                 job_id=record.job_id,
                 sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
             )
         record.live_outcome = evidence.outcome
         record.live_status = normalize_workflow_state(evidence.status)
         record.live_error = evidence.error
         if evidence.outcome == "absent":
             absent.append(record)
+            if record.job_id in failed_cancellations:
+                errors.append(
+                    "original controller absence is unverified after failed cancellation; "
+                    "recover the original caller state or use reconcile-controller"
+                )
+            elif durable_active := _durable_unresolved_states(record):
+                absence_conflicts.append(record)
+                conflict_error = (
+                    f"managed job {record.job_id} is absent from the verified queue "
+                    "while durable state remains non-terminal or unrecognized "
+                    f"({', '.join(durable_active)}); reconcile the original "
+                    "controller before declaring cancellation complete"
+                )
+                absence_conflict_errors.append(conflict_error)
+                errors.append(conflict_error)
         elif evidence.outcome == "unavailable":
             errors.append(
                 f"managed job {record.job_id} ({record.job_name or resolution.run_id}) "
@@ -350,12 +450,49 @@ def assess_run_cancellation(
     )
     return CancellationAssessment(
         detected_state=detected_state,
+        run_id=resolution.run_id,
         jobs=sorted(records.values(), key=lambda item: _job_sort_key(item.job_id)),
         active_jobs=sorted(active, key=lambda item: _job_sort_key(item.job_id)),
         terminal_jobs=sorted(terminal, key=lambda item: _job_sort_key(item.job_id)),
         absent_jobs=sorted(absent, key=lambda item: _job_sort_key(item.job_id)),
+        absence_conflict_jobs=sorted(
+            absence_conflicts, key=lambda item: _job_sort_key(item.job_id)
+        ),
+        absence_conflict_errors=absence_conflict_errors,
         errors=errors,
     )
+
+
+def reverify_active_cancellation(
+    assessment: CancellationAssessment,
+    *,
+    sky_bin: str = "",
+    lookup: LookupFn | None = None,
+    isolated_config_dir: Path | None = None,
+) -> list[str]:
+    """Recheck every exact active identity immediately before cancellation."""
+
+    lookup_fn = lookup or lookup_managed_job
+    errors: list[str] = []
+    for record in assessment.active_jobs:
+        evidence = lookup_fn(
+            record.job_name or assessment.run_id,
+            job_id=record.job_id,
+            sky_bin=sky_bin or None,
+            isolated_config_dir=isolated_config_dir,
+        )
+        status = normalize_workflow_state(evidence.status)
+        if evidence.outcome != "found":
+            errors.append(
+                f"exact job {record.job_id} changed before cancellation: "
+                f"{evidence.error or evidence.outcome}"
+            )
+        elif status not in _NONTERMINAL:
+            errors.append(
+                f"exact job {record.job_id} is no longer active before cancellation: "
+                f"{status or 'UNKNOWN'}"
+            )
+    return errors
 
 
 def _cached_evidence(

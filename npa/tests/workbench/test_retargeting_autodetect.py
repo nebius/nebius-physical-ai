@@ -25,16 +25,20 @@ def _write_soma_clip(clip_dir: Path, frames: int = 4) -> None:
     clip_dir.mkdir(parents=True, exist_ok=True)
     header_joint = ",".join(f"joint_{i}" for i in range(29))
     (clip_dir / "joint_pos.csv").write_text(
-        header_joint + "\n" + "\n".join(",".join("0.0" for _ in range(29)) for _ in range(frames)),
+        header_joint
+        + "\n"
+        + "\n".join(",".join("0.0" for _ in range(29)) for _ in range(frames)),
         encoding="utf-8",
     )
     (clip_dir / "body_pos.csv").write_text(
-        ",".join(f"b{i}" for i in range(42)) + "\n"
+        ",".join(f"b{i}" for i in range(42))
+        + "\n"
         + "\n".join(",".join("0.0" for _ in range(42)) for _ in range(frames)),
         encoding="utf-8",
     )
     (clip_dir / "body_quat.csv").write_text(
-        ",".join(f"q{i}" for i in range(56)) + "\n"
+        ",".join(f"q{i}" for i in range(56))
+        + "\n"
         + "\n".join(",".join("0.0" for _ in range(56)) for _ in range(frames)),
         encoding="utf-8",
     )
@@ -54,7 +58,9 @@ def test_detect_soma_csv_parent_dir(tmp_path: Path) -> None:
 def test_detect_bones_seed_csv(tmp_path: Path) -> None:
     header = "Frame,root_translateX,root_translateY,root_translateZ,root_rotateX,root_rotateY,root_rotateZ"
     header += "," + ",".join(f"j{i}_dof" for i in range(29))
-    (tmp_path / "session.csv").write_text(header + "\n" + ",".join("0.0" for _ in range(36)), encoding="utf-8")
+    (tmp_path / "session.csv").write_text(
+        header + "\n" + ",".join("0.0" for _ in range(36)), encoding="utf-8"
+    )
     assert _detect_source_format(tmp_path) == "bones-seed-csv"
 
 

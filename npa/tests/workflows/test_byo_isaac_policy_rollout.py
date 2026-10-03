@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from npa.workflows.sim2real import byo_isaac_policy_rollout as pr
 from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
 
@@ -49,6 +51,7 @@ def test_build_rollout_manifest_keeps_primary_compatibility_and_named_views():
         checkpoint_uri="s3://bucket/model_latest.pt",
         checkpoint_sha256="b" * 64,
         checkpoint_size_bytes=12345,
+        simulation_device="cpu",
         is_trained=True,
         capture={"width": 640, "height": 480, "fps": 10.0},
         camera_metadata_items=[
@@ -80,11 +83,25 @@ def test_build_rollout_manifest_keeps_primary_compatibility_and_named_views():
     )
     assert manifest["policy_checkpoint_sha256"] == "b" * 64
     assert manifest["policy_checkpoint_size_bytes"] == 12345
+    assert manifest["simulation_device"] == "cpu"
 
 
 def test_latest_checkpoint_uri_empty_inputs():
     assert pr.latest_checkpoint_uri("", "run") == ""
     assert pr.latest_checkpoint_uri("bucket", "") == ""
+
+
+def test_camera_coverage_tracks_decision_points_plus_terminal_frame():
+    assert (
+        pr._expected_camera_frame_count(
+            {
+                "decision_points": 32,
+                "horizon_steps": 300,
+                "rollout_stride": 1,
+            }
+        )
+        == 33
+    )
 
 
 def test_write_dryrun_rollouts_layout(tmp_path):
@@ -157,6 +174,7 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert "ROLLOUT_CAMERA_VIEWS_JSON=" in script
     assert 'ROLLOUT_CAPTURE_WIDTH="640"' in script
     assert 'ROLLOUT_CAPTURE_HEIGHT="480"' in script
+    assert "ROLLOUT_SIM_DEVICE=cuda:0" in script
     assert '"name":"side"' in script
     assert '"name":"overhead"' in script
     assert "/opt/npa/isaac-runtime/isaac_rollout.py" in script
@@ -166,6 +184,83 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert m["spec"]["backoffLimit"] == 1
     assert "--portable-root /tmp/npa-isaac-kit" in pr.ISAAC_ROLLOUT_SCRIPT
     assert "kit_args=os.environ.get(" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "device=SIM_DEVICE" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "OnPolicyRunner(env, acfg, log_dir=None, device=SIM_DEVICE)" in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert "get_inference_policy(device=SIM_DEVICE)" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert 'OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")' not in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert 'CameraType = CameraCfg if SIM_DEVICE == "cpu" else TiledCameraCfg' in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert "env_cfg.sim.use_fabric = False" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "CPU physics camera fallback requires ROLLOUT_COUNT=1" in (
+        pr.ISAAC_ROLLOUT_SCRIPT
+    )
+    assert "def _write_rgb_png(path, rgb):" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "from PIL import" not in pr.ISAAC_ROLLOUT_SCRIPT
+    assert '"/rtx/dataWindowNDC/2", 1.0' in pr.ISAAC_ROLLOUT_SCRIPT
+    assert '"/rtx/dataWindow/fitOutputToDataWindow", False' in (pr.ISAAC_ROLLOUT_SCRIPT)
+    assert "if arr.ndim == 3:" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "arr = arr[None, ...]" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert 'get_annotator("rgb", device="cuda:0")' in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "annotator.attach(sensor.render_product_paths)" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "arr = arr.view(np.uint8)" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert pr.ISAAC_ROLLOUT_SCRIPT.index(
+        "obs, _, dones, extras = env.step(actions)"
+    ) < (pr.ISAAC_ROLLOUT_SCRIPT.index("capture(_step)"))
+    assert "_write_rgb_png(os.path.join(d, name), arr[i])" in (pr.ISAAC_ROLLOUT_SCRIPT)
+    assert '"simulation_device": SIM_DEVICE' in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "CAPTURE_STEPS = [" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert '"expected_frames_per_view": len(CAPTURE_STEPS)' in (pr.ISAAC_ROLLOUT_SCRIPT)
+    assert '"sample_steps": SAMPLE_STEPS' in pr.ISAAC_ROLLOUT_SCRIPT
+
+
+def test_camera_coverage_counts_sampled_decisions_plus_terminal_frame():
+    capture = {
+        "decision_points": 8,
+        "horizon_steps": 300,
+        "rollout_stride": 1,
+    }
+    assert pr._expected_camera_frame_count(capture) == 9
+
+
+def test_camera_coverage_applies_stride_to_samples_but_always_keeps_terminal():
+    capture = {
+        "decision_points": 8,
+        "horizon_steps": 300,
+        "rollout_stride": 2,
+        "sample_steps": [0, 42, 85, 128, 170, 213, 256, 299],
+    }
+    assert pr._expected_camera_frame_count(capture) == 6
+
+
+def test_rollout_job_can_select_cpu_physics_without_releasing_gpu(
+    monkeypatch,
+):
+    monkeypatch.setenv("NPA_SIM2REAL_ISAAC_DEVICE", "cpu")
+    manifest = pr.build_isaac_rollout_job_manifest(
+        job_name="s2r-byo-isaac-roll-run1-cpu",
+        run_id="run1",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        rollout_count=1,
+        steps_per_rollout=1,
+        checkpoint_uri="",
+        out_s3_prefix="s3://b/sim2real-b/run1/byo-rollouts/cpu",
+        s3_endpoint="",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    )
+
+    script = _manifest_script(manifest)
+    assert "ROLLOUT_SIM_DEVICE=cpu" in script
+    resources = manifest["spec"]["template"]["spec"]["containers"][0]["resources"]
+    assert resources["requests"]["nvidia.com/gpu"] == "1"
+    assert resources["limits"]["nvidia.com/gpu"] == "1"
 
 
 def test_untrained_job_manifest_skips_download():
@@ -186,6 +281,123 @@ def test_untrained_job_manifest_skips_download():
     script = _manifest_script(m)
     assert "npa.workflows.sim2real.isaac_job_io download" not in script
     assert 'ROLLOUT_CKPT_LOCAL=""' in script
+
+
+def test_materialize_uses_declared_policy_capture_cadence(tmp_path, monkeypatch):
+    class _FakeS3:
+        def download_file(self, _bucket: str, _key: str, local: str) -> None:
+            Path(local).write_bytes(b"png")
+
+    class _FakeBoto3:
+        def client(self, *_args, **_kwargs):
+            return _FakeS3()
+
+    monkeypatch.setitem(sys.modules, "boto3", _FakeBoto3())
+    view_names = ("primary", "side", "overhead")
+    frames = {
+        view: [f"camera-{view}-{index:03d}.png" for index in range(9)]
+        for view in view_names
+    }
+    digest = "scenario-digest"
+    meta = {
+        "note": "rollout_ok_untrained",
+        "policy_trained": False,
+        "capture": {
+            "decision_points": 8,
+            "horizon_steps": 300,
+            "rollout_stride": 1,
+            "expected_frames_per_view": 9,
+        },
+        "camera_metadata": [{"name": view} for view in view_names],
+        "applied_scenarios": {
+            "records": [{"scenario_config_digest": digest, "applied_count": 1}]
+        },
+        "rollouts": [
+            {
+                "rollout_id": "rollout-0000",
+                "frames": frames["primary"],
+                "camera_views": frames,
+                "scenario": {"scenario_config_digest": digest},
+                "actions": [
+                    {
+                        "step": index,
+                        "sim_step": index,
+                        "episode_boundary": _no_reset_boundary(),
+                        "simulator_ground_truth": {"scenario_config_digest": digest},
+                    }
+                    for index in range(8)
+                ],
+            }
+        ],
+    }
+
+    result = pr.materialize_rollout_dirs(
+        tmp_path,
+        meta,
+        "s3://bucket/rollouts",
+        checkpoint_uri="",
+        s3_endpoint="https://storage.example",
+    )
+    assert result == [str(tmp_path / "rollout-0000")]
+
+    meta["capture"]["expected_frames_per_view"] = 10
+    with pytest.raises(RuntimeError, match="camera coverage mismatch"):
+        pr.materialize_rollout_dirs(
+            tmp_path / "wrong",
+            meta,
+            "s3://bucket/rollouts",
+            checkpoint_uri="",
+            s3_endpoint="https://storage.example",
+        )
+
+
+@pytest.mark.parametrize(
+    "rollout_id,frame",
+    [
+        ("../escape", "frame.png"),
+        ("rollout-0000", "../escape.png"),
+        ("rollout-0000", "/escape.png"),
+    ],
+)
+def test_materialize_rejects_remote_manifest_path_escape(
+    tmp_path, monkeypatch, rollout_id, frame
+):
+    from unittest.mock import Mock
+    from npa.clients.storage import StorageError
+
+    s3 = Mock()
+    monkeypatch.setattr("boto3.client", lambda *args, **kwargs: s3)
+    meta = {
+        "note": "rollout_ok_untrained",
+        "capture": {"decision_points": 1, "expected_frames_per_view": 1},
+        "camera_metadata": [{"name": "primary"}],
+        "rollouts": [
+            {
+                "rollout_id": rollout_id,
+                "frames": [frame],
+                "actions": [
+                    {
+                        "step": 0,
+                        "sim_step": 0,
+                        "episode_boundary": _no_reset_boundary(),
+                        "simulator_ground_truth": {"scenario_config_digest": "digest"},
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(StorageError):
+        pr.materialize_rollout_dirs(
+            tmp_path / "rollouts",
+            meta,
+            "s3://bucket/rollouts",
+            checkpoint_uri="",
+            s3_endpoint="",
+        )
+
+    s3.download_file.assert_not_called()
+    assert not (tmp_path / "escape").exists()
 
 
 def test_rollout_manifest_embeds_scenario_and_byo_robot_contract():
@@ -218,7 +430,9 @@ def test_rollout_manifest_embeds_scenario_and_byo_robot_contract():
         task_config={"task_id": "Isaac-Lift-Cube-Franka-v0"},
     )
     script = _manifest_script(manifest)
-    assert "npa.workflows.sim2real.isaac_job_io write-base64" in script
+    assert "base64 --decode > /tmp/rollwork/scenarios.jsonl" in script
+    assert "NPA_ROLLOUT_SCENARIOS_B64" in script
+    assert "--payload" not in script
     assert "/opt/npa/isaac-runtime/isaac_rollout.py" in script
     # Scenario and robot application lives in source baked into the immutable
     # runtime image; it must never be copied into the live Job manifest.
@@ -348,3 +562,15 @@ def test_inline_rollout_provenance_reaches_main_component_record(tmp_path, monke
 
     assert result == []
     assert pr._LAST_GPU_PROVENANCE == proof
+
+
+def _no_reset_boundary():
+    return {
+        "schema": "npa.sim2real.episode_boundary.v1",
+        "simulator_episode_id": 0,
+        "action_episode_id": 0,
+        "reset_events": [],
+        "reset_on_current_step": False,
+        "action_outcome_valid": True,
+        "temporal_credit_valid": True,
+    }

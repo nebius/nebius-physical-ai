@@ -6,7 +6,9 @@
 set -euo pipefail
 
 if [ "$#" -eq 0 ]; then
-  exec npa workbench cosmos3 generate --help
+  # SkyPilot creates the worker pod before it execs bootstrap/setup commands.
+  # Keep a no-argv pod alive across that gap instead of exiting after help.
+  exec sleep infinity
 fi
 
 MODE="$1"

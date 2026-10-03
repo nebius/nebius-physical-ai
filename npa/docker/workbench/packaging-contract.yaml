@@ -1,6 +1,11 @@
 # Machine-readable packaging contract for workbench containers.
 # Enforced by npa/tests/docker/test_packaging_contract.py
 # Human companion: docs/workbench/container-packaging.md
+#
+# This file says which bytes may not be BAKED, which makes them run-time
+# downloads. Where those downloads land, so the operator pays for them once
+# instead of once per run, is npa/src/npa/workbench/model_cache.py and
+# docs/workbench/model-weight-cache.md.
 
 version: 1
 
@@ -103,32 +108,318 @@ redistribution:
         must use the image's own venv python (see Dockerfile.mujoco's
         ARG NPA_IMAGE_PYTHON, which exists exactly because this was a live trap).
       pattern: '(?im)^\s*RUN\b[^\n]*(/isaac-sim/python\.sh|\bisaac-python\b)'
+    - kind: ovrtx_wheel_install
+      why: >-
+        OVRTX declares NVIDIA Proprietary Software. Installing its reviewed
+        hash lock puts the native renderer in the image and makes that complete
+        image private-registry-only unless redistribution rights are separately
+        established.
+      pattern: '(?is)\bRUN\b[^\n]*\b(?:uv\s+)?pip\s+install\b[^\n]*pylock\.ovrtx-runtime'
+    - kind: ovrtx_build_bootstrap
+      why: >-
+        Provisioning OVRTX during an image build bakes NVIDIA's proprietary
+        runtime even if the Dockerfile never spells out pip install.
+      pattern: '(?is)\bRUN\b[^\n]*render_ovrtx[^\n]*--provision-only'
   classes:
+    unvalidated:
+      description: >-
+        Redistribution eligibility is pending exact component and corresponding-source
+        closure. No public development or release publication is permitted.
     public:
       description: >
-        OSS-redistributable. Code is under OSI-approved licenses (Apache-2.0 /
-        BSD-3 / MIT / MPL-2.0); the CUDA/PyTorch base images (docker.io
-        nvidia/cuda, pytorch/pytorch) are freely redistributable; any gated model
-        weights are downloaded at runtime by the operator (never baked in). May
-        be published to a public registry.
+        Eligible for public redistribution under the verified terms of every
+        shipped component, including required notices and source delivery.
+        OSI approval alone does not classify a complete image; FiftyOne's SSPL
+        MongoDB component has separate source-delivery and service-use terms.
+        CUDA/PyTorch payloads require applicable component-specific grants.
+        Gated model weights are downloaded at runtime by the operator, never
+        baked in. Publication still requires the exact-artifact validation gates.
     restricted:
       description: >
         Bakes a runtime we may not redistribute — for NVIDIA Omniverse Kit (Isaac
-        Sim) that means the Kit SDK, models and textures, which are proprietary
-        even though the Isaac Sim SOURCE is Apache-2.0 (both the isaacsim and
-        isaaclab PyPI packages list their license as "NVIDIA Proprietary
-        Software"). Such an image may be built and run by the operator who owns
-        the registry (internal R&D, build-your-own), but hosting it PREBUILT on a
-        public/anonymous registry would make us the third-party redistributor,
-        which requires an NVIDIA AI Enterprise license.
-        Restricted membership is deliberate: cosmos3-serving remains
-        build-your-own under the NVIDIA Deep Learning Container License, and the
-        stale sonic-mujoco variant is quarantined because it inherits restricted
-        baked bytes. Credentials or runtime consent do not alter either result.
+        Sim) that means the proprietary Kit SDK and runtime payloads, even
+        though the Isaac Sim SOURCE is Apache-2.0. Classify exact wheel versions
+        separately: the Arena-selected isaaclab 3.0.0b2.post1 wheel declares
+        BSD-3-Clause; that grant does not cover Isaac Sim 6.0.1.0 or its
+        proprietary runtime dependencies. Such an image may be built and run by
+        the operator who owns the registry (internal R&D, build-your-own), but
+        hosting it PREBUILT on a public/anonymous registry would make us the
+        third-party redistributor, which requires an NVIDIA AI Enterprise license.
+        Membership is deliberately generic and may be empty. Historical
+        Cosmos3-serving and SONIC-MuJoCo digests remain quarantined because they
+        inherited restricted baked bytes; new zero-payload/independent builds do
+        not alter the classification of those old artifacts. Credentials or
+        runtime consent never repair already baked restricted bytes.
       reason: bakes-a-non-redistributable-runtime
+    unvalidated:
+      description: >
+        Proposed neutral bytes whose complete selected base, package, wheel,
+        notice, and source-conveyance closure has not yet been inspected and
+        accepted. This class makes no claim that restricted bytes are present;
+        it also supplies no public redistribution eligibility. Keep the image
+        private and publication-quarantined until an exact built-byte review
+        establishes and records the applicable class.
+      reason: exact-built-byte-license-closure-not-yet-established
 
 # Relative to npa/docker/workbench/
 images:
+  libero:
+    dockerfile: libero/Dockerfile
+    tier: job
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot may start or restart only the preinstalled SSH daemon. The
+      runtime user is non-root, package acquisition is bypassed only after the
+      complete package contract verifies, and no general passwordless sudo is
+      granted.
+    redistribution: public
+    notes: >-
+      Zero-payload neutral bootstrap. LIBERO, robomimic, MuJoCo, PyTorch,
+      CUDA/cuDNN/NCCL/NVIDIA packages, demonstrations, BERT, task/render
+      assets, populated caches, checkpoints, credentials, and outputs are not
+      baked. Runtime materialization requires a short-lived customer/run
+      authorization bound to the exact manifest and uses a non-root atomic
+      cache. Customer credentials prove upstream access, not acceptance. The image remains
+      unbuilt, quarantined, and unvalidated until complete-byte, anonymous-pull,
+      and exact-digest B200 evidence is accepted.
+  antioch:
+    dockerfile: antioch/Dockerfile
+    tier: service
+    ports: [8789]
+    redistribution: public
+    notes: >-
+      CPU-only control-plane wrapper. The proprietary antioch-sim CLI and all
+      operator credentials and scoped terms acceptance are runtime-only in
+      mounted volumes; none is baked. The image includes only redistributable
+      NPA cluster-native tunnel/relay bootstrap and Franka scenario source.
+  paidf-detection-sky:
+    dockerfile: paidf-detection-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    final_user: ubuntu
+    restricted_parent_image: nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. Retains the non-root upstream runtime
+      user; password/root SSH login is disabled and host keys are generated
+      only at runtime. No SSH service is started by the image entrypoint.
+    notes: >-
+      Operator-built compatibility layer over the exact NVIDIA PAIDF
+      auto-labeling service digest. Preserves the vendor service environment
+      and CLI, adds proven missing worker prerequisites and pinned-source
+      checkout support, and forwards orchestrator arguments. A separate writable
+      /opt/npa-venv hosts NPA without modifying the pinned /app/.venv service.
+      Adds no model weights, data or credentials. The accepted operator-private
+      digest passed complete built-layer license/security/SBOM review,
+      exact-digest bootstrap, real RF-DETR inference, and complete native EVG
+      acceptance. The inherited NGC payload remains restricted; this evidence
+      does not grant redistribution rights, and every future digest must repeat
+      the gates.
+  paidf-captioning-sky:
+    dockerfile: paidf-captioning-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    final_user: appuser
+    restricted_parent_image: nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. Retains the non-root upstream runtime
+      user; password/root SSH login is disabled and host keys are generated
+      only at runtime. No SSH service is started by the image entrypoint.
+    notes: >-
+      Operator-built compatibility layer over the exact NVIDIA PAIDF
+      auto-labeling service digest. Preserves the vendor service environment
+      and CLI, adds proven missing worker prerequisites and pinned-source
+      checkout support, and forwards orchestrator arguments. A separate writable
+      /opt/npa-venv hosts NPA without modifying the pinned /app/.venv service.
+      Adds no model weights, data or credentials. The accepted operator-private
+      digest passed complete built-layer license/security/SBOM review,
+      exact-digest bootstrap, real B200 CUVID decoding, and complete native EVG
+      acceptance. The inherited NGC payload remains restricted; this evidence
+      does not grant redistribution rights, and every future digest must repeat
+      the gates.
+  paidf-visual-qa-sky:
+    dockerfile: paidf-visual-qa-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    final_user: appuser
+    restricted_parent_image: nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. Retains the non-root upstream runtime
+      user; password/root SSH login is disabled and host keys are generated
+      only at runtime. No SSH service is started by the image entrypoint.
+    notes: >-
+      Operator-built compatibility layer over the exact NVIDIA PAIDF
+      auto-labeling service digest. Preserves the vendor service environment
+      and CLI, adds proven missing worker prerequisites and pinned-source
+      checkout support, and forwards orchestrator arguments. A separate writable
+      /opt/npa-venv hosts NPA without modifying the pinned /app/.venv service.
+      Adds no model weights, data or credentials. The accepted operator-private
+      digest passed complete built-layer license/security/SBOM review,
+      exact-digest bootstrap, real B200 CUVID decoding, and qualified native EVG
+      protocol acceptance. The inherited NGC payload remains restricted; this
+      evidence does not grant redistribution rights, and every future digest
+      must repeat the gates.
+  paidf-attribute-search-sky:
+    dockerfile: paidf-attribute-search-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    final_user: appuser
+    restricted_parent_image: nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. Retains the non-root upstream runtime
+      user; password/root SSH login is disabled and host keys are generated
+      only at runtime. No SSH service is started by the image entrypoint.
+    notes: >-
+      Operator-built compatibility layer over the exact NVIDIA PAIDF
+      auto-labeling service digest. Preserves the vendor service environment
+      and CLI, adds proven missing worker prerequisites and pinned-source
+      checkout support, and forwards orchestrator arguments. A separate writable
+      /opt/npa-venv hosts NPA without modifying the pinned /app/.venv service.
+      Adds no model weights, data or credentials. The accepted operator-private
+      digest passed complete built-layer license/security/SBOM review,
+      exact-digest bootstrap, and native attribute search in the completed IAA
+      and EVG workflows. The inherited NGC payload remains restricted; this
+      evidence does not grant redistribution rights, and every future digest
+      must repeat the gates.
+  paidf-image-edit-sky:
+    dockerfile: paidf-image-edit-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. The final runtime user is non-root;
+      password/root SSH login is disabled and host keys are generated only at
+      runtime. No credentials or default SSH service are baked into the image.
+    notes: >-
+      Operator-built compatibility layer over the exact upstream vLLM/Omni
+      0.22.0 amd64 digest, replacing the blueprint's vulnerable 0.20 image
+      for CVE-2026-48746. Adds sshd, rsync, sudo, and argument forwarding while
+      preserving the upstream model runtime. An independent /opt/npa-venv
+      hosts NPA so dependency installation cannot replace the vendor stack.
+      No weights or operator inputs are added. The accepted operator-private
+      digest passed complete built-layer license/security/SBOM review,
+      exact-digest bootstrap, a real B200 CUDA check, and the complete native
+      IAA workflow. The resolved dependency closure remains private-registry-only
+      pending separate redistribution review; private access and workload
+      acceptance do not grant redistribution rights. Every future digest must
+      repeat the gates.
+  paidf-event-video-sky:
+    dockerfile: paidf-event-video-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    tier: interactive
+    redistribution: restricted
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. The final runtime user is non-root;
+      password/root SSH login is disabled and host keys are generated only at
+      runtime. No credentials or default SSH service are baked into the image.
+    notes: >-
+      Operator-built compatibility layer over an exact upstream vLLM-Omni
+      image digest. Adds sshd, rsync, sudo, and argument forwarding while
+      preserving the upstream model runtime. Hash-pins the Apache-2.0 NLTK 3.10.3
+      wheel to fix inherited CVE-2026-79675 and updates distribution kernel headers. An independent /opt/npa-venv
+      hosts NPA so dependency installation cannot replace the vendor stack.
+      No weights or operator inputs are added. The accepted operator-private
+      digest passed complete built-layer license/security/SBOM review,
+      exact-digest bootstrap, a real B200 CUDA check, and the complete native
+      EVG workflow. The resolved dependency closure remains private-registry-only
+      pending separate redistribution review; private access and workload
+      acceptance do not grant redistribution rights. Every future digest must
+      repeat the gates.
+  paidf-anomalygen-sky:
+    dockerfile: paidf-anomalygen-sky/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    tier: interactive
+    redistribution: restricted
+    notes: >-
+      Operator-built implementation from the exact Apache-2.0 NVIDIA PAIDF
+      AnomalyGen source revision and digest-pinned public CUDA bases. It compiles
+      upstream's wheel recipe and adds SkyPilot bootstrap prerequisites without
+      model weights or data. SSH host keys are removed in their installation
+      layer. Hash-pinned W&B 0.28.2 fixes CVE-2026-56854; a digest-checked patch
+      redirects two pinned Cosmos framework run-ID calls to W&B's unchanged
+      generator, preserving the NVIDIA OpenMDW-1.1 header. The installed
+      dependency requirements and source-patch provenance are checked at build
+      time. The accepted operator-private digest passed exact-layer/rootfs
+      inventory, the repository fixed-CRITICAL policy, SPDX SBOM generation,
+      exact-digest bootstrap, offline CPU/runtime probes, and real B200
+      CUDA/FlashAttention/Triton plus four-case native attention checks. Review
+      found no baked gated model weights, credentials, or populated model cache;
+      retained public fixtures are classified separately. The same exact child
+      completed the full native DIG workflow on B200: all 15,000 training
+      iterations with early stopping disabled, evaluator-selected checkpoint
+      13,000, and all 30 requests accounted as 24 generated images plus six
+      text-guardrail blocks. The preset's face blur is not an image-content
+      classifier, so image guardrail enforcement remains false. The resolved
+      dependency closure remains private-registry-only pending a separate
+      redistribution review; neither private access nor acceptance grants
+      redistribution rights. Every future digest must repeat the gates.
+  openpi:
+    dockerfile: openpi/Dockerfile
+    tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
+    redistribution: public
+    notes: >-
+      Bakes pinned Apache-2.0 OpenPI source, its frozen RLDS/JAX dependency
+      environment, and an SM120 probe on the redistributable CUDA base. Gemma
+      and pi0.5 weights, DROID records, terms acceptance, credentials, trained
+      checkpoints, and populated caches are runtime-only. Built-image byte and
+      layer scanning plus an eight-node RTX PRO 6000 qualification are required
+      before release promotion.
+  habitat-sim:
+    dockerfile: habitat-sim/Dockerfile.bootstrap
+    tier: interactive
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption:
+      id: habitat-sim-skypilot-0.12.2-v1
+      rationale: >-
+        SkyPilot 0.12.2 Kubernetes workers require general package, SSH, rsync,
+        and service bootstrap through passwordless sudo from the non-root ubuntu
+        account; the package and service arguments are runtime-selected, so a
+        finite command allowlist cannot preserve the mechanically tested worker
+        contract. The ephemeral workflow task container, not a network service,
+        is the reviewed trust boundary.
+      sources:
+        - habitat-sim/Dockerfile
+        - habitat-sim/Dockerfile.bootstrap
+      grants:
+        - source: habitat-sim/Dockerfile
+          sudoers_entry: ubuntu ALL=(ALL) NOPASSWD:ALL
+        - source: habitat-sim/Dockerfile.bootstrap
+          sudoers_entry: ubuntu ALL=(ALL) NOPASSWD:ALL
+      compensating_controls:
+        bootstrap_contract: skypilot-0.12.2-v1
+        build_time_host_keys_deleted: true
+        capability_evidence: runtime_probe_required
+        entrypoint: command-passthrough
+        exact_digest_required: true
+        final_user: ubuntu
+        no_baked_credentials: true
+        no_default_sshd: true
+        no_exposed_ssh_port: true
+        trust_boundary: ephemeral-workflow-task-container
+      prohibited_uses:
+        - default-sshd
+        - public-ingress
+        - baked-credentials
+        - mutable-image-capability-claim
+    notes: >-
+      Neutral runtime-fetch bootstrap. The public Dockerfile.bootstrap contains
+      Ubuntu/Python/SSH prerequisites, NPA launchers and immutable upstream locks.
+      Every inherited and installed Ubuntu component has accompanying official
+      snapshot source and copyright notices. Habitat-Sim, its C++ dependencies,
+      scientific wheels, GPU libraries and the CC BY 4.0 Skokloster scene are
+      fetched only by the operator workload into an ephemeral runtime; source
+      archives, direct APT packages and wheels are verified against existing pins.
+      The real RGB-D, navigation and Bullet smoke still requires one RTX GPU.
+      build.sh selects this bootstrap by default. Its explicit --legacy-baked
+      option selects the legacy Dockerfile, separately quarantined under
+      runtime-payload.json and its unchanged full-layer/source/512 MiB guards;
+      they are not the public build target. All public full-SHA builds require
+      exact-image absence/source, security, SBOM/provenance and GPU validation.
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service
@@ -144,12 +435,76 @@ images:
     dockerfile: lancedb/Dockerfile
     tier: service
     ports: [8686]
+    passwordless_root_exemption: >-
+      SkyPilot's Kubernetes bootstrap invokes package and SSH setup through
+      passwordless sudo as the non-root ubuntu user. The service image does not
+      start sshd by default, stores no credentials, and retains its non-root
+      runtime entrypoint outside explicitly orchestrated workflow task pods.
     redistribution: public
   detection-training:
     dockerfile: detection-training/Dockerfile
     tier: service
     ports: [8790]
     redistribution: public
+  robocasa:
+    dockerfile: robocasa/Dockerfile
+    tier: service
+    ports: [8791]
+    redistribution: public
+    notes: >-
+      Bakes immutable Apache-2.0 RoboCasa source (pinned v1.0) and robosuite
+      (pinned commit) plus the exact MuJoCo 3.3.1 / Gymnasium 0.29.1 / CUDA 12.4
+      closure from the live-accepted BYOF evidence. Kitchen assets (textures,
+      fixtures, objects) are NOT baked and download at run time under the
+      operator's own network access. No model weights, credentials, or accepted
+      terms are baked. Built-image byte/layer scanning is mandatory before
+      publication. Workflow toolRefs are service clients and therefore run in
+      the standard task image; this service image grants no passwordless sudo.
+  openarm:
+    dockerfile: openarm/Dockerfile
+    isaac_runtime_fetch: true
+    tier: service
+    ports: [8792]
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only; the final runtime user is non-root,
+      no sshd service starts by default, and no credentials are baked.
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    notes: >-
+      Bakes only the immutable Apache-2.0 Enactic openarm_mujoco 2.2.0 and
+      openarm_isaac_lab 0.1.0 source/model assets, a digest-pinned CUDA base,
+      the reviewed open-source closure, and NVIDIA redistributable CUDA/cuDNN
+      runtime components required by the pinned PyTorch wheels. Separately
+      packaged vendor SDK headers/static archives are removed and license files
+      retained. NVIDIA Isaac Sim, Isaac Lab,
+      Omniverse Kit, acceptance, caches, credentials, and operator data are
+      absent and remain operator-fetched/runtime-owned. Full filesystem and
+      layer scans plus real MuJoCo and RTX Isaac Lab execution are mandatory
+      before release promotion.
+  robomimic:
+    dockerfile: robomimic/Dockerfile
+    tier: job
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only; the final runtime user is non-root,
+      no sshd service is enabled by default, and no credentials are baked.
+    redistribution: public
+    notes: >-
+      Public neutral development candidate: pinned MIT robomimic source and the
+      redistributable Debian/bootstrap closure on a pinned Python base. The
+      historical 40-entry hash lock is verifier evidence only; the selected
+      62-entry public/CUDA/PyTorch/vendor runtime map is fetched into the
+      customer-owned runtime volume after entitlement and exact inventory
+      checks. The image adds no solution Python wheel closure, torch, torchvision,
+      Triton, NVIDIA CUDA/cuDNN/NCCL distribution, weight, dataset, runtime
+      cache, credential, or output; inherited parent distributions and ancestor
+      bytes remain subject to exact parent inspection. Any prepared CUDA runtime is an external,
+      exact-inventory read-only mount owned by the customer and is not part of
+      this image. Exact Debian and CPython corresponding source is delivered
+      inside the image and checked against every distributed package version.
+      Release publication stays quarantined until
+      built-image scanning, license/security/SBOM/provenance, exact-digest
+      B200 qualification, and anonymous pull proofs pass.
   wan2-2:
     dockerfile: wan2-2/Dockerfile
     tier: job
@@ -161,6 +516,44 @@ images:
       writable runtime volume under their upstream package terms; model and
       tokenizer payloads are also runtime-only. Built-image byte/layer scanning
       is mandatory before publication.
+  diffusers:
+    dockerfile: diffusers/Dockerfile
+    tier: job
+    redistribution: public
+    passwordless_root_exemption: "Inherited SkyPilot bootstrap only; non-root ubuntu, no default sshd, no baked credentials."
+    notes: >-
+      Pinned Apache-2.0 Diffusers source with OSS CPU dependencies, NPA native
+      video/perception adapters, and the accepted public Wan runtime-fetch base.
+      CUDA and all checkpoints remain runtime-only. No bundled examples or media.
+      Exact-digest GPU capabilities and byte scans gate supported publication.
+  lingbot-world:
+    dockerfile: lingbot-world/Dockerfile
+    tier: job
+    redistribution: public
+    passwordless_root_exemption: "Inherited SkyPilot bootstrap only; non-root ubuntu, no default sshd, no baked credentials."
+    notes: >-
+      Pinned Apache-2.0 LingBot source, retained upstream license, OSS CPU
+      dependencies and native camera adapter. Runtime-only CUDA and checkpoints.
+      Four-rank attention/all-to-all and decoded video gate supported publication.
+  sam3:
+    dockerfile: sam3/Dockerfile
+    tier: job
+    redistribution: public
+    passwordless_root_exemption: "SkyPilot bootstrap only; non-root ubuntu, no default SSH daemon, and no credentials or vendor payload baked into the image."
+    notes: >-
+      Neutral Python bootstrap and NPA video adapter; SAM 3.1 source, checkpoint
+      and CUDA closure are pinned runtime fetches. Mandatory SAM payload scans
+      inspect every layer before and after public development publication.
+      Supported release remains quarantined pending exact-digest GPU proof.
+  sam2:
+    dockerfile: sam2/Dockerfile
+    tier: job
+    redistribution: public
+    passwordless_root_exemption: "Inherited SkyPilot bootstrap only; non-root ubuntu, no default sshd, no baked credentials."
+    notes: >-
+      Pinned Apache-2.0 SAM2 source, retained upstream licenses, OSS CPU
+      dependencies and native prompted-video adapter. Runtime-only CUDA and
+      checkpoints. Nonempty propagated masks and decoded video gate publication.
   ltx2:
     dockerfile: ltx2/Dockerfile
     tier: job
@@ -182,9 +575,142 @@ images:
       Agreement above $10M revenue) and Attachment A(18) (no training other
       models on Outputs for commercial use) govern the operator's own conduct and
       artifacts, and are their responsibility rather than something this image
-      certifies. Byte/layer scanning
-      with scripts/scan_image_ltx_payload.py is mandatory before publication.
-      NOT YET BUILT OR GPU-VALIDATED; see ltx2/REDISTRIBUTION.md.
+      certifies. Byte/layer scanning with scripts/scan_image_ltx_payload.py is
+      mandatory before publication. The supported release must resolve to the
+      exact zero-payload digest in ltx2_image_manifest.json, whose operator-only
+      runtime fetch and real GPU generation evidence are bound to the same bytes.
+  mjlab:
+    dockerfile: mjlab/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot bootstrap only; service deployment disables privilege escalation, no default SSH daemon or credentials."
+    redistribution: public
+    notes: >-
+      Apache-2.0 MJLab 1.6.0 and MuJoCo with a hash-locked CUDA wheel closure.
+      No checkpoints, motion datasets, credentials or populated runtime caches.
+      Historical CUDA 12.8 operator image passed native B200 and RTX PRO 6000
+      train/eval/export and service qualification. The CUDA 13.0 candidate has
+      separate RTX PRO 6000 G1 training/resume, evaluation, MP4/HTML and ONNX
+      evidence in docs/workbench/validation/mjlab-trained-g1-20260925.json.
+      Public promotion still requires built-layer license/security and bootstrap
+      gates; see mjlab/REDISTRIBUTION.md and docs/workbench/mjlab.md.
+  curobo:
+    dockerfile: curobo/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot bootstrap only; non-root runtime, no default SSH daemon, no credentials baked."
+    redistribution: public
+    notes: >-
+      Apache-2.0 cuRobo V2 source and robot assets, MIT/BSD pinned benchmark data,
+      non-cuDNN CUDA 13 base with a hash-locked Python closure. The cuDNN wheel
+      headers/static SDK files are excluded during the install RUN before its
+      layer commits; only runtime shared libraries and notices remain. No weights or populated
+      runtime cache. Publication quarantined pending exact-byte security/license
+      scans and independent real B200 and RTX PRO 6000 capability validation.
+  open3d:
+    dockerfile: open3d/Dockerfile
+    tier: job
+    final_user: ubuntu
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
+      as the non-root ubuntu user. The image deletes all build-time SSH host keys,
+      disables password and root login, starts no SSH service by default, and
+      bakes no credentials.
+    notes: >-
+      MIT Open3D 0.20.0 from the official PyPI wheel plus the exact NPA source
+      revision on the digest-pinned python:3.11-slim-trixie base shared with
+      npa-rerun-viewer. Open3D itself is MIT. Everything else baked here carries
+      its own component-specific license rather than any single family: the
+      Python dependency closure includes MPL-2.0 distributions, certifi among
+      them, and the Debian base carries the ordinary distribution package set,
+      which includes GPL, LGPL, and Artistic licensed packages. Notices reach
+      the image from more than one place: Python distributions that carry a
+      dist-info license file provide their own, OS packages provide theirs at
+      /usr/share/doc/<package>/copyright, and where an upstream ships no notice
+      the grant is supplied explicitly, as mcap's MIT grant is at
+      /usr/share/doc/npa-open3d/notices/mcap-LICENSE.txt. The exact
+      per-component inventory is retained with the image scan. That records what
+      is present and where its notices are; it is not an exhaustive license
+      certification. No model
+      weights, datasets, credentials, or accepted terms are present. The upstream
+      open3d.data demo scans are a run-time download into the runtime user's
+      cache, not a baked payload. plotly and dash (and dash's Flask/Werkzeug
+      closure) are installed only because open3d/__init__.py imports
+      open3d.visualization unconditionally, which imports them; no visualizer is
+      started and no port is exposed for one. CPU-only by design: Open3D's
+      registration and geometry pipelines have no CUDA path, so this image does
+      not derive from the CUDA base and its stages request no accelerator.
+      Publication quarantined pending exact-byte security/license scans.
+
+
+  robotwin:
+    dockerfile: robotwin/Dockerfile
+    tier: job
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only; the final runtime user is ubuntu,
+      no SSH host keys or credentials are baked, and no default root process runs.
+    notes: >-
+      Zero-vendor-payload bootstrap recipe. RoboTwin, CuRobo v0.7.8,
+      CUDA, cuDNN, PyTorch CUDA, SAPIEN, MPLib, Warp, assets, caches, credentials,
+      and outputs are absent and runtime-only. The official Ubuntu base, signed
+      snapshot apt closure, and empty public Python lock are immutable; runtime
+      delivery remains disabled and the native-content policy still refuses the
+      trusted build path before Docker. The bounded operator scope is
+      noncommercial validation/evaluation; customer credentials are runtime-only
+      and exact gated payload probes must precede provisioning. Cache reuse
+      defaults to isolated node-local ephemeral storage. The repository MIT card
+      classifies the exact locked embodiments.zip and objects.zip members. No
+      additional restriction was found in the inspected authoritative terms for
+      the four declared output classes; CuRobo's noncommercial
+      research/evaluation limit still binds their generating workload and
+      use/service claims. Public redistribution and real RTX capability claims
+      remain quarantined pending the native-content policy, trusted build,
+      complete exact-byte scans, anonymous pull, and exact-digest one-RTX gates.
+  alpamayo2-super:
+    dockerfile: alpamayo2-super/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
+    redistribution: public
+    notes: >-
+      Bakes immutable Apache-2.0 Alpamayo 2 source and its CUDA/PyTorch
+      inference runtime. The OpenMDW-1.1 checkpoint, separately restricted
+      PhysicalAI-AV dataset, operator credentials, and populated caches are
+      absent and fetched only at runtime. Built-image byte/layer scanning and
+      real B200 plus RTX PRO 6000 inference are publication gates. Release
+      0.1.0-cu128-r3, built from source commit
+      5b693476c113c833e9d9d4f8c7aa492492a27505 with the HTTPConnection
+      loopback healthcheck fix, passed the complete 25-layer payload scan, the full
+      vulnerability/secret/license scan, and both independent real-inference
+      gates on 2026-09-16; the accepted OCI index digest is
+      sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07.
+  flex-pi:
+    dockerfile: flex-pi/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
+    redistribution: public
+    notes: >-
+      Bakes immutable MIT flex-pi source and its CUDA/PyTorch inference runtime.
+      The checkpoint, Wan/T5/DINOv3 assets, public RoboTwin observation bytes,
+      operator credentials, and populated caches are absent and fetched only at
+      runtime. The RoboTwin dataset card declares no license, so sample bytes
+      are never redistributed. The supported 0.1.0-cu128-r2 release passed built-layer,
+      vulnerability/secret/license, SBOM/provenance, anonymous-pull, and independent
+      B200 and RTX PRO 6000 inference gates. Its accepted digest is
+      sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6,
+      recorded in the publication inventories. Replacement development bytes must
+      pass every publication gate and both GPU targets before release acceptance;
+      the existing release evidence does not validate changed source or patches.
+      B300 training-profile source overlays fetch hash-pinned CUPTI 13, CUPTI
+      Python and CUDA Python into a private runtime directory under their NVIDIA
+      software terms, with Apache-2.0 cuda-pathfinder and all package licenses
+      retained. These diagnostic SDKs and populated caches are not baked into
+      the public image; the training compute stack remains unchanged.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true
@@ -194,15 +720,23 @@ images:
   sonic-mujoco:
     dockerfile: sonic/Dockerfile.mujoco
     tier: job
-    redistribution: restricted
+    redistribution: public
     notes: >-
-      Quarantined legacy variant: its default parent is the old npa-sonic:0.1.2
-      image containing restricted NVIDIA bytes. Credentials or runtime consent
-      cannot make an already-baked payload redistributable.
+      Rebuilt independently on a digest-pinned official Python base from pinned
+      Apache-2.0 SONIC source plus an exact public PyPI CUDA/MuJoCo closure;
+      Isaac Sim, Isaac Lab, Omniverse Kit, models, credentials, and accepted terms
+      remain absent. Isaac-facing inherited modes retain runtime-fetch refusal.
   sim2real-eval:
     dockerfile: sim2real-eval/Dockerfile
     tier: job
     redistribution: public
+  loop-eval:
+    dockerfile: sim2real-eval/Dockerfile
+    tier: job
+    redistribution: public
+    notes: >-
+      Alias for sim2real-eval; CONTAINER_IMAGE_NAMES key loop-eval
+      builds from sim2real-eval/Dockerfile via sim2real-build.sh.
   sim2real-control:
     dockerfile: sim2real-control/Dockerfile
     tier: job
@@ -213,8 +747,9 @@ images:
       command allowlist would be equivalent to allowing its root shell and would
       provide a false boundary. This exception is limited to the CPU-only
       Sim2Real standard-workflow adapter image: its final user is uid 1000, sshd
-      is not started by the image, password/root SSH login is disabled by the
-      Debian defaults used here, no credentials or GPU/vendor runtime are baked,
+      is not started by the image, all build-time host keys are deleted, explicit
+      configuration disables password/root SSH login, no credentials or
+      GPU/vendor runtime are baked,
       and the task pod/container—not the uid—is the documented trust boundary.
       Remove this grant when the pinned SkyPilot bootstrap supports rootless
       Kubernetes task setup; it is not an authorization pattern for services.
@@ -223,6 +758,14 @@ images:
       expires_with: skypilot-rootless-kubernetes-bootstrap
       scope: ephemeral-standard-workflow-task-pod
       prohibited_uses: [service, public-ingress, baked-credentials]
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+  reference-policy:
+    dockerfile: sim2real-reference-policy/Dockerfile
+    tier: job
+    redistribution: public
+    notes: >-
+      Alias for sim2real-reference-policy; CONTAINER_IMAGE_NAMES key
+      reference-policy maps to sim2real-reference-policy/Dockerfile.
   cosmos2-transfer:
     dockerfile: cosmos2-transfer/Dockerfile
     tier: job
@@ -233,7 +776,11 @@ images:
       CUDA build/runtime bases. Git LFS smudging is disabled; upstream assets, example media,
       checkpoints, caches, and Git metadata are removed and build-guarded. Gated
       NVIDIA Open Model License weights are fetched only at runtime with the
-      operator's HF_TOKEN into a mounted cache. PAIDF's CC-BY-4.0 RoboPro starter
+      operator's HF_TOKEN into a mounted cache. Optional SAM2 removes the
+      lockfile's unaffiliated PyPI repackaging and installs Meta's official
+      Apache-2.0 source at immutable commit
+      2b90b9f5ceec907a1c18123530e92e794ad901a4; its public Apache-2.0 checkpoint
+      is runtime-fetched and never baked. PAIDF's CC-BY-4.0 RoboPro starter
       is likewise not baked into this or any image: the operator-side NPA CLI
       fetches the immutable object, enforces its SHA-256, and stages it to the
       run. The upstream Cosmos repository's ambiguously licensed example media
@@ -247,8 +794,17 @@ images:
     tier: job
     passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     notes: >-
-      Cosmos 3 omni-model generation, released additively as 1.2.2-cu130-r2;
-      the immutable 1.2.2-cu130 image remains rollback provenance. Bakes
+      Cosmos 3 omni-model generation, released additively as 1.2.2-cu130-r7;
+      the immutable 1.2.2-cu130, r2, and unpublished r3/r4 images remain rollback
+      provenance. The r7 image retains the removal of imageio-ffmpeg's redundant
+      wheel-bundled executable, uses the attributed distro FFmpeg instead, removes the unused
+      vulnerable Nsight EFA metrics helper inherited from the CUDA base, refreshes
+      the inherited linux-libc-dev package to the current security build, and keeps a
+      no-argv SkyPilot worker pod alive until bootstrap execs its setup. It also
+      fails closed unless requested prompt and media guardrails execute effectively,
+      materializes the pinned Blocklist tokenizer data as verified regular files, and
+      publishes auditable source-motion-preserving PAIDF composites beside the
+      unmodified Cosmos outputs. Bakes
       OpenMDW-1.1 cosmos-framework SOURCE at a pinned commit plus its cu130
       inference venv; NO model weights. Gated
       Cosmos3 checkpoints, the Wan VAE, and the guardrail models download at
@@ -261,24 +817,137 @@ images:
       runtime user because the SkyPilot Kubernetes bootstrap installs its SSH runtime in-pod; see
       docs/security/container-golden-evals.md.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos3-serving:
     dockerfile: cosmos3-serving/Dockerfile
     tier: service
     ports: [8000]
     notes: >-
-      Build-your-own only. The vLLM-Omni source is Apache-2.0 and no model or
-      guardrail weights are baked, but the pinned base image embeds NVIDIA's
-      Deep Learning Container License. Its derived-container distribution grant
-      requires material added primary functionality and downstream terms at
-      least as protective; this thin serving wrapper and anonymous GHCR do not
-      establish those conditions. Operators build into their own registry and
-      fetch gated weights at runtime using a token whose account has upstream access.
+      Zero-payload bootstrap on a digest-pinned official Python base. The exact
+      vLLM-Omni source and CUDA/PyTorch closure are fetched directly at runtime
+      only after the operator explicitly accepts the NVIDIA Software License.
+      It contains no NLC/NGC runtime, model or guardrail weights, credentials,
+      accepted terms, or gated assets. Both gated model repositories are probed
+      before the documented 8-GPU service starts.
+    redistribution: public
+  cosmos3-super-benchmark:
+    dockerfile: cosmos3-super-benchmark/Dockerfile
+    tier: interactive
+    notes: >-
+      Operator-private SkyPilot wrapper derived from the exact digest-pinned
+      vllm/vllm-omni Cosmos3 benchmark image. It adds only openssh-server,
+      rsync, sudo, a non-root runtime user, and the reviewed SkyPilot bootstrap
+      attestation. The inherited vendor runtime is never published through the
+      NPA public release channel; models remain operator-entitled runtime
+      downloads.
     redistribution: restricted
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+  cosmos3-nano-video:
+    dockerfile: cosmos3-nano-video/Dockerfile
+    tier: service
+    final_user: "10001:10001"
+    ports: [8000]
+    notes: >-
+      Operator-private Ray Serve extension of the digest-pinned
+      vllm/vllm-omni:cosmos3 runtime for BF16 Cosmos3-Nano diffusion video.
+      Adds Ray Serve, FFmpeg and NPA rollout/serving adapters. One shared
+      runtime staging job fetches and verifies the immutable model; replicas
+      consume it offline and read-only. Inherited vendor runtime is excluded
+      from the public release channel. No Cosmos model checkpoints or credentials
+      are baked; inherited public vendor fixtures are documented.
+    redistribution: restricted
+  cosmos3-ray-serve:
+    dockerfile: cosmos3-ray-serve/Dockerfile
+    tier: service
+    ports: [8000]
+    notes: >-
+      Persistent Cosmos3-Nano service using cosmos-framework 1.2.2's native
+      OmniModelDeployment and @ray.serve.batch path. Derives from the exact
+      accepted npa-cosmos3 digest and adds only NPA's authenticated ingress and
+      S3 client contract. No model, VAE, or guardrail weights are baked;
+      operator-entitled assets use the standard runtime model cache. Guardrails
+      default on and the API returns structured SampleOutputs plus hashed media.
+      The pinned Guardrail1 tokenizer subtree is fetched and materialized as
+      verified regular files only at runtime, preserving NLTK path enforcement.
+    redistribution: public
+  ncore:
+    dockerfile: ncore/Dockerfile
+    tier: job
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only. The final process is uid 1000; SSH
+      host keys are generated per container and no credentials are baked.
+    notes: >-
+      CPU-only official NVIDIA NCore COLMAP converter and V4 reader at
+      59c698d206da92b406a4f72619fce3b3a2c64bfd (Apache-2.0), with the MIT
+      trueprice/pycolmap reader at fe7a7c45df803b6c391777e349f0d8d65d39d777
+      and NVIDIA's Python 3 patch. A narrow NPA adapter downloads the exact
+      hash-locked converter/reader Python closure into an explicit writable
+      runtime cache with locking and atomic ready state. No application wheels,
+      Torch, CUDA, NRE, models, datasets or populated runtime caches are baked.
+      Retained base binaries receive their required source delivery. SOURCE_SHA
+      identifies the committed NPA tree. Public-eligible but quarantined until
+      exact built-image scans and real conversion evidence are accepted;
+      no supported public release is declared. See ncore/REDISTRIBUTION.md.
+  gymnasium-robotics:
+    dockerfile: gymnasium-robotics/Dockerfile
+    tier: interactive
+    redistribution: public
+    final_user: ubuntu
+    phase: development-build-quarantine
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only. The final workload runs as uid 1000;
+      SSH host keys are generated per container and no credentials are baked.
+    notes: >-
+      Neutral zero-Shadow-payload development bootstrap for the future Farama
+      Gymnasium-Robotics 1.4.2 / MuJoCo 3.12.0 runtime cache. Candidate layers
+      exclude the upstream solution, Shadow assets, MuJoCo/Python workload,
+      populated cache, vendor runtime, credentials, datasets, checkpoints, and
+      outputs. Exact Ubuntu/Python inputs, corresponding-source metadata and the
+      runtime-fetch manifest are content-locked for a payload-free public
+      development build; the Dockerfile verifies those reviewed bytes before
+      package network access. Restricted source, assets and workload wheels
+      remain operator-owned runtime fetches after the customer's existing
+      upstream notice and acceptance process.
+      Runtime fetch changes delivery only and grants no use, derivative, output,
+      or service rights. An owner-only reference build produced the exact config
+      and 20-DiffID graph pinned by the product scanner, but that transaction
+      stopped before a complete product scan, SBOM, push, or immutable digest and
+      its artifact was cleaned. The graph is scanner input, not accepted or
+      current-head image evidence. Shadow public-rights closure remains
+      incomplete, and no supported release tag, accepted manifest, public pull,
+      current-byte GPU qualification, or SM120 claim exists.
+  content-agents:
+    dockerfile: content-agents/Dockerfile
+    ovrtx_runtime_fetch: true
+    accepted_image_manifest: npa/src/npa/deploy/content_agents_image_manifest.json
+    tier: job
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only; the final task process is uid 1000,
+      no service or public ingress is enabled, host keys are generated only at
+      run time, and no credentials or license acceptance are baked.
+    notes: >-
+      NVIDIA Content Agents v0.5.2 source is Apache-2.0 and fetched at immutable
+      commit 36dbf3f274f8e256637230a05a085853f65cc175. The public image contains
+      only source, the NPA downloader, and the reviewed upstream OVRTX lock;
+      it contains zero OVRTX wheel, runtime, or native payload bytes. On first
+      render use, the operator fetches exact OVRTX 0.3.0.312915 directly from
+      NVIDIA's anonymous package index into the standard runtime cache.
+      Scene Optimizer Core, OvPhysX, upstream material/sample assets, model
+      weights, credentials, and customer data are excluded. Hosted VLM inference
+      and customer assets enter only at run time. NVIDIA driver userspace is not
+      baked; OVRTX requires an RTX Kubernetes node whose GPU Operator mounts
+      compute, utility, graphics, and display capabilities.
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile
     tier: job
     passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos-curate:
     dockerfile: cosmos-curate/Dockerfile
     tier: job
@@ -308,7 +977,51 @@ images:
     dockerfile: isaac-lab/Dockerfile
     isaac_runtime_fetch: true
     tier: interactive
+    notes: >-
+      Bakes OSS dependencies only and uses Debian FFmpeg at runtime. The image
+      removes imageio-ffmpeg's wheel-bundled static executable in the same layer
+      that installs the Python environment, and removes the CUDA development
+      base's unrelated Nsight Compute profiler tree from the final filesystem.
+      Isaac Sim/Lab and task assets remain cryptographically verified runtime
+      fetches after EULA preflight.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+  isaac-arena:
+    dockerfile: isaac-arena/Dockerfile
+    isaac_runtime_fetch: true
+    tier: job
+    notes: >-
+      Inherits the exact accepted payload-clean npa-isaac-lab digest and adds
+      Isaac Lab-Arena 0.3.0 Apache-2.0 source from its checksum-verified release
+      commit plus the hash-locked Apache-2.0 Lightwheel SDK client and the
+      open-source Pinocchio, Pink, ONNX Runtime, and solver dependency closure
+      that Arena imports during registry discovery. The exact Lightwheel wheel
+      and METADATA hashes are recorded in machine-readable evidence and checked
+      against the installed image bytes; upstream publishes no standalone
+      license member or source distribution for that SDK release. The exact
+      runtime-fetched Isaac Lab wheel's structured BSD-3-Clause metadata field
+      is also asserted after its wheel hash is verified.
+      Upstream tests, sample checkpoints, demonstration data, and documentation
+      media are removed. Isaac Sim/Lab, Lightwheel registry assets, operator
+      replay data, RSL-RL checkpoints, generated evaluation artifacts,
+      credentials, and populated caches remain runtime-only. NPA provides no
+      Lightwheel asset credential or redistribution grant. Viewport runs first
+      validate native NVIDIA headless EGL/Vulkan, libnvoptix.so.1, and readable
+      regular nonempty OptiX weights. When dependencies are missing, the worker
+      downloads the exact loaded-driver version from Ubuntu's
+      signed archive, validates its ICD metadata, and derives a canonical private
+      EGL ICD in run-private scratch. The image creates an empty user-owned
+      weights directory. Missing nvoptix.bin is copied only into the verified
+      private container root overlay, with no symlink or submount destination,
+      no overwrite, and hash readback. Copied weights remain only for the worker
+      container lifetime; they are never installed on the node, baked, published
+      as artifacts, or redistributed. Readiness does not prove denoising success.
+      The inherited
+      non-root SkyPilot bootstrap contract is
+      retained. Built-image byte/layer scanning and real B200 plus RTX PRO 6000
+      evaluation are required before release promotion.
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   leisaac:
     dockerfile: leisaac/Dockerfile
     isaac_runtime_fetch: true
@@ -333,6 +1046,13 @@ images:
       Command-passthrough entrypoint supports SkyPilot Kubernetes setup as the
       non-root ubuntu user (openssh-server, rsync, sudo, passwordless service
       restart). The service deploy path supplies the FiftyOne App command.
+      MongoDB Community Server uses SSPL v1, not an OSI-approved license.
+      Public redistribution requires the applicable notices and matching
+      corresponding-source delivery; service-use obligations need separate
+      review. The supported FiftyOne 1.21 release includes a verified source
+      annex and passes initial NPA installation, dependency and functional checks.
+      Verify these contracts for each replacement digest before any public push;
+      see fiftyone/RELEASE.md.
     passwordless_root_exemption: >-
       SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
       as the non-root ubuntu user. The image deletes all build-time SSH host keys,
@@ -348,6 +1068,7 @@ images:
     redistribution: public
   groot:
     dockerfile: groot/Dockerfile
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
     isaac_runtime_fetch: true
     tier: interactive
     ports: [8080]
@@ -362,6 +1083,8 @@ images:
         - common/install_isaac_runtime_base.sh
         - groot/Dockerfile.k8s-prereqs
       grants:
+        - source: groot/Dockerfile
+          sudoers_entry: "ubuntu ALL=(ALL) NOPASSWD:ALL"
         - source: common/install_isaac_runtime_base.sh
           sudoers_entry: "ubuntu ALL=(ALL) NOPASSWD:ALL"
         - source: groot/Dockerfile.k8s-prereqs
@@ -372,25 +1095,49 @@ images:
       verification: runtime_probe_required
     notes: >-
       EXPOSE 8080 without default server CMD. The canonical build supplies the
-      ubuntu user and passwordless sudo but not the complete SkyPilot contract;
-      the derived repair source supplies sshd, runtime host keys, and argument
-      forwarding. Its label is never trusted by itself: submit requires an exact-
-      digest runtime capability probe. Promote to service when ready.
+      complete SkyPilot contract: a non-root ubuntu user with passwordless sudo,
+      sshd with per-pod host keys, rsync, and argument forwarding. The derived
+      repair source remains available for historical canonical images. Because
+      both forms share one image repository, a label is never trusted by itself:
+      submit requires an exact-digest runtime capability probe. Promote to service
+      when ready.
     redistribution: public
   retargeting:
     dockerfile: retargeting/Dockerfile
     tier: interactive
     redistribution: public
-  sim2real-envgen:
+  envgen:
     dockerfile: sim2real-envgen/Dockerfile
     tier: interactive
+    notes: >-
+      The flattened public runtime removes the parent image's optional AGPL
+      tetgen wrapper, W&B client, and Nsight Compute tree. Canonical Sim2Real
+      environment generation does not use tetrahedralization, experiment
+      tracking, or profiler tooling. The runtime correspondingly removes the
+      Genesis/LeRobot metadata edges for those absent optional dependencies;
+      a repository-owned fail-closed import shim rejects tetrahedralization,
+      while build-time imports and pip consistency checks protect the reduced
+      contract.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   rerun-viewer:
     dockerfile: rerun-viewer/Dockerfile
     tier: job
     ports: [9090]
-    final_user: nobody
+    final_user: ubuntu
+    notes: >-
+      Command-passthrough entrypoint supports SkyPilot Kubernetes setup as the
+      non-root ubuntu user; an empty argv starts the interactive Rerun server.
+      The image also bakes the exact NPA source revision and resolver-closed
+      Stage 14 S3/MCAP dependencies so the canonical no-overlay workflow can
+      finalize Rerun and MCAP artifacts with source attestation.
+    passwordless_root_exemption: >-
+      SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
+      as the non-root ubuntu user. The image deletes all build-time SSH host keys,
+      disables password and root login, starts no SSH service by default, and
+      uses the grant only inside an explicitly orchestrated ephemeral worker.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   foxglove-embed:
     dockerfile: foxglove-embed/Dockerfile
     tier: service

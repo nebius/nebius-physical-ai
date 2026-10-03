@@ -20,8 +20,10 @@ from npa.cli.ingress import (
     ensure_alias_ingress,
     ensure_deploy_ingress,
     ingress_summary,
+    ingress_source_option,
     register_byovm_alias,
     resolve_deploy_instance_id,
+    world_open_ack_option,
 )
 from npa.cli.path_contract import (
     PathContractError,
@@ -48,7 +50,6 @@ from npa.clients.config import (
     list_projects,
     remove_workbench_config,
     resolve_config,
-    resolve_container_registry,
     resolve_credentials,
     resolve_environment,
     resolve_project_storage,
@@ -240,7 +241,9 @@ def _groot_deploy_models(model: str = DEFAULT_MODEL) -> list[str]:
 
 def _require_groot_isaac_consent(context: str) -> str:
     try:
-        return require_isaac_eula_acceptance(context=context, resume_command="npa workbench groot deploy ...")
+        return require_isaac_eula_acceptance(
+            context=context, resume_command="npa workbench groot deploy ..."
+        )
     except MissingIsaacEulaAcceptanceError as exc:
         _fail(str(exc))
 
@@ -478,11 +481,10 @@ def ensure_ingress_cmd(
         "-n",
         help="Workbench alias to repair. Defaults to the active workbench alias.",
     ),
-    source: str = typer.Option(
-        "0.0.0.0/0",
-        "--source",
-        help="Source CIDR allowed to reach the GR00T server.",
+    source: str = ingress_source_option(
+        "Source CIDR allowed to reach the GR00T server."
     ),
+    allow_world_open: bool = world_open_ack_option(),
 ) -> None:
     """Ensure public ingress for the saved GR00T BYOVM alias."""
     try:
@@ -492,6 +494,7 @@ def ensure_ingress_cmd(
             project_alias=_project_alias or None,
             name=name or _workbench_name or None,
             source=source,
+            allow_world_open=allow_world_open,
         )
     except (ConfigError, NetworkIngressError) as exc:
         _fail(str(exc))
@@ -507,6 +510,8 @@ def register_byovm_cmd(
         ..., "--instance-id", help="Nebius compute instance ID."
     ),
     port: int = typer.Option(8082, "--port", help="GR00T HTTP service port."),
+    source: str = ingress_source_option("Source CIDR allowed to reach GR00T."),
+    allow_world_open: bool = world_open_ack_option(),
 ) -> None:
     """Register an existing VM as a GR00T BYOVM alias and ensure ingress."""
     try:
@@ -516,6 +521,8 @@ def register_byovm_cmd(
             instance_id=instance_id,
             port=port,
             project_alias=_project_alias or None,
+            source=source,
+            allow_world_open=allow_world_open,
             warn=console.print,
         )
     except (ConfigError, NetworkIngressError) as exc:
@@ -580,7 +587,12 @@ for page in s3.get_paginator("list_objects_v2").paginate(Bucket={bucket!r}, Pref
         rel = key[len({prefix_with_slash!r}):]
         if not rel:
             continue
-        target = dest / rel
+        relative = pathlib.PurePosixPath(rel)
+        if not key.startswith({prefix_with_slash!r}) or relative.is_absolute() or ".." in relative.parts or "\\\\" in rel:
+            raise ValueError("Unsafe object key in checkpoint prefix")
+        target = (dest / relative).resolve()
+        if not target.is_relative_to(dest.resolve()):
+            raise ValueError("Checkpoint object escapes its destination")
         target.parent.mkdir(parents=True, exist_ok=True)
         s3.download_file({bucket!r}, key, str(target))
 print("npa_s3_download_done")
@@ -900,12 +912,7 @@ def _groot_serverless_infer(
         info = client.create_job(
             project_id=resolved_project_id,
             name=name,
-            image=image
-            or container_image_for_tool(
-                "groot",
-                registry=resolve_container_registry(proj_alias),
-                tag=GROOT_RUNTIME_VERSION,
-            ),
+            image=image or container_image_for_tool("groot", tag=GROOT_RUNTIME_VERSION),
             command=_groot_serverless_infer_command(
                 input_path=input_path,
                 dataset_path=dataset_path,
@@ -2954,9 +2961,7 @@ def deploy_cmd(
                         owner=ssh_user,
                     )
                     image_ref = container_image_for_tool(
-                        "groot",
-                        registry=resolve_container_registry(proj_alias),
-                        tag=GROOT_RUNTIME_VERSION,
+                        "groot", tag=GROOT_RUNTIME_VERSION
                     )
                     from npa.deploy.configurator import deploy_workbench_container
 
@@ -2991,7 +2996,6 @@ def deploy_cmd(
                                 f"--host 0.0.0.0 --port {server_port}"
                             )
                         ),
-                        registry_token=merged_vars.get("iam_token", ""),
                     )
                     if verify_env and not no_shared_creds:
                         failed_keys = audit_remote_env(
@@ -3158,6 +3162,11 @@ def deploy_cmd(
                     project_alias=proj_alias,
                     name=wb_name,
                 ),
+                source=str(merged_vars.get("application_cidr_block", "")),
+                allow_world_open=str(
+                    merged_vars.get("allow_world_open_application", "false")
+                ).lower()
+                == "true",
                 warn=console.print,
             )
 
@@ -3501,7 +3510,9 @@ def finetune_cmd(
         None, "--dataloader-num-workers", help="Override dataloader workers."
     ),
     logging_steps: int | None = typer.Option(
-        None, "--logging-steps", help="Emit a real trainer loss every N optimizer steps."
+        None,
+        "--logging-steps",
+        help="Emit a real trainer loss every N optimizer steps.",
     ),
     save_steps: int | None = typer.Option(
         None, "--save-steps", help="Override checkpoint save interval."
@@ -3694,7 +3705,8 @@ def eval_cmd(
         False, "--sim", help="Create a sim-eval request for an Isaac Lab workbench."
     ),
     accept_eula: bool = typer.Option(
-        True, "--accept-eula/--no-accept-eula",
+        True,
+        "--accept-eula/--no-accept-eula",
         help="Isaac EULA routing for --sim; defaults on, with --no-accept-eula as opt-out.",
     ),
     isaac_lab_workbench: str = typer.Option(

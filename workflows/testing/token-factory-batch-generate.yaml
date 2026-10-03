@@ -1,0 +1,47 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: token-factory-batch-generate
+  description: >-
+    Generate text completions through Nebius Token Factory batch inference
+    (zero-GPU). The cheaper, asynchronous twin of token-factory-generate: same
+    prompt file, same generations.jsonl, batch token rates, and no per-request
+    loop bounding how many prompts one stage can carry.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/token-factory-batch"
+
+  # Batch routing is a per-model entitlement unrelated to real-time chat, and the
+  # routable set is small: of eight text models measured on one key, only this one
+  # was routable. Batch is also text-to-text only, so a vision model is rejected
+  # at submit. Confirm a candidate on a handful of prompts first.
+  batch_model: "openai/gpt-oss-120b"
+  max_tokens: "512"
+  # Deadline the batch must finish within, not an expected latency. Batches
+  # routinely sit queued for minutes before running.
+  completion_window: "24h"
+  # Stage-side bound on how long this CPU pod waits for the operation.
+  batch_timeout_s: "43200"
+
+  prompts_uri: "s3://{{config.bucket}}/{{config.prefix}}/prompts.jsonl"
+  generations_uri: "s3://{{config.bucket}}/{{config.prefix}}/generations.jsonl"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: batch-generate-text
+
+states:
+  batch-generate-text:
+    description: Submit every prompt as one batch operation and collect the completions.
+    toolRef: workbench.token_factory.batch_generate
+    resources: cpu
+    outputs:
+      - uri: "{{config.generations_uri}}"
+        schema: npa.token_factory.generations.v1
+    terminal: true

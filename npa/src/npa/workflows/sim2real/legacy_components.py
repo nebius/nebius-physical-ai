@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import random
+import re
+import shlex
 import subprocess
 import tempfile
 import time
@@ -18,8 +19,11 @@ from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.artifact_upload import (
     upload_run_artifacts,  # noqa: F401 - public engine import surface
 )
-from npa.workbench.cosmos.reason import (
-    merge_dual_reason_evaluations,
+from npa.workbench.cosmos.reason import merge_reason_evaluations
+from npa.workbench.model_cache import (
+    RUNTIME_KUBERNETES,
+    model_cache_env,
+    resolve_model_cache_root,
 )
 from npa.workflows.sim2real.constants import (
     CORRECTIVE_TARGETS,
@@ -57,7 +61,6 @@ from npa.workflows.sim2real.reference_helpers import (
 )
 from npa.workflows.sim2real.utils import (
     _artifact_root_uri,
-    _bool_value,
     _serviceaccount_namespace,
     _split_csv,
     _utc_now,
@@ -168,7 +171,7 @@ def evaluate_rollout_with_vlm(
     output_dir: Path,
     config: Sim2RealLoopConfig,
 ) -> dict[str, Any]:
-    """Invoke Reason2 + Reason3 (or a single model) and parse structured judgments."""
+    """Invoke Reason2 + Cosmos3 (or a single model) and parse structured judgments."""
 
     manifest_path = rollout_dir / "manifest.json"
     if not manifest_path.exists():
@@ -192,31 +195,35 @@ def evaluate_rollout_with_vlm(
                 "NPA_SIM2REAL_VLM_IMAGE": config.vlm_image,
             },
         )
+        vlm_argv, vlm_env = _split_component_command(
+            config.byo_vlm_command, component="vlm_eval"
+        )
+        env.update(vlm_env)
         invocation = _run_component_command(
-            config.byo_vlm_command,
+            vlm_argv,
             cwd=rollout_dir,
             env=env,
             component="vlm_eval",
         )
         payload = _read_component_json(output_path, invocation)
     elif not config.s3_bucket.strip():
-        if config.vlm_dual_reason:
+        if config.vlm_two_evaluator:
             reason2 = _reference_vlm_payload_from_rollout(
                 manifest,
                 rollout_dir=rollout_dir,
                 rollout_id=rollout_id,
                 config=config,
             )
-            reason3 = _reference_vlm_payload_from_rollout(
+            cosmos3 = _reference_vlm_payload_from_rollout(
                 manifest,
                 rollout_dir=rollout_dir,
                 rollout_id=rollout_id,
                 config=config,
             )
             reason2["model"] = config.vlm_reason2_model
-            reason3["model"] = config.vlm_reason3_model
-            payload = merge_dual_reason_evaluations(
-                reason2, reason3, threshold=config.threshold
+            cosmos3["model"] = config.vlm_cosmos3_model
+            payload = merge_reason_evaluations(
+                reason2, cosmos3, threshold=config.threshold
             )
         else:
             payload = _reference_vlm_payload_from_rollout(
@@ -229,14 +236,14 @@ def evaluate_rollout_with_vlm(
             "component": "vlm_eval",
             "mode": "local_reference",
             "image": config.vlm_image,
-            "dual_reason": config.vlm_dual_reason,
+            "two_evaluator": config.vlm_two_evaluator,
         }
         _write_json_artifact(output_path, payload)
-    elif config.vlm_dual_reason:
+    elif config.vlm_two_evaluator:
         from concurrent.futures import ThreadPoolExecutor
 
         reason2_image = (config.vlm_reason2_image or config.vlm_image).strip()
-        reason3_image = (config.vlm_reason3_image or config.vlm_image).strip()
+        cosmos3_image = (config.vlm_cosmos3_image or config.vlm_image).strip()
 
         def _run_reason2() -> tuple[dict[str, Any], dict[str, Any]]:
             return _evaluate_reason_rollout_k8s(
@@ -251,34 +258,34 @@ def evaluate_rollout_with_vlm(
                 output_dir=output_dir,
             )
 
-        def _run_reason3() -> tuple[dict[str, Any], dict[str, Any]]:
+        def _run_cosmos3() -> tuple[dict[str, Any], dict[str, Any]]:
             return _evaluate_reason_rollout_k8s(
                 rollout_dir,
                 manifest=manifest,
                 manifest_path=manifest_path,
                 rollout_id=rollout_id,
                 config=config,
-                model=config.vlm_reason3_model,
-                image=reason3_image,
-                component="vlm_eval_reason3",
+                model=config.vlm_cosmos3_model,
+                image=cosmos3_image,
+                component="vlm_eval_cosmos3",
                 output_dir=output_dir,
             )
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             reason2_future = pool.submit(_run_reason2)
-            reason3_future = pool.submit(_run_reason3)
+            cosmos3_future = pool.submit(_run_cosmos3)
             reason2_eval, reason2_invocation = reason2_future.result()
-            reason3_eval, reason3_invocation = reason3_future.result()
-        payload = merge_dual_reason_evaluations(
-            reason2_eval, reason3_eval, threshold=config.threshold
+            cosmos3_eval, cosmos3_invocation = cosmos3_future.result()
+        payload = merge_reason_evaluations(
+            reason2_eval, cosmos3_eval, threshold=config.threshold
         )
         invocation = {
             "component": "vlm_eval",
-            "mode": "kubernetes_job_dual_reason",
+            "mode": "kubernetes_job_two_evaluator",
             "reason2_image": reason2_image,
-            "reason3_image": reason3_image,
+            "cosmos3_image": cosmos3_image,
             "reason2_invocation": _public_invocation(reason2_invocation),
-            "reason3_invocation": _public_invocation(reason3_invocation),
+            "cosmos3_invocation": _public_invocation(cosmos3_invocation),
             "gpu_provenance": {
                 "candidate_order": list(
                     dict.fromkeys(
@@ -288,7 +295,7 @@ def evaluate_rollout_with_vlm(
                             )
                         )
                         + list(
-                            (reason3_invocation.get("gpu_provenance") or {}).get(
+                            (cosmos3_invocation.get("gpu_provenance") or {}).get(
                                 "candidate_order", []
                             )
                         )
@@ -298,7 +305,7 @@ def evaluate_rollout_with_vlm(
                     (reason2_invocation.get("gpu_provenance") or {}).get("attempts", [])
                 )
                 + list(
-                    (reason3_invocation.get("gpu_provenance") or {}).get("attempts", [])
+                    (cosmos3_invocation.get("gpu_provenance") or {}).get("attempts", [])
                 ),
                 "selected_products": list(
                     dict.fromkeys(
@@ -307,7 +314,7 @@ def evaluate_rollout_with_vlm(
                             (reason2_invocation.get("gpu_provenance") or {}).get(
                                 "selected_product"
                             ),
-                            (reason3_invocation.get("gpu_provenance") or {}).get(
+                            (cosmos3_invocation.get("gpu_provenance") or {}).get(
                                 "selected_product"
                             ),
                         )
@@ -321,7 +328,7 @@ def evaluate_rollout_with_vlm(
                             (reason2_invocation.get("gpu_provenance") or {}).get(
                                 "selected_node"
                             ),
-                            (reason3_invocation.get("gpu_provenance") or {}).get(
+                            (cosmos3_invocation.get("gpu_provenance") or {}).get(
                                 "selected_node"
                             ),
                         )
@@ -339,14 +346,14 @@ def evaluate_rollout_with_vlm(
                         )
                     ),
                     int(
-                        (reason3_invocation.get("gpu_provenance") or {}).get(
+                        (cosmos3_invocation.get("gpu_provenance") or {}).get(
                             "minimum_vram_gb", 0
                         )
                     ),
                 ),
                 "model_requirement": [
                     config.vlm_reason2_model,
-                    config.vlm_reason3_model,
+                    config.vlm_cosmos3_model,
                 ],
                 "image_digests": list(
                     dict.fromkeys(
@@ -356,7 +363,7 @@ def evaluate_rollout_with_vlm(
                             )
                         )
                         + list(
-                            (reason3_invocation.get("gpu_provenance") or {}).get(
+                            (cosmos3_invocation.get("gpu_provenance") or {}).get(
                                 "image_digests", []
                             )
                         )
@@ -370,7 +377,7 @@ def evaluate_rollout_with_vlm(
                         or 0
                     )
                     + float(
-                        (reason3_invocation.get("gpu_provenance") or {}).get(
+                        (cosmos3_invocation.get("gpu_provenance") or {}).get(
                             "duration_s", 0
                         )
                         or 0
@@ -498,19 +505,53 @@ def _component_env(
     return env
 
 
+_ENV_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _split_component_command(
+    command: str, *, component: str
+) -> tuple[list[str], dict[str, str]]:
+    """Split an operator-supplied command string into (argv, env_overrides).
+
+    Quoting follows POSIX shell rules, but no shell is ever spawned. Leading
+    ``NAME=value`` tokens become env overrides, mirroring the shell's
+    ``VAR=x cmd`` prefix with values taken literally. Pipes, redirects,
+    ``&&`` chains, and ``$(...)`` expansions are passed through as literal
+    argument text instead of being interpreted.
+    """
+    tokens = shlex.split(command, posix=True)
+    env_overrides: dict[str, str] = {}
+    argv_start = 0
+    for token in tokens:
+        name, sep, value = token.partition("=")
+        if sep and _ENV_ASSIGNMENT_RE.fullmatch(name):
+            env_overrides[name] = value
+            argv_start += 1
+        else:
+            break
+    argv = tokens[argv_start:]
+    if not argv:
+        raise Sim2RealLoopError(f"{component}: command is empty")
+    return argv, env_overrides
+
+
 def _run_component_command(
-    command: str,
+    command: list[str],
     *,
     cwd: Path,
     env: dict[str, str],
     component: str,
     timeout_s: int = 0,
 ) -> dict[str, Any]:
+    if isinstance(command, str):
+        raise TypeError(
+            f"{component}: command must be an argv list, not a shell string; "
+            "split it with _split_component_command first"
+        )
     result = subprocess.run(
         command,
         cwd=str(cwd),
         env=env,
-        shell=True,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -575,6 +616,11 @@ def run_cosmos2_transfer_component(
         "UV_CACHE_DIR": "/tmp/uv_cache",
         "XDG_CACHE_HOME": "/tmp/xdg_cache",
     }
+    # Cosmos Transfer downloads its gated guardrail and transfer checkpoints on
+    # every Job, because the image is forbidden from baking them. Redirect them
+    # into the operator's durable cache when there is one, so the second Job of a
+    # run (and every later run) starts from local bytes.
+    env.update(model_cache_env(resolve_model_cache_root(runtime=RUNTIME_KUBERNETES)))
     output_json = local_dir / "cosmos2-transfer-result.json"
     invocation = _run_image_component(
         config.augment_image,
@@ -738,8 +784,12 @@ def _run_policy_rollouts_via_command(
             "NPA_SIM2REAL_ROLLOUT_TAG": f"outer-{outer_iteration:02d}-iter-{iteration:02d}",
         },
     )
+    policy_argv, policy_env = _split_component_command(
+        config.byo_policy_command, component="policy_actions"
+    )
+    env.update(policy_env)
     invocation = _run_component_command(
-        config.byo_policy_command,
+        policy_argv,
         cwd=actions_dir,
         env=env,
         component="policy_actions",
@@ -849,43 +899,6 @@ def _pod_info_from_snapshot(snapshot: Any) -> dict[str, Any]:
     }
 
 
-def _refresh_registry_pull_secret_for_sibling_job(
-    image: str,
-    *,
-    config: Sim2RealLoopConfig,
-    namespace: str,
-) -> None:
-    """Compatibility-only refresh before an archived sibling Job apply.
-
-    Pre-standard-runtime runs refreshed during the retired ``k8s_submit`` path,
-    but later sibling Jobs could outlive IAM registry tokens. The standard
-    compositional workflow does not import or call this helper.
-    """
-
-    if _bool_value(os.environ.get("NPA_SIM2REAL_SKIP_REGISTRY_REFRESH", "0")):
-        return
-
-    from npa.workflows.sim2real.registry_auth import (
-        ensure_registry_pull_secret_for_images,
-    )
-
-    try:
-        ensure_registry_pull_secret_for_images(
-            image,
-            namespace=namespace,
-            kubeconfig=config.k8s_kubeconfig,
-            k8s_context=config.k8s_context,
-        )
-    except Exception as exc:
-        if os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1":
-            raise Sim2RealLoopError(
-                f"could not refresh the registry pull secret for {image}"
-            ) from exc
-        logging.getLogger(__name__).warning(
-            "sibling registry pull-secret refresh skipped for %s: %s", image, exc
-        )
-
-
 def _run_kubernetes_indexed_image_component(
     image: str,
     *,
@@ -901,9 +914,6 @@ def _run_kubernetes_indexed_image_component(
         config.run_id,
         component,
         identity=env.get("NPA_SIM2REAL_OUTPUT_URI", ""),
-    )
-    _refresh_registry_pull_secret_for_sibling_job(
-        image, config=config, namespace=namespace
     )
 
     def manifest_factory(product: str, job_name: str) -> dict[str, Any]:
@@ -996,9 +1006,6 @@ def _run_kubernetes_image_component(
         config.run_id,
         component,
         identity=output_uri or env.get("NPA_SIM2REAL_OUTPUT_URI", ""),
-    )
-    _refresh_registry_pull_secret_for_sibling_job(
-        image, config=config, namespace=namespace
     )
 
     def manifest_factory(product: str, job_name: str) -> dict[str, Any]:
@@ -1402,7 +1409,11 @@ def _normalize_vlm_evaluation(
                 ),
                 "model_disagreement": bool(raw.get("model_disagreement")),
                 "reason2_critique": str(raw.get("reason2_critique") or ""),
-                "reason3_critique": str(raw.get("reason3_critique") or ""),
+                "cosmos3_critique": str(
+                    raw.get("cosmos3_critique")
+                    or raw.get("reason3_critique")  # archived artifact compatibility
+                    or ""
+                ),
                 "simulator_ground_truth": dict(
                     (action_items.get(step) or {}).get("simulator_ground_truth") or {}
                 ),
@@ -1431,7 +1442,7 @@ def _normalize_vlm_evaluation(
                 "critique_source": "model_missing",
                 "model_disagreement": False,
                 "reason2_critique": "",
-                "reason3_critique": "",
+                "cosmos3_critique": "",
                 "simulator_ground_truth": dict(
                     action_item.get("simulator_ground_truth") or {}
                 ),
@@ -1467,8 +1478,8 @@ def _component_excerpt(text: str, limit: int = 1200) -> str:
     return "\n".join(scrubbed)[-limit:]
 
 
-def _redact_command(command: str) -> str:
-    redacted = str(command)
+def _redact_command(command: str | list[str]) -> str:
+    redacted = command if isinstance(command, str) else shlex.join(command)
     for key in (
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
@@ -1560,8 +1571,12 @@ def _convert_eval_to_signal(
             "NPA_SIM2REAL_RL_SIGNAL_SCHEMA": SCHEMA_RL_SIGNAL,
         },
     )
+    signal_argv, signal_env = _split_component_command(
+        config.byo_signal_converter, component="signal_converter"
+    )
+    env.update(signal_env)
     invocation = _run_component_command(
-        config.byo_signal_converter,
+        signal_argv,
         cwd=output_dir,
         env=env,
         component="signal_converter",
@@ -1699,8 +1714,12 @@ def _run_trainer_via_command(
         output_json=output_path,
         extra=extra,
     )
+    trainer_argv, trainer_env = _split_component_command(
+        config.byo_trainer_command, component="trainer"
+    )
+    env.update(trainer_env)
     invocation = _run_component_command(
-        config.byo_trainer_command,
+        trainer_argv,
         cwd=output_dir,
         env=env,
         component="trainer",
@@ -1750,7 +1769,6 @@ __all__ = [
     "_reference_adapter_env_score",
     "_reference_heldout_payload",
     "_reference_vlm_payload_from_rollout",
-    "_refresh_registry_pull_secret_for_sibling_job",
     "_run_component_command",
     "_run_image_component",
     "_run_kubernetes_image_component",
@@ -1758,6 +1776,7 @@ __all__ = [
     "_run_policy_rollouts_via_command",
     "_run_trainer_via_command",
     "_safe_slug",
+    "_split_component_command",
     "_storage_client",
     "_upload_component_directory",
     "_upload_component_file",

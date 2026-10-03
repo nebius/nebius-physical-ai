@@ -107,6 +107,10 @@ def _run_component_command(*args: Any, **kwargs: Any) -> Any:
     return _compat_call("_run_component_command", *args, **kwargs)
 
 
+def _split_component_command(*args: Any, **kwargs: Any) -> Any:
+    return _compat_call("_split_component_command", *args, **kwargs)
+
+
 def _storage_client(*args: Any, **kwargs: Any) -> Any:
     return _compat_call("_storage_client", *args, **kwargs)
 
@@ -1103,11 +1107,11 @@ def _run_byo_rerun_command(
             "NPA_SIM2REAL_OUTPUT_RRD": str(rrd_path),
         },
     )
+    rerun_argv, rerun_env = _split_component_command(
+        config.byo_rerun_command, component="rerun_viz"
+    )
     invocation = _run_component_command(
-        config.byo_rerun_command,
-        cwd=local_dir,
-        env=env,
-        component="rerun_viz",
+        rerun_argv, cwd=local_dir, env=env | rerun_env, component="rerun_viz"
     )
     if not rrd_path.exists() or rrd_path.stat().st_size == 0:
         raise Sim2RealLoopError(

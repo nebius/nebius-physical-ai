@@ -28,9 +28,15 @@ def test_cosmos_byovm_tensor_parallel_serving(
     name = f"cosmos-{unique_name}"
     output_uri = f"{s3_prefix}cosmos/output.json"
     try:
-        run_npa(deploy_byovm_args("cosmos", byovm_target, name, requested_gpus), timeout=3600)
+        run_npa(
+            deploy_byovm_args("cosmos", byovm_target, name, requested_gpus),
+            timeout=3600,
+        )
 
-        status = run_npa([*npa_args("cosmos", byovm_target, name), "status", "--output", "json"], timeout=120)
+        status = run_npa(
+            [*npa_args("cosmos", byovm_target, name), "status", "--output", "json"],
+            timeout=120,
+        )
         status_data = json.loads(status.stdout)
         assert status_data.get("server") == "up"
 
@@ -52,7 +58,10 @@ def test_cosmos_byovm_tensor_parallel_serving(
         data = json.loads(result.stdout)
         assert data.get("job_id")
         assert data.get("status") == "completed"
-        assert data.get("saved_to") == output_uri or data.get("downloaded_to") == output_uri
+        assert (
+            data.get("saved_to") == output_uri
+            or data.get("downloaded_to") == output_uri
+        )
         assert_s3_has_objects(output_uri)
     finally:
         cleanup_workbench(run_npa, "cosmos", byovm_target, name)

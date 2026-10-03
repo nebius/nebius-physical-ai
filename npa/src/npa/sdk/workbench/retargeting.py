@@ -50,9 +50,15 @@ def run(
     )
 
 
-workflow = make_cli_wrapper("npa.cli.workbench.retargeting", "workflow_cmd", "Show retargeting workflow.")
-status = make_cli_wrapper("npa.cli.workbench.retargeting", "status_cmd", "Show retargeting status.")
-list = make_cli_wrapper("npa.cli.workbench.retargeting", "list_cmd", "List retargeting source formats.")
+workflow = make_cli_wrapper(
+    "npa.cli.workbench.retargeting", "workflow_cmd", "Show retargeting workflow."
+)
+status = make_cli_wrapper(
+    "npa.cli.workbench.retargeting", "status_cmd", "Show retargeting status."
+)
+list = make_cli_wrapper(
+    "npa.cli.workbench.retargeting", "list_cmd", "List retargeting source formats."
+)
 
 __all__ = [
     "RetargetingResult",

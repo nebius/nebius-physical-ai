@@ -7,6 +7,18 @@ description: Use before running or interpreting NPA tests, lint checks, or valid
 
 Use the repository virtualenv. Never use bare `python`; use `npa/.venv/bin/python`.
 
+If that venv is shared across checkouts (a symlinked `npa/.venv` in a git
+worktree or agent sandbox, rather than its own `pip install -e`), it can
+silently import a *different* checkout's `npa` while pytest still collects
+*this* checkout's test files — no error, no non-zero exit, just a misleading
+result. Run `make check-env` (or
+`npa/.venv/bin/python npa/scripts/check_dev_environment.py`) before trusting
+any test output from such a checkout; it fails fast with the exact
+`PYTHONPATH` fix. `make test`/`test-smoke`/`test-guardrails`/`test-e2e`
+already run it first. Separately, `make test-prereqs` reports (without
+blocking) which full-suite-parity tools are missing and how much temp-disk
+headroom is available — see CONTRIBUTING.md's "Testing Requirements".
+
 Correct command from repo root:
 
 ```bash
@@ -29,9 +41,29 @@ only running a slice:
 .venv/bin/python -m pytest tests/ -q -n auto
 ```
 
-Use the serial form when a failure needs a readable, ordered traceback. CI still
-runs serially with coverage, so treat a parallel pass as the fast signal, not as a
-replacement for the gate.
+Use the serial form when a failure needs a readable, ordered traceback. PR CI runs the full Python 3.12 coverage suite, Cypress,
+and focused Python 3.10/3.14 compatibility checks. The merge queue requires
+fresh successful evidence for the identical Git tree and repeats security
+scanning. A different combined tree reruns all tests, lint, guardrails and
+hostile-input checks, plus image checks when their inputs changed. The five-minute
+`pr-precheck` is an early signal, not a substitute for these tests. The full suite uses xdist
+inside eight duration-balanced shards, then merges coverage before enforcing
+the floor. Narrow prose-only candidates retain smoke, docs, guardrails, and
+security gates; see `CONTRIBUTING.md` for the trusted-base classification.
+Scheduled/manual audits repeat four shards across supported interpreters.
+Independent validation jobs use available GitHub runner capacity without shared
+job-level concurrency locks or matrix `max-parallel` caps. Keep the parent
+workflow's per-PR cancellation so new commits supersede old runs, and keep
+reusable workflow group prefixes distinct from their caller. `test_ci_concurrency`
+prevents shared validation locks and matrix caps; `test_ci_workflows` guards
+cancellation and required results. Organization runner limits may still cause
+waiting; refresh old branches after workflow changes land to adopt the policy.
+Every full Python 3.12 run uploads module timings; successful runs emit a merged
+profile. Use successful scheduled main profiles for reviewed weight updates.
+The independent CI timing report separates runner waiting from execution and
+setup; see `CONTRIBUTING.md` for dependency pins and report interpretation.
+A local parallel pass is the
+fast signal, not a reproduction of that distributed coverage gate.
 
 **Docs drift is a required gate and is slow to re-run blind.** `scripts/build_docs.sh`
 memoizes and prefetches its `npa --help` walk (~1 min, was ~5), but it still costs a
@@ -52,13 +84,88 @@ npa/.venv/bin/python -m ruff check <files>
 - Pipeline E2E tests use the `e2e_pipeline` pytest marker.
 - Live Nebius Token Factory tests use the `token_factory_e2e` marker (in `npa/tests/e2e/test_token_factory_e2e.py`). They self-skip without a real `NEBIUS_TOKEN_FACTORY_KEY`; the marker is in conftest `_LIVE_MARKERS` so the key is not scrubbed. Run with `NEBIUS_TOKEN_FACTORY_KEY=... pytest npa/tests/e2e/test_token_factory_e2e.py`.
 
-Expected baseline: 1242+ passed, 21 skipped, 1 xpassed, 0 failures.
+The gate for `make test` is **0 failures**. Most recent measurement:
+`10836 passed, 37 skipped, 12 deselected, 1 xpassed`, ~14 min serial (2026-08-18 at
+`1b89b3ba`).
+
+Treat that pass count as a floor, never as an equality. It is stale by
+construction — it rises whenever tests land, and it was previously recorded as a
+closed total that went wrong at the next merge. A higher number is normal; only a
+count that has *fallen* indicates tests stopped being collected, and the reliable
+comparison is against your own merge base. Two things move it legitimately: a few
+tests self-skip without `node`, `tmux`, or `docker`, and `make test` deselects the
+live/GPU markers so it collects a different tree from `test.yml`.
+
+The suite is hermetic: it needs no `kubectl`, no cluster, and no venv at a
+particular path. A failure that names a missing binary or `ModuleNotFoundError:
+No module named 'npa'` is a bug in the test or the script it drives, not a
+missing prerequisite — three of those were fixed in `516396ec`.
+
+A hermeticity fix needs a test that fails without it in *any* environment. CI
+pip-installs the package, so a fix that only matters when the `npa` console script
+is absent from `PATH` cannot regress-fail there: prune `PATH` inside the test, or
+assert on the helper directly, rather than relying on the ambient environment.
+
+Failures that appear only on an operator/dev VM are usually an ambient env var
+the conftest does not scrub, not a real regression. `tests/conftest.py` scrubs
+credential and infra-targeting variables for every non-live test precisely
+because CI runs with them unset and a working machine does not. When a test
+asserts on argv or rendered output, check that every env var the product reads to
+build it is in that scrub list: `NPA_NEBIUS_PROFILE` / `NEBIUS_PROFILE` were
+missing, and because product code prepends `--profile <name>` whenever either is
+set, ten `mk8s` argv assertions failed on any machine where an operator had
+selected a profile. Add the variable to the conftest tuple rather than working
+around it in the test; the tests that exercise the variable's own behavior set it
+with `monkeypatch.setenv` after the scrub runs.
 
 Use evidence-based convergence: report numeric pass counts and exact failure messages, not subjective assessment.
 
 ## Unit Test Rules
 
 Tests must not hit real infrastructure. Mock SSH, S3, Nebius APIs, GPUs, and network calls at the call site. CLI tests use `typer.testing.CliRunner` against `npa.cli.main:app`.
+
+When testing a later runtime failure, isolate successful prerequisite setup and
+assert that execution reached the intended failing boundary. For example, a
+Cosmos inference-denial test must mock the separately tested guardrail tokenizer
+preparation before its mocked inference subprocess. Otherwise a missing optional
+dependency or empty host cache masks the denial and privacy assertions. Preserve
+those assertions; never prime a real cache or download vendor data to make a
+hermetic test pass.
+
+### Optional Third-Party Library Validation
+
+Some exported artifact is only truly valid if the upstream library will load it,
+and asserting on the bytes we wrote cannot prove that. Those tests use
+`pytest.importorskip` and skip by default, because the library (`lerobot` pulls
+in torch) is not a test dependency. Put the `importorskip` in an `autouse`
+fixture, not mid-test, so a skip does not first pay for the fixture work it will
+throw away.
+
+A skipped test proves nothing, so run it against the real library when you touch
+the exporter. `npa/tests/test_adapter.py::TestLeRobotLibraryLoad` covers the
+sim-to-LeRobot export; give it its own virtualenv rather than adding torch to
+the shared one:
+
+Current NPA and LeRobot 0.5.1 pin incompatible AV and Rerun versions. Validate
+this adapter's source in a separate reader environment; do not co-install the
+complete NPA client there or weaken its dependency pins:
+
+```bash
+npa/.venv/bin/python -m venv /tmp/npa-lerobot-reader
+/tmp/npa-lerobot-reader/bin/python -m pip install \
+  --index-url https://download.pytorch.org/whl/cpu \
+  torch==2.10.0 torchvision==0.25.0 torchcodec==0.10.0
+/tmp/npa-lerobot-reader/bin/python -m pip install \
+  lerobot==0.5.1 pytest pytest-mock pytest-timeout pytest-cov pytest-xdist \
+  httpx typer pyyaml platformdirs boto3 paramiko requests rich
+PYTHONPATH="$PWD/npa/src" /tmp/npa-lerobot-reader/bin/python -m pytest \
+  npa/tests/test_adapter.py -k 'LeRobotLibraryLoad or native_lerobot_reader' -q -rs
+```
+
+Use Python 3.12 or later and `ffmpeg` on `PATH` to decode the exported videos.
+On Linux, building `evdev` needs matching Python and Linux kernel headers. This
+proves reader interoperability with the source adapter, not that the full NPA
+and LeRobot application dependency closures can share one environment.
 
 ## Live-Infra Testing Is A Priority (not optional)
 
@@ -98,6 +205,22 @@ and you report numeric results from running it.
   Terraform provider (`PermissionDenied`/`Unauthenticated` even though the CLI
   works); `provisioner._run` scrubs it, but when reproducing by hand
   `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN` first.
+- **`npa storage bucket delete` / `service-account delete` / `npa configure
+  --forget-project` changes:** run
+  `npa/tests/e2e/test_config_storage_cleanup_live_e2e.py` against one
+  disposable project:
+  ```bash
+  NPA_INTEGRATION_E2E=1 NPA_STORAGE_CLEANUP_LIVE_E2E=1 \
+    NPA_E2E_PROJECT=<alias> \
+    NPA_CONFIG_DIR=/private/path/to/config \
+    NPA_STORAGE_CLEANUP_LIVE_E2E_EVIDENCE_DIR=/private/path/to/evidence \
+    npa/.venv/bin/python -m pytest \
+    npa/tests/e2e/test_config_storage_cleanup_live_e2e.py -q -s
+  ```
+  The hermetic safety-contract tests in the same file run under plain
+  `pytest` with no env vars and never touch the network. See
+  `tests/cli/test_cleanup_teardown.py` for the separate credential-pruning
+  failure and concurrent-write checks.
 - If a full live run is genuinely infeasible in the environment, say so
   explicitly and still commit the `plan_only` live-matrix entry — never silently
   ship smoke-only.

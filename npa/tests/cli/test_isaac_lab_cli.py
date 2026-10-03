@@ -16,7 +16,9 @@ from npa.clients.ssh import SSHError
 
 
 runner = CliRunner()
-TERRAFORM_PLAN_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "terraform_plans"
+TERRAFORM_PLAN_FIXTURES = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "terraform_plans"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -100,7 +102,9 @@ def test_isaac_lab_deploy_requires_gpu_selection(tmp_path: Path) -> None:
     assert "H100/H200" in result.output
 
 
-def test_isaac_lab_deploy_installs_expected_package(tmp_path: Path, mocker) -> None:
+def test_isaac_lab_deploy_defaults_to_reproducible_container(
+    tmp_path: Path, mocker
+) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "connected", "")
     ssh.run_or_raise.return_value = (0, "ISAAC_LAB_ENV_SMOKE_OK", "")
@@ -122,6 +126,14 @@ def test_isaac_lab_deploy_installs_expected_package(tmp_path: Path, mocker) -> N
     update_status = mocker.patch("npa.cli.isaac_lab.update_workbench_app_status")
     mocker.patch("npa.cli.isaac_lab.write_manifest")
     mocker.patch("npa.cli.isaac_lab.list_projects", return_value={})
+    mocker.patch(
+        "npa.cli.isaac_lab.container_image_for_tool",
+        return_value="registry.example/npa-isaac-lab:3.0.0b2.post1",
+    )
+    write_env = mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
+    deploy_container = mocker.patch(
+        "npa.deploy.configurator.deploy_workbench_container"
+    )
 
     result = runner.invoke(
         app,
@@ -155,20 +167,47 @@ def test_isaac_lab_deploy_installs_expected_package(tmp_path: Path, mocker) -> N
     tf_vars = apply.call_args.kwargs["tf_vars"]
     assert tf_vars["gpu_platform"] == "gpu-l40s-a"
     assert tf_vars["gpu_preset"] == "1gpu-40vcpu-160gb"
-    assert "boot_disk_size_gb" not in tf_vars
+    assert tf_vars["boot_disk_size_gb"] == "250"
 
-    install_cmd = ssh.run_or_raise.call_args.args[0]
-    assert "python3.11 -m venv /opt/isaac-lab/venv" in install_cmd
+    write_env.assert_called_once()
+    deploy_container.assert_called_once()
     assert (
-        '/opt/isaac-lab/venv/bin/python -m pip install "isaaclab[isaacsim,all]==2.3.2.post1" '
-        "--extra-index-url https://pypi.nvidia.com"
-    ) in install_cmd
-    assert "ISAAC_LAB_ENV_SMOKE_OK" in install_cmd
+        deploy_container.call_args.kwargs["image_ref"]
+        == "registry.example/npa-isaac-lab:3.0.0b2.post1"
+    )
     write_config.assert_called()
     wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["isaac"]
     assert wb_cfg["app_status"] == "provisioned"
     assert update_status.call_args_list[0].args == ("proj", "isaac", "installing")
     assert update_status.call_args_list[-1].args == ("proj", "isaac", "healthy")
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_isaac_lab_deploy_rejects_native_vm_install_consistently(
+    dry_run: bool,
+) -> None:
+    args = [
+        "workbench",
+        "isaac-lab",
+        "deploy",
+        "--runtime",
+        "vm",
+        "--gpu-type",
+        "gpu-l40s-a",
+        "--gpu-preset",
+        "1gpu-40vcpu-160gb",
+    ]
+    if dry_run:
+        args.append("--dry-run")
+    result = runner.invoke(
+        app,
+        args,
+    )
+
+    assert result.exit_code == 1
+    assert "Native VM installation is not supported for Isaac Lab 3" in result.output
+    assert "--runtime container" in result.output
+    assert "Would install" not in result.output
 
 
 def _isaac_existing_config() -> dict:
@@ -239,7 +278,9 @@ def test_isaac_lab_deploy_existing_alias_no_replace_skips_terraform(mocker) -> N
     apply.assert_not_called()
 
 
-def test_isaac_lab_deploy_existing_alias_with_replace_prompts_confirmation(mocker) -> None:
+def test_isaac_lab_deploy_existing_alias_with_replace_prompts_confirmation(
+    mocker,
+) -> None:
     mocker.patch("npa.cli.isaac_lab.resolve_environment", return_value=None)
     mocker.patch("npa.cli.isaac_lab.alias_has_terraform_state", return_value=True)
     mocker.patch("npa.cli.isaac_lab.workbench_is_byovm", return_value=False)
@@ -271,7 +312,9 @@ def test_isaac_lab_deploy_existing_alias_with_replace_prompts_confirmation(mocke
     apply.assert_not_called()
 
 
-def test_isaac_lab_deploy_existing_alias_with_replace_and_yes_runs_terraform(tmp_path: Path, mocker) -> None:
+def test_isaac_lab_deploy_existing_alias_with_replace_and_yes_runs_terraform(
+    tmp_path: Path, mocker
+) -> None:
     mocker.patch("npa.cli.isaac_lab.resolve_environment", return_value=None)
     mocker.patch("npa.cli.isaac_lab.alias_has_terraform_state", return_value=True)
     mocker.patch("npa.cli.isaac_lab.workbench_is_byovm", return_value=False)
@@ -317,14 +360,18 @@ def test_isaac_lab_deploy_existing_alias_with_replace_and_yes_runs_terraform(tmp
     apply.assert_called_once()
 
 
-def test_isaac_lab_deploy_replacement_plan_without_replace_aborts(tmp_path: Path, mocker) -> None:
+def test_isaac_lab_deploy_replacement_plan_without_replace_aborts(
+    tmp_path: Path, mocker
+) -> None:
     mocker.patch("npa.cli.isaac_lab.resolve_environment", return_value=None)
     mocker.patch("npa.cli.isaac_lab.alias_has_terraform_state", return_value=False)
     mocker.patch("npa.cli.isaac_lab.workbench_is_byovm", return_value=False)
     mocker.patch("npa.cli.isaac_lab.provisioner.init")
     mocker.patch(
         "npa.cli.isaac_lab.provisioner.plan",
-        return_value=(TERRAFORM_PLAN_FIXTURES / "gpu_type_change_full_replace.txt").read_text(),
+        return_value=(
+            TERRAFORM_PLAN_FIXTURES / "gpu_type_change_full_replace.txt"
+        ).read_text(),
     )
     apply = mocker.patch("npa.cli.isaac_lab.provisioner.apply")
 
@@ -429,7 +476,9 @@ def test_isaac_lab_deploy_byovm_alias_skips_terraform(mocker) -> None:
     apply.assert_not_called()
 
 
-def test_isaac_lab_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -> None:
+def test_isaac_lab_deploy_runtime_container_starts_image(
+    tmp_path: Path, mocker
+) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "connected", "")
 
@@ -450,7 +499,9 @@ def test_isaac_lab_deploy_runtime_container_starts_image(tmp_path: Path, mocker)
     update_status = mocker.patch("npa.cli.isaac_lab.update_workbench_app_status")
     mocker.patch("npa.cli.isaac_lab.write_manifest")
     mocker.patch("npa.cli.isaac_lab.list_projects", return_value={})
-    deploy_container = mocker.patch("npa.deploy.configurator.deploy_workbench_container")
+    deploy_container = mocker.patch(
+        "npa.deploy.configurator.deploy_workbench_container"
+    )
     mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
 
     result = runner.invoke(
@@ -477,6 +528,8 @@ def test_isaac_lab_deploy_runtime_container_starts_image(tmp_path: Path, mocker)
             "1gpu-40vcpu-160gb",
             "--runtime",
             "container",
+            "--image",
+            "registry.example.invalid/operator/npa-isaac-lab:rebuilt",
         ],
     )
 
@@ -486,11 +539,23 @@ def test_isaac_lab_deploy_runtime_container_starts_image(tmp_path: Path, mocker)
     assert tf_vars["boot_disk_size_gb"] == "250"
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-isaac-lab"
-    assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-isaac-lab:2.3.2.post1")
-    wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"]["isaac-container"]
+    assert deploy_container.call_args.kwargs["image_ref"] == (
+        "registry.example.invalid/operator/npa-isaac-lab:rebuilt"
+    )
+    wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"][
+        "isaac-container"
+    ]
     assert wb_cfg["runtime"] == "container"
-    assert update_status.call_args_list[0].args == ("proj", "isaac-container", "installing")
-    assert update_status.call_args_list[-1].args == ("proj", "isaac-container", "healthy")
+    assert update_status.call_args_list[0].args == (
+        "proj",
+        "isaac-container",
+        "installing",
+    )
+    assert update_status.call_args_list[-1].args == (
+        "proj",
+        "isaac-container",
+        "healthy",
+    )
 
 
 def test_isaac_lab_train_builds_remote_command(mocker) -> None:
@@ -519,13 +584,16 @@ def test_isaac_lab_train_builds_remote_command(mocker) -> None:
     assert result.exit_code == 0
     cmd = ssh.run.call_args.args[0]
     assert "source /opt/isaac-lab/venv/bin/activate" in cmd
-    assert "ISAACLAB_PKG=/opt/isaac-lab/venv/lib/python3.11/site-packages/isaaclab" in cmd
+    assert (
+        "ISAACLAB_PKG=/opt/isaac-lab/venv/lib/python3.12/site-packages/isaaclab" in cmd
+    )
     assert "$ISAACLAB_PKG/source/isaaclab_tasks" in cmd
     assert "scripts/reinforcement_learning/rsl_rl/train.py" in cmd
-    assert "--task \"$TASK\"" in cmd
-    assert "--num_envs \"$NUM_ENVS\"" in cmd
-    assert "--max_iterations \"$MAX_ITERATIONS\"" in cmd
-    assert "--headless" in cmd
+    assert '--task "$TASK"' in cmd
+    assert '--num_envs "$NUM_ENVS"' in cmd
+    assert '--max_iterations "$MAX_ITERATIONS"' in cmd
+    assert "--visualizer none" in cmd
+    assert "Refusing to generate or run a compatibility trainer" in cmd
     assert "agent.save_interval=1" in cmd
     assert "Isaac-Reach-Franka-v0" in cmd
     assert "NUM_ENVS=64" in cmd
@@ -538,7 +606,9 @@ def test_isaac_lab_train_builds_remote_command(mocker) -> None:
     assert "ISAAC_LAB_TRAIN_COMPLETE" in cmd
 
 
-def test_isaac_lab_train_accepts_success_summary_with_nonzero_ssh_status(mocker) -> None:
+def test_isaac_lab_train_accepts_success_summary_with_nonzero_ssh_status(
+    mocker,
+) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (
         1,
@@ -617,7 +687,10 @@ def test_isaac_lab_train_falls_back_to_remote_env_upload(mocker) -> None:
 
 
 def _mock_isaac_serverless_env(mocker):
-    mocker.patch("npa.cli.isaac_lab.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
+    mocker.patch(
+        "npa.cli.isaac_lab.resolve_environment",
+        return_value=SimpleNamespace(project_id="project-1"),
+    )
     mocker.patch(
         "npa.cli.isaac_lab.resolve_project_storage",
         return_value=SimpleNamespace(
@@ -627,9 +700,13 @@ def _mock_isaac_serverless_env(mocker):
             aws_secret_access_key="SECRET",
         ),
     )
-    mocker.patch("npa.cli.isaac_lab.resolve_container_registry", return_value="registry.example")
-    mocker.patch("npa.cli.isaac_lab.container_image_for_tool", return_value="registry.example/npa-isaac-lab:smoke")
-    return mocker.patch("npa.cli.isaac_lab.resolve_subnet", return_value="vpcsubnet-auto")
+    mocker.patch(
+        "npa.cli.isaac_lab.container_image_for_tool",
+        return_value="registry.example/npa-isaac-lab:smoke",
+    )
+    return mocker.patch(
+        "npa.cli.isaac_lab.resolve_subnet", return_value="vpcsubnet-auto"
+    )
 
 
 def test_isaac_lab_serverless_requires_output_path(mocker) -> None:
@@ -638,8 +715,17 @@ def test_isaac_lab_serverless_requires_output_path(mocker) -> None:
     result = runner.invoke(
         app,
         [
-            "workbench", "isaac-lab", "-p", "proj", "-n", "isaac", "train",
-            "--runtime", "serverless", "--task", "Isaac-Reach-Franka-v0",
+            "workbench",
+            "isaac-lab",
+            "-p",
+            "proj",
+            "-n",
+            "isaac",
+            "train",
+            "--runtime",
+            "serverless",
+            "--task",
+            "Isaac-Reach-Franka-v0",
         ],
     )
 
@@ -651,16 +737,34 @@ def test_isaac_lab_serverless_requires_rt_cores_gpu_type(mocker) -> None:
     _mock_isaac_serverless_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
-    client.create_job.return_value = SimpleNamespace(id="job-1", name="isaac-job", status="running", output_uris=())
+    client.create_job.return_value = SimpleNamespace(
+        id="job-1", name="isaac-job", status="running", output_uris=()
+    )
     mocker.patch("npa.cli.isaac_lab.ServerlessClient", return_value=client)
 
     result = runner.invoke(
         app,
         [
-            "workbench", "isaac-lab", "-p", "proj", "-n", "isaac", "train",
-            "--runtime", "serverless", "--task", "Isaac-Reach-Franka-v0",
-            "--output-path", "s3://bucket/isaac/", "--submit-only",
-            "--gpu-type", "l40s", "--job-name", "isaac-job", "--output-format", "json",
+            "workbench",
+            "isaac-lab",
+            "-p",
+            "proj",
+            "-n",
+            "isaac",
+            "train",
+            "--runtime",
+            "serverless",
+            "--task",
+            "Isaac-Reach-Franka-v0",
+            "--output-path",
+            "s3://bucket/isaac/",
+            "--submit-only",
+            "--gpu-type",
+            "l40s",
+            "--job-name",
+            "isaac-job",
+            "--output-format",
+            "json",
         ],
     )
 
@@ -670,42 +774,114 @@ def test_isaac_lab_serverless_requires_rt_cores_gpu_type(mocker) -> None:
     assert kwargs["preset"] == "1gpu-40vcpu-160gb"
 
 
-def test_isaac_lab_serverless_rejects_non_rt_gpu_type(mocker) -> None:
+def _invoke_isaac_serverless_train(mocker, *, task: str, gpu_type: str):
     _mock_isaac_serverless_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
-    client.create_job.return_value = SimpleNamespace(id="job-1", name="isaac-job", status="running", output_uris=())
+    client.create_job.return_value = SimpleNamespace(
+        id="job-1", name="isaac-job", status="running", output_uris=()
+    )
     mocker.patch("npa.cli.isaac_lab.ServerlessClient", return_value=client)
 
     result = runner.invoke(
         app,
         [
-            "workbench", "isaac-lab", "-p", "proj", "-n", "isaac", "train",
-            "--runtime", "serverless", "--task", "Isaac-Reach-Franka-v0",
-            "--output-path", "s3://bucket/isaac/", "--submit-only",
-            "--gpu-type", "h200", "--job-name", "isaac-job",
+            "workbench",
+            "isaac-lab",
+            "-p",
+            "proj",
+            "-n",
+            "isaac",
+            "train",
+            "--runtime",
+            "serverless",
+            "--task",
+            task,
+            "--output-path",
+            "s3://bucket/isaac/",
+            "--submit-only",
+            "--gpu-type",
+            gpu_type,
+            "--job-name",
+            "isaac-job",
         ],
+    )
+    return result, client
+
+
+@pytest.mark.parametrize(
+    ("gpu_type", "expected_platform"),
+    [
+        ("h200", "gpu-h200-sxm"),
+        ("h100", "gpu-h100-sxm"),
+        ("b200", "gpu-b200-sxm"),
+    ],
+)
+def test_isaac_lab_serverless_allows_datacenter_gpu_for_headless_task(
+    mocker, gpu_type: str, expected_platform: str
+) -> None:
+    """State-based RL does not rasterize, so RT cores are not required for it."""
+
+    result, client = _invoke_isaac_serverless_train(
+        mocker, task="Isaac-Reach-Franka-v0", gpu_type=gpu_type
+    )
+
+    assert result.exit_code == 0, result.output
+    assert client.create_job.call_args.kwargs["gpu_type"] == expected_platform
+
+
+def test_isaac_lab_serverless_rejects_datacenter_gpu_for_camera_task(mocker) -> None:
+    """A task that declares camera observations still needs RT cores."""
+
+    result, client = _invoke_isaac_serverless_train(
+        mocker, task="Isaac-Cartpole-RGB-Camera-Direct-v0", gpu_type="h200"
     )
 
     assert result.exit_code == 1
-    assert "requires RT-core GPUs" in result.output
+    assert "cannot run on the datacenter-headless GPU" in result.output
+    assert "camera or rendered observations" in result.output
     client.create_job.assert_not_called()
+
+
+def test_isaac_lab_serverless_allows_rt_core_gpu_for_camera_task(mocker) -> None:
+    result, client = _invoke_isaac_serverless_train(
+        mocker, task="Isaac-Cartpole-RGB-Camera-Direct-v0", gpu_type="l40s"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert client.create_job.call_args.kwargs["gpu_type"] == "gpu-l40s-a"
 
 
 def test_isaac_lab_serverless_uses_shared_env_builder(mocker) -> None:
     resolver = _mock_isaac_serverless_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
-    client.create_job.return_value = SimpleNamespace(id="job-1", name="isaac-job", status="running", output_uris=())
+    client.create_job.return_value = SimpleNamespace(
+        id="job-1", name="isaac-job", status="running", output_uris=()
+    )
     mocker.patch("npa.cli.isaac_lab.ServerlessClient", return_value=client)
 
     result = runner.invoke(
         app,
         [
-            "workbench", "isaac-lab", "-p", "proj", "-n", "isaac", "train",
-            "--runtime", "serverless", "--task", "Isaac-Reach-Franka-v0",
-            "--output-path", "s3://bucket/isaac/", "--submit-only",
-            "--job-name", "isaac-job", "--output-format", "json",
+            "workbench",
+            "isaac-lab",
+            "-p",
+            "proj",
+            "-n",
+            "isaac",
+            "train",
+            "--runtime",
+            "serverless",
+            "--task",
+            "Isaac-Reach-Franka-v0",
+            "--output-path",
+            "s3://bucket/isaac/",
+            "--submit-only",
+            "--job-name",
+            "isaac-job",
+            "--output-format",
+            "json",
         ],
     )
 
@@ -724,16 +900,30 @@ def test_isaac_lab_serverless_uploads_output_dir(mocker) -> None:
     _mock_isaac_serverless_env(mocker)
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
-    client.create_job.return_value = SimpleNamespace(id="job-1", name="isaac-job", status="running", output_uris=())
+    client.create_job.return_value = SimpleNamespace(
+        id="job-1", name="isaac-job", status="running", output_uris=()
+    )
     mocker.patch("npa.cli.isaac_lab.ServerlessClient", return_value=client)
 
     result = runner.invoke(
         app,
         [
-            "workbench", "isaac-lab", "-p", "proj", "-n", "isaac", "train",
-            "--runtime", "serverless", "--task", "Isaac-Reach-Franka-v0",
-            "--output-path", "s3://bucket/isaac/", "--submit-only",
-            "--job-name", "isaac-job",
+            "workbench",
+            "isaac-lab",
+            "-p",
+            "proj",
+            "-n",
+            "isaac",
+            "train",
+            "--runtime",
+            "serverless",
+            "--task",
+            "Isaac-Reach-Franka-v0",
+            "--output-path",
+            "s3://bucket/isaac/",
+            "--submit-only",
+            "--job-name",
+            "isaac-job",
         ],
     )
 
@@ -741,7 +931,7 @@ def test_isaac_lab_serverless_uploads_output_dir(mocker) -> None:
     command = client.create_job.call_args.kwargs["command"]
     assert "PYUPLOAD" in command
     assert "scripts/reinforcement_learning/rsl_rl/train.py" in command
-    assert "--max_iterations \"$MAX_ITERATIONS\"" in command
+    assert '--max_iterations "$MAX_ITERATIONS"' in command
     assert "agent.save_interval=1" in command
     assert "npa_isaac_lab_train_summary.json" in command
     assert "npa_isaac_lab_checkpoint_manifest.json" in command
@@ -775,7 +965,7 @@ def test_isaac_lab_train_container_uses_docker_exec(mocker) -> None:
     assert "sudo docker exec npa-isaac-lab" in cmd
     assert "/isaac-sim/python.sh" in cmd
     assert "scripts/reinforcement_learning/rsl_rl/train.py" in cmd
-    assert "--max_iterations \"$MAX_ITERATIONS\"" in cmd
+    assert '--max_iterations "$MAX_ITERATIONS"' in cmd
     assert "/opt/isaac-lab/runs/container-test" in cmd
 
 
@@ -1145,7 +1335,9 @@ def test_isaac_lab_train_accepts_deprecated_output_dir_alias(mocker) -> None:
     assert "/tmp/old-isaac-out" in ssh.run.call_args.args[0]
 
 
-def test_isaac_lab_eval_accepts_deprecated_checkpoint_and_output_dir_aliases(mocker) -> None:
+def test_isaac_lab_eval_accepts_deprecated_checkpoint_and_output_dir_aliases(
+    mocker,
+) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "", "")
     mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
@@ -1172,20 +1364,26 @@ def test_isaac_lab_eval_accepts_deprecated_checkpoint_and_output_dir_aliases(moc
     assert "/tmp/old-isaac-eval" in cmd
 
 
-def test_isaac_lab_export_lerobot_runs_remote_rollout_and_uploads(tmp_path: Path, mocker) -> None:
+def test_isaac_lab_export_lerobot_runs_remote_rollout_and_uploads(
+    tmp_path: Path, mocker
+) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "ISAAC_LAB_EXPORT_LEROBOT_COMPLETE", "")
     cfg = _ssh_cfg()
     cfg.runtime = "container"
     mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=cfg)
     mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
-    mocker.patch("npa.cli.isaac_lab._download_remote_directory", return_value=tmp_path / "raw")
+    mocker.patch(
+        "npa.cli.isaac_lab._download_remote_directory", return_value=tmp_path / "raw"
+    )
     storage = mocker.MagicMock()
     storage.upload_directory.return_value = "s3://bucket/isaac-lab/g1/"
     mocker.patch("npa.cli.isaac_lab._storage_client", return_value=storage)
     converted = tmp_path / "converted"
     converted.mkdir()
-    convert = mocker.patch("npa.adapter.isaac_lab_lerobot.convert", return_value=converted)
+    convert = mocker.patch(
+        "npa.adapter.isaac_lab_lerobot.convert", return_value=converted
+    )
 
     result = runner.invoke(
         app,
@@ -1217,7 +1415,9 @@ def test_isaac_lab_export_lerobot_runs_remote_rollout_and_uploads(tmp_path: Path
     convert.assert_called_once()
     assert convert.call_args.kwargs["fps"] == 50
     assert convert.call_args.kwargs["include_placeholder_video"] is True
-    storage.upload_directory.assert_called_once_with(str(converted), "s3://bucket/isaac-lab/g1/")
+    storage.upload_directory.assert_called_once_with(
+        str(converted), "s3://bucket/isaac-lab/g1/"
+    )
     assert "s3://bucket/isaac-lab/g1/" in result.output
 
 
@@ -1231,7 +1431,9 @@ def test_isaac_lab_export_lerobot_falls_back_to_remote_env_upload(
     cfg.runtime = "container"
     mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=cfg)
     mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
-    mocker.patch("npa.cli.isaac_lab._download_remote_directory", return_value=tmp_path / "raw")
+    mocker.patch(
+        "npa.cli.isaac_lab._download_remote_directory", return_value=tmp_path / "raw"
+    )
     storage = mocker.MagicMock()
     storage.upload_directory.side_effect = _access_denied("AccessDenied")
     mocker.patch("npa.cli.isaac_lab._storage_client", return_value=storage)
@@ -1530,14 +1732,18 @@ def test_isaac_lab_export_onnx_s3_roundtrip_uploads(tmp_path: Path, mocker) -> N
     }
 
 
-def test_isaac_lab_export_onnx_upload_failure_exits_nonzero(tmp_path: Path, mocker) -> None:
+def test_isaac_lab_export_onnx_upload_failure_exits_nonzero(
+    tmp_path: Path, mocker
+) -> None:
     mocker.patch("npa.cli.isaac_lab._get_ssh_config", return_value=_ssh_cfg())
     storage = mocker.MagicMock()
     storage.upload_file.side_effect = _access_denied("denied")
     mocker.patch("npa.cli.isaac_lab._storage_client", return_value=storage)
     mocker.patch(
         "npa.workflows.sim2real.policy_export.export_policy_onnx",
-        side_effect=lambda checkpoint_path, *, out_dir, **kw: _onnx_export_result(Path(out_dir)),
+        side_effect=lambda checkpoint_path, *, out_dir, **kw: _onnx_export_result(
+            Path(out_dir)
+        ),
     )
 
     result = runner.invoke(
@@ -1561,7 +1767,9 @@ def test_isaac_lab_export_onnx_upload_failure_exits_nonzero(tmp_path: Path, mock
     assert payload["upload_status"] == "failed"
 
 
-def test_isaac_lab_export_onnx_export_error_exits_nonzero(tmp_path: Path, mocker) -> None:
+def test_isaac_lab_export_onnx_export_error_exits_nonzero(
+    tmp_path: Path, mocker
+) -> None:
     ckpt = tmp_path / "model.pt"
     ckpt.write_bytes(b"x")
     from npa.workflows.sim2real.policy_export import PolicyExportError
@@ -1660,7 +1868,15 @@ def test_isaac_lab_list_tasks_contains_filter_and_json(mocker) -> None:
 
     result = runner.invoke(
         app,
-        ["workbench", "isaac-lab", "list-tasks", "--contains", "franka", "--output-format", "json"],
+        [
+            "workbench",
+            "isaac-lab",
+            "list-tasks",
+            "--contains",
+            "franka",
+            "--output-format",
+            "json",
+        ],
     )
 
     assert result.exit_code == 0
@@ -1721,9 +1937,86 @@ def test_isaac_lab_train_export_trajectories_runs_second_remote_script(mocker) -
     assert "ISAAC_LAB_TRAJ_EXPORT_START" in traj_cmd
     assert "npa_isaac_lab_checkpoint.pt" in traj_cmd
     assert "/tmp/isaac-out/trajectories" in traj_cmd
+    assert "RslRlVecEnvWrapper(env, clip_actions=clip_actions)" in traj_cmd
+    assert "handle_deprecated_rsl_rl_cfg" in traj_cmd
+    assert 'metadata.version("rsl-rl-lib")' in traj_cmd
+    assert traj_cmd.index("import importlib.metadata as metadata") < traj_cmd.index(
+        'metadata.version("rsl-rl-lib")'
+    )
+    assert "device=runner_device" in traj_cmd
+    assert "random fallback" not in traj_cmd
+    assert "trained-policy checkpoint load failed" in traj_cmd
+    assert "ISAAC_LAB_TRAJ_EXPORT_FAILED" in traj_cmd
+    assert "capture_rgb = True" in traj_cmd
+    assert "enable_cameras=capture_rgb" in traj_cmd
+    assert '"--portable-root /tmp/npa-isaac-kit "' in traj_cmd
+    assert '"--/structuredLog/enable=false "' in traj_cmd
+    assert '"--/telemetry/enableAnonymousData=false "' in traj_cmd
+    assert 'rtx_settings.set_float("/rtx/dataWindowNDC/0", 0.0)' in traj_cmd
+    assert 'rtx_settings.set_float("/rtx/dataWindowNDC/3", 1.0)' in traj_cmd
+    assert (
+        'rtx_settings.set_bool("/rtx/dataWindow/fitOutputToDataWindow", False)'
+        in traj_cmd
+    )
+    assert "TiledCameraCfg(" in traj_cmd
+    assert 'prim_path="{ENV_REGEX_NS}/NpaRolloutCamera"' in traj_cmd
+    assert 'task == "Isaac-Cartpole-v0"' in traj_cmd
+    assert "return (0.0, -5.0, 3.0), (0.0, 0.0, 3.0)" in traj_cmd
+    assert "camera.set_world_poses_from_view(eyes=eye, targets=target)" in traj_cmd
+    assert 'camera = render_env.unwrapped.scene["npa_rollout_camera"]' in traj_cmd
+    assert traj_cmd.index("frame = _rgb_frame(render_env)") < traj_cmd.index(
+        "obs, _rewards, done, _info = _step_env"
+    )
+    assert 'np.save(episode_dir / "rgb.npy"' in traj_cmd
+    assert "RGB content validation failed" in traj_cmd
+    assert "RGB center framing validation failed" in traj_cmd
+    assert "RGB motion validation failed" in traj_cmd
+    assert '"renderer": "isaac_sim_tiled_camera_rtx"' in traj_cmd
+    assert '"rgb_content_frame_count": total_rgb_content_frames' in traj_cmd
+    assert (
+        '"rgb_center_content_frame_count": total_rgb_center_content_frames' in traj_cmd
+    )
+    assert '"rgb_motion_pair_count": total_rgb_motion_pairs' in traj_cmd
+    assert '"checkpoint_sha256": hashlib.sha256' in traj_cmd
     payload = json.loads(result.output)
     assert payload["trajectory_export"] == "success"
     assert payload["trajectories_dir"] == "/tmp/isaac-out/trajectories"
+    assert payload["trajectory_rgb_requested"] is True
+
+
+def test_isaac_lab_train_can_explicitly_disable_rgb_trajectory_capture(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.side_effect = [
+        (0, "", ""),
+        (0, "ISAAC_LAB_TRAJ_EXPORT_COMPLETE\n", ""),
+    ]
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "train",
+            "--task",
+            "Isaac-Cartpole-v0",
+            "--steps",
+            "1",
+            "--output-dir",
+            "/tmp/isaac-out",
+            "--export-trajectories",
+            "--no-export-rgb",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    traj_cmd = ssh.run.call_args_list[1].args[0]
+    assert "capture_rgb = False" in traj_cmd
+    assert "enable_cameras=capture_rgb" in traj_cmd
+    assert json.loads(result.output)["trajectory_rgb_requested"] is False
 
 
 def test_isaac_lab_train_export_trajectories_marks_masked_failure(mocker) -> None:
@@ -1737,7 +2030,11 @@ def test_isaac_lab_train_export_trajectories_marks_masked_failure(mocker) -> Non
     ssh = mocker.MagicMock()
     ssh.run.side_effect = [
         (0, "", ""),
-        (0, "ISAAC_LAB_TRAJ_EXPORT_START ...\nISAAC_LAB_TRAJ_EXPORT_POLICY_LOADED\n", ""),
+        (
+            1,
+            "ISAAC_LAB_TRAJ_EXPORT_START ...\nPOLICY_LOAD_FAILURE\n",
+            "runtime warning",
+        ),
     ]
     mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
     mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
@@ -1763,7 +2060,8 @@ def test_isaac_lab_train_export_trajectories_marks_masked_failure(mocker) -> Non
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["trajectory_export"] == "failed"
-    assert "trajectory_export_error" in payload
+    assert "POLICY_LOAD_FAILURE" in payload["trajectory_export_error"]
+    assert "runtime warning" in payload["trajectory_export_error"]
 
 
 def test_isaac_lab_train_without_export_flag_runs_single_command(mocker) -> None:

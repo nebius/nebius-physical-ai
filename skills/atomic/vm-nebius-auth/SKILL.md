@@ -5,6 +5,30 @@ description: Start, recover, or verify human Nebius CLI authentication on a remo
 
 # VM Nebius Authentication
 
+For an operator who cannot forward the callback port but can use a private
+terminal on the CLI machine, use
+[nebius-headless-oauth](../nebius-headless-oauth/SKILL.md) for manual callback
+delivery. Its returned URL contains a one-time code and must not pass through
+chat. The tunnel flow below remains the path when SSH forwarding is available.
+
+For unattended VM or CI work, use
+[nebius-service-account-auth](../nebius-service-account-auth/SKILL.md) to
+configure or verify a dedicated service identity and project-scoped grants.
+
+## Diagnose before starting login
+
+For a read-only readiness request, use
+`npa workbench health preflight --checks nebius --json`; do not start profile
+creation. A failed identity probe alone does not distinguish missing profile
+configuration, expired authentication, denied access, or a network failure.
+Check the selected profile's presence using the installed CLI's profile help
+and non-secret metadata. Do not dump configuration or token values. Report
+missing configuration only when established; otherwise leave the cause unknown.
+
+Create or recover a human profile only when the user authorizes login. A
+successful authentication check does not prove resource-creation permissions,
+quota, or capacity. Preserve attached-service-account profiles on agent VMs.
+
 Run on the operator/dev VM:
 
 ```bash

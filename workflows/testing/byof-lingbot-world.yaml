@@ -1,0 +1,82 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-lingbot-world
+  description: Pinned LingBot World v1 native camera-conditioned video on four B200 GPUs; validates distributed
+    execution and every decoded frame.
+config:
+  bucket: example-bucket
+  prompt: A smooth camera move reveals a large bright industrial hangar, preserving coherent geometry
+    and lighting.
+  seed: 42
+  repo_url: https://github.com/Robbyant/lingbot-world.git
+  repo_ref: a43bec7f8091c83e9b30b16b912f6fc906236fa6
+  repo_auth: none
+  repo_token_env: GH_TOKEN
+  base_profile: prebuilt
+  base_image: ghcr.io/nebius/nebius-physical-ai/npa-lingbot-world@sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277
+  build_command: ''
+  pip_extra: viz
+  workload: solution-smoke
+  smoke_command: |
+    set -euo pipefail
+    export VIDEO_PROMPT_B64="{{config.prompt|base64}}"
+    export VIDEO_SEED_B64="{{config.seed|base64}}"
+    export VIDEO_INPUT_B64="{{config.input_uri|base64}}"
+    export VIDEO_SHA256_B64="{{config.input_sha256|base64}}"
+    model-runtime ensure
+    /opt/byof/.venv/bin/python - <<'PY_VIDEO'
+    import base64
+    import json
+    import os
+    from pathlib import Path
+    from npa.solutions.lingbot_camera import generate_camera_video
+    from npa.solutions.media_input import download_input
+
+    def value(name):
+        return base64.b64decode(os.environ[name], validate=True).decode()
+    out = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    image = download_input(value("VIDEO_INPUT_B64"), value("VIDEO_SHA256_B64"), out / "original-input.png")
+    result = generate_camera_video(image, value("VIDEO_PROMPT_B64"), int(value("VIDEO_SEED_B64")), out)
+    assert result["solution"] == "lingbot-world"
+    assert result["capability"] == "lingbot_world_camera_conditioned_video"
+    assert {"lingbot_world_camera_conditioned_video", "distributed_rank_validation", "decoded_mp4_validation"} <= set(result["capabilities_exercised"])
+    (out / "lingbot_world_camera_conditioned_video.json").write_text(json.dumps(result, indent=2) + "\n")
+    PY_VIDEO
+  solution_name: lingbot-world
+  capability_name: lingbot_world_camera_conditioned_video
+  smoke_artifact_name: lingbot_world_camera_conditioned_video.json
+  resource_profile_yaml: byof-solution-smoke-rtxpro-gpu
+  task: text-to-video
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: '-1'
+  poll_interval: '60'
+  output_root: s3://{{config.bucket}}/oss-solutions/lingbot-world
+  summary_uri: s3://{{config.bucket}}/oss-solutions/lingbot-world/{{run.id}}/npa_byof_summary.json
+  artifact_uri: s3://{{config.bucket}}/oss-solutions/lingbot-world/{{run.id}}/lingbot_world_camera_conditioned_video.json
+  video_uri: s3://{{config.bucket}}/oss-solutions/lingbot-world/{{run.id}}/video.mp4
+  input_uri: s3://example-bucket/inputs/scene.png
+  input_sha256: <complete-input-sha256>
+resources:
+  gpu:
+    cloud: kubernetes
+    image: '{{config.base_image}}'
+    accelerators: B200:4
+    cpus: 64
+    memory: 700Gi
+    disk_size: 256
+initial: generate
+states:
+  generate:
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+    - uri: '{{config.summary_uri}}'
+      schema: npa.workbench.byof.summary.v1
+    - uri: '{{config.artifact_uri}}'
+      schema: npa.workbench.byof.lingbot_camera.v1
+    - uri: '{{config.video_uri}}'
+      schema: video/mp4
+    terminal: true

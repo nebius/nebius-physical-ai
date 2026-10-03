@@ -1,6 +1,6 @@
 ---
 name: byof-onboard
-description: Use when onboarding an OSS repo via BYOF — containerize on Ubuntu or Isaac Lab, push to Nebius registry, and smoke on live Kubernetes.
+description: Use when onboarding an OSS repo via BYOF — containerize on Ubuntu or Isaac Lab, push to an operator-controlled or authorized GHCR registry, and smoke on live Kubernetes.
 ---
 
 # BYOF Solution Onboard
@@ -11,7 +11,7 @@ in chat replies; point operators here.
 
 ## When To Use
 
-- Containerize a public GitHub/GitLab repo and push to the project registry
+- Containerize a public GitHub/GitLab or private GitHub repo and push to an authorized registry
 - Onboard a new workbench solution (toolRef + workflow + live smoke)
 - LeIsaac validation (Isaac Lab base + datagen or RL)
 - Generic Ubuntu BYOF (any OSS repo, no sim stack required)
@@ -24,12 +24,20 @@ names), encoding each accepted claim as a `solution-smoke` with a named JSON
 artifact, and collecting live Nebius validation evidence. See
 `docs/workbench/oss-solution-catalog.md`.
 
+If legal, license, or gated-access restrictions prevent source, SDKs, weights,
+datasets, or assets from being baked into the BYOF image, load
+`skills/workflows/runtime-fetch-onboard/SKILL.md`. Prefer a clean bootstrap
+container plus operator-authorized runtime fetch over rejecting the entire
+solution; keep any use, service, field-of-use, and output restrictions
+fail-closed.
+
 ## Prerequisites
 
-- `~/.npa/config.yaml` — project alias, registry, `kubernetes` block (`cluster_name`, `gpu_profile`)
-- `~/.npa/credentials.yaml` — Nebius IAM (registry push/pull)
+- `~/.npa/config.yaml` — project alias, registry override, `kubernetes` block (`cluster_name`, `gpu_profile`)
+- Exact-host registry credentials when the selected registry is private
+- Private GitHub source: a fine-grained read-only token in an environment
+  variable, or an existing authenticated `gh` login. Never put it in the URL.
 - Operator host: Docker, `nebius` CLI, `sky` (for GPU/container smokes)
-- Optional: `NPA_NEBIUS_PROFILE=agent-sa` for registry write on shared VMs
 - SkyPilot must have Kubernetes enabled for the target context. The
   `solution-smoke` runner runs `sky check kubernetes` automatically before
   submission; if debugging manually, run it with the resolved kubeconfig/context
@@ -93,6 +101,36 @@ npa workbench byof run \
   --cleanup
 ```
 
+For a private GitHub source, opt in explicitly. Workbench preflights access and
+mounts the token, URL, and ref into the clone step as BuildKit secrets; only the
+environment-variable name is an argument:
+
+```bash
+npa workbench byof run \
+  --repo-url <private-github-repo-url> \
+  --repo-ref <ref> \
+  --repo-auth github \
+  --repo-token-env NPA_BYOF_GITHUB_TOKEN \
+  --base-profile ubuntu \
+  --registry <operator-registry> \
+  --project <project-alias> \
+  --workload container-verify \
+  --cleanup
+```
+
+Omit `--repo-token-env` to use `GH_TOKEN`, `GITHUB_TOKEN`, or the existing
+`gh auth` login, in that order. For `npa.workflow`, set
+`config.repo_auth=github`, set `config.repo_token_env` to the variable name, and
+pass the same name through `workflow submit --secret-env`; never store the value
+in YAML.
+
+Repository URLs are intentionally canonical and credential-free for both public
+and private sources. URLs containing embedded credentials, a query string, or a
+fragment are rejected before registry resolution or build. This is a deliberate
+compatibility boundary: those URL components can carry secrets and do not form a
+stable source identity. Put authentication in `--repo-auth` / `--repo-token-env`
+and put the requested branch, tag, or commit in `--repo-ref` instead.
+
 Equivalent script (same flags; used by older docs and shims):
 
 ```bash
@@ -107,8 +145,44 @@ npa/.venv/bin/python npa/scripts/run_byof_repo.py \
   --cleanup
 ```
 
+This generic direct CLI/script route is not an authorization boundary. RoboTwin
+therefore refuses it: only normal `npa workbench workflow submit` may validate
+the manager context, start the CPU outer launcher, and enter RoboTwin's internal
+worker bridge.
+
 SDK: `npa.sdk.workbench.byof.run(...)` / `plan_argv(...)`.
 YAML toolRef: `workbench.byof.repo` → `npa workbench byof run ...`.
+
+For a standard `npa.workflow` submit, use `base_profile: prebuilt` with
+`workload: solution-smoke` and a digest-pinned image in the workflow resources.
+The command runs inside that allocated worker; it must not invoke another
+SkyPilot launch. Workbench checks the actual `NPA_TASK_IMAGE` and the image's
+`npa_source_metadata.json`, runs the real capability, uploads its outputs and
+failure diagnostics, and completes any registered postprocessor (including
+Wan's mandatory verified RRD). Worker markers are injected automatically.
+The outer run ID and lower-level worker run ID are separate provenance fields.
+Image builds and other host-orchestrated BYOF workloads must run from the
+operator entrypoint above, before workflow submission.
+
+RoboTwin is the explicit exception: its immutable workflow allocates a CPU-only
+outer launcher, not a capability worker. The validated internal bridge then
+requests exactly one STRICT RTX PRO 6000 workload. Generic worker markers do not
+replace that authorization or route RoboTwin into the prebuilt capability path.
+
+For a checked-in solution that needs manager resource authorization, set
+`config.runtime_context_env` only to its documented environment-variable name
+and pass the value through the workflow's secret environment channel. The
+public CLI equivalent is `--runtime-context-env <variable-name>`. If exact
+runtime terms instead require customer authorization, use the solution's
+separate documented customer-entitlement secret and bind it to customer, run,
+exact runtime manifest, activity, terms and expiry; never add legal-acceptance
+booleans to the manager context. Never put either context value, decisions,
+credentials, private registry/storage identities, or local file paths in a
+workflow or command line. The generic runner remains unchanged when the option
+is absent. A solution that selects these channels must validate every required
+owner-only value before source access, registry resolution, image work, or
+workload submission; a credential or private registry alone is not
+authorization.
 
 Workloads:
 
@@ -119,7 +193,9 @@ Workloads:
 | `rl-train` | `isaac-lab` | `isaac-lab-rl-train-rtxpro-smoke.yaml` |
 | `datagen` | `isaac-lab` | `byof-datagen-rtxpro-smoke.yaml` |
 
-Container layout: OSS repo cloned to `/opt/byof` + `npa_source_metadata.json`.
+Container layout: source repo cloned to `/opt/byof` + `npa_source_metadata.json`.
+Public metadata retains the source URL/ref. Private metadata contains only
+SHA-256 identities and private-source markers; image labels use placeholders.
 
 ### LeRobot-dependent solutions
 
@@ -139,7 +215,7 @@ train/eval rather than wrapping LeRobot inside a BYOF image.
 
 1. **Contract** — register `workbench.byof.repo` (already in catalog); draft `byof` workflow via chat or:
    ```bash
-   npa/.venv/bin/npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/byof.yaml --json
+   npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/byof.yaml --json
    ```
 2. **Containerize** — `run_byof_repo.py` with `--base-profile ubuntu` and `--skip-run` for build-only.
 3. **Deploy + test** — `--workload container-verify` (Ubuntu) or `--workload rl-train` / `datagen` (Isaac).
@@ -192,7 +268,7 @@ npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_onboarding_live_e2e.py -q
 | --- | --- |
 | `npa/scripts/run_byof_repo.py` | Build/push + workload dispatch |
 | `npa/src/npa/workflows/byof/live.py` | Project/kubeconfig/YAML resolution |
-| `npa/workflows/workbench/npa-workflows/byof.yaml` | Golden workflow spec |
+| `workflows/testing/byof.yaml` | Golden workflow spec |
 | `npa/src/npa/cli/agent_chat.py` | `onboard_solution` intent |
 | `skills/tools/npa-agent/SKILL.md` | Agent VM bootstrap + API reference |
 

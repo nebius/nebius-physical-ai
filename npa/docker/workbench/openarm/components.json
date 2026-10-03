@@ -1,0 +1,99 @@
+{
+  "schema": "npa.openarm.packaging-components.v1",
+  "redistribution": "public",
+  "reviewed_at": "2026-09-15",
+  "components": [
+    {
+      "name": "enactic/openarm_mujoco",
+      "version": "2.2.0",
+      "revision": "a8c979629f2591ad035d99d338ce114969e6cddc",
+      "source": "https://github.com/enactic/openarm_mujoco",
+      "license": "Apache-2.0",
+      "license_sha256": "66a512fea6d46110e34cd7d320573a276a0a5db6cd2508e4eaadabbe39eb5938",
+      "baked": true,
+      "payload": "Python source, OpenArm v2 MJCF, and repository model assets"
+    },
+    {
+      "name": "enactic/openarm_isaac_lab",
+      "version": "0.1.0",
+      "revision": "bad82e23716e6941c2de78ccb978f57c78b37734",
+      "source": "https://github.com/enactic/openarm_isaac_lab",
+      "license": "Apache-2.0",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "baked": true,
+      "payload": "Python source and repository OpenArm USD assets"
+    },
+    {
+      "name": "MuJoCo",
+      "version": "3.6.0",
+      "source": "https://pypi.org/project/mujoco/3.6.0/",
+      "license": "Apache-2.0",
+      "baked": true,
+      "payload": "Hash-locked PyPI wheel and declared dependencies"
+    },
+    {
+      "name": "OpenArm HTTP service stack",
+      "version": "FastAPI 0.136.1 / Starlette 1.6.0 / Uvicorn 0.53.0",
+      "source": "https://pypi.org/",
+      "license": "MIT",
+      "baked": true,
+      "payload": "Hash-locked PyPI wheels and declared dependencies"
+    },
+    {
+      "name": "NVIDIA CUDA base image",
+      "version": "12.8.1-cudnn-devel-ubuntu22.04",
+      "source": "https://hub.docker.com/r/nvidia/cuda",
+      "license": "NVIDIA Deep Learning Container License and component notices",
+      "baked": true,
+      "payload": "Digest-pinned upstream base; system copyright records retained"
+    },
+    {
+      "name": "NVIDIA CUDA/cuDNN Python runtime components",
+      "version": "exact versions in docker/workbench/common/isaac-oss-deps.txt",
+      "source": "https://pypi.org/project/nvidia-cuda-runtime-cu12/",
+      "license": "NVIDIA CUDA Toolkit EULA, cuDNN supplement, and per-package retained notices",
+      "baked": true,
+      "payload": "Runtime shared libraries only; separately installed SDK headers/static archives removed"
+    },
+    {
+      "name": "NVIDIA Isaac Sim and Isaac Lab",
+      "version": "5.1.0.0 / 2.3.2.post1",
+      "source": "https://pypi.nvidia.com/",
+      "license": "NVIDIA proprietary runtime terms",
+      "baked": false,
+      "payload": "Hash-pinned, operator-authorized runtime fetch only"
+    },
+    {
+      "name": "Isaac Lab source",
+      "version": "2.3.2.post1",
+      "revision": "37ddf626871758333d6ed89cf64ad702aef127d0",
+      "source": "https://github.com/isaac-sim/IsaacLab",
+      "license": "BSD-3-Clause",
+      "baked": false,
+      "payload": "Runtime cache checkout made by the shared bootstrap"
+    },
+    {
+      "name": "OpenArm hardware/CAD repository",
+      "source": "https://github.com/enactic/OpenArm",
+      "license": "Not used for the simulator image; separately governed",
+      "baked": false,
+      "payload": "Explicitly excluded"
+    }
+  ],
+  "transitive_inventory": {
+    "python_lock": [
+      "docker/workbench/common/isaac-oss-deps.txt",
+      "docker/workbench/openarm/mujoco-requirements.txt",
+      "docker/workbench/openarm/security-requirements.txt"
+    ],
+    "runtime_path": "/usr/share/doc/npa-openarm/python-license-inventory.json",
+    "vendor_prune_record": "/usr/share/doc/npa-openarm/python-vendor-prune.json",
+    "onboarding_contract": "/usr/share/doc/npa-openarm/ONBOARDING_CONTRACT.md",
+    "system_packages": "Retained dpkg metadata and /usr/share/doc/*/copyright",
+    "release_artifacts": [
+      "OCI SBOM",
+      "full-filesystem and layer payload scans",
+      "anonymous pull verification"
+    ]
+  }
+}

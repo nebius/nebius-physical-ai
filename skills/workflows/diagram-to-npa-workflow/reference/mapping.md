@@ -33,7 +33,7 @@ Match diagram/step language (left) to a cataloged tool (right).
 | "FiftyOne review", "human-in-the-loop viz" | `workbench.fiftyone.launch_app` | `lance_uri` |
 | "onboard OSS repo", "BYOF", "build+push+train custom image" | `workbench.byof.repo` | `repo_url`, `workload`, … |
 | "deploy Slurm/soperator cluster" | `infra.soperator.deploy` | `soperator_spec` |
-| "normalize rollout contract" / "cross-region improvement summary" | `workbench.data_transform.rollout_contract` / `.improvement_summary` | `project_*`, `region_*` |
+| "normalize rollout contract" / "cross-region improvement summary" | no catalog entry; use `run.shell` only for genuinely one-off glue | `project_*`, `region_*` |
 
 No match? Add a `ToolEntry` in `catalog.py` (argv template with `{{config.*}}`
 tokens), or use `run.shell` for genuinely one-off glue.
@@ -101,7 +101,7 @@ The user warned "there will be some discrepancy." Apply these rules and leave a
 ## Sim2real worked example (13 steps → spec)
 
 The provided write-up + diagram map to the canonical
-`npa/workflows/workbench/npa-workflows/sim2real.yaml`:
+`workflows/main/sim2real.yaml`:
 
 | Step (write-up) | Diagram box | State | `toolRef` |
 | --- | --- | --- | --- |

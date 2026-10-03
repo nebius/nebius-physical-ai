@@ -1,102 +1,198 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
+import pytest
+
+from npa.deploy import images as deploy_images
 from npa.deploy.images import (
     DEFAULT_CONTAINER_REGISTRY,
     SUPPORTED_TOOL_VERSIONS,
+    UNBUILT_CANDIDATE_TOOL_VERSIONS,
+    development_image_for_tool,
     container_image_for_tool,
     default_vlm_image,
     default_workbench_image,
-    primary_container_registry,
+    development_tag,
+    execution_container_registry,
+    PUBLICATION_QUARANTINE_TOOLS,
+    public_release_tag_for_tool,
     registry_from_env,
-    registry_from_id,
 )
-
-
-def test_registry_from_id_expands_against_primary_region() -> None:
-    assert registry_from_id("myregid123") == "cr.eu-north1.nebius.cloud/myregid123"
-    # Surrounding whitespace is stripped.
-    assert registry_from_id("  myregid123 ") == "cr.eu-north1.nebius.cloud/myregid123"
 
 
 def test_registry_from_env_prefers_npa_registry(monkeypatch) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "registry.example/team")
-    monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
     assert registry_from_env() == "registry.example/team"
-
-
-def test_registry_from_env_falls_back_to_registry_id(monkeypatch) -> None:
-    monkeypatch.delenv("NPA_REGISTRY", raising=False)
-    monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
-    assert registry_from_env() == "cr.eu-north1.nebius.cloud/myregid123"
 
 
 def test_registry_from_env_empty_when_unset(monkeypatch) -> None:
     monkeypatch.delenv("NPA_REGISTRY", raising=False)
-    monkeypatch.delenv("NPA_REGISTRY_ID", raising=False)
     assert registry_from_env() == ""
 
 
-def test_primary_container_registry_honors_registry_id(monkeypatch) -> None:
+def test_execution_container_registry_defaults_to_public_releases(monkeypatch) -> None:
     monkeypatch.delenv("NPA_REGISTRY", raising=False)
-    monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
-    assert primary_container_registry() == "cr.eu-north1.nebius.cloud/myregid123"
+    assert execution_container_registry() == DEFAULT_CONTAINER_REGISTRY
 
 
-def test_primary_container_registry_defaults_when_unset(monkeypatch) -> None:
-    monkeypatch.delenv("NPA_REGISTRY", raising=False)
-    monkeypatch.delenv("NPA_REGISTRY_ID", raising=False)
-    assert primary_container_registry() == DEFAULT_CONTAINER_REGISTRY
-
-
-def test_default_registry_is_real_first_party_registry() -> None:
-    assert DEFAULT_CONTAINER_REGISTRY == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw"
+def test_official_ghcr_namespace_is_public_only() -> None:
+    assert DEFAULT_CONTAINER_REGISTRY == "ghcr.io/nebius/nebius-physical-ai"
 
 
 def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
     assert (
         container_image_for_tool("lancedb")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-lancedb:"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-lancedb:"
         "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
     )
     assert container_image_for_tool("detection-training") == (
-        "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
-        "npa-detection-training:bdd100k-golden-eval-smoke-20260614T210000Z"
+        "ghcr.io/nebius/nebius-physical-ai/npa-detection-training:runtime-v1-20260905"
     )
     assert (
         container_image_for_tool("groot")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-groot:0.1.0"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-groot:0.1.0"
     )
     assert (
         container_image_for_tool("cosmos2-transfer")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
-        "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
-    )
-    assert (
-        container_image_for_tool("cosmos3")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
-        "npa-cosmos3:1.2.2-cu130-r2"
+        == "ghcr.io/nebius/nebius-physical-ai/"
+        "npa-cosmos2-transfer:2.5.1-sim2real-coherent-20260904"
     )
     assert (
         container_image_for_tool("cosmos3-reason")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos3-reason:"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason:"
         "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
     assert (
         container_image_for_tool("envgen")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-envgen:"
-        "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+        == "ghcr.io/nebius/nebius-physical-ai/npa-envgen:"
+        "0.1.2-sim2real-coherent-20260904"
     )
-    assert (
-        container_image_for_tool("reference-policy")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-reference-policy:"
-        "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+
+
+@pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS))
+def test_quarantined_public_release_metadata_fails_closed(tool: str) -> None:
+    with pytest.raises(ValueError, match="quarantined"):
+        public_release_tag_for_tool(tool)
+
+
+@pytest.mark.parametrize(
+    "tool",
+    sorted(
+        PUBLICATION_QUARANTINE_TOOLS
+        - {"sonic"}
+        - UNBUILT_CANDIDATE_TOOL_VERSIONS.keys()
+    ),
+)
+def test_quarantined_public_releases_fail_closed_for_consumers(tool: str) -> None:
+    with pytest.raises(ValueError, match="quarantined|no accepted release"):
+        container_image_for_tool(tool)
+    configured_tag = SUPPORTED_TOOL_VERSIONS[tool]
+    if re.fullmatch(r"dev-[0-9a-f]{40}", configured_tag):
+        assert container_image_for_tool(tool, tag=configured_tag).endswith(
+            f":{configured_tag}"
+        )
+    else:
+        with pytest.raises(ValueError, match="quarantined|no accepted release"):
+            container_image_for_tool(tool, tag=configured_tag)
+
+
+@pytest.mark.parametrize(
+    "tool",
+    sorted(PUBLICATION_QUARANTINE_TOOLS & UNBUILT_CANDIDATE_TOOL_VERSIONS.keys()),
+)
+def test_unbuilt_public_planning_sentinel_is_not_a_consumable_release(
+    tool: str,
+) -> None:
+    display_tag = UNBUILT_CANDIDATE_TOOL_VERSIONS[tool]
+
+    assert container_image_for_tool(tool).endswith(f":{display_tag}")
+    with pytest.raises(ValueError, match="quarantined"):
+        container_image_for_tool(tool, tag=display_tag)
+
+
+@pytest.mark.parametrize("tool", ["ncore", "robomimic", "robotwin"])
+def test_unaccepted_default_stays_blocked_without_quarantine_membership(
+    monkeypatch: pytest.MonkeyPatch, tool: str
+) -> None:
+    monkeypatch.setattr("npa.deploy.images.PUBLICATION_QUARANTINE_TOOLS", frozenset())
+
+    with pytest.raises(ValueError, match="no accepted release image"):
+        container_image_for_tool(tool)
+
+
+def test_sonic_public_resolution_rejects_quarantined_canonical_variant() -> None:
+    expected_tag = (
+        "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
+
+    with pytest.raises(ValueError, match="quarantined public release") as excinfo:
+        container_image_for_tool(
+            "sonic", gpu_target="gpu-rtx6000", workload="isaac-render"
+        )
+    assert expected_tag in str(excinfo.value)
+    assert "operator-controlled image" in str(excinfo.value)
+
+
+def test_sonic_variant_quarantine_does_not_depend_on_tool_level_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(deploy_images, "PUBLICATION_QUARANTINE_TOOLS", frozenset())
+
+    with pytest.raises(ValueError, match="quarantined public release"):
+        container_image_for_tool("sonic", gpu_target="gpu-rtx6000")
+
+
+def test_sonic_public_resolution_keeps_exact_candidate_and_mujoco_paths() -> None:
+    sha = "a" * 40
+    assert container_image_for_tool(
+        "sonic", gpu_target="gpu-rtx6000", tag=f"dev-{sha}"
+    ) == (f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic:dev-{sha}")
+
+    assert container_image_for_tool("sonic-mujoco") == (
+        f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic-mujoco:0.2.0-runtime"
+    )
+    assert container_image_for_tool(
+        "sonic", image_variant="sonic-mujoco-runtime-fetch", workload="mujoco-eval"
+    ) == (f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic-mujoco:0.2.0-runtime")
+
+
+@pytest.mark.parametrize("variant", ["sonic-l40s-baked", "sonic-mujoco-h100-mvp"])
+def test_sonic_quarantined_variants_still_fail_closed(variant: str) -> None:
+    with pytest.raises(ValueError, match="status 'quarantined'"):
+        container_image_for_tool("sonic", image_variant=variant)
+
+
+def test_sonic_public_tag_cannot_override_active_manifest_with_stale_release() -> None:
+    with pytest.raises(ValueError, match="quarantined public release"):
+        container_image_for_tool("sonic", tag="0.1.2")
+
+
+@pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS))
+def test_quarantined_tools_retain_explicit_candidate_paths(tool: str) -> None:
+    sha = "a" * 40
+    assert container_image_for_tool(tool, tag=f"dev-{sha}").endswith(f":dev-{sha}")
+    custom_tag = f"dev-{sha}" if tool in {"ncore", "robomimic", "robotwin"} else None
+    assert container_image_for_tool(
+        tool, registry="registry.example/operator", tag=custom_tag
+    ).startswith("registry.example/operator/")
+
+
+def test_repository_image_defaults_ignore_ambient_private_registry(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", "registry.example/private-builds")
+
+    assert container_image_for_tool("retargeting") == (
+        "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+    )
+    with pytest.raises(ValueError, match="quarantined"):
+        default_workbench_image()
+
+
+def test_explicit_custom_registry_remains_available() -> None:
     assert (
-        container_image_for_tool("loop-eval")
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-loop-eval:"
-        "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+        container_image_for_tool("retargeting", registry="registry.example/custom")
+        == "registry.example/custom/npa-retargeting:0.1.1"
     )
 
 
@@ -112,21 +208,19 @@ def test_packaged_supported_tool_versions_match_pyproject() -> None:
     assert SUPPORTED_TOOL_VERSIONS == data["tool"]["npa"]["supported-tools"]
 
 
-def test_byo_workflow_images_have_pushed_defaults(monkeypatch) -> None:
+def test_byo_workflow_defaults_fail_closed_when_release_is_quarantined(
+    monkeypatch,
+) -> None:
     monkeypatch.delenv("NPA_VLM_IMAGE", raising=False)
     monkeypatch.delenv("NPA_WORKBENCH_IMAGE", raising=False)
     monkeypatch.delenv("NPA_REGISTRY", raising=False)
 
     assert (
-        default_vlm_image()
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
+        default_vlm_image() == "ghcr.io/nebius/nebius-physical-ai/"
         "npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z"
     )
-    assert (
+    with pytest.raises(ValueError, match="quarantined"):
         default_workbench_image()
-        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-genesis:"
-        "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
-    )
 
 
 def test_byo_workflow_images_honor_env(monkeypatch) -> None:
@@ -135,3 +229,24 @@ def test_byo_workflow_images_honor_env(monkeypatch) -> None:
 
     assert default_vlm_image() == "registry.example/npa-vlm:custom"
     assert default_workbench_image() == "registry.example/npa-workbench:custom"
+
+
+def test_development_images_use_public_package_and_full_sha() -> None:
+    sha = "a" * 40
+    assert development_tag(sha) == f"dev-{sha}"
+    assert development_image_for_tool("genesis", git_sha=sha) == (
+        f"ghcr.io/nebius/nebius-physical-ai/npa-genesis:dev-{sha}"
+    )
+
+
+def test_restricted_image_cannot_enter_official_development_channel() -> None:
+    import pytest
+    from npa.deploy import images
+
+    original = images.RESTRICTED_PUBLICATION_TOOLS
+    images.RESTRICTED_PUBLICATION_TOOLS = frozenset({"genesis"})
+    try:
+        with pytest.raises(ValueError, match="restricted/build-your-own"):
+            development_image_for_tool("genesis", git_sha="b" * 40)
+    finally:
+        images.RESTRICTED_PUBLICATION_TOOLS = original

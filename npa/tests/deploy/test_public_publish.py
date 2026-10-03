@@ -1,26 +1,30 @@
-"""License-guarded public-registry publishing.
+"""License-guarded public-development to supported-release GHCR publishing.
 
-Nebius CR has no anonymous/public mode, so public exposure means mirroring the
-OSS-redistributable image subset to a public registry. These tests lock the license
+These tests lock the license
 boundary: whatever is classified non-redistributable must never be selected for a public
 registry, and the selector must stay in sync with the packaging contract's
 ``redistribution:`` fields.
 
-The four Isaac images are no longer restricted — they were
+The Isaac images are no longer restricted — they were
 re-architected to fetch Isaac Sim / Isaac Lab at first run under the operator's own EULA
-acceptance instead of baking it, so every workbench tool is now publishable. That makes
+acceptance instead of baking it. Cosmos3 serving is now a zero-payload runtime
+bootstrap and SONIC MuJoCo is independently rebuilt on a public base. That makes
 the boundary tests the delicate ones: asserting "nothing is restricted" would pass just
 as well against a guard that had been deleted. So the tests that exercise the refusal
-monkeypatch a synthetic restricted tool in, proving the mechanism still bites while its
-membership is empty.
+monkeypatch a synthetic restricted catalog tool in, proving the mechanism still bites.
 """
 
 from __future__ import annotations
 
-import base64
+import copy
+import hashlib
+import http.client
 import json
 import re
 import subprocess
+import urllib.error
+import urllib.parse
+from email.message import Message
 from pathlib import Path
 
 import pytest
@@ -30,22 +34,28 @@ from npa.deploy import images
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
-    OMNIVERSE_RESTRICTED_DERIVED_IMAGES,
-    OMNIVERSE_RESTRICTED_TOOLS,
+    NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
+    PUBLICATION_QUARANTINE_TOOLS,
+    RESTRICTED_DERIVED_IMAGES,
+    RESTRICTED_PUBLICATION_TOOLS,
+    STALE_PUBLICATION_TOOLS,
     UNVALIDATED_PUBLICATION_TOOLS,
     container_image_for_tool,
     is_public_registry,
     is_publicly_redistributable,
-    omniverse_restricted_image_names,
     public_container_registry,
     publicly_publishable_tools,
+    restricted_image_names,
 )
 from npa.deploy.publish_public import (
     PublishItem,
     _pin_publication_sources as REAL_PUBLICATION_SOURCE_PIN,
-    _pin_wan_publication_sources as REAL_WAN_SOURCE_PIN,
+    _valid_content_agents_rigid_physics,
     build_publish_plan,
     verify_bootstrap_publication_source as REAL_BOOTSTRAP_PUBLICATION_GATE,
+    verify_gpu_accepted_publication_source as REAL_GPU_ACCEPTANCE_GATE,
+    verify_ltx_publication_source as REAL_LTX_PUBLICATION_GATE,
+    verify_publication_provenance_labels as REAL_PROVENANCE_LABEL_GATE,
     verify_wan_publication_source as REAL_WAN_PUBLICATION_GATE,
 )
 
@@ -65,8 +75,13 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
     )
     monkeypatch.setattr(
         publish_public,
-        "_pin_wan_publication_sources",
-        lambda plan: (list(plan), []),
+        "verify_ltx_publication_source",
+        lambda item: (True, "test fixture: LTX gate verified"),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "verify_content_agents_publication_source",
+        lambda item: (True, "test fixture: Content Agents gate verified"),
     )
     monkeypatch.setattr(
         publish_public,
@@ -78,6 +93,108 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
         "verify_bootstrap_publication_source",
         lambda item: (True, "test fixture: bootstrap gate verified"),
     )
+    monkeypatch.setattr(
+        publish_public,
+        "verify_gpu_accepted_publication_source",
+        lambda item: (True, "test fixture: GPU acceptance gate verified"),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "verify_publication_provenance_labels",
+        lambda item: (True, "test fixture: provenance label gate verified"),
+    )
+
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize(
+    ("mass_or_density", "friction"),
+    [(5e-324, 0.1), (1, 2.0)],
+)
+def test_content_agents_gate_accepts_finite_physics_boundaries(
+    mass_or_density: int | float, friction: float
+) -> None:
+    rigid = {
+        "rigid_body": True,
+        "collision": True,
+        "fixed": False,
+        "mass_or_density": mass_or_density,
+        "friction": friction,
+    }
+
+    assert _valid_content_agents_rigid_physics(rigid)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("mass_or_density", float("nan")),
+        ("mass_or_density", float("inf")),
+        ("mass_or_density", float("-inf")),
+        ("mass_or_density", True),
+        ("mass_or_density", False),
+        ("mass_or_density", "1.0"),
+        ("mass_or_density", "not-a-number"),
+        ("mass_or_density", 0),
+        ("mass_or_density", -1),
+        ("mass_or_density", _MISSING),
+        ("friction", float("nan")),
+        ("friction", float("inf")),
+        ("friction", float("-inf")),
+        ("friction", True),
+        ("friction", False),
+        ("friction", "0.5"),
+        ("friction", "not-a-number"),
+        ("friction", 0.09),
+        ("friction", 2.01),
+        ("friction", _MISSING),
+    ],
+)
+def test_content_agents_gate_rejects_invalid_physics_evidence(
+    field: str, value: object
+) -> None:
+    rigid = {
+        "rigid_body": True,
+        "collision": True,
+        "fixed": False,
+        "mass_or_density": 1.0,
+        "friction": 0.5,
+    }
+    if value is _MISSING:
+        rigid.pop(field)
+    else:
+        rigid[field] = value
+
+    assert not _valid_content_agents_rigid_physics(rigid)
+
+
+@pytest.mark.parametrize("tool", ["cosmos3-serving", "detection-training"])
+def test_gpu_accepted_publication_gate_binds_exact_digest(monkeypatch, tool) -> None:
+    from npa.deploy import publish_public
+
+    item = PublishItem(
+        tool=tool,
+        source_ref=f"ghcr.io/example/npa-{tool}:dev-source",
+        target_ref=f"ghcr.io/example/npa-{tool}:release",
+    )
+    accepted = images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[item.tool]
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda _ref, **_: (True, accepted)
+    )
+    assert REAL_GPU_ACCEPTANCE_GATE(item) == (
+        True,
+        f"exact GPU-accepted digest {accepted}",
+    )
+
+    mutation = "sha256:" + "f" * 64
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda _ref, **_: (True, mutation)
+    )
+    ok, detail = REAL_GPU_ACCEPTANCE_GATE(item)
+    assert not ok
+    assert mutation in detail
+    assert accepted in detail
 
 
 def test_wan_source_tag_is_frozen_before_preflight_and_copy(monkeypatch) -> None:
@@ -89,7 +206,7 @@ def test_wan_source_tag_is_frozen_before_preflight_and_copy(monkeypatch) -> None
     monkeypatch.setattr(
         publish_public, "_crane_digest", lambda ref, **_: (True, digest)
     )
-    plan, failures = REAL_WAN_SOURCE_PIN(
+    plan, failures = REAL_PUBLICATION_SOURCE_PIN(
         [
             PublishItem(
                 tool="wan2-2",
@@ -179,7 +296,94 @@ def test_publication_accepts_exact_digest_bootstrap_attestation(monkeypatch) -> 
     assert digest in detail
 
 
-@pytest.mark.parametrize("tool", ["cosmos", "groot"])
+@pytest.mark.parametrize(
+    "label_key",
+    ["npa.base_image", "NPA.BASE_IMAGE", " npa.base_image "],
+)
+def test_publication_refuses_operator_base_image_provenance_label(
+    monkeypatch, label_key: str
+) -> None:
+    from npa.deploy import publish_public
+
+    digest = "sha256:" + "e" * 64
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: {
+            "config": {
+                "Labels": {label_key: "registry.operator.example/private/base:tag"}
+            }
+        },
+    )
+
+    ok, detail = REAL_PROVENANCE_LABEL_GATE(
+        PublishItem(
+            tool="envgen",
+            source_ref=f"source.example/npa-envgen@{digest}",
+            target_ref="target.example/npa-envgen:release",
+        )
+    )
+
+    assert not ok
+    assert "npa.base_image" in detail
+    assert "operator registry path" in detail
+
+
+def test_publication_accepts_registry_neutral_base_image_provenance(
+    monkeypatch,
+) -> None:
+    from npa.deploy import publish_public
+
+    digest = "sha256:" + "f" * 64
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: {
+            "config": {
+                "Labels": {
+                    "npa.base.image": "npa-envgen",
+                    "org.opencontainers.image.revision": "a" * 40,
+                }
+            }
+        },
+    )
+
+    ok, detail = REAL_PROVENANCE_LABEL_GATE(
+        PublishItem(
+            tool="envgen",
+            source_ref=f"source.example/npa-envgen@{digest}",
+            target_ref="target.example/npa-envgen:release",
+        )
+    )
+
+    assert ok
+    assert detail == "no operator-specific base-image provenance label"
+
+
+def test_preflight_runs_provenance_label_gate_for_every_image(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    item = PublishItem(
+        tool="cosmos",
+        source_ref="source.example/npa-cosmos@sha256:" + "a" * 64,
+        target_ref="target.example/npa-cosmos:release",
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
+    )
+    checked: list[PublishItem] = []
+
+    def gate(candidate: PublishItem) -> tuple[bool, str]:
+        checked.append(candidate)
+        return True, "clean"
+
+    monkeypatch.setattr(publish_public, "verify_publication_provenance_labels", gate)
+
+    assert publish_public.preflight_sources([item]) == []
+    assert checked == [item]
+
+
+@pytest.mark.parametrize("tool", ["cosmos"])
 def test_preflight_skips_bootstrap_gate_for_uncontracted_image(
     monkeypatch, tool: str
 ) -> None:
@@ -204,13 +408,16 @@ def test_preflight_skips_bootstrap_gate_for_uncontracted_image(
     assert publish_public.preflight_sources([item]) == []
 
 
-def test_preflight_runs_bootstrap_gate_for_contracted_image(monkeypatch) -> None:
+@pytest.mark.parametrize("tool", ["fiftyone", "groot"])
+def test_preflight_runs_bootstrap_gate_for_contracted_image(
+    monkeypatch, tool: str
+) -> None:
     from npa.deploy import publish_public
 
     item = PublishItem(
-        tool="fiftyone",
-        source_ref="source.example/npa-fiftyone@sha256:" + "a" * 64,
-        target_ref="target.example/npa-fiftyone:release",
+        tool=tool,
+        source_ref=f"source.example/npa-{tool}@sha256:" + "a" * 64,
+        target_ref=f"target.example/npa-{tool}:release",
     )
     monkeypatch.setattr(
         publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
@@ -239,8 +446,8 @@ def test_isaac_images_are_no_longer_restricted() -> None:
         assert is_publicly_redistributable(tool), tool
 
 
-def test_isaac_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
-    """The Isaac fixes do not imply an unrelated vendor base may be mirrored.
+def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> None:
+    """Clean bytes and exact GPU evidence earn release eligibility.
 
     Omniverse Kit was only the first: sonic also baked gated model weights (git-LFS
     smudging) and NVIDIA Omniverse 3D assets (the RoboCasa asset library under
@@ -248,52 +455,134 @@ def test_isaac_tools_are_public_while_cosmos3_serving_is_restricted() -> None:
     visible in the Dockerfile. The scan that clears it:
     npa-sonic:0.1.2-rtfetch-rc5, 125,655 entries, 16 allowlisted paths, VERDICT clean.
     """
-    assert OMNIVERSE_RESTRICTED_TOOLS == frozenset({"cosmos3-serving"})
-    assert OMNIVERSE_RESTRICTED_DERIVED_IMAGES == frozenset({"sonic-mujoco"})
-    for tool in ("isaac-lab", "sonic", "groot"):
+    assert RESTRICTED_PUBLICATION_TOOLS == frozenset(
+        {
+            "cosmos3-nano-video",
+            "cosmos3-super-benchmark",
+            "paidf-anomalygen-sky",
+            "paidf-attribute-search-sky",
+            "paidf-captioning-sky",
+            "paidf-detection-sky",
+            "paidf-event-video-sky",
+            "paidf-image-edit-sky",
+            "paidf-visual-qa-sky",
+        }
+    )
+    assert RESTRICTED_DERIVED_IMAGES == frozenset()
+    assert not {"cosmos3-serving", "sonic-mujoco"} & RESTRICTED_PUBLICATION_TOOLS
+    assert not {"cosmos3-serving", "sonic-mujoco"} & RESTRICTED_DERIVED_IMAGES
+    for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
+    assert UNVALIDATED_PUBLICATION_TOOLS == (
+        frozenset({"openpi", "curobo", "ncore", "libero", "sam3"})
+        | ({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
+    )
+    assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset()
+    assert is_publicly_redistributable("robomimic")
+    assert STALE_PUBLICATION_TOOLS == frozenset(
+        {
+            "cosmos-curate",
+            "cosmos-evaluator",
+            "cosmos3",
+            "cosmos3-ray-serve",
+            "genesis",
+            "isaac-lab",
+            "isaac-arena",
+            "lerobot",
+            "lerobot-vlm-rl",
+            "loop-eval",
+            "reference-policy",
+            "sonic",
+        }
+    )
+    assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
+        "diffusers",
+        "lingbot-world",
+        "sam2",
+        "alpamayo2-super",
+        "cosmos3",
+        "cosmos3-ray-serve",
+        "cosmos3-serving",
+        "detection-training",
+        "isaac-arena",
+        "openarm",
+        "flex-pi",
+        "sonic-mujoco",
+    }
 
 
 def test_public_set_excludes_every_restricted_tool(monkeypatch) -> None:
     """The exclusion remains effective for canonical tools too."""
     monkeypatch.setattr(
-        images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis", "cosmos"})
+        images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis", "cosmos"})
     )
     public = set(publicly_publishable_tools())
     assert public.isdisjoint({"genesis", "cosmos"})
     for tool in ("genesis", "cosmos"):
         assert not is_publicly_redistributable(tool)
-    assert "lerobot" in public, "unrelated tools must stay publishable"
+    assert "fiftyone" in public, "unrelated tools must stay publishable"
 
 
 def test_public_set_includes_the_oss_tools() -> None:
     public = set(publicly_publishable_tools())
     for tool in (
-        "lerobot",
-        "genesis",
         "cosmos",
         "fiftyone",
         "lancedb",
         "rerun-viewer",
         "lichtblick",
-        # Newly publishable: no baked Omniverse Kit, weights or assets.
-        "isaac-lab",
-        "sonic",
+        # Independently clean images remain publishable.
         "groot",
+        "cosmos3-serving",
+        "sonic-mujoco",
     ):
         assert tool in public, tool
-    assert public == set(CONTAINER_IMAGE_NAMES) - OMNIVERSE_RESTRICTED_TOOLS
+    assert public.isdisjoint(STALE_PUBLICATION_TOOLS)
+    assert public == (
+        set(CONTAINER_IMAGE_NAMES)
+        - RESTRICTED_PUBLICATION_TOOLS
+        - PUBLICATION_QUARANTINE_TOOLS
+    )
 
 
-def test_publish_plan_now_includes_the_isaac_images() -> None:
-    """The point of the re-architecture: these are publishable at last."""
+def test_libero_neutral_candidate_remains_unvalidated_and_out_of_release_plan() -> None:
+    assert is_publicly_redistributable("libero") is True
+    assert "libero" in UNVALIDATED_PUBLICATION_TOOLS
+    assert "libero" in images.PUBLICATION_QUARANTINE_TOOLS
+    plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
+    assert "libero" not in {item.tool for item in plan}
+    assert images.SUPPORTED_TOOL_VERSIONS["libero"] == (
+        "public-neutral-bootstrap-unbuilt"
+    )
+
+
+def test_publish_plan_excludes_stale_base_images_and_their_derivatives() -> None:
+    """A stale base and descendants retaining its layers are quarantined together."""
     plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
     names = {item.source_ref.rsplit("/", 1)[-1].split(":", 1)[0] for item in plan}
-    for image in ("npa-isaac-lab", "npa-sonic", "npa-groot"):
+    for image in ("npa-groot",):
         assert image in names, image
-    # sonic-mujoco is a sonic variant, so it ships through sonic's image manifest rather
-    # than as its own tool key.
-    assert "npa-sonic-mujoco" not in names
+    for image in (
+        "npa-isaac-lab",
+        "npa-isaac-arena",
+        "npa-cosmos3",
+        "npa-cosmos3-ray-serve",
+        "npa-genesis",
+        "npa-lerobot",
+        "npa-lerobot-vlm-rl",
+        "npa-loop-eval",
+        "npa-reference-policy",
+        "npa-sonic",
+    ):
+        assert image not in names
+    assert "npa-sonic-mujoco" in names
+    assert "npa-cosmos3-serving" in names
+    assert "npa-curobo" not in names
+    assert "curobo" not in publicly_publishable_tools()
+    assert images.SUPPORTED_TOOL_VERSIONS["curobo"].endswith("-unbuilt")
+    assert "npa-robotwin" not in names
+    assert "robotwin" not in publicly_publishable_tools()
+    assert images.SUPPORTED_TOOL_VERSIONS["robotwin"].endswith("-unbuilt")
     for item in plan:
         assert item.target_ref.startswith("ghcr.io/example/workbench/")
 
@@ -307,13 +596,26 @@ def test_publish_plan_still_refuses_a_restricted_image(monkeypatch) -> None:
     refusal and the whole plan raised. A defence-in-depth check holding a stale copy of the
     thing it defends is worse than no check.
     """
-    monkeypatch.setattr(images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis"}))
+    manifest = images.public_release_manifest()
+    monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
+    monkeypatch.setattr(
+        images,
+        "public_release_manifest",
+        lambda: {
+            **manifest,
+            "releases": {
+                tool: entry
+                for tool, entry in manifest["releases"].items()
+                if tool != "genesis"
+            },
+        },
+    )
     plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
     names = {item.source_ref.rsplit("/", 1)[-1].split(":", 1)[0] for item in plan}
     assert "npa-genesis" not in names
-    # sonic is publishable under this monkeypatched set, so the plan must contain it -
+    # groot is publishable under this monkeypatched set, so the plan must contain it -
     # proving the refusal followed the patched set instead of a captured one.
-    assert "npa-sonic" in names
+    assert "npa-groot" in names
 
 
 def test_publish_plan_requires_a_target() -> None:
@@ -321,32 +623,65 @@ def test_publish_plan_requires_a_target() -> None:
         build_publish_plan(target_registry="")
 
 
-def test_publish_plan_copies_the_pinned_tag_unchanged() -> None:
-    """A mirror must serve the same ``name:tag`` the primary registry serves, or
-    every pin in the repo (and every customer's) breaks against the mirror."""
+def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
+    sha = "1" * 40
     plan = build_publish_plan(
         target_registry="ghcr.io/example/workbench",
-        source_registry="cr.eu-north1.nebius.cloud/example",
+        development_git_sha=sha,
     )
     assert plan
+    expected_shas = {
+        tool: entry.get("development_sha") or sha
+        for tool, entry in images.public_release_manifest()["releases"].items()
+    }
+    assert expected_shas
+    observed_shas: dict[str, str] = {}
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
-        assert source_image == target_image, item
+        assert source_image.split(":", 1)[0] == target_image.split(":", 1)[0], item
+        expected_sha = expected_shas[item.tool]
+        observed_shas[item.tool] = source_image.rsplit(":dev-", 1)[-1]
+        assert source_image.endswith(f":dev-{expected_sha}"), item
+        assert not target_image.endswith(f":dev-{expected_sha}"), item
+    assert observed_shas == expected_shas
 
 
-def test_publish_plan_uses_the_public_sonic_pin_not_the_default_variant() -> None:
+def test_accepted_images_use_distinct_exact_development_sources_and_digests() -> None:
     plan = build_publish_plan(
-        target_registry="ghcr.io/example/workbench",
-        source_registry="cr.eu-north1.nebius.cloud/example",
+        target_registry="ghcr.io/nebius/nebius-physical-ai",
+        development_git_sha="1" * 40,
     )
-    sonic = next(item for item in plan if item.tool == "sonic")
-    expected = (
-        "npa-sonic:cuda13-b300-0.1.2-k8s-runtime-"
-        "sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
-    )
-    assert sonic.source_ref.endswith(expected)
-    assert sonic.target_ref.endswith(expected)
+    by_tool = {item.tool: item for item in plan}
+    manifest = images.public_release_manifest()["releases"]
+
+    for tool in (
+        "ltx2",
+        "wan2-2",
+        "cosmos3-serving",
+        "sonic-mujoco",
+        "detection-training",
+        "diffusers",
+        "lingbot-world",
+        "sam2",
+        "openarm",
+        "alpamayo2-super",
+        "flex-pi",
+    ):
+        entry = manifest[tool]
+        assert by_tool[tool].source_ref.endswith(f":dev-{entry['development_sha']}")
+        if tool == "ltx2":
+            accepted_digest = images.ltx2_accepted_image_manifest()["oci_digest"]
+        elif tool == "wan2-2":
+            accepted_digest = images.wan_accepted_image_manifest()["oci_digest"]
+        else:
+            accepted_digest = images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[tool]
+        assert entry["published_digest"] == accepted_digest
+
+
+def test_publish_plan_excludes_the_stale_public_sonic_pin() -> None:
+    plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
+    assert all(item.tool != "sonic" for item in plan)
 
 
 def test_public_registry_defaults_to_ghcr(monkeypatch) -> None:
@@ -356,8 +691,21 @@ def test_public_registry_defaults_to_ghcr(monkeypatch) -> None:
 
 
 def test_public_registry_honors_env_override(monkeypatch) -> None:
-    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "docker.io/nebius/workbench")
-    assert public_container_registry() == "docker.io/nebius/workbench"
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "ghcr.io/example/workbench")
+    assert public_container_registry() == "ghcr.io/example/workbench"
+
+
+def test_official_channel_overrides_must_remain_on_ghcr(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "registry.example/workbench/releases")
+    with pytest.raises(ValueError, match="public release registry must be a GHCR"):
+        public_container_registry()
+
+    with pytest.raises(ValueError, match="public development registry must be a GHCR"):
+        images.development_image_for_tool(
+            "genesis",
+            git_sha="c" * 40,
+            registry="registry.example/workbench/development",
+        )
 
 
 def test_publish_plan_targets_public_registry_by_default() -> None:
@@ -370,15 +718,13 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # having no built/validated artifact to publish. Both are subtracted from the
     # contract-derived total rather than hardcoded, so adding a freely
     # redistributable image does not silently drift this gate.
-    assert len(plan) == len(publicly_publishable_tools()) - len(
-        set(publicly_publishable_tools()) & set(UNVALIDATED_PUBLICATION_TOOLS)
-    )
+    assert len(plan) == len(publicly_publishable_tools())
     # And, since the Isaac re-architecture emptied the restricted set: every image the repo
     # builds and has validated is publishable. This is the assertion that would catch a
     # tool silently dropping out of the plan, which the derived equality above cannot.
     assert len(plan) == len(CONTAINER_IMAGE_NAMES) - len(
         set(CONTAINER_IMAGE_NAMES)
-        & (set(OMNIVERSE_RESTRICTED_TOOLS) | set(UNVALIDATED_PUBLICATION_TOOLS))
+        & (set(RESTRICTED_PUBLICATION_TOOLS) | set(PUBLICATION_QUARANTINE_TOOLS))
     )
     for item in plan:
         assert item.target_ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-")
@@ -399,13 +745,11 @@ def test_restricted_image_names_cover_every_contract_restricted_image() -> None:
         for name, entry in contract["images"].items()
         if entry.get("redistribution") == "restricted"
     }
-    names = omniverse_restricted_image_names()
+    names = restricted_image_names()
     assert names == sorted(names), "names must be stable/sorted for operator output"
     assert contract_restricted <= set(names), sorted(contract_restricted - set(names))
-    assert set(OMNIVERSE_RESTRICTED_DERIVED_IMAGES).isdisjoint(CONTAINER_IMAGE_NAMES)
-    assert set(OMNIVERSE_RESTRICTED_DERIVED_IMAGES).isdisjoint(
-        publicly_publishable_tools()
-    )
+    assert set(RESTRICTED_DERIVED_IMAGES).isdisjoint(CONTAINER_IMAGE_NAMES)
+    assert set(RESTRICTED_DERIVED_IMAGES).isdisjoint(publicly_publishable_tools())
 
 
 def test_contract_marks_active_isaac_images_public_and_runtime_fetch() -> None:
@@ -420,18 +764,33 @@ def test_contract_marks_active_isaac_images_public_and_runtime_fetch() -> None:
         entry = contract["images"][name]
         assert entry["redistribution"] == "public", name
         assert entry.get("isaac_runtime_fetch") is True, name
-    stale = contract["images"]["sonic-mujoco"]
-    assert stale["redistribution"] == "restricted"
-    assert stale.get("isaac_runtime_fetch") is not True
+    mujoco = contract["images"]["sonic-mujoco"]
+    assert mujoco["redistribution"] == "public"
+    assert "runtime-fetch" in mujoco["notes"]
 
 
 def test_the_restriction_mechanism_still_exists() -> None:
-    """The build-your-own Cosmos3 serving image exercises this boundary."""
+    """The general refusal API covers every restricted PAIDF compatibility runtime."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
-    assert omniverse_restricted_image_names() == ["cosmos3-serving", "sonic-mujoco"]
+    assert restricted_image_names() == [
+        "cosmos3-nano-video",
+        "cosmos3-super-benchmark",
+        "paidf-anomalygen-sky",
+        "paidf-attribute-search-sky",
+        "paidf-captioning-sky",
+        "paidf-detection-sky",
+        "paidf-event-video-sky",
+        "paidf-image-edit-sky",
+        "paidf-visual-qa-sky",
+    ]
+    assert "cosmos3-nano-video" not in publicly_publishable_tools()
+    assert not is_publicly_redistributable("cosmos3-nano-video")
+    assert not is_publicly_redistributable("paidf-anomalygen-sky")
+    assert "paidf-anomalygen-sky" not in publicly_publishable_tools()
     for symbol in (
         "is_publicly_redistributable",
+        "restricted_image_names",
         "omniverse_restricted_image_names",
         "publicly_publishable_tools",
         "is_public_registry",
@@ -443,6 +802,35 @@ def test_the_restriction_mechanism_still_exists() -> None:
             "classes"
         ]
     ), "the restricted class must remain enforced"
+
+
+def test_public_refusal_union_preserves_pending_and_permanent_reasons() -> None:
+    expected = (
+        images.RESTRICTED_PUBLICATION_TOOLS
+        | images.RESTRICTED_DERIVED_IMAGES
+        | images.PENDING_REDISTRIBUTION_TOOLS
+    )
+    assert restricted_image_names() == sorted(expected)
+    assert images.omniverse_restricted_image_names() == sorted(expected)
+    assert all(not is_publicly_redistributable(name) for name in expected)
+    assert "habitat-sim" not in images.PENDING_REDISTRIBUTION_TOOLS
+    assert "habitat-sim" not in images.RESTRICTED_PUBLICATION_TOOLS
+    assert "habitat-sim" in images.PUBLICATION_QUARANTINE_TOOLS
+    assert "habitat-sim" not in publicly_publishable_tools()
+
+
+def test_public_refusal_union_covers_derived_members_without_policy_reclassification(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        images, "RESTRICTED_DERIVED_IMAGES", frozenset({"inert-derived"})
+    )
+    assert not is_publicly_redistributable("inert-derived")
+    assert "inert-derived" in restricted_image_names()
+    assert images.omniverse_restricted_image_names() == restricted_image_names()
+    assert is_publicly_redistributable("foxglove-embed")
+    assert "inert-derived" not in images.RESTRICTED_PUBLICATION_TOOLS
+    assert "inert-derived" not in images.PENDING_REDISTRIBUTION_TOOLS
 
 
 def test_selector_matches_packaging_contract_classification() -> None:
@@ -458,21 +846,34 @@ def test_selector_matches_packaging_contract_classification() -> None:
         if entry.get("redistribution") != "restricted":
             continue
         if image_name == "sonic-mujoco":
-            assert image_name in OMNIVERSE_RESTRICTED_DERIVED_IMAGES
+            assert image_name in RESTRICTED_DERIVED_IMAGES
             continue
         tool = image_name
         if tool in CONTAINER_IMAGE_NAMES:
             assert not is_publicly_redistributable(tool), image_name
         else:
-            # non-canonical restricted image (e.g. sonic-mujoco) must map to a
+            # A future non-canonical restricted image must map to a
             # restricted canonical tool
-            assert tool in OMNIVERSE_RESTRICTED_TOOLS, image_name
+            assert tool in RESTRICTED_PUBLICATION_TOOLS, image_name
+
+
+def test_selector_refuses_unvalidated_neutral_redistribution() -> None:
+    """A neutral proposal is not public before its exact-byte license closure."""
+
+    contract = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+    contract_unvalidated = {
+        name
+        for name, entry in contract["images"].items()
+        if entry.get("redistribution") == "unvalidated"
+    }
+    assert contract_unvalidated == set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
+    assert all(not is_publicly_redistributable(tool) for tool in contract_unvalidated)
 
 
 # --- Resolution guard: a restricted tool must never resolve from a public registry ----
 #
-# The docs tell external consumers to point NPA_REGISTRY at the public mirror. Asking
-# for a restricted tool in that state used to silently produce a public image reference
+# Explicitly selecting the public release namespace for a restricted tool must
+# never silently produce a public image reference
 # for something we must never publish. Private registries are unaffected —
 # build-your-own is the licensed path, whichever registry that is.
 
@@ -489,7 +890,7 @@ def test_selector_matches_packaging_contract_classification() -> None:
 def test_restricted_tools_refuse_to_resolve_from_a_public_registry(
     monkeypatch, registry
 ) -> None:
-    monkeypatch.setattr(images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis"}))
+    monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
     with pytest.raises(ValueError, match="not publicly redistributable"):
         container_image_for_tool("genesis", registry=registry)
 
@@ -498,32 +899,57 @@ def test_restricted_tools_still_resolve_from_an_operators_own_registry(
     monkeypatch,
 ) -> None:
     """Build-your-own into a private registry is the licensed path; do not block it."""
-    monkeypatch.setattr(images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis"}))
-    ref = container_image_for_tool(
-        "genesis", registry="cr.eu-north1.nebius.cloud/example"
-    )
-    assert ref.startswith("cr.eu-north1.nebius.cloud/example/npa-genesis:")
+    monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
+    ref = container_image_for_tool("genesis", registry="registry.example/example")
+    assert ref.startswith("registry.example/example/npa-genesis:")
 
 
 def test_public_registry_detection() -> None:
     assert is_public_registry("ghcr.io/nebius/nebius-physical-ai")
-    assert is_public_registry("GHCR.IO/Nebius/Workbench")
-    assert not is_public_registry("cr.eu-north1.nebius.cloud/e00example")
+    assert not is_public_registry("GHCR.IO/Operator/Private-Package")
+    assert not is_public_registry("registry.example/e00example")
     assert not is_public_registry("")
 
 
-def test_public_mirror_override_is_treated_as_public(monkeypatch) -> None:
-    """Whatever is configured as the mirror is public, even on a private-looking host."""
-    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "mirror.example.com/workbench")
-    assert is_public_registry("mirror.example.com/workbench")
+def test_public_release_override_is_treated_as_public(monkeypatch) -> None:
+    """The configured GHCR release namespace is public; other GHCR packages are not."""
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "ghcr.io/example/workbench")
+    assert is_public_registry("ghcr.io/example/workbench")
+    assert is_public_registry(DEFAULT_PUBLIC_CONTAINER_REGISTRY)
+    assert not is_public_registry("ghcr.io/example/private")
 
 
-def test_oss_tools_resolve_from_the_public_mirror_normally() -> None:
-    """The guard must not get in the way of the images that ARE publishable."""
+def test_restricted_tool_refuses_default_official_namespace_after_override(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "ghcr.io/example/workbench")
+    monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
+
+    with pytest.raises(ValueError, match="not publicly redistributable"):
+        container_image_for_tool("genesis", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY)
+
+
+def test_restricted_tool_allows_deliberate_operator_ghcr_namespace(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "ghcr.io/example/workbench")
+    monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
+
     ref = container_image_for_tool(
-        "lerobot", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
+        "genesis", registry="ghcr.io/operator/build-your-own"
     )
-    assert ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-lerobot:")
+    assert ref.startswith("ghcr.io/operator/build-your-own/npa-genesis:")
+
+
+def test_oss_tools_resolve_from_the_public_release_normally() -> None:
+    """The guard must not get in the way of the images that ARE publishable."""
+    ref = container_image_for_tool("groot", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY)
+    assert ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-groot:")
+
+
+def test_robotwin_quarantine_blocks_implicit_public_image_resolution() -> None:
+    with pytest.raises(ValueError, match="robotwin.*no accepted release image"):
+        container_image_for_tool("robotwin", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY)
 
 
 # --------------------------------------------------------------------------------------
@@ -546,9 +972,241 @@ def test_registry_host_is_split_off_correctly() -> None:
         _registry_host("ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1")
         == "ghcr.io"
     )
-    assert _registry_host("cr.eu-north1.nebius.cloud/abc/npa-lerobot:0.5.1") == (
-        "cr.eu-north1.nebius.cloud"
+    assert _registry_host("registry.example/abc/npa-lerobot:0.5.1") == (
+        "registry.example"
     )
+
+
+@pytest.fixture
+def anonymous_registry(monkeypatch):
+    """Exercise the real anonymous client, replacing only HTTP transport."""
+    from npa.deploy import publish_public
+
+    body = (
+        b'{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}'
+    )
+    digest = "sha256:" + hashlib.sha256(body).hexdigest()
+    state = {
+        "body": body,
+        "digest": digest,
+        "header": digest,
+        "token_body": b'{"token":"fixture-anonymous-pull"}',
+        "requests": [],
+        "status": 200,
+    }
+
+    class Response:
+        def __init__(self, payload, *, header=None, status=200):
+            self.payload = payload
+            self.status = status
+            self.headers = Message()
+            if header is not None:
+                self.headers["docker-content-digest"] = header
+
+        def read(self):
+            if isinstance(self.payload, Exception):
+                raise self.payload
+            return self.payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+    def urlopen(request, timeout=None):
+        url = request if isinstance(request, str) else request.full_url
+        headers = {} if isinstance(request, str) else dict(request.header_items())
+        state["requests"].append((url, headers))
+        token_request = urllib.parse.urlsplit(url).path == "/token"
+        error = state.get("token_error" if token_request else "manifest_error")
+        if error:
+            raise urllib.error.HTTPError(url, error, "fixture denial", {}, None)
+        if token_request:
+            return Response(state["token_body"])
+        return Response(state["body"], header=state["header"], status=state["status"])
+
+    monkeypatch.setenv("GH_TOKEN", "fixture-ambient-token")
+    monkeypatch.setenv("DOCKER_AUTH_CONFIG", '{"auths":{"ghcr.io":{"auth":"fixture"}}}')
+    monkeypatch.setattr(publish_public.urllib.request, "urlopen", urlopen)
+    return state
+
+
+@pytest.mark.parametrize("helper", ["anonymous_digest", "anonymous_pull_ok"])
+@pytest.mark.parametrize("suffix", [":release", "@{digest}", ":release@{digest}"])
+def test_anonymous_reference_selects_exact_manifest_and_repository_scope(
+    anonymous_registry,
+    helper,
+    suffix,
+):
+    from npa.deploy import publish_public
+
+    state = anonymous_registry
+    ref = "ghcr.io/example/workbench/image" + suffix.format(digest=state["digest"])
+    ok, detail = getattr(publish_public, helper)(ref)
+    assert ok, detail
+    assert detail == (state["digest"] if helper == "anonymous_digest" else "HTTP 200")
+    token_request, manifest_request = state["requests"]
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(token_request[0]).query)
+    assert query == {
+        "scope": ["repository:example/workbench/image:pull"],
+        "service": ["ghcr.io"],
+    }
+    assert token_request[1] == {}
+    selected = state["digest"] if "@" in suffix else "release"
+    assert (
+        manifest_request[0]
+        == "https://ghcr.io/v2/example/workbench/image/manifests/" + selected
+    )
+    assert manifest_request[1]["Authorization"] == "Bearer fixture-anonymous-pull"
+    assert "fixture-ambient-token" not in str(state["requests"])
+
+
+@pytest.mark.parametrize("suffix", [":release", "@{digest}", ":release@{digest}"])
+def test_anonymous_registry_port_is_not_a_tag(anonymous_registry, suffix):
+    from npa.deploy import publish_public
+
+    state = anonymous_registry
+    ref = "registry.example:5443/team/image" + suffix.format(digest=state["digest"])
+    assert publish_public.anonymous_digest(ref) == (True, state["digest"])
+    assert len(state["requests"]) == 1
+    url, headers = state["requests"][0]
+    selected = state["digest"] if "@" in suffix else "release"
+    assert url == "https://registry.example:5443/v2/team/image/manifests/" + selected
+    assert "Authorization" not in headers
+
+
+def test_untagged_pull_uses_latest_but_digest_resolution_requires_reference(
+    anonymous_registry,
+):
+    from npa.deploy import publish_public
+
+    ref = "registry.example/team/image"
+    assert publish_public.anonymous_digest(ref)[0] is False
+    assert anonymous_registry["requests"] == []
+    assert publish_public.anonymous_pull_ok(ref) == (True, "HTTP 200")
+    assert anonymous_registry["requests"][0][0].endswith("/manifests/latest")
+
+
+@pytest.mark.parametrize("suffix", [":release", "@{digest}"])
+def test_anonymous_digest_without_header_hashes_actual_bytes(
+    anonymous_registry, suffix
+):
+    from npa.deploy import publish_public
+
+    state = anonymous_registry
+    state["header"] = None
+    ref = "registry.example/team/image" + suffix.format(digest=state["digest"])
+    assert publish_public.anonymous_digest(ref) == (True, state["digest"])
+
+
+@pytest.mark.parametrize("helper", ["anonymous_digest", "anonymous_pull_ok"])
+@pytest.mark.parametrize(
+    "case,reason",
+    [
+        ("tampered_body", "does not match response body"),
+        ("invalid_header", "invalid manifest digest header"),
+        ("wrong_requested_digest", "does not match requested digest"),
+        ("wrong_requested_digest_no_header", "does not match requested digest"),
+        ("empty_body", "empty manifest"),
+        ("partial_response", "unreachable"),
+        ("wrong_status", "HTTP 206"),
+    ],
+)
+def test_anonymous_manifest_integrity_failure_is_not_public(
+    anonymous_registry,
+    helper,
+    case,
+    reason,
+):
+    from npa.deploy import publish_public
+
+    state = anonymous_registry
+    requested = state["digest"]
+    if case == "tampered_body":
+        state["body"] += b" "
+    elif case == "invalid_header":
+        state["header"] = "sha256:invalid"
+    elif case.startswith("wrong_requested_digest"):
+        requested = "sha256:" + "f" * 64
+        if case.endswith("no_header"):
+            state["header"] = None
+    elif case == "empty_body":
+        state["body"] = b""
+    elif case == "partial_response":
+        state["body"] = http.client.IncompleteRead(b"partial", 100)
+    elif case == "wrong_status":
+        state["status"] = 206
+    ok, detail = getattr(publish_public, helper)(
+        "registry.example/team/image@" + requested
+    )
+    assert not ok
+    assert reason in detail
+    assert len(state["requests"]) == 1
+
+
+@pytest.mark.parametrize("helper", ["anonymous_digest", "anonymous_pull_ok"])
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "image:release",
+        "ghcr.io/team/image@sha256:abc",
+        "ghcr.io/team/image@sha256:" + "a" * 64 + "@sha256:" + "b" * 64,
+        "ghcr.io/team/image:release?alternate=1",
+        "ghcr.io/team/image:release#fragment",
+        "ghcr.io/team/image:release\nInjected: value",
+        "ghcr.io:99999/team/image:release",
+        "user:password@ghcr.io/team/image:release",
+        "ghcr.io/team/../image:release",
+    ],
+)
+def test_invalid_anonymous_reference_rejected_before_http(
+    anonymous_registry, helper, ref
+):
+    from npa.deploy import publish_public
+
+    assert getattr(publish_public, helper)(ref)[0] is False
+    assert anonymous_registry["requests"] == []
+
+
+@pytest.mark.parametrize("helper", ["anonymous_digest", "anonymous_pull_ok"])
+@pytest.mark.parametrize("stage", ["token", "manifest"])
+@pytest.mark.parametrize("status", [401, 403])
+def test_anonymous_denial_never_falls_back_to_credentials(
+    anonymous_registry,
+    helper,
+    stage,
+    status,
+):
+    from npa.deploy import publish_public
+
+    state = anonymous_registry
+    state[stage + "_error"] = status
+    ok, detail = getattr(publish_public, helper)(
+        "ghcr.io/team/image@" + state["digest"]
+    )
+    assert not ok
+    assert f"HTTP {status}" in detail
+    assert "private" in detail
+    assert len(state["requests"]) == (1 if stage == "token" else 2)
+    assert "fixture-ambient-token" not in str(state["requests"])
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [b"{}", b"[]", b'{"token":10}', b'{"token":"bad token"}', b"not-json", b"\xff"],
+)
+def test_invalid_anonymous_token_stops_before_manifest(anonymous_registry, payload):
+    from npa.deploy import publish_public
+
+    state = anonymous_registry
+    state["token_body"] = payload
+    ok, detail = publish_public.anonymous_digest(
+        "ghcr.io/team/image@" + state["digest"]
+    )
+    assert not ok
+    assert "token" in detail
+    assert len(state["requests"]) == 1
 
 
 def test_verify_public_reports_every_private_image(monkeypatch) -> None:
@@ -585,9 +1243,7 @@ def test_verify_public_exits_non_zero_when_anything_is_private(
     )
     assert rc == 1
     captured = capsys.readouterr()
-    # The message has to tell an operator exactly what to do, because there is no API for it.
-    assert "Change visibility" in captured.err
-    assert "irreversible" in captured.err
+    assert "must be anonymously pullable" in captured.err
 
 
 def test_verify_public_exits_zero_when_everything_is_public(monkeypatch) -> None:
@@ -694,6 +1350,108 @@ def test_verify_parity_is_read_only(monkeypatch) -> None:
     )
 
 
+def test_accepted_release_plan_partitions_published_and_pending_tools() -> None:
+    from npa.deploy import publish_public
+
+    manifest = images.public_release_manifest()
+    plan = publish_public.accepted_release_plan(
+        target_registry="ghcr.io/nebius/nebius-physical-ai"
+    )
+
+    assert len(plan) == len(manifest["releases"])
+    assert set(manifest["releases"]) == set(publicly_publishable_tools())
+    assert set(manifest["publication_pending"]) == {
+        "antioch",
+        *STALE_PUBLICATION_TOOLS,
+    }
+    for item in plan:
+        recorded = manifest["releases"][item.tool]["published_digest"]
+        assert item.source_ref.endswith(f"@{recorded}")
+
+
+def test_release_manifest_delegates_redistribution_classification(monkeypatch) -> None:
+    original = images.is_publicly_redistributable
+    classified: list[str] = []
+
+    def classify(tool: str) -> bool:
+        classified.append(tool)
+        return original(tool)
+
+    images.public_release_manifest.cache_clear()
+    monkeypatch.setattr(images, "is_publicly_redistributable", classify)
+    try:
+        images.public_release_manifest()
+    finally:
+        images.public_release_manifest.cache_clear()
+
+    assert set(classified) == set(CONTAINER_IMAGE_NAMES)
+
+
+def test_verify_accepted_releases_compares_anonymous_live_and_recorded_digests(
+    monkeypatch,
+) -> None:
+    from npa.deploy import publish_public
+
+    plan = publish_public.accepted_release_plan(
+        target_registry="ghcr.io/nebius/nebius-physical-ai"
+    )[:2]
+    expected = {item.target_ref: item.source_ref.rpartition("@")[2] for item in plan}
+    drifted = plan[1]
+
+    def resolve(ref: str, **_: object) -> tuple[bool, str]:
+        if ref == drifted.target_ref:
+            return True, "sha256:" + "f" * 64
+        return True, expected[ref]
+
+    monkeypatch.setattr(publish_public, "anonymous_digest", resolve)
+
+    assert publish_public.verify_accepted_releases(plan) == [
+        (
+            drifted,
+            "published digest mismatch — recorded "
+            + expected[drifted.target_ref]
+            + "; live sha256:"
+            + "f" * 64,
+        )
+    ]
+
+
+def test_verify_accepted_releases_mode_never_reads_development_sources(
+    monkeypatch,
+) -> None:
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr(
+        publish_public,
+        "anonymous_digest",
+        lambda ref, **_: (
+            True,
+            next(
+                item.source_ref.rpartition("@")[2]
+                for item in publish_public.accepted_release_plan(
+                    target_registry="ghcr.io/nebius/nebius-physical-ai"
+                )
+                if item.target_ref == ref
+            ),
+        ),
+    )
+
+    def explode(*_args, **_kwargs):
+        raise AssertionError("accepted release verification must not read dev tags")
+
+    monkeypatch.setattr(publish_public, "_preflight_or_explain", explode)
+    assert (
+        publish_public.main(
+            [
+                "--target",
+                "ghcr.io/nebius/nebius-physical-ai",
+                "--verify-accepted-releases",
+            ]
+        )
+        == 0
+    )
+
+
 def test_anonymous_check_sends_no_credentials_for_a_private_registry(
     monkeypatch,
 ) -> None:
@@ -708,6 +1466,7 @@ def test_anonymous_check_sends_no_credentials_for_a_private_registry(
 
     class FakeResponse:
         status = 200
+        headers = {}
 
         def read(self) -> bytes:
             return b"{}"
@@ -727,12 +1486,12 @@ def test_anonymous_check_sends_no_credentials_for_a_private_registry(
 
     monkeypatch.setattr(publish_public.urllib.request, "urlopen", fake_urlopen)
     ok, detail = publish_public.anonymous_pull_ok(
-        "cr.eu-north1.nebius.cloud/abc/npa-lerobot:0.5.1"
+        "registry.example/abc/npa-lerobot:0.5.1"
     )
 
     assert ok, detail
     assert seen["url"].startswith(
-        "https://cr.eu-north1.nebius.cloud/v2/abc/npa-lerobot/manifests/"
+        "https://registry.example/v2/abc/npa-lerobot/manifests/"
     )
     assert seen.get("auth") is None, (
         "no Authorization header may be sent for a non-GHCR host"
@@ -840,109 +1599,41 @@ def test_the_preflight_flag_never_copies(monkeypatch) -> None:
     )
 
 
-def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) -> None:
+@pytest.mark.parametrize("recorded_total", [27, 26, None])
+def test_wan_publication_gate_binds_live_trivy_to_recorded_totals(
+    monkeypatch, recorded_total: int | None
+) -> None:
     from npa.deploy import publish_public
 
-    platform_digest = "sha256:" + "1" * 64
-    index_digest = "sha256:" + "2" * 64
-    attestation_digest = "sha256:" + "3" * 64
-    subject = [{"name": "pkg", "digest": {"sha256": "1" * 64}}]
-    accepted = {
-        "oci_digest": index_digest,
-        "amd64_manifest": platform_digest,
-        "runtime_requirements_sha256": "4" * 64,
-        "source": {"revision": "source-ref"},
-        "model": {"revision": "model-ref"},
-        "tokenizer": {"revision": "tokenizer-ref"},
-        "runtime_acceptance": {"manifest_sha256": "b" * 64},
-        "payload_scan": {
-            "report_sha256": "c" * 64,
-            "archives_scanned": 2,
-            "findings": 0,
-        },
-        "single_gpu_proof": {
-            "run_id": "single",
-            "gpu_count": 1,
-            "observed_image_id_digest": index_digest,
-            "mp4_sha256": "5" * 64,
-            "rrd_sha256": "6" * 64,
-            "rrd_manifest_sha256": "7" * 64,
-        },
-        "distributed_proof": {
-            "run_id": "multi",
-            "gpu_count": 4,
-            "observed_image_id_digest": index_digest,
-            "mp4_sha256": "8" * 64,
-            "rrd_sha256": "9" * 64,
-            "rrd_manifest_sha256": "a" * 64,
-        },
-        "vulnerability_scan": {
-            "report_sha256": "d" * 64,
-            "critical_total": 27,
-            "critical_with_fix": 0,
-            "secrets": 0,
-        },
-    }
-    index = {
-        "manifests": [
-            {
-                "digest": platform_digest,
-                "platform": {"architecture": "amd64", "os": "linux"},
-            },
-            {
-                "digest": attestation_digest,
-                "annotations": {
-                    "vnd.docker.reference.type": "attestation-manifest",
-                    "vnd.docker.reference.digest": platform_digest,
-                },
-            },
-        ]
-    }
-    attestation = {
-        "layers": [
-            {
-                "digest": "sha256:spdx",
-                "annotations": {
-                    "in-toto.io/predicate-type": "https://spdx.dev/Document"
-                },
-            },
-            {
-                "digest": "sha256:slsa",
-                "annotations": {
-                    "in-toto.io/predicate-type": "https://slsa.dev/provenance/v1"
-                },
-            },
-        ]
-    }
-
-    monkeypatch.setattr(
-        publish_public, "_crane_digest", lambda ref, **_: (True, index_digest)
-    )
+    accepted = copy.deepcopy(images.wan_accepted_image_manifest())
+    if recorded_total is None:
+        accepted["vulnerability_scan"].pop("critical_total")
+        accepted["vulnerability_scan"].pop("critical_unfixed")
+    else:
+        accepted["vulnerability_scan"]["critical_total"] = recorded_total
+        accepted["vulnerability_scan"]["critical_unfixed"] = recorded_total
     monkeypatch.setattr(
         publish_public.images, "wan_accepted_image_manifest", lambda: accepted
+    )
+    digest = accepted["oci_digest"]
+
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, digest)
     )
     monkeypatch.setattr(
         publish_public,
         "_crane_json",
         lambda args: (
-            index if args[0:1] == ["manifest"] and "@" not in args[1] else attestation
+            {"config": {}, "layers": [{}]}
+            if args[0] == "manifest"
+            else {"architecture": "amd64", "os": "linux"}
         ),
     )
-
-    def fake_blob(repository: str, digest: str) -> dict:
-        if digest == "sha256:spdx":
-            return {
-                "subject": subject,
-                "predicateType": "https://spdx.dev/Document",
-                "predicate": {"packages": [{"name": "npa-wan2-2"}]},
-            }
-        return {
-            "subject": subject,
-            "predicateType": "https://slsa.dev/provenance/v1",
-            "predicate": {"buildDefinition": {"buildType": "docker"}},
-        }
-
-    monkeypatch.setattr(publish_public, "_crane_blob_json", fake_blob)
+    monkeypatch.setattr(
+        publish_public,
+        "_github_attestation_predicates",
+        lambda **_: set(accepted["attestations"]["required_predicates"]),
+    )
 
     class CleanScan:
         returncode = 0
@@ -982,15 +1673,21 @@ def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) ->
     ok, detail = REAL_WAN_PUBLICATION_GATE(
         PublishItem(
             tool="wan2-2",
-            source_ref="source.example/npa-wan2-2:accepted",
-            target_ref="ghcr.io/example/npa-wan2-2:accepted",
+            source_ref=("ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@" + digest),
+            target_ref="ghcr.io/nebius/nebius-physical-ai/npa-wan2-2:accepted",
         )
     )
 
-    assert ok, detail
-    assert index_digest in detail
-    assert platform_digest in detail
-    assert "residual unfixed CRITICAL findings disclosed: 27" in detail
+    if recorded_total == 27:
+        assert ok, detail
+        assert digest in detail
+        assert "residual unfixed CRITICAL findings disclosed: 27" in detail
+    else:
+        assert not ok
+        assert (
+            "differs from the accepted manifest" in detail
+            or "totals are missing or inconsistent" in detail
+        )
 
 
 @pytest.mark.parametrize(
@@ -1061,7 +1758,12 @@ def test_wan_live_trivy_gate_uses_digest_pinned_container_fallback(
         "source.example/npa-wan2-2@sha256:" + "1" * 64
     )
 
-    assert result == {"critical_total": 0, "critical_with_fix": 0, "secrets": 0}
+    assert result == {
+        "critical_total": 0,
+        "critical_with_fix": 0,
+        "critical_unfixed": 0,
+        "secrets": 0,
+    }
     assert invoked[:3] == ["/usr/bin/docker", "run", "--rm"]
     assert f"{docker_config.resolve()}:/root/.docker:ro" in invoked
     assert publish_public._TRIVY_CONTAINER_IMAGE in invoked
@@ -1079,6 +1781,365 @@ def test_wan_live_trivy_gate_fails_closed_without_scanner_runtime(
         publish_public._scan_wan_trivy_exact_digest(
             "source.example/npa-wan2-2@sha256:" + "1" * 64
         )
+
+
+# --------------------------------------------------------------------------------------
+# Exact-digest secret severity
+#
+# Trivy applies ``--severity`` to every enabled scanner at once. The gate used to ask for
+# CRITICAL and get back a report whose ``Class: secret`` rows were present and empty --
+# indistinguishable from an image with no secrets. A pinned scan of one real workbench
+# image reported 0 secret findings under the CRITICAL filter and 3 HIGH ``private-key``
+# findings for the same bytes under all severities.
+#
+# The fake scanner below therefore APPLIES the severity filter the way Trivy does,
+# including dropping the section key when nothing survives. A fake that ignored the flag
+# would pass against the blind gate too and would prove nothing about the argv contract.
+# --------------------------------------------------------------------------------------
+
+
+def _severity_filtered_trivy(report: dict, *, record: list[list[str]] | None = None):
+    """Return a fake scanner that filters like Trivy, honouring the real flags."""
+
+    def run(args, **_kwargs):
+        if record is not None:
+            record.append(list(args))
+        requested = set()
+        if "--severity" in args:
+            requested = {
+                part.strip().upper()
+                for part in args[args.index("--severity") + 1].split(",")
+                if part.strip()
+            }
+        scanners = set()
+        if "--scanners" in args:
+            scanners = {
+                part.strip()
+                for part in args[args.index("--scanners") + 1].split(",")
+                if part.strip()
+            }
+        results = []
+        for result in report.get("Results", []):
+            kept = {
+                key: value
+                for key, value in result.items()
+                if key not in ("Vulnerabilities", "Secrets")
+            }
+            for section, scanner in (
+                ("Vulnerabilities", "vuln"),
+                ("Secrets", "secret"),
+            ):
+                if scanner not in scanners:
+                    continue
+                surviving = [
+                    finding
+                    for finding in result.get(section) or []
+                    if not requested
+                    or str(finding.get("Severity") or "UNKNOWN").upper() in requested
+                ]
+                # Trivy omits the section entirely when the filter empties it.
+                if surviving:
+                    kept[section] = surviving
+            results.append(kept)
+        payload = {key: value for key, value in report.items() if key != "Results"} | {
+            "Results": results
+        }
+        return subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps(payload), stderr=""
+        )
+
+    return run
+
+
+def _secret_report(severity: str, count: int = 3) -> dict:
+    """A report shaped like the real one: empty-able secret rows plus OS packages."""
+
+    return {
+        "SchemaVersion": 2,
+        "ArtifactType": "container_image",
+        "Results": [
+            {
+                "Target": "example (ubuntu 24.04)",
+                "Class": "os-pkgs",
+                "Type": "ubuntu",
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": "CVE-unfixed-critical",
+                        "Severity": "CRITICAL",
+                        "FixedVersion": "",
+                    },
+                    {
+                        "VulnerabilityID": "CVE-high-noise",
+                        "Severity": "HIGH",
+                        "FixedVersion": "9.9.9",
+                    },
+                ],
+            }
+        ]
+        + [
+            {
+                "Target": f"secret-row-{index}",
+                "Class": "secret",
+                "Secrets": [
+                    {
+                        "RuleID": "private-key",
+                        "Category": "AsymmetricPrivateKey",
+                        "Severity": severity,
+                        "Title": "Asymmetric Private Key",
+                    }
+                ],
+            }
+            for index in range(count)
+        ],
+    }
+
+
+def test_exact_digest_scan_requests_every_secret_severity(monkeypatch) -> None:
+    """The scanner must not be asked to pre-filter findings to CRITICAL."""
+
+    from npa.deploy import publish_public
+
+    invoked: list[list[str]] = []
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess,
+        "run",
+        _severity_filtered_trivy({"Results": []}, record=invoked),
+    )
+
+    publish_public._scan_trivy_exact_digest(
+        "source.example/image@sha256:" + "1" * 64, subject="Control"
+    )
+
+    (argv,) = invoked
+    assert "secret" in argv[argv.index("--scanners") + 1].split(",")
+    requested = argv[argv.index("--severity") + 1].split(",")
+    assert {"UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"} == set(requested)
+    # The exact-image binding must survive the severity change.
+    assert argv[argv.index("--platform") + 1] == "linux/amd64"
+    assert argv[-1] == "source.example/image@sha256:" + "1" * 64
+
+
+@pytest.mark.parametrize("severity", ["HIGH", "MEDIUM", "LOW", "UNKNOWN"])
+def test_exact_digest_scan_rejects_secrets_below_critical(
+    monkeypatch, severity: str
+) -> None:
+    """A private key the scanner ranks below CRITICAL must still block publication."""
+
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess,
+        "run",
+        _severity_filtered_trivy(_secret_report(severity)),
+    )
+
+    with pytest.raises(RuntimeError, match=r"found 3 secret findings"):
+        publish_public._scan_trivy_exact_digest(
+            "source.example/image@sha256:" + "1" * 64, subject="Control"
+        )
+
+
+def test_exact_digest_secret_rejection_reports_counts_without_content(
+    monkeypatch,
+) -> None:
+    """The rejection reaches CI logs, so it carries counts and no matched bytes."""
+
+    from npa.deploy import publish_public
+
+    report = _secret_report("HIGH", count=2)
+    report["Results"][1]["Secrets"][0]["Match"] = "-----BEGIN PRIVATE KEY-----"
+    report["Results"][1]["Secrets"][0]["Code"] = {"Lines": [{"Content": "sensitive"}]}
+    report["Results"][2]["Secrets"][0]["Severity"] = "MEDIUM"
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess, "run", _severity_filtered_trivy(report)
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        publish_public._scan_trivy_exact_digest(
+            "source.example/image@sha256:" + "1" * 64, subject="Control"
+        )
+
+    message = str(raised.value)
+    assert "found 2 secret findings (HIGH=1, MEDIUM=1)" in message
+    assert "PRIVATE KEY" not in message
+    assert "sensitive" not in message
+    assert "secret-row" not in message
+
+
+def test_exact_digest_scan_keeps_critical_vulnerability_policy(monkeypatch) -> None:
+    """All-severity reports must not change the CRITICAL vulnerability accounting."""
+
+    from npa.deploy import publish_public
+
+    report = _secret_report("HIGH", count=0)
+    report["Results"][0]["Vulnerabilities"].extend(
+        [
+            {
+                "VulnerabilityID": "CVE-medium",
+                "Severity": "MEDIUM",
+                "FixedVersion": "1",
+            },
+            {"VulnerabilityID": "CVE-unknown", "Severity": "UNKNOWN"},
+            {
+                "VulnerabilityID": "CVE-unfixed-critical-2",
+                "Severity": "CRITICAL",
+                "FixedVersion": "",
+            },
+        ]
+    )
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess, "run", _severity_filtered_trivy(report)
+    )
+
+    assert publish_public._scan_trivy_exact_digest(
+        "source.example/image@sha256:" + "1" * 64, subject="Control"
+    ) == {
+        "critical_total": 2,
+        "critical_with_fix": 0,
+        "critical_unfixed": 2,
+        "secrets": 0,
+    }
+
+
+def test_exact_digest_scan_still_rejects_fixable_critical_vulnerabilities(
+    monkeypatch,
+) -> None:
+    """The pre-existing vulnerability gate must keep biting under all severities."""
+
+    from npa.deploy import publish_public
+
+    report = _secret_report("HIGH", count=0)
+    report["Results"][0]["Vulnerabilities"][0]["FixedVersion"] = "2.1.0"
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess, "run", _severity_filtered_trivy(report)
+    )
+
+    with pytest.raises(RuntimeError, match="1 fixed CRITICAL vulnerabilities"):
+        publish_public._scan_trivy_exact_digest(
+            "source.example/image@sha256:" + "1" * 64, subject="Control"
+        )
+
+
+@pytest.mark.parametrize(
+    ("stdout", "message"),
+    [
+        ("", "unparsable JSON"),
+        ("not json at all", "unparsable JSON"),
+        ('{"Results": "surprise"}', "invalid JSON"),
+        ('{"SchemaVersion": 2}', "invalid JSON"),
+        ('{"Results": ["not-a-result"]}', "result entry is invalid"),
+        ('{"Results": [{"Secrets": {"RuleID": "private-key"}}]}', "unreadable Secrets"),
+        ('{"Results": [{"Secrets": ["private-key"]}]}', "unreadable Secrets"),
+        ('{"Results": [{"Secrets": "private-key"}]}', "unreadable Secrets"),
+        ('{"Results": [{"Vulnerabilities": "CVE-1"}]}', "unreadable Vulnerabilities"),
+        ('{"Results": [{"Vulnerabilities": [null]}]}', "unreadable Vulnerabilities"),
+    ],
+)
+def test_exact_digest_scan_fails_closed_on_unreadable_report(
+    monkeypatch, stdout: str, message: str
+) -> None:
+    """An unexpected report shape must block publication, never drop a finding."""
+
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess,
+        "run",
+        lambda args, **_kwargs: subprocess.CompletedProcess(
+            args, 0, stdout=stdout, stderr=""
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        publish_public._scan_trivy_exact_digest(
+            "source.example/image@sha256:" + "1" * 64, subject="Control"
+        )
+
+
+def test_secret_findings_block_the_publisher_before_any_copy(monkeypatch) -> None:
+    """A rejected image must leave preflight as a failure and never be copied.
+
+    The recorded vulnerability totals are set to match this fixture exactly, so
+    every other part of the gate agrees. Before the severity fix that made the
+    whole gate return ok for an image carrying three HIGH private keys, which is
+    what this test exists to prevent.
+    """
+
+    from npa.deploy import publish_public
+
+    accepted = copy.deepcopy(images.wan_accepted_image_manifest())
+    digest = accepted["oci_digest"]
+    accepted["vulnerability_scan"] |= {
+        "critical_total": 1,
+        "critical_with_fix": 0,
+        "critical_unfixed": 1,
+        "secrets": 0,
+    }
+    monkeypatch.setattr(
+        publish_public.images, "wan_accepted_image_manifest", lambda: accepted
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, digest)
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: (
+            {"config": {}, "layers": [{}]}
+            if args[0] == "manifest"
+            else {"architecture": "amd64", "os": "linux"}
+        ),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_github_attestation_predicates",
+        lambda **_: set(accepted["attestations"]["required_predicates"]),
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", lambda *_a, **_k: (True, "ok")
+    )
+    monkeypatch.setattr(publish_public.shutil, "which", lambda name: f"/usr/bin/{name}")
+    # The module-wide fixture stubs this gate out for the unrelated publish tests;
+    # reaching the scanner through preflight is the whole point here.
+    monkeypatch.setattr(
+        publish_public, "verify_wan_publication_source", REAL_WAN_PUBLICATION_GATE
+    )
+
+    def refuse_copy(*_args, **_kwargs):
+        raise AssertionError("a rejected image must never be copied")
+
+    monkeypatch.setattr(publish_public, "_crane_copy", refuse_copy)
+
+    scanner = _severity_filtered_trivy(_secret_report("HIGH"))
+
+    def run(args, **kwargs):
+        if args[0] == "/usr/bin/trivy":
+            return scanner(args, **kwargs)
+        # The separate payload scan is not what is under test here.
+        return subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps({"status": "pass", "findings": []}), stderr=""
+        )
+
+    monkeypatch.setattr(publish_public.subprocess, "run", run)
+
+    item = PublishItem(
+        tool="wan2-2",
+        source_ref="ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@" + digest,
+        target_ref="ghcr.io/nebius/nebius-physical-ai/npa-wan2-2:accepted",
+    )
+    ok, detail = REAL_WAN_PUBLICATION_GATE(item)
+    assert not ok, f"gate accepted an image carrying private keys: {detail}"
+    assert "3 secret findings (HIGH=3)" in detail
+
+    failures = publish_public.preflight_sources([item])
+    assert [reason for _item, reason in failures], "rejected image reached the copy set"
+    assert "secret findings" in failures[0][1]
 
 
 def test_wan_publication_gate_refuses_digest_not_bound_to_gpu_proofs(
@@ -1107,6 +2168,79 @@ def test_wan_publication_gate_refuses_digest_not_bound_to_gpu_proofs(
 
     assert not ok
     assert accepted_digest in detail
+
+
+def test_ltx_publication_gate_binds_zero_payload_gpu_and_attestation_proofs(
+    monkeypatch,
+) -> None:
+    from npa.deploy import publish_public
+
+    accepted = images.ltx2_accepted_image_manifest()
+    digest = accepted["oci_digest"]
+    repository = "ghcr.io/nebius/nebius-physical-ai/npa-ltx2"
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, digest)
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_github_attestation_predicates",
+        lambda **_: set(accepted["attestations"]["required_predicates"]),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: {"architecture": "amd64", "os": "linux"},
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_scan_wan_trivy_exact_digest",
+        lambda ref: {
+            "critical_total": 0,
+            "critical_with_fix": 0,
+            "critical_unfixed": 0,
+            "secrets": 0,
+        },
+    )
+    monkeypatch.setattr(
+        publish_public.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, stdout=json.dumps({"status": "pass", "findings": []}), stderr=""
+        ),
+    )
+
+    ok, detail = REAL_LTX_PUBLICATION_GATE(
+        PublishItem(
+            tool="ltx2",
+            source_ref=f"{repository}@{digest}",
+            target_ref=f"{repository}:2.5-rtfetch-20260817",
+        )
+    )
+
+    assert ok, detail
+    assert digest in detail
+    assert "SPDX+SLSA" in detail
+
+
+def test_ltx_publication_gate_refuses_a_nonaccepted_digest(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    observed = "sha256:" + "a" * 64
+    accepted = images.ltx2_accepted_image_manifest()["oci_digest"]
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, observed)
+    )
+
+    ok, detail = REAL_LTX_PUBLICATION_GATE(
+        PublishItem(
+            tool="ltx2",
+            source_ref="ghcr.io/nebius/nebius-physical-ai/npa-ltx2:retagged",
+            target_ref="ghcr.io/nebius/nebius-physical-ai/npa-ltx2:release",
+        )
+    )
+
+    assert not ok
+    assert accepted in detail
 
 
 def test_wan_publication_gate_refuses_an_extra_unscanned_platform(monkeypatch) -> None:
@@ -1180,7 +2314,7 @@ def test_wan_publication_gate_refuses_an_extra_unscanned_platform(monkeypatch) -
     )
 
     assert not ok
-    assert "unscanned/unattested extra manifest" in detail
+    assert "one scanned platform manifest" in detail
 
 
 def test_wan_publication_gate_blocks_copy_before_any_write(monkeypatch, capsys) -> None:
@@ -1230,9 +2364,11 @@ def test_a_successful_copy_still_fails_while_the_packages_are_private(
     assert rc == 1
     assert copied, "the copy itself must still have happened"
     assert github_output.read_text(encoding="utf-8") == "copy_phase_completed=true\n"
-    assert "The copy succeeded" in captured.err, "must not read as a failed copy"
+    assert "release-tag copy completed" in captured.err, (
+        "must not read as a failed copy"
+    )
     # The click-through list is the whole point: no hunting for 20-odd packages by hand.
-    assert "/packages/container/" in captured.out
+    assert "NOT PUBLIC" in captured.out
 
 
 def test_a_copy_exits_zero_only_once_the_packages_are_public(monkeypatch) -> None:
@@ -1358,13 +2494,10 @@ def test_crane_copy_updates_a_target_with_a_different_digest(
     [
         "MANIFEST_UNKNOWN: manifest unknown",
         "NAME_UNKNOWN: repository name not known",
-        "DENIED: requested access to the resource is denied",
     ],
 )
-def test_crane_copy_creates_a_missing_or_pull_denied_target(
-    monkeypatch, target_error: str
-) -> None:
-    """A first GHCR push can create a package the pull path cannot read yet."""
+def test_crane_copy_creates_a_missing_target(monkeypatch, target_error: str) -> None:
+    """Only authoritative absence permits a release-tag write."""
     from npa.deploy import publish_public
     from npa.deploy.publish_public import PublishItem
 
@@ -1460,206 +2593,10 @@ def test_repeat_publish_skips_all_matching_copies_but_still_verifies(
     assert verified == [item.target_ref for item in plan]
 
 
-def test_settings_url_encodes_the_repository_nested_package_name() -> None:
-    from npa.deploy.publish_public import package_settings_url
-
-    url = package_settings_url("ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1")
-
-    # GHCR package name is "<repo>/<image>"; the slash is percent-encoded in the path, and
-    # a raw slash here silently 404s.
-    assert url == (
-        "https://github.com/orgs/nebius/packages/container/"
-        "nebius-physical-ai%2Fnpa-lerobot/settings"
-    )
-
-
-def test_settings_url_is_none_for_a_registry_with_a_different_visibility_model() -> (
-    None
-):
-    from npa.deploy.publish_public import package_settings_url
-
-    assert (
-        package_settings_url("cr.eu-north1.nebius.cloud/abc/npa-lerobot:0.5.1") is None
-    )
-
-
-def test_the_checklist_covers_exactly_the_packages_still_private() -> None:
-    from npa.deploy import publish_public
-
-    plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
-    failures = [(plan[0], "HTTP 403"), (plan[2], "HTTP 403")]
-
-    checklist = publish_public.visibility_checklist(failures)
-
-    assert checklist.count("- [ ] ") == 2
-    assert publish_public.ghcr_owner_and_package(plan[1].target_ref)[1] not in checklist
-
-
-def test_the_checklist_labels_a_package_the_way_its_settings_page_does() -> None:
-    """The label must be the package name, not the whole reference, or the list does not
-    match the page it links to."""
-    from npa.deploy import publish_public
-    from npa.deploy.publish_public import PublishItem
-
-    item = PublishItem(
-        tool="lerobot",
-        source_ref="cr.eu-north1.nebius.cloud/abc/npa-lerobot:0.5.1",
-        target_ref="ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1",
-    )
-
-    assert publish_public.visibility_checklist([(item, "HTTP 403")]) == (
-        "- [ ] [nebius-physical-ai/npa-lerobot]"
-        "(https://github.com/orgs/nebius/packages/container/"
-        "nebius-physical-ai%2Fnpa-lerobot/settings)"
-    )
-
-
-# --------------------------------------------------------------------------------------
-# Source credential expiry
-#
-# The workflow's first real dispatch failed with 23 identical
-# "UNAUTHORIZED ... failed to get profile" reads, because the stored NEBIUS_CR_TOKEN was a
-# `nebius iam get-access-token` value and those live 12 hours. Nothing was published (the
-# preflight held), but the diagnosis cost a two-minute sweep and reads like a registry or
-# permissions problem rather than "the secret is a kind of credential that cannot work
-# here". These pin the offline verdict that replaces that.
-# --------------------------------------------------------------------------------------
-
-
-def _jwt(exp: int | None) -> str:
-    """A JWT-shaped token, unsigned — describe_credential must never verify signatures."""
-
-    def segment(payload: dict[str, object]) -> str:
-        raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-        return raw.rstrip("=")  # real JWTs are unpadded base64url
-
-    claims: dict[str, object] = {"sub": "serviceaccount-abc"}
-    if exp is not None:
-        claims["exp"] = exp
-    return f"{segment({'alg': 'RS256'})}.{segment(claims)}.c2lnbmF0dXJl"
-
-
-def test_an_expired_access_token_is_reported_as_expired_not_as_a_registry_problem() -> (
-    None
-):
-    from npa.deploy.publish_public import describe_credential
-
-    now = 1_800_000_000.0
-    usable, verdict = describe_credential(_jwt(int(now) - 6 * 86400), now=now)
-
-    assert not usable
-    assert "EXPIRED" in verdict
-    assert "6d ago" in verdict
-    # The remedy has to be the credential that does not expire again next week, or the fix
-    # is to paste another 12-hour token and rediscover this in a month.
-    assert "static-key issue" in verdict
-    assert "--service=CONTAINER_REGISTRY" in verdict
-
-
-def test_a_valid_access_token_is_usable_but_still_flagged_as_too_short_lived() -> None:
-    """It works right now, which is the trap: it will not survive to the next dispatch."""
-    from npa.deploy.publish_public import describe_credential
-
-    now = 1_800_000_000.0
-    usable, verdict = describe_credential(_jwt(int(now) + 4 * 3600), now=now)
-
-    assert usable
-    assert "4h left" in verdict
-    assert "next dispatch" in verdict
-
-
-def test_an_opaque_static_key_is_usable_and_is_not_called_a_problem() -> None:
-    """A static key is not a JWT, so having no readable expiry is the GOOD outcome.
-
-    Treating "unreadable" as suspect would turn this diagnostic into a gate that refuses
-    the one credential CI is supposed to use.
-    """
-    from npa.deploy.publish_public import describe_credential
-
-    usable, verdict = describe_credential("nbstatic-opaque-key-value")
-
-    assert usable
-    assert "static key" in verdict
-    assert "EXPIRED" not in verdict
-
-
-def test_a_malformed_credential_is_never_guessed_to_be_expired() -> None:
-    """Three dots and garbage inside must fall back to "no readable expiry", not a verdict."""
-    from npa.deploy.publish_public import describe_credential
-
-    usable, verdict = describe_credential("not-base64.$$$not-json$$$.sig")
-
-    assert usable
-    assert "no readable expiry" in verdict
-
-
-def test_an_empty_credential_is_refused() -> None:
-    from npa.deploy.publish_public import describe_credential
-
-    usable, verdict = describe_credential("   \n")
-
-    assert not usable
-    assert "empty" in verdict
-
-
-def test_describe_credential_never_echoes_the_secret() -> None:
-    """This runs in CI logs, so the verdict must carry the expiry and nothing else."""
-    from npa.deploy.publish_public import describe_credential
-
-    for token in (_jwt(1), _jwt(4_000_000_000), "nbstatic-super-secret", _jwt(None)):
-        _, verdict = describe_credential(token)
-        assert token not in verdict
-        for part in token.split("."):
-            assert len(part) < 8 or part not in verdict
-
-
-def test_the_credential_check_exits_non_zero_on_an_expired_token(
-    monkeypatch, capsys
-) -> None:
-    """The workflow relies on the exit code to stop before the manifest sweep."""
-    import io
-
-    from npa.deploy import publish_public
-
-    monkeypatch.setattr("sys.stdin", io.StringIO(_jwt(1)))
-    rc = publish_public.main(["--describe-credential"])
-
-    assert rc == 1
-    assert "EXPIRED" in capsys.readouterr().err
-
-
-def test_the_credential_check_needs_no_target_registry(monkeypatch) -> None:
-    """It contacts nothing, so requiring a --target it cannot use would be a papercut that
-    makes the check awkward to run by hand."""
-    import io
-
-    from npa.deploy import publish_public
-
-    monkeypatch.delenv("NPA_PUBLIC_REGISTRY", raising=False)
-    monkeypatch.setattr("sys.stdin", io.StringIO("nbstatic-opaque-key-value"))
-
-    assert publish_public.main(["--target", "", "--describe-credential"]) == 0
-
-
-def test_the_credential_check_copies_nothing(monkeypatch) -> None:
-    import io
-
-    from npa.deploy import publish_public
-
-    def explode(item) -> None:  # pragma: no cover - must not run
-        raise AssertionError("--describe-credential must not copy anything")
-
-    monkeypatch.setattr(publish_public, "_crane_copy", explode)
-    monkeypatch.setattr("sys.stdin", io.StringIO("nbstatic-opaque-key-value"))
-
-    assert publish_public.main(["--describe-credential"]) == 0
-
-
 def test_a_wholesale_unauthorized_preflight_blames_the_credential(
     monkeypatch, capsys
 ) -> None:
-    """All reads failing is a different diagnosis from some failing, and the old message
-    conflated them — it recommended re-minting a 12-hour token, which is what caused it."""
+    """All reads failing points to the GHCR package credential, not one package grant."""
     from npa.deploy import publish_public
 
     monkeypatch.setattr(
@@ -1676,7 +2613,8 @@ def test_a_wholesale_unauthorized_preflight_blames_the_credential(
 
     assert rc == 1
     assert "Every read was denied" in err
-    assert "static-key issue" in err
+    assert "GITHUB_TOKEN" in err
+    assert "crane auth login ghcr.io" in err
     assert "lacks\nviewer" not in err, "a per-repository role hint would misdirect here"
 
 
@@ -1722,7 +2660,7 @@ def test_a_partial_preflight_failure_blames_the_role_or_the_tag(
 # skipping it would quietly shrink the published set while reporting success.
 # --------------------------------------------------------------------------------------
 
-# The literal strings Nebius CR returned, so the classifier is pinned against real output.
+# Historical provider error strings keep the classifier pinned against real output.
 _NAME_UNKNOWN = (
     "NAME_UNKNOWN: repository name not known to registry: Entity Folder not found for "
     "registry e00example"
@@ -1753,7 +2691,7 @@ def test_preflight_failures_are_classified_by_what_they_require(detail, kind) ->
 def test_a_denial_that_also_says_name_unknown_is_never_treated_as_absence() -> None:
     """A registry may answer NAME_UNKNOWN for a repository the identity cannot see.
 
-    Reading that as "not built yet" would silently drop a publishable image from the mirror,
+    Reading that as "not built yet" would silently drop a publishable release,
     so denial has to win over absence.
     """
     from npa.deploy.publish_public import classify_preflight_failure
@@ -1765,7 +2703,7 @@ def test_a_denial_that_also_says_name_unknown_is_never_treated_as_absence() -> N
 
 
 def _run2_readability(plan):
-    """The catalog fixture has 19 readable images, 4 absent repos, and 1 absent tag."""
+    """Model a mixed catalog with absent repos and an absent immutable tag."""
     never_built = {
         "npa-cosmos-curate",
         "npa-cosmos-evaluator",
@@ -1783,6 +2721,13 @@ def _run2_readability(plan):
         return True, "ok"
 
     return readable
+
+
+def _run2_missing(plan) -> list:
+    """Return only planned images the synthetic registry reports as absent."""
+
+    readable = _run2_readability(plan)
+    return [item for item in plan if not readable(item.source_ref)[0]]
 
 
 def test_unbuilt_images_block_the_publish_by_default(monkeypatch, capsys) -> None:
@@ -1804,9 +2749,10 @@ def test_unbuilt_images_block_the_publish_by_default(monkeypatch, capsys) -> Non
 
     rc = publish_public.main(["--target", "ghcr.io/example/workbench"])
     err = capsys.readouterr().err
+    missing = _run2_missing(plan)
 
     assert rc == 1
-    assert f"5 of {len(plan)}" in err
+    assert f"{len(missing)} of {len(plan)}" in err
     # Both codes must survive into the explanation: they need different fixes, and an
     # operator greps for the registry's own wording.
     assert "NAME_UNKNOWN" in err and "never been pushed" in err
@@ -1839,17 +2785,18 @@ def test_skip_missing_publishes_the_ready_images_and_names_the_skipped(
         ["--target", "ghcr.io/example/workbench", "--skip-missing"]
     )
     captured = capsys.readouterr()
+    missing = _run2_missing(plan)
 
     assert rc == 0
-    assert len(copied) == len(plan) - 5
-    for image in ("npa-cosmos3", "npa-foxglove-embed", "npa-cosmos2-transfer"):
+    assert len(copied) == len(plan) - len(missing)
+    for image in ("npa-foxglove-embed", "npa-cosmos2-transfer"):
         assert not any(f"/{image}:" in ref for ref in copied), image
         # Skipping quietly would leave a hole in the mirror nobody knew about.
         assert image in captured.err, image
-    assert any("/npa-lerobot:" in ref for ref in copied), (
+    assert any("/npa-groot:" in ref for ref in copied), (
         "ready images must still publish"
     )
-    assert f"Copied {len(plan) - 5} image(s)." in captured.out
+    assert f"Copied {len(plan) - len(missing)} image(s)." in captured.out
 
 
 def test_skip_missing_never_skips_past_a_denial(monkeypatch, capsys) -> None:
@@ -1929,16 +2876,22 @@ def test_verify_public_with_skip_missing_ignores_the_unpublished(
             "ghcr.io/example/workbench",
             "--skip-missing",
             "--verify-public",
-            "--checklist",
         ]
     )
     captured = capsys.readouterr()
+    missing = _run2_missing(plan)
 
     assert rc == 1
-    assert captured.out.count("- [ ] ") == len(plan) - 5
+    assert captured.out.count("NOT PUBLIC") == len(plan) - len(missing)
     # Match whole package names: "npa-cosmos3-reason" contains "npa-cosmos3" as a substring
     # and IS readable, so a substring check would fail for the wrong reason.
-    listed = set(re.findall(r"- \[ \] \[workbench/([^\]]+)\]", captured.out))
+    listed = set(
+        re.findall(
+            r"^\s+ghcr\.io/example/workbench/(npa-[^:]+):.*NOT PUBLIC",
+            captured.out,
+            re.MULTILINE,
+        )
+    )
     assert "npa-cosmos3" not in listed
     assert "npa-cosmos3-reason" in listed, (
         "a readable image whose name shares a prefix stays"
@@ -1979,7 +2932,8 @@ def test_the_post_copy_verification_only_covers_what_was_copied(
     rc = publish_public.main(
         ["--target", "ghcr.io/example/workbench", "--skip-missing"]
     )
+    missing = _run2_missing(plan)
 
     assert rc == 0
-    assert len(verified) == len(plan) - 5
+    assert len(verified) == len(plan) - len(missing)
     assert not any("npa-cosmos3:" in ref for ref in verified)

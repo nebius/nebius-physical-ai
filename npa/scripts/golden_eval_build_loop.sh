@@ -10,7 +10,7 @@ STATE_DIR="${GOLDEN_EVAL_STATE_DIR:-/tmp/golden-evals/converge}"
 COMPLETE_FILE="${STATE_DIR}/golden-evals-complete"
 LOG="${STATE_DIR}/build-loop.log"
 BUILD="${SCRIPT_DIR}/build_golden_eval_images.sh"
-REGISTRY="${REGISTRY:-cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw}"
+REGISTRY="${REGISTRY:-ghcr.io/nebius/nebius-physical-ai}"
 POLL_S="${GOLDEN_EVAL_BUILD_POLL_S:-600}"
 
 mkdir -p "${STATE_DIR}"

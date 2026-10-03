@@ -54,8 +54,12 @@ def test_parse_nebius_gpu_catalog_discovers_quantity_sets() -> None:
 
 
 def test_parse_accelerator_request_defaults_bare_names_to_one() -> None:
-    assert parse_accelerator_request("h100") == catalog_module.AcceleratorRequest("h100", 1)
-    assert parse_accelerator_request("B200:8") == catalog_module.AcceleratorRequest("B200", 8)
+    assert parse_accelerator_request("h100") == catalog_module.AcceleratorRequest(
+        "h100", 1
+    )
+    assert parse_accelerator_request("B200:8") == catalog_module.AcceleratorRequest(
+        "B200", 8
+    )
 
     with pytest.raises(ValueError, match="positive integer"):
         parse_accelerator_request("H100:many")
@@ -99,9 +103,15 @@ def test_discover_nebius_gpu_catalog_retries_transient_and_empty_results(
 ) -> None:
     sky = _executable(tmp_path / "sky")
     responses = [
-        subprocess.CompletedProcess([str(sky)], 1, stdout="", stderr="temporary auth cache miss"),
-        subprocess.CompletedProcess([str(sky)], 0, stdout="COMMON_GPU  AVAILABLE_QUANTITIES\n", stderr=""),
-        subprocess.CompletedProcess([str(sky)], 0, stdout=SKY_SHOW_GPUS_OUTPUT, stderr=""),
+        subprocess.CompletedProcess(
+            [str(sky)], 1, stdout="", stderr="temporary auth cache miss"
+        ),
+        subprocess.CompletedProcess(
+            [str(sky)], 0, stdout="COMMON_GPU  AVAILABLE_QUANTITIES\n", stderr=""
+        ),
+        subprocess.CompletedProcess(
+            [str(sky)], 0, stdout=SKY_SHOW_GPUS_OUTPUT, stderr=""
+        ),
     ]
     calls: list[list[str]] = []
     sleeps: list[float] = []

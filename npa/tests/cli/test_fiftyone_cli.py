@@ -15,13 +15,14 @@ from npa.cli.fiftyone import (
     DEFAULT_CPU_IMAGE_FAMILY,
     DEFAULT_CPU_PLATFORM,
     DEFAULT_CPU_PRESET,
-    FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES,
+    FIFTYONE_HEALTH_RETRIES,
     FIFTYONE_HEALTH_BACKOFF_SEC,
     FIFTYONE_VERSION,
+    _lerobot_importer_source,
     _run_fiftyone_command,
 )
+from npa.cli.fiftyone.subtasks import _subtask_export_python_script
 from npa.cli.main import app
-from npa.clients.ssh import SSHError
 from npa.clients import config as config_module
 from npa.clients import credentials as credentials_module
 from npa.clients.config import (
@@ -31,7 +32,12 @@ from npa.clients.config import (
     TerraformStateConfig,
     WorkbenchConfig,
 )
+from npa.clients.nebius import NebiusError
 from npa.clients.serverless import EndpointNotFoundError
+from npa.clients.ssh import SSHError
+from npa.deploy.byovm import _alias_project_storage as resolve_alias_storage
+from npa.deploy.images import public_release_tag_for_tool
+from npa.deploy.provisioner import ProvisionerError
 
 
 runner = CliRunner()
@@ -45,6 +51,35 @@ def _terraform_plan_allows_apply(mocker):
     mocker.patch(
         "npa.cli.fiftyone.provisioner.plan",
         return_value=(TERRAFORM_PLAN_FIXTURES / "fresh_create.txt").read_text(),
+    )
+    mocker.patch(
+        "npa.clients.project_credential_store.project_credential_record",
+        return_value={
+            "storage": {
+                "bucket": "s3://selected-bucket/checkpoints/",
+                "endpoint": "https://selected-storage.example",
+                "access_key": "selected-access",
+                "secret_key": "selected-secret",
+            }
+        },
+    )
+    mocker.patch(
+        "npa.deploy.byovm._alias_project_storage",
+        return_value=StorageConfig(
+            checkpoint_bucket="s3://selected-bucket/checkpoints/",
+            endpoint_url="https://selected-storage.example",
+            aws_access_key_id="selected-access",
+            aws_secret_access_key="selected-secret",
+        ),
+    )
+    return mocker.patch(
+        "npa.clients.config.resolve_project_storage",
+        return_value=StorageConfig(
+            checkpoint_bucket="s3://selected-bucket/checkpoints/",
+            endpoint_url="https://selected-storage.example",
+            aws_access_key_id="selected-access",
+            aws_secret_access_key="selected-secret",
+        ),
     )
 
 
@@ -69,6 +104,7 @@ def _active_endpoint(url: str):
         "launch",
         "curate",
         "eval",
+        "export-lerobot-subtasks",
         "load-dataset",
         "restart",
         "open",
@@ -102,6 +138,73 @@ def test_fiftyone_load_dataset_help_includes_format_flag() -> None:
     assert "lerobot" in output
 
 
+def test_fiftyone_export_lerobot_subtasks_requires_s3_output(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "export-lerobot-subtasks",
+            "--dataset-name",
+            "review",
+            "--output-path",
+            str(tmp_path / "derived"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--output-path must be an s3:// URI" in result.output
+
+
+def test_fiftyone_export_lerobot_subtasks_returns_remote_report(mocker) -> None:
+    ssh = mocker.Mock()
+    ssh.run.return_value = (
+        0,
+        json.dumps(
+            {
+                "status": "exported",
+                "dataset_name": "review",
+                "segment_count": 3,
+                "output_path": "s3://bucket/derived/",
+            }
+        ),
+        "",
+    )
+    mocker.patch("npa.cli.fiftyone._get_ssh_config", return_value=_cfg())
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "export-lerobot-subtasks",
+            "--dataset-name",
+            "review",
+            "--output-path",
+            "s3://bucket/derived/",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["segment_count"] == 3
+    remote_command = ssh.run.call_args.args[0]
+    assert "export_fiftyone_subtasks_to_s3" in remote_command
+    assert "subtask:" in remote_command
+
+
+def test_fiftyone_subtask_export_embedded_python_compiles() -> None:
+    script = _subtask_export_python_script("review", "s3://bucket/derived/")
+
+    compile(script, "<fiftyone-subtask-export>", "exec")
+
+
+def test_fiftyone_bundled_lerobot_importer_compiles() -> None:
+    compile(_lerobot_importer_source(), "<fiftyone-lerobot-importer>", "exec")
+
+
 def test_fiftyone_deploy_defaults_to_cpu_without_gpu_flags(
     tmp_path: Path, mocker
 ) -> None:
@@ -131,7 +234,7 @@ def test_fiftyone_deploy_defaults_to_cpu_without_gpu_flags(
             "curate",
             "deploy",
             "--address",
-            "0.0.0.0",
+            "127.0.0.1",
             "--project-id",
             "project",
             "--tenant-id",
@@ -165,12 +268,797 @@ def test_fiftyone_deploy_defaults_to_cpu_without_gpu_flags(
     assert wb_cfg["app_status"] == "provisioned"
 
 
+def test_fiftyone_managed_deploy_ignores_ambient_storage_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    monkeypatch.setenv("NPA_CHECKPOINT_BUCKET", "ambient-bucket")
+    monkeypatch.setenv("NPA_STORAGE_ENDPOINT", "ambient-route.example")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://ambient-storage.example")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ambient-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "ambient-secret")
+    alias_resolver = mocker.patch(
+        "npa.clients.config.resolve_project_storage",
+        return_value=StorageConfig(
+            checkpoint_bucket="s3://legacy-alias-bucket/checkpoints/",
+            endpoint_url="https://legacy-alias-storage.example",
+            aws_access_key_id="legacy-alias-access",
+            aws_secret_access_key="legacy-alias-secret",
+        ),
+    )
+    apply = mocker.patch(
+        "npa.cli.fiftyone.provisioner.apply",
+        return_value={
+            "vm_ip": "10.0.0.20",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "s3://selected-bucket/checkpoints/",
+            "storage_endpoint": "https://selected-storage.example",
+        },
+    )
+    mocker.patch("npa.cli.fiftyone.provisioner.init")
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+    mocker.patch("npa.cli.fiftyone.write_config")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "deploy",
+            "--project-id",
+            "private-project-identifier",
+            "--tenant-id",
+            "private-tenant-identifier",
+            "--region",
+            "private-region-identifier",
+            "--tf-dir",
+            str(tmp_path),
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 0
+    tf_vars = apply.call_args.kwargs["tf_vars"]
+    assert tf_vars["s3_bucket"] == "s3://selected-bucket/checkpoints/"
+    assert tf_vars["s3_endpoint"] == "https://selected-storage.example"
+    assert tf_vars["nebius_api_key"] == "selected-access"
+    assert tf_vars["nebius_secret_key"] == "selected-secret"
+    alias_resolver.assert_not_called()
+
+
+@pytest.mark.parametrize("output_format", ["text", "json"])
+def test_fiftyone_managed_dry_run_redacts_existing_infrastructure(
+    output_format: str, tmp_path: Path, mocker
+) -> None:
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+    mocker.patch("npa.cli.fiftyone.alias_has_terraform_state", return_value=True)
+    mocker.patch(
+        "npa.cli.fiftyone.read_existing_workbench_outputs",
+        return_value={
+            "vm_ip": "192.0.2.40",
+            "ssh_user": "private-operator",
+            "ssh_key_path": "/private/operator/key",
+            "storage_bucket": "s3://private-bucket/checkpoints/",
+            "storage_endpoint": "https://private-storage.example",
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "private-alias",
+            "deploy",
+            "--project-id",
+            "private-project-identifier",
+            "--tenant-id",
+            "private-tenant-identifier",
+            "--region",
+            "private-region-identifier",
+            "--tf-dir",
+            str(tmp_path),
+            "--dry-run",
+            "--skip-app",
+            "--output",
+            output_format,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "selected-access" not in result.output
+    assert "selected-secret" not in result.output
+    assert "private-project-identifier" not in result.output
+    assert "private-tenant-identifier" not in result.output
+    assert "private-region-identifier" not in result.output
+    assert "private-alias" not in result.output
+    assert "192.0.2.40" not in result.output
+    assert "private-operator" not in result.output
+    assert "/private/operator/key" not in result.output
+    assert "private-bucket" not in result.output
+    assert "private-storage.example" not in result.output
+
+
+@pytest.mark.parametrize("output_format", ["text", "json"])
+def test_fiftyone_byovm_dry_run_redacts_supplied_target(
+    output_format: str, mocker
+) -> None:
+    mocker.patch(
+        "npa.clients.config._load_yaml",
+        return_value={
+            "projects": {
+                "private-alias": {
+                    "storage": {
+                        "bucket": "private-bucket",
+                        "endpoint": "https://private-storage.example",
+                        "access_key": "selected-access",
+                        "secret_key": "selected-secret",
+                    }
+                }
+            }
+        },
+    )
+    mocker.patch("npa.deploy.byovm._alias_project_storage", wraps=resolve_alias_storage)
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "private-alias",
+            "-n",
+            "private-workbench",
+            "deploy",
+            "--runtime",
+            "byovm",
+            "--host",
+            "192.0.2.50",
+            "--ssh-user",
+            "private-operator",
+            "--ssh-key",
+            "/private/operator/key",
+            "--dry-run",
+            "--skip-app",
+            "--output",
+            output_format,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "selected-access" not in result.output
+    assert "selected-secret" not in result.output
+    assert "private-alias" not in result.output
+    assert "private-workbench" not in result.output
+    assert "192.0.2.50" not in result.output
+    assert "private-operator" not in result.output
+    assert "/private/operator/key" not in result.output
+    assert "selected-bucket" not in result.output
+    assert "selected-storage.example" not in result.output
+
+
+def test_fiftyone_bootstrap_error_redacts_provider_details(mocker) -> None:
+    private_details = (
+        "private-secret for project private-project-identifier in private-region"
+    )
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch(
+        "npa.clients.nebius.bootstrap_environment",
+        side_effect=NebiusError(private_details),
+    )
+    terraform_init = mocker.patch("npa.cli.fiftyone.provisioner.init")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "private-alias",
+            "deploy",
+            "--project-id",
+            "private-project-identifier",
+            "--tenant-id",
+            "private-tenant-identifier",
+            "--region",
+            "private-region",
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Nebius bootstrap failed" in result.output
+    assert "private-" not in result.output
+    terraform_init.assert_not_called()
+
+
+def test_fiftyone_terraform_error_redacts_provider_details(
+    tmp_path: Path, mocker
+) -> None:
+    private_details = (
+        "private-secret while creating instance private-instance at 192.0.2.60"
+    )
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.provisioner.init")
+    mocker.patch(
+        "npa.cli.fiftyone.provisioner.apply",
+        side_effect=ProvisionerError(private_details),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "private-alias",
+            "deploy",
+            "--project-id",
+            "private-project-identifier",
+            "--tenant-id",
+            "private-tenant-identifier",
+            "--region",
+            "private-region",
+            "--tf-dir",
+            str(tmp_path),
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Terraform plan or apply failed" in result.output
+    assert "private-" not in result.output
+    assert "192.0.2.60" not in result.output
+
+
+def test_fiftyone_ssh_error_redacts_target_and_exception_details(
+    tmp_path: Path, mocker
+) -> None:
+    private_host = "192.0.2.61"
+    private_user = "private-operator"
+    private_key = "/private/operator/key"
+    ssh = mocker.MagicMock()
+    ssh.run.side_effect = SSHError(
+        f"private-secret connecting to {private_user}@{private_host} with {private_key}"
+    )
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.provisioner.init")
+    mocker.patch(
+        "npa.cli.fiftyone.provisioner.apply",
+        return_value={
+            "vm_ip": private_host,
+            "ssh_user": private_user,
+            "ssh_key_path": private_key,
+        },
+    )
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+    mocker.patch("npa.cli.fiftyone.resolve_credentials", return_value=_cfg().ssh)
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+    mocker.patch("npa.cli.fiftyone.write_config")
+    mocker.patch("npa.cli.fiftyone.update_workbench_app_status")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "private-alias",
+            "deploy",
+            "--project-id",
+            "private-project-identifier",
+            "--tenant-id",
+            "private-tenant-identifier",
+            "--region",
+            "private-region",
+            "--tf-dir",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "SSH connection to the selected VM failed" in result.output
+    for private_value in (
+        "private-secret",
+        "private-alias",
+        "private-project-identifier",
+        "private-tenant-identifier",
+        "private-region",
+        private_host,
+        private_user,
+        private_key,
+    ):
+        assert private_value not in result.output
+
+
+def test_fiftyone_managed_skip_infra_keeps_selected_storage_identity(
+    tmp_path: Path, mocker
+) -> None:
+    mocker.patch(
+        "npa.clients.config._load_yaml",
+        return_value={
+            "projects": {
+                "proj": {
+                    "storage": {
+                        "bucket": "s3://selected-bucket/checkpoints/",
+                        "endpoint": "https://selected-storage.example",
+                        "access_key": "selected-access",
+                        "secret_key": "selected-secret",
+                    }
+                }
+            }
+        },
+    )
+    mocker.patch("npa.deploy.byovm._alias_project_storage", wraps=resolve_alias_storage)
+    mocker.patch(
+        "npa.cli.fiftyone.resolve_terraform_state",
+        return_value=TerraformStateConfig(
+            bucket="stale-bucket",
+            endpoint="",
+            access_key="stale-access",
+            secret_key="",
+        ),
+    )
+    mocker.patch("npa.cli.fiftyone.provisioner.working_dir_path", return_value=tmp_path)
+    terraform_init = mocker.patch("npa.cli.fiftyone.provisioner.init")
+    mocker.patch(
+        "npa.cli.fiftyone.provisioner.outputs",
+        return_value={
+            "vm_ip": "10.0.0.20",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "s3://stale-output-bucket/checkpoints/",
+            "storage_endpoint": "https://stale-output-storage.example",
+        },
+    )
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.fiftyone.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+    write_config = mocker.patch("npa.cli.fiftyone.write_config")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "deploy",
+            "--skip-infra",
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 0
+    terraform_init.assert_called_once_with(
+        tf_dir=str(tmp_path),
+        backend_config={
+            "access_key": "selected-access",
+            "secret_key": "selected-secret",
+        },
+    )
+    project_config = write_config.call_args.args[0]["projects"]["proj"]
+    assert project_config["terraform_state"] == {
+        "bucket": "s3://selected-bucket/checkpoints/",
+        "endpoint": "https://selected-storage.example",
+        "access_key": "selected-access",
+        "secret_key": "selected-secret",
+    }
+    assert project_config["workbenches"]["fiftyone"]["storage"] == {
+        "checkpoint_bucket": "s3://selected-bucket/checkpoints/",
+        "endpoint_url": "https://selected-storage.example",
+    }
+
+
+def test_fiftyone_managed_skip_infra_keeps_explicit_storage_over_stale_outputs(
+    tmp_path: Path, mocker
+) -> None:
+    mocker.patch("npa.cli.fiftyone.provisioner.working_dir_path", return_value=tmp_path)
+    mocker.patch("npa.cli.fiftyone.provisioner.init")
+    mocker.patch(
+        "npa.cli.fiftyone.provisioner.outputs",
+        return_value={
+            "vm_ip": "10.0.0.20",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "stale-output-bucket",
+            "storage_endpoint": "https://stale-output-storage.example",
+        },
+    )
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.fiftyone.workbench_is_byovm", return_value=False)
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+    write_config = mocker.patch("npa.cli.fiftyone.write_config")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "deploy",
+            "--skip-infra",
+            "--skip-app",
+            "--tf-var",
+            "s3_bucket=explicit-bucket",
+            "--storage-endpoint",
+            "explicit-storage.example",
+            "--tf-var",
+            "nebius_api_key=explicit-access",
+            "--tf-var",
+            "nebius_secret_key=explicit-secret",
+        ],
+    )
+
+    assert result.exit_code == 0
+    project_config = write_config.call_args.args[0]["projects"]["proj"]
+    assert project_config["workbenches"]["fiftyone"]["storage"] == {
+        "checkpoint_bucket": "s3://explicit-bucket/checkpoints/",
+        "endpoint_url": "https://explicit-storage.example",
+    }
+
+
+@pytest.mark.parametrize(
+    ("tf_endpoint", "expected_endpoint"),
+    [
+        ("", "https://cli-route.example"),
+        ("https://tf-route.example", "https://tf-route.example"),
+    ],
+    ids=["cli-over-environment", "terraform-over-cli"],
+)
+def test_fiftyone_storage_routing_overrides_selected_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker,
+    tf_endpoint: str,
+    expected_endpoint: str,
+) -> None:
+    monkeypatch.setenv("NPA_STORAGE_ENDPOINT", "ambient-route.example")
+    apply = mocker.patch(
+        "npa.cli.fiftyone.provisioner.apply",
+        return_value={
+            "vm_ip": "10.0.0.20",
+            "ssh_user": "ubuntu",
+            "ssh_key_path": "~/.ssh/id",
+            "storage_bucket": "override-bucket",
+            "storage_endpoint": expected_endpoint,
+        },
+    )
+    mocker.patch("npa.cli.fiftyone.provisioner.init")
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+    mocker.patch("npa.cli.fiftyone.write_config")
+
+    args = [
+        "workbench",
+        "fiftyone",
+        "-p",
+        "proj",
+        "deploy",
+        "--project-id",
+        "project",
+        "--tenant-id",
+        "tenant",
+        "--region",
+        "eu-north1",
+        "--tf-dir",
+        str(tmp_path),
+        "--skip-app",
+        "--storage-endpoint",
+        "cli-route.example",
+        "--tf-var",
+        "s3_bucket=override-bucket",
+        "--tf-var",
+        "nebius_api_key=override-access",
+        "--tf-var",
+        "nebius_secret_key=override-secret",
+    ]
+    if tf_endpoint:
+        args.extend(["--tf-var", f"s3_endpoint={tf_endpoint}"])
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0
+    tf_vars = apply.call_args.kwargs["tf_vars"]
+    assert tf_vars["s3_bucket"] == "override-bucket"
+    assert tf_vars["s3_endpoint"] == expected_endpoint
+    assert tf_vars["nebius_api_key"] == "override-access"
+    assert tf_vars["nebius_secret_key"] == "override-secret"
+
+
+@pytest.mark.parametrize("runtime", ["managed", "byovm"])
+def test_fiftyone_deploy_rejects_partial_explicit_storage_before_mutation(
+    runtime: str, mocker
+) -> None:
+    bootstrap = mocker.patch("npa.clients.nebius.bootstrap_environment")
+    terraform_init = mocker.patch("npa.cli.fiftyone.provisioner.init")
+    ssh_client = mocker.patch("npa.cli.fiftyone.SSHClient")
+    args = [
+        "workbench",
+        "fiftyone",
+        "-p",
+        "proj",
+        "deploy",
+        "--skip-app",
+        "--storage-endpoint",
+        "explicit-storage.example",
+    ]
+    if runtime == "managed":
+        args.extend(
+            [
+                "--project-id",
+                "project",
+                "--tenant-id",
+                "tenant",
+                "--region",
+                "eu-north1",
+            ]
+        )
+    else:
+        args.extend(
+            [
+                "--runtime",
+                "byovm",
+                "--host",
+                "203.0.113.20",
+                "--ssh-key",
+                "~/.ssh/byovm",
+            ]
+        )
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert (
+        "Explicit object-storage overrides must provide one complete identity"
+        in result.output
+    )
+    bootstrap.assert_not_called()
+    terraform_init.assert_not_called()
+    ssh_client.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("config", "expected_error"),
+    [
+        (
+            {"projects": {"private-project-alias": {"region": "private-region"}}},
+            "no complete selected object-storage identity",
+        ),
+        (
+            {
+                "projects": {
+                    "private-project-alias": {
+                        "storage": {
+                            "bucket": "private-inline-bucket",
+                            "endpoint": "https://private-inline-storage.example",
+                        },
+                        "terraform_state": {
+                            "access_key": "private-state-access",
+                            "secret_key": "private-state-secret",
+                        },
+                    }
+                }
+            },
+            "incomplete object-storage identity",
+        ),
+        (
+            {
+                "projects": {
+                    "private-project-alias": {
+                        "storage": {
+                            "bucket": "private-inline-bucket",
+                            "endpoint": "https://private-inline-storage.example",
+                            "access_key": "private-inline-access",
+                            "secret_key": "private-inline-secret",
+                        },
+                        "terraform_state": {
+                            "bucket": "private-state-bucket",
+                            "endpoint": "https://private-state-storage.example",
+                            "access_key": "private-state-access",
+                            "secret_key": "private-state-secret",
+                        },
+                    }
+                }
+            },
+            "conflicting object-storage identities",
+        ),
+        (
+            {"projects": {"another-private-alias": {}}},
+            "storage configuration is unavailable or invalid",
+        ),
+    ],
+    ids=["absent", "partial-generations", "conflicting-generations", "unknown"],
+)
+def test_fiftyone_byovm_rejects_incomplete_selected_storage_before_mutation(
+    config: dict[str, object], expected_error: str, mocker
+) -> None:
+    mocker.patch("npa.clients.config._load_yaml", return_value=config)
+    mocker.patch("npa.deploy.byovm._alias_project_storage", wraps=resolve_alias_storage)
+    resolver = mocker.patch("npa.clients.config.resolve_project_storage")
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    bootstrap = mocker.patch("npa.clients.nebius.bootstrap_environment")
+    terraform_init = mocker.patch("npa.cli.fiftyone.provisioner.init")
+    ssh_client = mocker.patch("npa.cli.fiftyone.SSHClient")
+    args = [
+        "workbench",
+        "fiftyone",
+        "-p",
+        "private-project-alias",
+        "deploy",
+        "--skip-app",
+        "--runtime",
+        "byovm",
+        "--host",
+        "203.0.113.20",
+        "--ssh-key",
+        "~/.ssh/byovm",
+    ]
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert expected_error in result.output
+    for private_value in (
+        "private-project-alias",
+        "another-private-alias",
+        "private-inline",
+        "private-state",
+    ):
+        assert private_value not in result.output
+    resolver.assert_not_called()
+    bootstrap.assert_not_called()
+    terraform_init.assert_not_called()
+    ssh_client.assert_not_called()
+
+
+def test_fiftyone_deploy_rejects_partial_exact_record_before_legacy_fallback(
+    mocker,
+) -> None:
+    mocker.patch(
+        "npa.clients.project_credential_store.project_credential_record",
+        return_value={
+            "storage": {
+                "bucket": "exact-bucket",
+                "endpoint": "https://exact-storage.example",
+                "access_key": "private-exact-access",
+            }
+        },
+    )
+    resolver = mocker.patch("npa.clients.config.resolve_project_storage")
+    bootstrap = mocker.patch("npa.clients.nebius.bootstrap_environment")
+    terraform_init = mocker.patch("npa.cli.fiftyone.provisioner.init")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "deploy",
+            "--project-id",
+            "project",
+            "--tenant-id",
+            "tenant",
+            "--region",
+            "eu-north1",
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "incomplete exact-project object-storage identity" in result.output
+    assert "private-exact-access" not in result.output
+    resolver.assert_not_called()
+    bootstrap.assert_not_called()
+    terraform_init.assert_not_called()
+
+
+def test_fiftyone_deploy_rejects_storage_owned_by_another_project(mocker) -> None:
+    mocker.patch(
+        "npa.clients.project_credential_store.project_credential_record",
+        return_value={},
+    )
+    mocker.patch(
+        "npa.clients.config._load_yaml",
+        return_value={
+            "projects": {
+                "proj": {
+                    "project_id": "previous-project-identifier",
+                    "tenant_id": "private-tenant-identifier",
+                    "region": "private-region-identifier",
+                }
+            }
+        },
+    )
+    resolver = mocker.patch("npa.clients.config.resolve_project_storage")
+    bootstrap = mocker.patch("npa.clients.nebius.bootstrap_environment")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "deploy",
+            "--project-id",
+            "selected-project-identifier",
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "alias storage belongs to a different project" in result.output
+    assert "previous-project-identifier" not in result.output
+    assert "selected-project-identifier" not in result.output
+    resolver.assert_not_called()
+    bootstrap.assert_not_called()
+
+
+def test_fiftyone_deploy_rejects_unowned_alias_storage_for_named_project(
+    mocker,
+) -> None:
+    mocker.patch(
+        "npa.clients.project_credential_store.project_credential_record",
+        return_value={},
+    )
+    resolver = mocker.patch(
+        "npa.clients.config.resolve_project_storage",
+        return_value=StorageConfig(
+            checkpoint_bucket="s3://legacy-alias-bucket/checkpoints/",
+            endpoint_url="https://legacy-alias-storage.example",
+            aws_access_key_id="legacy-alias-access",
+            aws_secret_access_key="legacy-alias-secret",
+        ),
+    )
+    bootstrap = mocker.patch("npa.clients.nebius.bootstrap_environment")
+    terraform_init = mocker.patch("npa.cli.fiftyone.provisioner.init")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "deploy",
+            "--project-id",
+            "selected-project-identifier",
+            "--tenant-id",
+            "private-tenant-identifier",
+            "--region",
+            "private-region-identifier",
+            "--skip-app",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "no exact object-storage identity" in result.output
+    assert "selected-project-identifier" not in result.output
+    assert "legacy-alias" not in result.output
+    resolver.assert_not_called()
+    bootstrap.assert_not_called()
+    terraform_init.assert_not_called()
+
+
 def test_fiftyone_deploy_existing_alias_no_replace_skips_terraform(mocker) -> None:
     mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
     mocker.patch("npa.cli.fiftyone.alias_has_terraform_state", return_value=True)
     mocker.patch("npa.cli.fiftyone.workbench_is_byovm", return_value=False)
     mocker.patch(
-        "npa.cli.fiftyone._read_existing_outputs",
+        "npa.cli.fiftyone.read_existing_workbench_outputs",
         return_value={
             "vm_ip": "10.0.0.20",
             "ssh_user": "ubuntu",
@@ -340,7 +1228,7 @@ def test_fiftyone_deploy_byovm_alias_skips_terraform(mocker) -> None:
     mocker.patch("npa.cli.fiftyone.alias_has_terraform_state", return_value=False)
     mocker.patch("npa.cli.fiftyone.workbench_is_byovm", return_value=True)
     mocker.patch(
-        "npa.cli.fiftyone._read_existing_outputs",
+        "npa.cli.fiftyone.read_existing_workbench_outputs",
         return_value={
             "vm_ip": "10.0.0.20",
             "ssh_user": "ubuntu",
@@ -440,7 +1328,7 @@ def test_fiftyone_deploy_accepts_gpu_flags_and_installs_app(
     mocker.patch("npa.cli.fiftyone.write_config")
     update_status = mocker.patch("npa.cli.fiftyone.update_workbench_app_status")
     mocker.patch("npa.cli.fiftyone.write_manifest")
-    health = mocker.patch("npa.cli.fiftyone._app_health_check", return_value=True)
+    health = mocker.patch("npa.cli.fiftyone.health_check_ssh", return_value=True)
 
     result = runner.invoke(
         app,
@@ -481,10 +1369,18 @@ def test_fiftyone_deploy_accepts_gpu_flags_and_installs_app(
         f'/opt/fiftyone/venv/bin/python -m pip install "fiftyone=={FIFTYONE_VERSION}"'
         in install_cmd
     )
-    assert "pyarrow pillow" in install_cmd
-    assert "FIFTYONE_DEFAULT_APP_ADDRESS=0.0.0.0" in install_cmd
+    assert 'pyarrow "pillow>=12.3.0"' in install_cmd
+    assert '"datasets>=5.0.1"' in install_cmd
+    assert '"paramiko>=5.0.0"' in install_cmd
+    assert 'Version(metadata.version("datasets")) >= Version("5.0.1")' in install_cmd
+    assert 'Version(metadata.version("pillow")) >= Version("12.3.0")' in install_cmd
+    assert "FIFTYONE_DEFAULT_APP_ADDRESS=127.0.0.1" in install_cmd
     assert "FIFTYONE_DEFAULT_APP_PORT=5151" in install_cmd
-    assert 'sudo chown "$USER:$USER" /etc/npa-fiftyone/env' in install_cmd
+    assert 'service_group="$(id -gn "$service_user")"' in install_cmd
+    assert (
+        'sudo chown "$service_user:$service_group" "$fiftyone_env_stage/env"'
+        in install_cmd
+    )
     assert "lerobot[pusht" not in install_cmd
     assert "Installing LeRobot" not in install_cmd
     assert "TimeoutStopSec=15" in install_cmd
@@ -492,7 +1388,13 @@ def test_fiftyone_deploy_accepts_gpu_flags_and_installs_app(
     assert update_status.call_args_list[0].args == ("proj", "curate-gpu", "installing")
     assert update_status.call_args_list[1].args == ("proj", "curate-gpu", "provisioned")
     assert update_status.call_args_list[-1].args == ("proj", "curate-gpu", "healthy")
-    health.assert_called_once_with("http://10.0.0.21:5151")
+    health.assert_called_once_with(
+        ssh,
+        5151,
+        path="/",
+        retries=FIFTYONE_HEALTH_RETRIES,
+        backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
+    )
 
 
 def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -> None:
@@ -516,7 +1418,7 @@ def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) 
     write_config = mocker.patch("npa.cli.fiftyone.write_config")
     update_status = mocker.patch("npa.cli.fiftyone.update_workbench_app_status")
     mocker.patch("npa.cli.fiftyone.write_manifest")
-    mocker.patch("npa.cli.fiftyone._app_health_check", return_value=True)
+    mocker.patch("npa.cli.fiftyone.health_check_ssh", return_value=True)
     deploy_container = mocker.patch(
         "npa.deploy.configurator.deploy_workbench_container"
     )
@@ -554,9 +1456,12 @@ def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) 
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-fiftyone"
     assert deploy_container.call_args.kwargs["image_ref"].endswith(
-        "/npa-fiftyone:1.15.0.post1"
+        f"/npa-fiftyone:{public_release_tag_for_tool('fiftyone')}"
     )
     assert deploy_container.call_args.kwargs["gpu"] is False
+    assert deploy_container.call_args.kwargs["command"] == (
+        "bash -lc 'exec /opt/fiftyone/venv/bin/python /opt/fiftyone/app.py'"
+    )
     wb_cfg = write_config.call_args_list[0].args[0]["projects"]["proj"]["workbenches"][
         "curate-container"
     ]
@@ -572,8 +1477,41 @@ def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) 
         "healthy",
     )
 
+    custom_image = "registry.example/npa-fiftyone@sha256:" + "a" * 64
+    deploy_container.reset_mock()
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "-n",
+            "curate-container-custom",
+            "deploy",
+            "--project-id",
+            "project",
+            "--tenant-id",
+            "tenant",
+            "--region",
+            "eu-north1",
+            "--tf-dir",
+            str(tmp_path),
+            "--runtime",
+            "container",
+            "--image",
+            custom_image,
+        ],
+    )
 
-def test_fiftyone_byovm_auto_health_uses_short_public_retry_budget(mocker) -> None:
+    assert result.exit_code == 0
+    assert deploy_container.call_args.kwargs["image_ref"] == custom_image
+    assert deploy_container.call_args.kwargs["command"] == (
+        "bash -lc 'exec /opt/fiftyone/venv/bin/python /opt/fiftyone/app.py'"
+    )
+
+
+def test_fiftyone_byovm_health_uses_ssh_without_public_probe(mocker) -> None:
     ssh = mocker.MagicMock()
     ssh.run.return_value = (0, "connected", "")
     ssh.run_or_raise.side_effect = [
@@ -619,16 +1557,74 @@ def test_fiftyone_byovm_auto_health_uses_short_public_retry_budget(mocker) -> No
             "s3_bucket=lerobot-bucket",
             "--tf-var",
             "s3_endpoint=https://storage.example",
+            "--tf-var",
+            "nebius_api_key=byovm-access",
+            "--tf-var",
+            "nebius_secret_key=byovm-secret",
         ],
     )
 
     assert result.exit_code == 0
-    public_health.assert_called_once_with(
-        "http://203.0.113.20:5151",
-        retries=FIFTYONE_AUTO_PUBLIC_HEALTH_RETRIES,
-        backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
-    )
+    public_health.assert_not_called()
     ssh_health.assert_called_once()
+
+
+def test_fiftyone_byovm_service_env_ignores_ambient_storage_identity(
+    monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    monkeypatch.setenv("NPA_STORAGE_ENDPOINT", "ambient-route.example")
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (0, "connected", "")
+    ssh.run_or_raise.side_effect = [
+        (0, "connected", ""),
+        (0, "NVIDIA H200\n", ""),
+    ]
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=None)
+    mocker.patch(
+        "npa.cli.fiftyone.resolve_credentials",
+        return_value=credentials_module.CredentialsConfig(
+            tokens={"HF_TOKEN": "shared-hf-token"},
+            s3_access_key_id="ambient-access",
+            s3_secret_access_key="ambient-secret",
+            s3_endpoint="https://ambient-storage.example",
+            s3_bucket="ambient-bucket",
+        ),
+    )
+    mocker.patch("npa.cli.fiftyone.list_projects", return_value={})
+    mocker.patch("npa.cli.fiftyone.write_config")
+    mocker.patch("npa.cli.fiftyone.update_workbench_app_status")
+    mocker.patch("npa.deploy.configurator.deploy_workbench_container")
+    write_env = mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
+    mocker.patch("npa.deploy.configurator.write_remote_text_file")
+    mocker.patch("npa.cli.fiftyone.write_manifest")
+    mocker.patch("npa.cli.fiftyone.health_check_ssh", return_value=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "-p",
+            "proj",
+            "deploy",
+            "--runtime",
+            "byovm",
+            "--host",
+            "203.0.113.20",
+            "--ssh-key",
+            "~/.ssh/byovm",
+        ],
+    )
+
+    assert result.exit_code == 0
+    service_env = write_env.call_args.args[2]
+    assert service_env["AWS_ACCESS_KEY_ID"] == "selected-access"
+    assert service_env["AWS_SECRET_ACCESS_KEY"] == "selected-secret"
+    assert service_env["AWS_ENDPOINT_URL"] == "https://selected-storage.example"
+    assert service_env["NEBIUS_S3_ENDPOINT"] == "https://selected-storage.example"
+    assert service_env["NEBIUS_S3_BUCKET"] == "s3://selected-bucket/checkpoints/"
+    assert service_env["HF_TOKEN"] == "shared-hf-token"
 
 
 def test_fiftyone_byovm_skip_infra_reuses_saved_config_and_preserves_status(
@@ -658,12 +1654,12 @@ def test_fiftyone_byovm_skip_infra_reuses_saved_config_and_preserves_status(
     )
     mocker.patch("npa.cli.fiftyone.list_projects", return_value={"proj": {}})
     mocker.patch(
-        "npa.clients.config.resolve_project_storage",
+        "npa.deploy.byovm._alias_project_storage",
         return_value=StorageConfig(
-            checkpoint_bucket="",
-            endpoint_url="",
-            aws_access_key_id="",
-            aws_secret_access_key="",
+            checkpoint_bucket="s3://saved-bucket/checkpoints/",
+            endpoint_url="https://saved-storage.example",
+            aws_access_key_id="saved-access",
+            aws_secret_access_key="saved-secret",
         ),
     )
     write_config = mocker.patch("npa.cli.fiftyone.write_config")
@@ -743,8 +1739,10 @@ def test_fiftyone_deploy_writes_config_before_readiness_and_warns_on_timeout(
     )
     mocker.patch("npa.cli.fiftyone.write_manifest")
     mocker.patch(
-        "npa.cli.fiftyone._app_health_check",
-        side_effect=lambda _endpoint: events.append(("health", "timeout")) or False,
+        "npa.cli.fiftyone.health_check_ssh",
+        side_effect=lambda *_args, **_kwargs: (
+            events.append(("health", "timeout")) or False
+        ),
     )
 
     result = runner.invoke(
@@ -805,7 +1803,7 @@ def test_fiftyone_deploy_accepts_ready_marker_when_ssh_exits_nonzero(
     mocker.patch("npa.cli.fiftyone.write_config")
     update_status = mocker.patch("npa.cli.fiftyone.update_workbench_app_status")
     mocker.patch("npa.cli.fiftyone.write_manifest")
-    mocker.patch("npa.cli.fiftyone._app_health_check", return_value=True)
+    mocker.patch("npa.cli.fiftyone.health_check_ssh", return_value=True)
 
     result = runner.invoke(
         app,
@@ -837,19 +1835,26 @@ def test_fiftyone_deploy_fails_nonzero_ssh_without_ready_marker(
     tmp_path: Path,
     mocker,
 ) -> None:
+    private_host = "192.0.2.62"
+    private_user = "private-operator"
+    private_key = "/private/operator/key"
     ssh = mocker.MagicMock()
     ssh.run.side_effect = [
         (0, "connected", ""),
-        (1, "FIFTYONE_ENV_SMOKE_OK\n", "install boom"),
+        (
+            1,
+            "FIFTYONE_ENV_SMOKE_OK\n",
+            f"private-secret install failure on {private_user}@{private_host}",
+        ),
     ]
 
     mocker.patch("npa.cli.fiftyone.provisioner.init")
     mocker.patch(
         "npa.cli.fiftyone.provisioner.apply",
         return_value={
-            "vm_ip": "10.0.0.24",
-            "ssh_user": "ubuntu",
-            "ssh_key_path": "~/.ssh/id",
+            "vm_ip": private_host,
+            "ssh_user": private_user,
+            "ssh_key_path": private_key,
             "storage_bucket": "bucket",
             "storage_endpoint": "https://storage.example",
         },
@@ -883,6 +1888,13 @@ def test_fiftyone_deploy_fails_nonzero_ssh_without_ready_marker(
 
     assert result.exit_code == 1
     assert "FiftyOne installation failed" in result.output
+    for private_value in (
+        "private-secret",
+        private_host,
+        private_user,
+        private_key,
+    ):
+        assert private_value not in result.output
     assert update_status.call_args_list[-1].args == ("proj", "curate", "install_failed")
 
 
@@ -921,14 +1933,14 @@ def test_fiftyone_launch_builds_remote_command_and_url(mocker) -> None:
 
     result = runner.invoke(
         app,
-        ["workbench", "fiftyone", "launch", "--port", "6161", "--address", "0.0.0.0"],
+        ["workbench", "fiftyone", "launch", "--port", "6161", "--address", "127.0.0.1"],
     )
 
     assert result.exit_code == 0
-    assert "http://fiftyone.example:6161" in result.output
+    assert "http://127.0.0.1:6161?polling=true" in result.output
     cmd = ssh.run.call_args.args[0]
     assert "test -x /opt/fiftyone/venv/bin/python" in cmd
-    assert "FIFTYONE_DEFAULT_APP_ADDRESS=0.0.0.0" in cmd
+    assert "FIFTYONE_DEFAULT_APP_ADDRESS=127.0.0.1" in cmd
     assert "FIFTYONE_DEFAULT_APP_PORT=6161" in cmd
     assert "sudo systemctl enable npa-fiftyone-app" in cmd
     assert "http://127.0.0.1:6161/" in cmd
@@ -944,7 +1956,7 @@ def test_fiftyone_launch_accepts_ready_marker_when_ssh_exits_nonzero(mocker) -> 
     result = runner.invoke(app, ["workbench", "fiftyone", "launch"])
 
     assert result.exit_code == 0
-    assert "http://fiftyone.example:5151" in result.output
+    assert "http://127.0.0.1:5151?polling=true" in result.output
 
 
 def test_fiftyone_launch_adds_polling_for_ssh_endpoint_strategy(mocker) -> None:
@@ -1015,7 +2027,11 @@ def test_fiftyone_load_dataset_builds_source_specific_command(
     assert f'SOURCE = "{source}"' in cmd
     assert 'FORMAT = "auto"' in cmd
     assert "FIFTYONE_DATASET_NAME=curated" in cmd
-    assert 'sudo chown "$USER:$USER" /etc/npa-fiftyone/env' in cmd
+    assert 'npa_fiftyone_env_group="$(id -gn "$npa_fiftyone_env_user")"' in cmd
+    assert (
+        'sudo chown "$npa_fiftyone_env_user:$npa_fiftyone_env_group" '
+        "/etc/npa-fiftyone/env"
+    ) in cmd
     assert "sudo systemctl restart npa-fiftyone-app" in cmd
     assert "NPA_FIFTYONE_APP_READY" in cmd
     for snippet in expected:
@@ -1035,9 +2051,6 @@ def _mock_fiftyone_serverless_env(mocker):
             aws_access_key_id="AKIA",
             aws_secret_access_key="SECRET",
         ),
-    )
-    mocker.patch(
-        "npa.cli.fiftyone.resolve_container_registry", return_value="registry.example"
     )
     mocker.patch(
         "npa.cli.fiftyone.container_image_for_tool",
@@ -1343,7 +2356,9 @@ def test_fiftyone_load_dataset_lerobot_format_uses_remote_importer(
     assert f'SOURCE = "{source}"' in cmd
     assert 'FORMAT = "lerobot"' in cmd
     assert "npa_fiftyone_lerobot_importer.py" in cmd
+    assert "_npa_fiftyone_lerobot_subtasks" in cmd
     assert "def import_lerobot_dataset(" in cmd
+    assert "def existing_subtask_segments(" in cmd
     assert "stale estimatedDocumentCount" in cmd
     assert "import_lerobot_dataset(NAME, SOURCE, DATASETS_DIR)" in cmd
 
@@ -1518,6 +2533,11 @@ def test_fiftyone_datasets_list_queries_graphql(mocker) -> None:
     mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg())
     post = mocker.patch("npa.cli.fiftyone.httpx.post", return_value=response)
 
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
+
     result = runner.invoke(
         app,
         ["workbench", "fiftyone", "datasets", "list", "--output", "json"],
@@ -1529,7 +2549,7 @@ def test_fiftyone_datasets_list_queries_graphql(mocker) -> None:
     assert payload["datasets"][0]["name"] == "demo_cosmos_ranked"
     assert payload["datasets"][0]["samples"] == 5
     post.assert_called_once()
-    assert post.call_args.args[0] == "http://fiftyone.example:5151/graphql"
+    assert post.call_args.args[0] == "http://127.0.0.1:15151/graphql"
     assert post.call_args.kwargs["json"]["variables"] == {"first": 100, "search": ""}
 
 
@@ -1538,6 +2558,11 @@ def test_fiftyone_status_checks_app_port_url(mocker) -> None:
     mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg())
     get = mocker.patch("npa.cli.fiftyone.httpx.get", return_value=response)
 
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
+
     result = runner.invoke(
         app,
         ["workbench", "fiftyone", "status", "--port", "6161"],
@@ -1545,8 +2570,8 @@ def test_fiftyone_status_checks_app_port_url(mocker) -> None:
 
     assert result.exit_code == 0
     assert "server: up" in result.output
-    assert "http://fiftyone.example:6161" in result.output
-    get.assert_called_once_with("http://fiftyone.example:6161", timeout=5.0)
+    assert "http://127.0.0.1:15151" in result.output
+    get.assert_called_once_with("http://127.0.0.1:15151", timeout=5.0)
 
 
 def _service_type_from_manifest(output: str) -> str:
@@ -1555,7 +2580,7 @@ def _service_type_from_manifest(output: str) -> str:
     return service["spec"]["type"]
 
 
-def test_fiftyone_kubernetes_deploy_public_ip_manifest_is_loadbalancer() -> None:
+def test_fiftyone_kubernetes_deploy_public_ip_is_rejected() -> None:
     result = runner.invoke(
         app,
         [
@@ -1573,8 +2598,8 @@ def test_fiftyone_kubernetes_deploy_public_ip_manifest_is_loadbalancer() -> None
         ],
     )
 
-    assert result.exit_code == 0
-    assert _service_type_from_manifest(result.output) == "LoadBalancer"
+    assert result.exit_code == 1
+    assert "does not permit unauthenticated public exposure" in result.output
 
 
 def test_fiftyone_kubernetes_deploy_default_manifest_is_clusterip() -> None:
@@ -1598,7 +2623,7 @@ def test_fiftyone_kubernetes_deploy_default_manifest_is_clusterip() -> None:
     assert _service_type_from_manifest(result.output) == "ClusterIP"
 
 
-def test_fiftyone_status_shows_public_url_for_loadbalancer(mocker) -> None:
+def test_fiftyone_status_requires_legacy_loadbalancer_redeploy(mocker) -> None:
     mocker.patch("npa.cli.fiftyone._try_get_ssh_config", return_value=None)
     mocker.patch(
         "npa.cli.fiftyone._k8s_status_payload",
@@ -1613,7 +2638,8 @@ def test_fiftyone_status_shows_public_url_for_loadbalancer(mocker) -> None:
 
     assert result.exit_code == 0
     assert "Service type:  LoadBalancer" in result.output
-    assert "Public URL:    http://203.0.113.42:5151" in result.output
+    assert "Redeploy required" in result.output
+    assert "Public URL:" not in result.output
     assert "Status:        RUNNING" in result.output
 
 
@@ -1637,6 +2663,8 @@ def test_fiftyone_status_suggests_open_for_clusterip(mocker) -> None:
 
 
 def test_fiftyone_open_port_forwards_and_cleans_up(mocker) -> None:
+    mocker.patch("npa.cli.fiftyone._try_get_ssh_config", return_value=None)
+    mocker.patch("npa.cli.fiftyone._wait_for_kubernetes_forward")
     mocker.patch(
         "npa.cli.fiftyone._resolve_required_kubeconfig", return_value="/tmp/kubeconfig"
     )
@@ -1660,11 +2688,15 @@ def test_fiftyone_open_port_forwards_and_cleans_up(mocker) -> None:
             "--kubeconfig",
             "/tmp/kubeconfig",
             "port-forward",
+            "--address",
+            "127.0.0.1",
             "-n",
             "workbench",
             "svc/npa-fiftyone",
             "6161:5151",
-        ]
+        ],
+        stdout=-1,
+        stderr=-2,
     )
     process.terminate.assert_called_once()
     process.wait.assert_called()
@@ -1690,6 +2722,7 @@ def test_fiftyone_status_uses_recorded_ssh_endpoint_strategy(mocker) -> None:
         default_port=5151,
         endpoint="http://fiftyone.example:5151",
         service_port=5151,
+        require_ssh=True,
     )
     get.assert_called_once_with("http://127.0.0.1:15151", timeout=5.0)
 
@@ -1743,7 +2776,7 @@ def test_fiftyone_status_self_heals_legacy_byovm_alias(
     mocker.patch("npa.clients.endpoint.subprocess.Popen", return_value=process)
     mocker.patch("npa.clients.endpoint._tcp_open", return_value=False)
     mocker.patch("npa.clients.endpoint._free_local_port", side_effect=[15151, 15152])
-    mocker.patch("npa.clients.endpoint._wait_for_local_port")
+    mocker.patch("npa.clients.endpoint._wait_for_ssh_forward")
 
     first = runner.invoke(
         app, ["workbench", "fiftyone", "-p", "proj", "-n", "curate", "status"]
@@ -1774,6 +2807,11 @@ def test_fiftyone_status_reports_http_error(mocker) -> None:
     )
     mocker.patch("npa.cli.fiftyone.httpx.get", return_value=response)
 
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
+
     result = runner.invoke(app, ["workbench", "fiftyone", "status"])
 
     assert result.exit_code == 1
@@ -1787,6 +2825,11 @@ def test_fiftyone_status_reports_provisioning_when_unreachable(mocker) -> None:
         return_value=_cfg(app_status="provisioning"),
     )
     mocker.patch("npa.cli.fiftyone.httpx.get", side_effect=httpx.ConnectError("down"))
+
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
 
     result = runner.invoke(app, ["workbench", "fiftyone", "status"])
 
@@ -2081,3 +3124,47 @@ def test_curate_augmented_reports_real_fiftyone_engine(mocker) -> None:
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["engine"] == "fiftyone-brain"
+
+
+def test_review_augmented_exports_rejected_candidates_without_promotion(mocker) -> None:
+    review = mocker.patch(
+        "npa.workflows.data_factory_stages.review_terminal_candidates",
+        return_value={
+            "status": "completed",
+            "engine": "fiftyone",
+            "dataset_name": "paidf-review-run",
+            "candidate_count": 8,
+            "quality_disposition": "rejected",
+            "review_only": True,
+            "promotion_eligible_count": 0,
+            "written_uri": "s3://bucket/run/review/fiftyone-review.json",
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "review-augmented",
+            "--run-root-uri",
+            "s3://bucket/run/",
+            "--quality-disposition-uri",
+            "s3://bucket/run/grade/quality_disposition.json",
+            "--dataset-uri",
+            "s3://bucket/run/review/fiftyone-dataset/",
+            "--report-uri",
+            "s3://bucket/run/review/fiftyone-review.json",
+            "--dataset-name",
+            "paidf-review-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["quality_disposition"] == "rejected"
+    assert payload["review_only"] is True
+    assert payload["promotion_eligible_count"] == 0
+    review.assert_called_once()

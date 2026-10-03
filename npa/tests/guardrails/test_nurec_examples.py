@@ -31,7 +31,7 @@ def test_example_set_is_pinned() -> None:
 
     assert found == set(PINNED_EXAMPLES), (
         "NuRec examples changed. A multi-stage pipeline is a workflow: author an "
-        "npa.workflow/v0.0.1 spec under npa/workflows/workbench/npa-workflows/ instead. "
+        "npa.workflow/v0.0.1 spec under workflows/testing/ instead. "
         f"expected {sorted(PINNED_EXAMPLES)}, found {sorted(found)}"
     )
 

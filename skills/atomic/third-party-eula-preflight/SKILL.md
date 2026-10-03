@@ -7,8 +7,49 @@ description: Use before provisioning, building, downloading, or submitting a wor
 
 Run this preflight before any costly or state-changing setup. NPA's Isaac product
 policy defaults vendor acceptance on for non-interactive workflows while retaining an
-explicit opt-out. Other third-party agreements remain opt-in unless their product policy
-documents a default.
+explicit opt-out. For every other third-party agreement, use only the documented
+upstream or product mechanism; do not invent a local opt-in.
+
+## Operator-owned runtime fetch
+
+For a public image that contains no gated or redistribution-restricted payload,
+apply this reusable policy before asking for any additional approval:
+
+1. Treat the operator as responsible for using their credential and fetched
+   artifacts consistently with upstream terms.
+2. For an exact gated Hugging Face or NGC artifact, require the operator's own
+   credential and a successful usable-payload probe against the exact immutable
+   revision. That probe is operationally sufficient for NPA to fetch the exact
+   artifact; it is not legal acceptance or proof of compliance. Do not add an
+   NPA terms checkbox or ask for another per-image attestation.
+3. Preserve the exact operator statement once under one bounded manager
+   task/run ID. If the operator states `noncommercial`, record exactly that and
+   keep the intended activity separate. Compatible child solutions reference
+   that record without another per-image question. It expires with the task/run
+   and is never global or permanent. Reopen only for changed scope or a concrete
+   additional fact required by exact authoritative terms.
+4. Keep the result provider-, account-, artifact-, and revision-scoped. A token
+   does not cover an unrelated provider or an anonymously delivered CUDA,
+   cuDNN, SDK, dataset, or asset. For those, use the exact product policy,
+   vendor acceptance mechanism, vendor-gated delivery, or operator-provided
+   runtime.
+5. Keep the public-image decision separate. A byte-scanned neutral image is
+   eligible for public classification only after verifying redistribution
+   rights for every baked byte and passing all `secure-image-build` publication
+   gates. Runtime-fetch `Ready` grants no redistribution rights.
+
+Concise operator-facing statement:
+
+> You supply and control the upstream credential. By running this fetch, you
+> accept responsibility for using the credential and fetched artifact under the
+> provider's terms. NPA verifies access for this exact artifact and does not
+> store the credential or include the artifact in the public image.
+
+When authoritative terms expressly state that downloading or using constitutes
+acceptance, do not duplicate that documented mechanism; NPA makes no conclusion
+about enforceability. Do not manufacture output or service restrictions absent
+from authoritative terms. Still stop when the terms require a separate
+click-through, license key, paid/enterprise grant, or prohibit the declared use.
 
 ## Procedure
 
@@ -30,9 +71,11 @@ documents a default.
 4. For runtime-fetched Hugging Face weights, do not add an NPA EULA/terms
    boolean, confirmation flag, empty placeholder, or model-check bypass. The
    operator's token and its actual upstream permissions are the only local gate
-   for a gated repository. Probe every required repository before provisioning;
-   public repositories may pass anonymously. A token authenticates a fetch and
-   does not change the artifact's redistribution classification.
+   for a gated repository. Token presence alone is not evidence. Probe every
+   required repository before provisioning, using exact-revision payload bytes
+   and never repository metadata; public repositories may pass anonymously. A
+   successful exact probe is sufficient for NPA to proceed, but it neither
+   accepts terms nor changes the artifact's redistribution classification.
 5. For non-interactive Isaac execution, forward the default only to Isaac-backed
    tasks. If the operator opted out, fail before provisioning and print the exact
    resume command needed to re-enable acceptance.
@@ -71,6 +114,22 @@ or persist it in an image, repository file, credential store, checkpoint, or
 dataset. A separate invalid-value workload must exit before importing the model
 or starting checkpoint access, and must run before any accepted checkpoint
 fetch. Acceptance covers only the two named Gemma policies.
+
+## Antioch Runtime Reference
+
+The proprietary `antioch-sim==0.4.289` CLI and use of the Antioch Service are
+governed by the [Antioch Terms of Service](https://antioch.com/terms), version
+dated 2026-02-28, or the operator's controlling MSA/order form. The product
+policy is explicit opt-in: require the exact run-scoped
+`NPA_ANTIOCH_ACCEPT_TERMS=YES` value before fetching or using the CLI. Reject
+absent, empty, differently cased, or alternative values before network access.
+Pass the value through the dedicated deployment Secret only; never bake it into
+the image or persist it in the runtime cache, project, dataset, credentials
+store, workflow YAML, or live-test source. Durable operation state may record
+only the public agreement name, URL, version, exact component/service scope, and
+an accepted boolean. This attestation does not grant redistribution rights: the
+public adapter remains eligible only because the built image contains no
+`antioch-sim` distribution or populated runtime cache.
 
 ## Isaac Reference
 

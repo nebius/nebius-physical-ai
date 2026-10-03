@@ -46,7 +46,9 @@ def _state_dict(obs_dim: int = 6, act_dim: int = 4, hidden=(16, 8)) -> dict:
 # Pure dim inference.
 # --------------------------------------------------------------------------- #
 def test_infer_mlp_dims_basic() -> None:
-    shapes = actor_weight_shapes(_state_dict(obs_dim=36, act_dim=8, hidden=(256, 128, 64)))
+    shapes = actor_weight_shapes(
+        _state_dict(obs_dim=36, act_dim=8, hidden=(256, 128, 64))
+    )
     obs_dim, act_dim, hidden = infer_mlp_dims(shapes)
     assert obs_dim == 36
     assert act_dim == 8
@@ -55,7 +57,9 @@ def test_infer_mlp_dims_basic() -> None:
 
 def test_actor_weight_shapes_ignores_critic_and_std() -> None:
     shapes = actor_weight_shapes(_state_dict())
-    assert all(name.startswith("actor.") and name.endswith(".weight") for name in shapes)
+    assert all(
+        name.startswith("actor.") and name.endswith(".weight") for name in shapes
+    )
     assert "std" not in shapes
     assert not any("critic" in name for name in shapes)
 
@@ -131,13 +135,17 @@ def test_build_policy_contract_terms_sum_mismatch_raises() -> None:
 
 
 def test_build_policy_contract_unknown_task_action_opaque() -> None:
-    contract = build_policy_contract(obs_dim=12, act_dim=3, isaac_task="Some-Unknown-Task")
+    contract = build_policy_contract(
+        obs_dim=12, act_dim=3, isaac_task="Some-Unknown-Task"
+    )
     assert contract["action"]["type"] == "opaque"
 
 
 def test_build_policy_contract_action_type_override() -> None:
     contract = build_policy_contract(
-        obs_dim=12, act_dim=3, isaac_task="Isaac-Lift-Cube-Franka-v0",
+        obs_dim=12,
+        act_dim=3,
+        isaac_task="Isaac-Lift-Cube-Franka-v0",
         action_type="joint_velocity",
     )
     assert contract["action"]["type"] == "joint_velocity"
@@ -188,7 +196,7 @@ def test_export_policy_onnx_shapes_mocked(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         pe,
         "_make_forward_module",
-        lambda t, actor, norm: (lambda obs: SimpleNamespace(shape=(1, 8))),
+        lambda t, actor, norm: lambda obs: SimpleNamespace(shape=(1, 8)),
     )
 
     result = pe.export_policy_onnx(
@@ -210,7 +218,9 @@ def test_export_policy_onnx_shapes_mocked(tmp_path: Path, monkeypatch) -> None:
     assert contract["checkpoint"]["source"] == "s3://bucket/run/model_975.pt"
 
 
-def test_export_policy_onnx_dim_override_mismatch_raises(tmp_path: Path, monkeypatch) -> None:
+def test_export_policy_onnx_dim_override_mismatch_raises(
+    tmp_path: Path, monkeypatch
+) -> None:
     ckpt = tmp_path / "model.pt"
     ckpt.write_bytes(b"x")
     checkpoint = {"model_state_dict": _state_dict(obs_dim=36, act_dim=8)}

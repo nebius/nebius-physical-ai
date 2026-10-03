@@ -34,12 +34,21 @@ Workbench services should expose these standard surfaces unless a tool-specific 
 
 ## Deployment
 
-Always pass `--storage-endpoint storage.eu-north1.nebius.cloud` when deploying or configuring workbench tools. The CLI default `storage.uk-south1.nebius.cloud` is wrong for the primary cluster.
+Resolve the endpoint for the operator's explicitly selected artifact bucket
+through the supported private configuration. Pass that verified endpoint when
+deploying or configuring a tool; do not inherit another cluster's regional
+endpoint. Prove the selected bucket and credentials together with
+`health-preflight` before provisioning or submitting.
 
-Kubernetes namespace split:
-
-- `workbench`: deployed workbench services.
-- `default`: SkyPilot task pods.
+Kubernetes workflows follow the selected kubeconfig context namespace; an unset
+namespace means `default`. Use `npa workbench namespace apply <name> --context
+<context>` to create a namespace or reuse it unchanged, then `namespace context`
+to prepare private kubeconfig and SkyPilot configuration using existing access.
+The context command preserves existing SkyPilot settings and workload identities;
+it does not create service accounts or grant RBAC. See
+`docs/workbench/namespaces.md`. Registry pull-secret checks, model-cache lookup,
+controller probes, and diagnostics follow the context namespace. Service commands
+retain their explicit `--namespace` options and historical defaults.
 
 ## Cross-Tool Data Flow
 
@@ -57,3 +66,24 @@ in sync. Prefer standardizing new tools on `--input-path`/`--output-path`.
 The full contract — literal-value rules, wrapper templates, reachability, image
 routing, and the local check that proves an argv can run — is in
 `skills/atomic/toolref-argv-contract/SKILL.md`.
+
+## Generated Video Publication
+
+Publish generated video bytes unchanged unless the tool explicitly declares a
+required transform, such as removing repeated conditioning frames at segment
+joins. Never alpha-blend source and generated frames to claim preservation of
+motion, geometry, or identity: unaligned scenes produce double exposures.
+Source-motion preservation belongs in model conditioning and quality validation.
+
+Keep source video, model output, and labeled comparison media distinct. Record
+any declared transform and retain its input artifacts. Validate the exact bytes
+delivered to downstream consumers; a source-heavy composite must not substitute
+for the model output in an acceptance evaluation. Test publication with model
+output that differs from the source, and verify artifact hashes after readback.
+
+The PAIDF Cosmos3 publisher enforces this through a zero-only legacy
+`source_motion_weight` setting and publishes an output SHA-256. The restriction
+applies to every workflow invoking `workbench.cosmos3.generate_variants`,
+independently of dataset, camera, prompt, or workflow name. Transfer 2.5 and the
+general Cosmos3 publisher already upload model videos directly; Nano augmentation
+removes duplicate conditioning prefixes and concatenates without blending.

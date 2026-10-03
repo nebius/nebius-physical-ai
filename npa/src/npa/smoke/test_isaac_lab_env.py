@@ -58,7 +58,9 @@ def check_isaac_sim_runtime() -> CheckResult:
         app_launcher = AppLauncher(headless=True)
         simulation_app = app_launcher.app
         if simulation_app is None:
-            return CheckResult("launch Isaac Sim runtime", False, "AppLauncher.app is None")
+            return CheckResult(
+                "launch Isaac Sim runtime", False, "AppLauncher.app is None"
+            )
 
         update = getattr(simulation_app, "update", None)
         if callable(update):

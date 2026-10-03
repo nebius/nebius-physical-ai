@@ -116,7 +116,7 @@ Follow `byof-onboard`; the world-model specifics:
 
 | Item | Path / pattern |
 | --- | --- |
-| Workflow spec | `npa/workflows/workbench/npa-workflows/byof-<model>.yaml` (`workload: solution-smoke`) |
+| Workflow spec | `workflows/testing/byof-<model>.yaml` (`workload: solution-smoke`) |
 | N-GPU resource profile | `npa/src/npa/workflows/byof/profiles/byof-solution-smoke-rtxpro-2gpu.yaml` (or a new N-GPU profile) |
 | toolRef | `workbench.byof.repo` (argv consumes `smoke_command`, `resource_profile_yaml`, `output_root`, `run.id`, …) |
 | Catalog + contract | `docs/workbench/oss-solution-catalog.md` + `npa/tests/workflows/test_byof_solution_smokes.py` (`must_exercise`) |
@@ -136,7 +136,7 @@ Spec hygiene (learned from Open Dreamer):
 
 ```bash
 npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/byof-<model>.yaml --json
+  workflows/testing/byof-<model>.yaml --json
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py \
   npa/tests/guardrails/test_skills_index.py npa/tests/smoke/test_all_workflow_yamls.py -q
 ```

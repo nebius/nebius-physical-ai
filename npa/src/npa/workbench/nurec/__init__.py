@@ -63,7 +63,9 @@ visualize = make_cli_wrapper(
 finalize = make_cli_wrapper(
     "npa.cli.nurec", "finalize_cmd", "Write the run's aggregate report."
 )
-status = make_cli_wrapper("npa.cli.nurec", "status_cmd", "Summarize a NuRec run prefix.")
+status = make_cli_wrapper(
+    "npa.cli.nurec", "status_cmd", "Summarize a NuRec run prefix."
+)
 
 __all__ = [
     "DEFAULT_CONFIG_NAME",

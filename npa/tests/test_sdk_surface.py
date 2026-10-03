@@ -3,8 +3,23 @@
 from __future__ import annotations
 
 import inspect
+import os
+import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
+
+
+def _probe(code: str, **env_overrides: str) -> subprocess.CompletedProcess[str]:
+    """Run ``code`` in a fresh interpreter so module-import state is not shared."""
+    env = {**os.environ, **env_overrides}
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _public_modules() -> list[ModuleType]:
@@ -62,7 +77,13 @@ def test_rerun_public_surface() -> None:
     """npa.rerun exposes hosted Rerun sharing commands."""
     from npa import rerun
 
-    assert rerun.__all__ == ["host", "share", "list_shares", "revoke"]
+    assert rerun.__all__ == [
+        "configure_browser_cors",
+        "host",
+        "share",
+        "list_shares",
+        "revoke",
+    ]
     for name in rerun.__all__:
         assert callable(getattr(rerun, name))
 
@@ -80,8 +101,20 @@ def test_workbench_public_surface() -> None:
         "isaac_lab": ["deploy", "train", "eval", "export_lerobot", "status"],
         "lancedb": ["import_bdd100k"],
         "lerobot": ["deploy", "train", "eval", "serve", "infer"],
-        "mjlab": ["evaluate_locomotion", "write_result", "result_uri_for"],
-        "retargeting": ["run_retargeting", "validate_motion_lib", "metadata_uri_for", "result_uri_for"],
+        "mjlab": [
+            "train",
+            "evaluate",
+            "export",
+            "list_tasks",
+            "system_info",
+            "result_uri_for",
+        ],
+        "retargeting": [
+            "run_retargeting",
+            "validate_motion_lib",
+            "metadata_uri_for",
+            "result_uri_for",
+        ],
         "sonic": [
             "export_onnx",
             "evaluate_onnx_policy",
@@ -106,6 +139,97 @@ def test_errors_public_surface() -> None:
     assert issubclass(NpaError, Exception)
 
 
+def test_sdk_namespace_is_reachable_from_the_top_level_package() -> None:
+    """``npa.sdk.workbench.<tool>`` is the documented entrypoint, so plain
+    attribute access after ``import npa`` has to reach it."""
+    import npa
+
+    assert inspect.ismodule(npa.sdk)
+    assert inspect.ismodule(npa.sdk.workbench)
+    assert "sdk" in npa.__all__
+
+
+def test_top_level_dir_reports_only_the_public_surface() -> None:
+    """``dir(npa)`` is the answer to "what may I use?", so it must not leak
+    module-private helpers."""
+    import npa
+
+    assert dir(npa) == sorted(npa.__all__)
+    private = [
+        name for name in dir(npa) if name.startswith("_") and name != "__version__"
+    ]
+    assert not private, private
+
+
+def test_importing_the_sdk_namespace_does_not_pull_the_dependency_closure() -> None:
+    """The minimal workbench images import ``npa.sdk`` with a partial dependency
+    set, so the namespace itself must not import any tool client."""
+    result = _probe(
+        """
+import sys
+import npa.sdk
+
+heavy = [name for name in ("pyarrow", "lancedb", "boto3", "rerun", "torch")
+         if name in sys.modules]
+assert not heavy, f"npa.sdk eagerly imported {heavy}"
+assert "npa.sdk.workbench" not in sys.modules
+"""
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_sdk_workbench_exports_every_tool_client_on_disk() -> None:
+    """A new client under ``npa/src/npa/sdk/workbench/`` must be exported, or it
+    is unreachable by attribute access and invisible to ``dir()``."""
+    from npa.sdk import workbench
+
+    package_root = Path(workbench.__path__[0])
+    on_disk = {
+        path.stem if path.suffix == ".py" else path.name
+        for path in package_root.iterdir()
+        if (path.suffix == ".py" or (path.is_dir() and (path / "__init__.py").exists()))
+        and not path.name.startswith("_")
+    }
+
+    assert set(workbench.__all__) == on_disk | {"training_config"}
+
+
+def test_sdk_workbench_lancedb_is_the_sdk_client_regardless_of_import_order() -> None:
+    """``npa.sdk.workbench.lancedb`` used to resolve to the implementation module
+    until something imported the submodule and rebound the attribute."""
+    from npa.sdk import workbench
+
+    assert workbench.lancedb.__name__ == "npa.sdk.workbench.lancedb"
+
+    import npa.sdk.workbench.lancedb  # noqa: F401
+
+    assert workbench.lancedb.__name__ == "npa.sdk.workbench.lancedb"
+
+
+def test_light_openarm_image_narrows_the_sdk_surface() -> None:
+    """The OpenArm image serves one tool; the SDK surface it advertises has to
+    match, so nothing else can be reached behind its back."""
+    result = _probe(
+        """
+import npa.sdk
+
+assert npa.sdk.__all__ == ["workbench"], npa.sdk.__all__
+assert npa.sdk.workbench.__all__ == ["openarm"], npa.sdk.workbench.__all__
+try:
+    npa.sdk.workbench.sonic
+except AttributeError:
+    pass
+else:
+    raise AssertionError("sonic reachable from the light OpenArm surface")
+""",
+        NPA_SKIP_EAGER_IMPORTS="1",
+        NPA_LIGHT_WORKBENCH_TOOL="openarm",
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_sdk_compatibility_namespace_exposes_lancedb_import() -> None:
     from npa.sdk.workbench.lancedb import import_bdd100k
 
@@ -116,6 +240,89 @@ def test_sdk_compatibility_namespace_exposes_sonic_export() -> None:
     from npa.sdk.workbench.sonic import export_onnx
 
     assert callable(export_onnx)
+
+
+def test_encord_sdk_delegates_all_push_seams(mocker) -> None:
+    from npa.sdk.workbench import encord
+
+    sentinel = object()
+    run_push = mocker.patch("npa.workbench.encord.run_push", return_value=sentinel)
+    seams = {
+        name: object()
+        for name in (
+            "user_client",
+            "storage_client",
+            "artifact_store",
+            "clock",
+            "environ",
+        )
+    }
+
+    result = encord.push(
+        input_path="s3://bucket/input/",
+        integration="integration",
+        folder="folder",
+        output_path="s3://bucket/output/",
+        identity_sidecar_uri="s3://bucket/identity.json",
+        **seams,
+    )
+
+    assert result is sentinel
+    assert run_push.call_args.kwargs["transfer"] == "register"
+    assert (
+        run_push.call_args.kwargs["identity_sidecar_uri"] == "s3://bucket/identity.json"
+    )
+    for name, value in seams.items():
+        assert run_push.call_args.kwargs[name] is value
+
+
+def test_encord_sdk_delegates_pull_and_verify_seams(mocker) -> None:
+    from npa.sdk.workbench import encord
+
+    pull_result = object()
+    verify_result = object()
+    run_pull = mocker.patch("npa.workbench.encord.run_pull", return_value=pull_result)
+    run_verify = mocker.patch(
+        "npa.workbench.encord.verify_roundtrip", return_value=verify_result
+    )
+    pull_seams = {
+        name: object()
+        for name in (
+            "user_client",
+            "storage_client",
+            "artifact_store",
+            "downloader",
+            "clock",
+            "environ",
+        )
+    }
+    assert (
+        encord.pull(
+            source="project",
+            source_id="project-id",
+            output_path="s3://bucket/pull/",
+            **pull_seams,
+        )
+        is pull_result
+    )
+    assert run_pull.call_args.kwargs["label_export"] == "none"
+    for name, value in pull_seams.items():
+        assert run_pull.call_args.kwargs[name] is value
+
+    verify_seams = {
+        name: object() for name in ("storage_client", "artifact_store", "clock")
+    }
+    assert (
+        encord.verify_roundtrip(
+            receipt_uri="s3://bucket/push_receipt.json",
+            manifest_uri="s3://bucket/manifest.json",
+            output_path="s3://bucket/report.json",
+            **verify_seams,
+        )
+        is verify_result
+    )
+    for name, value in verify_seams.items():
+        assert run_verify.call_args.kwargs[name] is value
 
 
 def test_public_functions_have_docstrings_and_no_typer_signature_leaks() -> None:
@@ -212,6 +419,10 @@ def test_network_ensure_ingress_parses_cli_style_ports(mocker) -> None:
 
     mock_ensure = mocker.patch("npa.network._ensure_ingress", return_value="ok")
 
-    assert network.ensure_ingress(vm="vm-id", ports="5151,8080") == "ok"
+    assert (
+        network.ensure_ingress(vm="vm-id", ports="5151,8080", source="203.0.113.50/32")
+        == "ok"
+    )
     mock_ensure.assert_called_once()
     assert mock_ensure.call_args.kwargs["ports"] == [5151, 8080]
+    assert mock_ensure.call_args.kwargs["source"] == "203.0.113.50/32"

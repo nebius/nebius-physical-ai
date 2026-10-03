@@ -1,10 +1,20 @@
 # sm_120 Image Catalog
 
+[Workbench docs](README.md)
+
 This catalog records the first-party images used for RTX PRO 6000 Blackwell
-(`sm_120`) validation. The registry IDs can be replaced with a customer registry
-when rebuilding the same Dockerfiles.
+(`sm_120`) validation. Published redistributable releases use the public GHCR
+channel; rebuilds may target an operator-controlled registry via `NPA_REGISTRY`.
 
 Manifest source: `npa/docker/workbench/sm120-images.json`.
+
+For **FlashAttention 4 on RTX PRO 6000**, use the
+[application-image adoption guide](guides/rtx6000-fa4.md). It explains why the
+shared base is named `cuda13-blackwell` and how to build the updated FA4 stack.
+Existing published `cuda13-b300` references below retain their original names;
+new base builds receive that prefix as a compatibility alias for the same image.
+The historical tags below do not establish that they contain the FA4 update;
+use the exact source/image identities in the [FA4 evidence](flash-attention.md).
 
 ## Required Images
 
@@ -24,9 +34,9 @@ Manifest source: `npa/docker/workbench/sm120-images.json`.
 Build the base image:
 
 ```bash
-npa/docker/workbench/base/cuda13-b300/build.sh \
+npa/docker/workbench/base/cuda13-blackwell/build.sh \
   --registry "${NPA_REGISTRY}" \
-  --tag sm80-sm90-sm100-sm103-sm120-<timestamp> \
+  --tag "sm80-sm90-sm100-sm103-sm120-<timestamp>" \
   --push
 ```
 
@@ -36,7 +46,7 @@ Build the Genesis sm_120 image:
 npa/docker/workbench/genesis/build_sm120.sh \
   --base-image "${NPA_REGISTRY}/npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest" \
   --registry "${NPA_REGISTRY}" \
-  --tag 0.4.6-sm80-sm90-sm100-sm103-sm120-<timestamp> \
+  --tag "0.4.6-sm80-sm90-sm100-sm103-sm120-<timestamp>" \
   --push
 ```
 
@@ -48,7 +58,8 @@ GENESIS_IMAGE="${NPA_REGISTRY}/npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm1
 npa/docker/workbench/sim2real-build.sh --registry "${NPA_REGISTRY}" --push
 ```
 
-Build the SONIC RTX PRO 6000 Kubernetes runtime:
+For a generic operator-owned BYOF registry, build the SONIC RTX PRO 6000
+Kubernetes runtime with:
 
 ```bash
 npa/docker/workbench/sonic/build.sh \
@@ -57,6 +68,10 @@ npa/docker/workbench/sonic/build.sh \
   --tag 0.1.2-k8s-runtime \
   --push
 ```
+
+This command is not the NPA release path. Official GHCR development builds and
+promotions use `.github/workflows/publish-public-images.yml` and immutable
+source-SHA tags.
 
 ## Live Smoke
 

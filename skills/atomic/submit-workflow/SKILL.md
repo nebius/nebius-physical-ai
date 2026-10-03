@@ -15,7 +15,7 @@ SkyPilot submission behavior.
 1. Read `skills/tools/skypilot-workflows/SKILL.md` for SkyPilot version and
    cleanup constraints.
 2. Prefer `npa.workflow/v0.0.1` specs under
-   `npa/workflows/workbench/npa-workflows/`. Parse / `validate-spec` locally
+   `workflows/`. Parse / `validate-spec` locally
    before launch.
 3. Use `NPA_SKYPILOT_BIN` or `npa skypilot status --bin-path`; do not assume
    `sky` from `PATH`.
@@ -30,7 +30,8 @@ SkyPilot submission behavior.
 - SDK: use shared workflow submission helpers rather than shelling out from
   application logic.
 - YAML: author shipped workflows as `npa.workflow/v0.0.1` specs under
-  `npa/workflows/workbench/npa-workflows/`. `npa workbench workflow submit`
+  `workflows/testing/`; `workflows/main/` is reserved for `sim2real.yaml` and
+  `paidf-cosmos3.yaml`. `npa workbench workflow submit`
   accepts those specs (plans, renders, then launches SkyPilot) and still accepts
   raw SkyPilot YAML supplied by an operator or by guarded single-task example
   directories.
@@ -45,13 +46,22 @@ successful `npa skypilot verify --cluster <exact-context>`:
   `HF_TOKEN` / `NGC_API_KEY` for gated model pulls. Submit resolves each requested
   name from the explicit process environment first, then the selected project's
   configured NPA credentials; it fails locally if the value is unavailable.
-- **`NPA_SRC_S3_URI` (or `--image`)** for CPU tool steps and `run.shell` states —
-  they have no heavy workbench image and install npa from that source tarball,
-  else render fails with "planned step has no workbench image and NPA_SRC_S3_URI
-  is unset". Persist it once with `npa configure --src-s3-uri s3://bucket/prefix/npa`
-  so a new shell resolves it from `~/.npa/config.yaml` instead of failing preflight
-  on already-staged objects (`scripts/stage-npa-src.sh` does this for you).
-- **`--assume-decision promote_checkpoint`** for specs with a dynamic gate/loop.
+- **NPA source for steps that need it.** Submit automatically stages missing
+  or outdated saved source from the local editable checkout under a
+  content-addressed S3 prefix and reuses verified matching source. An exported
+  `NPA_SRC_S3_URI` or `NPA_E2E_NPA_SRC_S3_URI` is an explicit selection and is
+  retained. For a new run after upgrading, clear an old export or use
+  `--stage-src` to force restaging; leave `--no-stage-src` off for the automatic
+  path. Updating NPA does not require syncing an unchanged input dataset or
+  the whole bucket. Specs with `config.source_overlay: true` also apply the
+  submitted NPA code inside pinned workbench images.
+- **Dynamic decisions.** `--assume-decision promote_checkpoint` previews an
+  accepted path in `plan-spec`, `preflight-images`, or `submit --plan-only`.
+  For execution, specs declaring `metadata.executionMode: runtime`, including
+  PAIDF Cosmos3, select the runtime automatically and reject assumed decisions.
+  Keep `--runtime` and omit `--assume-decision` when executing that workflow;
+  actual evaluator decisions control its refinement and terminal routing.
+  See the [PAIDF Cosmos3 upgrade guidance](../../../workflows/guides/paidf-cosmos3.md#upgrading-an-existing-installation).
 - **`--var key=value`** to override `config` (e.g. `--var bucket=<real-bucket>`;
   the reference specs default to `bucket: example-bucket`).
 
@@ -65,6 +75,50 @@ successful `npa skypilot verify --cluster <exact-context>`:
   immutable ID, retry only after authoritative absence plus a classified
   transport/API warm-up failure, or fail closed as indeterminate. Never bypass
   this with raw `sky jobs launch`, retry by name, or cancel by name.
+- **An isolated SkyPilot state directory has its own stable controller user
+  identity.** Reuse the same directory when resuming a run; a different isolated
+  directory intentionally selects a different controller namespace. An explicit
+  `SKYPILOT_USER_ID` still takes precedence.
+- **A baked workflow image validates the module it actually executes.** Set
+  `config.baked_npa_import` to that dotted module when `require_baked_npa` is
+  enabled; otherwise the backward-compatible probe is `npa.cli.main`. This keeps
+  source attestation strict without requiring narrow stage images to install the
+  unrelated full CLI dependency closure.
+- **Baked Kubernetes tasks get writable bootstrap caches.** NPA supplies
+  pod-local `XDG_CACHE_HOME` and `UV_CACHE_DIR` defaults under `/tmp` so a
+  read-only image-owned model cache cannot break SkyPilot's setup probe. Explicit
+  workflow environment values still take precedence; model/checkpoint caches and
+  mounted durable volumes are not redirected.
+- **Explicit workload retries apply after exact resume reconciliation too.** If an
+  adopted in-flight job is proven terminal, `--retries` advances through the same
+  durable terminal-retry path and assigns a new attempt identity. With no explicit
+  retries, the terminal outcome remains preserved and no duplicate is launched.
+- **Infrastructure recovery has its own finite policy.** `--retries` remains the
+  payload/terminal-wave retry count. `--max-infrastructure-recoveries` bounds
+  typed capacity, quota, node-not-ready, and provider recovery per wave (default
+  1; 0 disables automatic relaunch). Exhaustion is persisted and terminal; the
+  two policies never silently borrow from each other.
+- **Runtime supervision is durable and fail closed.** Pending pods are inspected
+  by exact managed-job ID. Image/auth/reference, missing Secret/ConfigMap,
+  malformed pod config, and impossible GPU shape failures stop immediately and
+  cancel only that ID. Proven transient infrastructure failures may create a new
+  immutable attempt under the same run ID only after immutable workflow/source/
+  image identity, declared S3 output absence, preflight readiness, and exact
+  cancellation are verified. Expected identities are independently recomputed
+  from the current spec, source selection, and digest pins rather than copied
+  from the attempt being checked. Unknown evidence blocks relaunch.
+- **Async acceptance is not workload observability.** SkyPilot launch uses its
+  asynchronous API mode, then the existing launch transaction reconciles the
+  exact logical name to a provider job ID before runtime polling begins. Exact
+  cancellation is polled to terminal; a request acknowledgement alone never
+  permits relaunch.
+- **Checkpoint recovery is capability-based.** Completed waves require validated
+  declared outputs. Mid-stage resume requires an explicit compatible loader and
+  validated application checkpoint; otherwise recovery restarts the incomplete
+  wave and must not claim checkpoint resume. The same adapter contract is active
+  in `npa workbench genesis train-teacher --runtime serverless` for deterministic
+  Nebius Serverless Job re-attempts without a GPU supervisor VM. It does not
+  enable mixed per-stage Serverless routing in `npa.workflow/v0.0.1`.
 - Transaction recovery uses capped exponential jitter and a 180-second recovery
   deadline. This is product behavior, not an operator job/time budget. A
   recovered launch proceeds in the same command; use `--resume-run <same-id>`
@@ -96,15 +150,15 @@ successful `npa skypilot verify --cluster <exact-context>`:
   nodes exist. `workflow gpus` prints the requestable quantity per node; submit
   rejects anything above it. Multi-GPU fan-out docs assume N GPUs per pod, which is
   a different cluster shape from "N single-GPU node presets".
-- **A workflow's images are not shipped into your registry.** `npa configure` picks
-  (or creates) a project registry; nothing mirrors workbench images into it, so a
-  spec that pins them needs them built and pushed once per registry. Run
+- **A workflow's images resolve from GHCR releases unless explicitly overridden.**
+  `npa configure` records the public release namespace by default. Run
   `npa workbench workflow preflight-images <spec.yaml>` — it reports each image as
   `ok`/`not_found`/`forbidden` and prints the build command for the tag
   `npa/src/npa/deploy/images.py` pins (the guide's tags are pinned to those by
   `tests/guardrails/test_paidf_image_tags_match_code.py`). `submit` runs the same
-  check **before `deployIfAbsent`**, so a registry without the images costs no
-  cluster time.
+  public-manifest check **before `deployIfAbsent`**, so a missing release costs
+  no cluster time. The exact target-pod proof follows provisioning because it
+  cannot exist before the selected cluster does.
 - **Multi-tool validation images stay distinct.** Repeat
   `--image-override TOOL_REF=IMAGE` on preflight and submit. Exact tool refs take
   precedence over the optional global `--image`; preflight resolves each selected
@@ -112,10 +166,57 @@ successful `npa skypilot verify --cluster <exact-context>`:
 - **A registry `403` stalls rather than fails.** Kubernetes retries image pulls
   forever, so an unpullable image leaves the job in `PENDING`/`ImagePullBackOff`.
   Listing a repository's tags is a *different permission* from pulling it, so a
-  `200` on `/v2/<repo>/tags/list` proves nothing. Submit reproduces each planned
-  pull with the credentials it injects and refuses to launch on a `403`; run it
-  standalone with `npa workbench workflow preflight-images <spec.yaml>`, or skip
-  with `--no-preflight-images`.
+  `200` on `/v2/<repo>/tags/list` proves nothing. Submit verifies every rendered
+  execution path independently: VM paths use the exact host-scoped registry
+  credential, while private Kubernetes paths use an owned pull-probe pod and the
+  declared `imagePullSecret`. Kubernetes verification requires the exact
+  `--infra k8s/<context>` and resolves the same effective namespace SkyPilot
+  0.12 uses: the selected kubeconfig context namespace, otherwise `default`.
+  SkyPilot config-level `kubernetes.namespace` keys are not namespace
+  overrides. The probe also uses the exact rendered ServiceAccount: the
+  context-effective `kubernetes.remote_identity`, with any config-level or task
+  `pod_config.spec.serviceAccountName` override applied. This matters because
+  ServiceAccount admission can attach additional pull Secrets. Every distinct
+  rendered Secret, ServiceAccount, and pull-relevant pod-placement path
+  (`nodeSelector`, affinity, runtime class, tolerations, and related scheduling
+  fields) is probed independently. NPA uses the first `KUBECONFIG` file because
+  that is the file pinned SkyPilot 0.12 exposes in its isolated home.
+  Both the creation response and the observed pod must preserve the requested
+  ServiceAccount, pull Secret references, placement, and the pull container's
+  `Always` image pull policy. Cached-image reuse cannot establish registry
+  credential access. When the pod requests
+  no pull Secrets, preflight first reads that exact ServiceAccount in the same
+  context and namespace and binds its inherited references; an unavailable or
+  changed default cannot produce a verified result. Requested tolerations are
+  preserved, allowing only Kubernetes' two additional `NoExecute` eviction
+  defaults for not-ready/unreachable nodes with finite nonnegative seconds.
+  Additional RuntimeClass or custom admission placement changes are currently
+  reported as unverified rather than assumed equivalent. A rejected proof still
+  runs UID-preconditioned cleanup of the owned probe.
+  SkyPilot 0.12 replaces the first
+  `imagePullSecrets` entry at each context/task overlay, so preflight mirrors
+  that effective set instead of unioning overridden Secrets. An initial empty
+  or multi-entry list is valid; after a base list exists, SkyPilot requires one
+  override entry and cannot merge into an empty base, so NPA rejects those exact
+  invalid merge shapes. For a multi-platform image, a target platform-manifest
+  digest is accepted only when the fetched OCI index declares it. Anonymous
+  host access never substitutes for a target pull, and an opaque runtime image
+  ID without an immutable digest is not proof. Registry credentials are sent
+  only to a trusted HTTPS Bearer realm. Preflight includes every
+  control-flow-reachable image, including mixed outcomes across multiple
+  decisions. If a resource omits `cloud`, pass an exact `--infra`; NPA does not
+  guess VM versus Kubernetes authority. It never falls back to the ambient
+  context or mints a Secret. Run it standalone with
+  `npa workbench workflow preflight-images <spec.yaml>` plus
+  `--infra k8s/<context>`, or skip with `--no-preflight-images`.
+- **A large authenticated cold pull is not an access failure.** Bootstrap probes
+  default to a 30-minute observation window. Use
+  `--image-bootstrap-timeout-seconds 0` for no deadline while warming large
+  images; digest, authentication, attestation, capability, exact ownership, and
+  verified cleanup gates remain mandatory. A pull-probe cleanup failure blocks
+  submission and leaves an auditable
+  `npa.nebius.com/purpose=image-pull-preflight` label; inspect that exact-context
+  pod before retrying rather than deleting an unverified name.
 - **A silent 15-minute submit is usually the kubernetes client.** SkyPilot 0.12.2
   does not cap the client version, and client 36+ makes every `pod_config` fail
   validation, so the managed-jobs controller retries forever. `npa skypilot

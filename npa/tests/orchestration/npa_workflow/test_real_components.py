@@ -1,4 +1,4 @@
-"""Enforce the real-components skill for the Physical AI Data Factory blueprint.
+"""Enforce real components in the NVIDIA-derived PAIDF VDA workflow.
 
 Fails if the blueprint uses a known-stub toolRef, if a run.shell stage isn't a
 real command/module call, or if the augment stage isn't the real Cosmos execute.
@@ -6,6 +6,8 @@ real command/module call, or if the augment stage isn't the real Cosmos execute.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import pathlib
 import re
 
@@ -15,13 +17,15 @@ import yaml
 
 from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.spec import load_spec
 from npa.cli.agent_workflow import (
     generate_data_factory_yaml,
     generate_sim2real_staged_yaml,
 )
 
-BLUEPRINT = resolve_npa_workflow_spec("physical-ai-data-factory.yaml")
-assert BLUEPRINT is not None, "physical-ai-data-factory.yaml not found in any spec root"
+BLUEPRINT = resolve_npa_workflow_spec("nvidia-paidf-vda-cosmos-transfer25.yaml")
+assert BLUEPRINT is not None, "NVIDIA-derived PAIDF VDA spec not found"
 
 NUREC_BLUEPRINT = resolve_npa_workflow_spec("nurec-reconstruct.yaml")
 assert NUREC_BLUEPRINT is not None, "nurec-reconstruct.yaml not found in any spec root"
@@ -41,7 +45,12 @@ KNOWN_STUB_TOOLREFS = {
     "workbench.fiftyone.launch_app",  # echo hook
     "workbench.sim2real.write_decision",  # demo stub
 }
-REAL_RUN_MARKERS = ("npa workbench", "data_factory_stages", "data_factory_viz")
+REAL_RUN_MARKERS = (
+    "npa workbench",
+    "data_factory_stages",
+    "data_factory_viz",
+    "paidf_upstream",
+)
 
 
 def _states() -> dict:
@@ -57,6 +66,10 @@ def _memory_gi(value: object) -> int:
     match = re.fullmatch(r"(\d+)Gi", str(value))
     assert match is not None, f"expected Gi memory value, got {value!r}"
     return int(match.group(1))
+
+
+def test_blueprint_requires_runtime_decision_execution() -> None:
+    assert _spec()["metadata"]["executionMode"] == "runtime"
 
 
 def test_blueprint_uses_no_stub_toolrefs() -> None:
@@ -92,8 +105,37 @@ def test_agent_generated_paidf_runs_named_real_components() -> None:
         generate_data_factory_yaml(user_text="fan out 2 variants on 2 GPUs")
     )
     states = spec["states"]
-    assert states["grade"]["sequence"] == ["augment", "evaluate", "quality-gate"]
+    assert states["grade"]["sequence"] == [
+        "prepare-refinement",
+        "augment",
+        "evaluate",
+        "select-candidates",
+        "evaluate-selected",
+        "quality-gate",
+    ]
+    assert "prepare_refinement" in states["prepare-refinement"]["run"]["argv"][2]
+    for option in (
+        "--refinement-uri",
+        "--control-weight",
+        "--guidance",
+        "--protected-chroma-mode",
+        "--protected-regions-json",
+        "--protected-luma-max-delta",
+        "--protected-feather-pixels",
+        "--segmentation-mode",
+        "--segmentation-uri",
+        "--sam2-model",
+        "--sam2-model-revision",
+    ):
+        assert (
+            option in TOOL_CATALOG["workbench.cosmos2.transfer_execute"].argv_template
+        )
     assert states["evaluate"]["toolRef"] == "workbench.cosmos_evaluator.evaluate"
+    assert (
+        states["review-terminal-candidates"]["toolRef"]
+        == "workbench.fiftyone.review_augmented"
+    )
+    assert not TOOL_CATALOG["workbench.fiftyone.review_augmented"].stub
     assert states["cosmos-curate"]["toolRef"] == "workbench.cosmos_curate.curate"
     assert states["curate"]["toolRef"] == "workbench.fiftyone.curate_augmented"
     assert (
@@ -101,7 +143,9 @@ def test_agent_generated_paidf_runs_named_real_components() -> None:
         in TOOL_CATALOG["workbench.fiftyone.curate_augmented"].argv_template
     )
     assert states["visualize"]["toolRef"] == "workbench.nurec.visualize"
+    assert states["visualize-rejected"]["toolRef"] == "workbench.nurec.visualize"
     assert "pip install" not in str(states["visualize"])
+    assert "pip install" not in str(states["visualize-rejected"])
 
 
 def test_blueprint_run_shell_stages_are_real() -> None:
@@ -115,6 +159,63 @@ def test_blueprint_run_shell_stages_are_real() -> None:
         assert any(m in command for m in REAL_RUN_MARKERS), (
             f"stage '{name}' run is not a real command/module call: {command[:100]}"
         )
+
+
+def test_blueprint_records_official_upstream_boundary_first() -> None:
+    spec = _spec()
+    state = spec["states"]["record-upstream"]
+    command = " ".join(str(item) for item in state["run"]["argv"])
+
+    assert spec["initial"] == "record-upstream"
+    assert "paidf_upstream" in command
+    assert "write_upstream_contract" in command
+    assert state["outputs"] == [
+        {
+            "uri": "{{config.upstream_contract_uri}}",
+            "schema": "npa.paidf.upstream.v1",
+        }
+    ]
+
+
+def test_blueprint_overlays_reviewed_source_on_baked_component_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+
+    monkeypatch.delenv("NPA_SRC_OVERLAY", raising=False)
+    monkeypatch.setenv(
+        "NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa/reviewed-source"
+    )
+    spec = load_spec(BLUEPRINT)
+    plan = build_plan(
+        spec, run_id="overlay-contract", assume_decision="promote_checkpoint"
+    )
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="overlay-contract",
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/validated",
+            materialize_registry_secrets=False,
+        ),
+    )
+    tasks = [
+        task
+        for task in yaml.safe_load_all(rendered)
+        if task and (task.get("resources") or {}).get("image_id")
+    ]
+
+    assert tasks
+    assert all(task["envs"]["NPA_SRC_OVERLAY"] == "1" for task in tasks)
+    assert all(
+        task["envs"]["NPA_SRC_S3_URI"]
+        == "s3://example-bucket/npa-src/npa/reviewed-source"
+        for task in tasks
+    )
 
 
 def test_augment_runs_real_cosmos_transfer() -> None:
@@ -133,6 +234,20 @@ def test_augment_runs_real_cosmos_transfer() -> None:
     description = states["augment"]["description"].lower()
     assert "input/conditioning.mp4" in description
     assert "no bundled or geometric fallback" in description
+    assert spec["config"]["prompt_policy"] == "source-fidelity-v3"
+    assert spec["config"]["input_conditioning_policy"] == "source-fidelity-v3"
+    generate_argv = states["generate-configs"]["run"]["argv"]
+    assert generate_argv[-1] == "{{config.prompt_policy}}"
+
+
+def test_readiness_record_is_bound_to_exact_workflow_bytes() -> None:
+    readiness_path = BLUEPRINT.with_suffix(".readiness.json")
+    readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
+
+    assert (
+        readiness["workflow_sha256"]
+        == hashlib.sha256(BLUEPRINT.read_bytes()).hexdigest()
+    )
 
 
 def test_input_conditioned_cosmos_toolref_fails_closed_without_input() -> None:
@@ -169,22 +284,83 @@ def test_evaluate_runs_the_real_cosmos_evaluator() -> None:
         "--appearance-chroma-instability-tolerance",
         "--appearance-blur-ksize",
         "--appearance-max-dimension",
+        "--attribute-sample-policy",
+        "--attribute-evidence-mode",
+        "--attribute-lighting-vlm-model",
     ):
         assert option in argv
 
     loop = states["grade"]["loop"]
     assert loop["until"] == "promote_checkpoint"
-    assert states["grade"]["sequence"] == ["augment", "evaluate", "quality-gate"]
+    assert states["grade"]["sequence"] == [
+        "prepare-refinement",
+        "augment",
+        "evaluate",
+        "select-candidates",
+        "evaluate-selected",
+        "quality-gate",
+    ]
     assert states["grade"]["next"] == "quality-disposition"
-    assert states["annotate-augmented"]["needs"] == ["quality-disposition"]
+    assert states["annotate-augmented"]["needs"] == ["require-accepted-quality"]
+    selected_batch = "{{config.selection_uri}}iteration-{{loop.grade}}/"
     assert (
-        "enforce_quality_disposition" in states["quality-disposition"]["run"]["shell"]
+        states["annotate-augmented"]["params"]["augmented_frames_uri"] == selected_batch
+    )
+    assert states["cosmos-curate"]["params"]["augment_uri"] == selected_batch
+    assert states["curate"]["params"]["augment_uri"] == selected_batch
+    assert states["curate"]["params"]["lance_uri"] == selected_batch
+    assert (
+        "selection_uri='{{config.selection_uri}}iteration-{{loop.grade}}/'"
+        in states["finalize"]["run"]["shell"]
+    )
+    disposition = states["quality-disposition"]
+    disposition_command = " ".join(disposition["run"]["argv"])
+    assert disposition["writesDecision"] is True
+    assert "write_quality_disposition" in disposition_command
+    assert disposition["transitions"] == [
+        {"when": "promote_checkpoint", "goto": "review-terminal-candidates"},
+        {"when": "loop_back", "goto": "review-terminal-candidates"},
+    ]
+    assert states["review-terminal-candidates"]["needs"] == ["quality-disposition"]
+    assert states["review-terminal-candidates"]["next"] == "route-terminal-quality"
+    assert states["route-terminal-quality"]["transitions"] == [
+        {"when": "promote_checkpoint", "goto": "require-accepted-quality"},
+        {"when": "loop_back", "goto": "visualize-rejected"},
+    ]
+    assert "enforce_quality_disposition" in " ".join(
+        states["require-accepted-quality"]["run"]["argv"]
+    )
+    assert states["visualize-rejected"]["next"] == "reject-quality"
+    assert states["visualize-rejected"]["outputs"][0]["uri"] == "{{config.rrd_uri}}"
+    assert "enforce_quality_disposition" in " ".join(
+        states["reject-quality"]["run"]["argv"]
     )
     assert float(_spec()["config"]["grade_threshold"]) >= 0.75
     assert float(_spec()["config"]["temporal_consistency_threshold"]) >= 0.8
     assert _spec()["config"]["temporal_consistency_mode"] == "advisory"
     assert float(_spec()["config"]["appearance_fidelity_threshold"]) >= 0.8
     assert _spec()["config"]["appearance_fidelity_mode"] == "advisory"
+    assert _spec()["config"]["attribute_evidence_mode"] == "source-relative-change"
+    assert _spec()["config"]["caption_model"] == "google/gemma-3-27b-it"
+    assert _spec()["config"]["attribute_lighting_vlm_model"] == "MiniMaxAI/MiniMax-M3"
+    assert "protected_chroma_regions_json" in _spec()["config"]
+    assert _spec()["config"]["protected_luma_max_delta"] == "32"
+    assert _spec()["config"]["protected_feather_pixels"] == "12"
+    assert _spec()["config"]["segmentation_mode"] == "off"
+    assert _spec()["config"]["sam2_model"] == "facebook/sam2.1-hiera-tiny"
+    assert len(_spec()["config"]["sam2_model_revision"]) == 40
+    transfer_argv = TOOL_CATALOG["workbench.cosmos2.transfer_execute"].argv_template
+    protected_index = transfer_argv.index("--protected-regions-json")
+    assert (
+        transfer_argv[protected_index + 1] == "{{config.protected_chroma_regions_json}}"
+    )
+    luma_index = transfer_argv.index("--protected-luma-max-delta")
+    assert transfer_argv[luma_index + 1] == "{{config.protected_luma_max_delta}}"
+    feather_index = transfer_argv.index("--protected-feather-pixels")
+    assert transfer_argv[feather_index + 1] == "{{config.protected_feather_pixels}}"
+    segmentation_index = transfer_argv.index("--segmentation-mode")
+    assert transfer_argv[segmentation_index + 1] == "{{config.segmentation_mode}}"
+    assert "--segmentation-uri" in transfer_argv
 
 
 def test_curation_runs_the_real_cosmos_curator_before_review() -> None:
@@ -213,19 +389,125 @@ def test_quality_gate_reads_the_evaluator_report() -> None:
     from npa.workbench.cosmos_evaluator import RESULT_FILENAME
 
     states = _states()
-    assert states["quality-gate"]["needs"] == ["evaluate"]
-    outputs = [output["uri"] for output in states["evaluate"]["outputs"]]
+    assert states["quality-gate"]["needs"] == ["evaluate-selected"]
+    assert states["evaluate"]["params"]["attribute_sample_policy"] == "ranking"
+    assert states["evaluate-selected"]["params"]["attribute_sample_policy"] == "holdout"
+    outputs = [output["uri"] for output in states["evaluate-selected"]["outputs"]]
     assert any(uri.endswith(RESULT_FILENAME) for uri in outputs), (
         f"evaluate must publish {RESULT_FILENAME}, which grade_gate reads"
     )
 
 
 def test_gpu_resource_has_headroom_for_multi_variant_fanout() -> None:
-    gpu = _spec()["resources"]["gpu"]
-    assert int(gpu["cpus"]) >= 16, "4-way Cosmos fan-out needs CPU headroom"
+    document = _spec()
+    gpu = document["resources"]["gpu"]
+    assert int(document["config"]["augment_cpus"]) >= 16, (
+        "the default 4-way Cosmos fan-out needs CPU headroom"
+    )
+    assert gpu["cpus"] == "{{config.augment_cpus}}"
     assert _memory_gi(gpu["memory"]) >= 128, (
         "4-way Cosmos fan-out OOMs with the old 16Gi profile"
     )
+
+
+def test_single_gpu_augment_cpu_request_can_fit_existing_cluster_headroom(
+    tmp_path: pathlib.Path,
+) -> None:
+    from npa.orchestration.npa_workflow.spec import resolve_resource_profile
+
+    raw = _spec()
+    raw["config"]["augment_cpus"] = "12"
+    path = tmp_path / "single-gpu-existing-cluster.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    spec = load_spec(path)
+    resolved = resolve_resource_profile(
+        "gpu", spec.resources["gpu"], config=spec.config, run={"id": "capacity"}
+    )
+
+    assert resolved["cpus"] == "12"
+    assert resolved["accelerators"] == "RTXPRO6000:1"
+
+
+def test_cpu_stage_request_can_fit_existing_cluster_headroom(
+    tmp_path: pathlib.Path,
+) -> None:
+    from npa.orchestration.npa_workflow.spec import resolve_resource_profile
+
+    raw = _spec()
+    assert raw["resources"]["cpu"] == {
+        "cloud": "kubernetes",
+        "cpus": "{{config.cpu_cpus}}",
+        "memory": "{{config.cpu_memory}}",
+    }
+    assert raw["config"]["cpu_cpus"] == "4"
+    assert raw["config"]["cpu_memory"] == "16Gi"
+
+    raw["config"].update(cpu_cpus="1", cpu_memory="4Gi")
+    path = tmp_path / "capacity-constrained-existing-cluster.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    spec = load_spec(path)
+    resolved = resolve_resource_profile(
+        "cpu", spec.resources["cpu"], config=spec.config, run={"id": "capacity"}
+    )
+
+    assert resolved == {"cloud": "kubernetes", "cpus": "1", "memory": "4Gi"}
+
+
+def test_optional_sam2_config_is_validated_before_provisioning(
+    tmp_path: pathlib.Path,
+) -> None:
+    raw = _spec()
+    raw["config"]["segmentation_mode"] = "sam2-boxes"
+    path = tmp_path / "invalid-paidf.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    with pytest.raises(NpaWorkflowError, match="off or sam2-auto"):
+        load_spec(path)
+
+    raw["config"]["segmentation_mode"] = "sam2-auto"
+    raw["config"]["segmentation_uri"] = "not-s3"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(NpaWorkflowError, match="versioned s3:// prefix"):
+        load_spec(path)
+
+    raw["config"]["segmentation_uri"] = "s3://example/segmentation/"
+    raw["config"]["augment_nodes"] = "2"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(NpaWorkflowError, match="requires one augment node"):
+        load_spec(path)
+
+    raw["config"]["augment_nodes"] = "1"
+    raw["config"]["segmentation_uri"] = "s3://example/run/segmentation/"
+    raw["config"]["protected_luma_max_delta"] = "256"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(NpaWorkflowError, match="within 0..255"):
+        load_spec(path)
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("sam2_points_per_side", 16.5, "numeric sampling"),
+        ("sam2_max_objects", True, "numeric sampling"),
+        ("protected_luma_max_delta", 32.5, "must be integers"),
+        ("protected_feather_pixels", False, "must be integers"),
+    ],
+)
+def test_optional_sam2_integer_fields_are_exact(
+    tmp_path: pathlib.Path, key: str, value: object, message: str
+) -> None:
+    raw = _spec()
+    raw["config"].update(
+        segmentation_mode="sam2-auto",
+        segmentation_uri="s3://example/run/segmentation/",
+        augment_nodes="1",
+    )
+    raw["config"][key] = value
+    path = tmp_path / f"invalid-{key}.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    with pytest.raises(NpaWorkflowError, match=message):
+        load_spec(path)
 
 
 def test_blueprint_toolrefs_exist_in_catalog() -> None:
@@ -370,3 +652,67 @@ def test_nurec_skypilot_task_has_no_echo_or_manifest_stub_stage() -> None:
     # An `echo` that merely announces a stage is fine; one that stands IN for a
     # stage is not, so assert the tool call count matches the advertised stages.
     assert run.count("npa workbench nurec") >= 6
+
+
+# ---------------------------------------------------------------------------------
+# Living-lab 16-zone neural-reconstruction digital twin (real nurec fan-out)
+# ---------------------------------------------------------------------------------
+LIVING_LAB_SPEC = resolve_npa_workflow_spec("living-lab-nurec-fanout.yaml")
+assert LIVING_LAB_SPEC is not None, (
+    "living-lab-nurec-fanout.yaml not found in any spec root"
+)
+
+
+def _living_lab_states() -> dict:
+    return yaml.safe_load(LIVING_LAB_SPEC.read_text(encoding="utf-8"))["states"]
+
+
+def test_living_lab_has_exactly_16_gpu_shards_and_a_join() -> None:
+    states = _living_lab_states()
+    shards = [n for n in states if n.startswith("zone-")]
+    assert len(shards) == 16
+    assert list(states["living-lab-zones"]["parallel"]) == shards
+    assert states["join"]["needs"] == ["living-lab-zones"]
+
+
+def test_living_lab_every_shard_is_real_nurec_work_on_rtx_gpu() -> None:
+    spec = yaml.safe_load(LIVING_LAB_SPEC.read_text(encoding="utf-8"))
+    gpu = spec["resources"]["gpu"]
+    assert gpu["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    assert "B200" not in gpu["accelerators"] and "H100" not in gpu["accelerators"]
+    for name, state in _living_lab_states().items():
+        if not name.startswith("zone-"):
+            continue
+        assert state["resources"] == "gpu", name
+        shell = state["run"]["shell"]
+        # Every shard runs the full real pipeline inside the NRE container.
+        assert "npa workbench nurec check" in shell
+        assert "npa workbench nurec fetch" in shell
+        assert "npa workbench nurec reconstruct" in shell
+        assert "npa workbench nurec render" in shell
+        assert "npa workbench nurec visualize" in shell
+        assert "npa workbench nurec finalize" in shell
+        # One GPU per shard: never a disguised single-GPU program.
+        assert "--world-size 1" in shell
+        # Novel view requires a non-zero rig offset.
+        assert "--rig-translation-offset" in shell and "--rig-rotation-offset" in shell
+        # --- flag-level correctness (validates cleanly, crashes on submit if
+        # drifted from the real nurec CLI) ----------------------------------
+        assert "--ncore-json" in shell and "--ncore-uri" not in shell
+        assert "--poses-component-group" in shell
+        assert shell.count("--camera-id") == 2  # reconstruct + render require it
+        assert "--artifact-path" in shell
+        assert 'visualize --input-uri "${ZU}"' in shell
+
+
+def test_living_lab_join_runs_the_real_module_and_publishes_a_twin() -> None:
+    join = _living_lab_states()["join"]
+    assert join["resources"] == "cpu"
+    shell = join["run"]["shell"]
+    assert "npa.workflows.living_lab" in shell and "join_living_lab_zones" in shell
+    outputs = {o["uri"] for o in join["outputs"]}
+    assert any("{{config.report_uri}}" in u for u in outputs)
+    assert any("{{config.panorama_uri}}" in u for u in outputs)
+    spec = yaml.safe_load(LIVING_LAB_SPEC.read_text(encoding="utf-8"))
+    assert spec["config"]["report_uri"].endswith("reports/digital_twin.json")
+    assert spec["config"]["panorama_uri"].endswith("reports/panorama.png")

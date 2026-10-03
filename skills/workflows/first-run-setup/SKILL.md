@@ -6,9 +6,10 @@ description: Use on a fresh machine or a new Nebius project to get from zero to 
 # First run: zero to a verified result
 
 The failure mode this skill exists to prevent is spending an hour provisioning a
-GPU cluster and discovering at stage three that a token was never accepted. Each
-step below has a **gate**: a command whose success is the precondition for the
-next step. Do not skip ahead because a later step looks more interesting.
+GPU cluster and discovering at stage three that a credential did not have exact
+artifact access. Each step below has a **gate**: a command whose success is the
+precondition for the next step. Do not skip ahead because a later step looks more
+interesting.
 
 Escalate through the cheapest tier that can prove the thing you need. Most
 first-run questions are answered before any GPU is involved.
@@ -40,34 +41,50 @@ npa configure                 # interactive: creates/reuses the CLI profile
 ```
 
 `configure` writes `~/.npa/config.yaml` (machine-managed, non-secret) and
-`~/.npa/credentials.yaml` (secrets, `0600`). It auto-provisions an S3 bucket and
-access key by default; `--no-provision` lets you supply existing object-storage
-credentials instead.
+`~/.npa/credentials.yaml` (secrets, `0600`). Interactive setup offers S3 bucket
+and access-key provisioning by default. `--no-provision` is a provider-free
+project/token setup: it neither probes nor adopts saved storage. Enter an exact
+existing bucket name only when you intend to reuse it; pressing Enter generates
+a fresh name with a UTC timestamp and random suffix.
 
 For unattended setup, avoid the prompts entirely:
 
 ```bash
-npa configure --no-interactive --save-env-credentials \
+npa configure --no-interactive --no-provision --save-env-credentials \
   --tenant-id <id> --project-id <id> --region <region> --project-alias <alias>
 ```
 
-**Gate:** `npa configure --show` reports the project stanza, bucket, and endpoint
-you intend to use. A silent exit or an empty storage section means configure did
-not write what you think it did — resolve it here, because every later command
-resolves credentials through this file.
+That command imports supported environment credentials and saves the project;
+it does not contact Nebius, Hugging Face, or NGC and does not select storage.
+Add explicit `--provision` when unattended setup should create or reuse writable
+project storage.
 
-Do not hardcode project IDs, tenant IDs, registry IDs, or bucket names anywhere
-in the repo; they belong only in `~/.npa/`.
+**Gate:** `npa configure --show` reports the intended project stanza. When
+storage was explicitly provisioned, it also reports the exact bucket and
+endpoint. A silent exit or an unexpected stanza means configure did not write
+what you think it did — resolve it here, because every later command resolves
+credentials through this file. Hugging Face and NGC status in provisioning or
+credential-import summaries is informative and never blocks the local save;
+`--no-provision` reports those probes as skipped. Step 3 is the enforcing access
+gate.
+
+Do not hardcode project IDs, tenant IDs, private registry IDs, or bucket names
+anywhere in the repo. The project values belong only in `~/.npa/`; `NPA_REGISTRY`
+is a private build/BYOF destination, while runtime selection requires a complete
+image reference or an explicit workflow `--registry`.
 
 ## Step 3 — Prove credentials before spending anything
 
 ```bash
 npa workbench health preflight --json
+npa workbench health preflight --checks nebius --json
 npa workbench health access --capability <the-one-you-will-run> --json
 ```
 
-**Gate:** both exit zero. `preflight` covers Hugging Face, NGC, S3, and Token
-Factory presence and authentication; `access` proves your token is actually
+**Gate:** all three exit zero. The default `preflight` covers Hugging Face, NGC,
+S3, and Token Factory presence and authentication. The explicit `nebius` check
+proves the selected Nebius CLI profile can resolve identity and mint an IAM
+token before provisioning. `access` proves your token is actually
 entitled to the gated models a given capability pulls. Gated Hugging Face
 licenses can only be accepted interactively on the model page — `access` prints
 the exact URL, and nothing else will clear the gate. Full detail in
@@ -143,14 +160,42 @@ single node, so `NAME:2` never schedules on 1-GPU nodes regardless of node count
 ## Step 8 — Prove the images are pullable
 
 ```bash
-npa workbench workflow preflight-images <spec.yaml> --project <alias> --json
+npa workbench workflow preflight-images <spec.yaml> --project <alias> \
+  --infra k8s/<context> --json
 ```
 
-**Gate:** every image reports `ok`. Nothing mirrors workbench images into the
-registry `npa configure` selected, so `not_found` means the image was never
-pushed to *your* registry. A `403` does not fail a job — Kubernetes retries pulls
-forever — so an unpullable image silently burns cluster time in
-`ImagePullBackOff`. `submit` runs this check before provisioning by default.
+**Gate:** every image reports `ok`. Supported images resolve from the anonymous
+GHCR mirror by default. If you explicitly select a custom/private registry,
+`not_found` means the image was never pushed there. A `403` does not fail a job —
+Kubernetes retries pulls forever — so an unpullable image silently burns cluster
+time in `ImagePullBackOff`. The check uses the selected kubeconfig context
+namespace (the namespace source used by SkyPilot 0.12), falling back to
+`default`, and proves every distinct rendered `imagePullSecret` plus
+ServiceAccount and pod-placement path after applying SkyPilot 0.12's
+context/task overrides. Placement includes selectors, affinity, runtime class,
+and tolerations. NPA deliberately uses the first `KUBECONFIG` file, matching
+SkyPilot's isolated home rather than accepting a context available only in a
+later file.
+ServiceAccount identity comes from the context-effective
+`kubernetes.remote_identity`, followed by config-level and task pod-config
+overrides; admission may attach additional pull Secrets, so a probe under
+another ServiceAccount is not equivalent. An initial empty or multi-entry
+Secret list is valid; once a base list exists, the override must have exactly
+one entry and the base cannot be empty. For `deployIfAbsent`, `submit` checks
+definitive public manifests before provisioning and runs the exact target pod
+proof immediately after the cluster exists. Bearer credentials are forwarded
+only to trusted HTTPS token realms; every reachable decision combination is
+covered; every returned image is digest-pinned. If `cloud` is omitted, provide
+an exact `--infra` so VM versus Kubernetes authority is not guessed.
+
+Image-policy quarantine is earlier than pullability. If resolution reports
+`no consumable public release` or `quarantined`, stop: the recorded public tag
+may still exist and pull anonymously, but NPA deliberately will not execute it.
+Use a fully qualified, immutable `IMAGE@sha256:DIGEST` only after that rebuilt
+artifact has passed the relevant byte scan and capability validation. Supply it
+through the tool's explicit `--image` option or repeat workflow
+`--image-override TOOL_REF=IMAGE@sha256:DIGEST`; do not repoint ambient
+`NPA_REGISTRY` and do not select the stale public tag directly.
 
 ## Step 9 — Submit
 
@@ -194,7 +239,8 @@ audit.
   status` wants `--run-id`, and `token-factory status` takes neither — so check
   `--help` rather than assuming a common shape.
 - **`--offline` on health checks proves presence, not validity.** An expired token
-  passes offline and fails on first pull.
+  can pass a presence check and fail on first pull. The `nebius` check returns
+  SKIP offline because profile configuration is not authentication proof.
 
 ## Verify
 

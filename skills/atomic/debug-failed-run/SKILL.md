@@ -36,6 +36,56 @@ the whole triage:
   (threshold `--startup-failure-threshold`, default 3). This is infrastructure,
   not your payload.
 
+Use the run's selected `--project` consistently. Status, pending-manifest lookup,
+live logs, and cancellation carry the resolved project and storage credentials into
+their controller calls, including a cold restart of an owned local API. The
+caller environment is unchanged. This does not permit adopting a controller
+under a different principal or ignoring changed credential files; reconcile
+those identity failures before resuming.
+
+All currently recorded jobs can be `SUCCEEDED` between waves while the workflow
+lifecycle remains `RUNNING`. This is a successful observation of incomplete
+workflow evidence, not a failed query: inspect `workflow_lifecycle` for the
+original durable timestamp, `completion_recorded: false`, and
+`driver_liveness: unknown`. Fresh job polls do not prove driver liveness or create
+progress heartbeats. Keep the original driver running and let `--watch` cross the
+handoff; do not recommend resume solely from this state. Actual query failures
+still exit nonzero, and terminal workflow/artifact proof remains required.
+
+The job aggregate and task rows are separate queue snapshots. A recognized
+nonterminal job can coexist with a successful task or durable stage record while
+the workflow remains incomplete. Compare each stage's `raw_job_scheduler_state`
+and `raw_task_scheduler_state`; keep the original driver and watch running through
+this transition. Missing/unknown/malformed job evidence and query/authentication
+failures still stop verification. Contradictory terminal job/task outcomes remain
+`UNKNOWN` with explicit stage conflicts; a failed parallel job may still have
+successful individual tasks.
+
+At finalization, the interpreter manifest's `completed` marker is normalized to
+`SUCCEEDED`. Inspect `workflow_lifecycle.manifest_evidence` for its unchanged raw
+status, timestamp, and authoritative source. This alias applies only to the
+manifest; runtime ledgers require `succeeded`. Keep latest-attempt conflicts,
+live-query failures, and final-artifact validation as separate checks.
+
+Runtime-supervised runs also expose `supervisor.classification` and
+`supervisor.recovery` in JSON status. `actionable_configuration` means automatic
+retry has stopped and only the exact recorded attempt was cancelled;
+`transient_infrastructure` records adoption or a new attempt under the same run
+ID until the finite `--max-infrastructure-recoveries` policy is exhausted;
+`payload` uses only explicit `--retries`; `unknown` blocks relaunch to prevent
+duplicates. `INFRASTRUCTURE_RECOVERY_EXHAUSTED` is terminal durable evidence, not
+permission to increase payload retries implicitly.
+
+A credential-exec RPC stream closure during controller file sync may leave a
+Pending reservation without a submitted payload. The runtime records this as a
+partial launch, verifies exact cancellation and actual terminal state, checks
+all declared outputs remain absent, and refreshes the shared SDK preflight
+before using the existing infrastructure recovery allowance. Inspect both the
+failed parent and its exact reserved successor; do not count the failed row as
+running work or launch another copy. Missing/ambiguous rows, denied access,
+changed identities, output uncertainty, and unverified cancellation still block
+recovery. Fresh preflight denials retain their sanitized actionable reason.
+
 Add `--watch --interval 10` to follow a run to a terminal state. Use `--cached`
 only when the live controller is unreachable: its output is explicitly marked
 CACHED and is **not automation-trustworthy** — never gate a decision on it.
@@ -80,13 +130,23 @@ npa workbench workflow preflight-images <spec.yaml> --project <alias> --json
 This reproduces the exact manifest fetch a worker performs, with the credentials
 the run injects, and reports each image `ok` / `not_found` / `forbidden`.
 
-- `not_found` → the image was never built and pushed into *this* project's
-  registry. Nothing mirrors workbench images into a registry created by
-  `npa configure`; see `skills/atomic/build-and-push-image/SKILL.md`.
-- `forbidden` → Nebius IAM registry tokens expire. Refresh the pull secret in the
-  namespace that owns the pod rather than hand-minting per run; the canonical
-  helper is `npa.clients.nebius_auth.mint_nebius_iam_token` and, for Kubernetes,
-  `npa.workflows.sim2real.registry_auth.ensure_registry_pull_secret_for_images`.
+A resolver error containing `no consumable public release` or `quarantined` is
+not one of those pull states. It happens before submission because repository
+policy has withdrawn trust from the recorded release bytes. Do not retry, add a
+pull secret, or paste the stale public tag into an override. Either select an
+independently scanned immutable operator image through the explicit `--image`
+or per-tool `--image-override` surface, or wait for a repaired accepted release.
+Read-only status, logs, and artifact discovery for an existing run remain valid
+and should be used for the post-mortem.
+
+- `not_found` → the selected tag or digest was not published in that registry.
+  Official NPA release images come from public GHCR; an operator-supplied BYOF
+  image must be built and pushed to the registry named in its reference.
+- `forbidden` → the image is private or the operator-supplied registry
+  credentials do not authorize that repository. Official public GHCR images use
+  anonymous pulls. For a private/BYOF image, configure credentials for the
+  image's exact registry host before submitting; NPA does not mint provider IAM
+  registry tokens or manage Kubernetes pull secrets.
 
 ## 5. Scheduling problems
 
@@ -106,6 +166,18 @@ shortage:
   single node, so `NAME:2` can never schedule across 2 nodes × 1 GPU. `gpus`
   prints the requestable quantity per node.
 
+`requested GPU task has no compatible free placement` means the live inventory
+cannot satisfy the complete request. Check per-node GPU, CPU, memory, pod slots,
+placement rules, and active workloads.
+
+`shared GPU capacity is indeterminate because active GPU pods await placement`
+means active GPU demand has not yet been assigned to a node. The preflight stops
+before launch even when the hardware supports the requested shape. Wait for
+authoritative scheduling, or cancel only pending workloads the operator owns,
+then recheck capacity. Earlier setup success does not reserve the GPU for a
+later workflow stage. Preserve this placement category in diagnostics without
+publishing raw provider errors, node names, or workload identities.
+
 ## 6. When the run looks fine but the controller does not
 
 ```bash
@@ -124,6 +196,10 @@ spec: SkyPilot 0.12.2 does not cap the client version and client 36+ makes every
   waves are valid. Submit with `--resume-run <same-id>`; the runtime adopts
   complete waves from declared S3 outputs and resubmits only incomplete work.
   Never resume to paper over a bad input — you will inherit the bad artifacts.
+  Completed waves are reused only after every declared non-empty S3 output is
+  validated. Mid-stage resume additionally requires a tool-provided compatible
+  checkpoint loader; otherwise the honest recovery boundary is the whole
+  incomplete wave.
 - **Re-load artifacts only** when every stage succeeded and only the final
   artifact load failed. This never relaunches stages:
 

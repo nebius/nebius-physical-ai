@@ -5,9 +5,22 @@ description: Use when working on Isaac Lab RL simulation, deployment, SkyPilot w
 
 # Isaac Lab
 
-Isaac Lab is the RL simulation framework. It requires RT cores: use L40S or RTX Pro 6000 only. It will not run correctly on H100 or H200 because those GPUs do not provide RT cores.
+Isaac Lab is the RL simulation framework. The canonical workbench pins the
+latest published 3.Y beta point, `v3.0.0-beta2.patch1` / wheel
+`3.0.0b2.post1`, with Isaac Sim `6.0.1.0`. Upstream has not labeled this a GA
+release; keep the beta limitation explicit. Use L40S or RTX Pro 6000 for the
+validated graphics/PhysX path. Rendering, camera-bearing tasks, and deployed
+workbenches require RT cores and cannot target B200, H100, or H200.
 
-Training must invoke headless mode. Verify training commands do not trigger rendering paths.
+The standalone training routing guard allows state-based, camera-free tasks to
+select datacenter GPUs. This is routing eligibility, not proof that the selected
+Isaac image, PhysX runtime, and driver work there. Require real training and a
+checkpoint from that exact runtime before claiming support; historical Isaac
+Lab 2.x results do not validate the generation 3 beta image.
+
+Generation 3 training must invoke `--visualizer none`. A compatibility path
+that can also receive a generation 2 image must select `--headless` only when
+the image's `ISAAC_LAB_VERSION` starts with `2.`.
 
 Before provisioning, building, downloading, or submitting an Isaac workload,
 load `skills/atomic/third-party-eula-preflight/SKILL.md`. NPA defaults the
@@ -17,10 +30,12 @@ spellings normalize case-insensitively; unrecognized values are errors.
 
 ## Runtime Isaac bootstrap (the container ships no Isaac Sim)
 
-The `npa-isaac-lab` image contains **no NVIDIA Isaac Sim or Isaac Lab code**. It used to bake
-Omniverse Kit, which made it non-redistributable; Isaac is now downloaded on first use of
-`/isaac-sim/python.sh` from `https://pypi.nvidia.com`, into a cache volume, under the
-**operator's own EULA acceptance**. Full rationale:
+The `npa-isaac-lab` image contains **no NVIDIA Isaac Sim, Isaac Lab, Omniverse
+Client, or other proprietary NVIDIA runtime code**. It used to bake Omniverse
+Kit, which made it non-redistributable; the exact runtime wheel set is now
+downloaded on first use of `/isaac-sim/python.sh` from
+`https://pypi.nvidia.com`, hash-verified, and installed into a cache volume
+under the **operator's own EULA acceptance**. Full rationale:
 `docs/workbench/container-packaging.md` and `skills/atomic/solution-licensing/SKILL.md`.
 
 What this changes in practice:
@@ -35,16 +50,19 @@ What this changes in practice:
   the bootstrap shim, and it is what every SkyPilot template, the sim2real engine and the
   workbench CLI already use. A bare `python3` is the *system* interpreter and will not
   find Isaac.
-- **Never invoke the shim from a Dockerfile `RUN`.** It would download and bake ~4.5 GB of
-  Isaac into a layer. Build-time work uses the image's own venv python.
-- **Budget the first start.** Measured on RTX PRO 6000: 111 s cold, 32 ms warm, 10.04 GiB
-  of cache. Pre-warm a shared volume once per node/PVC with
-  `npa/docker/workbench/common/warm-isaac-cache.yaml`, then run workload pods with
-  `NPA_ISAAC_CACHE_READONLY=1`. Otherwise every pod pays it, and 8 GPU pods on a node
-  download ~36 GB.
+- **Never invoke the shim from a Dockerfile `RUN`.** It would download and bake
+  the multi-gigabyte Isaac runtime into a layer. Build-time work uses the
+  image's own venv python.
+- **Budget the first start.** Use the generation-specific measurements in
+  `docs/workbench/isaac-lab-3.md`; do not reuse generation 2 cache numbers for
+  generation 3. Pre-warm a shared volume once per node/PVC with
+  `npa/docker/workbench/common/warm-isaac-cache.yaml`, then run workload pods
+  with `NPA_ISAAC_CACHE_READONLY=1`. Otherwise every pod pays the cold fetch.
 - `isaac-bootstrap status` reports what is cached without needing acceptance or network;
   `isaac-bootstrap verify` additionally launches Isaac Sim headless (needs a GPU).
-- No NGC credentials are needed to build or run this image.
+- No NGC credentials are needed to build or run this image. Native
+  `--runtime vm` installation is intentionally unsupported for generation 3;
+  managed and BYOVM deployments use the payload-clean container contract.
 
 ## Interfaces
 
@@ -59,13 +77,21 @@ API:
 CLI:
 
 ```bash
-npa workbench isaac-lab deploy
+npa workbench isaac-lab deploy --image <reviewed-image@sha256:digest>
 npa workbench isaac-lab train
 npa workbench isaac-lab eval
 npa workbench isaac-lab status
 npa workbench isaac-lab system-info
 npa workbench isaac-lab list
 ```
+
+The previously accepted public Isaac Lab image is publication-quarantined: its
+layers contain package-generated SSH host private keys. The default container
+resolver therefore refuses it even though the historical tag may still pull.
+For container/BYOVM deployment, pass `--image` with a rebuilt, byte-scanned
+immutable digest; for workflows, use the exact toolRef `--image-override`.
+Never override with the withdrawn public tag. VM-native deployment is a
+different path and does not establish a replacement container release.
 
 ### Standalone checkpoint eval
 
@@ -93,6 +119,25 @@ on `passed` (the Sim2Real workflow does this in Stage 11). With
 `--output-format json`, `eval_status`, `policy_loaded`, `success_rate`, and
 `passed` are top-level structured CLI fields; callers do not need to scrape
 the remote log tail.
+
+### Trained-policy visual export
+
+`npa workbench isaac-lab train --export-trajectories` captures genuine Isaac
+Sim RGB by default during the post-training policy rollout. The exporter must
+load the trained RSL-RL checkpoint fail-closed, launch Isaac with cameras
+enabled, call the environment's `rgb_array` renderer, and write one `rgb.npy`
+array per episode with exactly the same frame count as `state.npy` and
+`actions.npy`. It records runtime version, checkpoint hash, renderer, image
+dimensions/count, `policy_loaded`, and the shared
+episode/frame/timestamp timeline in `trajectories/meta.json`.
+
+The Isaac-to-LeRobot adapter automatically encodes these frames as the
+`observation.images.workspace` video feature and preserves their provenance.
+The LeRobot-to-Rerun adapter maps each episode to its own video asset and
+`VideoFrameReference` timeline, makes the trained-policy environment the
+prominent view, and omits evaluation panes when no evaluation entities exist.
+Metadata-only rollouts remain valid but must not be described as containing an
+environment visual. `--no-export-rgb` is the explicit scalar-only opt-out.
 
 ## Custom Forks
 
@@ -162,7 +207,42 @@ branch `npa` code into that interpreter at start from an S3 source tarball
 
 Architecture + licensing rationale: `docs/architecture/sim-backend-selection.md`.
 
+## Shared-scene navigation BYOF
+
+Use `workflows/testing/shared-scene-navigation.yaml` and
+`docs/workbench/guides/shared-scene-navigation.md` for an existing registered
+navigation task in an operator-owned Isaac image. The operator supplies a
+source-hashed task adapter, exact image digest, self-contained scene USDZ and
+deterministic train/evaluation/probe cases. Native RSL-RL trains and reloads an
+actual checkpoint; no stock task or CPU fallback proves this integration.
+GPU acceptance is unverified until the opt-in native test runs with those inputs.
+The development extra pins CPU OpenUSD so scene and visibility regressions run
+in CI; those checks do not substitute for native RTX sensor/physics acceptance.
+
+Validate peer-contact exclusion separately from observation isolation. The
+supported RGB-D mode is `all_robot_geometry_hidden`: hide every robot's render
+geometry, including self and attachments, without altering collision physics.
+Require live USD coverage, fresh paired RGB/depth invariance and a changing
+camera positive control. Reject unsupported proxies, effects and sensor modes.
+State/raycast support still requires real isolation and obstacle-contact probes.
+Use RT-core resources. Do not claim thousands-of-camera throughput from the
+focal-camera probe. Stage publications use immutable attempt objects and
+provider-conditional claim/completion records; failed claims require a new run
+prefix. Keep operator artifact locations and runtime logs private.
+
 ## Operational Safety
+
+For a captured static environment, use
+`workflows/testing/scan-to-isaac-navigation.yaml` and the contract in
+`docs/workbench/guides/scan-to-isaac-navigation.md`. Its stateless native probe
+runs with `/isaac-sim/python.sh` and tests PhysX ray intersections against the
+assembled collision geometry. It verifies sealed scene/provenance bytes and
+rejects raw OmniScripting/OmniGraph declarations before Kit opens the stage,
+including hidden variants and nested archives. It records actual Isaac/PhysX
+versions separately from the operator-declared immutable image reference;
+runtime introspection does not attest a registry digest. This path has committed
+opt-in live coverage but no completed GPU acceptance, navigation-policy result,
+or NuRec-rendering proof. Stock robot tasks do not qualify these scene inputs.
 
 Managed VM `deploy` defaults to in-place updates for existing aliases. Terraform
 plans that would destroy or replace critical infrastructure are blocked unless
@@ -170,8 +250,52 @@ the operator passes `--replace` and confirms with `--yes` for automation.
 
 ## Workflows
 
+### Calibrated RGB-D sensor rigs
+
+Use `workflows/testing/multicamera-rgbd-capture.yaml` for a supplied static USD
+scene plus calibrated camera rig and sampled trajectory. It calls
+`npa.workflows.isaac_rgbd.cli capture` in the supported Isaac interpreter and
+validates decoded S3 RGB/depth/masks/optional world points in a separate CPU
+stage. The graph stays in the standard workflow runtime; no robot is needed.
+The default four-camera procedural room is a sensor qualification fixture, not
+evidence of an industrial scan, navigation task, or encoder-training quality.
+GPU acceptance has not been run for this adapter.
+
+Keep `config.source_overlay: true` and submit with `--stage-src` (or a verified
+`NPA_SRC_S3_URI`) so both workers receive the new adapter even when the selected
+Isaac image already contains an older NPA package. Before opening any supplied
+stage in Kit, inspect every hashed USD layer through raw Sdf traversal, including
+inactive and unselected variants. Reject scripting APIs/properties, graph
+content, time samples and value clips, then reject composition errors after
+opening. Portable USDZ roots and nested packages are supported: inspect every
+archive member in private audit directories, including unused layers, and reject
+traversal, symlinks, duplicate/colliding names, compression and renamed packages.
+Explicit package-relative member paths remain unsupported. Author capture cameras
+into the writable session layer. Relative dependencies may use parent components
+only when the resolved path stays in the hashed bundle or package. Preserve ordinary
+textures. Do not describe these checks as a sandbox for arbitrary USD plugins.
+
+`workflows/testing/multicamera-rgbd-warehouse.yaml` runtime-collects the public
+NVIDIA full warehouse with native `omni.kit.usd.collect` (USD and MDL dependencies),
+then captures 265 poses over 66 meters using four 1280x720 cameras. Preparation is
+`npa.workflows.isaac_rgbd.cli prepare-reference --output-path <s3-prefix>` in the
+Isaac interpreter. Missing assets, native collection errors and content-audit
+failures stop preparation. Vendor assets stay in operator storage. This is a
+public authored reference, not a scan reconstruction or robot navigation result;
+GPU acceptance remains pending. Point-cloud output includes a per-frame fused
+world cloud retaining camera and pixel indices; validation recomputes it from
+the original RGB-D bytes rather than trusting cloud hashes alone.
+
+The contract requires Z-up meter scenes, finite rigid transforms, zero-skew
+pinhole calibration, and strictly increasing sampled timestamps. Depth is
+axial optical Z in meters; invalid values become zero with a boolean mask.
+Never publish successful capture evidence without decoding actual artifacts,
+matching all camera render reference times, and verifying calibration and
+backprojection. See `docs/workbench/multicamera-rgbd-capture.md` for S3 schemas,
+limits, pinned API references and opt-in live acceptance.
+
 - Single RL job: `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml`.
-- Parameter sweep: `npa/workflows/workbench/npa-workflows/isaac-lab-rl-sweep.yaml`.
+- Parameter sweep: `workflows/testing/isaac-lab-rl-sweep.yaml`.
 - Runner: `npa/scripts/run_isaac_lab_rl.py`.
 
 E2E is pending the training command fix tracked by `W9-isaac-lab-e2e-fix`.

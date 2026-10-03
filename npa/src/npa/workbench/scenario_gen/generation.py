@@ -56,7 +56,11 @@ def compute_manifest_sha256(kind: str, payload: dict[str, Any]) -> str:
     digest = hashlib.sha256()
     digest.update(kind.encode("utf-8"))
     digest.update(b"\n")
-    digest.update(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+    digest.update(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode(
+            "utf-8"
+        )
+    )
     digest.update(b"\n")
     return digest.hexdigest()
 
@@ -92,10 +96,14 @@ def simulate_adversary(request: GenerateRequest, seed: int) -> list[dict[str, An
     budget_gain = min(0.25, math.log10(max(request.adversary_steps, 10)) / 40.0)
     candidates: list[dict[str, Any]] = []
     for index in range(request.num_scenarios):
-        perturbation = {axis: round(rng.uniform(0.0, 1.0), 4) for axis in PERTURBATION_AXES}
+        perturbation = {
+            axis: round(rng.uniform(0.0, 1.0), 4) for axis in PERTURBATION_AXES
+        }
         magnitude = sum(perturbation.values()) / len(perturbation)
         # Heuristic: bigger correlated perturbations => higher predicted failure.
-        failure_score = min(1.0, round(magnitude * (0.75 + budget_gain) + rng.uniform(0.0, 0.1), 4))
+        failure_score = min(
+            1.0, round(magnitude * (0.75 + budget_gain) + rng.uniform(0.0, 0.1), 4)
+        )
         candidates.append(
             {
                 "scenario_id": f"adv-{index:04d}",
@@ -113,7 +121,9 @@ def simulate_adversary(request: GenerateRequest, seed: int) -> list[dict[str, An
 
 def _diversity_scores(records: list[dict[str, Any]]) -> dict[str, float]:
     """Mean pairwise perturbation distance, normalized to [0, 1]."""
-    axes = sorted({axis for record in records for axis in record.get("perturbation", {})})
+    axes = sorted(
+        {axis for record in records for axis in record.get("perturbation", {})}
+    )
     norm = math.sqrt(len(axes)) or 1.0
     diversity: dict[str, float] = {}
     for record in records:
@@ -124,7 +134,10 @@ def _diversity_scores(records: list[dict[str, Any]]) -> dict[str, float]:
                 continue
             other_vector = other.get("perturbation", {})
             distance = math.sqrt(
-                sum((vector.get(axis, 0.0) - other_vector.get(axis, 0.0)) ** 2 for axis in axes)
+                sum(
+                    (vector.get(axis, 0.0) - other_vector.get(axis, 0.0)) ** 2
+                    for axis in axes
+                )
             )
             distances.append(distance)
         raw = sum(distances) / len(distances) if distances else 0.0
@@ -161,7 +174,9 @@ def generate_scenarios(
         record = ScenarioRecord(
             scenario_id=scenario_id,
             seed=int(candidate.get("seed", 0)),
-            perturbation={k: float(v) for k, v in candidate.get("perturbation", {}).items()},
+            perturbation={
+                k: float(v) for k, v in candidate.get("perturbation", {}).items()
+            },
             failure_score=failure_score,
             severity=failure_score,
             diversity=diversity.get(scenario_id, 0.0),
@@ -191,7 +206,9 @@ def generate_scenarios(
         "scenarios": [record.model_dump(mode="json") for record in records],
     }
 
-    _emit_artifacts(request, resolved_run_id, records, manifest_payload, target_manifest_uri)
+    _emit_artifacts(
+        request, resolved_run_id, records, manifest_payload, target_manifest_uri
+    )
 
     viz_target = ""
     if request.visualize:

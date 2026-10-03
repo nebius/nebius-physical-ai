@@ -1,0 +1,57 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof
+  description: >
+    Generic BYOF workflow: build/push an OSS repo image on any base (Ubuntu or
+    Isaac Lab) and run a live workload on Kubernetes (RL training or datagen).
+config:
+  bucket: example-bucket
+  repo_url: "<repo-url>"
+  repo_ref: "<repo-ref>"
+  # Private GitHub: set repo_auth=github and forward the named variable with
+  # workflow submit --secret-env. The value never belongs in this spec.
+  repo_auth: none
+  repo_token_env: GH_TOKEN
+  base_profile: ubuntu
+  # The outer workflow task runs in this same declared base instead of silently
+  # falling back to SkyPilot's default. For Isaac use base_profile=isaac-lab and
+  # base_image=tool://isaac-lab so routing and EULA preflight see the real runtime.
+  base_image: "ubuntu:22.04"
+  build_command: ""
+  workload: "<workload>"
+  smoke_command: ""
+  solution_name: ""
+  capability_name: ""
+  smoke_artifact_name: ""
+  resource_profile_yaml: "<resource-profile.yaml>"
+  task: "<task>"
+  iterations: 1
+  num_envs: 4
+  num_demos: 10
+  wait_timeout: 21600
+  poll_interval: 60
+
+  output_root: s3://{{config.bucket}}/byof/{{run.id}}
+  summary_uri: "{{config.output_root}}/npa_byof_summary.json"
+  dataset_uri: "{{config.output_root}}/dataset.hdf5"
+  checkpoint_uri: "{{config.output_root}}/npa_isaac_lab_checkpoint.pt"
+resources:
+  gpu:
+    cloud: kubernetes
+    image: "{{config.base_image}}"
+    accelerators: RTXPRO6000:1
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Build a BYOF image from config.repo_url and run the selected workload
+      (rl-train or datagen) on live infra.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+      - uri: "{{config.dataset_uri}}"
+        schema: npa.workbench.byof.dataset.v1
+    terminal: true
