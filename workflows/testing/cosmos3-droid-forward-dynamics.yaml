@@ -15,7 +15,8 @@ config:
   prefix: "runs/{{run.id}}/cosmos3-droid-forward-dynamics"
   source_overlay: true
   # A run-scoped, hash-verified selection manifest. It identifies one DROID
-  # episode window and either a scene/building split or the card's exact 3% split.
+  # episode window, its raw action.gripper_position values, and either a
+  # scene/building split or the card's exact 3% split.
   selection_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/selection.json"
   checkpoint_revision: "1dfff3cc3b86548b208341bb123d1c4f71043114"
   seed: "0"

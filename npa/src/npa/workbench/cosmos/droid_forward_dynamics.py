@@ -259,25 +259,36 @@ def _decode_video(path: Path) -> list[np.ndarray]:
     return frames
 
 
-def _relative_actions(poses: list[dict[str, Any]]) -> list[list[float]]:
+def _relative_actions(
+    poses: list[dict[str, Any]], raw_gripper_actions: list[float]
+) -> list[list[float]]:
     if len(poses) != FRAME_COUNT:
         raise DroidForwardDynamicsError(f"poses_abs must contain exactly {FRAME_COUNT} entries")
-    decoded: list[tuple[np.ndarray, np.ndarray, float]] = []
+    if len(raw_gripper_actions) != PREDICTION_FRAME_COUNT:
+        raise DroidForwardDynamicsError(
+            "gripper_actions_raw must contain exactly 16 source action values"
+        )
+    if any(not 0.0 <= value <= 1.0 for value in raw_gripper_actions):
+        raise DroidForwardDynamicsError("gripper_actions_raw values must be within [0, 1]")
+    decoded: list[tuple[np.ndarray, np.ndarray]] = []
     for index, raw_pose in enumerate(poses):
         pose = _expect_mapping(raw_pose, f"poses_abs[{index}]")
         position = np.asarray(_finite_vector(pose.get("position_m"), 3, f"pose {index} position"))
         rotation = _matrix3(pose.get("rotation_matrix"), f"pose {index} rotation")
-        gripper = _finite_vector([pose.get("gripper_position")], 1, f"pose {index} gripper")[0]
-        decoded.append((position, rotation, gripper))
+        decoded.append((position, rotation))
     actions: list[list[float]] = []
-    for index, ((position, rotation, _), (next_position, next_rotation, next_gripper)) in enumerate(
+    for index, ((position, rotation), (next_position, next_rotation)) in enumerate(
         zip(decoded, decoded[1:])
     ):
         translation = next_position - position
         relative_rotation = rotation.T @ next_rotation
         # Cosmos' rot6d convention stores the first two *columns*, column-major.
         rot6d = relative_rotation[:, :2].reshape(-1, order="F")
-        raw = [*translation.tolist(), *rot6d.tolist(), 1.0 - next_gripper]
+        # The DROID post-train reads action.gripper_position, not the gripper
+        # state embedded in an observation/pose record.  It flips that source
+        # field for this exact dataset version before concatenating it with the
+        # relative end-effector pose action.
+        raw = [*translation.tolist(), *rot6d.tolist(), 1.0 - raw_gripper_actions[index]]
         if len(raw) != RAW_ACTION_DIM or not all(math.isfinite(value) for value in raw):
             raise DroidForwardDynamicsError(f"action {index} does not satisfy the raw 10-D contract")
         actions.append([*raw, *([0.0] * (PADDED_ACTION_DIM - RAW_ACTION_DIM))])
@@ -342,7 +353,12 @@ def prepare_droid_forward_dynamics(*, input_path: str, output_path: str) -> dict
     poses = selection.get("poses_abs")
     if not isinstance(poses, list):
         raise DroidForwardDynamicsError("selection must provide absolute DROID poses")
-    actions = _relative_actions(poses)
+    raw_gripper_actions = _finite_vector(
+        selection.get("gripper_actions_raw"),
+        PREDICTION_FRAME_COUNT,
+        "gripper_actions_raw",
+    )
+    actions = _relative_actions(poses, raw_gripper_actions)
 
     with policy_workspace(output_path, "droid-fd-prepare") as root:
         artifacts = root / "artifacts"
@@ -372,7 +388,7 @@ def prepare_droid_forward_dynamics(*, input_path: str, output_path: str) -> dict
             "action_contract": {
                 "relative_translation": True,
                 "rotation": "rot6d_first_two_rotation_columns",
-                "gripper": "1.0 - raw_droid_gripper_position",
+                "gripper": "1.0 - source.action.gripper_position",
                 "normalization": "none",
                 "shape": [PREDICTION_FRAME_COUNT, PADDED_ACTION_DIM],
                 "domain_name": DOMAIN_NAME,

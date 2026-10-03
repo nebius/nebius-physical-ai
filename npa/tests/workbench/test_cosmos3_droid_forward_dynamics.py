@@ -49,7 +49,6 @@ def _selection(tmp_path: Path) -> Path:
         {
             "position_m": [index * 0.01, 0.0, 0.1],
             "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            "gripper_position": index / 32.0,
         }
         for index in range(17)
     ]
@@ -68,6 +67,7 @@ def _selection(tmp_path: Path) -> Path:
         },
         "frames": frames,
         "poses_abs": poses,
+        "gripper_actions_raw": [index / 32.0 for index in range(16)],
     }
     path = tmp_path / "selection.json"
     path.write_text(json.dumps(selection))
@@ -167,6 +167,15 @@ def test_prepare_rejects_an_unrecognized_heldout_split(tmp_path: Path) -> None:
         prepare_droid_forward_dynamics(input_path=str(path), output_path=str(tmp_path / "out"))
 
 
+def test_prepare_requires_the_source_action_gripper_not_pose_state(tmp_path: Path) -> None:
+    path = _selection(tmp_path)
+    selection = json.loads(path.read_text())
+    selection.pop("gripper_actions_raw")
+    path.write_text(json.dumps(selection))
+    with pytest.raises(DroidForwardDynamicsError, match="gripper_actions_raw"):
+        prepare_droid_forward_dynamics(input_path=str(path), output_path=str(tmp_path / "out"))
+
+
 def test_native_argv_uses_the_card_contract(tmp_path: Path) -> None:
     repo = tmp_path / "framework"
     (repo / ".venv/bin").mkdir(parents=True)
@@ -193,6 +202,7 @@ def test_relative_action_contract_is_not_accidentally_normalized(tmp_path: Path)
     first = np.asarray(action_data["actions"][0])
     assert first.shape == (64,)
     assert first[0] == pytest.approx(0.01)
+    assert first[9] == pytest.approx(1.0)
     assert np.allclose(first[10:], 0.0)
     assert prepared["action_contract"]["normalization"] == "none"
 

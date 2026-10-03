@@ -30,6 +30,8 @@ def test_droid_forward_dynamics_has_five_connected_substantive_stages() -> None:
         "workbench.cosmos3.droid_fd_visualize",
     ]
     assert all(TOOL_CATALOG[ref].stub is False for ref in refs)
+    assert TOOL_CATALOG["workbench.cosmos3.droid_fd_predict"].access_capabilities == ("cosmos3",)
+    assert TOOL_CATALOG["workbench.cosmos3.droid_fd_controls"].access_capabilities == ("cosmos3",)
     assert "prepared.json" in str(states["predict_true"]["inputs"])
     predict_argv = TOOL_CATALOG["workbench.cosmos3.droid_fd_predict"].argv_template
     controls_argv = TOOL_CATALOG["workbench.cosmos3.droid_fd_controls"].argv_template

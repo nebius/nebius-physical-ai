@@ -4254,6 +4254,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos3.droid_fd_predict": ToolEntry(
         name="workbench.cosmos3.droid_fd_predict",
+        access_capabilities=("cosmos3",),
         description=(
             "Run the published DROID forward-dynamics checkpoint using its selected "
             "held-out true-action chunk."
@@ -4275,6 +4276,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.cosmos3.droid_fd_controls": ToolEntry(
         name="workbench.cosmos3.droid_fd_controls",
+        access_capabilities=("cosmos3",),
         description=(
             "Run matched temporal-permutation and zero-action native controls for "
             "the exact prepared DROID window."

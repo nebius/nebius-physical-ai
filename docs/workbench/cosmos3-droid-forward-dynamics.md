@@ -9,7 +9,8 @@ policy or a general benchmark result.
 ## What the workflow does
 
 1. Reads one hash-verified DROID selection manifest, composes the three views,
-   and converts absolute poses to the checkpoint's exact action representation.
+   and converts absolute poses plus source `action.gripper_position` values to
+   the checkpoint's exact action representation.
 2. Runtime-fetches the immutable exported checkpoint, hashes its metadata and
    every safetensors shard independently, then runs upstream native inference
    with the true actions.
@@ -31,7 +32,7 @@ The pinned model revision is
 15-fps window: the first composite observation is conditioning and the next 16
 frames are predicted. The action tensor is `[16,64]`: channels 0–2 are relative
 translation, 3–8 are the relative rotation matrix's first two columns in rot6d,
-and channel 9 is `1.0 - raw_droid_gripper_position`; remaining channels are
+and channel 9 is `1.0 - source.action.gripper_position`; remaining channels are
 zero. No action normalization is applied. The workflow uses
 `droid_lerobot` (domain id 8), the same checkpoint domain named in the card.
 For the upstream native CLI, the stage writes the corresponding bare `[16,10]`
