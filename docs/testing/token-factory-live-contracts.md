@@ -30,8 +30,10 @@ Optional environment configuration:
 | Variable `NPA_TF_RECHECK_REQUIRED_MODELS` | Comma-separated additional models that must pass actual inference |
 | Variable `NPA_TF_RECHECK_JSON_BASELINE` | Reviewed structured-output expectation: `healthy` (default), `malformed_json`, or `schema_invalid` |
 
-The migration's configured text, reasoning and vision defaults always remain
-required. Catalog membership alone cannot pass: actual requests must return
+The migration's configured text, reasoning and vision defaults and Kimi-K3
+always remain required. The scheduled job executes both Kimi visual controls
+(completed and incomplete sequences), then independently verifies both executed
+and passed in the receipt. Catalog membership alone cannot pass: actual requests must return
 the expected model identity, a complete visible answer, a request identity and
 positive token accounting. Additional model checks do not replace or silently
 reroute any default. Existing explicit model, endpoint and SDK argument
@@ -77,7 +79,15 @@ if that key is absent. Direct pytest jobs can enforce the same prerequisite
 with `--require-token-factory-live`. Ordinary developer invocations retain their
 credential-free skip behavior. The runner requires all three suites, nonzero
 collection, equality of collected/executed/passed counts, and zero failures,
-skips or collection errors. A skipped/xfail test cannot create green proof.
+skips, deselections or collection errors. A skipped/xfail or filtered-out test
+cannot create green proof.
+
+GPU served-model provenance is a separate operator-triggered lane documented in
+the [VLM runbook](../workbench/cookbooks/vlm-eval-loop-runbook.md#live-provenance-verification).
+It requires an owned, provisioned endpoint and private configuration. It is not
+scheduled GitHub coverage; this hosted job neither receives cloud administrator
+credentials nor provisions GPU resources. An operator execution and its cleanup
+receipt must be reported separately.
 
 Every invocation writes an exclusive `0600` `receipt.json` with source commit
 and file hashes, execution location, scope-label and endpoint hashes, test
