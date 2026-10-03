@@ -75,11 +75,10 @@ def rrd_scale_rows(count: int) -> list[dict]:
 
 
 def _decoded_rrd_events(path: Path) -> list[dict]:
-    import rerun_bindings
+    from rerun.chunk import RrdReader
 
     events = []
-    recording = rerun_bindings.load_recording(str(path))
-    for chunk in recording.chunks():
+    for chunk in RrdReader(path).stream():
         batch = chunk.to_record_batch()
         columns = batch.to_pydict()
         if "problem_index" not in columns:
@@ -827,7 +826,7 @@ def test_factual_rrd_round_trip(tmp_path):
         check=True,
     ).stdout
     for entity in (
-        "npa.curobo",
+        "npa-curobo",
         "unit-rrd",
         "problem_index",
         "trajectory_time",
@@ -923,7 +922,7 @@ def test_decoded_rrd_rejects_same_cardinality_wrong_semantics(tmp_path, mutation
     original = row()
     journal_bytes = canonical(original) + b"\n"
     target = tmp_path / "adversarial.rrd"
-    recording = rr.RecordingStream("npa.curobo", recording_id="semantic-run")
+    recording = rr.RecordingStream("npa-curobo", recording_id="semantic-run")
     recording.save(str(target))
     recording.log(
         "provenance",
@@ -1009,7 +1008,7 @@ def test_decoded_rrd_coverage_rejects_any_missing_problem_or_sample_chunk(tmp_pa
     }
     expected = _expected_rrd_chunks([solved, failed])
     decoded = tmp_path / "truncated-print.txt"
-    lines = [b'npa.curobo "coverage-run"']
+    lines = [b'npa-curobo "coverage-run"']
     for entity, count in expected.items():
         if entity == "trajectory/joints/0/position":
             continue

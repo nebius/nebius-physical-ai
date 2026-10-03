@@ -19,7 +19,7 @@ prepare its project and compute, then inspect the result.
 | Task | Read |
 | --- | --- |
 | Author and submit YAML | [Workflow guide](workbench/npa-workflow-guide.md) · [toolRef catalog](workbench/npa-workflow-tool-catalog.md) |
-| Use CLI, Python, or HTTP | [CLI reference](cli/README.md) · [SDK walkthrough](workbench/cli-sdk-yaml-walkthrough.md) · [SDK errors](sdk/errors.md) |
+| Use CLI, Python, or HTTP | [CLI reference](cli/README.md) · [SDK surface](sdk/README.md) · [SDK walkthrough](workbench/cli-sdk-yaml-walkthrough.md) · [SDK errors](sdk/errors.md) |
 | Choose a direct deployment mode | [Runtime modes](workbench/runtime-modes.md) |
 | Understand status and resume | [Run lifecycle](run-lifecycle.md) |
 | View results in a browser | [Agent workbench](agent.md) · [Rerun shares](workbench/rerun-sharing.md) · [Foxglove export](workbench/foxglove-export.md) |
@@ -34,6 +34,8 @@ prepare its project and compute, then inspect the result.
 | Configure workflow scheduling | [SkyPilot setup](orchestration/skypilot-setup.md) |
 | Manage fleets or Slurm | [Cluster backends](cluster-backends.md) · [Fleet storage verification](fleet-storage-verification.md) · [RTX MIG](fleet-rtx-pro-6000-mig.md) |
 | Choose an image and GPU | [Public image catalog](workbench/container-image-catalog.md) · [compatibility matrix](workbench/image-gpu-compatibility-matrix.md) |
+| Adopt FA4 in an RTX PRO 6000 application | [Base naming, image build and model integration](workbench/guides/rtx6000-fa4.md) |
+| Compare standalone FA2 and tuned FA4 | [RTX PRO 6000 measurements and actual renders](workbench/fa2-fa4-validation.md) |
 | Reuse model downloads | [Model-weight cache](workbench/model-weight-cache.md) |
 | Use preemptible VMs | [Preemptible capacity](workbench/preemptible-vms.md) |
 | Reproduce a workload | [Cookbooks](workbench/cookbooks/README.md) |
@@ -44,6 +46,9 @@ prepare its project and compute, then inspect the result.
 | --- | --- |
 | Add a tool or integration | [Contributing](../CONTRIBUTING.md) · [OSS onboarding ladder](architecture/oss-onboarding-ladder.md) |
 | Understand the platform | [Contributor context](architecture/contributor-context.md) · [solutions model](architecture/solutions-model.md) · [CLI namespaces](architecture/cli-namespaces.md) |
+| Use Jev model routing | [Configuration and live cache evidence](workbench/jev-routing.md) · [integration assessment](architecture/jev-workbench-evaluation.md) |
+| Generate synthetic training data | [Automatically routed Token Factory SDG](workbench/token-factory-sdg.md) |
+| Generate robot demonstrations | [Token Factory → MuJoCo → LeRobot SDG](workbench/token-factory-robot-sdg.md) |
 | Plan a Cosmos 3 model factory | [Architecture and implementation plan](architecture/cosmos3-model-factory.md) |
 | Package a container | [Container contract](workbench/container-packaging.md) · [image reproducibility](security/image-reproducibility.md) |
 | Run local and live checks | [Package test commands](../npa/README.md#developing-and-testing-npa) · [E2E](testing/e2e.md) · [serverless E2E](testing/e2e-serverless.md) · [daily dev VM](testing/dev-vm-daily.md) |

@@ -2,7 +2,7 @@
 
 [Workbench docs](README.md)
 
-The image candidate remains `0.8.0-cuda13-b300-unbuilt` and publication-quarantined
+The image candidate remains `0.8.0-cuda13-blackwell-unbuilt` and publication-quarantined
 until built-image checks and real GPU validation pass. Build from committed inputs;
 `build.sh` checks scoped source cleanliness and archives the exact commit for Docker.
 The image also locks the Ubuntu package closure to an immutable snapshot; changing

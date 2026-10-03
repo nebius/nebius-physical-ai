@@ -70,6 +70,28 @@ def service_endpoint(name: str, namespace: str, port: int) -> str:
     return f"http://{name}.{namespace}.svc.cluster.local:{port}"
 
 
+def _service_environment(
+    service_env: dict[str, str], storage_path: str
+) -> list[dict[str, Any]]:
+    """Bind the service path once and leave storage credentials to Secret refs."""
+
+    configured_storage = service_env.get("LANCEDB_STORAGE_PATH")
+    if configured_storage is not None and configured_storage != storage_path:
+        raise ServiceKubernetesError(
+            "service_env LANCEDB_STORAGE_PATH conflicts with storage_path"
+        )
+
+    manifest_env = {
+        key: value
+        for key, value in service_env.items()
+        if key not in STORAGE_SECRET_ENVS
+    }
+    manifest_env["LANCEDB_STORAGE_PATH"] = storage_path
+    return [
+        {"name": key, "value": value} for key, value in sorted(manifest_env.items())
+    ]
+
+
 def build_manifests(
     *,
     name: str,
@@ -91,11 +113,11 @@ def build_manifests(
 
     if not image.strip():
         raise ServiceKubernetesError("an image reference is required")
+    if not storage_path.strip():
+        raise ServiceKubernetesError("a storage path is required")
 
     labels = {"app": name, **MANAGED_BY_LABEL}
-    env: list[dict[str, Any]] = [
-        {"name": key, "value": value} for key, value in sorted(service_env.items())
-    ]
+    env = _service_environment(service_env, storage_path)
     if storage_endpoint_url:
         env.append({"name": "AWS_ENDPOINT_URL", "value": storage_endpoint_url})
         env.append({"name": "NEBIUS_S3_ENDPOINT", "value": storage_endpoint_url})
@@ -119,13 +141,13 @@ def build_manifests(
         # Readiness gates the Service's endpoints, so a stage never resolves the DNS name to a
         # pod that is still opening its storage.
         "readinessProbe": {
-            "httpGet": {"path": "/health", "port": port},
+            "httpGet": {"path": "/readyz", "port": port},
             "initialDelaySeconds": 5,
             "periodSeconds": 5,
             "failureThreshold": 12,
         },
         "livenessProbe": {
-            "httpGet": {"path": "/health", "port": port},
+            "httpGet": {"path": "/readyz", "port": port},
             "initialDelaySeconds": 30,
             "periodSeconds": 30,
             "failureThreshold": 6,

@@ -33,17 +33,20 @@ it remains unvalidated end to end. For browser teleoperation measurements, see
 | Generate images with Cosmos 3 | [Generation guide](../cosmos3-generate.md) and [access preflight](../cosmos3-access-preflight.md) |
 | Augment your source video with Cosmos 3 | [PAIDF + Cosmos 3](paidf-cosmos3.md) and [setup/run procedure](../../../workflows/guides/paidf-cosmos3.md) |
 | Assess augmentation across manipulation tasks | [LeRobot realism comparison](paidf-lerobot-realism.md); pinned cup, coffee and simulated cube-lift episodes |
-| Produce a labeled dataset with Cosmos Transfer | [Data Factory deployment](physical-ai-data-factory-deploy.md); its [quickstart](physical-ai-data-factory-deploy.md#quick-start-copy-paste) can seed generated frames |
+| Produce a labeled dataset with Cosmos Transfer | Run the separately named `nvidia-paidf-vda-cosmos-transfer25.yaml` via [Data Factory deployment](physical-ai-data-factory-deploy.md); its [quickstart](physical-ai-data-factory-deploy.md#quick-start-copy-paste) can seed generated frames |
 | Understand Data Factory stages and artifacts | [Component and S3 mapping](physical-ai-data-factory.md) |
+| Audit native DIG, IAA, and EVG image evidence | [Restricted image evidence](paidf-image-evidence.md) |
 | Reuse a verified dataset campaign | [Campaign reuse](paidf-campaign-reuse.md) |
 | Caption or reason about existing artifacts | [Token Factory](../token-factory.md) |
 
 <a id="physical-ai-data-factory-video-data-augmentation"></a>
 
 Data Factory composes annotation, Cosmos augmentation, evaluation, curation, and
-Rerun visualization on Nebius + SkyPilot. Select the actual workflow's inputs
-and model access requirements; generation and input-conditioned augmentation
-have different contracts.
+Rerun visualization on Nebius + SkyPilot. Its native workflow family includes a
+separately named VDA translation, DIG, IAA, and EVG translations, the established
+Transfer blueprint, and the NPA-specific Cosmos 3 alternative.
+Select the actual workflow's inputs and model access requirements; generation
+and input-conditioned augmentation have different contracts.
 
 ## Sim-to-real: the full 14-stage loop
 
@@ -63,6 +66,15 @@ when adapting it:
 <a id="bring-your-own-everything"></a>
 
 ## Use your own data, policy, or robot
+
+For a custom transformer workload, follow the
+[RTX PRO 6000 FlashAttention 4 adoption guide](rtx6000-fa4.md): build the shared
+`cuda13-blackwell` base, rebuild your application image, integrate
+FA4 explicitly, and validate before changing its deployed image digest.
+Use the [FA2/FA4 comparison guide](fa2-fa4-comparison.md) to build separate
+baselines, measure full SDXL generation and test the opt-in FA4 inference profile.
+The [latest RTX comparison](../fa4-rtx-optimization.md) includes timings and
+actual renders, with both improvements and regressions.
 
 Match the selected tool's dataset format, observation/action schema, runtime,
 and output contract. A new robot may also need simulator assets and action

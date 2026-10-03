@@ -1,12 +1,11 @@
 """Full benchmark workflow stages, handoffs and actual tool argv."""
 
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 import yaml
-
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.orchestration.npa_workflow.blueprints import (
     iter_npa_workflow_specs,

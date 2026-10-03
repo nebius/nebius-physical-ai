@@ -463,7 +463,7 @@ def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
     import rerun as rr
 
     rows = read_journal(journal)
-    recording = rr.RecordingStream("npa.curobo", recording_id=run_id)
+    recording = rr.RecordingStream("npa-curobo", recording_id=run_id)
     recording.save(str(output))
     try:
         recording.log(
@@ -530,7 +530,7 @@ def _scan_decoded_chunks(
 ) -> tuple[str, int, list[str]]:
     digest = hashlib.sha256()
     observed = {entity: 0 for entity in expected}
-    identities = {b"npa.curobo": False, run_id.encode(): False}
+    identities = {b"npa-curobo": False, run_id.encode(): False}
     size = 0
     with path.open("rb") as stream:
         for line in stream:
@@ -583,13 +583,13 @@ def _normalize_rrd_for_compare(source: Path, output: Path, *, rerun: str) -> Non
         [
             rerun,
             "rrd",
-            "compact",
+            "optimize",
             "--max-rows",
             "1000000",
             "--max-rows-if-unsorted",
             "1000000",
-            "--max-bytes",
-            "134217728",
+            "--max-size",
+            "128MiB",
             "--output",
             str(output),
             str(filtered_output),

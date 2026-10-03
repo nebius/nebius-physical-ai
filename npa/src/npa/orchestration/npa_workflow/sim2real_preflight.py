@@ -44,6 +44,50 @@ def cpu_placement_requirement() -> str:
     )
 
 
+def _config_is_enabled(value: Any) -> bool:
+    """Return whether a config flag uses an enabled truthy string form."""
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_source_sha(value: str) -> bool:
+    """Return whether a value is an exact lowercase 40-character hexadecimal SHA."""
+    return len(value) == 40 and all(char in "0123456789abcdef" for char in value)
+
+
+def _source_sha_issues(config: Mapping[str, Any]) -> list[Issue]:
+    """Mirror the renderer's two independent ``config.source_sha`` gates.
+
+    ``skypilot_render.build_skypilot_task_doc`` normalizes the value with
+    ``strip().lower()`` and then (1) rejects any non-empty value that is not an
+    exact 40-character hexadecimal SHA regardless of baked mode, and (2) requires
+    a value to be present when ``require_baked_npa`` is enabled. Reproduce both so
+    a missing or malformed attestation is reported by preflight rather than as a
+    per-step render error.
+    """
+    issues: list[Issue] = []
+    require_baked = _config_is_enabled(config.get("require_baked_npa"))
+    source_sha_value = str(config.get("source_sha") or "").strip().lower()
+    if source_sha_value and not _is_source_sha(source_sha_value):
+        issues.append(
+            (
+                "config.source_sha is not an exact 40-character hexadecimal source "
+                "attestation",
+                "set --var source_sha=<40-hex> to the exact source commit the "
+                "attested immutable task images were built from",
+            )
+        )
+    elif require_baked and not source_sha_value:
+        issues.append(
+            (
+                "config.source_sha is missing while config.require_baked_npa is "
+                "enabled",
+                "set --var source_sha=<40-hex> to the exact source commit the "
+                "attested immutable task images were built from",
+            )
+        )
+    return issues
+
+
 def static_prerequisites(
     config: Mapping[str, Any],
     *,
@@ -70,6 +114,8 @@ def static_prerequisites(
                 "verify the exact bytes",
             )
         )
+
+    issues.extend(_source_sha_issues(config))
 
     pvc = str(config.get("isaac_cache_pvc") or "").strip()
     if not pvc:
@@ -149,7 +195,17 @@ def static_prerequisites(
 
     hf_token = str(secret_values.get("HF_TOKEN") or "").strip()
     if hf_token:
-        repos = ["nvidia/Cosmos-Transfer2.5-2B"]
+        # Derive the gated repos from the sim2real capability's single source of
+        # truth so this pre-launch gate matches `health access --capability
+        # sim2real`. Cosmos Transfer (Stage 3) also fetches the pinned
+        # Predict2.5 tokenizer and the Cosmos Guardrail weights at runtime;
+        # probing only Cosmos-Transfer2.5-2B here let a run pass preflight and
+        # then fail inside Stage 3 on an unaccepted dependency.
+        from npa.workbench.model_access import gated_hf_repos
+
+        repos = list(dict.fromkeys(gated_hf_repos(("sim2real",))))
+        if not repos:
+            repos = ["nvidia/Cosmos-Transfer2.5-2B"]
         denied: list[str] = []
         for repo in (item for item in repos if item):
             result = hf_validator(hf_token, repo)
@@ -216,16 +272,82 @@ def _ready_schedulable_cpu_nodes(nodes_json: str) -> list[str]:
     )
 
 
-def kubernetes_prerequisites(
-    config: Mapping[str, Any],
-    *,
-    runner: Callable[[list[str]], Any],
-    namespace: str = "default",
-) -> list[Issue]:
-    """Validate cluster objects the real Sim2Real/SkyPilot path consumes."""
+def _is_rtx_pro_6000(labels: Mapping[str, Any]) -> bool:
+    """Use the same reviewed GPU equivalences as workflow placement."""
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuCatalog,
+        UnsatisfiableAcceleratorError,
+        resolve_kubernetes_accelerator,
+    )
 
+    for key in (
+        "nvidia.com/gpu.product",
+        "nebius.com/gpu-name",
+        "skypilot.co/accelerator",
+    ):
+        product = str(labels.get(key) or "")
+        if not product:
+            continue
+        catalog = KubernetesGpuCatalog(
+            context="driver-preflight",
+            quantities_by_accelerator={product: frozenset({1})},
+        )
+        try:
+            resolve_kubernetes_accelerator("RTXPRO6000:1", catalog=catalog)
+        except UnsatisfiableAcceleratorError:
+            continue
+        return True
+    return False
+
+
+def _managed_driver_isaac_nodes(nodes_json: str, *, placements=None) -> list[str]:
+    """Return RTX PRO 6000 nodes serving managed drivers rather than operator drivers.
+
+    Isaac Sim's camera-bearing rollouts are validated on Kubernetes only against the
+    GPU-Operator mounted RTX driver stack that `--gpu-workload-profile rtx-rendering`
+    provisions. The Nebius managed-driver image still satisfies pure-compute CUDA, so
+    Cosmos Transfer and EnvGen succeed on it and the mismatch stays invisible until
+    Stage 7 renders, where it surfaces as an opaque Warp illegal-memory-access after
+    the earlier GPU stages have already been paid for.
+    """
+    payload = json.loads(nodes_json or "")
+    from npa.orchestration.npa_workflow.sim2real_driver_preflight import (
+        node_can_host_isaac,
+    )
+
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("items"), list):
+        raise ValueError("Isaac node listing must contain an items list")
+    flagged: list[str] = []
+    for node in payload["items"]:
+        if not isinstance(node, Mapping):
+            raise ValueError("Isaac node listing contains an invalid record")
+        metadata = node.get("metadata")
+        if not isinstance(metadata, Mapping) or not metadata.get("name"):
+            raise ValueError("Isaac node metadata evidence is invalid")
+        labels = metadata.get("labels", {})
+        if not isinstance(labels, Mapping):
+            raise ValueError("Isaac node label evidence is invalid")
+        if not _is_rtx_pro_6000(labels):
+            continue
+        managed = str(labels.get("nebius.com/driverful") or "").lower() == "true"
+        operator = (
+            str(labels.get("nvidia.com/gpu.deploy.operands") or "").lower() == "true"
+        )
+        if managed and not operator and node_can_host_isaac(node, placements):
+            flagged.append(str(metadata.get("name") or ""))
+    return sorted(name for name in flagged if name)
+
+
+def _verified_cpu_nodes(nodes_json):
+    """Keep malformed node records inside the aggregated prerequisite boundary."""
+    try:
+        return _ready_schedulable_cpu_nodes(nodes_json)
+    except (AttributeError, TypeError, ValueError):
+        return []
+
+
+def _cpu_placement_issues(nodes) -> list[Issue]:
     issues: list[Issue] = []
-    nodes = runner(["get", "nodes", "-o", "json"])
     if getattr(nodes, "returncode", 1) != 0:
         issues.append(
             (
@@ -234,7 +356,7 @@ def kubernetes_prerequisites(
                 "`kubectl get nodes -o wide`",
             )
         )
-    elif not _ready_schedulable_cpu_nodes(str(getattr(nodes, "stdout", ""))):
+    elif not _verified_cpu_nodes(str(getattr(nodes, "stdout", ""))):
         issues.append(
             (
                 "no Ready, schedulable, appropriately untainted node can fit the "
@@ -247,6 +369,43 @@ def kubernetes_prerequisites(
             )
         )
 
+    return issues
+
+
+def _driver_placement_issues(nodes, placements) -> list[Issue]:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalogError
+
+    if getattr(nodes, "returncode", 1) != 0:
+        return []
+    try:
+        names = _managed_driver_isaac_nodes(
+            str(getattr(nodes, "stdout", "")), placements=placements
+        )
+    except (ValueError, KubernetesGpuCatalogError):
+        return [
+            (
+                "Isaac render node placement could not be verified",
+                "verify the selected node listing and the effective Isaac resource "
+                "profile, selectors, affinity, and tolerations",
+            )
+        ]
+    if not names:
+        return []
+    return [
+        (
+            "Isaac render stages could run on eligible RTX PRO 6000 node(s) serving the "
+            "Nebius managed-driver image instead of the validated GPU-Operator "
+            "mounted RTX drivers: " + ", ".join(names),
+            "reprovision the Isaac GPU pool with `npa cluster up "
+            "--gpu-workload-profile rtx-rendering`, which selects the "
+            "operator-mounted RTX driver path and its GLX/EGL/Vulkan readiness "
+            "gate, then rerun `kubectl get nodes -o json` on the selected context",
+        )
+    ]
+
+
+def _isaac_cache_issues(config, runner, namespace) -> list[Issue]:
+    issues: list[Issue] = []
     pvc_name = str(config.get("isaac_cache_pvc") or "").strip()
     if pvc_name:
         pvc_result = runner(["get", "pvc", pvc_name, "-n", namespace, "-o", "json"])
@@ -271,3 +430,30 @@ def kubernetes_prerequisites(
             )
 
     return issues
+
+
+def kubernetes_prerequisites(
+    config: Mapping[str, Any],
+    *,
+    runner: Callable[[list[str]], Any],
+    namespace: str = "default",
+    isaac_placements=None,
+) -> list[Issue]:
+    """Validate cluster objects the real Sim2Real/SkyPilot path consumes.
+
+    Args:
+        config: Resolved workflow configuration.
+        runner: Exact-context Kubernetes reader.
+        namespace: Selected workflow namespace.
+        isaac_placements: Effective render stage placement constraints.
+    Returns:
+        Missing prerequisites and their remediation guidance.
+    Raises:
+        None.
+    """
+    nodes = runner(["get", "nodes", "-o", "json"])
+    return (
+        _cpu_placement_issues(nodes)
+        + _driver_placement_issues(nodes, isaac_placements)
+        + _isaac_cache_issues(config, runner, namespace)
+    )

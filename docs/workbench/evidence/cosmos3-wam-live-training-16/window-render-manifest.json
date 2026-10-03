@@ -1,0 +1,9 @@
+{
+  "matplotlib": "3.11.2",
+  "numpy": "2.5.3",
+  "node_evidence_sha256": {
+    "0": "1c5e0f30a06de9b5d7f7396a4c7cfeea2c75ad12a022de593cb9657fb368f237",
+    "1": "f71190c1ff00cd2af90b001b286879e6754e9a9e8a4df208238c6e75545f4d4b"
+  },
+  "image_sha256": "ba00950dcb21883a75dcc4d267c79b954db715f1dfd26294d8269cebcb3e6c0a"
+}

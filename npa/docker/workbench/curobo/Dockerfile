@@ -10,7 +10,7 @@ ARG SOURCE_DATE_EPOCH
 # public image bytes and requires a new complete-byte policy review.
 ARG UBUNTU_SNAPSHOT=20260920T000000Z
 LABEL npa.tool="curobo" \
-      npa.version="0.8.0-cuda13-b300-unbuilt" \
+      npa.version="0.8.0-cuda13-blackwell-unbuilt" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.licenses="Apache-2.0 AND MIT AND BSD-3-Clause AND (GPL-3.0-or-later WITH GCC-exception-3.1)"
 

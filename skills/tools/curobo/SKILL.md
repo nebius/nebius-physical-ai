@@ -5,7 +5,7 @@ description: Use when running, validating or reviewing NVIDIA cuRobo V2 Franka p
 
 # cuRobo V2 motion planning
 
-The image candidate remains `0.8.0-cuda13-b300-unbuilt` and publication-quarantined
+The image candidate remains `0.8.0-cuda13-blackwell-unbuilt` and publication-quarantined
 until built-image checks and real GPU validation pass. Build from committed inputs;
 `build.sh` checks scoped source cleanliness and archives the exact commit for Docker.
 The Dockerfile pins the full Ubuntu package closure to an exact snapshot and

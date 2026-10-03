@@ -44,8 +44,8 @@ states:
     toolRef: workbench.insights.ingest_run
     resources: cpu
     outputs:
-      - uri: "{{config.insights_store_uri}}records.jsonl"
-        schema: npa.insights.metric_record.v1
+      - uri: "{{config.insights_store_uri}}"
+        schema: npa.insights.store.v1
     next: compare
 
   compare:
@@ -54,8 +54,8 @@ states:
     toolRef: workbench.insights.compare
     resources: cpu
     inputs:
-      - uri: "{{config.insights_store_uri}}records.jsonl"
-        schema: npa.insights.metric_record.v1
+      - uri: "{{config.insights_store_uri}}"
+        schema: npa.insights.store.v1
     outputs:
       - uri: "{{config.comparison_uri}}comparison.json"
         schema: npa.insights.comparison.v1
@@ -67,8 +67,8 @@ states:
     toolRef: workbench.insights.dashboard
     resources: cpu
     inputs:
-      - uri: "{{config.insights_store_uri}}records.jsonl"
-        schema: npa.insights.metric_record.v1
+      - uri: "{{config.insights_store_uri}}"
+        schema: npa.insights.store.v1
     outputs:
       - uri: "{{config.dashboard_uri}}dashboard.html"
         schema: npa.insights.dashboard.v1

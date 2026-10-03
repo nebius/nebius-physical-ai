@@ -67,6 +67,21 @@ def test_pending_stage_is_not_collapsed_to_running() -> None:
     assert curate["log_command"].endswith("--stage curate --project demo")
 
 
+def test_stage_log_command_retains_exact_isolated_controller() -> None:
+    result = build_actionable_run_status(
+        _manifest(),
+        live_status="RUNNING",
+        task_rows=[{"task_id": 1, "status": "PENDING"}],
+        project="demo",
+        isolated_config_dir="/task/controller roots/run-1",
+        now=NOW,
+    )
+
+    assert result["stages"]["curate"]["log_command"].endswith(
+        "--project demo --isolated-config-dir '/task/controller roots/run-1'"
+    )
+
+
 def test_retry_backoff_is_exposed() -> None:
     result = build_actionable_run_status(
         _manifest(),

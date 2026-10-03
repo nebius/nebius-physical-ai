@@ -58,6 +58,14 @@ first, then confirm on B300. See
 `docs/workbench/blackwell-datacenter-image-compatibility.md` and the per-image
 verdicts in `npa/docker/workbench/blackwell-dc-images.json`.
 
+For FA4 on RTX PRO 6000, use `docs/workbench/flash-attention.md` and the current
+CUDA 13 base recipe. SM120 has TMA; the historical FA4 epilogue failure was a
+software dispatch bug. Use the qualified `pack_gqa=False`, `num_splits=1`
+baseline and run the baked `gpu_capability_smoke.py --expect-capability 12.0`
+to check outputs and Q/K/V gradients. Never waive an RTX kernel failure or
+infer full-model, untested-feature, or B200/B300 support from that smoke. New
+source pins do not update existing immutable base or downstream image bytes.
+
 ## Gotchas
 
 - H100, H200, and datacenter Blackwell (B200/B300) lack RT cores; do not route
