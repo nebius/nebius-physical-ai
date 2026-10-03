@@ -28,11 +28,12 @@ def _input(tmp_path: Path) -> Path:
 
 
 def test_live_caption_identifies_frozen_shapes(tmp_path: Path) -> None:
+    client = _client()
     result = token_factory.caption_images(
         input_path=str(_input(tmp_path)),
         output_path=str(tmp_path / "caption.json"),
         temperature=0,
-        client=_client(),
+        client=client,
     )
     (tmp_path / "caption-result.json").write_text(json.dumps(asdict(result)))
     assert result.status == "completed" and result.failed_count == 0
