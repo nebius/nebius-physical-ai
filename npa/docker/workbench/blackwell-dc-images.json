@@ -144,6 +144,19 @@
       "smoke": "gpu_capability_smoke.py: device/native SASS checks, BF16 matmul and Torch SDPA controls, then 24 FA4 CuTe cases comparing outputs and dQ/dK/dV against FP64 attention",
       "notes": "The base builds and validates first. Torch must report sm_80/sm_90/sm_100/sm_120; sm_100 covers sm_103 by same-major compatibility. Current source updates FA4 for SM120 and removes the failure waiver. Published image results remain version-specific; see known_gaps.flash_attn_sm120 and docs/workbench/flash-attention.md.",
       "source_recipe_evidence": "docs/workbench/validation/fa4-rtx6000-20260925.json",
+      "build_variants": {
+        "fa2": {
+          "tag_family": "cuda13-blackwell-fa2",
+          "build_arguments": ["--attention-backend", "fa2"],
+          "purpose": "benchmark-comparison",
+          "publication": "local-only",
+          "default_cuda_archs": ["sm_120"],
+          "datacenter_validation": "not-qualified",
+          "source_recipe_evidence": "docs/workbench/validation/fa2-fa4-20260928/fa2-fa2-correctness.json",
+          "guide": "docs/workbench/guides/fa2-fa4-comparison.md",
+          "notes": "Inherits this entry's Dockerfile and build script only. Historical RTX qualification is specific to its recorded source/image; new builds require qualification. No inherited published tags, digests or B200/B300 qualification."
+        }
+      },
       "published_tag": "cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260803T032705Z",
       "published_digest": "sha256:6a493973bf8a92a9a33ad0c301a1b3c9ef1d4ba9e7e8364318d041e1b10285f1",
       "published_registries": [

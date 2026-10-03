@@ -120,6 +120,8 @@ def _runtime(selected):
     from flash_attn.cute.utils import AuxData
 
     # Upstream fingerprints cute/, but this launcher lives outside that directory.
+    # Compiled SM120 code is shared across devices; callables stay device-bound
+    # and each launch receives fresh tensors on that device's current stream.
     source_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     cache = get_jit_cache(f"rtx6000_inference_{source_hash}")
     return _Runtime(selected, flash_attn_func, _flash_attn_fwd, cache, AuxData())

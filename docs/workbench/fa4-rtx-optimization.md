@@ -46,6 +46,13 @@ both block medians, individual-run ranges and first-generation times. Their
 ranges are descriptive, not confidence intervals. All six raw reports and
 source fingerprints are in the [artifact directory](validation/fa4-rtx-20260930/).
 
+The October 2 review update adds a cache-sharing comment to the helper without
+changing its executable Python syntax tree. Because the cache namespace hashes
+the complete source file, that comment changes the namespace and triggers fresh
+compilation for a rebuilt helper. The recorded source/image hashes remain the
+identities measured here; this update supplies no new startup timings or GPU
+qualification.
+
 ## Actual renders and correctness
 
 ![Actual model renders, arranged by scene and backend](validation/fa4-rtx-20260930/renders.png)

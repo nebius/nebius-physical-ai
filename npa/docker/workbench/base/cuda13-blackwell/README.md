@@ -43,6 +43,13 @@ not the GPU kernel configuration or attention benchmark iteration count.
 The new FA2 variant uses only its canonical tag; it has no historical B300
 alias to preserve and makes no B300 qualification claim.
 
+Machine-readable discovery lives in the `npa-base.build_variants.fa2` entry of
+[`blackwell-dc-images.json`](../../blackwell-dc-images.json). The variant inherits
+the parent's Dockerfile and build script, supplies `build_arguments`, and records
+its own `tag_family`, default CUDA architecture, local-only publication scope
+and historical RTX evidence. It does not inherit the parent's published tags,
+digests or datacenter qualification.
+
 See [FA2/FA4 comparison and inference tile experiments](../../../../../docs/workbench/guides/fa2-fa4-comparison.md)
 for correctness checks, full SDXL generations and repeated timing. The
 [latest RTX comparison](../../../../../docs/workbench/fa4-rtx-optimization.md)
@@ -65,7 +72,8 @@ The `base-cuda13-b300` golden-eval entry asserts capability **10.3**. It has an
 explicit `unlimited` timeout because cold CuTe compilation for the complete
 output/gradient matrix has not been timed on the new datacenter dependency set.
 Run this entry with local `--execute` inside the selected image on B300;
-the golden-eval runner rejects serverless execution for unlimited entries.
+it declares no serverless GPU route, and the golden-eval runner rejects
+serverless execution for unlimited entries.
 For RTX PRO 6000, B200 or H100, invoke `/npa/gpu_capability_smoke.py` directly
 with `--expect-capability 12.0`, `10.0` or `9.0`, respectively.
 

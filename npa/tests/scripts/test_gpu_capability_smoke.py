@@ -231,7 +231,7 @@ def test_golden_eval_runs_strict_smoke_on_selected_gpu():
         entry["command"]
         == "python /npa/gpu_capability_smoke.py --expect-capability 10.3"
     )
-    assert entry["serverless_gpu"] == "b300"
+    assert "serverless_gpu" not in entry
     assert entry["timeout_seconds"] == "unlimited"
     assert (
         entry["script"]

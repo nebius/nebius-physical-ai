@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -184,3 +186,57 @@ def test_compiler_memory_control_reaches_the_fa2_build(docker_calls, monkeypatch
     result = _run(CANONICAL, "--attention-backend", "fa2", "--tag", SUFFIX)
     assert result.returncode == 0, result.stderr
     assert "FA2_NVCC_THREADS=1" in _calls(docker_calls)[0]
+
+
+def _python_literals(path):
+    return {
+        target.id: node.value.value
+        for node in ast.parse(path.read_text()).body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+
+def test_fa4_runtime_and_benchmark_pins_match_the_recipe():
+    """Catch incompatible helper guards before an image reaches a GPU."""
+    dockerfile = (CANONICAL / "Dockerfile").read_text()
+    commit = re.search(r"^ARG FLASH_ATTN_COMMIT=(\w+)$", dockerfile, re.M)[1]
+    helper = _python_literals(CANONICAL / "scripts/flash_attn_rtx.py")
+    benchmark = _python_literals(
+        BASES.parents[2] / "scripts/attention_benchmark_backend.py"
+    )
+    assert re.fullmatch(r"[0-9a-f]{40}", commit)
+    assert helper["_COMMIT"] == benchmark["FA_COMMIT"] == commit
+    assert helper["_VERSION"] == benchmark["FA4_VERSION"]
+    version, separator, source = helper["_VERSION"].partition("+g")
+    assert version.startswith("4.") and separator
+    assert len(source) >= 7 and commit.startswith(source)
+
+
+@pytest.mark.parametrize(
+    "pin", ["FLASH_ATTN_COMMIT", "CUTLASS_DSL_VERSION", "QUACK_KERNELS_VERSION"]
+)
+def test_build_defaults_match_the_docker_dependency_pins(
+    docker_calls, monkeypatch, pin
+):
+    monkeypatch.delenv(pin, raising=False)
+    result = _run(CANONICAL, "--tag", SUFFIX)
+    assert result.returncode == 0, result.stderr
+    dockerfile = (CANONICAL / "Dockerfile").read_text()
+    default = re.search(rf"^ARG {pin}=([^\s]+)$", dockerfile, re.M)[1]
+    assert f"{pin}={default}" in _calls(docker_calls)[0]
+
+
+def test_catalog_fa2_variant_builds_its_declared_family(docker_calls, monkeypatch):
+    monkeypatch.delenv("FA2_CUDA_ARCHS", raising=False)
+    manifest = json.loads((BASES.parent / "blackwell-dc-images.json").read_text())
+    base = next(entry for entry in manifest["images"] if entry["name"] == "npa-base")
+    variant = base["build_variants"]["fa2"]
+    result = _run(CANONICAL, *variant["build_arguments"], "--tag", SUFFIX)
+    assert result.returncode == 0, result.stderr
+    assert _tags(_calls(docker_calls)[0]) == [
+        f"npa-base:{variant['tag_family']}-{SUFFIX}"
+    ]
+    archs = ";".join(arch.removeprefix("sm_") for arch in variant["default_cuda_archs"])
+    assert f"FA2_CUDA_ARCHS={archs}" in _calls(docker_calls)[0]

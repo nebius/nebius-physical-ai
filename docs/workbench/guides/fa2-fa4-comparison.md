@@ -35,6 +35,9 @@ default. The FA2 variant's `FA2_CUDA_ARCHS=120` default is specific to the RTX
 comparison; it does not qualify that extension on B200/B300. The legacy build
 entrypoint also accepts `--attention-backend fa2` and emits the canonical FA2 tag.
 This new variant has no B300 alias. Existing FA4 tags are never reused for FA2.
+The machine-readable [`npa-base.build_variants.fa2` record](../../../npa/docker/workbench/blackwell-dc-images.json)
+lists the build arguments, tag family and SM120-only comparison scope. It is
+separate from the accepted public release inventory.
 
 FA2 compilation can require substantial host RAM. On a smaller build host,
 prefix the FA2 build command with `FA2_NVCC_THREADS=1` to reduce compiler

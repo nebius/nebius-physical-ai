@@ -212,7 +212,6 @@ containers:
       kind: container-smoke
       command: 'python /npa/gpu_capability_smoke.py --expect-capability 10.3'
       script: npa/docker/workbench/base/cuda13-blackwell/scripts/gpu_capability_smoke.py
-      serverless_gpu: b300
       gpu: required
       # Cold CuTe JIT time is unmeasured on these pins. Run locally in the
       # selected image; unlimited evaluations reject serverless deadlines.
