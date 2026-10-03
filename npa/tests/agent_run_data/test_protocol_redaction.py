@@ -12,6 +12,17 @@ import pytest
 from npa.agent_backend import trajectory as emitter
 
 
+def test_yaml_mapping_headers_do_not_consume_the_next_field_as_a_secret():
+    source = "states:\n  stage-06-tokens:\n    description: Produce policy tokens\n"
+    assert emitter.redact(source) == source
+    nested = "credentials:\n  api_key: synthetic-sensitive-value\n"
+    assert "synthetic-sensitive-value" not in emitter.redact(nested)
+    scalar = "token:\n  synthetic-multiline-value\n"
+    assert "synthetic-multiline-value" not in emitter.redact(scalar)
+    colon_scalar = "token:\n  synthetic:colon-value\n"
+    assert "synthetic:colon-value" not in emitter.redact(colon_scalar)
+
+
 class Storage:
     def __init__(self, *, fail: bool = False):
         self.s3 = self
