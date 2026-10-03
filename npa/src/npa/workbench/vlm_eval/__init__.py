@@ -6,6 +6,7 @@ import base64
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
+import errno
 import hashlib
 from itertools import product
 from io import BytesIO
@@ -2514,8 +2515,19 @@ def _rubric_from_path(raw_name: str, *, dataset_path: str) -> tuple[str, str] | 
         dataset_base = dataset_file.parent if dataset_file.suffix else dataset_file
         paths.insert(0, dataset_base / candidate)
     for path in paths:
-        if path.is_file():
-            return (path.stem, path.read_text(encoding="utf-8").strip())
+        try:
+            if path.is_file():
+                return (path.stem, path.read_text(encoding="utf-8").strip())
+        except (OSError, UnicodeError) as exc:
+            # Inline rubrics can exceed filesystem component limits; explicit
+            # file requests must still report the actual access/read failure.
+            if (
+                isinstance(exc, OSError)
+                and exc.errno == errno.ENAMETOOLONG
+                and not raw_name.startswith("@")
+            ):
+                return None
+            raise VlmEvalError(f"Unable to read rubric file: {candidate}") from exc
     if raw_name.startswith("@"):
         raise VlmEvalError(f"rubric file does not exist: {candidate}")
     return None
