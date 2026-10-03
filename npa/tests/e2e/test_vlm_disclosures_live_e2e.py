@@ -49,11 +49,15 @@ def _record_transport(monkeypatch, evidence: Path) -> list[dict]:
 
     def post(client, url, *args, **kwargs):
         response = original(client, url, *args, **kwargs)
+        raw_name = f"transport-{len(records) + 1:02d}.response.bin"
+        with (evidence / raw_name).open("xb") as raw:
+            raw.write(response.content)
         record = {
             "request": kwargs.get("json"),
             "http_status": response.status_code,
             "raw_response": response.text,
             "response_sha256": hashlib.sha256(response.content).hexdigest(),
+            "raw_response_bytes_file": raw_name,
         }
         records.append(record)
         (evidence / f"transport-{len(records):02d}.json").write_text(
