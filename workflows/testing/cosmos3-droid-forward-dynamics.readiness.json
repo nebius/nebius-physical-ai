@@ -1,0 +1,62 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "40911f90abbf12bb63796704e64acf64c86afa38c9e911710996e183dc862f8f",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and five-stage planning resolve every toolRef and exact run-scoped handoff. The focused workflow, CLI, catalog, media, and Rerun tests pass locally.",
+      "evidence": [
+        "npa/tests/workflows/test_cosmos3_droid_forward_dynamics_workflow.py",
+        "npa/tests/workbench/test_cosmos3_droid_forward_dynamics.py",
+        "npa workbench workflow validate-spec workflows/testing/cosmos3-droid-forward-dynamics.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/cosmos3-droid-forward-dynamics.yaml --run-id cosmos3-droid-fd-readiness --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The local contract test creates and decodes actual three-view MP4s, evaluates frame-wise RGB metrics and action controls, and independently verifies the emitted Rerun recording. It does not substitute those synthetic test media for model-inference evidence.",
+      "evidence": [
+        "npa/tests/workbench/test_cosmos3_droid_forward_dynamics.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "blocked",
+      "reason": "The configured bucket is listable but rejects run-prefix writes under the current scoped profile; no artifacts were published and no alternative bucket was assumed.",
+      "evidence": [
+        "private task evidence: storage-write-denial.json"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "A genuine 17-frame DROID window from documented held-out failure episode 6150 was independently extracted and hash-checked in private evidence, but cannot yet be staged to a writable worker-visible prefix.",
+      "evidence": [
+        "private task evidence: selected-episode-6150/selection.local.json"
+      ]
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "Nebius and public Cosmos access preflights passed, but the storage write denial blocks a complete workflow submission. The public derivative checkpoint also needs its own runtime fetch and identity check on the selected worker.",
+      "evidence": [
+        "private task evidence: upstream/model-card",
+        "private task evidence: novel-issues.md"
+      ]
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "The configured public Cosmos3 image is repository-quarantined pending a repaired, exact-digest scan and capability qualification; this workflow does not bypass that policy or publish a new image.",
+      "evidence": [
+        "npa/deploy/public_release_manifest.json",
+        "npa/docker/workbench/packaging-contract.yaml"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "No owned GPU workflow can be submitted until a writable scoped output prefix and qualified immutable Cosmos3 image are supplied. No live acceptance, benchmark result, or robot claim is made.",
+      "evidence": [
+        "docs/workbench/cosmos3-droid-forward-dynamics.md"
+      ]
+    }
+  }
+}
