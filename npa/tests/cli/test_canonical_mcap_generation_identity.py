@@ -12,7 +12,7 @@ from mcap.writer import Writer
 
 from npa.agent_backend.canonical_mcap import prepare_canonical_mcap
 from npa.workflows.sim2real import publication
-from tests.cli.test_canonical_mcap import _S3, _journal_present, _safe_key
+from .test_canonical_mcap import _S3, _journal_present, _safe_key
 
 
 ROOT = "s3://bucket/runs/run-1"

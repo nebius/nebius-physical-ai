@@ -8,7 +8,7 @@ import sys
 import pytest
 from fastapi import HTTPException
 
-from tests.cli.test_stage14_twentieth_agent_controls import _import_rendered_backend
+from .test_stage14_twentieth_agent_controls import _import_rendered_backend
 
 
 def test_legacy_publication_read_rejects_missing_strong_identity(
