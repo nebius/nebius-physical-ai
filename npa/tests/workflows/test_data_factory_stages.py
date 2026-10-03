@@ -1922,6 +1922,18 @@ def test_grade_gate_rejects_self_consistent_unregistered_hosted_substitution(
     _assert_completion_blocked(tmp_path, report, "provider_model_mismatch")
 
 
+def test_hosted_substitution_fails_before_creating_promotion_report(
+    tmp_path: Path, monkeypatch
+) -> None:
+    completion = _provider_completion(success=True, metadata=True)
+    completion["model"] = "different/model"
+    with pytest.raises(
+        vlm_eval.VlmEvalError, match="does not match the requested model"
+    ):
+        _provider_vlm_report(monkeypatch, tmp_path, completion=completion)
+    assert not (tmp_path / RESULT_FILENAME).exists()
+
+
 @pytest.mark.parametrize("backend", ["stub", "api", "self-hosted"])
 @pytest.mark.parametrize("explicit_path", [False, True])
 def test_grade_gate_rejects_real_core_stub_and_score_override_reports(
