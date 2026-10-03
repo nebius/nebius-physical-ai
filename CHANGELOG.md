@@ -24,6 +24,25 @@ a versioned heading when a release is cut.
   deletion no longer leaves private keys recoverable from an ancestor layer;
   clean containers continue to generate independent host keys when SSH starts.
 
+### VLM result artifacts use a backend-neutral filename
+
+- New `vlm-eval run` directory and object-prefix outputs are named
+  `vlm_eval.json`; the payload's `backend` and provider evidence distinguish
+  hosted/self-hosted inference from fixture scoring. Shipped workflow
+  declarations use the same canonical name. Data-factory and artifact-summary
+  readers still accept historical `vlm_eval_stub.json` bundles as a read-only
+  fallback.
+- External consumers must prefer the canonical file and fall back only when it
+  is absent; malformed canonical results never select a legacy score. Explicit
+  `.json` output paths remain unchanged. See the
+  [migration instructions](docs/workbench/cookbooks/vlm-eval-loop-runbook.md#outputs).
+- VLM promotion validates schema-v2 sampling against retained frame metadata.
+  Invalid evidence keeps its existing public reason and adds `evidence_reason`
+  diagnostics; frame hash format checks do not claim to verify image bytes.
+- Promotion now requires a completed, non-refused, strictly typed VLM verdict
+  for either backend. Truncated, filtered, duplicate-key, and coerced self-hosted
+  results remain readable through the legacy parser but cannot promote.
+
 ### Kimi-K3 direct-output requests preserve a visible answer
 
 - Token Factory and hosted VLM evaluation now share one model request profile.
