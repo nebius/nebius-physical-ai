@@ -12,7 +12,7 @@ from npa.clients.token_factory import DEFAULT_VISION_MODEL, resolve_config
 from npa.workbench.vlm_eval import benchmark_vlm_eval, DEFAULT_RUBRIC
 
 
-pytestmark = pytest.mark.token_factory_e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.token_factory_e2e]
 PROTOCOL = {
     "dataset": "isaac-agency",
     "threshold": 0.5,
