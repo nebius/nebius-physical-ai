@@ -505,6 +505,44 @@ def test_preference_cli_redacts_storage_failures(
     assert post.call_count == (2 if stage == "final" else 0)
 
 
+@pytest.mark.parametrize("boundary", ["input", "output"])
+def test_preference_cli_symlink_loop_paths_are_sanitized(
+    tmp_path, monkeypatch, boundary
+):
+    from npa.workbench import vlm_eval
+
+    first, second = _preference_cli_images(tmp_path)
+    loop = tmp_path / "private-loop"
+    loop.symlink_to(loop.name)
+    post = Mock(side_effect=AssertionError("must not call provider"))
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    output = loop if boundary == "output" else tmp_path / "output"
+    baseline = loop if boundary == "input" else first
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "compare-preference",
+            "--baseline-path",
+            str(baseline),
+            "--candidate-path",
+            str(second),
+            "--output-path",
+            str(output),
+            "--task",
+            "Compare visible shapes.",
+            "--output-format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 1
+    assert str(tmp_path) not in result.output
+    assert "Traceback" not in result.output
+    assert "private-loop" not in result.output
+    post.assert_not_called()
+
+
 def test_vlm_eval_sdk_exports_blinded_preference_surface() -> None:
     from npa.sdk.workbench import vlm_eval as sdk_vlm_eval
     from npa.workbench import vlm_eval as core_vlm_eval
