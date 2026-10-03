@@ -21,15 +21,13 @@ def test_api_backend_defaults_to_token_factory_served_vision_model(tmp_path) -> 
     """The Token Factory API serves MiniMax-M3, not vlm_eval's self-hosted
     default (Qwen2-VL-7B, which 404s), so the api backend must pick the served
     model unless --model is overridden."""
-    from npa.clients.token_factory import DEFAULT_VISION_MODEL
-
     result = evaluate_vlm(
         input_path="s3://ignored",
         output_path=str(tmp_path / "out.json"),
         backend="api",
         score=0.9,  # skips the real VLM call
     )
-    assert result.model == DEFAULT_VISION_MODEL
+    assert result.model == "MiniMaxAI/MiniMax-M3"
 
 
 def test_api_backend_defaults_to_token_factory_base_url(monkeypatch) -> None:
