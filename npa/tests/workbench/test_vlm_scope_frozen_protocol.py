@@ -5,12 +5,42 @@ import json
 from pathlib import Path
 import runpy
 
+import httpx
+import pytest
+
 from npa.workbench import vlm_eval
 
 
 def _live_lane():
     path = Path(__file__).parents[1] / "e2e/test_vlm_benchmark_scope_live_e2e.py"
     return runpy.run_path(str(path))
+
+
+@pytest.mark.parametrize("body", [b'{"control":"utf8"}', b"\xff\xfecontrol"])
+def test_scope_recorder_retains_original_bytes(monkeypatch, tmp_path, body) -> None:
+    monkeypatch.setattr(
+        httpx.Client, "post", lambda *_, **__: httpx.Response(200, content=body)
+    )
+    records = _live_lane()["_record_transport"](monkeypatch, tmp_path)
+    with httpx.Client() as client:
+        client.post("https://example.test/v1", json={"model": "synthetic"})
+    assert len(records) == 1
+    record = records[0]
+    assert (tmp_path / record["raw_response_bytes_file"]).read_bytes() == body
+    assert record["response_sha256"] == hashlib.sha256(body).hexdigest()
+
+
+def test_scope_recorder_refuses_existing_raw_bytes(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        httpx.Client, "post", lambda *_, **__: httpx.Response(200, content=b"new")
+    )
+    prior = tmp_path / "transport-01.response.bin"
+    prior.write_bytes(b"retained failure")
+    records = _live_lane()["_record_transport"](monkeypatch, tmp_path)
+    with httpx.Client() as client, pytest.raises(FileExistsError):
+        client.post("https://example.test/v1", json={"model": "synthetic"})
+    assert prior.read_bytes() == b"retained failure"
+    assert records == []
 
 
 def test_frozen_scope_protocol_retains_exact_original_manifest(tmp_path) -> None:
@@ -36,7 +66,9 @@ def test_frozen_scope_protocol_retains_exact_original_manifest(tmp_path) -> None
 
 
 def test_current_sample_keeps_new_terminal_case_and_updated_scope() -> None:
-    current = vlm_eval.load_benchmark_dataset(str(vlm_eval.DEFAULT_SAMPLE_BENCHMARK_PATH))
+    current = vlm_eval.load_benchmark_dataset(
+        str(vlm_eval.DEFAULT_SAMPLE_BENCHMARK_PATH)
+    )
     assert len(current.items) == 5
     current_items = {item.id: item for item in current.items}
     assert current_items["progress-without-terminal-fail"].expected_label is False
@@ -45,6 +77,8 @@ def test_current_sample_keeps_new_terminal_case_and_updated_scope() -> None:
     assert "truncated-progress sequence" in current.limitations[0]
     assert "additional omitted-terminal label" in current.limitations[1]
     assert "not task-validation" in current.limitations[2]
-    frozen = vlm_eval.load_benchmark_dataset(str(_live_lane()["FROZEN_SCOPE_PROTOCOL_PATH"]))
+    frozen = vlm_eval.load_benchmark_dataset(
+        str(_live_lane()["FROZEN_SCOPE_PROTOCOL_PATH"])
+    )
     assert current.rubrics["default"] != frozen.rubrics["default"]
     assert [current_items[item.id] for item in frozen.items] == frozen.items
