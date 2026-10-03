@@ -12,8 +12,8 @@ import tempfile
 from importlib.metadata import version
 from pathlib import Path
 
-from datasets import load_dataset
 from datasets.exceptions import DatasetGenerationError
+from datasets.packaged_modules.imagefolder.imagefolder import ImageFolder
 from PIL import Image
 
 
@@ -27,12 +27,14 @@ def _load_case(root: Path, name: str, reference: str) -> tuple[int, int, int]:
         json.dumps({"file_name": reference, "control": name}) + "\n",
         encoding="utf-8",
     )
-    dataset = load_dataset(
-        "imagefolder",
+    # Construct the installed, hash-locked local builder directly. No Hub
+    # repository resolution or remote dataset script participates in this test.
+    builder = ImageFolder(
         data_dir=str(folder),
         cache_dir=str(root / "cache" / name),
-        split="train",
     )
+    builder.download_and_prepare()
+    dataset = builder.as_dataset(split="train")
     assert len(dataset) == 1, len(dataset)
     return tuple(dataset[0]["image"].convert("RGB").getpixel((0, 0)))
 

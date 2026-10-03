@@ -389,6 +389,16 @@ SDK; previously published container pins retain their recorded build versions.
 
 ## Developing and testing npa
 
+The [served-model VLM sampling lane](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#served-model-sampling-live-lane)
+extends `npa/scripts/vlm_provenance_live_recheck.py` against an operator-owned GPU
+endpoint. Set `NPA_INTEGRATION_E2E=1` and `NPA_VLM_PROVENANCE_LIVE_CONFIG` to a
+private JSON configuration; both are unset by default. The configuration supplies
+local input/output paths, endpoint and model identities, a task, and optionally
+`api_key_env` (default `VLM_EVAL_API_KEY`). That environment variable must contain
+the endpoint key. The runner retains private per-case evidence outside Git and
+fails unless every inference case executes and passes. The linked runbook covers
+configuration, credential/access checks, provisioning ownership, and cleanup.
+
 Build actual RGB/action robot demonstrations with
 [robot SDG and LeRobot export](../docs/workbench/token-factory-robot-sdg.md).
 `npa workbench token-factory robot-sdg` uses S3 handoffs; the SDK's `robot_sdg`
