@@ -7,6 +7,23 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### VLM benchmarks distinguish outcome from agency
+
+- A packaged `isaac-agency` calibration pairs one true elevated-object claim
+  with one false grasp-and-lift claim on the same six exact stylized frames.
+  Its optional structural preflight validates frame hashes, complete
+  claim-specific color masks, signed motion, and actor separation before any
+  evaluator activity, then reuses the exact selected frames and metadata-derived
+  task for real-backend scoring without changing stub or fixture-score behavior.
+- **Breaking dataset contract:** all benchmark manifests, including calls to
+  `load_benchmark_dataset`, now require both expected-label classes and unique
+  resolved item IDs before frame selection. Single-class manifests are rejected;
+  add independently justified positive and negative cases rather than inventing
+  labels to satisfy the validator. Direct dataset loading still rejects an empty
+  path; only benchmark/CLI default selection uses the packaged illustrative sample.
+  Reports add specificity and balanced accuracy,
+  and rank configurations by balanced accuracy before existing tie-breakers.
+
 ### Audit-only rich visual review
 
 - Add `vlm-eval review-visual` and its SDK surface. Private records separate

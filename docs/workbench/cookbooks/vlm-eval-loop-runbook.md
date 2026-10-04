@@ -409,7 +409,11 @@ mean-score gate, not the per-rollout `success_rate`.
 For unlabeled gating, point `rollouts_uri` at the rollout prefix and keep the loop
 spec unchanged. For labeled calibration, create a benchmark manifest that
 points at the same rollout directories and includes `expected_label` for each
-item, then run the sweep below.
+item, then run the sweep below. A benchmark must include at least one pass and
+one fail label, and every resolved item ID must be unique. Invalid class balance
+or duplicate IDs fail before rollout-frame materialization, VLM provider
+credentials, or evaluator/provider activity. An S3-hosted manifest still needs
+storage credentials before its labels and IDs can be parsed.
 
 ## Tune
 
@@ -460,7 +464,47 @@ npa workbench vlm-eval benchmark \
 Use the best threshold and rubric from the benchmark report to update
 `vlm_success_threshold` in the loop spec (or pass `--var` at submit time).
 `workflows/testing/vlm-eval-benchmark.yaml` runs the same sweep as
-a workflow stage.
+a workflow stage. Compare balanced accuracy first; the report also retains
+specificity, accuracy, precision, recall, F1, and all four confusion counts.
+This prevents an all-positive judge from being selected because the calibration
+set contains more positive than negative cases.
+
+## Separate outcome from agency
+
+The packaged `isaac-agency` dataset is a hermetic example of a paired control:
+the same exact six stylized frames support the state claim that the red cube
+becomes elevated, but reject the agency claim that the separated, retracting arm
+grasped and lifted it.
+
+```bash
+npa workbench vlm-eval benchmark \
+  --dataset isaac-agency \
+  --output /tmp/isaac-agency-benchmark.json \
+  --backend stub \
+  --frame-selection sequence \
+  --max-frames 6 \
+  --thresholds 0.5 \
+  --format json
+```
+
+The manifest's optional `structural_check` is deliberately narrow. Before any
+backend work, it validates the configured frame selection, labels, normalized
+PNG hashes, color-mask completeness, motion direction, and expected structural
+verdict for every configured item. The benchmark report records those
+measurements under `sweep.structural_checks`, and real scoring reuses the exact
+selected frame objects rather than reading or encoding the rollout again.
+When an item relies on rollout metadata for its task, preflight freezes that
+resolved task during the same materialization and reuses it for real-backend
+scoring; stub and fixture-score behavior stays unchanged. Datasets without this
+field retain no structural-check key.
+
+The command above uses the stub only to exercise report plumbing; it does not
+qualify a model. The fixture contains synthetic stylized stand-ins, not Isaac
+Sim renders. Its geometry cannot prove contact, grasp, force, dynamics,
+causality, photoreal generalization, policy success, physical correctness, or
+robot safety.
+The frozen measurements, hardware table, and reproduction commands are in the
+[Isaac agency calibration evidence record](../evidence/vlm-isaac-agency-calibration.md).
 
 Benchmark reports also set
 `independent_human_label_calibration_established: false`: the manifest accepts
@@ -657,6 +701,11 @@ changed rubric or current commit.
   rollout directories or directly to one rollout directory.
 - Scores are all low or noisy: tighten `RUBRIC`, switch `FRAME_SELECTION`, or run
   `vlm-eval benchmark` on labeled rollouts before using the gate.
+- Simulator axes or debug gizmos appear in submitted frames: disable or crop
+  them. A judge can misclassify overlays as task objects.
+- A qualitative judgment appears to contradict a sealed numeric gate: keep the
+  synchronized simulator or telemetry measurement authoritative. Text such as
+  "a visible gap" does not establish that a predeclared height was crossed.
 - S3 writes fail: verify `AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud`
   and that the storage keys can read `rollouts_uri` and write `scores_uri`.
 

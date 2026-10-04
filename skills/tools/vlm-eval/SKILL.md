@@ -273,6 +273,34 @@ correctness, or safety. Limitations name `fixture` and deterministic `stub`
 score sources when they occur so mixed reports do not imply those cases made a
 model call.
 
+Every benchmark must contain at least one pass label and one fail label, and
+resolved item IDs must be unique. Both conditions are checked before frame
+selection or evaluator/backend activity. Reports include specificity and
+balanced accuracy in addition to the existing confusion counts and metrics;
+configuration ranking uses balanced accuracy first so an all-positive judge
+does not win on an imbalanced set.
+
+The packaged `isaac-agency` alias is a CPU-only calibration control:
+
+```bash
+npa workbench vlm-eval benchmark \
+  --dataset isaac-agency \
+  --output /tmp/isaac-agency-benchmark.json \
+  --backend stub \
+  --frame-selection sequence \
+  --max-frames 6 \
+  --thresholds 0.5
+```
+
+It pairs the same six exact stylized frames with a true state claim (the red
+cube becomes elevated) and a false agency claim (the robot grasps and lifts the
+cube). Before scoring, its opt-in structural check verifies frame order and
+hashes, complete color masks, signed vertical motion, and the absence of actor
+proximity. The exact preselected frames and any task resolved from rollout
+metadata are then reused for real-backend scoring. A structural pass or stub
+score is not model evidence: this fixture does not establish contact, causality,
+photoreal performance, physical correctness, policy success, or robot safety.
+
 The packaged sample's `progress-without-terminal-fail` case exercises an
 omitted-outcome negative, but its tiny synthetic frames and prerecorded score
 remain wiring-only. For a real rollout gate, retain a source-matched truncated
@@ -286,8 +314,9 @@ Each `npa_vlm_eval_benchmark_report_v2` configuration includes the full 2x2
 confusion matrix, false-positive and false-negative rates, and ordered
 `false_positive_item_ids` / `false_negative_item_ids`. Resolve those IDs in the
 same configuration's complete `results` list before choosing a threshold; an
-aggregate accuracy can hide the exact false pass that matters. Rates are null
-when the labeled dataset has no examples of the required class. Item IDs must
+aggregate accuracy can hide the exact false pass that matters. Historical or
+manually constructed metrics can have null rates when a required class is absent;
+new sweeps reject such single-class datasets before evaluation. Item IDs must
 be unique. Historical reports without `schema_version` are v1; their counts can
 be recomputed from retained per-item labels and predictions, but absent v2
 fields must not be presented as if the producer emitted them.
@@ -325,6 +354,16 @@ Self-hosted VLM steps need a GPU image; set it with `--image` on
 - **Benchmark the rubric before trusting it.** Rubric wording moves scores more
   than most people expect, which is precisely what `benchmark` is for. The task
   text and rubric form one prompt; changing either invalidates prior calibration.
+- **Do not calibrate only on positive examples.** Such a set cannot measure
+  false-positive behavior and is rejected before evaluation.
+- **Outcome is not agency.** A moved object does not prove that the visible
+  actor grasped or caused its motion. Use paired state and agency controls.
+- **Do not send simulator gizmos as task evidence.** Disable coordinate axes
+  and debug overlays, or crop them before a VLM audit; judges can inventory
+  those markers as physical task objects.
+- **Keep sealed numeric gates external.** Qualitative text such as "a visible
+  gap" cannot replace synchronized simulator height or another predeclared
+  numeric reference.
 - **A green gate does not mean a good policy.** It means the judge, at this
   rubric and threshold, on these frames, said yes.
 
