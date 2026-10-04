@@ -155,7 +155,7 @@
     "aggregate_confidentiality": "PASS",
     "aggregate_gitleaks": "PASS",
     "merge_precheck": "PASS",
-    "compact_source_before_after": "Equal head/tree/clean and three runtime hashes; own-checkout import check passed. Complete module paths/distribution enumerations were not captured."
+    "compact_source_before_after": "Equal C508 head/tree/clean and three source-file hashes; own-checkout import check passed. Complete module paths/distribution enumerations were not captured. The c5a9f2ae security package snapshot belongs to a separate earlier execution and is not C508 before/after evidence."
   },
   "historical": {
     "full_execution_head": "2bcc2badfb102a17341df354f95782316874e7e3",
