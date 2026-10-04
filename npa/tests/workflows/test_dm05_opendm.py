@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -213,3 +214,23 @@ def test_hf_download_uses_the_pinned_native_environment(
     environment = captured["env"]
     assert isinstance(environment, dict)
     assert environment["PATH"].split(":", 1)[0] == str(native_python.parent)
+
+
+def test_revision_check_scopes_git_trust_to_the_pinned_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        captured.update(command=command, kwargs=kwargs)
+        return SimpleNamespace(stdout="0123456789abcdef\n")
+
+    monkeypatch.setattr(dm05_opendm.subprocess, "run", fake_run)
+    assert dm05_opendm._git_revision(tmp_path) == "0123456789abcdef"
+    assert captured["command"] == [
+        "git",
+        "-c",
+        f"safe.directory={tmp_path}",
+        "rev-parse",
+        "HEAD",
+    ]

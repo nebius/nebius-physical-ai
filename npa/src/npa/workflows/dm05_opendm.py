@@ -95,7 +95,7 @@ def _run(
 
 def _git_revision(root: Path) -> str:
     result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
+        ["git", "-c", f"safe.directory={root}", "rev-parse", "HEAD"],
         cwd=root,
         check=True,
         text=True,
