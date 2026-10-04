@@ -18,6 +18,7 @@ from npa.clients.token_factory import (
     TokenFactoryError,
     resolve_config,
     split_reasoning,
+    thinking_chat_extra,
     validate_model_access,
 )
 
@@ -498,6 +499,7 @@ def test_chat_completion_text_raises_on_reasoning_only_response() -> None:
     [
         ("nvidia/Nemotron-3_5-Lightning", {"enable_thinking": False}),
         ("MiniMaxAI/MiniMax-M3", {"thinking_mode": "disabled"}),
+        ("openbmb/MiniCPM-V-4_5", None),
         ("vendor/explicit-model", None),
         ("meta-llama/Llama-3.3-70B-Instruct", None),
     ],
@@ -625,6 +627,7 @@ _EXPECTED_POLICY_AST_HASHES = {
     "profile-lookup": "acb9f15d262d592dc8e42223b18b5d9c1056ae914a26538a196858655d43cf5e",
     "profile-default-extra": "747196a0990c411b8c81c50ee7a0fcede5bb00cf0b837404d0fc946939709512",
     "default-chat-extra": "b80360e5856bc5d03c05b9008efe78ee72c1c040d999b066fc0530da154d85e8",
+    "thinking-chat-extra": "8f60504724b3af000f4c2207bfaae367e4ad85300b72b0aea460cb08ebe21ddc",
     "client-payload": "9398a00f57375892b9be1844e07a5bb38eb532298382b618e19dbd3df4dcf813",
     "client-entrypoint": "e71d1c6e9c6ec18770a044ead9a7f668a3682ec14fbb435a3c504d7d85b60459",
     "hosted-request": "9183ee81e359c6abd170bc9ea51fcdd1aa380552d6e7651c9ba6232aab32ae8a",
@@ -645,6 +648,7 @@ def _policy_ast_hashes() -> dict[str, str]:
         "profile-lookup": token_factory.token_factory_chat_profile,
         "profile-default-extra": token_factory.TokenFactoryChatProfile.default_extra,
         "default-chat-extra": token_factory.default_chat_extra,
+        "thinking-chat-extra": token_factory.thinking_chat_extra,
         "client-payload": token_factory._chat_completion_payload,
         "client-entrypoint": token_factory.TokenFactoryClient.chat_completion,
         "hosted-request": vlm_eval._openai_request,
@@ -664,7 +668,9 @@ def test_model_discrimination_is_centralized_in_chat_profile() -> None:
     assert _policy_ast_hashes() == _EXPECTED_POLICY_AST_HASHES
 
 
-@pytest.mark.parametrize("target", ["client-payload", "hosted-request"])
+@pytest.mark.parametrize(
+    "target", ["client-payload", "hosted-request", "thinking-chat-extra"]
+)
 @pytest.mark.parametrize("mutation", ["alias-default-switch", "helper-switch"])
 def test_policy_fingerprint_kills_indirect_switch_mutants(target, mutation) -> None:
     from npa.clients import token_factory
@@ -673,6 +679,7 @@ def test_policy_fingerprint_kills_indirect_switch_mutants(target, mutation) -> N
     function = {
         "client-payload": token_factory._chat_completion_payload,
         "hosted-request": vlm_eval._openai_request,
+        "thinking-chat-extra": token_factory.thinking_chat_extra,
     }[target]
     source = textwrap.dedent(inspect.getsource(function))
     anchor = "profile = token_factory_chat_profile(model)"
@@ -704,6 +711,52 @@ def test_explicit_kimi_extra_wins_over_direct_output_profile() -> None:
     )
     assert requests[0]["reasoning_effort"] == "high"
     assert requests[0]["temperature"] == 1.0
+
+
+@pytest.mark.parametrize(
+    ("model", "enabled", "expected"),
+    [
+        ("nvidia/Nemotron-3_5-Lightning", False, {"enable_thinking": False}),
+        ("nvidia/Nemotron-3_5-Lightning", True, {"enable_thinking": True}),
+        ("MiniMaxAI/MiniMax-M3", False, {"thinking_mode": "disabled"}),
+        ("MiniMaxAI/MiniMax-M3", True, {"thinking_mode": "enabled"}),
+        ("openbmb/MiniCPM-V-4_5", False, {"thinking": False}),
+        ("openbmb/MiniCPM-V-4_5", True, {"thinking": True}),
+        ("vendor/explicit-model", False, {"thinking": False}),
+        ("vendor/explicit-model", True, {"thinking": True}),
+        ("moonshotai/Kimi-K3", False, None),
+        ("moonshotai/Kimi-K3", True, None),
+    ],
+)
+def test_explicit_thinking_override_uses_exact_payload(
+    model, enabled, expected
+) -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
+
+    if expected is None:
+        with pytest.raises(TokenFactoryError, match="reasoning_effort"):
+            _client(handler).chat_completion_text(
+                model=model,
+                messages=[{"role": "user", "content": "task"}],
+                extra=thinking_chat_extra(model, enabled),
+            )
+        assert requests == []
+        return
+    assert (
+        _client(handler).chat_completion_text(
+            model=model,
+            messages=[{"role": "user", "content": "task"}],
+            extra=thinking_chat_extra(model, enabled),
+        )
+        == "answer"
+    )
+    assert requests[0]["chat_template_kwargs"] == expected
 
 
 def test_explicit_thinking_and_other_template_parameters_win() -> None:
