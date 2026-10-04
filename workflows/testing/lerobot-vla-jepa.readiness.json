@@ -22,7 +22,7 @@
         "sha256:a1002b2b0c0ee813b87370e67bfcbd23e5fed6789a7a7e2cc987b7427b93a3ed npa/src/npa/smoke/golden_evals.yaml",
         "sha256:16eea43a1f3cb47a5a4197cc41098d696b2330d013a6939cadef952f300b63bb npa/src/npa/smoke/capabilities.py",
         "sha256:c7849bd4d3932885879507c8fda6345ca1250dc6ef88725a5be8eb5530078e95 npa/src/npa/workflows/lerobot_vla_jepa.py",
-        "sha256:d99189ff49fd773fbebcdbf73c7a1479532d4b3c1f0ab8fc3af5d83a043c39b3 npa/tests/workflows/test_lerobot_vla_jepa.py"
+        "sha256:96b740995b0b30849582a2cac4afcea3501f764935d959aede4fb59847804de7 npa/tests/workflows/test_lerobot_vla_jepa.py"
       ]
     }
   },

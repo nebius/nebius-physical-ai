@@ -196,7 +196,10 @@ def test_runtime_cache_preserves_operator_home_and_uses_system_temp_fallback(
     monkeypatch.setenv("HF_HOME", "/operator-owned/hf-cache")
     assert vla._runtime_cache() == Path("/operator-owned/hf-cache")
     monkeypatch.delenv("HF_HOME")
-    assert vla._runtime_cache() == Path(vla.tempfile.gettempdir()) / "npa-vla-jepa-hf-cache"
+    assert (
+        vla._runtime_cache()
+        == Path(vla.tempfile.gettempdir()) / "npa-vla-jepa-hf-cache"
+    )
 
 
 def test_evaluation_rejects_missing_or_out_of_range_native_success(
