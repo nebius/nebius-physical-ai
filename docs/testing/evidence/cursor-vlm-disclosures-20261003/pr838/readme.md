@@ -23,3 +23,22 @@ evidence directory and therefore made zero benchmark transport calls; it is reta
 in private evidence separately and was not a model-answer retry.
 
 Opt-in command: `NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_vlm_benchmark_scope_live_e2e.py -q -s`. Use a fresh, unique evidence directory: the harness intentionally refuses an existing directory to preserve earlier receipts. Frozen protocol/dataset hash, each request/frame/prompt/rubric/response hash and numeric result are in the summary; exact raw operational results remain private. Source/evidence review by distinct Codex accepted the original observed scope only, not later source or final readiness. Native Claude was unavailable when historically measured; actual first-party review became available later and remains a distinct AI lane, not human approval. Full gates, publication scans, anonymous downloads and final published-head CI are separate conditions.
+
+## Current-main strict-verdict source bridge
+
+[Sanitized current-main bridge](current-main09548-source-bridge.json) records the
+signed integration of landed main `09548f6939e0216d15b76819c6cc9d7537bf8e40`
+with the PR838 disclosure contract. A bounded CPU bridge first exposed one direct
+test helper that needed the existing explicit no-call argument; that first result
+(464 pass, one failure, one skip) is retained privately. The narrow test-only
+repair then passed 466 controls with one inherited skip, and current precheck
+passed 270 controls. The bridge used synthetic or mocked completions only: it
+made no hosted-provider call, native/GPU workload, full run, or new AI review.
+
+The earlier four-hosted-response result in `current-main935.json` remains at its
+own execution SHA and byte-frozen protocol; it was not rerun merely because main
+advanced. This source bridge does not claim physical validity, calibration,
+safety, generalization, an operational error rate, or final readiness. Current
+published-head CI, all accepted catalogue-fixture components, the immutable native
+binding, a final owner runner, full validation, and independent final-output review
+remain separate requirements.
