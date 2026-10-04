@@ -6,6 +6,12 @@ Both fixed loop and benchmark protocols preserve green=1, red=0, blank=0. Loop m
 
 Actual v2 sampling controls remain keyframes/max_frames4, one source image at index0/count1, null video timestamps. The test recomputes canonical request-manifest hashes. Coverage_complete is provenance completeness, not full episode coverage.
 
+## Current-source continuity
+
+[Current-source continuity evidence](current-main-09548-bridge.json) binds the one-shot selected 12-transport protocol to source candidate `8a42af1ba863c5187a2596de22d36086c17c0c8a`, which incorporates main `09548f6939e0216d15b76819c6cc9d7537bf8e40` and the accepted catalogue fixtures. It is a socket-blocked retained-response CPU bridge: all six scalar and six paired response hashes re-parse under the current evaluator, the scalar writer/grade artifacts retain green=1, red=0, blank=0, and paired outside/blank remain `judges_agree_needs_iteration`. Its direct structured-result helper requires an explicit call-origin declaration; the synthetic strict control explicitly declares `provider_call_made=false`. It made no new provider call and does not claim final-head execution.
+
+The current bridge keeps the original result digest and only sanitized frame/request/response hashes. It does not disclose response text, provider identifiers, credential material, endpoints, private paths, or runtime resource identifiers. A clean full suite, independent receipt, published head, anonymous byte verification, and current-head CI remain separate requirements.
+
 Distinct immutable strict/model/disclosure integration `696cebd2d1fab59f1f3f347f432ddf8c60c0804d` passed265, skipped one inherited opt-in GPU case, and passed the separate six-call hosted protocol. Invalid score/type/NaN/Infinity/out-of-range and missing/string success reject before publication. The strict numeric regression explicitly uses provider_call_made=false and retains its clamp-failure spy and0.74268→0.7427 gate assertion. Every hosted profile, including unknown/custom IDs, retains exact requested/served equality. This integration-only execution is not the PR publication head.
 
 Commands: `NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_vlm_disclosures_live_e2e.py -q -s`; composed unit union covers strict_scores, model_enforcement, VLM backend/token_factory/loop/CLI, token_factory client policy-AST mutation controls and sampling_evidence.
