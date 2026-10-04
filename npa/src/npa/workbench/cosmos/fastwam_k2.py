@@ -286,10 +286,21 @@ def _validate_overlay_sources(server_text: str, model_text: str) -> None:
 def _sync_framework(framework: Path, env: dict[str, str], log: Path) -> Path:
     """Create the exact framework policy-server environment on the GPU worker."""
     _run(
-        # At the pinned upstream revision policy-server is a uv dependency
-        # group (not a project optional extra).  Keep the upstream CUDA 13.0
-        # training group explicit for the Blackwell policy-server runtime.
-        ["uv", "sync", "--frozen", "--group", "policy-server", "--group", "cu130-train"],
+        # The pinned upstream policy-server guide installs every declared
+        # optional dependency as well as the CUDA and policy-server groups.
+        # In particular, the action-policy server imports ``iopath`` from the
+        # upstream ``train`` extra; syncing only its two dependency groups is
+        # incomplete even though resolution succeeds.
+        [
+            "uv",
+            "sync",
+            "--frozen",
+            "--all-extras",
+            "--group",
+            "policy-server",
+            "--group",
+            "cu130-train",
+        ],
         cwd=framework,
         env=env,
         log=log,

@@ -112,10 +112,10 @@ def test_robolab_sync_selects_isaac_supported_python_runtime(tmp_path: Path, mon
     assert returned == robolab / ".venv/bin/python"
 
 
-def test_framework_sync_uses_pinned_upstream_dependency_groups(
+def test_framework_sync_uses_pinned_upstream_policy_server_contract(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """The pinned framework exposes policy-server as a uv group, not an extra."""
+    """The pinned policy guide needs its extras and CUDA/policy groups."""
     calls: list[list[str]] = []
 
     def fake_run(argv, *, cwd, env, log) -> None:
@@ -129,6 +129,7 @@ def test_framework_sync_uses_pinned_upstream_dependency_groups(
         "uv",
         "sync",
         "--frozen",
+        "--all-extras",
         "--group",
         "policy-server",
         "--group",
