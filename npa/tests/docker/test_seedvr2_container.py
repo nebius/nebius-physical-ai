@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,42 @@ from npa.smoke.manifest import load_manifest
 ROOT = Path(__file__).resolve().parents[3]
 DOCKER_DIR = ROOT / "npa" / "docker" / "workbench" / "seedvr2"
 CONTAINER_TEMP_ROOT = Path("/") / "tmp"
+
+
+def test_seedvr2_clean_root_exports_one_repaired_filesystem_and_runtime_config():
+    dockerfile = (DOCKER_DIR / "Dockerfile").read_text()
+    producer, final = dockerfile.split("FROM scratch AS seedvr2-runtime", 1)
+    assert "AS seedvr2-runtime-producer" in producer
+    assert final.count("COPY ") == 1
+    assert "COPY --from=seedvr2-runtime-producer / /" in final
+    assert "RUN " not in final
+    assert not any(line.startswith("+") for line in dockerfile.splitlines())
+    contract = json.loads((DOCKER_DIR / "clean-root-config.json").read_text())
+    logical = final.replace("\\\n", "").splitlines()
+    for instruction, field in (("ENV ", "Env"), ("LABEL ", "Labels")):
+        values = [
+            value
+            for line in logical
+            if line.startswith(instruction)
+            for value in shlex.split(line[len(instruction) :])
+        ]
+        actual = dict(value.split("=", 1) for value in values)
+        if field == "Labels":
+            assert (
+                "ARG SEEDVR2_SOURCE_REF=e4de8c24441a67e1b7df56abea10645059bb1185"
+                in final
+            )
+            assert actual["npa.source.ref"] == "${SEEDVR2_SOURCE_REF}"
+            actual["npa.source.ref"] = "e4de8c24441a67e1b7df56abea10645059bb1185"
+        expected = contract["config"][field]
+        if field == "Env":
+            expected = dict(value.split("=", 1) for value in expected)
+        assert actual == expected
+    assert "USER ubuntu" in final
+    assert 'VOLUME ["/workspace/.cache/huggingface"]' in final
+    assert 'ENTRYPOINT ["seedvr2-entrypoint"]' in final
+    assert 'CMD ["serve"]' in final
+    assert "HEALTHCHECK --interval=30s --timeout=5s --retries=3" in final
 
 
 def test_seedvr2_image_is_registered_and_quarantined() -> None:
@@ -155,9 +192,22 @@ def test_seedvr2_system_seed_wheels_are_repaired_before_export() -> None:
         (DOCKER_DIR.parent / "common/secure_pip/inputs.json").read_text()
     )
     donor = next(row for row in manifest["vendors"] if row["name"] == "setuptools")
+    seed_lock = (DOCKER_DIR / "setuptools-seed.lock").read_text()
+    seed_hash = "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
+    seed_filename = "setuptools-84.0.0-py3-none-any.whl"
+    assert "setuptools==84.0.0" in seed_lock
+    assert "--hash=sha256:" + seed_hash in seed_lock
+    assert donor["filename"] != seed_filename
     assert "FROM seedvr2-build AS seedvr2-bootstrap" in build_stage
     assert "COPY docker/workbench/common/secure_pip /opt/secure-pip" in build_stage
-    assert donor["filename"] in build_stage
+    assert donor["filename"] not in build_stage
+    assert "COPY docker/workbench/seedvr2/setuptools-seed.lock" in build_stage
+    assert "-m pip --isolated download" in build_stage
+    assert (
+        "--no-cache-dir --no-deps --only-binary=:all: --require-hashes" in build_stage
+    )
+    assert "--index-url https://pypi.org/simple" in build_stage
+    assert "--requirement /opt/setuptools-seed.lock" in build_stage
     # The OS package seed is replaced within its creation RUN, never hidden
     # by a later whiteout. Only derived wheels and provenance leave the builder.
     apt_layer = final_stage.split("COPY --from=seedvr2-ml-runtime", 1)[0]
@@ -165,6 +215,7 @@ def test_seedvr2_system_seed_wheels_are_repaired_before_export() -> None:
     assert "--mount=type=bind,from=seedvr2-bootstrap" in apt_layer
     assert (
         apt_layer.index("apt-get install")
+        < apt_layer.index(seed_hash + "  /opt/secure-pip-wheels/" + seed_filename)
         < apt_layer.index("find /usr/share/python-wheels")
         < apt_layer.index("install -m 0644 /opt/secure-pip-wheels/*.whl")
     )

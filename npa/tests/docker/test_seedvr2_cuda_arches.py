@@ -135,12 +135,20 @@ def test_build_refuses_mismatch_before_any_git_or_docker_operation(tmp_path):
 def test_dockerfile_and_builder_forward_both_architecture_inputs():
     dockerfile = (IMAGE / "Dockerfile").read_text()
     build = (IMAGE / "build.sh").read_text()
-    assert dockerfile.count("ARG TORCH_CUDA_ARCH_LIST=9.0") == 2
-    assert dockerfile.count("TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}") == 2
-    assert (
-        dockerfile.count('npa.build.torch.cuda-arch-list="${TORCH_CUDA_ARCH_LIST}"')
-        == 2
-    )
+    compiler = dockerfile.split("FROM seedvr2-build AS seedvr2-ml-runtime", 1)[0]
+    producer = dockerfile.split("AS seedvr2-runtime-producer\n", 1)[1]
+    producer, runtime = producer.split("FROM scratch AS seedvr2-runtime", 1)
+    # COPY from a producer transfers files, not its build arguments or ENV.
+    # Require the exact forwarding contract in every stage that owns metadata.
+    for stage in (compiler, producer, runtime):
+        assert stage.count("ARG TORCH_CUDA_ARCH_LIST=9.0") == 1
+        assert (
+            stage.count('npa.build.torch.cuda-arch-list="${TORCH_CUDA_ARCH_LIST}"') == 1
+        )
+        assert (
+            "TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}" in stage
+            or 'TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}"' in stage
+        )
     assert '--build-arg "TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST"' in build
     assert "--torch-cuda-arch-list)" in build
     assert dockerfile.count('--skip-no-fatbin "${ARCH_ARGS[@]}" --json') == 2

@@ -186,12 +186,15 @@ RUN /opt/seedvr2-venv/bin/python -m pip uninstall --yes pip \
 FROM seedvr2-build AS seedvr2-bootstrap
 COPY docker/workbench/common/secure_pip /opt/secure-pip
 RUN /usr/bin/python3.12 /opt/secure-pip/build.py \
-      --work-dir /tmp/secure-pip-build --output-dir /opt/secure-pip-wheels \
-    && install -m 0644 \
-      /tmp/secure-pip-build/vendors/setuptools-80.9.0-py3-none-any.whl \
-      /opt/secure-pip-wheels/setuptools-80.9.0-py3-none-any.whl
+      --work-dir /tmp/secure-pip-build --output-dir /opt/secure-pip-wheels
+# The limited pkg_resources donor is not a full setuptools bootstrap seed.
+COPY docker/workbench/seedvr2/setuptools-seed.lock /opt/setuptools-seed.lock
+RUN /opt/seedvr2-venv/bin/python -m pip --isolated download \
+      --no-cache-dir --no-deps --only-binary=:all: --require-hashes \
+      --index-url https://pypi.org/simple \
+      --requirement /opt/setuptools-seed.lock --dest /opt/secure-pip-wheels
 
-FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@sha256:4d242f206abc4b9588a6506cce2d88932cc879849395aae3785075179718cc49
+FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@sha256:4d242f206abc4b9588a6506cce2d88932cc879849395aae3785075179718cc49 AS seedvr2-runtime-producer
 
 ARG SEEDVR2_SOURCE_REF=e4de8c24441a67e1b7df56abea10645059bb1185
 ARG FLASH_ATTN_MAX_JOBS=2
@@ -233,6 +236,7 @@ RUN --mount=type=bind,from=seedvr2-bootstrap,source=/opt/secure-pip-wheels,targe
     && apt-get install -y --no-install-recommends \
       ca-certificates ffmpeg libgl1 libglib2.0-0 openssh-server \
       python3.12 python3.12-venv rsync sudo \
+    && echo '51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670  /opt/secure-pip-wheels/setuptools-84.0.0-py3-none-any.whl' | sha256sum -c - \
     && find /usr/share/python-wheels -maxdepth 1 -type f \
       \( -name 'pip-*.whl' -o -name 'setuptools-*.whl' \) -delete \
     && install -m 0644 /opt/secure-pip-wheels/*.whl /usr/share/python-wheels/ \
@@ -319,6 +323,70 @@ RUN install -d -m 0755 -o ubuntu -g ubuntu \
       /workspace/seedvr2-runs \
     && install -d -m 0700 -o ubuntu -g ubuntu /workspace/tmp \
     && chown -R ubuntu:ubuntu /workspace
+
+# Export the repaired filesystem, not the producer's superseded ancestor layers.
+# This is a canonical build stage, not a repack of historical image bytes.
+# Restore the measured NVIDIA and NPA runtime config explicitly: COPY does not
+# carry environment, launch, user, volume or healthcheck metadata across stages.
+FROM scratch AS seedvr2-runtime
+ARG NPA_SOURCE_SHA
+ARG SEEDVR2_SOURCE_REF=e4de8c24441a67e1b7df56abea10645059bb1185
+ARG FLASH_ATTN_MAX_JOBS=2
+ARG FLASH_ATTN_NVCC_THREADS=1
+ARG FLASH_ATTN_CUDA_ARCHS=90
+ARG APEX_MAX_JOBS=2
+ARG TORCH_CUDA_ARCH_LIST=9.0
+COPY --from=seedvr2-runtime-producer / /
+LABEL com.nvidia.cudnn.version="9.14.0.64-1" \
+      npa.build.apex.max-jobs="${APEX_MAX_JOBS}" \
+      npa.build.flash-attn.cuda-archs="${FLASH_ATTN_CUDA_ARCHS}" \
+      npa.build.flash-attn.max-jobs="${FLASH_ATTN_MAX_JOBS}" \
+      npa.build.flash-attn.nvcc-threads="${FLASH_ATTN_NVCC_THREADS}" \
+      npa.build.torch.cuda-arch-list="${TORCH_CUDA_ARCH_LIST}" \
+      npa.source.ref="${SEEDVR2_SOURCE_REF}" \
+      npa.source.repo="https://github.com/ByteDance-Seed/SeedVR" \
+      npa.tool="seedvr2" \
+      npa.version="0.1.0-cu130-unbuilt" \
+      npa.weights="operator-runtime-fetch" \
+      org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause AND LicenseRef-NVIDIA-CUDA-Toolkit" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai"
+
+ENV PATH="/opt/npa-venv/bin:/opt/seedvr2-venv/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    NVARCH="x86_64" \
+    NVIDIA_REQUIRE_CUDA="cuda>=13.0 brand=unknown,driver>=535,driver<536 brand=grid,driver>=535,driver<536 brand=tesla,driver>=535,driver<536 brand=nvidia,driver>=535,driver<536 brand=quadro,driver>=535,driver<536 brand=quadrortx,driver>=535,driver<536 brand=nvidiartx,driver>=535,driver<536 brand=vapps,driver>=535,driver<536 brand=vpc,driver>=535,driver<536 brand=vcs,driver>=535,driver<536 brand=vws,driver>=535,driver<536 brand=cloudgaming,driver>=535,driver<536 brand=unknown,driver>=550,driver<551 brand=grid,driver>=550,driver<551 brand=tesla,driver>=550,driver<551 brand=nvidia,driver>=550,driver<551 brand=quadro,driver>=550,driver<551 brand=quadrortx,driver>=550,driver<551 brand=nvidiartx,driver>=550,driver<551 brand=vapps,driver>=550,driver<551 brand=vpc,driver>=550,driver<551 brand=vcs,driver>=550,driver<551 brand=vws,driver>=550,driver<551 brand=cloudgaming,driver>=550,driver<551 brand=unknown,driver>=565,driver<566 brand=grid,driver>=565,driver<566 brand=tesla,driver>=565,driver<566 brand=nvidia,driver>=565,driver<566 brand=quadro,driver>=565,driver<566 brand=quadrortx,driver>=565,driver<566 brand=nvidiartx,driver>=565,driver<566 brand=vapps,driver>=565,driver<566 brand=vpc,driver>=565,driver<566 brand=vcs,driver>=565,driver<566 brand=vws,driver>=565,driver<566 brand=cloudgaming,driver>=565,driver<566 brand=unknown,driver>=570,driver<571 brand=grid,driver>=570,driver<571 brand=tesla,driver>=570,driver<571 brand=nvidia,driver>=570,driver<571 brand=quadro,driver>=570,driver<571 brand=quadrortx,driver>=570,driver<571 brand=nvidiartx,driver>=570,driver<571 brand=vapps,driver>=570,driver<571 brand=vpc,driver>=570,driver<571 brand=vcs,driver>=570,driver<571 brand=vws,driver>=570,driver<571 brand=cloudgaming,driver>=570,driver<571 brand=unknown,driver>=575,driver<576 brand=grid,driver>=575,driver<576 brand=tesla,driver>=575,driver<576 brand=nvidia,driver>=575,driver<576 brand=quadro,driver>=575,driver<576 brand=quadrortx,driver>=575,driver<576 brand=nvidiartx,driver>=575,driver<576 brand=vapps,driver>=575,driver<576 brand=vpc,driver>=575,driver<576 brand=vcs,driver>=575,driver<576 brand=vws,driver>=575,driver<576 brand=cloudgaming,driver>=575,driver<576" \
+    NV_CUDA_CUDART_VERSION="13.0.96-1" \
+    CUDA_VERSION="13.0.2" \
+    LD_LIBRARY_PATH="/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64" \
+    NVIDIA_VISIBLE_DEVICES="all" \
+    NVIDIA_DRIVER_CAPABILITIES="compute,utility" \
+    NV_CUDA_LIB_VERSION="13.0.2-1" \
+    NV_NVTX_VERSION="13.0.85-1" \
+    NV_LIBNPP_VERSION="13.0.1.2-1" \
+    NV_LIBNPP_PACKAGE="libnpp-13-0=13.0.1.2-1" \
+    NV_LIBCUSPARSE_VERSION="12.6.3.3-1" \
+    NV_LIBCUBLAS_PACKAGE_NAME="libcublas-13-0" \
+    NV_LIBCUBLAS_VERSION="13.1.0.3-1" \
+    NV_LIBCUBLAS_PACKAGE="libcublas-13-0=13.1.0.3-1" \
+    NV_LIBNCCL_PACKAGE_NAME="libnccl2" \
+    NV_LIBNCCL_PACKAGE_VERSION="2.28.3-1" \
+    NCCL_VERSION="2.28.3-1" \
+    NV_LIBNCCL_PACKAGE="libnccl2=2.28.3-1+cuda13.0" \
+    NVIDIA_PRODUCT_NAME="CUDA" \
+    NV_CUDNN_VERSION="9.14.0.64-1" \
+    NV_CUDNN_PACKAGE_NAME="libcudnn9-cuda-13" \
+    NV_CUDNN_PACKAGE="libcudnn9-cuda-13=9.14.0.64-1" \
+    DEBIAN_FRONTEND="noninteractive" \
+    PYTHONUNBUFFERED="1" \
+    HF_HOME="/workspace/.cache/huggingface" \
+    HF_HUB_CACHE="/workspace/.cache/huggingface/hub" \
+    SEEDVR2_PYTHON="/opt/seedvr2-venv/bin/python" \
+    NPA_SEEDVR2_WORK_DIR="/workspace/seedvr2-runs" \
+    NPA_SKIP_EAGER_IMPORTS="1" \
+    NPA_LIGHT_WORKBENCH_TOOL="seedvr2" \
+    TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}"
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 VOLUME ["/workspace/.cache/huggingface"]
 WORKDIR /workspace

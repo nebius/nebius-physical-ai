@@ -118,7 +118,7 @@ SETUPTOOLS_DISTUTILS_PATH_FILE = (
 )
 ALLOWED_PYTHON_PATH_FILES = {
     (
-        "usr/share/python-wheels/setuptools-80.9.0-py3-none-any.whl!/"
+        "usr/share/python-wheels/setuptools-84.0.0-py3-none-any.whl!/"
         "distutils-precedence.pth"
     ): SETUPTOOLS_DISTUTILS_PATH_FILE,
     (
@@ -126,6 +126,105 @@ ALLOWED_PYTHON_PATH_FILES = {
     ): SETUPTOOLS_DISTUTILS_PATH_FILE,
     "opt/npa-venv/lib/python3.12/site-packages/rerun_sdk.pth": b"rerun_sdk\n",
 }
+
+CLEAN_ROOT_CONTRACT = (
+    Path(__file__).resolve().parents[1]
+    / "docker/workbench/seedvr2/clean-root-config.json"
+)
+CLEAN_ROOT_CONTRACT_SHA256 = (
+    "95f9de241432bc72452a7d900a7c3ae5b29c113a7c8bde37520c0a78339a8b8e"
+)
+
+
+def _clean_root_findings(
+    config: dict, *, layers: list[dict], expected_source_sha: str
+) -> list[Finding]:
+    """Additional clean-root qualification; never an exemption from layer scans."""
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_source_sha):
+        raise RuntimeError("clean-root qualification requires a full source SHA")
+    raw = CLEAN_ROOT_CONTRACT.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != CLEAN_ROOT_CONTRACT_SHA256:
+        raise RuntimeError("clean-root config contract digest differs")
+    contract = _strict_json(raw)
+    if contract["schema"] != "npa.seedvr2.clean-root-config.v1":
+        raise RuntimeError("unsupported clean-root config contract")
+    findings = []
+    payload_layers = contract["filesystem_layer_count"]
+    tail = contract["optional_terminal_metadata_layer"]
+    # Docker may emit its canonical empty WORKDIR metadata layer. These exact
+    # compressed bytes decode to 1024 NULs and no tar records. Layer decoding,
+    # digest/size checks and payload scanning have already run for every layer.
+    shape_matches = len(layers) == payload_layers or (
+        len(layers) == payload_layers + 1
+        and all(layers[-1].get(key) == value for key, value in tail.items())
+    )
+    if not shape_matches:
+        findings.append(Finding("clean_root_ancestor_layers", "image-config", "rootfs"))
+    if any(config.get(key) != value for key, value in contract["platform"].items()):
+        findings.append(Finding("clean_root_platform", "image-config", "platform"))
+
+    actual = config.get("config")
+    expected = contract["config"]
+    if not isinstance(actual, dict) or set(actual) - (set(expected) | {"ArgsEscaped"}):
+        return findings + [
+            Finding("clean_root_runtime_config", "image-config", "config")
+        ]
+    labels = actual.get("Labels")
+    if not isinstance(labels, dict) or not all(
+        isinstance(v, str) for v in labels.values()
+    ):
+        return findings + [
+            Finding("clean_root_runtime_config", "image-config", "Labels")
+        ]
+    parameters = {"NPA_SOURCE_SHA": expected_source_sha}
+    for parameter, key in {
+        "FLASH_ATTN_MAX_JOBS": "npa.build.flash-attn.max-jobs",
+        "FLASH_ATTN_NVCC_THREADS": "npa.build.flash-attn.nvcc-threads",
+        "APEX_MAX_JOBS": "npa.build.apex.max-jobs",
+    }.items():
+        value = labels.get(key, "")
+        if not re.fullmatch(r"[1-9][0-9]*", value):
+            return findings + [
+                Finding("clean_root_build_metadata", "image-config", key)
+            ]
+        parameters[parameter] = value
+    flash = labels.get("npa.build.flash-attn.cuda-archs", "")
+    torch = labels.get("npa.build.torch.cuda-arch-list", "")
+    if (
+        not re.fullmatch(r"[1-9][0-9]*(;[1-9][0-9]*)*", flash)
+        or not re.fullmatch(r"[1-9][0-9]*\.[0-9](;[1-9][0-9]*\.[0-9])*", torch)
+        or len(set(flash.split(";"))) != len(flash.split(";"))
+        or len(set(torch.split(";"))) != len(torch.split(";"))
+        or set(flash.split(";"))
+        != {value.replace(".", "") for value in torch.split(";")}
+    ):
+        return findings + [
+            Finding("clean_root_build_metadata", "image-config", "CUDA targets")
+        ]
+    parameters.update(FLASH_ATTN_CUDA_ARCHS=flash, TORCH_CUDA_ARCH_LIST=torch)
+
+    def expand(value: str) -> str:
+        for key, replacement in parameters.items():
+            value = value.replace("${" + key + "}", replacement)
+        return value
+
+    expected_labels = {key: expand(value) for key, value in expected["Labels"].items()}
+    environment = actual.get("Env")
+    matches = (
+        labels == expected_labels
+        and isinstance(environment, list)
+        and all(isinstance(value, str) for value in environment)
+        and sorted(environment) == sorted(expand(value) for value in expected["Env"])
+        and actual.get("ArgsEscaped", True) is True
+        and all(
+            actual.get(key) == value
+            for key, value in expected.items()
+            if key not in {"Env", "Labels"}
+        )
+    )
+    if not matches:
+        findings.append(Finding("clean_root_runtime_config", "image-config", "config"))
+    return findings
 
 
 def _strict_json(payload: bytes) -> object:
@@ -690,6 +789,7 @@ def _inspect_saved_image(image_tar: Path) -> tuple[list[Finding], dict]:
         "oci": oci_identity,
         "rootfs_diff_ids": diff_ids,
         "layers": layer_identities,
+        "config_document": config,
     }
 
 
@@ -734,7 +834,15 @@ def main(argv: list[str] | None = None) -> int:
         "--expected-image-id",
         help="Required immutable sha256 image ID for a supplied tarball.",
     )
+    parser.add_argument(
+        "--clean-root-source-sha",
+        help="Additionally require the SeedVR2 clean-root layer/config contract at this full source SHA.",
+    )
     args = parser.parse_args(argv)
+    if args.clean_root_source_sha is not None and not re.fullmatch(
+        r"[0-9a-f]{40}", args.clean_root_source_sha
+    ):
+        parser.error("--clean-root-source-sha requires a full source SHA")
     if bool(args.image) == bool(args.tarball):
         parser.error("provide exactly one image or --tarball")
     if args.tarball and not re.fullmatch(
@@ -764,6 +872,14 @@ def main(argv: list[str] | None = None) -> int:
         identity["image_config_digest"],
     }:
         raise RuntimeError("saved image identity differs from the expected image ID")
+    if args.clean_root_source_sha is not None:
+        findings.extend(
+            _clean_root_findings(
+                identity["config_document"],
+                layers=identity["layers"],
+                expected_source_sha=args.clean_root_source_sha,
+            )
+        )
     report = {
         "format": "npa_seedvr2_payload_scan_v2",
         "source": source,
@@ -777,6 +893,14 @@ def main(argv: list[str] | None = None) -> int:
         "rootfs_diff_ids": identity["rootfs_diff_ids"],
         "layers": identity["layers"],
         "layers_scanned": len(identity["layers"]),
+        "clean_root_qualification": (
+            {
+                "contract_sha256": CLEAN_ROOT_CONTRACT_SHA256,
+                "expected_source_sha": args.clean_root_source_sha,
+            }
+            if args.clean_root_source_sha is not None
+            else None
+        ),
         "verdict": "clean" if not findings else "runtime-only-payload-detected",
         "findings": [asdict(item) for item in findings],
     }

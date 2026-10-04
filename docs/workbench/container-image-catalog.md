@@ -291,6 +291,12 @@ calibrated VLM review, and independent review are accepted for the same commit
 and digest. There is no accepted public release row or verified anonymous pull
 claim for this image.
 
+The candidate recipe now exports its repaired runtime filesystem through a
+clean-root stage, separately pins the full setuptools bootstrap seed, and
+requires the measured NVIDIA/NPA runtime-config contract. This source change
+does not repair prior image digests or qualify a replacement image; complete
+byte, bootstrap, GPU and quality evidence remain separate gates.
+
 ## Pending Open3D registration image
 
 `npa-open3d` is a development validation candidate for the

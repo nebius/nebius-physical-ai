@@ -12,7 +12,7 @@ This record is engineering classification, not legal advice.
    and file headers are Apache-2.0.
 2. Baked runtime: extension compilation uses a digest-pinned NVIDIA CUDA 13.0
    development build stage that is absent from the final manifest. The final
-   image uses the digest-pinned cuDNN runtime base, current PyTorch/CUDA runtime
+   runtime producer uses the digest-pinned cuDNN runtime base, current PyTorch/CUDA runtime
    wheels, pinned Python dependencies, compiled FlashAttention/Apex extensions,
    and Apache-2.0 SeedVR source. cuDNN wheel SDK headers and static archives are
    removed before the runtime-only environment is copied; the retained shared
@@ -41,11 +41,28 @@ This record is engineering classification, not legal advice.
    The service installer is the source-identified `pip==26.2.1+npa.1`
    derivative documented in `../common/secure_pip/README.md`, not an upstream
    pip release. Ubuntu's pip and setuptools seed wheels are replaced by the
-   derivative and pinned setuptools 80.9.0 in the same package-install layer,
+   derivative and the hash-locked full setuptools 84.0.0 seed in the same
+   package-install layer,
    before any final layer export. Standard Python 3.12 venv creation uses this
    repaired seed, and the exact build receipt is retained at
    `/usr/share/doc/npa-seedvr2/secure-pip-build.json`. Temporary upstream
    bootstrap and vendoring tools remain confined to a separate build stage.
+   The full seed is separate from the derivative's limited setuptools 80.9.0
+   `pkg_resources` donor. The full 84.0.0 wheel fixes cross-Unicode-normalization
+   `MANIFEST.in` exclusions; a bounded donor disposition does not exempt an
+   older full setuptools implementation. This recipe change does not repair
+   existing image digests or establish whole-image security acceptance.
+   A final `FROM scratch` stage copies the repaired producer filesystem once,
+   so superseded base-package ancestors are not part of the new manifest.
+   This is a canonical recipe build, not a repack or approval of old archives.
+   `clean-root-config.json` binds the measured CUDA/cuDNN environment, build
+   metadata, non-root user, cache volume, entrypoint, service command and health
+   check. Docker's optional terminal metadata layer is admitted only by its
+   exact compressed and decoded hashes: 32 gzip bytes, 1024 NUL bytes, and no
+   tar entries. Nonempty, reordered, additional or differently encoded tails
+   do not meet this contract. The new artifact still requires exact-layer security, payload,
+   bootstrap and real GPU validation; the configuration contract is not live
+   capability or scientific-quality evidence.
 3. Weights: `ByteDance-Seed/SeedVR2-3B` revision
    `37255ff8cccfb01071b87f635a5948ca8d53117c` is public and marked
    Apache-2.0. The four required payloads are fetched at runtime and verified
@@ -74,13 +91,18 @@ review, and independent review pass for the exact candidate commit and digest.
 An operator-controlled private validation image proves only the operator's run.
 It does not authorize official publication or establish release acceptance.
 Scan every immutable layer, including bytes hidden by whiteouts, with
-`npa/scripts/scan_image_seedvr2_payload.py <image-ref>` and retain its JSON
+`npa/scripts/scan_image_seedvr2_payload.py <image-ref>
+--clean-root-source-sha <full-source-sha>` and retain its JSON
 report alongside the broader security/SBOM scans. The report separately binds
 each compressed blob digest and uncompressed rootfs diff ID, the config and OCI
 manifest graph, the complete saved archive, and the scanner implementation.
 Python `.pth` files fail closed except for the exact path and bytes of the
 inventoried setuptools and Rerun bootstrap files. The publication workflow
 runs this gate before push and again against bytes pulled by immutable digest.
+For new clean-root qualification the source-SHA option is mandatory: it adds
+the one-filesystem-layer (plus the exact optional empty tail) and runtime-config contract without skipping any payload
+checks. Without that option the historical layered-image payload scan remains
+available, but `clean_root_qualification: null` is not clean-root acceptance.
 
 ### MCAP service dependency notice
 

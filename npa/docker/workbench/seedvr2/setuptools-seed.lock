@@ -1,0 +1,4 @@
+# Full system seed; separate from secure-pip's limited pkg_resources donor.
+# The fixed MANIFEST.in matcher must also seed fresh system Python environments.
+setuptools==84.0.0 \
+    --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670

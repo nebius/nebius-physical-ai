@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import copy
 import importlib.util
 import hashlib
 import io
@@ -24,6 +25,152 @@ assert SPEC and SPEC.loader
 scanner = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = scanner
 SPEC.loader.exec_module(scanner)
+
+
+def _clean_root_config():
+    contract = json.loads(scanner.CLEAN_ROOT_CONTRACT.read_bytes())
+    config = copy.deepcopy(contract["config"])
+    substitutions = {
+        "NPA_SOURCE_SHA": "1" * 40,
+        "FLASH_ATTN_MAX_JOBS": "8",
+        "FLASH_ATTN_NVCC_THREADS": "1",
+        "APEX_MAX_JOBS": "8",
+        "FLASH_ATTN_CUDA_ARCHS": "90;100",
+        "TORCH_CUDA_ARCH_LIST": "9.0;10.0",
+    }
+    serialized = json.dumps(config)
+    for key, value in substitutions.items():
+        serialized = serialized.replace("${" + key + "}", value)
+    return {**contract["platform"], "config": json.loads(serialized)}
+
+
+def _clean_root_codes(config, layers=1, source="1" * 40):
+    if isinstance(layers, int):
+        layers = [{} for _ in range(layers)]
+    return {
+        finding.kind
+        for finding in scanner._clean_root_findings(
+            config, layers=layers, expected_source_sha=source
+        )
+    }
+
+
+def test_clean_root_measured_runtime_config_is_preserved():
+    assert not _clean_root_codes(_clean_root_config())
+
+
+@pytest.mark.parametrize("layers", [0, 2, 32])
+def test_clean_root_rejects_missing_or_retained_ancestor_layers(layers):
+    assert "clean_root_ancestor_layers" in _clean_root_codes(
+        _clean_root_config(), layers
+    )
+
+
+def test_clean_root_accepts_only_exact_optional_empty_terminal_metadata():
+    contract = json.loads(scanner.CLEAN_ROOT_CONTRACT.read_bytes())
+    empty = contract["optional_terminal_metadata_layer"]
+    assert not _clean_root_codes(_clean_root_config(), [{}, empty])
+    assert "clean_root_ancestor_layers" in _clean_root_codes(
+        _clean_root_config(), [empty, {}]
+    )
+    assert "clean_root_ancestor_layers" in _clean_root_codes(
+        _clean_root_config(), [{}, empty, empty]
+    )
+    for key, value in empty.items():
+        changed = dict(empty)
+        changed[key] = value + 1 if isinstance(value, int) else value + "changed"
+        assert "clean_root_ancestor_layers" in _clean_root_codes(
+            _clean_root_config(), [{}, changed]
+        )
+
+
+@pytest.mark.parametrize("key,value", [("os", "windows"), ("architecture", "arm64")])
+def test_clean_root_rejects_wrong_platform(key, value):
+    config = _clean_root_config()
+    config[key] = value
+    assert "clean_root_platform" in _clean_root_codes(config)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("User", "root"),
+        ("ExposedPorts", {}),
+        ("Entrypoint", ["sh"]),
+        ("Cmd", ["version"]),
+        ("Volumes", {}),
+        ("WorkingDir", "/"),
+        ("Healthcheck", {}),
+        ("Shell", ["/bin/sh", "-c"]),
+        ("OnBuild", ["RUN unexpected"]),
+        ("ArgsEscaped", False),
+    ],
+)
+def test_clean_root_rejects_changed_launch_config(key, value):
+    config = _clean_root_config()
+    config["config"][key] = value
+    assert "clean_root_runtime_config" in _clean_root_codes(config)
+
+
+@pytest.mark.parametrize("index", range(len(_clean_root_config()["config"]["Env"])))
+def test_clean_root_rejects_each_changed_environment_value(index):
+    config = _clean_root_config()
+    environment = config["config"]["Env"]
+    environment[index] = environment[index].split("=", 1)[0] + "=changed"
+    assert "clean_root_runtime_config" in _clean_root_codes(config)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "duplicate", "not-string"])
+def test_clean_root_rejects_ambiguous_environment(mutation):
+    config = _clean_root_config()
+    environment = config["config"]["Env"]
+    if mutation == "missing":
+        environment.pop()
+    elif mutation == "extra":
+        environment.append("UNEXPECTED=value")
+    elif mutation == "duplicate":
+        environment.append(environment[0])
+    else:
+        environment.append(None)
+    assert "clean_root_runtime_config" in _clean_root_codes(config)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("npa.build.apex.max-jobs", "0"),
+        ("npa.build.flash-attn.max-jobs", "unbounded"),
+        ("npa.build.flash-attn.nvcc-threads", "-1"),
+        ("npa.build.flash-attn.cuda-archs", "90;90"),
+        ("npa.build.flash-attn.cuda-archs", "90"),
+        ("npa.build.torch.cuda-arch-list", "9.0+PTX"),
+    ],
+)
+def test_clean_root_rejects_inconsistent_build_labels(key, value):
+    config = _clean_root_config()
+    config["config"]["Labels"][key] = value
+    assert "clean_root_build_metadata" in _clean_root_codes(config)
+
+
+def test_clean_root_rejects_changed_source_or_extra_label():
+    config = _clean_root_config()
+    assert "clean_root_runtime_config" in _clean_root_codes(config, source="2" * 40)
+    config["config"]["Labels"]["unknown"] = "unexpected"
+    assert "clean_root_runtime_config" in _clean_root_codes(config)
+
+
+def test_clean_root_rejects_changed_contract_bytes(tmp_path, monkeypatch):
+    contract = tmp_path / "contract.json"
+    contract.write_bytes(scanner.CLEAN_ROOT_CONTRACT.read_bytes() + b" ")
+    monkeypatch.setattr(scanner, "CLEAN_ROOT_CONTRACT", contract)
+    with pytest.raises(RuntimeError, match="contract digest"):
+        _clean_root_codes(_clean_root_config())
+
+
+def test_clean_root_source_argument_fails_before_image_inspection():
+    with pytest.raises(SystemExit) as error:
+        scanner.main(["not-read", "--clean-root-source-sha", "main"])
+    assert error.value.code == 2
 
 
 def _tar(path: Path, members: dict[str, bytes]) -> Path:
@@ -75,6 +222,125 @@ def _saved_image(
         ]
     ).encode()
     return _tar(tmp_path / "image.tar", payloads)
+
+
+@pytest.mark.parametrize("ancestor", [False, True])
+def test_clean_root_cli_binds_shape_source_and_payload_scan(tmp_path, capsys, ancestor):
+    layers = [{"usr/share/doc/source.txt": b"source-only runtime"}]
+    if ancestor:
+        layers.insert(0, {"superseded-libssl.so": b"old object"})
+        layers[1][".wh.superseded-libssl.so"] = b""
+    saved = _saved_image(
+        tmp_path, layers, config=json.dumps(_clean_root_config()).encode()
+    )
+    findings, identity = scanner.inspect_saved_image(saved)
+    assert not findings  # A payload-only pass is not clean-root acceptance.
+    result = scanner.main(
+        [
+            "--tarball",
+            str(saved),
+            "--expected-image-id",
+            identity["image_id"],
+            "--clean-root-source-sha",
+            "1" * 40,
+        ]
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert result == int(ancestor)
+    assert report["clean_root_qualification"] == {
+        "contract_sha256": scanner.CLEAN_ROOT_CONTRACT_SHA256,
+        "expected_source_sha": "1" * 40,
+    }
+    assert report["layers_scanned"] == len(layers)
+    assert bool(report["findings"]) == ancestor
+
+
+def test_clean_root_does_not_exempt_forbidden_payload(tmp_path, capsys):
+    saved = _saved_image(
+        tmp_path,
+        [{"opt/model.pt": b"forbidden weights"}],
+        config=json.dumps(_clean_root_config()).encode(),
+    )
+    _, identity = scanner.inspect_saved_image(saved)
+    assert (
+        scanner.main(
+            [
+                "--tarball",
+                str(saved),
+                "--expected-image-id",
+                identity["image_id"],
+                "--clean-root-source-sha",
+                "1" * 40,
+            ]
+        )
+        == 1
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert any(row["kind"] == "model_weight" for row in report["findings"])
+
+
+@pytest.mark.parametrize(
+    "variant", ["canonical", "other-gzip", "whiteout", "forged-diff"]
+)
+def test_clean_root_empty_tail_passes_full_byte_and_shape_checks(
+    tmp_path, capsys, variant
+):
+    # Exact Docker empty-layer bytes; both stored and decoded identities matter.
+    canonical = bytes.fromhex(
+        "1f8b08000000000000ff621805a360148c5800080000ffff2eafb5ef00040000"
+    )
+    decoded = gzip.decompress(canonical)
+    assert decoded == b"\0" * 1024
+    assert (
+        hashlib.sha256(canonical).hexdigest()
+        == "4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1"
+    )
+    if variant == "other-gzip":
+        tail = gzip.compress(decoded, mtime=0)
+        assert tail != canonical
+    elif variant in {"whiteout", "forged-diff"}:
+        decoded = _tar(tmp_path / "whiteout.tar", {".wh.old.so": b""}).read_bytes()
+        tail = gzip.compress(decoded, mtime=0)
+    else:
+        tail = canonical
+    original = _saved_image(
+        tmp_path,
+        [{"source.txt": b"source-only runtime"}],
+        config=json.dumps(_clean_root_config()).encode(),
+    )
+    with tarfile.open(original) as archive:
+        members = {
+            row.name: archive.extractfile(row).read() for row in archive.getmembers()
+        }
+    config = json.loads(members["config.json"])
+    diff = hashlib.sha256(
+        b"\0" * 1024 if variant == "forged-diff" else decoded
+    ).hexdigest()
+    config["rootfs"]["diff_ids"].append("sha256:" + diff)
+    members["config.json"] = json.dumps(config).encode()
+    manifest = json.loads(members["manifest.json"])
+    manifest[0]["Layers"].append("tail.tar.gz")
+    members["manifest.json"] = json.dumps(manifest).encode()
+    members["tail.tar.gz"] = tail
+    saved = _tar(tmp_path / "with-tail.tar", members)
+    if variant == "forged-diff":
+        with pytest.raises(RuntimeError, match="rootfs diff IDs"):
+            scanner.inspect_saved_image(saved)
+        return
+    _, identity = scanner.inspect_saved_image(saved)
+    result = scanner.main(
+        [
+            "--tarball",
+            str(saved),
+            "--expected-image-id",
+            identity["image_id"],
+            "--clean-root-source-sha",
+            "1" * 40,
+        ]
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert result == (0 if variant == "canonical" else 1)
+    assert report["layers_scanned"] == 2
 
 
 def _gzip_saved_image(
@@ -599,8 +865,9 @@ def test_nested_wheel_cudnn_and_nvshmem_sdk_payloads_fail(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     ("version", "contents", "accepted"),
     [
-        ("80.9.0", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE, True),
-        ("80.9.0", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE + b"changed", False),
+        ("84.0.0", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE, True),
+        ("84.0.0", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE + b"changed", False),
+        ("80.9.0", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE, False),
         ("68.1.2", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE, False),
     ],
 )
@@ -634,7 +901,7 @@ def test_setuptools_seed_wheel_path_and_contents_are_exactly_bound(
 
 
 def test_exact_setuptools_path_file_cannot_be_zip_symlink(tmp_path: Path) -> None:
-    wheel = tmp_path / "setuptools-80.9.0-py3-none-any.whl"
+    wheel = tmp_path / "setuptools-84.0.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         info = zipfile.ZipInfo("distutils-precedence.pth")
         info.create_system = 3
@@ -646,7 +913,7 @@ def test_exact_setuptools_path_file_cannot_be_zip_symlink(tmp_path: Path) -> Non
             [
                 {
                     "usr/share/python-wheels/"
-                    "setuptools-80.9.0-py3-none-any.whl": wheel.read_bytes(),
+                    "setuptools-84.0.0-py3-none-any.whl": wheel.read_bytes(),
                 }
             ],
         )
