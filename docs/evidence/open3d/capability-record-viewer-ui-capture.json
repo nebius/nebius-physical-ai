@@ -1,0 +1,65 @@
+{
+  "capability": "The Rerun viewer's own frame was captured, and it found a clipping defect the offscreen renders could not",
+  "recorded_at": "2026-09-21T03:52Z",
+  "lane": "geometry",
+  "why_this_was_worth_doing": "Root's directive said PLY renders do not prove the UI and that an actual viewer capture mattered for the operator's original complaint. That was right, and not merely procedurally: the capture found a real defect that no offscreen render could have surfaced.",
+  "how_the_capture_works": {
+    "mechanism": "rerun --screenshot-to, the viewer's own screenshot path, under xvfb-run. This is the real native viewer consuming the real recording and applying the real blueprint, not a reimplementation.",
+    "host_change": "libxkbcommon-x11-0 and libxcb-xkb1 installed on the shared dev VM. Verified purely additive first: two NEW packages, zero removals, zero upgrades. The viewer panics without them.",
+    "resolution": "1920x1200 logical, captured at 3840x2400 by the viewer's 2x scale factor",
+    "caveat": "The viewer emitted a wgpu validation error in one capture -- 'Surface width and height must be within the maximum supported texture size. Requested was (40000, 40000), maximum extent 16384'. The frame still rendered and is legible. Not diagnosed; recorded because it appeared in evidence rather than hidden."
+  },
+  "the_defect_the_capture_found": {
+    "what": "Every view's camera was fitted for a 4:3 frame, but the blueprint's own layout sets column_shares=[2,1], so no view is ever displayed in a 4:3 pane. The scene pane is about 1.07 and each tab about 0.53.",
+    "why_the_offscreen_renders_could_not_show_it": "They were rendered at exactly the aspect the camera assumed. A camera fitted for the wrong pane shape looks perfectly framed in a frame of that same wrong shape. The 0.926 figure I reported earlier was true, and true only in a 4:3 frame that the shipped layout never produces.",
+    "measured_analytically_on_the_completed_run_s_own_geometry": {
+      "units": "worst frame-relative coordinate; 1.0 is exactly the frame edge",
+      "one_4_3_fit_measured_in_the_pane_the_view_is_actually_shown_in": {
+        "Scene: observed scan and supported surface": 1.157,
+        "Observed scan only": 2.314,
+        "Supported surface only": 2.314,
+        "Removed: unsupported surface": 2.314
+      },
+      "per_pane_fit_measured_in_the_same_panes": {
+        "Scene: observed scan and supported surface": 0.926,
+        "Observed scan only": 0.926,
+        "Supported surface only": 0.926,
+        "Removed: unsupported surface": 0.926
+      },
+      "reading": "In the narrow tab column the old fit put content 2.31 frame half-extents out, so well under half of it fit horizontally. The scene pane clipped by 16%. The fix lands every view at 0.926, the same target the margin constant asks for."
+    },
+    "the_cost_of_the_fix_stated_plainly": {
+      "per_pane_fit_measured_in_a_4_3_frame": {
+        "Scene: observed scan and supported surface": 0.741,
+        "Observed scan only": 0.37,
+        "Supported surface only": 0.37,
+        "Removed: unsupported surface": 0.37
+      },
+      "reading": "A view fitted for a half-width pane uses only 37% of a wide frame. That is the honest trade: the tab views are now zoomed out in any pane wider than the one they ship in. Over-zoom is reviewable and clipping is not, which is why the trade goes this way, and it is the same two-sided tension the snugness test already pins."
+    },
+    "the_fix": "Each view's pane shape is part of the same table that defines its geometry and contents, derived from the layout's own column shares against a nominal window aspect deliberately chosen narrower than a wide monitor. _camera takes that aspect, and the camera record carries the pane it was fitted for."
+  },
+  "a_measurement_of_mine_that_did_not_hold_up": {
+    "what_i_first_claimed": "A pixel audit of the captured frame reported geometry spanning the full pane width and touching both side edges, and I read that as clipping.",
+    "why_it_was_wrong": "The blueprint deliberately draws a metre LineGrid3D across the entire pane. The grid is content by any pixel measure, so it spans the full width and touches every edge whatever the camera does. The measurement could not distinguish the grid from the geometry, and it reported 'clipped' for both members of a controlled pair including the fixed one.",
+    "a_second_flaw_in_the_same_harness": "The first version estimated the background as each row's median, which inverts once content fills most of a row: the geometry becomes the reference and the background reads as content. Replaced with a per-row dark-quantile floor, which is still defeated by the grid.",
+    "what_this_means": "The pixel audit is not evidence of geometry clipping in this viewer and is not used as such. The claim rests on the projection-space measurement above, which the grid cannot confound because it measures the geometry's own coordinates against the camera. The harness is kept, with its limitation documented in its own docstring, because it is the right tool for a pane with no grid.",
+    "the_capture_still_earned_its_place": "The defect was found by looking at the captured frame and noticing the tab content was cut off. The capture generated the hypothesis; the projection measurement is what tests it."
+  },
+  "what_the_capture_shows_that_is_not_about_clipping": {
+    "colour_fix_visible_side_by_side": "In the capture taken before the colour change, the scene pane's surface is flat white while the point cloud beside it carries the scan's colour. After, the surface shows the reconstruction's own 5432 distinct colours. This is the clearest confirmation that root's second finding was real rather than theoretical.",
+    "layout_is_as_designed": "Scene pane on the left at two thirds width, with the scan-only, surface-only and audit views as tabs beside it."
+  },
+  "provenance": {
+    "captures": {
+      "01-live-run-256c26bc9.png": "the recording the six-state workflow actually produced, at 256c26bc9; single-aspect cameras and an uncoloured surface",
+      "pair-oneaspect.png and pair-perpane.png": "a controlled pair built from the completed run's PLY bytes, identical content, differing only in the aspect each camera was fitted for"
+    },
+    "honesty_note": "The controlled pair is regenerated from the run's outputs, not produced by a new end-to-end workflow run. It is real geometry from a real run, rendered by the real viewer, but the recording itself was rebuilt for the comparison and is labelled as such rather than presented as the run's own artifact."
+  },
+  "still_not_claimed": {
+    "accuracy": "Nothing here touches accuracy, collision fitness or safe planning. The crop still leaves holes and thin disconnected fragments, visible in these captures.",
+    "web_viewer": "This is the native viewer. The web viewer is not bundled in this build, so no claim is made about it.",
+    "window_independence": "A user can resize any pane to any shape. The fit is made against the layout's own column shares at a nominal window, so an extremely narrow window can still clip. Bounding that properly would need the viewer to report pane size back, which this path does not offer."
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "schema": "npa.specialists.telemetry_informed_standard_equivalent.v1",
+  "execution_label": "pair6",
+  "telemetry_sha256": "c8adb128f60f6abf78e36e1f2fb70b61fe29aac11937e2fe61705ba8878ce912",
+  "auditor_sha256": "a9bb8280dcd6f6b7a325b42ac9b933d6d90affee938c32b7959f17f42f27163e",
+  "runs": [
+    {
+      "arm": "astra-only",
+      "audit_sha256": "1bea2a02a131824e958f4992aee27daeb8acf9513af07c7d0cb40377aebc653b",
+      "tofa_recorded_tariff_usd": 0.0,
+      "actual_invoice_or_billed_tier_proven": false,
+      "astra_cli_standard_equivalent_usd": 0.932278,
+      "combined_standard_recorded_equivalent_usd": 0.932278,
+      "additional_setup_token_sensitivity_usd": {
+        "minimum": 0,
+        "maximum": 0.11103
+      },
+      "combined_standard_plus_setup_sensitivity_usd": {
+        "minimum": 0.932278,
+        "maximum": 1.043308
+      },
+      "evidence": {
+        "thread_identity_bound": true,
+        "outer_invocations": 1,
+        "completed_response_records": 15,
+        "records_after_input_only_completion": 14,
+        "maximum_observed_prompt_tokens": 33431,
+        "first_input_only_record": {
+          "input_tokens": 11103,
+          "output_tokens": 0,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "remaining_counters_equal_cli": {
+          "input_tokens": 359835,
+          "output_tokens": 1652,
+          "cached_input_tokens": 305408,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 84
+        },
+        "all_five_counters_match": true,
+        "direct_warmup_marker_captured": false,
+        "response_id_available": false
+      }
+    },
+    {
+      "arm": "astra-tofa",
+      "audit_sha256": "2894f8ca1d216f80547cac793cb4a6620ecfc374c825e300cb28aa4b1d7372dd",
+      "tofa_recorded_tariff_usd": 0.011391799999999999,
+      "actual_invoice_or_billed_tier_proven": false,
+      "astra_cli_standard_equivalent_usd": 0.219028,
+      "combined_standard_recorded_equivalent_usd": 0.2304198,
+      "additional_setup_token_sensitivity_usd": {
+        "minimum": 0,
+        "maximum": 0.11103
+      },
+      "combined_standard_plus_setup_sensitivity_usd": {
+        "minimum": 0.2304198,
+        "maximum": 0.3414498
+      },
+      "evidence": {
+        "thread_identity_bound": true,
+        "outer_invocations": 1,
+        "completed_response_records": 4,
+        "records_after_input_only_completion": 3,
+        "maximum_observed_prompt_tokens": 14911,
+        "first_input_only_record": {
+          "input_tokens": 11103,
+          "output_tokens": 0,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "remaining_counters_equal_cli": {
+          "input_tokens": 42971,
+          "output_tokens": 763,
+          "cached_input_tokens": 27648,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "all_five_counters_match": true,
+        "direct_warmup_marker_captured": false,
+        "response_id_available": false
+      }
+    }
+  ],
+  "recorded_standard_equivalent_reduction_fraction": 0.7528421779769554,
+  "reduction_with_independent_setup_sensitivity_fraction": {
+    "minimum": 0.6337468008469577,
+    "maximum": 0.7791449888240097
+  },
+  "source": "https://github.com/openai/codex/blob/rust-v0.153.3/codex-rs/core/src/client.rs",
+  "interpretation": "All captured prompts fit the standard context tariff. Exactly one first 11,103-input/zero-output completion is consistent with documented WebSocket prewarm; classification is inferred, billing is unknown. That row is retained as separate sensitivity, not silently discarded. Remaining counters exactly match CLI totals. No actual invoice, billed service tier or subscriber quota deduction is established.",
+  "raw_audits_and_conservative_context_ranges_preserved": true,
+  "reasoning_not_double_charged": true,
+  "tofa_cache_discount_assumed": false
+}

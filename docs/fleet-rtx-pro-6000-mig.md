@@ -82,7 +82,11 @@ taint.
 The GPU Operator driver DaemonSet uses `OnDelete`. When a new driver pod template
 is pending, `--reconcile` refuses to proceed while any running application pod
 holds an `nvidia.com/*` resource: delete those workloads explicitly first. With
-the cluster workload-free, NPA cordons one worker, rechecks the workload gate,
+the cluster workload-free, NPA validates every target worker’s node spec and
+literal boolean scheduling state before its first mutation. Malformed evidence
+on any worker stops the entire rollout. Read-only inspection instead marks that
+worker unschedulable with a diagnostic while retaining healthy worker results.
+NPA then cordons one worker, rechecks the workload gate,
 replaces and waits for that worker's driver pod, uncordons it, and only then
 moves to the other worker. NPA never deletes application workloads implicitly.
 

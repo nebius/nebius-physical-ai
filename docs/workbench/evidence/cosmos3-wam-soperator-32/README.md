@@ -82,7 +82,12 @@ The independent provider inventory found zero compute instances, managed
 clusters, filesystems and IP allocations in the dedicated project. See
 [teardown.json](teardown.json) for counts, archive totals and private-source hashes.
 
-The private archive, project and two original native-VM evidence disks remain.
-Both historical native VMs were already absent at the pre-cleanup audit.
-Retained storage and reservation commitments are separate from compute-instance
-cleanup; this is not a billing or reservation-cancellation receipt.
+The September 30 receipt records the private archive, project, and two original
+native-VM evidence disks as retained at that time. After PR 797 merged, the
+operator requested further cleanup. The [October 2 receipt](post-merge-cleanup.json)
+records deletion of both disks, the archive bucket, and its dedicated storage
+identity and access key. The original project and default network remain;
+the reservation was unchanged. Published measurements and the separate Word
+manuscript were preserved. The old raw checkpoint archive is no longer available.
+These receipts cover the original campaign, not subsequent reproductions, and
+do not establish a billing total or reservation cancellation.

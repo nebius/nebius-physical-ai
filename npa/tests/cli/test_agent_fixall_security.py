@@ -98,7 +98,7 @@ def test_allow_provision_defaults_false() -> None:
     source = AGENT_PY.read_text(encoding="utf-8")
     assert 'allow_provision = bool(body.get("allow_provision", False))' in source
     assert (
-        'dry_run = bool(body.get("dry_run", True))'
+        'dry_run = _agent_request_boolean(body, "dry_run", default=True)'
         in source.split("def provision_infra")[1].split("def validate_soperator")[0]
     )
     assert (

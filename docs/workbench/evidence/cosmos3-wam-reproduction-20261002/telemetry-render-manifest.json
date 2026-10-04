@@ -1,0 +1,11 @@
+{
+  "matplotlib": "3.11.2",
+  "numpy": "2.5.3",
+  "sha256": {
+    "plot-telemetry.py": "a51c3b0439f2c478a64d094c4621e4e6d7e2f84604853a3dfc2214b6a0a0b9c2",
+    "live-training-16/window.json": "4fe058a96228b39b34d1e445332f469d89342802c5ef7ca57fa22c10598214a5",
+    "live-gpu-16-window.png": "51f0507128c0d69fc4ca2b4c7ba1b13837ec5f9dcbc5cf6f0ac420ac0f9834b1"
+  },
+  "second_render_identical": true,
+  "visually_inspected": true
+}

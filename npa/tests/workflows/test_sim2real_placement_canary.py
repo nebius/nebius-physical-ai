@@ -106,6 +106,62 @@ def test_canary_rejects_unpinned_scenario_transport() -> None:
         )
 
 
+@pytest.mark.parametrize("value", ["false", "true"])
+def test_canary_rejects_mutually_truthy_success_evidence(value: str) -> None:
+    report = _report(stable=True)
+    report["per_env"][0]["success"] = value
+    report["per_env"][0]["details"]["placement_stable"] = value
+    with pytest.raises(ValueError, match="row success must be a literal boolean"):
+        assess_placement_report(
+            report,
+            checkpoint_uri=report["policy_checkpoint"],
+            expected_scenarios=2,
+        )
+
+
+def test_canary_rejects_non_boolean_placement_stability() -> None:
+    report = _report(stable=True)
+    report["per_env"][0]["details"]["placement_stable"] = "true"
+    with pytest.raises(ValueError, match="placement_stable must be a literal boolean"):
+        assess_placement_report(
+            report,
+            checkpoint_uri=report["policy_checkpoint"],
+            expected_scenarios=2,
+        )
+
+
+@pytest.mark.parametrize(
+    ("section", "field"),
+    [
+        ("policy_inference_provenance", "loaded_for_inference"),
+        ("policy_inference_provenance", "actor_is_learned"),
+        ("policy_inference_provenance", "scripted_post_actor_controller"),
+        ("scenario_input_provenance", "content_addressed"),
+    ],
+)
+def test_canary_rejects_non_boolean_provenance(section: str, field: str) -> None:
+    report = _report(stable=True)
+    report[section][field] = "false"
+    with pytest.raises(ValueError, match=f"{field} must be a literal boolean"):
+        assess_placement_report(
+            report,
+            checkpoint_uri=report["policy_checkpoint"],
+            expected_scenarios=2,
+        )
+
+
+@pytest.mark.parametrize("field", ["reach", "contact", "stable_grasp", "lift", "place"])
+def test_canary_rejects_non_boolean_decomposed_stage(field: str) -> None:
+    report = _report(stable=True)
+    report["per_env"][0]["details"][field] = "false"
+    with pytest.raises(ValueError, match=f"decomposed stage {field}"):
+        assess_placement_report(
+            report,
+            checkpoint_uri=report["policy_checkpoint"],
+            expected_scenarios=2,
+        )
+
+
 def test_canary_rejects_any_scripted_post_actor_controller() -> None:
     report = _report(stable=True)
     inference = report["policy_inference_provenance"]
@@ -117,3 +173,94 @@ def test_canary_rejects_any_scripted_post_actor_controller() -> None:
             checkpoint_uri=report["policy_checkpoint"],
             expected_scenarios=2,
         )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, True, False, "0.01", -0.01, float("nan"), float("inf"), -float("inf")],
+)
+def test_canary_rejects_invalid_verdict_distance(value):
+    report = _report(stable=True)
+    report["per_env"][0]["details"]["object_goal_distance_m"] = value
+    with pytest.raises(ValueError, match="object_goal_distance_m"):
+        assess_placement_report(
+            report, checkpoint_uri=report["policy_checkpoint"], expected_scenarios=2
+        )
+
+
+@pytest.mark.parametrize("field", ["scenario_count", "size_bytes"])
+@pytest.mark.parametrize(
+    "value", [None, True, False, "2", 2.0, 2.5, 0, -1, float("nan"), float("inf")]
+)
+def test_canary_rejects_invalid_provenance_counts(field, value):
+    report = _report(stable=True)
+    report["scenario_input_provenance"][field] = value
+    with pytest.raises(ValueError, match=field):
+        assess_placement_report(
+            report, checkpoint_uri=report["policy_checkpoint"], expected_scenarios=2
+        )
+
+
+@pytest.mark.parametrize("value", [None, True, "2", 2.0, 0, -1])
+def test_canary_rejects_invalid_expected_count(value):
+    report = _report(stable=True)
+    with pytest.raises(ValueError, match="expected_scenarios"):
+        assess_placement_report(
+            report, checkpoint_uri=report["policy_checkpoint"], expected_scenarios=value
+        )
+
+
+def test_canary_fallback_names_actual_key_and_preserves_null():
+    report = _report(stable=True)
+    details = report["per_env"][0]["details"]
+    del details["placement_stable"]
+    assert (
+        assess_placement_report(
+            report, checkpoint_uri=report["policy_checkpoint"], expected_scenarios=2
+        )["strict_stable_placements"]
+        == 1
+    )
+    details["place"] = "true"
+    with pytest.raises(ValueError, match="canary place must"):
+        assess_placement_report(
+            report, checkpoint_uri=report["policy_checkpoint"], expected_scenarios=2
+        )
+    details["place"] = True
+    details["placement_stable"] = None
+    with pytest.raises(ValueError, match="canary placement_stable must"):
+        assess_placement_report(
+            report, checkpoint_uri=report["policy_checkpoint"], expected_scenarios=2
+        )
+
+
+@pytest.mark.parametrize(
+    "distance,success", [(0, True), (0.049, True), (0.05, False), (1, False)]
+)
+def test_canary_preserves_strict_distance_boundary(distance, success):
+    report = _report(stable=True)
+    report["per_env"][0]["details"]["object_goal_distance_m"] = distance
+    report["per_env"][0]["success"] = success
+    result = assess_placement_report(
+        report, checkpoint_uri=report["policy_checkpoint"], expected_scenarios=2
+    )
+    assert result["credible_placement_signal"] is success
+
+
+@pytest.mark.parametrize("value", [True, "2", 2.0, 0, -1])
+def test_canary_rejects_bad_count_before_storage_or_gpu(monkeypatch, tmp_path, value):
+    from npa.workflows.sim2real import placement_canary
+
+    def unexpected(**kwargs):
+        pytest.fail("invalid ingress reached storage")
+
+    monkeypatch.setattr(placement_canary, "_validation_rows", unexpected)
+    with pytest.raises(ValueError, match="scenario_count"):
+        placement_canary.run_validation_canary(
+            run_id="test",
+            checkpoint_uri="s3://bucket/model.pt",
+            validation_envs_uri="s3://bucket/validation",
+            gold_envs_uri="s3://bucket/gold",
+            output_json=tmp_path / "report.json",
+            scenario_count=value,
+        )
+    assert not (tmp_path / "report.json").exists()

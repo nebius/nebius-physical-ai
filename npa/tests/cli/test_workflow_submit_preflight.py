@@ -3577,3 +3577,38 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
     assert (
         target_preflight.call_args.kwargs["image_pull_timeout_seconds"] == pull_timeout
     )
+
+
+@pytest.mark.parametrize("configuration", ["kubernetes: notamapping", "kubernetes: ["])
+def test_sim2real_submit_reports_invalid_placement_config_before_cloud_work(
+    tmp_path, monkeypatch, mocker, configuration
+):
+    config = tmp_path / "invalid-skypilot.yaml"
+    config.write_text(configuration)
+    monkeypatch.setenv("SKYPILOT_GLOBAL_CONFIG", str(config))
+    image_preflight = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_images"
+    )
+    launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    node_read = mocker.patch("npa.clients.kube.run_kubectl")
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SIM2REAL_SPEC),
+            "--run-id",
+            "sim2real-invalid-placement",
+            "--no-deploy-if-absent",
+            "--var",
+            "bucket=real-bucket",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, SystemExit)
+    assert "Isaac render placement configuration could not be verified" in result.output
+    assert "missing prerequisites" in result.output
+    image_preflight.assert_not_called()
+    launch.assert_not_called()
+    node_read.assert_not_called()
