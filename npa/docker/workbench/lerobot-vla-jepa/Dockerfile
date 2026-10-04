@@ -52,6 +52,31 @@ assert rerun.__version__ == "0.38.1"
 assert lerobot_vla_jepa.LEROBOT_VERSION == "0.6.1"
 PY
 
+# The generic LeRobot service base intentionally is not an attested SkyPilot
+# worker image.  This separate job candidate needs the full non-root bootstrap
+# contract for the exact Kubernetes image probe: a usable SSH daemon, rsync,
+# passwordless bootstrap sudo, and no build-time host keys.  Repair the
+# historical base's intentionally incomplete APT state before installing the
+# worker packages, then delete package-generated keys in this same layer.
+USER root
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --fix-broken \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      openssh-server \
+      rsync \
+      sudo \
+    && install -d -m 0755 /run/sshd /etc/ssh/sshd_config.d \
+    && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/99-npa-skypilot-runtime \
+    && chmod 0440 /etc/sudoers.d/99-npa-skypilot-runtime \
+    && printf '%s\n' 'PasswordAuthentication no' 'PermitRootLogin no' \
+      > /etc/ssh/sshd_config.d/99-npa-runtime.conf \
+    && rm -f /etc/ssh/ssh_host_*
+
+# The entrypoint creates per-pod SSH keys only at runtime, then forwards the
+# stage command unchanged.  It is deliberately not a service launcher.
+COPY --chmod=0555 docker/workbench/lerobot-vla-jepa/entrypoint.sh \
+  /usr/local/bin/npa-lerobot-vla-jepa-entrypoint
+
 # Copying the merged build filesystem into a scratch final stage means cache
 # bytes inherited in a parent image are not retained in the published image's
 # layer history. A later rm alone would only create a whiteout and leave those
@@ -68,7 +93,8 @@ LABEL npa.tool="lerobot-vla-jepa" \
       npa.lerobot.source-revision="${LEROBOT_SOURCE_REVISION}" \
       npa.adapter.source-revision="${NPA_ADAPTER_REVISION}" \
       org.opencontainers.image.source="https://github.com/huggingface/lerobot" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 USER ubuntu
 WORKDIR /opt/lerobot
@@ -77,10 +103,11 @@ ENV WANDB_MODE=disabled \
     HF_HUB_DISABLE_TELEMETRY=1 \
     NPA_LEROBOT_VERSION=0.6.1 \
     PYTHONPATH=/opt/vla-jepa-npa/src \
-    PATH=/opt/lerobot/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    HOME=/home/ubuntu \
+    PATH=/usr/bin:/opt/lerobot/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/bin
 
 # The parent service entrypoint would start FastAPI rather than the workflow's
 # native CLI.  A job image leaves command selection to the NPA stage renderer.
 HEALTHCHECK NONE
-ENTRYPOINT []
-CMD ["lerobot-train", "--help"]
+ENTRYPOINT ["/usr/local/bin/npa-lerobot-vla-jepa-entrypoint"]
+CMD ["/opt/lerobot/venv/bin/lerobot-train", "--help"]

@@ -13,6 +13,7 @@ import numpy as np
 from npa.orchestration.npa_workflow import load_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
+from npa.deploy.images import SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS
 from npa.workflows import lerobot_vla_jepa as vla
 
 
@@ -85,6 +86,28 @@ def test_candidate_image_removes_the_inherited_pip_cache() -> None:
     assert "h5py/tests/data_files -type f -name '*.h5' -delete" in dockerfile
     assert "robosuite/models/assets/demonstrations -type f -name '*.hdf5'" in dockerfile
     assert "botocore/data -type f -name 'examples-1.json' -delete" in dockerfile
+
+
+def test_candidate_image_declares_and_implements_skypilot_bootstrap_contract() -> None:
+    """Keep the separately built candidate eligible for the real K8s preflight."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in dockerfile
+    for token in (
+        "openssh-server",
+        "rsync",
+        "sudo",
+        "ubuntu ALL=(ALL) NOPASSWD:ALL",
+        "PasswordAuthentication no",
+        "PermitRootLogin no",
+        "rm -f /etc/ssh/ssh_host_*",
+        "ENTRYPOINT [\"/usr/local/bin/npa-lerobot-vla-jepa-entrypoint\"]",
+    ):
+        assert token in dockerfile
+    entrypoint = DOCKERFILE.parent / "entrypoint.sh"
+    entrypoint_text = entrypoint.read_text(encoding="utf-8")
+    assert "ssh-keygen -A" in entrypoint_text
+    assert 'exec "$@"' in entrypoint_text
+    assert "lerobot-vla-jepa" in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS
 
 
 def test_task_disjoint_split_and_numeric_training_statistics() -> None:
@@ -228,6 +251,8 @@ def test_readiness_is_hash_bound_and_does_not_claim_live_acceptance() -> None:
     expected = (
         WORKFLOW,
         DOCKERFILE,
+        Path("npa/docker/workbench/lerobot-vla-jepa/entrypoint.sh"),
+        Path("npa/src/npa/deploy/images.py"),
         Path("npa/src/npa/workflows/lerobot_vla_jepa.py"),
         Path("npa/tests/workflows/test_lerobot_vla_jepa.py"),
     )
