@@ -66,3 +66,17 @@ malformed/ineligible canonical artifact blocks favorable fallback. Filename and
 hash checks authenticate neither a provider nor a current workflow attempt;
 ignoring producer failure and manually reusing an old prefix is not supported
 current-run promotion evidence. This remains an explicit lifecycle limitation.
+# Scope note: #828 completion-only snapshot
+
+The hashes, heads and counts below describe the explicitly named #828
+completion-only snapshots, not every later tree that inherits this document.
+In particular, they are not #836 strict-score execution identities. The strict
+source bridge at `5d2b5b41247eab1634b3ace031450212ed5282b9` instead preserves
+original execution `7f7121c2cb126c7fa9954d8e950939c144515d68`: evaluator hashes
+`c9923024cbab3e88d884de41832260d3c32d14934be5b2afbd86172088cce099` to
+`66c3ba5fa03c0f174a4da46a1fa9bdc3bbc0a6dab8f211bde8171f90b8975495`,
+119 equal function/class ASTs with only filename constants changed, 1,959
+affected tests and two inherited opt-in skips. Its full gate remains the
+original 71c execution (39,848 pass/213 skip/one non-strict XPASS), not 5d2.
+The later landed #622 resolver/capture/writer interface needs its own affected
+receipt; this snapshot does not assert whole-evaluator equality across it.
