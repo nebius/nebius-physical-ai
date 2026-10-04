@@ -1,0 +1,797 @@
+{
+  "helper_sha256": "21631e50bd98bdb10abd731a2129f6b2779c9f6776262eb8237051dc5033634b",
+  "validation_source_sha256": "63f8a4f6ae85e12ccefd5da0092973be8a28396097b7d08d4222344f9af21453",
+  "environment": {
+    "image_id": "sha256:da0b6eb71c0d36eea037aeb6485e5727c72db212c23ea2a8b710ed54654c25f4",
+    "driver": "580.173.02",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "capability": [
+      12,
+      0
+    ],
+    "cuda": "13.0",
+    "flash_attention_commit": "eed1971f5132630dc296fe37601e834d4b57a248",
+    "benchmark_sources_sha256": {
+      "attention_benchmark_backend.py": "0446bbca2f106613ea981282662f839e55ed8f27edb3bd260dc34534a75d60db",
+      "attention_kernel_benchmark.py": "4bfc3438b5fb4b1ff6721d5ddc83af05bb8011e82e8f5c14bd69ced4a9950dc1",
+      "attention_sdxl_benchmark.py": "d8b536b77b7a60b3ce688555461360eb94755f7cc74660ce097d75bce44d1189",
+      "fa4_sdxl_attention.py": "77de0e7c35e5a20f191dfa04feaa5df34b480dfcd77204be00815d8ab3c741d5",
+      "fa4_sdxl_validation.py": "a3053ff2021d23287d665e3b5f0c8f29871ef2e595318f6d17c936096c739f2c",
+      "fa4_sdxl_model.json": "9b79fe42d2b5693798a19aae6a79febe7e8c5783310d0ee8968c70e31c5ecb38"
+    },
+    "attention_sources_sha256": {
+      "rtx_inference": "21631e50bd98bdb10abd731a2129f6b2779c9f6776262eb8237051dc5033634b"
+    },
+    "packages": {
+      "absl-py": "2.5.0",
+      "accelerate": "1.15.0",
+      "aiohappyeyeballs": "2.7.1",
+      "aiohttp": "3.14.3",
+      "aiosignal": "1.4.0",
+      "annotated-doc": "0.0.5",
+      "annotated-types": "0.8.0",
+      "anyio": "4.15.1",
+      "apache-tvm-ffi": "0.1.14.post1",
+      "attrs": "26.1.0",
+      "av": "18.1.0",
+      "boto3": "1.43.105",
+      "botocore": "1.43.105",
+      "certifi": "2026.7.22",
+      "charset-normalizer": "3.5.2",
+      "click": "8.5.0",
+      "cuda-bindings": "13.4.3",
+      "cuda-core": "1.2.1",
+      "cuda-pathfinder": "1.6.0",
+      "cuda-python": "13.4.1",
+      "cuda-toolkit": "13.0.3.0",
+      "datasets": "5.0.1",
+      "dill": "0.4.1",
+      "einops": "0.8.2",
+      "filelock": "3.32.3",
+      "flash-attn-4": "4.0.0b33.dev10+geed1971f",
+      "frozenlist": "1.8.0",
+      "fsspec": "2026.6.0",
+      "googleapis-common-protos": "1.75.5",
+      "grpcio": "1.84.0",
+      "h11": "0.16.0",
+      "hf-xet": "1.6.0",
+      "httpcore": "1.0.9",
+      "httpx": "0.28.1",
+      "huggingface-hub": "1.33.0",
+      "idna": "3.20",
+      "jinja2": "3.1.6",
+      "jmespath": "1.1.0",
+      "markdown": "3.11",
+      "markdown-it-py": "4.2.0",
+      "markupsafe": "3.0.3",
+      "mdurl": "0.1.2",
+      "mpmath": "1.3.0",
+      "multidict": "6.9.1",
+      "multiprocess": "0.70.19",
+      "networkx": "3.6.1",
+      "numpy": "2.4.6",
+      "nvidia-cublas": "13.1.1.3",
+      "nvidia-cuda-cupti": "13.0.85",
+      "nvidia-cuda-nvdisasm": "13.4.92",
+      "nvidia-cuda-nvrtc": "13.0.88",
+      "nvidia-cuda-runtime": "13.0.96",
+      "nvidia-cudnn-cu13": "9.20.0.48",
+      "nvidia-cufft": "12.0.0.61",
+      "nvidia-cufile": "1.15.1.6",
+      "nvidia-curand": "10.4.0.35",
+      "nvidia-cusolver": "12.0.4.66",
+      "nvidia-cusparse": "12.6.3.3",
+      "nvidia-cusparselt-cu13": "0.8.1",
+      "nvidia-cutlass-dsl": "4.6.2",
+      "nvidia-cutlass-dsl-libs-base": "4.6.2",
+      "nvidia-cutlass-dsl-libs-core": "4.6.2",
+      "nvidia-cutlass-dsl-libs-cu12": "4.6.2",
+      "nvidia-cutlass-dsl-libs-cu13": "4.6.2",
+      "nvidia-nccl-cu13": "2.29.7",
+      "nvidia-nvjitlink": "13.3.33",
+      "nvidia-nvshmem-cu13": "3.4.5",
+      "nvidia-nvtx": "13.0.85",
+      "opencv-python-headless": "5.0.0.93",
+      "opentelemetry-api": "1.45.0",
+      "opentelemetry-exporter-http-transport": "0.66b0",
+      "opentelemetry-exporter-otlp-common": "0.66b0",
+      "opentelemetry-exporter-otlp-proto-common": "1.45.0",
+      "opentelemetry-exporter-otlp-proto-http": "1.45.0",
+      "opentelemetry-proto": "1.45.0",
+      "opentelemetry-sdk": "1.45.0",
+      "opentelemetry-semantic-conventions": "0.66b0",
+      "packaging": "26.3",
+      "pandas": "3.0.6",
+      "pillow": "12.3.0",
+      "pip": "26.2.1",
+      "platformdirs": "4.12.2",
+      "propcache": "0.5.4",
+      "protobuf": "6.33.6",
+      "psutil": "7.2.2",
+      "pyarrow": "25.0.1",
+      "pydantic": "2.13.5",
+      "pydantic-core": "2.46.5",
+      "pygments": "2.21.0",
+      "python-dateutil": "2.9.0.post0",
+      "pyyaml": "6.0.3",
+      "quack-kernels": "0.6.4",
+      "regex": "2026.9.29",
+      "requests": "2.34.2",
+      "rich": "15.0.0",
+      "s3transfer": "0.19.2",
+      "safetensors": "0.8.0",
+      "scipy": "1.17.1",
+      "setuptools": "84.0.0",
+      "shellingham": "1.5.4",
+      "six": "1.17.0",
+      "sympy": "1.14.0",
+      "tensorboard": "2.21.0",
+      "tensorboard-data-server": "0.7.2",
+      "tokenizers": "0.23.2",
+      "torch": "2.13.0+cu130",
+      "torch-c-dlpack-ext": "0.1.5",
+      "torchaudio": "2.11.0+cu130",
+      "torchvision": "0.28.0+cu130",
+      "tqdm": "4.70.1",
+      "transformers": "5.17.0",
+      "triton": "3.7.1",
+      "typer": "0.27.2",
+      "typing-extensions": "4.16.0",
+      "typing-inspection": "0.4.4",
+      "urllib3": "2.8.0",
+      "wandb": "0.30.0",
+      "werkzeug": "3.1.9",
+      "wheel": "0.48.0",
+      "xxhash": "4.0.1",
+      "yarl": "1.25.1"
+    }
+  },
+  "checks": [
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q1024-k77",
+      "errors": {
+        "relative_l2": 0.00026087413425557315,
+        "max_abs": 0.0004947185516357422
+      },
+      "seed": 101,
+      "scale": 1,
+      "call_seconds": 0.9110851079994973
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q1024-k77",
+      "errors": {
+        "relative_l2": 0.00018406582239549607,
+        "max_abs": 0.0019378662109375
+      },
+      "seed": 202,
+      "scale": 4,
+      "call_seconds": 0.000863270000081684
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q1024-k77",
+      "errors": {
+        "relative_l2": 0.00020810453861486167,
+        "max_abs": 0.00012108683586120605
+      },
+      "seed": 303,
+      "scale": 0,
+      "call_seconds": 0.0005971359996692627
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q1024-k77",
+      "errors": {
+        "relative_l2": 0.0002614580444060266,
+        "max_abs": 0.0004985332489013672
+      },
+      "stream": 0
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q1024-k77",
+      "errors": {
+        "relative_l2": 0.0002599537547212094,
+        "max_abs": 0.0005037784576416016
+      },
+      "stream": 1
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q1024-k1024",
+      "errors": {
+        "relative_l2": 0.0002768967824522406,
+        "max_abs": 0.00024253129959106445
+      },
+      "seed": 101,
+      "scale": 1,
+      "call_seconds": 0.9523457599998437
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q1024-k1024",
+      "errors": {
+        "relative_l2": 0.0001938920613611117,
+        "max_abs": 0.0019526481628417969
+      },
+      "seed": 202,
+      "scale": 4,
+      "call_seconds": 0.009457027999815182
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q1024-k1024",
+      "errors": {
+        "relative_l2": 0.0002102634171023965,
+        "max_abs": 3.0308961868286133e-05
+      },
+      "seed": 303,
+      "scale": 0,
+      "call_seconds": 0.0090074640002058
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q1024-k1024",
+      "errors": {
+        "relative_l2": 0.00027655495796352625,
+        "max_abs": 0.00022596120834350586
+      },
+      "stream": 0
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q1024-k1024",
+      "errors": {
+        "relative_l2": 0.0002771311847027391,
+        "max_abs": 0.00013744831085205078
+      },
+      "stream": 1
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q1536-k77",
+      "errors": {
+        "relative_l2": 0.00026177047402597964,
+        "max_abs": 0.0004807710647583008
+      },
+      "seed": 101,
+      "scale": 1,
+      "call_seconds": 0.7897129259999929
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q1536-k77",
+      "errors": {
+        "relative_l2": 0.00018321446259506047,
+        "max_abs": 0.0019388198852539062
+      },
+      "seed": 202,
+      "scale": 4,
+      "call_seconds": 0.0012857760002589202
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q1536-k77",
+      "errors": {
+        "relative_l2": 0.00020441900414880365,
+        "max_abs": 0.0001137852668762207
+      },
+      "seed": 303,
+      "scale": 0,
+      "call_seconds": 0.0013731280005231383
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q1536-k77",
+      "errors": {
+        "relative_l2": 0.0002622938191052526,
+        "max_abs": 0.0006506443023681641
+      },
+      "stream": 0
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q1536-k77",
+      "errors": {
+        "relative_l2": 0.0002620615705382079,
+        "max_abs": 0.0006701946258544922
+      },
+      "stream": 1
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q1536-k1536",
+      "errors": {
+        "relative_l2": 0.0002801458758767694,
+        "max_abs": 0.00012639164924621582
+      },
+      "seed": 101,
+      "scale": 1,
+      "call_seconds": 1.0171057389998168
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q1536-k1536",
+      "errors": {
+        "relative_l2": 0.00019498568144626915,
+        "max_abs": 0.0019140243530273438
+      },
+      "seed": 202,
+      "scale": 4,
+      "call_seconds": 0.025057640000341053
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q1536-k1536",
+      "errors": {
+        "relative_l2": 0.00020611441868823022,
+        "max_abs": 2.7842819690704346e-05
+      },
+      "seed": 303,
+      "scale": 0,
+      "call_seconds": 0.02505773099983344
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q1536-k1536",
+      "errors": {
+        "relative_l2": 0.00027777100331149995,
+        "max_abs": 0.00012874603271484375
+      },
+      "stream": 0
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q1536-k1536",
+      "errors": {
+        "relative_l2": 0.0002800805668812245,
+        "max_abs": 0.00012284517288208008
+      },
+      "stream": 1
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q4096-k77",
+      "errors": {
+        "relative_l2": 0.0002609035582281649,
+        "max_abs": 0.0005350112915039062
+      },
+      "seed": 101,
+      "scale": 1,
+      "call_seconds": 0.7649960159997136
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q4096-k77",
+      "errors": {
+        "relative_l2": 0.00018383738643024117,
+        "max_abs": 0.0019483566284179688
+      },
+      "seed": 202,
+      "scale": 4,
+      "call_seconds": 0.0018199320002167951
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q4096-k77",
+      "errors": {
+        "relative_l2": 0.00020825129467993975,
+        "max_abs": 0.00012168288230895996
+      },
+      "seed": 303,
+      "scale": 0,
+      "call_seconds": 0.0018659770003068843
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q4096-k77",
+      "errors": {
+        "relative_l2": 0.00026278311270289123,
+        "max_abs": 0.0005261898040771484
+      },
+      "stream": 0
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q4096-k77",
+      "errors": {
+        "relative_l2": 0.0002600743027869612,
+        "max_abs": 0.0005269050598144531
+      },
+      "stream": 1
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q4096-k4096",
+      "errors": {
+        "relative_l2": 0.00028355131507851183,
+        "max_abs": 6.355345249176025e-05
+      },
+      "seed": 101,
+      "scale": 1,
+      "call_seconds": 0.9652271499999188
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q4096-k4096",
+      "errors": {
+        "relative_l2": 0.00019741131109185517,
+        "max_abs": 0.0019445419311523438
+      },
+      "seed": 202,
+      "scale": 4,
+      "call_seconds": 0.08490289600013057
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q4096-k4096",
+      "errors": {
+        "relative_l2": 0.00019958837947342545,
+        "max_abs": 1.4994293451309204e-05
+      },
+      "seed": 303,
+      "scale": 0,
+      "call_seconds": 0.08493519399962679
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q4096-k4096",
+      "errors": {
+        "relative_l2": 0.000283394823782146,
+        "max_abs": 7.110834121704102e-05
+      },
+      "stream": 0
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q4096-k4096",
+      "errors": {
+        "relative_l2": 0.00028451989055611193,
+        "max_abs": 6.076693534851074e-05
+      },
+      "stream": 1
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q6144-k77",
+      "errors": {
+        "relative_l2": 0.0002609261719044298,
+        "max_abs": 0.0006140470504760742
+      },
+      "seed": 101,
+      "scale": 1,
+      "call_seconds": 0.7829107139996268
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q6144-k77",
+      "errors": {
+        "relative_l2": 0.00018421166168991476,
+        "max_abs": 0.0019392967224121094
+      },
+      "seed": 202,
+      "scale": 4,
+      "call_seconds": 0.002885617000174534
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q6144-k77",
+      "errors": {
+        "relative_l2": 0.00020800552738364786,
+        "max_abs": 0.00012171268463134766
+      },
+      "seed": 303,
+      "scale": 0,
+      "call_seconds": 0.0028955400002814713
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q6144-k77",
+      "errors": {
+        "relative_l2": 0.00026141307898797095,
+        "max_abs": 0.0005434751510620117
+      },
+      "stream": 0
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q6144-k77",
+      "errors": {
+        "relative_l2": 0.00026128118042834103,
+        "max_abs": 0.0005234479904174805
+      },
+      "stream": 1
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q6144-k6144",
+      "errors": {
+        "relative_l2": 0.00028492690762504935,
+        "max_abs": 6.732344627380371e-05
+      },
+      "seed": 101,
+      "scale": 1,
+      "call_seconds": 0.9726334749993839
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q6144-k6144",
+      "errors": {
+        "relative_l2": 0.00019773431995417923,
+        "max_abs": 0.0019507408142089844
+      },
+      "seed": 202,
+      "scale": 4,
+      "call_seconds": 0.19021009100015362
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "sdxl-q6144-k6144",
+      "errors": {
+        "relative_l2": 0.00019876542501151562,
+        "max_abs": 1.4957040548324585e-05
+      },
+      "seed": 303,
+      "scale": 0,
+      "call_seconds": 0.1903029470004185
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q6144-k6144",
+      "errors": {
+        "relative_l2": 0.0002862236287910491,
+        "max_abs": 5.348026752471924e-05
+      },
+      "stream": 0
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "sdxl-q6144-k6144",
+      "errors": {
+        "relative_l2": 0.0002855009224731475,
+        "max_abs": 5.7756900787353516e-05
+      },
+      "stream": 1
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "transformer-s1024-kv4",
+      "errors": {
+        "relative_l2": 0.00200174399651587,
+        "max_abs": 0.009235620498657227
+      },
+      "seed": 101,
+      "scale": 1,
+      "call_seconds": 2.7524738029997025
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "transformer-s1024-kv4",
+      "errors": {
+        "relative_l2": 0.0014257372822612524,
+        "max_abs": 0.0151824951171875
+      },
+      "seed": 202,
+      "scale": 4,
+      "call_seconds": 0.01396468700022524
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "transformer-s1024-kv4",
+      "errors": {
+        "relative_l2": 0.0015518777072429657,
+        "max_abs": 0.0078125
+      },
+      "seed": 303,
+      "scale": 0,
+      "call_seconds": 0.014009581999744114
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "transformer-s1024-kv4",
+      "errors": {
+        "relative_l2": 0.002004152163863182,
+        "max_abs": 0.007805585861206055
+      },
+      "stream": 0
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "transformer-s1024-kv4",
+      "errors": {
+        "relative_l2": 0.001999744214117527,
+        "max_abs": 0.007931232452392578
+      },
+      "stream": 1
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "transformer-s1024-kv16",
+      "errors": {
+        "relative_l2": 0.0020038620568811893,
+        "max_abs": 0.010022401809692383
+      },
+      "seed": 101,
+      "scale": 1,
+      "call_seconds": 2.434527989000344
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "transformer-s1024-kv16",
+      "errors": {
+        "relative_l2": 0.0014284406788647175,
+        "max_abs": 0.015161514282226562
+      },
+      "seed": 202,
+      "scale": 4,
+      "call_seconds": 0.01397993599948677
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "transformer-s1024-kv16",
+      "errors": {
+        "relative_l2": 0.0015580098843201995,
+        "max_abs": 0.0078125
+      },
+      "seed": 303,
+      "scale": 0,
+      "call_seconds": 0.013999281999531377
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "transformer-s1024-kv16",
+      "errors": {
+        "relative_l2": 0.0020057372748851776,
+        "max_abs": 0.008624553680419922
+      },
+      "stream": 0
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "transformer-s1024-kv16",
+      "errors": {
+        "relative_l2": 0.002007873263210058,
+        "max_abs": 0.008059024810791016
+      },
+      "stream": 1
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "transformer-s4096-kv4",
+      "errors": {
+        "relative_l2": 0.00204206514172256,
+        "max_abs": 0.007859230041503906
+      },
+      "seed": 101,
+      "scale": 1,
+      "call_seconds": 1.5298053830001663
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "transformer-s4096-kv4",
+      "errors": {
+        "relative_l2": 0.0014722530031576753,
+        "max_abs": 0.015414237976074219
+      },
+      "seed": 202,
+      "scale": 4,
+      "call_seconds": 0.2416442809999353
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "transformer-s4096-kv4",
+      "errors": {
+        "relative_l2": 0.0015739233931526542,
+        "max_abs": 0.0078125
+      },
+      "seed": 303,
+      "scale": 0,
+      "call_seconds": 0.24196091999965574
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "transformer-s4096-kv4",
+      "errors": {
+        "relative_l2": 0.0020529686007648706,
+        "max_abs": 0.008347272872924805
+      },
+      "stream": 0
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "transformer-s4096-kv4",
+      "errors": {
+        "relative_l2": 0.0020484095439314842,
+        "max_abs": 0.008354425430297852
+      },
+      "stream": 1
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "transformer-s4096-kv16",
+      "errors": {
+        "relative_l2": 0.002054952085018158,
+        "max_abs": 0.007944345474243164
+      },
+      "seed": 101,
+      "scale": 1,
+      "call_seconds": 1.5580555700007608
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "transformer-s4096-kv16",
+      "errors": {
+        "relative_l2": 0.001470554037950933,
+        "max_abs": 0.01558065414428711
+      },
+      "seed": 202,
+      "scale": 4,
+      "call_seconds": 0.24181129300086468
+    },
+    {
+      "kind": "fp64-new-input",
+      "case": "transformer-s4096-kv16",
+      "errors": {
+        "relative_l2": 0.001569282729178667,
+        "max_abs": 0.0078125
+      },
+      "seed": 303,
+      "scale": 0,
+      "call_seconds": 0.2426033510000707
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "transformer-s4096-kv16",
+      "errors": {
+        "relative_l2": 0.002048666123300791,
+        "max_abs": 0.009694576263427734
+      },
+      "stream": 0
+    },
+    {
+      "kind": "cuda-stream",
+      "case": "transformer-s4096-kv16",
+      "errors": {
+        "relative_l2": 0.0020541080739349127,
+        "max_abs": 0.008488178253173828
+      },
+      "stream": 1
+    },
+    {
+      "kind": "strided-native-path",
+      "case": "sdxl-q1024-k1024",
+      "errors": {
+        "relative_l2": 0.00027713642339222133,
+        "max_abs": 0.00013178586959838867
+      }
+    },
+    {
+      "kind": "strided-native-path",
+      "case": "transformer-s1024-kv4",
+      "errors": {
+        "relative_l2": 0.0020109028555452824,
+        "max_abs": 0.009013891220092773
+      }
+    },
+    {
+      "kind": "unlisted-native-path",
+      "case": "unlisted-s2048",
+      "errors": {
+        "relative_l2": 0.00028155374457128346,
+        "max_abs": 0.00024372339248657227
+      }
+    },
+    {
+      "kind": "graph-replay-new-values",
+      "case": "sdxl-q1024-k1024",
+      "errors": {
+        "relative_l2": 0.00027656220481731,
+        "max_abs": 0.00013116002082824707
+      }
+    }
+  ],
+  "status": "passed",
+  "persistent_cache_reload": false
+}

@@ -56,7 +56,10 @@ def test_feedback_endpoint_rejects_traversal(
     client = fastapi_testclient.TestClient(create_app())
     response = client.post(
         "/feedback/train-step",
-        json={"feedback": [], "output_dir": "/etc/cron.d/evil"},
+        json={
+            "feedback": [{"success": True, "score": 0.9, "rationale": "reviewed"}],
+            "output_dir": "/etc/cron.d/evil",
+        },
     )
     assert response.status_code == 400
     assert "output_dir" in response.json()["detail"]

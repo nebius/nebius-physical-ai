@@ -221,35 +221,35 @@ containers:
       status: needs-image-update
       artifact: /workspace/openpi-golden-eval/direct.json
 
+  # Preserve the existing golden-eval ID; the canonical recipe is cuda13-blackwell.
   base-cuda13-b300:
     image: npa-base
     foundation: true
-    dockerfile: npa/docker/workbench/base/cuda13-b300/Dockerfile
+    dockerfile: npa/docker/workbench/base/cuda13-blackwell/Dockerfile
     physical_ai:
       useful: true
       role: >-
-        Shared CUDA 13 / PyTorch 2.9 foundation image for B300 (Blackwell)
-        derivatives (cosmos3-reason, sim2real-*). Not a tool itself.
+        Shared CUDA 13 / PyTorch 2.13 foundation image for Blackwell
+        derivatives (cosmos3-reason, sim2real-*), including RTX PRO 6000.
+        Not a tool itself.
     safety:
       runs_as: ubuntu
       base_image: nvidia/cuda:13.0.1-cudnn-devel-ubuntu22.04
       network: none
       external_fetch: [pypi, pytorch-cu130, flash-attn-cute]
       notes: >-
-        No runtime entrypoint or open ports; build-time only. Pinned digestless
+        No runtime entrypoint or open ports; build-time only. Digest-pinned
         CUDA base tracked by the weekly Trivy base-image CVE scan.
     golden_eval:
-      # An import check passed on every Blackwell part for months while the
-      # flash-attn-4 CuTe forward kernel could not actually execute on sm_120.
-      # Execute the kernel instead, via the committed capability smoke: it also
-      # asserts the device architecture and that the wheel carries native SASS
-      # for it, with a bf16 matmul and torch SDPA as controls.
+      # Import-only checks miss dispatch and backward regressions. Execute FA4
+      # outputs and gradients against FP64 references on the intended B300.
       kind: container-smoke
       command: 'python /npa/gpu_capability_smoke.py --expect-capability 10.3'
-      script: npa/docker/workbench/base/cuda13-b300/scripts/gpu_capability_smoke.py
-      serverless_gpu: b300
+      script: npa/docker/workbench/base/cuda13-blackwell/scripts/gpu_capability_smoke.py
       gpu: required
-      timeout_seconds: 300
+      # Cold CuTe JIT time is unmeasured on these pins. Run locally in the
+      # selected image; unlimited evaluations reject serverless deadlines.
+      timeout_seconds: unlimited
       status: blocked-on-upstream
 
   ncore:
@@ -1380,6 +1380,41 @@ containers:
       gpu: required
       timeout_seconds: 600
       status: needs-image-update
+
+  open3d:
+    image: npa-open3d
+    dockerfile: npa/docker/workbench/open3d/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Registers overlapping sensor scans into one consistent frame and
+        reconstructs a surface from them — the real2sim and multi-sensor fusion
+        step that turns captured point clouds into usable geometry.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.11-slim-trixie (digest pinned, CPU-only)
+      network: >-
+        S3 artifact I/O, plus the upstream open3d.data scan download that only
+        the stage-demo verb performs.
+      external_fetch: [s3, open3d-demo-data]
+      notes: >-
+        No weights, gated data, credentials or populated runtime cache. No
+        visualizer is started and no port is exposed.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_open3d_functional
+      command: python -m npa.smoke.test_open3d_functional
+      # Optional shared-project Serverless placement; the payload remains CPU-only.
+      serverless_gpu: h200
+      gpu: none
+      timeout_seconds: 300
+      status: ready
+      notes: >-
+        Asserts the recovered pose against the ground-truth transform it applied
+        (<=1 deg, <=1 voxel), that ICP lowered the RANSAC residual, and that the
+        Poisson surface and RRD decode — not merely that the stages exited 0.
+        Runs offline, so it uses sampled primitives rather than the upstream
+        captured scans; stage-demo covers those in the reference workflow.
 
   alpamayo2-super:
     image: npa-alpamayo2-super

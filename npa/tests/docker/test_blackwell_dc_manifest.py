@@ -62,6 +62,22 @@ def test_manifest_does_not_hardcode_a_live_nebius_identifier(manifest: dict) -> 
     assert "${NPA_REGISTRY}" in manifest["registry_ref"]
 
 
+def test_fa2_build_variant_has_its_own_unpublished_rtx_scope(
+    entries: list[dict],
+) -> None:
+    base = next(entry for entry in entries if entry["name"] == "npa-base")
+    variant = base["build_variants"]["fa2"]
+    assert variant["purpose"] == "benchmark-comparison"
+    assert variant["publication"] == "local-only"
+    assert variant["datacenter_validation"] == "not-qualified"
+    assert variant["default_cuda_archs"] == ["sm_120"]
+    assert not any(key.startswith("published_") for key in variant)
+    assert (ROOT / variant["guide"]).is_file()
+    evidence = json.loads((ROOT / variant["source_recipe_evidence"]).read_text())
+    assert evidence["backend"] == "fa2" and evidence["status"] == "passed"
+    assert evidence["environment"]["capability"] == [12, 0]
+
+
 def test_every_entry_is_well_formed(manifest: dict, entries: list[dict]) -> None:
     allowed_verdicts = set(manifest["verdicts"])
     allowed_validation = set(manifest["validation_states"])

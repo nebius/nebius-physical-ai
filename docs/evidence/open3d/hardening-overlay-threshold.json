@@ -1,0 +1,46 @@
+{
+  "capability": "overlay threshold follows the crop that ran",
+  "finding": {
+    "defect": "_log_removed_surface thresholded at the bare voxel while run_reconstruct crops at voxel * support_distance_factor. The call site passed voxel only, so the overlay had no way to apply the crop's limit. The two agree only at factor 1.0.",
+    "latent_not_active": "Every run shipped so far used factor 1.0, where the thresholds coincide, so the published overlays are correct. This was a latent defect on a reachable path: the schema permits 0.0 to 100.0 and the CLI exposes the flag.",
+    "reported_by": "review lane, PR 602 verdict F2, independently by reading both functions",
+    "why_it_matters": "Every published number stays correct and only the picture lies. In a tool whose purpose is letting a reviewer see which geometry was measured, a view that contradicts the mesh beside it is worse than a wrong number, because nothing in the report contradicts it."
+  },
+  "hardware": "CPU only. Open3D registration and reconstruction have no CUDA path; a GPU would sit idle.",
+  "limits": "Proves the overlay now redraws the crop's own threshold. It does not certify the crop itself, and a surface that passed the support check is still not certified for collision.",
+  "regression_guard": {
+    "guard_on_crop_not_path": "mesh_uncropped.ply is written unconditionally, so its presence never implied a crop. A factor-0 run could previously have drawn a removed overlay for surface it kept; the guard is now factor > 0 and vertices actually cropped.",
+    "unit_tests": [
+      "test_visualize_tells_the_runner_which_threshold_the_crop_used",
+      "test_visualize_passes_a_disabled_crop_through_as_disabled",
+      "test_an_overlay_at_a_different_threshold_is_caught_by_arithmetic",
+      "test_a_run_that_cropped_nothing_must_draw_nothing",
+      "test_overlay_check_requires_the_counts_it_compares"
+    ],
+    "validate_overlay_matches_crop": "Ties unsupported_triangles_shown to mesh_uncropped.triangle_count minus mesh.triangle_count and fails visualize when they disagree. Run against the pre-fix output it rejects with 'recording drew 8453 unsupported triangles but the crop removed 4869'. The defect was found by reading code; the arithmetic now surfaces it from the report."
+  },
+  "reproduction": {
+    "both_reconstructs_agree": {
+      "crop_removed_triangles": 4869,
+      "kept_triangles": 31791,
+      "note": "reconstruct is untouched by the fix, so the surfaces are identical",
+      "uncropped_triangles": 36660,
+      "unsupported_vertices_removed": 2107
+    },
+    "method": "Same input prefix, same factor 2.0, two images differing only by this commit. Real object storage, real Open3D, no fault injection needed: the divergence is in the code path itself.",
+    "post_fix": {
+      "agrees_with_crop_exactly": true,
+      "image_tag": "npa-open3d:f2-verified",
+      "overlay_triangles_drawn": 4869
+    },
+    "pre_fix": {
+      "image_tag": "npa-open3d:retry-proof",
+      "meaning": "3584 triangles painted red as removed while mesh.ply kept them. That surface lies between one and two voxels of an observed sample: the crop kept it because factor 2.0 allows it, and the overlay called it unsupported anyway.",
+      "overlay_triangles_drawn": 8453,
+      "overstatement": 3584,
+      "overstatement_percent": 73.6
+    }
+  },
+  "source_commit": "fc70f0ab26df87b7262b905f363fd707d4fedc87",
+  "vlm_evaluation": "Not applicable as an acceptance gate. This is a numeric agreement between two counts, and the calibration bundle already established no available model meets the bar for geometry judgements."
+}
