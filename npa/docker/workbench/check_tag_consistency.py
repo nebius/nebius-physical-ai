@@ -17,7 +17,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in bare CI failures.
     yaml = None
 
 
-REQUIRED_TAGS = {"cuda12", "cuda13-b300"}
+REQUIRED_TAGS = {"cuda12", "cuda13-blackwell"}
 TEXT_SUFFIXES = {".md", ".py", ".sh", ".yaml", ".yml"}
 IMAGE_REF_RE = re.compile(
     r"(?:^|[\\s\"'`])(?:[a-z0-9.-]+(?::[0-9]+)?/)?"
@@ -49,7 +49,20 @@ def _load_valid_tags(tags_yaml: Path) -> set[str]:
         raise RuntimeError(
             f"{tags_yaml} missing required tag families: {sorted(missing)}"
         )
-    return valid_tags
+    aliases = config.get("legacy_tag_families", {})
+    if not isinstance(aliases, dict):
+        raise RuntimeError(f"{tags_yaml} legacy_tag_families must be a mapping")
+    for alias, canonical in aliases.items():
+        if (
+            not isinstance(alias, str)
+            or not alias
+            or not isinstance(canonical, str)
+            or canonical not in valid_tags
+        ):
+            raise RuntimeError(f"{tags_yaml} has an invalid legacy tag mapping")
+        if alias in valid_tags:
+            raise RuntimeError(f"{tags_yaml} legacy tag duplicates a canonical family")
+    return valid_tags | set(aliases)
 
 
 def _iter_scan_files(repo_root: Path) -> list[Path]:
@@ -136,7 +149,8 @@ def main() -> int:
         return 1
 
     print(
-        f"Two-tag strategy: all scanned references use canonical tags {sorted(valid_tags)}"
+        "Tag families: all scanned references use a canonical family or "
+        f"declared legacy alias: {sorted(valid_tags)}"
     )
     return 0
 

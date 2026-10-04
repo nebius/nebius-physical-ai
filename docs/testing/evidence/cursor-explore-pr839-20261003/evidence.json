@@ -1,0 +1,871 @@
+{
+  "schema": "npa.cursor-explore.vlm-image-proof/v1",
+  "pr": 839,
+  "execution": {
+    "execution_head": "50111ebcb9a8604c63ad6cd9d702c3c703044e7d",
+    "execution_tree": "c5d57e1a76cb9bcb2da21c12d9650fac51ca0a85",
+    "plan_sha256": "fc89575e3557a21d06793150d3c1950c2b655b9f28c07d9f96ecbb0914bed592",
+    "harness_sha256": "e348e9fbf313e90d95607bb16582c07130844bf22533a6441788e2b2c9c755e1",
+    "source_bindings": [
+      {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+      },
+      {
+        "path": "npa/src/npa/workbench/token_factory/__init__.py",
+        "sha256": "1e0ab8fb5d94c95231b41275c16bd54f6b16a8c50499978fffb211766e6d5904"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "sha256": "f9bb7489dc5db5c7aa02cdf7e5da3a6041cb9d4d40b557b78eccafac0b6c663e"
+      },
+      {
+        "path": "npa/tests/e2e/test_token_factory_e2e.py",
+        "sha256": "83a927ea80bb586049edaf72f206e762908e476fe00f0237a4ebb10f50fe3c81"
+      }
+    ],
+    "pytest_exit": 0,
+    "outcomes": [
+      {
+        "nodeid": "tests/e2e/test_token_factory_e2e.py::test_live_list_models_authenticates",
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "nodeid": "tests/e2e/test_token_factory_e2e.py::test_live_caption_and_reason_saved_artifacts",
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "nodeid": "tests/e2e/test_token_factory_e2e.py::test_live_visual_judge_distinguishes_completion[MiniMaxAI/MiniMax-M3-True]",
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "nodeid": "tests/e2e/test_token_factory_e2e.py::test_live_visual_judge_distinguishes_completion[MiniMaxAI/MiniMax-M3-False]",
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "nodeid": "tests/e2e/test_token_factory_e2e.py::test_live_attribute_question_and_vision_chain",
+        "phase": "call",
+        "outcome": "passed"
+      }
+    ],
+    "physical_requests": 15,
+    "offline_mock_requests": 0,
+    "transport_records": 15
+  },
+  "scope": {
+    "synthetic_controls": true,
+    "quality_calibrated": false,
+    "real_robot_or_gpu_workload": false,
+    "hosted_hardware": "provider-managed, unobserved"
+  },
+  "observations": [
+    {
+      "ordinal": 0,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_list_models_authenticates",
+      "mock_transport": false,
+      "method": "GET",
+      "requested_model": null,
+      "http_status": 200,
+      "finish_reason": null,
+      "request_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "response_sha256": "84f21eeabcd54c3a5df1d71961b1391ab8e98d28066efd0bad1b90e07e903ab5",
+      "response_bytes": 2345,
+      "visible_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": null,
+      "usage": {},
+      "generation_controls": {},
+      "images": []
+    },
+    {
+      "ordinal": 1,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_caption_and_reason_saved_artifacts",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "34f0d3291dadc2def7d6adaee8d963074b611c29d1facaa8d278304e72c3a564",
+      "response_sha256": "7130c613e638c537b380f1292abb4ed83d768195a8d0101b7a82f1385271183c",
+      "response_bytes": 1094,
+      "visible_sha256": "f6965249aa0a0d773e8ab6573fd1273b5bf056eb6e1e8ad5351f26cdd3c2d146",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 36,
+        "prompt_tokens": 584,
+        "total_tokens": 620
+      },
+      "generation_controls": {
+        "temperature": 0.2,
+        "max_tokens": 512,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        }
+      ]
+    },
+    {
+      "ordinal": 2,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_caption_and_reason_saved_artifacts",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "34f0d3291dadc2def7d6adaee8d963074b611c29d1facaa8d278304e72c3a564",
+      "response_sha256": "f6bbe916a66fb3824d41a5060994bcdc71875c7a16c2b00e00c712609c2a030c",
+      "response_bytes": 1100,
+      "visible_sha256": "e26e40b48c7c0a5ee7a97598aa742d398c3951640c4a1aa8d360e5940a016c00",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 37,
+        "prompt_tokens": 584,
+        "total_tokens": 621
+      },
+      "generation_controls": {
+        "temperature": 0.2,
+        "max_tokens": 512,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        }
+      ]
+    },
+    {
+      "ordinal": 3,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_caption_and_reason_saved_artifacts",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "07138c7a81db430d2d49de78b1060b329553376e02ccf8c8d08200a6238db9f4",
+      "response_sha256": "9d29a7d27cdf1800959b7bd0c3242027c90bdbcb9e22512942ed027de80b5b6e",
+      "response_bytes": 1104,
+      "visible_sha256": "2ea7b252b79ca8947a14a980b78a568fa585f8d833453065ba27892ad8d23424",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 36,
+        "prompt_tokens": 584,
+        "total_tokens": 620
+      },
+      "generation_controls": {
+        "temperature": 0.2,
+        "max_tokens": 512,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "89ff7a51cff347b206b6c98bd1cfaa9246c708567e22579db08a5a51984f786d",
+          "bytes": 1929,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "6ece94ec5403568dc114a1a79012d789f7dfb4183efb64a098c34cd4b73cba3d"
+        }
+      ]
+    },
+    {
+      "ordinal": 4,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_caption_and_reason_saved_artifacts",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "960205755c6daf076f736ee7f858b17a4d648cdbbcf2d2f5d1db888cfd3959ac",
+      "response_sha256": "670d83252b611674c3553c6bbb8661e9d5cabb183af7cb2f9a838a902d9bc5e9",
+      "response_bytes": 2510,
+      "visible_sha256": "5f1e95a70a1b59170983f8da557de86a40b915063ce6406339fdee307747e82e",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 332,
+        "prompt_tokens": 1419,
+        "total_tokens": 1751
+      },
+      "generation_controls": {
+        "temperature": 0.2,
+        "max_tokens": 1024,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        },
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        },
+        {
+          "sha256": "89ff7a51cff347b206b6c98bd1cfaa9246c708567e22579db08a5a51984f786d",
+          "bytes": 1929,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "6ece94ec5403568dc114a1a79012d789f7dfb4183efb64a098c34cd4b73cba3d"
+        }
+      ]
+    },
+    {
+      "ordinal": 5,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_visual_judge_distinguishes_completion[MiniMaxAI/MiniMax-M3-True]",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "53767b7c3bbca75358e20ea5ff4379fbd4082568490dd83b7196d912ef7874b3",
+      "response_sha256": "e329ed9fdce342c253a3ce0925f762a89b03daae45f92353229270c512e95327",
+      "response_bytes": 1143,
+      "visible_sha256": "6faa5e3e58324801c951425e029da298fd1d3bae416fb5bac271fb6addecd5f1",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 50,
+        "prompt_tokens": 1476,
+        "total_tokens": 1526
+      },
+      "generation_controls": {
+        "temperature": 0,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        },
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        },
+        {
+          "sha256": "89ff7a51cff347b206b6c98bd1cfaa9246c708567e22579db08a5a51984f786d",
+          "bytes": 1929,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "6ece94ec5403568dc114a1a79012d789f7dfb4183efb64a098c34cd4b73cba3d"
+        }
+      ]
+    },
+    {
+      "ordinal": 6,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_visual_judge_distinguishes_completion[MiniMaxAI/MiniMax-M3-False]",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "b363f38cf08e499a8238a28f4901adcd1af67668e222bac5ea194d62f01fa90d",
+      "response_sha256": "ab2a3cb9004618831dd8202adea49a0a29abe1b663735f06643968687ebcc4ae",
+      "response_bytes": 1166,
+      "visible_sha256": "0a2d2ed087de3302e8782ff51bbec7b9789736f9698337464b6d1fb2786c40c2",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 54,
+        "prompt_tokens": 1476,
+        "total_tokens": 1530
+      },
+      "generation_controls": {
+        "temperature": 0,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        },
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        },
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        }
+      ]
+    },
+    {
+      "ordinal": 7,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_attribute_question_and_vision_chain",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "nvidia/Nemotron-3_5-Lightning",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "3f496a907633ac05812aad6cdbff58029ac02a938de8bbe9709246b91aa73c3b",
+      "response_sha256": "da953e50e991d6e51fb93c8d1ba7a396d52e8be0e28cbe94b7fc009b56231ff6",
+      "response_bytes": 1066,
+      "visible_sha256": "47ad0b1b87ddb81fc8a8b78789914eeb5f21db10fd4e36cca188dbdb7f9a307e",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 59,
+        "prompt_tokens": 373,
+        "total_tokens": 432
+      },
+      "generation_controls": {
+        "temperature": 0.2,
+        "max_tokens": 2048,
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        },
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "verification_question",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "variable": {
+                  "type": "string",
+                  "description": "Name of the variable being verified"
+                },
+                "value": {
+                  "type": "string",
+                  "description": "The selected value to verify"
+                },
+                "question": {
+                  "type": "string",
+                  "description": "The multiple choice question text"
+                },
+                "options": {
+                  "type": "object",
+                  "properties": {
+                    "A": {
+                      "type": "string"
+                    },
+                    "B": {
+                      "type": "string"
+                    },
+                    "C": {
+                      "type": "string"
+                    },
+                    "D": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "A",
+                    "B"
+                  ],
+                  "additionalProperties": false
+                },
+                "correct_answer": {
+                  "type": "string",
+                  "enum": [
+                    "A",
+                    "B",
+                    "C",
+                    "D"
+                  ]
+                }
+              },
+              "required": [
+                "variable",
+                "value",
+                "question",
+                "options",
+                "correct_answer"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "images": []
+    },
+    {
+      "ordinal": 8,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_attribute_question_and_vision_chain",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "a821ab069407748d9e007b1d1034d9b2af0c26c38c0f2b5c2b3a37a328db09b7",
+      "response_sha256": "a18933f2ef36f6a5ab566613b70faf972637c21ca6de19f4878ad8a4193704e7",
+      "response_bytes": 925,
+      "visible_sha256": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 2,
+        "prompt_tokens": 679,
+        "total_tokens": 681
+      },
+      "generation_controls": {
+        "temperature": 0,
+        "max_tokens": 10,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "d545ded95659f50d2672af766bb26db1f83ae1529e9fd14d7b2e17a11b762b54",
+          "bytes": 2435,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "6ece94ec5403568dc114a1a79012d789f7dfb4183efb64a098c34cd4b73cba3d"
+        }
+      ]
+    },
+    {
+      "ordinal": 9,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_attribute_question_and_vision_chain",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "nvidia/Nemotron-3_5-Lightning",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "7db8c03f7b2ed035e1199fe83924caa79a620ef7daace15353ab6e8810644c82",
+      "response_sha256": "0df11e301a2ad1888bb352b63474efef3c9ca4768305cd6ed7d2b7f563db482f",
+      "response_bytes": 1067,
+      "visible_sha256": "fe00f4fb0de717d6fbd028b81d0e4e2803c0ece13217129bf0162e27411e26b7",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 58,
+        "prompt_tokens": 371,
+        "total_tokens": 429
+      },
+      "generation_controls": {
+        "temperature": 0.2,
+        "max_tokens": 2048,
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        },
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "verification_question",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "variable": {
+                  "type": "string",
+                  "description": "Name of the variable being verified"
+                },
+                "value": {
+                  "type": "string",
+                  "description": "The selected value to verify"
+                },
+                "question": {
+                  "type": "string",
+                  "description": "The multiple choice question text"
+                },
+                "options": {
+                  "type": "object",
+                  "properties": {
+                    "A": {
+                      "type": "string"
+                    },
+                    "B": {
+                      "type": "string"
+                    },
+                    "C": {
+                      "type": "string"
+                    },
+                    "D": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "A",
+                    "B"
+                  ],
+                  "additionalProperties": false
+                },
+                "correct_answer": {
+                  "type": "string",
+                  "enum": [
+                    "A",
+                    "B",
+                    "C",
+                    "D"
+                  ]
+                }
+              },
+              "required": [
+                "variable",
+                "value",
+                "question",
+                "options",
+                "correct_answer"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "images": []
+    },
+    {
+      "ordinal": 10,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_attribute_question_and_vision_chain",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "0fdb4ba56f5459836b10b47f2810aee19092b7a086a5ba9fad3f78e3c20c6a52",
+      "response_sha256": "1d9636a355dd227affe859bd0f1f1673e6e5f5a25b482148691673495a6fff57",
+      "response_bytes": 925,
+      "visible_sha256": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 2,
+        "prompt_tokens": 679,
+        "total_tokens": 681
+      },
+      "generation_controls": {
+        "temperature": 0,
+        "max_tokens": 10,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "d545ded95659f50d2672af766bb26db1f83ae1529e9fd14d7b2e17a11b762b54",
+          "bytes": 2435,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "6ece94ec5403568dc114a1a79012d789f7dfb4183efb64a098c34cd4b73cba3d"
+        }
+      ]
+    },
+    {
+      "ordinal": 11,
+      "test": "provider-capability-controls",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "53bb768133c2ebdf149da3bf581515daa10ee42945e89f14a0e00ccc785d6c6a",
+      "response_sha256": "6f0524ec0b2d398cbfa8ece0237682e6ba6df3e4c978f6700b304e08e0423fc6",
+      "response_bytes": 942,
+      "visible_sha256": "b1374b281b7eba3804a6d6afbddc4ec98ae8157a362cb9e1cf126fb983b92202",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 7,
+        "prompt_tokens": 212,
+        "total_tokens": 219
+      },
+      "generation_controls": {
+        "temperature": 0,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "83f20a60df6384d38b71f39824dcb661c3239eb861ac3bd328e6bc80ecb81365",
+          "bytes": 112,
+          "width": 64,
+          "height": 32,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "ea8a9f09eb6e8286ce3f9724d6c05408d9e5112903472bc0becd1ef0483591df"
+        }
+      ]
+    },
+    {
+      "ordinal": 12,
+      "test": "provider-capability-controls",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "google/gemma-3-27b-it",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "97dab3c21bee5eb64e326122c1c1c55f115f98edfdf97030d4f82480ebd09110",
+      "response_sha256": "1f6ca90a5f60c72a2af5f36d309a3c30795f7db0bb30b48feaf723831cbd0a8b",
+      "response_bytes": 667,
+      "visible_sha256": "b1374b281b7eba3804a6d6afbddc4ec98ae8157a362cb9e1cf126fb983b92202",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 8,
+        "prompt_tokens": 310,
+        "total_tokens": 318
+      },
+      "generation_controls": {
+        "temperature": 0
+      },
+      "images": [
+        {
+          "sha256": "83f20a60df6384d38b71f39824dcb661c3239eb861ac3bd328e6bc80ecb81365",
+          "bytes": 112,
+          "width": 64,
+          "height": 32,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "ea8a9f09eb6e8286ce3f9724d6c05408d9e5112903472bc0becd1ef0483591df"
+        }
+      ]
+    },
+    {
+      "ordinal": 13,
+      "test": "provider-capability-controls",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      "http_status": 400,
+      "finish_reason": null,
+      "request_body_sha256": "34ce5dded3ea11ad9cfd8326a3fcee084a84e9f58c696095be195247e86d0e76",
+      "response_sha256": "469a9f0cbf37a8cf3d24db51deb0aa588ed274708b29ec74f7037b29342a986f",
+      "response_bytes": 52,
+      "visible_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": null,
+      "usage": {},
+      "generation_controls": {
+        "temperature": 0
+      },
+      "images": [
+        {
+          "sha256": "83f20a60df6384d38b71f39824dcb661c3239eb861ac3bd328e6bc80ecb81365",
+          "bytes": 112,
+          "width": 64,
+          "height": 32,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "ea8a9f09eb6e8286ce3f9724d6c05408d9e5112903472bc0becd1ef0483591df"
+        }
+      ]
+    },
+    {
+      "ordinal": 14,
+      "test": "provider-capability-controls",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "http_status": 400,
+      "finish_reason": null,
+      "request_body_sha256": "ceb4d08c40f28b4ec02e17f11bb6cfa0a38b19aaac67663b3752d8340135a6a8",
+      "response_sha256": "469a9f0cbf37a8cf3d24db51deb0aa588ed274708b29ec74f7037b29342a986f",
+      "response_bytes": 52,
+      "visible_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": null,
+      "usage": {},
+      "generation_controls": {
+        "temperature": 0
+      },
+      "images": [
+        {
+          "sha256": "83f20a60df6384d38b71f39824dcb661c3239eb861ac3bd328e6bc80ecb81365",
+          "bytes": 112,
+          "width": 64,
+          "height": 32,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "ea8a9f09eb6e8286ce3f9724d6c05408d9e5112903472bc0becd1ef0483591df"
+        }
+      ]
+    }
+  ],
+  "artifact_results": [
+    {
+      "score": 1,
+      "passed": true,
+      "question_model": "nvidia/Nemotron-3_5-Lightning",
+      "vlm_model": "MiniMaxAI/MiniMax-M3",
+      "total_checks": 2,
+      "passed_checks": 2,
+      "artifact_sha256": "8989bde174c2a3cc313381e86c1e8028b273d299fcf3a0816745cf679f69e51b",
+      "artifact_role": "attributes.json"
+    },
+    {
+      "status": "completed",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "image_count": 3,
+      "artifact_sha256": "de5c523ff7e3de0be786f32ce122b4b9c09db0be1470c7d1819aad90fc306278",
+      "artifact_role": "captions.json",
+      "item_statuses": [
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "status": "completed",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "image_count": 3,
+      "artifact_sha256": "c8496a0bbca80181877d3a143b5c009322b550d3153abb0cc4784ac6e87975f7",
+      "artifact_role": "plan.json"
+    },
+    {
+      "status": "passed",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "frame_count": 3,
+      "score": 1,
+      "passed": true,
+      "success_threshold": 0.8,
+      "provider_success": true,
+      "provider_success_matches_score_gate": true,
+      "artifact_sha256": "25a85465a6b1197846aab50e9be892046f13304f5755bead68c1328b721f6e1f",
+      "artifact_role": "evaluation.json"
+    },
+    {
+      "status": "needs_iteration",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "frame_count": 3,
+      "score": 0,
+      "passed": false,
+      "success_threshold": 0.8,
+      "provider_success": false,
+      "provider_success_matches_score_gate": true,
+      "artifact_sha256": "b0d2f96575cdff80da5defef532ae87921e3347df5e8d9565c2269a157af3289",
+      "artifact_role": "evaluation.json"
+    }
+  ],
+  "capability_controls": [
+    {
+      "model": "MiniMaxAI/MiniMax-M3",
+      "expected": "correct-colours",
+      "passed": true,
+      "transport_ordinals": [
+        11
+      ]
+    },
+    {
+      "model": "google/gemma-3-27b-it",
+      "expected": "correct-colours",
+      "passed": true,
+      "transport_ordinals": [
+        12
+      ]
+    },
+    {
+      "model": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      "expected": "image-rejected",
+      "error_type": "TokenFactoryError",
+      "passed": true,
+      "transport_ordinals": [
+        13
+      ]
+    },
+    {
+      "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "expected": "image-rejected",
+      "error_type": "TokenFactoryError",
+      "passed": true,
+      "transport_ordinals": [
+        14
+      ]
+    }
+  ],
+  "limitations": [
+    "Frozen controls prove these observed paths only; they do not estimate broad vision quality, operational failure rates, task safety or robot performance.",
+    "Sentinel classification is cooperative and prompt-sensitive; only recognized whole-answer forms fail, and a legitimate caption exactly matching one false-fails.",
+    "A no-image provider response is replayed offline through the caption classifier; this does not simulate a real image-delivery incident.",
+    "Historical proof remains bound to its original execution commits. Fresh proof retains its original source and tree; later proof-only commits do not relabel execution.",
+    "No semantic response retries or label/threshold tuning occurred. Existing transport retry attempts are counted in raw records."
+  ],
+  "source_bridge": {
+    "integrated_main": "f1ecd4255131374c417cdbb1f6c3e0d84b2a3514",
+    "integrated_candidate": "0b265c0cf422dbc24678f57ce7d391aadf21009d",
+    "bindings": [
+      {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "execution_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+        "integrated_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+        "byte_identical": true
+      },
+      {
+        "path": "npa/src/npa/workbench/token_factory/__init__.py",
+        "execution_sha256": "1e0ab8fb5d94c95231b41275c16bd54f6b16a8c50499978fffb211766e6d5904",
+        "integrated_sha256": "1e0ab8fb5d94c95231b41275c16bd54f6b16a8c50499978fffb211766e6d5904",
+        "byte_identical": true
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "execution_sha256": "f9bb7489dc5db5c7aa02cdf7e5da3a6041cb9d4d40b557b78eccafac0b6c663e",
+        "integrated_sha256": "755a9185ccc78305a5af8331dd97c587d946d7a66712f9af05c2896ed8e377c2",
+        "byte_identical": false
+      },
+      {
+        "path": "npa/tests/e2e/test_token_factory_e2e.py",
+        "execution_sha256": "83a927ea80bb586049edaf72f206e762908e476fe00f0237a4ebb10f50fe3c81",
+        "integrated_sha256": "8ba3c5f2083fccde4651a65faad6fd11d40157080643ea227c844aef774cdc53",
+        "byte_identical": false
+      }
+    ],
+    "caption_and_client_runtime_unchanged": true,
+    "evaluator_metadata_changed_after_execution": true,
+    "execution_was_not_relabelled": true,
+    "combined_registration_dependency_gates": "fresh local and current-head CI required separately",
+    "current_evaluator_provenance_requires_separate_fresh_run": true
+  }
+}

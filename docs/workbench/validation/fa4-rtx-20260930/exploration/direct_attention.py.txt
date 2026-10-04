@@ -1,0 +1,47 @@
+"""Experiment with a guarded direct launch of the unchanged pinned SM120 kernel."""
+import torch
+import cutlass
+import cutlass.cute as cute
+from flash_attn.cute.cute_dsl_utils import to_cute_tensor
+from flash_attn.cute.flash_fwd_sm120 import FlashAttentionForwardSm120
+from flash_attn.cute.utils import AuxData
+
+
+def arguments(query, key, value, output, scale):
+    return (query, key, value, output, None, scale,
+            None, None, None, None, None, None, None, None, None,
+            AuxData(), None, None)
+
+
+def make_direct(configuration, report):
+    cache = {}
+    device = torch.device('cuda', torch.cuda.current_device())
+    assert torch.cuda.get_device_capability(device) == (12, 0)
+
+    def forward(query, key, value, *, causal=False):
+        tensors = (query, key, value)
+        if torch.is_grad_enabled() or any(t.requires_grad for t in tensors):
+            raise ValueError('Inference only')
+        if any(t.device != device or not t.is_contiguous() or t.data_ptr() % 16 for t in tensors):
+            raise ValueError('Direct candidate requires aligned contiguous tensors on the bound device')
+        if query.dtype not in (torch.float16, torch.bfloat16) or any(t.dtype != query.dtype for t in tensors):
+            raise ValueError('Unsupported dtype')
+        shape_key = (tuple(query.shape), tuple(key.shape), tuple(value.shape), query.dtype, causal)
+        output = torch.empty_like(query, memory_format=torch.contiguous_format)
+        scale = query.shape[-1] ** -0.5
+        if shape_key not in cache:
+            dtype = cutlass.Float16 if query.dtype == torch.float16 else cutlass.BFloat16
+            dimension = query.shape[-1]
+            tile_m, tile_n = configuration['tile']
+            legal = FlashAttentionForwardSm120.can_implement(dtype, dimension, dimension, tile_m, tile_n, configuration['stages'], configuration['threads'], causal, configuration['q_regs'])
+            if not legal:
+                raise ValueError('Candidate exceeds the SM120 resource/layout constraints')
+            kernel = FlashAttentionForwardSm120(dtype, dimension, dimension, query.shape[2] // key.shape[2], is_causal=causal, is_local=False, pack_gqa=False, tile_m=tile_m, tile_n=tile_n, num_stages=configuration['stages'], num_threads=configuration['threads'], Q_in_regs=configuration['q_regs'])
+            converted = [to_cute_tensor(t) for t in (*tensors, output)]
+            stream = cute.runtime.make_fake_stream(use_tvm_ffi_env_stream=True)
+            cache[shape_key] = cute.compile(kernel, *arguments(*converted, scale), stream, options='--enable-tvm-ffi')
+            report['constructed'].append({'direct':True, **configuration, 'shape':str(shape_key)})
+        cache[shape_key](*arguments(query, key, value, output, scale))
+        return output
+
+    return forward
