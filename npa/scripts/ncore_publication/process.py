@@ -178,7 +178,7 @@ def file_sha(path):
 
 
 def write_json(path, value):
-    """Create private evidence without replacing prior evidence.
+    """Create owner-only evidence without relying on the caller's umask.
 
     Args:
         path: New file path.
@@ -188,7 +188,10 @@ def write_json(path, value):
     Raises:
         OSError: The file exists or cannot be written.
     """
-    with path.open("x", encoding="utf-8") as stream:
+    descriptor = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         json.dump(value, stream, sort_keys=True, indent=2)
         stream.write("\n")
 
