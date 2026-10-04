@@ -908,6 +908,26 @@ def test_restricted_tools_still_resolve_from_an_operators_own_registry(
     assert ref.startswith("registry.example/example/npa-genesis:")
 
 
+def test_lingbot_va_refuses_public_resolution_but_allows_a_scoped_private_candidate() -> (
+    None
+):
+    """Keep this source-only candidate out of public releases without blocking BYO proof."""
+    private_registry = "registry.example/operator-private"
+    candidate_tag = "dev-" + "a" * 40
+
+    assert "lingbot-va" in RESTRICTED_PUBLICATION_TOOLS
+    assert "lingbot-va" in PRIVATE_VALIDATION_CANDIDATE_TOOLS
+    with pytest.raises(ValueError, match="lingbot-va.*not publicly redistributable"):
+        container_image_for_tool(
+            "lingbot-va", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
+        )
+
+    ref = container_image_for_tool(
+        "lingbot-va", registry=private_registry, tag=candidate_tag
+    )
+    assert ref == f"{private_registry}/npa-lingbot-va:{candidate_tag}"
+
+
 def test_public_registry_detection() -> None:
     assert is_public_registry("ghcr.io/nebius/nebius-physical-ai")
     assert not is_public_registry("GHCR.IO/Operator/Private-Package")
