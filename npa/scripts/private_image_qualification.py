@@ -441,14 +441,19 @@ def _fetch(ssh, selector, role, destination, *, size=None, digest=None):
             try:
                 if role == "manifest":
                     payload = process.stdout.read(MANIFEST_BYTES + 1)
+                    # A transport failure can produce empty or partial stdout.
+                    # Check its exit status before describing those bytes as a
+                    # malformed manifest, so the operator gets the actionable
+                    # SSH failure without exposing remote stderr in Actions.
+                    _require(process.wait() == 0, "ssh_transfer_failed")
                     _manifest(payload, selector)
                     output.write(payload)
                 else:
                     _copy_exact(process.stdout, output, size, digest)
+                    _require(process.wait() == 0, "ssh_transfer_failed")
             except BaseException:
                 process.kill()
                 raise
-            _require(process.wait() == 0, "ssh_transfer_failed")
 
 
 def _source_binding(scanner):
