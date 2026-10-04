@@ -22,7 +22,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 
 from npa.workflows.groot_learning import (
@@ -69,9 +69,92 @@ IMAGE_GROOT_REPOSITORY = "https://github.com/NVIDIA/Isaac-GR00T.git"
 IMAGE_GROOT_LICENSE = "Apache-2.0"
 LIBERO_REPOSITORY = "https://github.com/Lifelong-Robot-Learning/LIBERO"
 LIBERO_LICENSE = "MIT"
-RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v1"
+LIBERO_X_EVALUATOR_REPOSITORY = "https://github.com/meituan/LIBERO-X.git"
+LIBERO_X_EVALUATOR_REVISION = "f528726421c7211d8eb05fe48e9e5e2535ccc813"
+LIBERO_X_EVALUATOR_LICENSE = "MIT"
+LIBERO_X_EVALUATOR_SOURCE = "https://github.com/meituan/LIBERO-X"
+RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v2"
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+LIBERO_X_BDDL_LEVELS = frozenset({"LEVEL1", "LEVEL2", "LEVEL3", "LEVEL4"})
+
+
+# This overlay is appended to the private, runtime-fetched Apache-2.0 Isaac-GR00T
+# checkout.  Its only job is to let GR00T's existing ``register_libero_envs``
+# function register an operator-selected LIBERO-X BDDL task in every
+# Sync/AsyncVectorEnv worker.  Keeping it in the native module avoids claiming
+# that unmodified Isaac-GR00T already supports LIBERO-X, while preserving the
+# upstream ``run_gr00t_sim_policy`` rollout entrypoint.
+LIBERO_X_RUNTIME_OVERLAY = r'''
+
+# NPA_GROOT_LIBERO_X_RUNTIME_OVERLAY_V1
+def _npa_groot_libero_x_register_envs():
+    import json as _npa_json
+    import re as _npa_re
+    from pathlib import Path as _NpaPath
+
+    manifest_raw = os.environ.get("NPA_GROOT_LIBERO_X_REGISTRATION_MANIFEST", "")
+    source_raw = os.environ.get("NPA_GROOT_LIBERO_X_SOURCE", "")
+    if not manifest_raw and not source_raw:
+        return
+    if not manifest_raw or not source_raw:
+        raise RuntimeError("LIBERO-X registration requires both source and manifest")
+    source = _NpaPath(source_raw).resolve()
+    manifest = _NpaPath(manifest_raw).resolve()
+    allowed_root = (source / "libero" / "libero_x" / "bddl").resolve()
+    if not allowed_root.is_dir() or not manifest.is_file():
+        raise RuntimeError("LIBERO-X source or registration manifest is unavailable")
+    payload = _npa_json.loads(manifest.read_text())
+    tasks = payload.get("tasks") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != "npa.groot_libero_x.registration.v1"
+        or not isinstance(tasks, list)
+    ):
+        raise RuntimeError("LIBERO-X registration manifest is invalid")
+    from libero.libero.utils.parse_bddl import parse_bddl_file as _npa_parse_bddl
+
+    for task in tasks:
+        if not isinstance(task, dict):
+            raise RuntimeError("LIBERO-X registration task is invalid")
+        native_env_name = str(task.get("native_env_name") or "")
+        relative = str(task.get("libero_x_bddl_path") or "")
+        parts = tuple(relative.split("/"))
+        if (
+            not _npa_re.fullmatch(r"libero_sim/npa_groot_libero_x_[a-f0-9]{32}", native_env_name)
+            or len(parts) != 5
+            or parts[:3] != ("libero", "libero_x", "bddl")
+            or parts[3] not in {"LEVEL1", "LEVEL2", "LEVEL3", "LEVEL4"}
+            or not parts[4].endswith(".bddl")
+            or any(part in {"", ".", ".."} for part in parts)
+        ):
+            raise RuntimeError("LIBERO-X registration task has an unsafe environment or BDDL path")
+        bddl_path = (source / relative).resolve()
+        if allowed_root not in bddl_path.parents or not bddl_path.is_file():
+            raise RuntimeError("LIBERO-X BDDL path escapes the reviewed evaluator source")
+        parsed = _npa_parse_bddl(str(bddl_path))
+        task_description = str(parsed.get("language") or "").strip()
+        if not task_description:
+            raise RuntimeError("LIBERO-X BDDL has no language instruction")
+        if native_env_name in gym.registry:
+            raise RuntimeError(f"LIBERO-X environment is already registered: {native_env_name}")
+        register(
+            id=native_env_name,
+            entry_point="gr00t.eval.sim.LIBERO.libero_env:LiberoEnv",
+            kwargs={
+                "task_bddl_file": str(bddl_path),
+                "task_description": task_description,
+            },
+        )
+
+
+_npa_groot_libero_x_original_register_libero_envs = register_libero_envs
+
+
+def register_libero_envs():
+    _npa_groot_libero_x_original_register_libero_envs()
+    _npa_groot_libero_x_register_envs()
+'''
 
 
 def _json_hash(payload: Mapping[str, Any]) -> str:
@@ -91,6 +174,33 @@ def _require_sha256(value: Any, *, field: str) -> str:
     if not SHA256.fullmatch(parsed):
         raise GrootVisualizationError(f"{field} must be a sha256 hex digest")
     return parsed
+
+
+def _libero_x_bddl_path(payload: Mapping[str, Any], *, task_id: str) -> str:
+    """Accept only a reviewed LIBERO-X BDDL path inside the evaluator tree."""
+
+    raw = _require_string(payload, "libero_x_bddl_path")
+    path = PurePosixPath(raw)
+    parts = path.parts
+    if (
+        path.is_absolute()
+        or len(parts) != 5
+        or parts[:3] != ("libero", "libero_x", "bddl")
+        or parts[3] not in LIBERO_X_BDDL_LEVELS
+        or path.suffix != ".bddl"
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        raise GrootVisualizationError(
+            f"evaluation task {task_id} has an unsafe LIBERO-X BDDL path"
+        )
+    return path.as_posix()
+
+
+def _native_libero_x_env_name(task_id: str) -> str:
+    """Map a logical task ID to a portable Gymnasium environment identifier."""
+
+    digest = hashlib.sha256(task_id.encode()).hexdigest()[:32]
+    return f"libero_sim/npa_groot_libero_x_{digest}"
 
 
 def _task_rows(payload: Mapping[str, Any], *, training: bool) -> list[dict[str, Any]]:
@@ -117,9 +227,11 @@ def _task_rows(payload: Mapping[str, Any], *, training: bool) -> list[dict[str, 
         row["task_id"] = task_id
         if not training:
             env_name = _require_string(row, "env_name")
-            if not env_name.startswith("libero_sim/"):
+            if env_name.startswith("libero_x/"):
+                row["libero_x_bddl_path"] = _libero_x_bddl_path(row, task_id=task_id)
+            elif not env_name.startswith("libero_sim/"):
                 raise GrootVisualizationError(
-                    f"evaluation task {task_id} is not a native LIBERO env"
+                    f"evaluation task {task_id} is not a native LIBERO or LIBERO-X env"
                 )
             trajectories = row.get("trajectory_ids")
             if not isinstance(trajectories, list) or not trajectories:
@@ -393,13 +505,57 @@ def _run_runtime_command(
     completed = subprocess.run(command, cwd=cwd, env=dict(env), check=False)
     if completed.returncode:
         raise GrootVisualizationError(
-            "pinned Isaac-GR00T runtime setup failed: " + " ".join(command[:3])
+            "pinned native runtime setup failed: " + " ".join(command[:4])
         )
+
+
+def _git_without_lfs(git: str, *arguments: str) -> list[str]:
+    """Return a Git command that cannot invoke an unavailable LFS filter.
+
+    ``GIT_LFS_SKIP_SMUDGE`` is insufficient when a repository's configured LFS
+    filter executable is absent: Git can still try to start ``git-lfs`` during
+    checkout.  The runtime only needs source code, never LFS-managed payloads,
+    so disable that filter explicitly for clone and checkout.
+    """
+
+    return [
+        git,
+        "-c",
+        "filter.lfs.smudge=",
+        "-c",
+        "filter.lfs.process=",
+        "-c",
+        "filter.lfs.required=false",
+        *arguments,
+    ]
+
+
+def _overlay_libero_env(source: Path) -> dict[str, str]:
+    """Install the deterministic worker-side LIBERO-X registration bridge."""
+
+    target = source / "gr00t/eval/sim/LIBERO/libero_env.py"
+    try:
+        original = target.read_text()
+    except OSError as exc:
+        raise GrootVisualizationError(
+            "reviewed Isaac-GR00T checkout lacks its native LIBERO environment"
+        ) from exc
+    if "NPA_GROOT_LIBERO_X_RUNTIME_OVERLAY_V1" in original:
+        raise GrootVisualizationError(
+            "runtime source unexpectedly contains a pre-existing LIBERO-X overlay"
+        )
+    target.write_text(original.rstrip() + LIBERO_X_RUNTIME_OVERLAY + "\n")
+    return {
+        "target": "gr00t/eval/sim/LIBERO/libero_env.py",
+        "sha256": hashlib.sha256(LIBERO_X_RUNTIME_OVERLAY.encode()).hexdigest(),
+        "version": "v1",
+    }
 
 
 def _runtime_ready(target: Path) -> dict[str, Any] | None:
     marker = target / "runtime-ready.json"
     source = target / "Isaac-GR00T"
+    libero_x_source = target / "LIBERO-X"
     try:
         payload = json.loads(marker.read_text())
     except (OSError, json.JSONDecodeError):
@@ -407,6 +563,18 @@ def _runtime_ready(target: Path) -> dict[str, Any] | None:
     if not isinstance(payload, dict) or payload.get("schema") != RUNTIME_READY_SCHEMA:
         return None
     if payload.get("isaac_groot_revision") != IMAGE_GROOT_REF:
+        return None
+    evaluator = payload.get("libero_x_evaluator")
+    overlay = payload.get("npa_libero_x_overlay")
+    if (
+        not isinstance(evaluator, dict)
+        or evaluator.get("repository") != LIBERO_X_EVALUATOR_REPOSITORY
+        or evaluator.get("revision") != LIBERO_X_EVALUATOR_REVISION
+        or evaluator.get("license") != LIBERO_X_EVALUATOR_LICENSE
+        or not isinstance(overlay, dict)
+        or overlay.get("sha256")
+        != hashlib.sha256(LIBERO_X_RUNTIME_OVERLAY.encode()).hexdigest()
+    ):
         return None
     source_python = source / ".venv/bin/python"
     libero_python = source / "gr00t/eval/sim/LIBERO/libero_uv/.venv/bin/python"
@@ -421,11 +589,33 @@ def _runtime_ready(target: Path) -> dict[str, Any] | None:
     )
     if revision.returncode or revision.stdout.strip() != IMAGE_GROOT_REF:
         return None
+    evaluator_revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=libero_x_source,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if (
+        evaluator_revision.returncode
+        or evaluator_revision.stdout.strip() != LIBERO_X_EVALUATOR_REVISION
+        or not (libero_x_source / "libero/libero_x/bddl").is_dir()
+    ):
+        return None
+    try:
+        overlay_text = (
+            source / "gr00t/eval/sim/LIBERO/libero_env.py"
+        ).read_text()
+    except OSError:
+        return None
+    if not overlay_text.endswith(LIBERO_X_RUNTIME_OVERLAY + "\n"):
+        return None
     return {
         "root": target,
         "source": source,
         "server_python": source_python,
         "sim_python": libero_python,
+        "libero_x_source": libero_x_source,
         "home": target / "home",
         "provenance": payload,
     }
@@ -440,8 +630,9 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
     """
 
     cache_root = _runtime_cache_root(temporary_root)
-    target = cache_root / f"isaac-groot-{IMAGE_GROOT_REF}"
-    lock_path = cache_root / f"isaac-groot-{IMAGE_GROOT_REF}.lock"
+    cache_identity = f"isaac-groot-{IMAGE_GROOT_REF}-libero-x-{LIBERO_X_EVALUATOR_REVISION}"
+    target = cache_root / cache_identity
+    lock_path = cache_root / f"{cache_identity}.lock"
     cache_root.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -458,13 +649,14 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             raise GrootVisualizationError(
                 "native Isaac-GR00T runtime requires git and uv in the image"
             )
-        build = cache_root / f".isaac-groot-{IMAGE_GROOT_REF}.build-{os.getpid()}"
+        build = cache_root / f".{cache_identity}.build-{os.getpid()}"
         if build.exists():
             raise GrootVisualizationError(
                 f"native runtime build path already exists: {build}"
             )
         build.mkdir(parents=True)
         source = build / "Isaac-GR00T"
+        libero_x_source = build / "LIBERO-X"
         home = build / "home"
         home.mkdir()
         environment = dict(os.environ)
@@ -477,19 +669,21 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             }
         )
         _run_runtime_command(
-            [
+            _git_without_lfs(
                 git,
                 "clone",
                 "--filter=blob:none",
                 "--no-checkout",
                 IMAGE_GROOT_REPOSITORY,
                 str(source),
-            ],
+            ),
             cwd=build,
             env=environment,
         )
         _run_runtime_command(
-            [git, "checkout", "--detach", IMAGE_GROOT_REF], cwd=source, env=environment
+            _git_without_lfs(git, "checkout", "--detach", IMAGE_GROOT_REF),
+            cwd=source,
+            env=environment,
         )
         verified = subprocess.run(
             [git, "rev-parse", "HEAD"],
@@ -502,6 +696,41 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             raise GrootVisualizationError(
                 "runtime-fetched Isaac-GR00T revision differs from reviewed pin"
             )
+        _run_runtime_command(
+            _git_without_lfs(
+                git,
+                "clone",
+                "--filter=blob:none",
+                "--no-checkout",
+                LIBERO_X_EVALUATOR_REPOSITORY,
+                str(libero_x_source),
+            ),
+            cwd=build,
+            env=environment,
+        )
+        _run_runtime_command(
+            _git_without_lfs(
+                git, "checkout", "--detach", LIBERO_X_EVALUATOR_REVISION
+            ),
+            cwd=libero_x_source,
+            env=environment,
+        )
+        evaluator_verified = subprocess.run(
+            [git, "rev-parse", "HEAD"],
+            cwd=libero_x_source,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if (
+            evaluator_verified.returncode
+            or evaluator_verified.stdout.strip() != LIBERO_X_EVALUATOR_REVISION
+            or not (libero_x_source / "libero/libero_x/bddl").is_dir()
+        ):
+            raise GrootVisualizationError(
+                "runtime-fetched LIBERO-X evaluator differs from reviewed source"
+            )
+        overlay = _overlay_libero_env(source)
         _run_runtime_command(
             [uv, "sync", "--python", "3.12"], cwd=source, env=environment
         )
@@ -533,6 +762,14 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             "repository": IMAGE_GROOT_REPOSITORY,
             "isaac_groot_revision": IMAGE_GROOT_REF,
             "libero_submodule_revision": libero_revision.stdout.strip(),
+            "libero_x_evaluator": {
+                "repository": LIBERO_X_EVALUATOR_REPOSITORY,
+                "revision": LIBERO_X_EVALUATOR_REVISION,
+                "license": LIBERO_X_EVALUATOR_LICENSE,
+                "source": LIBERO_X_EVALUATOR_SOURCE,
+                "attribution": "Meituan LIBERO-X authors; Wang et al. (2026)",
+            },
+            "npa_libero_x_overlay": overlay,
             "python": "3.12",
             "entrypoint": "gr00t.eval.rollout_policy.run_gr00t_sim_policy",
         }
@@ -570,6 +807,28 @@ def _run_native_evaluator(
         )
     config_path = root / "native-evaluator-config.json"
     result_path = root / "native-evaluator-result.json"
+    libero_x_tasks = [
+        {
+            "task_id": task["task_id"],
+            "native_env_name": _native_libero_x_env_name(task["task_id"]),
+            "libero_x_bddl_path": task["libero_x_bddl_path"],
+        }
+        for task in tasks
+        if str(task.get("env_name") or "").startswith("libero_x/")
+    ]
+    registration_manifest = root / "libero-x-registration.json"
+    if libero_x_tasks:
+        registration_manifest.write_text(
+            json.dumps(
+                {
+                    "schema": "npa.groot_libero_x.registration.v1",
+                    "tasks": libero_x_tasks,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
     config = {
         "server_python": str(runtime["server_python"]),
         "server_script": str(
@@ -586,6 +845,12 @@ def _run_native_evaluator(
         "seed": seed,
         "video_dir": str(root / "videos"),
         "plot_dir": str(root / "open-loop-plots"),
+        "libero_x_source": str(runtime["libero_x_source"])
+        if libero_x_tasks
+        else "",
+        "libero_x_registration_manifest": str(registration_manifest)
+        if libero_x_tasks
+        else "",
     }
     config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
     environment = dict(os.environ)
@@ -596,6 +861,15 @@ def _run_native_evaluator(
             "PYOPENGL_PLATFORM": "egl",
         }
     )
+    if libero_x_tasks:
+        environment.update(
+            {
+                "NPA_GROOT_LIBERO_X_SOURCE": str(runtime["libero_x_source"]),
+                "NPA_GROOT_LIBERO_X_REGISTRATION_MANIFEST": str(
+                    registration_manifest
+                ),
+            }
+        )
     _run_runtime_command(
         [
             str(runtime["sim_python"]),

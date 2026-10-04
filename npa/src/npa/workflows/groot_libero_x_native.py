@@ -10,13 +10,20 @@ silently substituted for the reviewed native entrypoints.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import re
 import socket
 import subprocess
+import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+
+
+TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+LIBERO_X_BDDL_LEVELS = frozenset({"LEVEL1", "LEVEL2", "LEVEL3", "LEVEL4"})
 
 
 def _read_config(path: Path) -> dict[str, Any]:
@@ -24,6 +31,46 @@ def _read_config(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("native evaluator config must be a JSON object")
     return payload
+
+
+def _native_libero_x_env_name(task_id: str) -> str:
+    digest = hashlib.sha256(task_id.encode()).hexdigest()[:32]
+    return f"libero_sim/npa_groot_libero_x_{digest}"
+
+
+def _validate_libero_x_task(task: dict[str, Any]) -> str:
+    """Validate the native-side copy of the task-to-BDDL contract."""
+
+    task_id = str(task.get("task_id") or "").strip()
+    relative = str(task.get("libero_x_bddl_path") or "").strip()
+    path = PurePosixPath(relative)
+    if (
+        not TASK_ID.fullmatch(task_id)
+        or path.is_absolute()
+        or len(path.parts) != 5
+        or path.parts[:3] != ("libero", "libero_x", "bddl")
+        or path.parts[3] not in LIBERO_X_BDDL_LEVELS
+        or path.suffix != ".bddl"
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise RuntimeError("native LIBERO-X task has an unsafe task ID or BDDL path")
+    return _native_libero_x_env_name(task_id)
+
+
+def _configure_libero_x_source(config: dict[str, Any]) -> Path | None:
+    """Prioritize the pinned LIBERO-X fork before importing GR00T's wrapper."""
+
+    raw = str(config.get("libero_x_source") or "").strip()
+    if not raw:
+        return None
+    source = Path(raw).resolve()
+    package_root = source / "libero"
+    if not (source / "libero/libero_x/bddl").is_dir():
+        raise RuntimeError("pinned LIBERO-X evaluator source lacks BDDL assets")
+    package_text = str(package_root)
+    if package_text not in sys.path:
+        sys.path.insert(0, package_text)
+    return source
 
 
 def _reserve_loopback_port() -> int:
@@ -97,6 +144,7 @@ def _parse_rollout(result: Any) -> dict[str, Any]:
 
 
 def _run(config: dict[str, Any]) -> dict[str, Any]:
+    libero_x_source = _configure_libero_x_source(config)
     # These imports must resolve from the checked-out Isaac-GR00T revision,
     # via the .pth that upstream setup_libero.sh writes into this interpreter.
     from gr00t.data.embodiment_tags import EmbodimentTag
@@ -159,6 +207,18 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
                     raise RuntimeError(
                         "native evaluator task lacks task_id, env_name, or trajectory_ids"
                     )
+                if env_name.startswith("libero_x/"):
+                    if libero_x_source is None:
+                        raise RuntimeError(
+                            "LIBERO-X task requires the pinned evaluator source"
+                        )
+                    native_env_name = _validate_libero_x_task(task)
+                elif env_name.startswith("libero_sim/"):
+                    native_env_name = env_name
+                else:
+                    raise RuntimeError(
+                        "native evaluator task is not a LIBERO or LIBERO-X environment"
+                    )
                 for trajectory_id in trajectory_ids:
                     if (
                         not isinstance(trajectory_id, int)
@@ -208,7 +268,7 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
                     )
                 video_dir = Path(config["video_dir"]) / f"{index:03d}-{task_id}"
                 native = run_gr00t_sim_policy(
-                    env_name=env_name,
+                    env_name=native_env_name,
                     n_episodes=int(config["episodes_per_task"]),
                     max_episode_steps=int(config["max_episode_steps"]),
                     model_path="",
@@ -219,12 +279,22 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
                     video_dir=str(video_dir),
                     seed=int(config["seed"]) + index,
                 )
+                rollout = _parse_rollout(native)
+                if rollout["native_env_name"] != native_env_name:
+                    raise RuntimeError(
+                        "native GR00T rollout did not preserve the registered environment"
+                    )
                 task_rows.append(
                     {
                         "task_id": task_id,
                         "env_name": env_name,
+                        "native_env_name": native_env_name,
                         "trajectory_ids": trajectory_ids,
-                        **_parse_rollout(native),
+                        **{
+                            key: value
+                            for key, value in rollout.items()
+                            if key != "native_env_name"
+                        },
                         "video_dir": str(video_dir),
                     }
                 )

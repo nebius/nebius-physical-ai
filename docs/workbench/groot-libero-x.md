@@ -18,6 +18,7 @@ that a local smoke is a representative benchmark.
 | Base checkpoint | [NVIDIA `GR00T-N1.7-LIBERO`](https://huggingface.co/nvidia/GR00T-N1.7-LIBERO) `2ea293aa20ba7cf5bbf3ba17a5fbcb1a01cbfe21`, `libero_10`; NVIDIA is the model developer. | NVIDIA Open Model License Agreement. It is runtime-fetched at its immutable revision, never redistributed by this change. |
 | GR00T evaluator | [NVIDIA Isaac-GR00T](https://github.com/NVIDIA/Isaac-GR00T) `51d4c89f72fda44cbf77285c6a8114b52676b8a1`; Apache-2.0, copyright notices retained in the fetched source. | The existing immutable `npa-groot:0.1.0` bootstrap carries an older GR00T ref, so each policy stage fetches this exact public Apache source at runtime, verifies its Git SHA, then creates the upstream Python 3.12 server and LIBERO client environments. No new image is published and no upstream source is relabelled as NPA work. |
 | Native simulator | [Lifelong Robot Learning's LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO) submodule `8f1084e3132a39270c3a13ebe37270a43ece2a01`, MIT, copyright 2023 Lifelong Robot Learning. | Materialized only by Isaac-GR00T's documented `setup_libero.sh` inside the run-private/managed cache. It is not baked or redistributed by this workflow. |
+| LIBERO-X evaluator | [Meituan's LIBERO-X source](https://github.com/meituan/LIBERO-X) `f528726421c7211d8eb05fe48e9e5e2535ccc813`; MIT; credit Wang, Zhang, Liu, Zhang, Cai, Liu, and Liu. | Runtime-fetched beside Isaac-GR00T, SHA-verified, and kept in the private cache. A hash-recorded NPA compatibility overlay registers only manifest-selected BDDL tasks in GR00T's existing native LIBERO workers; it does not claim that unmodified Isaac-GR00T supports LIBERO-X. |
 | Evaluation data | [Meituan `LIBERO-X`](https://huggingface.co/datasets/meituan/LIBERO-X) `73053111f932d4dbaee995e3f06c2f42b3ad4adc`, CC-BY-4.0; credit Wang, Zhang, Liu, Zhang, Cai, Liu, and Liu, *LIBERO-X: Robustness Litmus for Vision-Language-Action Models* (2026). | Operator materializes the selected GR00T-format subset under a run-scoped S3 prefix. The workflow retains the card's CC-BY-4.0 attribution/revision in the protocol and does not package dataset bytes. |
 
 The model/data licenses above are independently recorded rather than inferred
@@ -46,14 +47,18 @@ three run-scoped JSON inputs:
 1. A `npa.groot_libero_x.training_tasks.v1` manifest naming **exactly 60**
    derivative training task IDs.
 2. A `npa.groot_libero_x.evaluation_tasks.v1` manifest with disjoint task IDs,
-   `libero_sim/...` environments, and concrete global LeRobot trajectory IDs.
+   `libero_x/<logical-task-id>` environments, an exact
+   `libero/libero_x/bddl/LEVEL1...LEVEL4/<task>.bddl` path from the pinned
+   evaluator source, and concrete global LeRobot trajectory IDs.  Classic
+   `libero_sim/...` task names remain accepted for compatibility, but do not
+   establish LIBERO-X coverage.
 3. A `npa.groot_libero_x.evaluation_dataset.v1` manifest binding the selected
    GR00T-format dataset prefix, exact LIBERO-X revision/license, task-manifest
    hash, and object-inventory SHA-256.
 
-The preparation stage rejects overlap, undeclared data, non-native environment
-names, changed object inventories, and a training cohort that does not contain
-60 unique tasks.  It writes a protocol consumed verbatim by both policy stages:
+The preparation stage rejects overlap, undeclared data, unsafe BDDL paths,
+changed object inventories, and a training cohort that does not contain 60
+unique tasks.  It writes a protocol consumed verbatim by both policy stages:
 
 ```text
 prepare disjoint tasks/data
@@ -65,10 +70,17 @@ prepare disjoint tasks/data
 
 Both policy stages call upstream
 `gr00t.eval.rollout_policy.run_gr00t_sim_policy` through the upstream
-server/client split.  The evaluator refuses empty episode sets, non-finite
-action metrics, task/result mismatch, runtime SHA mismatch, and absent MP4s.
-The runtime cache uses a per-revision lock and an atomically published ready
-marker; without the managed GR00T data mount it is private to the workflow pod.
+server/client split.  For a `libero_x/...` task, the runtime derives its
+instruction from the reviewed BDDL instead of trusting a manifest prompt and
+maps the logical task to a stable internal `libero_sim/...` Gym identifier.
+The registration bridge is present in every spawned vector-environment worker,
+so the configured upstream `n_envs` is retained.  The evaluator refuses empty
+episode sets, non-finite action metrics, task/result mismatch, runtime SHA
+mismatch, and absent MP4s.  The runtime cache uses a per-revision lock and an
+atomically published ready marker; without the managed GR00T data mount it is
+private to the workflow pod.  Git LFS filters are disabled for the source-only
+runtime fetch, so an absent `git-lfs` binary cannot silently turn a source
+checkout into a failed or partial cache.
 The GPU placement is an NPA workflow configuration input
 (`evaluation_accelerator`), rather than a fixed graph resource.  Resolve it
 against the selected target with `--var evaluation_accelerator=<catalog-name>:1`
@@ -82,10 +94,10 @@ contract tests, artifact comparison, and real RRD inspection are verified in
 the adjacent readiness record.  They are not a live benchmark result.
 
 Live execution remains unverified until the operator supplies the three
-hash-bound inputs, passes the existing storage/Nebius/Hugging Face preflight,
-confirms the unchanged immutable bootstrap image is pullable, and runs the
-five-stage workflow on Kubernetes.  Acceptance then requires independent
-readback of the final comparison, native MP4s, and RRD—not just a successful
-job status.  Preserve the produced provenance and licenses with any shared
-result; do not reuse the reported derivative-card open-loop values as
-closed-loop evidence.
+hash-bound inputs (including the authoritative 60-task training inventory),
+passes the existing storage/Nebius/Hugging Face preflight, confirms the
+unchanged immutable bootstrap image is pullable, and runs the five-stage
+workflow on Kubernetes.  Acceptance then requires independent readback of the
+final comparison, native MP4s, and RRD—not just a successful job status.
+Preserve the produced provenance and licenses with any shared result; do not
+reuse the reported derivative-card open-loop values as closed-loop evidence.

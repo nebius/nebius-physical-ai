@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from npa.workflows import groot_libero_x as workflow
+from npa.workflows import groot_libero_x_native as native
 from npa.workflows.groot_visualization import _split_s3
 
 
@@ -97,7 +98,11 @@ def _native_rollout_mp4(tmp_path: Path) -> bytes:
 def _task(task_id: str) -> dict[str, Any]:
     return {
         "task_id": task_id,
-        "env_name": "libero_sim/pick_up_the_black_bowl_from_table_center_and_place_it_on_the_plate",
+        "env_name": f"libero_x/{task_id}",
+        "libero_x_bddl_path": (
+            "libero/libero_x/bddl/LEVEL1/"
+            "EXTENSION_KITCHEN_SCENE1_LEVEL1__T001_place_the_green_bowl_on_the_plate.bddl"
+        ),
         "trajectory_ids": [0],
     }
 
@@ -247,6 +252,122 @@ def test_prepare_rejects_task_identifiers_that_could_escape_artifact_paths() -> 
             "groot-libero-x-fixture",
             s3_client=client,
         )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../libero/libero_x/bddl/LEVEL1/task.bddl",
+        "libero/libero_x/bddl/LEVEL5/task.bddl",
+        "libero/libero_x/bddl/LEVEL1/../task.bddl",
+        "libero/libero_x/bddl/LEVEL1/task.txt",
+    ],
+)
+def test_prepare_rejects_unsafe_or_unsupported_libero_x_bddl_paths(path: str) -> None:
+    client = FakeS3()
+    training = {
+        "schema": workflow.TRAINING_TASKS_SCHEMA,
+        "tasks": [{"task_id": f"training-{index:02d}"} for index in range(60)],
+    }
+    evaluation = {
+        "schema": workflow.EVALUATION_TASKS_SCHEMA,
+        "tasks": [{**_task("heldout-0"), "libero_x_bddl_path": path}],
+    }
+    _put_json(client, "s3://bucket/run/inputs/training.json", training)
+    _put_json(client, "s3://bucket/run/inputs/evaluation.json", evaluation)
+    with pytest.raises(workflow.GrootVisualizationError, match="unsafe LIBERO-X BDDL"):
+        workflow._task_rows(evaluation, training=False)
+
+
+def test_native_libero_x_task_contract_is_hash_bound_and_source_scoped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    task = _task("heldout-0")
+    assert native._validate_libero_x_task(task) == workflow._native_libero_x_env_name(
+        "heldout-0"
+    )
+    with pytest.raises(RuntimeError, match="unsafe"):
+        native._validate_libero_x_task(
+            {**task, "libero_x_bddl_path": "libero/libero_x/bddl/LEVEL5/task.bddl"}
+        )
+
+    source = tmp_path / "LIBERO-X"
+    (source / "libero/libero_x/bddl").mkdir(parents=True)
+    monkeypatch.setattr(native.sys, "path", list(native.sys.path))
+    assert native._configure_libero_x_source({"libero_x_source": str(source)}) == source
+    assert str(source / "libero") == native.sys.path[0]
+
+
+def test_native_evaluator_writes_worker_registration_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "LIBERO-X"
+    source.mkdir()
+    captured: dict[str, Any] = {}
+
+    def fake_runtime_command(
+        command: list[str], *, cwd: Path, env: dict[str, str]
+    ) -> None:
+        captured["environment"] = env
+        config = json.loads(Path(command[3]).read_text())
+        captured["config"] = config
+        Path(command[-1]).write_text(json.dumps({"tasks": []}))
+
+    monkeypatch.setattr(workflow, "_run_runtime_command", fake_runtime_command)
+    result = workflow._run_native_evaluator(
+        runtime={
+            "server_python": tmp_path / "server-python",
+            "source": tmp_path / "Isaac-GR00T",
+            "sim_python": tmp_path / "sim-python",
+            "home": tmp_path / "home",
+            "libero_x_source": source,
+        },
+        root=tmp_path,
+        model_path=tmp_path / "model",
+        dataset_path=tmp_path / "dataset",
+        tasks=[_task("heldout-0")],
+        episodes_per_task=1,
+        n_envs=1,
+        max_episode_steps=1,
+        n_action_steps=1,
+        seed=7,
+    )
+
+    assert result == {"tasks": []}
+    registration = json.loads(
+        Path(captured["environment"]["NPA_GROOT_LIBERO_X_REGISTRATION_MANIFEST"]).read_text()
+    )
+    assert registration["tasks"] == [
+        {
+            "task_id": "heldout-0",
+            "native_env_name": workflow._native_libero_x_env_name("heldout-0"),
+            "libero_x_bddl_path": _task("heldout-0")["libero_x_bddl_path"],
+        }
+    ]
+    assert captured["config"]["libero_x_source"] == str(source)
+
+
+def test_runtime_overlay_and_git_fetch_contract_keep_lfs_bytes_out_of_cache(
+    tmp_path: Path,
+) -> None:
+    command = workflow._git_without_lfs("git", "checkout", "--detach", "revision")
+    assert command[:7] == [
+        "git",
+        "-c",
+        "filter.lfs.smudge=",
+        "-c",
+        "filter.lfs.process=",
+        "-c",
+        "filter.lfs.required=false",
+    ]
+    target = tmp_path / "Isaac-GR00T/gr00t/eval/sim/LIBERO/libero_env.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def register_libero_envs():\n    pass\n")
+    overlay = workflow._overlay_libero_env(tmp_path / "Isaac-GR00T")
+    assert overlay["sha256"] == hashlib.sha256(
+        workflow.LIBERO_X_RUNTIME_OVERLAY.encode()
+    ).hexdigest()
+    assert target.read_text().endswith(workflow.LIBERO_X_RUNTIME_OVERLAY + "\n")
 
 
 def test_compare_and_rrd_evidence_decode_matched_native_rollout_artifacts(
