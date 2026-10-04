@@ -84,6 +84,11 @@ def test_clean_root_recipe_retains_measured_cuda_and_launch_configuration():
     )
     assert "EXPOSE 8080" in instructions
     assert expected["layer_count"] == 1
+    assert expected["optional_empty_metadata_layer"] == {
+        "blob_sha256": "4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+        "blob_bytes": 32,
+        "diff_id": "sha256:" + hashlib.sha256(b"\x00" * 1024).hexdigest(),
+    }
     assert expected["platform"] == {"os": "linux", "architecture": "amd64"}
 
 

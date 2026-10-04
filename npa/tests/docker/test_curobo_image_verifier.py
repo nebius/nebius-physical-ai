@@ -145,8 +145,11 @@ def save_image(
     config_path=None,
     layer_replacement=None,
     outer_entries=(),
+    layer_overrides=None,
 ):
     raw_layers = [tar_bytes(layer) for layer in layers]
+    for index, (raw, _) in (layer_overrides or {}).items():
+        raw_layers[index] = raw
     config = {
         "rootfs": {
             "type": "layers",
@@ -165,6 +168,8 @@ def save_image(
     layer_data = [
         gzip.compress(layer, mtime=0) if compressed else layer for layer in raw_layers
     ]
+    for index, (_, packed) in (layer_overrides or {}).items():
+        layer_data[index] = packed
     layer_names = [
         ("blobs/sha256/" + digest(data) if oci_paths else f"layer-{index}/layer.tar")
         for index, data in enumerate(layer_data)
@@ -238,6 +243,110 @@ def test_clean_root_rejects_superseded_layer_even_after_whiteout(tmp_path, paylo
     report = verify(tmp_path, payload, layers, config_update=clean_root_config)
     assert report["valid"] is False
     assert "clean_root_layer_population_mismatch" in codes(report)
+
+
+EMPTY_METADATA_GZIP = bytes.fromhex(
+    "1f8b08000000000000ff621805a360148c5800080000ffff2eafb5ef00040000"
+)
+
+
+def test_clean_root_accepts_only_exact_measured_empty_metadata_tail(tmp_path, payload):
+    use_clean_root_contract(payload)
+    raw = gzip.decompress(EMPTY_METADATA_GZIP)
+    assert raw == b"\x00" * 1024
+    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as archive:
+        assert archive.getmembers() == []
+    report = verify(
+        tmp_path,
+        payload,
+        [payload[1], []],
+        config_update=clean_root_config,
+        layer_overrides={1: (raw, EMPTY_METADATA_GZIP)},
+    )
+    assert report["valid"] is True
+    assert report["layer_count"] == 2
+    expected = json.loads((IMAGE / "clean-root-config.json").read_text())
+    assert (
+        report["verified_layer_identities"][-1]
+        == expected["optional_empty_metadata_layer"]
+    )
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "alternate_gzip",
+        "raw_tar",
+        "padding",
+        "file",
+        "whiteout",
+        "symlink",
+        "hidden_gzip_name",
+        "extra_tail",
+        "prefix_tail",
+    ],
+)
+def test_clean_root_rejects_other_metadata_layer_forms(tmp_path, payload, kind):
+    use_clean_root_contract(payload)
+    raw = b"\x00" * 1024
+    packed = EMPTY_METADATA_GZIP
+    layers = [payload[1], []]
+    if kind == "alternate_gzip":
+        packed = gzip.compress(raw, mtime=0)
+    elif kind == "raw_tar":
+        packed = raw
+    elif kind == "padding":
+        raw = b"\x00" * 10240
+        packed = gzip.compress(raw, mtime=0)
+    elif kind in {"file", "whiteout", "symlink"}:
+        entries = {
+            "file": [entry("unexpected", b"payload")],
+            "whiteout": [entry(".wh.absent")],
+            "symlink": [entry("unexpected", kind=tarfile.SYMTYPE, link="absent")],
+        }[kind]
+        raw = tar_bytes(entries)
+        packed = gzip.compress(raw, mtime=0)
+    elif kind == "hidden_gzip_name":
+        stream = io.BytesIO()
+        with gzip.GzipFile(
+            filename="unexpected-metadata", mode="wb", fileobj=stream, mtime=0
+        ) as zipped:
+            zipped.write(raw)
+        packed = stream.getvalue()
+    overrides = {1: (raw, packed)}
+    if kind == "extra_tail":
+        layers.append([])
+        overrides[2] = (raw, packed)
+    elif kind == "prefix_tail":
+        layers = [[], payload[1]]
+        overrides = {0: (raw, packed)}
+    report = verify(
+        tmp_path,
+        payload,
+        layers,
+        config_update=clean_root_config,
+        layer_overrides=overrides,
+    )
+    assert report["valid"] is False
+    assert "clean_root_layer_population_mismatch" in codes(report)
+
+
+def test_clean_root_empty_tail_identity_cannot_mask_different_bytes(tmp_path, payload):
+    use_clean_root_contract(payload)
+    raw = tar_bytes([entry("unexpected", b"payload")])
+
+    def forged(config):
+        clean_root_config(config)
+        config["rootfs"]["diff_ids"][-1] = "sha256:" + digest(b"\x00" * 1024)
+
+    with pytest.raises(VERIFIER.ImageVerificationError, match="diff ID mismatch"):
+        verify(
+            tmp_path,
+            payload,
+            [payload[1], []],
+            config_update=forged,
+            layer_overrides={1: (raw, gzip.compress(raw, mtime=0))},
+        )
 
 
 @pytest.mark.parametrize(

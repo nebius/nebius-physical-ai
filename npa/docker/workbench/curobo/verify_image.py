@@ -176,7 +176,7 @@ def _clean_root_runtime_matches(config, expected):
     )
 
 
-def _clean_root_findings(config, layers, contract):
+def _clean_root_findings(config, layers, contract, layer_identities):
     pinned_hash = contract.get("clean_root_config_sha256")
     if pinned_hash is None:
         return []
@@ -187,7 +187,14 @@ def _clean_root_findings(config, layers, contract):
     if expected["schema_version"] != "npa.curobo.clean-root-config.v1":
         raise ImageVerificationError("unsupported clean-root runtime contract")
     findings = []
-    if len(layers) != expected["layer_count"]:
+    # BuildKit may encode WORKDIR after COPY as this exact empty gzip/tar.
+    # Both compressed bytes and the verified uncompressed diff ID are pinned:
+    # an arbitrary empty tar, hidden gzip metadata, or a whiteout is not allowed.
+    canonical_empty_tail = (
+        len(layers) == expected["layer_count"] + 1
+        and layer_identities[-1] == expected["optional_empty_metadata_layer"]
+    )
+    if len(layers) != expected["layer_count"] and not canonical_empty_tail:
         findings.append({"code": "clean_root_layer_population_mismatch"})
     if any(config.get(key) != value for key, value in expected["platform"].items()):
         findings.append({"code": "clean_root_platform_mismatch"})
@@ -356,7 +363,6 @@ def verify_image(
             raise ImageVerificationError(
                 "image config requires root filesystem identity"
             )
-        findings.extend(_clean_root_findings(config, layers, contract))
         if config["rootfs"].get("type") != "layers":
             raise ImageVerificationError("unsupported image root filesystem")
         diff_ids = config.get("rootfs", {}).get("diff_ids")
@@ -364,6 +370,7 @@ def verify_image(
             raise ImageVerificationError(
                 "config and complete layer population disagree"
             )
+        layer_identities = []
         for layer_index, layer_name in enumerate(layers):
             member = members[_path(layer_name)]
             if not member.isfile():
@@ -392,6 +399,13 @@ def verify_image(
                     )
             if _layer_diff_id(archive.extractfile(member)) != diff_ids[layer_index]:
                 raise ImageVerificationError("saved-image layer diff ID mismatch")
+            layer_identities.append(
+                {
+                    "blob_sha256": blob_hash,
+                    "blob_bytes": blob_size,
+                    "diff_id": diff_ids[layer_index],
+                }
+            )
             # Whiteouts affect lower layers, including when recorded after new files.
             current = {}
             current_links = {}
@@ -567,6 +581,9 @@ def verify_image(
                                 )
             observed.update(current)
             observed_links.update(current_links)
+        findings.extend(
+            _clean_root_findings(config, layers, contract, layer_identities)
+        )
         for path in expected:
             if path not in observed:
                 # Expected names originate in reviewed code, never the image.
@@ -592,6 +609,7 @@ def verify_image(
         "expected_image_id": expected_image_id,
         "image_manifest_digest": manifest_digest,
         "verified_layer_diff_ids": diff_ids,
+        "verified_layer_identities": layer_identities,
         "contract_sha256": hashlib.sha256(
             json.dumps(contract, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),

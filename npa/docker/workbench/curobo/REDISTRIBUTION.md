@@ -14,8 +14,14 @@ The current recipe adds a separate `FROM scratch` final stage that copies the
 repaired runtime filesystem without the producer's superseded layers. This is
 an intended packaging repair, not an assertion that a new image has passed its
 gates. All historical images, findings and the four-database source census below
-remain as-issued. The final artifact contract now requires exactly one layer,
-only the measured final package database, and the 164 final notices. It rejects
+remain as-issued. The final artifact contract requires one filesystem layer,
+only the measured final package database, and the 164 final notices. The measured
+BuildKit export also emits a terminal `WORKDIR` metadata layer: exactly 32 gzip
+bytes decoding to 1024 zero bytes and no tar entries. Only that optional tail's
+exact compressed hash, size and uncompressed diff ID are permitted; arbitrary
+empty archives, hidden gzip metadata, extra layers and whiteouts are rejected.
+The original one-layer-only verifier refusal is retained, not relabeled as a
+pass. The contract rejects
 the earlier databases/notices if reintroduced as distributed ancestor bytes.
 `clean-root-config.json` pins the measured producer's CUDA environment, driver
 requirements, interpreter, non-root user and launch behavior; the verifier
