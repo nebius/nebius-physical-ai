@@ -38,7 +38,7 @@ def _framework_source(root: Path) -> Path:
     server.parent.mkdir(parents=True)
     model.parent.mkdir(parents=True)
     server.write_text(
-        '    format_prompt_as_json: bool | None = None\n'
+        "    format_prompt_as_json: bool | None = None\n"
         '    """Serve prompts as structured JSON (matching training ``format_prompt_as_json``)."""\n'
         "        self.model = pipe.model\n        self.model.eval()\n"
     )
@@ -74,7 +74,9 @@ def _variant_bundle(path: Path, variant: str, prepared_sha: str) -> Path:
     return path / "published" / f"{variant}.json"
 
 
-def test_overlay_retains_k2_generated_frames_and_native_condition_mask(tmp_path: Path) -> None:
+def test_overlay_retains_k2_generated_frames_and_native_condition_mask(
+    tmp_path: Path,
+) -> None:
     framework = _framework_source(tmp_path)
     record = apply_k2_runtime_overlay(framework, tmp_path / "artifacts")
 
@@ -82,8 +84,13 @@ def test_overlay_retains_k2_generated_frames_and_native_condition_mask(tmp_path:
     assert record["conditioning_latent_frames"] == CONDITIONING_LATENT_FRAMES
     assert record["expected_vision_tokens"] == TOKENS_PER_VISION_LATENT_FRAME * 3
     assert record["expected_mse_target_tokens"] == TOKENS_PER_VISION_LATENT_FRAME * 2
-    model = (framework / "cosmos_framework/model/generator/omni_mot_model.py").read_text()
-    assert "kept_latent_frames = min(num_latent_frames, needed_latent_frames + keep_generated)" in model
+    model = (
+        framework / "cosmos_framework/model/generator/omni_mot_model.py"
+    ).read_text()
+    assert (
+        "kept_latent_frames = min(num_latent_frames, needed_latent_frames + keep_generated)"
+        in model
+    )
     assert "condition_indexes" in model
     assert "condition_mask" in model
 
@@ -93,7 +100,9 @@ def test_robolab_checkout_uses_the_upstream_published_repository() -> None:
     assert ROBOLAB_REPOSITORY == "https://github.com/NVlabs/RoboLab.git"
 
 
-def test_robolab_sync_selects_isaac_supported_python_runtime(tmp_path: Path, monkeypatch) -> None:
+def test_robolab_sync_selects_isaac_supported_python_runtime(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Keep Isaac's runtime wheel selection independent from the control Python."""
     calls: list[list[str]] = []
 
@@ -105,7 +114,9 @@ def test_robolab_sync_selects_isaac_supported_python_runtime(tmp_path: Path, mon
     robolab = tmp_path / "robolab"
     robolab.mkdir()
 
-    returned = _sync_robolab(robolab, {"ACCEPT_EULA": "Y"}, tmp_path / "robolab-sync.log")
+    returned = _sync_robolab(
+        robolab, {"ACCEPT_EULA": "Y"}, tmp_path / "robolab-sync.log"
+    )
 
     assert ROBOLAB_ISAAC_PYTHON == "3.11"
     assert calls == [["uv", "sync", "--python", "3.11", "--extra", "isaac50"]]
@@ -160,8 +171,12 @@ def test_robolab_uses_only_the_shared_isaac_acceptance_surface() -> None:
 
     assert runtime_env["ACCEPT_EULA"] == "Y"
     assert runtime_env["OMNI_KIT_ACCEPT_EULA"] == "Y"
-    assert isaac_eula_envs("workbench.cosmos3.fastwam_k2_full_wam") == {"ACCEPT_EULA": "Y"}
-    assert isaac_eula_envs("workbench.cosmos3.fastwam_k2_eval", accepted=False) == {"ACCEPT_EULA": ""}
+    assert isaac_eula_envs("workbench.cosmos3.fastwam_k2_full_wam") == {
+        "ACCEPT_EULA": "Y"
+    }
+    assert isaac_eula_envs("workbench.cosmos3.fastwam_k2_eval", accepted=False) == {
+        "ACCEPT_EULA": ""
+    }
     try:
         _isaac_runtime_env({"ACCEPT_EULA": ""})
     except FastWamK2Error as exc:
@@ -229,7 +244,10 @@ def test_prepared_payload_hashes_matched_task_sources(tmp_path: Path) -> None:
 
     assert payload["schema"] == PREPARED_SCHEMA
     assert payload["benchmark_claim"] is False
-    assert set(payload["task_sources"]) == {"RubiksCubesInBinTask", "StackYellowOnRedTask"}
+    assert set(payload["task_sources"]) == {
+        "RubiksCubesInBinTask",
+        "StackYellowOnRedTask",
+    }
     assert len(payload["prepared_sha256"]) == 64
 
 
@@ -238,14 +256,22 @@ def test_comparison_requires_matched_closed_loop_manifests(tmp_path: Path) -> No
     fastwam_k2 = _variant_bundle(tmp_path / "k2", "fastwam-k2", "matched")
 
     result = compare_variants(
-        full_wam_path=str(full_wam), k2_path=str(fastwam_k2), output_path=str(tmp_path / "comparison")
+        full_wam_path=str(full_wam),
+        k2_path=str(fastwam_k2),
+        output_path=str(tmp_path / "comparison"),
     )
     persisted = json.loads((tmp_path / "comparison" / "comparison.json").read_text())
 
     assert result["schema"] == COMPARISON_SCHEMA
-    assert persisted["decision_basis"] == "closed-loop task success; open-loop errors are intentionally excluded"
+    assert (
+        persisted["decision_basis"]
+        == "closed-loop task success; open-loop errors are intentionally excluded"
+    )
     assert persisted["benchmark_claim"] is False
-    assert persisted["paired_task_metrics"]["RubiksCubesInBinTask"]["success_rate_delta"] == 0.25
+    assert (
+        persisted["paired_task_metrics"]["RubiksCubesInBinTask"]["success_rate_delta"]
+        == 0.25
+    )
 
 
 def test_episode_metrics_require_native_latency_for_every_closed_loop_row() -> None:

@@ -1853,7 +1853,9 @@ def _assert_fastwam_k2_bundle(
     assert manifest["schema"] == schema
     assert manifest["status"] == "succeeded"
     artifacts = manifest.get("artifacts")
-    assert isinstance(artifacts, list) and artifacts, "missing declared FastWAM-K2 artifacts"
+    assert isinstance(artifacts, list) and artifacts, (
+        "missing declared FastWAM-K2 artifacts"
+    )
     names = [item.get("path") for item in artifacts]
     assert len(names) == len(set(names)), "duplicate FastWAM-K2 artifact paths"
     downloaded: dict[str, Path] = {}
@@ -1864,14 +1866,18 @@ def _assert_fastwam_k2_bundle(
         target.parent.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha256()
         size = 0
-        with client.get_object(Bucket=bucket, Key=key.rsplit("/", 1)[0] + "/" + path)["Body"] as body:
+        with client.get_object(Bucket=bucket, Key=key.rsplit("/", 1)[0] + "/" + path)[
+            "Body"
+        ] as body:
             with target.open("wb") as stream:
                 for chunk in iter(lambda: body.read(8 * 1024 * 1024), b""):
                     stream.write(chunk)
                     digest.update(chunk)
                     size += len(chunk)
         assert size == item["bytes"], f"FastWAM-K2 artifact size differs: {path}"
-        assert digest.hexdigest() == item["sha256"], f"FastWAM-K2 artifact hash differs: {path}"
+        assert digest.hexdigest() == item["sha256"], (
+            f"FastWAM-K2 artifact hash differs: {path}"
+        )
         downloaded[path] = target
     assert body_name in downloaded, f"missing FastWAM-K2 report body: {body_name}"
     return manifest, downloaded
@@ -1888,7 +1894,9 @@ def _assert_fastwam_k2_metrics(report: dict[str, Any]) -> None:
     assert topology["visible_cuda_device_count"] >= 1
     assert topology["policy_server_cuda_visible_devices"] == "0"
     assert topology["robolab_cuda_visible_devices"] in {"0", "1"}
-    assert topology["shared_cuda_device"] is (topology["robolab_cuda_visible_devices"] == "0")
+    assert topology["shared_cuda_device"] is (
+        topology["robolab_cuda_visible_devices"] == "0"
+    )
     metrics = report["metrics"]
     assert set(metrics["tasks"]) == set(SCREENING_TASKS)
     for task in SCREENING_TASKS:
@@ -1961,8 +1969,12 @@ def assert_fastwam_k2_live_outputs(
 
         full_body = json.loads(full_files["variant-result.json"].read_text())
         k2_body = json.loads(k2_files["variant-result.json"].read_text())
-        comparison_body = json.loads(comparison_files["comparison-result.json"].read_text())
-        visualization_body = json.loads(visualization_files["visualization-result.json"].read_text())
+        comparison_body = json.loads(
+            comparison_files["comparison-result.json"].read_text()
+        )
+        visualization_body = json.loads(
+            visualization_files["visualization-result.json"].read_text()
+        )
         assert full_body["prepared_sha256"] == k2_body["prepared_sha256"]
         assert comparison_body["prepared_sha256"] == full_body["prepared_sha256"]
         assert visualization_body["prepared_sha256"] == full_body["prepared_sha256"]
@@ -1980,7 +1992,9 @@ def assert_fastwam_k2_live_outputs(
         )
         assert comparison_body["benchmark_claim"] is False
         assert comparison_body["physical_robot_tested"] is False
-        assert set(comparison_body["paired_task_metrics"]) == set(full_body["metrics"]["tasks"])
+        assert set(comparison_body["paired_task_metrics"]) == set(
+            full_body["metrics"]["tasks"]
+        )
         assert visualization_body["rrd"] == "fastwam-k2-screening.rrd"
         assert visualization_body["rrd_recording_id"] == run_id
         assert visualization_body["rollout_mp4_count"] >= 2
@@ -1993,17 +2007,27 @@ def assert_fastwam_k2_live_outputs(
         )
         assert verify.returncode == 0, "Rerun rejected the FastWAM-K2 recording"
         printed = subprocess.run(
-            [str(Path(sys.executable).with_name("rerun")), "rrd", "print", "-vv", str(rrd)],
+            [
+                str(Path(sys.executable).with_name("rerun")),
+                "rrd",
+                "print",
+                "-vv",
+                str(rrd),
+            ],
             capture_output=True,
             check=False,
         )
-        assert printed.returncode == 0, "Rerun could not decode the FastWAM-K2 recording"
+        assert printed.returncode == 0, (
+            "Rerun could not decode the FastWAM-K2 recording"
+        )
         recording = load_recording(rrd)
         assert recording.application_id() == "npa_cosmos3_fastwam_k2"
         assert recording.recording_id() == run_id
         assert list(recording.chunks()), "FastWAM-K2 recording has no decoded chunks"
 
-        videos = sorted(path for name, path in visualization_files.items() if name.endswith(".mp4"))
+        videos = sorted(
+            path for name, path in visualization_files.items() if name.endswith(".mp4")
+        )
         assert len(videos) == visualization_body["rollout_mp4_count"]
         for video in (videos[0], videos[-1]):
             probe = subprocess.run(
@@ -2011,7 +2035,9 @@ def assert_fastwam_k2_live_outputs(
                 capture_output=True,
                 check=False,
             )
-            assert probe.returncode == 0, f"ffprobe rejected published rollout: {video.name}"
+            assert probe.returncode == 0, (
+                f"ffprobe rejected published rollout: {video.name}"
+            )
 
 
 def materialize_live_spec(

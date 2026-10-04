@@ -24,7 +24,9 @@ def _invoke(function: Callable[..., dict[str, Any]], **kwargs: str) -> None:
         for name, value in kwargs.items():
             if name != "output_path" and name.endswith("_path") and value:
                 validate_read_path(value, tool="cosmos3 fastwam-k2", allow_hf=False)
-        validate_write_path(kwargs["output_path"], tool="cosmos3 fastwam-k2", required=True)
+        validate_write_path(
+            kwargs["output_path"], tool="cosmos3 fastwam-k2", required=True
+        )
         result = function(**kwargs)
     except Exception as exc:
         typer.echo(json.dumps({"status": "failed", "error_type": type(exc).__name__}))
@@ -47,7 +49,9 @@ def full_wam_cmd(
     output_path: str = typer.Option(..., "--output-path"),
 ) -> None:
     """Run the exact full-WAM baseline through native closed-loop RoboLab."""
-    _invoke(run_variant, input_path=input_path, output_path=output_path, variant="full-wam")
+    _invoke(
+        run_variant, input_path=input_path, output_path=output_path, variant="full-wam"
+    )
 
 
 @json_stdout_contract
@@ -73,7 +77,12 @@ def compare_cmd(
     output_path: str = typer.Option(..., "--output-path"),
 ) -> None:
     """Compare matched closed-loop task success and native latency only."""
-    _invoke(compare_variants, full_wam_path=full_wam_path, k2_path=k2_path, output_path=output_path)
+    _invoke(
+        compare_variants,
+        full_wam_path=full_wam_path,
+        k2_path=k2_path,
+        output_path=output_path,
+    )
 
 
 @json_stdout_contract
