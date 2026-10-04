@@ -516,6 +516,12 @@ def test_interactive_configure_survives_access_advisory_construction_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     config_path, _credentials_path = _point_configure_at_tmp(monkeypatch, tmp_path)
+    project_name = Mock(return_value="Synthetic project")
+    provider_call = Mock(side_effect=AssertionError("unexpected provider query"))
+    process_call = Mock(side_effect=AssertionError("unexpected subprocess"))
+    monkeypatch.setattr(nebius, "get_project_name", project_name)
+    monkeypatch.setattr(nebius, "_run_json", provider_call)
+    monkeypatch.setattr(subprocess, "Popen", process_call)
     monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     monkeypatch.setattr(nebius, "current_project_id", lambda: "project-synthetic")
     monkeypatch.setattr(nebius, "current_tenant_id", lambda: "tenant-synthetic")
@@ -564,6 +570,9 @@ def test_interactive_configure_survives_access_advisory_construction_failure(
     assert "advisory unavailable" in result.output
     assert "hf_synthetic_secret" not in result.output
     assert "nvapi-synthetic-secret" not in result.output
+    project_name.assert_called_once_with("project-synthetic")
+    provider_call.assert_not_called()
+    process_call.assert_not_called()
 
 
 def test_environment_credential_import_saves_then_reports_advisory(

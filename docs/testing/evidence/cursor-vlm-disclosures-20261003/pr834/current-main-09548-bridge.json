@@ -1,0 +1,62 @@
+{
+  "schema": "npa.sanitized-vlm-disclosure-current-source-bridge/v1",
+  "candidate": {
+    "head": "8a42af1ba863c5187a2596de22d36086c17c0c8a",
+    "tree": "77709758bbfe4e9b8d8e9d5ff6f5fb74007e5c52",
+    "main_parent": "09548f6939e0216d15b76819c6cc9d7537bf8e40"
+  },
+  "completed_protocol": {
+    "execution_head": "961a6199f03fc8efa4141c862b564a273b19768b",
+    "private_result_sha256": "b1d017ad6b4b5f1e98d30d8808ff20343e905460ebbbec2eadcf4f722012569f",
+    "sanitized_observation_sha256": "786872d5b5b3a1c8404e7aa3fc530e0d6e610f3b75dbae977fd3dafeb23c24d8",
+    "provider_transports": 12,
+    "manual_retries": 0,
+    "http_statuses": [200],
+    "finish_reasons": ["stop"],
+    "provider_calls_in_current_bridge": 0
+  },
+  "current_source": {
+    "vlm_eval_sha256": "84f02dbb94cbae6f84188228d4f149a15e18216ec9197206b2040b740f4783c6",
+    "strict_score_test_sha256": "a8aa7d2cc8bfe0967f9a3849a3ba419f7ff2dae1c95c049e89dbf67159f78493",
+    "token_factory_client_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+    "strict_parser_and_hosted_completion_controls": 245,
+    "strict_synthetic_caller_provider_call_made": false,
+    "retained_grade_controls": 80,
+    "network_connects_in_replay": 0
+  },
+  "scalar": {
+    "model": "MiniMaxAI/MiniMax-M3",
+    "threshold": 0.8,
+    "benchmark": {
+      "true_positives": 1,
+      "true_negatives": 2,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "accuracy": 1.0,
+      "f1": 1.0
+    },
+    "loop": {
+      "green": 1.0,
+      "red": 0.0,
+      "blank": 0.0,
+      "mean_score": 0.3333333333333333,
+      "task_success": false
+    },
+    "decoded_rgb_sha256": {
+      "green": "b9dbdeb4d8c688fc0c370f78b42740dadcd31b31675c798e9d91acf7e0e8a00c",
+      "red": "54ace337720fd6dd8b1e8b8ff7230f5e2819b228c751451bc9dfcc69c2c5f548",
+      "blank": "be1e5a32fff9f186f58214b34b996d6336fd87609116d7eb7fe643b81a68bb10"
+    }
+  },
+  "paired": {
+    "models": ["MiniMaxAI/MiniMax-M3", "google/gemma-3-27b-it"],
+    "inside": {"status": "judges_agree_passed", "passed": true, "escalation_required": false},
+    "outside": {"status": "judges_agree_needs_iteration", "passed": false, "escalation_required": false},
+    "blank": {"status": "judges_agree_needs_iteration", "passed": false, "escalation_required": false}
+  },
+  "limitations": [
+    "The retained response bridge establishes source continuity only; it is not a second inference, quality calibration, safety claim, rendered workload, or final-head proof.",
+    "The fixed synthetic labels and scores do not establish independent-human label calibration or a production error rate.",
+    "Negative controls are retained outcomes, not retry triggers."
+  ]
+}

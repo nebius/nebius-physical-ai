@@ -7,6 +7,17 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Distinct known-count frame sampling
+
+- Keep `sequence` as uniform full-span sampling and make `keyframes` allocate
+  half its budget to the final 10% or a wider unique terminal window. This is
+  deterministic temporal stratification, not pixel-aware event detection.
+  Short sources return every frame; unknown-count video fallback is unchanged.
+- Preserve the original six-call hosted negative result: neither strategy
+  improved the declared labels, and one rationale hallucinated absent objects.
+  This result remains a failed model-improvement gate, separately from the
+  sampler's deterministic source/provenance contract.
+
 ### VLM benchmarks distinguish outcome from agency
 
 - A packaged `isaac-agency` calibration pairs one true elevated-object claim
@@ -166,6 +177,16 @@ a versioned heading when a release is cut.
   directory creation. External clients must send a JSON boolean. Update-result
   decoding enforces the same contract instead of coercing truthy values.
 
+### Token Factory captions expose thinking control
+
+- `token-factory caption` accepts `--thinking/--no-thinking` and the SDK accepts
+  `thinking=True|False`. Omitting the option preserves existing model defaults;
+  explicit overrides use verified Lightning/MiniMax template fields and a
+  generic `thinking` field for other selected models. Known `reasoning_effort`
+  profiles, including Kimi-K3, reject a boolean thinking override before inference;
+  their omitted-option defaults remain unchanged. Reasoning-only responses
+  still fail closed and now point default callers to `--no-thinking`.
+
 ### Token Factory captions expose unavailable images
 
 - Caption requests now ask the hosted vision model for the exact
@@ -176,9 +197,9 @@ a versioned heading when a release is cut.
 - Closed whole-answer matching now tolerates an omitted final period and nested
   matching pairs of Markdown emphasis, ASCII quotes, or smart quotes. It still
   rejects longer answers, mismatched or code wrappers, punctuation outside the
-  wrappers, other punctuation, and paraphrases. Hosted evidence observed only
-  the exact punctuated sentinel; the added formatting cases are deterministic
-  local controls.
+  wrappers, other punctuation, and paraphrases. The composed hosted panel also
+  observed MiniMax's periodless sentinel for a valid blank PNG; wrapped, nested
+  and emphasis variants remain deterministic local controls.
 
 ### Studio videos accept S3 output paths
 
