@@ -364,7 +364,12 @@ def test_self_hosted_omitted_success_is_not_reported_as_provider_value(
     completion = {
         "model": "deployed-model-revision",
         "choices": [
-            {"message": {"content": '{"score":0.7,"rationale":"partial completion"}'}}
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": '{"score":0.7,"rationale":"partial completion"}'
+                },
+            }
         ],
     }
     monkeypatch.setattr(
@@ -395,6 +400,7 @@ def test_self_hosted_non_boolean_success_is_not_reported_as_provider_value(
         "model": "deployed-model-revision",
         "choices": [
             {
+                "finish_reason": "stop",
                 "message": {
                     "content": json.dumps(
                         {
@@ -403,7 +409,7 @@ def test_self_hosted_non_boolean_success_is_not_reported_as_provider_value(
                             "rationale": "legacy response",
                         }
                     )
-                }
+                },
             }
         ],
     }
@@ -1349,7 +1355,12 @@ class _FakeResp:
 
 _OK_PAYLOAD = {
     "choices": [
-        {"message": {"content": '{"success": true, "score": 0.9, "rationale": "ok"}'}}
+        {
+            "finish_reason": "stop",
+            "message": {
+                "content": '{"success": true, "score": 0.9, "rationale": "ok"}'
+            },
+        }
     ]
 }
 
