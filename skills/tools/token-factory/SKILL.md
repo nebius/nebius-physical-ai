@@ -122,6 +122,44 @@ npa workbench token-factory caption \
   --instruction "Describe the scene, objects, and any action."
 ```
 
+Caption requests append `If you cannot see the image pixels, respond exactly:
+NO IMAGE RECEIVED.` after the operator instruction. The closed
+case-insensitive whole-answer match also accepts an omitted final period or one
+or more nested matching pairs of Markdown asterisk or underscore emphasis,
+ASCII quotes, or smart quotes. It does not accept longer answers, mismatched
+wrappers, code wrappers, punctuation outside the wrappers, other punctuation,
+or paraphrases, and it retains the exact stripped answer. Exact-answer
+induction can still false-fail, including when an image's only salient text is
+the sentinel. Earlier retained hosted evidence observed the exact punctuated
+sentinel; the composed thinking panel also observed MiniMax's periodless
+sentinel for a valid blank PNG. These false unavailability indications do not
+prove missing image delivery. Wrapped, nested, and emphasis variants remain
+deterministic local controls, not observed hosted outputs. An unavailable item
+fails the aggregate, is written before the CLI exits 1, and does not trigger a silent
+retry. Later selected images are still attempted once. `--dry-run` emits the
+same failed result and exits 1 without writing it.
+
+The partial-result guarantee applies to cooperative sentinel responses, not
+provider/configuration exceptions or storage-write failures; those can abort
+before an artifact is saved.
+
+Caption preserves existing model defaults when neither thinking flag is present.
+If an explicitly selected reasoning-capable vision model returns no visible
+caption, retry the command with `--no-thinking`. `--thinking` deliberately
+reverses the built-in suppression for
+Lightning/MiniMax and may consume the output allowance without yielding visible
+text. Explicit overrides use verified model-specific fields for Lightning and
+MiniMax and the generic `thinking` field for other model IDs, except known
+`reasoning_effort` profiles such as Kimi-K3. Those reject either boolean override
+before inference instead of sending a known unsupported template field; omitted
+thinking options retain their defaults. Direct client `extra` can set
+`reasoning_effort` explicitly. Other unsupported
+providers may reject or ignore that control. Rejected requests and empty or
+reasoning-only answers fail, but silently ignored controls with visible text
+cannot be detected; control compliance is not validated.
+The override is direct CLI/workbench/SDK only; the caption workflow toolRef does
+not expose it.
+
 **Batch text generation** over a JSONL/text prompt file — default model
 `nvidia/Nemotron-3_5-Lightning`:
 

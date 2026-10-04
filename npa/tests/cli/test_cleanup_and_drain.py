@@ -1076,11 +1076,28 @@ def test_provisioning_rollback_uses_explicit_context(
     assert rollback["context"] == "explicit-context"
 
 
+def _stub_absent_dry_run_cluster(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[str, str]]:
+    from npa.cluster.api import MK8sClient
+    from npa.cluster.exceptions import ClusterNotFoundError
+
+    lookups: list[tuple[str, str]] = []
+
+    def get_cluster(_client, cluster_name: str, *, project_id: str = ""):
+        lookups.append((cluster_name, project_id))
+        raise ClusterNotFoundError("Synthetic dry-run cluster is absent")
+
+    monkeypatch.setattr(MK8sClient, "get_cluster", get_cluster)
+    return lookups
+
+
 def test_dry_run_reports_the_requested_node_shape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from npa import provisioning
 
+    lookups = _stub_absent_dry_run_cluster(monkeypatch)
     monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *a, **k: False)
     monkeypatch.setattr(
         provisioning,
@@ -1102,6 +1119,7 @@ def test_dry_run_reports_the_requested_node_shape(
     assert any(
         "gpu_nodes=2" in action and "cpu_nodes=1" in action for action in result.actions
     )
+    assert lookups == [("npa-cluster", "p")]
 
 
 def test_an_unavailable_capacity_api_does_not_advertise_the_dead_command(
@@ -1364,6 +1382,7 @@ def test_dry_run_reports_the_preemptible_choice(
 ) -> None:
     from npa import provisioning
 
+    lookups = _stub_absent_dry_run_cluster(monkeypatch)
     monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *a, **k: False)
     monkeypatch.setattr(
         provisioning,
@@ -1383,6 +1402,7 @@ def test_dry_run_reports_the_preemptible_choice(
     )
 
     assert any("preemptible=true" in action for action in result.actions)
+    assert lookups == [("npa-cluster", "p")]
 
 
 def test_configure_show_leads_with_what_is_saved(

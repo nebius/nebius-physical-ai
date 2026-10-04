@@ -14,10 +14,17 @@ import json
 from pathlib import Path
 
 import pytest
+import httpx
 from PIL import Image
+from typer.testing import CliRunner
+
+from npa.cli.main import app
+from npa.workbench import vlm_eval
 
 from npa.workbench.vlm_eval import (
+    LEGACY_RESULT_FILENAME,
     LOOP_REPORT_FILENAME,
+    RESULT_FILENAME,
     VlmEvalError,
     VlmLoopRollout,
     aggregate_loop_report,
@@ -35,6 +42,84 @@ def _write_rollout(root: Path, name: str, frames: int = 2) -> Path:
             rollout / f"frame_{index:03d}.png"
         )
     return rollout
+
+
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+@pytest.mark.parametrize("interface", ["core", "cli"])
+def test_incomplete_second_rollout_aborts_without_an_aggregate_or_fake_score(
+    tmp_path: Path, monkeypatch, backend: str, interface: str
+) -> None:
+    root = tmp_path / "rollouts"
+    for name in ("episode_000", "episode_001"):
+        _write_rollout(root, name, frames=1)
+    output = tmp_path / "scores"
+    calls = []
+
+    def forbidden_network(*_args, **_kwargs):
+        pytest.fail("This is a hermetic completion-control test, not inference")
+
+    def completion(**kwargs):
+        calls.append(kwargs["request"])
+        return {
+            "model": kwargs["request"]["model"],
+            "choices": [
+                {
+                    "finish_reason": "stop" if len(calls) == 1 else "length",
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "success": True,
+                                "score": 0.9,
+                                "rationale": "Synthetic transport control only.",
+                            }
+                        )
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(httpx.Client, "send", forbidden_network)
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **_: "")
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", completion)
+    model = "MiniMaxAI/MiniMax-M3"
+    if interface == "core":
+        with pytest.raises(VlmEvalError, match="finish_reason=stop"):
+            evaluate_rollout_set(
+                input_path=str(root),
+                output_path=str(output),
+                backend=backend,
+                model=model,
+                endpoint_url="https://example.test/v1",
+            )
+    else:
+        invocation = CliRunner().invoke(
+            app,
+            [
+                "workbench",
+                "vlm-eval",
+                "loop",
+                "--input-path",
+                str(root),
+                "--output-path",
+                str(output),
+                "--backend",
+                backend,
+                "--model",
+                model,
+                "--endpoint-url",
+                "https://example.test/v1",
+                "--output",
+                "json",
+            ],
+        )
+        assert invocation.exit_code == 1
+        assert "finish_reason=stop" in invocation.output
+    assert len(calls) == 2
+    first = output / "rollouts" / "episode_000" / RESULT_FILENAME
+    assert json.loads(first.read_text())["score"] == 0.9
+    assert not (output / "rollouts" / "episode_001" / RESULT_FILENAME).exists()
+    assert not (output / LOOP_REPORT_FILENAME).exists()
+    assert list(output.rglob("*.json")) == [first]
 
 
 # ------------------------------------------------------------------------- discovery
@@ -77,7 +162,7 @@ def _rollout(rollout_id: str, score: float, success: bool) -> VlmLoopRollout:
         rationale="because",
         status="passed" if success else "needs_iteration",
         frame_count=2,
-        result_uri=f"s3://b/{rollout_id}/vlm_eval_stub.json",
+        result_uri=f"s3://b/{rollout_id}/{RESULT_FILENAME}",
     )
 
 
@@ -173,9 +258,9 @@ def test_loop_scores_every_rollout_and_writes_both_artifact_levels(
     }
     # One result per rollout ...
     for name in ("episode_000", "episode_001", "episode_002"):
-        assert (scores / "rollouts" / name).is_dir()
-        written = list((scores / "rollouts" / name).glob("*.json"))
-        assert written, f"no per-rollout result for {name}"
+        rollout_scores = scores / "rollouts" / name
+        assert (rollout_scores / RESULT_FILENAME).is_file()
+        assert not (rollout_scores / LEGACY_RESULT_FILENAME).exists()
     # ... plus the aggregate report the sim-to-real loop gates on.
     report_path = scores / LOOP_REPORT_FILENAME
     assert report_path.is_file()

@@ -1,0 +1,242 @@
+{
+  "schema_version": "1.0",
+  "work_item": "vlm-self-hosted-finish-reason-v1",
+  "generated_at_utc": "2026-10-01T05:14:06Z",
+  "claim": "Both real VLM-eval backends require the exact finish_reason value stop before parsing a verdict.",
+  "source": {
+    "base_commit": "59514b9905c5427a250c2d0d3455b1f8e374b7e5",
+    "base_tree": "39219e686dde3bf72ae681318d3da744f0764d4b",
+    "base_module_sha256": "0c79239c762efd77856d7cb27e6b3dfbe32428b37fb3b78ee9ac96e84613abd5",
+    "base_archive_sha256": "061e9e462bbb95dd4ccb10b2b1d0d18b74a75cd54be82eb4ad2a0d45488af4f5",
+    "candidate_commit": "b6fcc370049ab73c7c6536a3b58554d6be4d4592",
+    "candidate_tree": "7a7c5e45beb7cf1a5d664251bbcad8e85f0287fa",
+    "candidate_module_sha256": "45ef23cacbe6d502219fd51266586d683b784c012d0b97fd2ebfbc11be9ac0ee",
+    "candidate_archive_sha256": "0e873840d78b4e8634801dcbcc20272470564f78385acfed29da253e83558db9",
+    "base_to_candidate_diff_sha256": "755dc1f6813c6dc748047e17858b10cc4a694b72c2bd09861615d14d57a3f28b"
+  },
+  "frozen_plan": {
+    "sha256": "f6d27026214c6775b0fab242aaefb7475c3c38668ae7ae00b4e32a688ae577ce",
+    "decision": "APPROVED_PLAN"
+  },
+  "synthetic_control": {
+    "content": {
+      "success": true,
+      "score": 0.93,
+      "rationale": "target reached"
+    },
+    "label": "Deterministic parser control; not a model judgment or visual score."
+  },
+  "matrix": {
+    "rows_per_source": 24,
+    "cases": [
+      {
+        "case": "stop",
+        "finish_reason": "stop",
+        "base_api": "score",
+        "base_self_hosted": "score",
+        "candidate_api": "score",
+        "candidate_self_hosted": "score"
+      },
+      {
+        "case": "length",
+        "finish_reason": "length",
+        "base_api": "error",
+        "base_self_hosted": "score",
+        "candidate_api": "error",
+        "candidate_self_hosted": "error"
+      },
+      {
+        "case": "content_filter",
+        "finish_reason": "content_filter",
+        "base_api": "error",
+        "base_self_hosted": "score",
+        "candidate_api": "error",
+        "candidate_self_hosted": "error"
+      },
+      {
+        "case": "tool_calls",
+        "finish_reason": "tool_calls",
+        "base_api": "error",
+        "base_self_hosted": "score",
+        "candidate_api": "error",
+        "candidate_self_hosted": "error"
+      },
+      {
+        "case": "abort",
+        "finish_reason": "abort",
+        "base_api": "error",
+        "base_self_hosted": "score",
+        "candidate_api": "error",
+        "candidate_self_hosted": "error"
+      },
+      {
+        "case": "null",
+        "finish_reason": null,
+        "base_api": "error",
+        "base_self_hosted": "score",
+        "candidate_api": "error",
+        "candidate_self_hosted": "error"
+      },
+      {
+        "case": "empty",
+        "finish_reason": "",
+        "base_api": "error",
+        "base_self_hosted": "score",
+        "candidate_api": "error",
+        "candidate_self_hosted": "error"
+      },
+      {
+        "case": "missing",
+        "finish_reason": "missing-key",
+        "base_api": "error",
+        "base_self_hosted": "score",
+        "candidate_api": "error",
+        "candidate_self_hosted": "error"
+      },
+      {
+        "case": "upper_stop",
+        "finish_reason": "STOP",
+        "base_api": "error",
+        "base_self_hosted": "score",
+        "candidate_api": "error",
+        "candidate_self_hosted": "error"
+      },
+      {
+        "case": "leading_space",
+        "finish_reason": " stop",
+        "base_api": "error",
+        "base_self_hosted": "score",
+        "candidate_api": "error",
+        "candidate_self_hosted": "error"
+      },
+      {
+        "case": "trailing_space",
+        "finish_reason": "stop ",
+        "base_api": "error",
+        "base_self_hosted": "score",
+        "candidate_api": "error",
+        "candidate_self_hosted": "error"
+      },
+      {
+        "case": "integer_zero",
+        "finish_reason": 0,
+        "base_api": "error",
+        "base_self_hosted": "score",
+        "candidate_api": "error",
+        "candidate_self_hosted": "error"
+      }
+    ],
+    "base_counts": {
+      "api_score": 1,
+      "api_error": 11,
+      "self_hosted_score": 12,
+      "self_hosted_error": 0
+    },
+    "candidate_counts": {
+      "api_score": 1,
+      "api_error": 11,
+      "self_hosted_score": 1,
+      "self_hosted_error": 11
+    },
+    "candidate_non_stop_contract": "All 22 non-stop, absent, near-miss, and non-string rows raised VlmEvalError naming finish_reason=stop before either verdict parser ran."
+  },
+  "ordering_control": {
+    "finish_reason": "length",
+    "content": "{malformed-json",
+    "base_api": "finish-reason error before parsing",
+    "base_self_hosted": "verdict parser error after one parser call",
+    "candidate_api": "finish-reason error before parsing",
+    "candidate_self_hosted": "finish-reason error before parsing"
+  },
+  "legacy_control": {
+    "finish_reason": "stop",
+    "content_shape": "Markdown-fenced legacy values",
+    "success": true,
+    "score": 1.0,
+    "rationale": "legacy",
+    "served_model": null
+  },
+  "mutations": {
+    "killed": 6,
+    "total": 6,
+    "names": [
+      "hosted_only_guard",
+      "allow_missing_metadata",
+      "allow_length",
+      "normalize_stop",
+      "parse_before_completion_check",
+      "reject_stop"
+    ],
+    "receipt_sha256": "7764d4a303bdf20517db6cdc44e56643982f85d7d24cbbf015c002b649318315"
+  },
+  "call_accounting_per_source": {
+    "transport_substitutions": 27,
+    "credential_resolver_substitutions": 27,
+    "api_requests": 13,
+    "self_hosted_requests": 14,
+    "outbound_socket_attempts": 0,
+    "provider_calls_observed": 0,
+    "health_calls_source_derived": 0,
+    "model_list_calls_source_derived": 0,
+    "source_derived_caveat": "The substituted response path contains no health or model-list request, but those two zeros were not separately instrumented."
+  },
+  "validation": {
+    "exact_archive_tests": {
+      "passed": 80,
+      "skipped": 1,
+      "skip_reason": "Opt-in live GPU endpoint test was not applicable to deterministic response parsing."
+    },
+    "related_vlm_tests": {
+      "passed": 109,
+      "skipped": 2
+    },
+    "independent_skill_and_documentation_contracts": {
+      "passed": 846
+    },
+    "ruff": "passed",
+    "format": "passed",
+    "diff_confidentiality": "passed",
+    "gitleaks": "passed"
+  },
+  "independent_review": {
+    "decision": "APPROVED_SOURCE",
+    "findings": 0,
+    "base_matrix_sha256": "581f0aa973d8568a212629b5b0b1808401121fd50b4e4645e26f8c92747ebf04",
+    "candidate_matrix_sha256": "b19ab755b6f1f25ff3633d47a2932cc1c01dc4c116e7801e899affb98cb2f70d",
+    "private_summary_sha256": "030c39e146b86aeac05374828e29b410b9c75c9e71b3ed7c943c276231df7df5"
+  },
+  "hardware_applicability": {
+    "customer_hardware": "CPU only; no GPU or cluster required.",
+    "hosted_hardware": "Not applicable; no provider execution occurred.",
+    "visual_evaluation": "Not applicable; this change has no visual output behavior."
+  },
+  "integration": {
+    "order": "Integrate this focused current-main correction before refreshing the overlapping VLM provenance and Kimi stack.",
+    "direct_overlaps": [
+      596,
+      678
+    ],
+    "dependent_prs": [
+      597,
+      612,
+      617,
+      622,
+      624,
+      627,
+      634,
+      647
+    ],
+    "resolved_tree_gate": "Preserve the exact-stop guard and both migration documents, rerun this matrix plus skill/documentation checks, and obtain fresh exact-head review.",
+    "pr_678_block": "PR 678 remains blocked until both its PR 596 dependency and this combined-tree reconciliation are proven."
+  },
+  "limitations": [
+    "This is deterministic response-metadata evidence, not a real model judgment or visual evaluation.",
+    "A server-reported stop value does not prove that the server is truthful, that image pixels were consumed, or that a score is visually or physically correct.",
+    "Self-hosted adapters that omit finish_reason must be updated before their scores can be accepted.",
+    "The exact base has no explicit message.refusal guard; refusal and shared-response-helper hardening are outside this change.",
+    "One earlier private harness attempt stopped while recording an intentionally failing mutant and is excluded from acceptance evidence.",
+    "Health and model-list zeros are source-derived from the reviewed substituted call path, not separately instrumented counters.",
+    "This source/publication evidence is not current combined-tree, exact-PR-head, required-CI, conflict-free, or merge-readiness approval.",
+    "This does not change models, thresholds, rubrics, retries, JSON repair, physical-correctness claims, or robot-safety claims."
+  ]
+}

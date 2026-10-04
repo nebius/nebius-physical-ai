@@ -380,6 +380,7 @@ def test_dm05_shared_matrix_refuses_stock_lerobot_submission() -> None:
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
     plan_only = {
         "adversarial-scenario-hardening.yaml",
+        "byof-apriltag.yaml",
         "byof-droid-policy-learning.yaml",
         "byof-evo.yaml",
         "byof-maniskill.yaml",
@@ -400,6 +401,17 @@ def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
 
 def test_evo_byof_case_discloses_the_nested_runner_boundary() -> None:
     case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == "byof-evo.yaml")
+
+    assert case.tier == "cpu"
+    assert case.plan_only
+    assert "inner SkyPilot launch" in case.plan_only_justification
+    assert not case.secret_envs
+
+
+def test_apriltag_byof_case_discloses_the_nested_runner_boundary() -> None:
+    case = next(
+        case for case in SUBMIT_LIVE_MATRIX if case.spec == "byof-apriltag.yaml"
+    )
 
     assert case.tier == "cpu"
     assert case.plan_only

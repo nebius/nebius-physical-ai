@@ -1,0 +1,17 @@
+{
+  "schema": "npa.robot-workflow.v1",
+  "cases": [
+    {
+      "id": "red-transfer", "seed": 42, "controller": "pick_place", "expected_accepted": true,
+      "scene": {"object_x": -0.10, "object_y": -0.08, "goal_x": 0.10, "goal_y": 0.08, "object_color": "red", "target_color": "green", "lighting": 1.0, "reason": "Prepared diagonal transfer"}
+    },
+    {
+      "id": "open-gripper-control", "seed": 42, "controller": "open_gripper", "expected_accepted": false,
+      "scene": {"object_x": -0.10, "object_y": -0.08, "goal_x": 0.10, "goal_y": 0.08, "object_color": "red", "target_color": "green", "lighting": 1.0, "reason": "Prepared physical failed-grasp control"}
+    },
+    {
+      "id": "blue-transfer", "seed": 44, "controller": "pick_place", "expected_accepted": true,
+      "scene": {"object_x": -0.08, "object_y": 0.10, "goal_x": 0.09, "goal_y": -0.10, "object_color": "blue", "target_color": "red", "lighting": 1.0, "reason": "Prepared opposite diagonal transfer"}
+    }
+  ]
+}
