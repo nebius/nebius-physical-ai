@@ -183,6 +183,7 @@ def test_native_commands_preserve_split_and_direct_action_contract(tmp_path) -> 
     assert "--policy.device=cuda" in train
     assert "--dataset.episodes=[1, 4, 8]" in train
     assert "--env_eval_freq=0" in train
+    assert "--policy.push_to_hub=false" in train
     assert rollout[0] == "lerobot-eval"
     assert "--policy.compile_action_infer=true" in rollout
     assert "--env.task=libero_10" in rollout

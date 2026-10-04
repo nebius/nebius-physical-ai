@@ -435,6 +435,10 @@ def _fastwam_train_command(
         f"--steps={args.train_steps}",
         f"--batch_size={args.batch_size}",
         "--env_eval_freq=0",
+        # This qualification keeps checkpoints in run-scoped object storage.
+        # LeRobot otherwise attempts an implicit Hub publication and requires a
+        # repository id even though this workflow never publishes one.
+        "--policy.push_to_hub=false",
         "--wandb.enable=false",
     ]
 
