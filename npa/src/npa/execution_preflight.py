@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import os
+from pathlib import Path
 import re
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlparse
@@ -1519,6 +1520,7 @@ def preflight_skypilot_submission(
     submission_backend: str = "",
     sky_bin: str = "",
     cwd: str | None = None,
+    resolved_sky_config_path: str = "",
     run_id: str = "",
     executable_profile_sha256: str = "",
 ) -> tuple[ExecutionTarget, dict[str, Any], dict[str, str]]:
@@ -1530,14 +1532,24 @@ def preflight_skypilot_submission(
     validate_gymnasium_task_configuration(documents, global_config=global_config)
     process_env = dict(os.environ)
     process_env.update(extra_env or {})
-    if process_env.get("SKYPILOT_CONFIG"):
-        raise ExecutionPreflightError(
-            "worker_environment",
-            "internal SkyPilot config override prevents verification of the effective task environment",
-            status="unknown",
-        )
+    configured_sky_path = str(process_env.get("SKYPILOT_CONFIG") or "").strip()
+    if configured_sky_path:
+        expected_sky_path = str(resolved_sky_config_path or "").strip()
+        try:
+            is_exact_resolved_config = (
+                bool(expected_sky_path)
+                and Path(configured_sky_path).expanduser().resolve()
+                == Path(expected_sky_path).expanduser().resolve()
+            )
+        except OSError:
+            is_exact_resolved_config = False
+        if not is_exact_resolved_config:
+            raise ExecutionPreflightError(
+                "worker_environment",
+                "internal SkyPilot config override prevents verification of the effective task environment",
+                status="unknown",
+            )
     if cwd is not None or process_env.get("SKYPILOT_PROJECT_CONFIG"):
-        from pathlib import Path
         import yaml
 
         project_config = Path(
