@@ -1,0 +1,81 @@
+{
+  "format": "npa_vlm_eval_benchmark_v1",
+  "description": "Paired state-versus-agency calibration on six synthetic stylized stand-in frames. This is not a photoreal or safety qualification set.",
+  "rollout_base_path": "rollouts",
+  "items": [
+    {
+      "id": "cube-elevated-positive",
+      "rollout": "isaac-franka-lift-cube",
+      "task": "The red cube becomes elevated above the ground surface.",
+      "expected_label": "pass",
+      "structural_check": {
+        "kind": "stylized_color_bbox_agency_v1",
+        "claim": "object_elevates",
+        "required_frame_selection": "sequence",
+        "required_max_frames": 6,
+        "required_labels": [
+          "frame_00.png",
+          "frame_01.png",
+          "frame_02.png",
+          "frame_03.png",
+          "frame_04.png",
+          "frame_05.png"
+        ],
+        "required_normalized_png_sha256": [
+          "a11e411b701ecace52c4d324a5603435bf6577633be91fcc2f776e16e45a58af",
+          "b687156a9d606c5410028c9f777387dd69cba0a25497bb03172c872f166fd6d8",
+          "48b41db30e7b272617db230aa1594e4d9c2c16ef826651acfcfb132c25e97df9",
+          "195af3fa11382ae0ce9f519d783cc3f36d7fdbfcf5ff49f4c0235a14793e0d20",
+          "02fa3ac1b6dcf65f160e67d64073c0f913cf3b30ab55bd10cf0f696185d5bfcc",
+          "bb1fa58e881d0083ffd35bf9461cc16dfdd9b119758f076db18597344de859a3"
+        ],
+        "title_rows_excluded": 22,
+        "object_r_min_inclusive": 121,
+        "object_g_max_inclusive": 79,
+        "object_b_max_inclusive": 79,
+        "actor_channel_min_inclusive": 151,
+        "actor_rg_delta_max_inclusive": 17,
+        "actor_gb_delta_max_inclusive": 17,
+        "contact_px_inclusive": 4,
+        "movement_px_inclusive": 8
+      }
+    },
+    {
+      "id": "robot-grasp-lift-negative",
+      "rollout": "isaac-franka-lift-cube",
+      "task": "The robot arm grasps the red cube and lifts it off the ground.",
+      "expected_label": "fail",
+      "structural_check": {
+        "kind": "stylized_color_bbox_agency_v1",
+        "claim": "actor_causes_motion",
+        "required_frame_selection": "sequence",
+        "required_max_frames": 6,
+        "required_labels": [
+          "frame_00.png",
+          "frame_01.png",
+          "frame_02.png",
+          "frame_03.png",
+          "frame_04.png",
+          "frame_05.png"
+        ],
+        "required_normalized_png_sha256": [
+          "a11e411b701ecace52c4d324a5603435bf6577633be91fcc2f776e16e45a58af",
+          "b687156a9d606c5410028c9f777387dd69cba0a25497bb03172c872f166fd6d8",
+          "48b41db30e7b272617db230aa1594e4d9c2c16ef826651acfcfb132c25e97df9",
+          "195af3fa11382ae0ce9f519d783cc3f36d7fdbfcf5ff49f4c0235a14793e0d20",
+          "02fa3ac1b6dcf65f160e67d64073c0f913cf3b30ab55bd10cf0f696185d5bfcc",
+          "bb1fa58e881d0083ffd35bf9461cc16dfdd9b119758f076db18597344de859a3"
+        ],
+        "title_rows_excluded": 22,
+        "object_r_min_inclusive": 121,
+        "object_g_max_inclusive": 79,
+        "object_b_max_inclusive": 79,
+        "actor_channel_min_inclusive": 151,
+        "actor_rg_delta_max_inclusive": 17,
+        "actor_gb_delta_max_inclusive": 17,
+        "contact_px_inclusive": 4,
+        "movement_px_inclusive": 8
+      }
+    }
+  ]
+}
