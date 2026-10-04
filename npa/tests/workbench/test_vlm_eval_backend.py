@@ -22,6 +22,7 @@ from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
     DEFAULT_SAMPLE_BENCHMARK_PATH,
     VlmBenchmarkCaseResult,
+    VlmBenchmarkMetrics,
     VlmEvalResult,
     VlmStructuredResponse,
     benchmark_vlm_eval,
@@ -53,6 +54,36 @@ _CREDENTIAL_ERROR_PATTERNS = (
     "not configured",
     "permission",
 )
+
+
+def test_benchmark_metrics_legacy_positional_constructor() -> None:
+    metrics = VlmBenchmarkMetrics(2, 2, 1.0, 1.0, 1.0, 1.0, 1.0, 1, 1, 0, 0)
+    assert metrics.f1 == 1.0
+    assert (metrics.true_positives, metrics.true_negatives) == (1, 1)
+    assert (metrics.false_positives, metrics.false_negatives) == (0, 0)
+    assert metrics.specificity is None
+    assert metrics.balanced_accuracy is None
+
+
+def test_benchmark_metrics_legacy_keyword_constructor() -> None:
+    metrics = VlmBenchmarkMetrics(
+        total=2,
+        correct=2,
+        agreement=1.0,
+        accuracy=1.0,
+        precision=1.0,
+        recall=1.0,
+        f1=1.0,
+        true_positives=1,
+        true_negatives=1,
+        false_positives=0,
+        false_negatives=0,
+    )
+    assert metrics.f1 == 1.0
+    assert (metrics.true_positives, metrics.true_negatives) == (1, 1)
+    assert (metrics.false_positives, metrics.false_negatives) == (0, 0)
+    assert metrics.specificity is None
+    assert metrics.balanced_accuracy is None
 
 
 @dataclass(frozen=True)
@@ -1054,6 +1085,8 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
     assert report.best_config.metrics.accuracy == 1.0
     assert report.best_config.metrics.precision == 1.0
     assert report.best_config.metrics.recall == 1.0
+    assert report.best_config.metrics.specificity == 1.0
+    assert report.best_config.metrics.balanced_accuracy == 1.0
     assert report.best_config.metrics.true_positives == 2
     assert report.best_config.metrics.true_negatives == 3
     assert report.schema_version == "npa_vlm_eval_benchmark_report_v2"
@@ -1155,9 +1188,24 @@ def test_benchmark_metrics_expose_ordered_false_positive_and_negative_cases() ->
 def test_benchmark_error_rates_are_null_without_required_label_class(
     results, undefined_rate
 ) -> None:
-    metrics = vlm_eval._benchmark_metrics(results)
-
+    # Legacy/manual records may lack a class; generated sweeps must not.
+    metrics = vlm_eval.VlmBenchmarkMetrics(
+        total=1,
+        correct=1,
+        agreement=1.0,
+        accuracy=1.0,
+        precision=1.0,
+        recall=1.0,
+        f1=1.0,
+        true_positives=int(results[0].expected_label),
+        true_negatives=int(not results[0].expected_label),
+        false_positives=0,
+        false_negatives=0,
+    )
     assert getattr(metrics, undefined_rate) is None
+    assert vlm_eval._safe_ratio(0, 0) is None
+    with pytest.raises(ValueError, match="both pass and fail expected-label classes"):
+        vlm_eval._benchmark_metrics(results)
 
 
 def test_legacy_benchmark_metrics_constructor_keeps_additive_defaults() -> None:
@@ -1194,7 +1242,12 @@ def test_legacy_benchmark_report_constructor_keeps_legacy_schema_default() -> No
         rank=1,
         config=config,
         metrics=vlm_eval._benchmark_metrics(
-            [_benchmark_case("positive", expected_label=True, predicted_label=True)]
+            [
+                _benchmark_case("positive", expected_label=True, predicted_label=True),
+                _benchmark_case(
+                    "negative", expected_label=False, predicted_label=False
+                ),
+            ]
         ),
         results=[],
     )
