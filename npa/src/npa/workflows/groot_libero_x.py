@@ -85,7 +85,7 @@ LIBERO_X_BDDL_LEVELS = frozenset({"LEVEL1", "LEVEL2", "LEVEL3", "LEVEL4"})
 # Sync/AsyncVectorEnv worker.  Keeping it in the native module avoids claiming
 # that unmodified Isaac-GR00T already supports LIBERO-X, while preserving the
 # upstream ``run_gr00t_sim_policy`` rollout entrypoint.
-LIBERO_X_RUNTIME_OVERLAY = r'''
+LIBERO_X_RUNTIME_OVERLAY = r"""
 
 # NPA_GROOT_LIBERO_X_RUNTIME_OVERLAY_V1
 def _npa_groot_libero_x_register_envs():
@@ -154,7 +154,7 @@ _npa_groot_libero_x_original_register_libero_envs = register_libero_envs
 def register_libero_envs():
     _npa_groot_libero_x_original_register_libero_envs()
     _npa_groot_libero_x_register_envs()
-'''
+"""
 
 
 def _json_hash(payload: Mapping[str, Any]) -> str:
@@ -603,9 +603,7 @@ def _runtime_ready(target: Path) -> dict[str, Any] | None:
     ):
         return None
     try:
-        overlay_text = (
-            source / "gr00t/eval/sim/LIBERO/libero_env.py"
-        ).read_text()
+        overlay_text = (source / "gr00t/eval/sim/LIBERO/libero_env.py").read_text()
     except OSError:
         return None
     if not overlay_text.endswith(LIBERO_X_RUNTIME_OVERLAY + "\n"):
@@ -630,7 +628,9 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
     """
 
     cache_root = _runtime_cache_root(temporary_root)
-    cache_identity = f"isaac-groot-{IMAGE_GROOT_REF}-libero-x-{LIBERO_X_EVALUATOR_REVISION}"
+    cache_identity = (
+        f"isaac-groot-{IMAGE_GROOT_REF}-libero-x-{LIBERO_X_EVALUATOR_REVISION}"
+    )
     target = cache_root / cache_identity
     lock_path = cache_root / f"{cache_identity}.lock"
     cache_root.mkdir(parents=True, exist_ok=True)
@@ -709,9 +709,7 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             env=environment,
         )
         _run_runtime_command(
-            _git_without_lfs(
-                git, "checkout", "--detach", LIBERO_X_EVALUATOR_REVISION
-            ),
+            _git_without_lfs(git, "checkout", "--detach", LIBERO_X_EVALUATOR_REVISION),
             cwd=libero_x_source,
             env=environment,
         )
@@ -845,9 +843,7 @@ def _run_native_evaluator(
         "seed": seed,
         "video_dir": str(root / "videos"),
         "plot_dir": str(root / "open-loop-plots"),
-        "libero_x_source": str(runtime["libero_x_source"])
-        if libero_x_tasks
-        else "",
+        "libero_x_source": str(runtime["libero_x_source"]) if libero_x_tasks else "",
         "libero_x_registration_manifest": str(registration_manifest)
         if libero_x_tasks
         else "",
@@ -865,9 +861,7 @@ def _run_native_evaluator(
         environment.update(
             {
                 "NPA_GROOT_LIBERO_X_SOURCE": str(runtime["libero_x_source"]),
-                "NPA_GROOT_LIBERO_X_REGISTRATION_MANIFEST": str(
-                    registration_manifest
-                ),
+                "NPA_GROOT_LIBERO_X_REGISTRATION_MANIFEST": str(registration_manifest),
             }
         )
     _run_runtime_command(

@@ -335,7 +335,9 @@ def test_native_evaluator_writes_worker_registration_manifest(
 
     assert result == {"tasks": []}
     registration = json.loads(
-        Path(captured["environment"]["NPA_GROOT_LIBERO_X_REGISTRATION_MANIFEST"]).read_text()
+        Path(
+            captured["environment"]["NPA_GROOT_LIBERO_X_REGISTRATION_MANIFEST"]
+        ).read_text()
     )
     assert registration["tasks"] == [
         {
@@ -364,9 +366,10 @@ def test_runtime_overlay_and_git_fetch_contract_keep_lfs_bytes_out_of_cache(
     target.parent.mkdir(parents=True)
     target.write_text("def register_libero_envs():\n    pass\n")
     overlay = workflow._overlay_libero_env(tmp_path / "Isaac-GR00T")
-    assert overlay["sha256"] == hashlib.sha256(
-        workflow.LIBERO_X_RUNTIME_OVERLAY.encode()
-    ).hexdigest()
+    assert (
+        overlay["sha256"]
+        == hashlib.sha256(workflow.LIBERO_X_RUNTIME_OVERLAY.encode()).hexdigest()
+    )
     assert target.read_text().endswith(workflow.LIBERO_X_RUNTIME_OVERLAY + "\n")
 
 
