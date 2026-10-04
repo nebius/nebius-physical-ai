@@ -61,7 +61,8 @@ def _write_rollout_bundle(root: Path, *, successes: int = 3, episodes: int = 5) 
 
 
 def test_prepare_reads_actual_rlds_file_and_publishes_normalization(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     dataset = tmp_path / "dataset"
     dataset.mkdir()
@@ -144,7 +145,10 @@ def test_licensed_dlimp_override_is_one_line_and_hash_bound(tmp_path: Path) -> N
         encoding="utf-8",
     )
     result = pipe._apply_dlimp_deterministic_override(dlimp)
-    assert target.read_text(encoding="utf-8").splitlines()[-1] == "options.deterministic = True"
+    assert (
+        target.read_text(encoding="utf-8").splitlines()[-1]
+        == "options.deterministic = True"
+    )
     assert result["path"] == "dlimp/dataset.py"
     assert result["before_sha256"] != result["after_sha256"]
 
@@ -180,10 +184,12 @@ def test_neutral_image_is_private_validation_quarantined() -> None:
 def test_neutral_image_preserves_nonroot_access_to_its_notices() -> None:
     """Runtime attribution stays readable after Docker COPY preserves file modes."""
     dockerfile = (
-        Path(__file__).resolve().parents[1]
-        / "docker/workbench/openvla-oft/Dockerfile"
+        Path(__file__).resolve().parents[1] / "docker/workbench/openvla-oft/Dockerfile"
     ).read_text(encoding="utf-8")
-    assert "install -d -m 0755 -o root -g root /usr/share/doc/npa-openvla-oft" in dockerfile
+    assert (
+        "install -d -m 0755 -o root -g root /usr/share/doc/npa-openvla-oft"
+        in dockerfile
+    )
 
 
 def test_private_build_contract_refuses_official_public_pushes() -> None:
@@ -213,9 +219,12 @@ def test_immutable_model_cache_requires_matching_ready_identity(tmp_path: Path) 
             }
         )
     )
-    assert pipe._materialize_model_snapshot(
-        runtime, pipe.DEFAULT_MODEL_ID, pipe.MODEL_REVISION
-    ) == snapshot
+    assert (
+        pipe._materialize_model_snapshot(
+            runtime, pipe.DEFAULT_MODEL_ID, pipe.MODEL_REVISION
+        )
+        == snapshot
+    )
 
 
 def test_runtime_identity_requires_resolved_dependency_provenance(
@@ -292,16 +301,22 @@ def test_official_suite_contract_has_immutable_component_identity(suite: str) ->
     assert re.fullmatch(r"[0-9a-f]{40}", entry["revision"])
     assert entry["component_step"].isdigit()
     assert entry["repo_id"].startswith("moojink/openvla-7b-oft-finetuned-")
-    assert entry["action_head"] == f"action_head--{entry['component_step']}_checkpoint.pt"
+    assert (
+        entry["action_head"] == f"action_head--{entry['component_step']}_checkpoint.pt"
+    )
     assert entry["proprio_projector"] == (
         f"proprio_projector--{entry['component_step']}_checkpoint.pt"
     )
     assert entry["lora_adapter"] == "lora_adapter"
 
 
-def test_pipeline_main_dispatches_prepare(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+def test_pipeline_main_dispatches_prepare(
+    monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
     """The module entrypoint dispatches one parsed command without mutation bugs."""
-    monkeypatch.setattr(pipe, "prepare", lambda config: {"dataset": config.dataset_name})
+    monkeypatch.setattr(
+        pipe, "prepare", lambda config: {"dataset": config.dataset_name}
+    )
     result = pipe.main(
         [
             "prepare",

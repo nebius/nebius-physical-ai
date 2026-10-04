@@ -47,7 +47,9 @@ TRANSFORMERS_LICENSE = "Apache-2.0"
 DLIMP_REPOSITORY = "https://github.com/kvablack/dlimp.git"
 DLIMP_REVISION = "92e3eca97af3b14d0b6aa15182c0dc240407698d"
 DLIMP_LICENSE = "Apache-2.0"
-DLIMP_LICENSE_SHA256 = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+DLIMP_LICENSE_SHA256 = (
+    "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+)
 DLIMP_DETERMINISTIC_PATH = "dlimp/dataset.py"
 DLIMP_DETERMINISTIC_ORIGINAL = "options.deterministic = False"
 DLIMP_DETERMINISTIC_REPLACEMENT = "options.deterministic = True"
@@ -183,7 +185,9 @@ def _require_hf_repo(value: str, name: str) -> str:
 def _require_hf_commit(value: str, name: str) -> str:
     result = _require(value, name)
     if not _HF_COMMIT.fullmatch(result):
-        raise OpenVLAPipelineError(f"{name} must be an immutable 40-character Hub commit")
+        raise OpenVLAPipelineError(
+            f"{name} must be an immutable 40-character Hub commit"
+        )
     return result
 
 
@@ -333,7 +337,9 @@ def _runtime_identity(runtime: Path) -> dict[str, Any]:
     if payload.get("status") != "ready" or not payload.get(
         "dependency_inventory_sha256"
     ):
-        raise OpenVLAPipelineError("OFT runtime ready marker lacks dependency provenance")
+        raise OpenVLAPipelineError(
+            "OFT runtime ready marker lacks dependency provenance"
+        )
     return payload
 
 
@@ -415,7 +421,9 @@ print(json.dumps({"deterministic": deterministic, "parallel_values": len(values)
             "licensed dlimp deterministic runtime regression check failed"
         ) from exc
     if payload != {"deterministic": True, "parallel_values": 32}:
-        raise OpenVLAPipelineError("dlimp deterministic runtime check returned invalid data")
+        raise OpenVLAPipelineError(
+            "dlimp deterministic runtime check returned invalid data"
+        )
     return payload
 
 
@@ -452,7 +460,12 @@ print(json.dumps({
     try:
         payload = json.loads(
             subprocess.check_output(
-                [str(python), "-c", script, json.dumps([str(path) for path in records])],
+                [
+                    str(python),
+                    "-c",
+                    script,
+                    json.dumps([str(path) for path in records]),
+                ],
                 text=True,
             )
         )
@@ -541,8 +554,13 @@ def _bootstrap_runtime_unlocked(root: Path) -> Path:
         )
         _checkout_exact_git_source(DLIMP_REPOSITORY, DLIMP_REVISION, dlimp, "dlimp")
         license_path = dlimp / "LICENSE"
-        if not license_path.is_file() or file_digest(license_path) != DLIMP_LICENSE_SHA256:
-            raise OpenVLAPipelineError("licensed dlimp Apache notice does not match contract")
+        if (
+            not license_path.is_file()
+            or file_digest(license_path) != DLIMP_LICENSE_SHA256
+        ):
+            raise OpenVLAPipelineError(
+                "licensed dlimp Apache notice does not match contract"
+            )
         dlimp_override = _apply_dlimp_deterministic_override(dlimp)
         _checkout_exact_git_source(LIBERO_REPOSITORY, LIBERO_REVISION, libero, "LIBERO")
         subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
@@ -604,7 +622,9 @@ def _materialize_model_snapshot(
                 and (root / "config.json").is_file()
             ):
                 return root
-            raise OpenVLAPipelineError("OpenVLA model cache identity is stale or incomplete")
+            raise OpenVLAPipelineError(
+                "OpenVLA model cache identity is stale or incomplete"
+            )
         if root.exists() and any(root.iterdir()):
             raise OpenVLAPipelineError(
                 "OpenVLA model cache exists without an atomic ready marker"
@@ -837,9 +857,7 @@ def train(cfg: TrainConfig) -> dict[str, Any]:
             runtime,
             UPSTREAM_FINETUNE_SCRIPT,
             cfg.processes,
-            _finetune_arguments(
-                cfg, model_snapshot, data_root, dataset_name, results
-            ),
+            _finetune_arguments(cfg, model_snapshot, data_root, dataset_name, results),
         )
         _run(command, cwd=runtime / "source", log=workspace / "train.log")
         components = _validate_oft_components(results)
