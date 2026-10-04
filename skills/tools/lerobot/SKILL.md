@@ -131,9 +131,11 @@ then uses BFL's LoRA preset. Raw and EMA checkpoint directories, a training log,
 and calibration report go to the run prefix. `COMPLETE.json` is written after
 the final raw adapter SHA-256 and marker readback. It proves training and
 publication only; closed-loop policy quality needs separate paired evaluation.
-The image is a candidate until its local build, payload scan, and Nebius GPU
-run pass. Supply an immutable reviewed image, an operator bucket, and an existing
-Kubernetes image pull Secret when submitting the private validation image.
+The private validation digest passed its payload scan and a checkpoint-resumed
+H100 run through 60,000 total microsteps, finite loss, adapter reload, verified
+raw/EMA S3 hashes, and live terminal success. Public publication remains
+quarantined. Supply an immutable reviewed image, an operator bucket, and an
+existing Kubernetes image pull Secret when submitting the private validation image.
 
 For interrupted SO-101 training, first reconcile and cancel the exact managed job.
 Pass `--input-path s3://.../checkpoints/050000/` to resume a complete numbered

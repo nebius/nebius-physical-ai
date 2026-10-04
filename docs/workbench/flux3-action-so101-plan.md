@@ -26,26 +26,27 @@ stack. A distinct reviewed image is needed.
 
 ## Implementation status
 
-The pinned dataset conversion, calibration, training command, raw and EMA
-checkpoint publication, finite-loss check, adapter reload, and S3 readback are
-implemented in Workbench. The CLI, SDK, toolRef, image route, packaging
-contract, golden eval declaration, and one-stage YAML are wired. Local
-contract, access, workflow-render, container startup, CLI, real AV1 decode,
-and full pinned dataset conversion checks pass. The Dockerfile restores LeRobot's required PyAV 15.1.0 after the NPA install
-and splits CUDA dependencies into registry-friendly layers. The image passes
-dataset import and real AV1 decode. The exact private registry manifest, amd64
-pull, and target-cluster pull with a task-owned Secret passed. A four-microstep
-H100 smoke reached terminal success with finite loss, verified raw and EMA
-adapters, and a complete S3 artifact. Full training was interrupted with exit 137 after saving step 50,000. Managed
-recovery was blocked by an expired registry credential, and the exact old job
-was reconciled and cancelled. A checkpoint-based successor is now live after target image/bootstrap preflight
-passed. Native GPU resume restored the saved adapter, training state, data order,
-and EMA and advanced beyond 50,000 microsteps with finite reported losses. Final
-60,000-step acceptance remains pending in the workflow readiness record. The retained evidence does not identify
-the reason for signal 9. The workflow now requests 128 GiB host memory and
-105 GB ephemeral storage to fit the existing worker disks. Older local checkpoint
-copies are removed only after successful S3 uploads and hash readbacks; the latest
-native checkpoint and every remote checkpoint remain available.
+The Workbench CLI, SDK, toolRef, dedicated image, calibration, pinned dataset
+conversion, native checkpoint recovery, and one-stage YAML are implemented.
+The private image passed its full payload scan, target-cluster pull/bootstrap
+preflight, and real H100 execution. The four-microstep smoke succeeded.
+
+Full training initially stopped with exit 137 after saving checkpoint 50,000.
+The precise signal-9 cause is unavailable. After reconciling and cancelling the
+interrupted managed job, native recovery restored the adapter, optimizer,
+scheduler, RNG, data order, and EMA. The successor reached live-verified NPA
+`SUCCEEDED` with **60,000 total microsteps and 15,000 optimizer updates** on
+2026-10-03. Independent S3 checks verified `COMPLETE.json`, both final adapter
+SHA-256 hashes, all 500 finite resumed loss reports, and a finite six-value action
+after adapter reload. The original pre-interruption loss logs were not retained;
+these checks establish training and publication, not closed-loop policy quality.
+See the [acceptance evidence](../../workflows/partners/bfl/flux3-action-so101-finetune.readiness.json).
+
+The workflow requests one H100, 128 GiB host memory, and 105 GB ephemeral storage.
+Older local checkpoint copies are removed after successful S3 uploads and hash
+readbacks; the latest native checkpoint and every remote checkpoint remain
+available. Public image publication remains quarantined, so provide an
+independently reviewed immutable operator image and its pull Secret.
 
 ## Smallest implementation
 
@@ -53,14 +54,14 @@ native checkpoint and every remote checkpoint remain available.
 2. Add one shared `npa.workbench.lerobot` implementation that downloads the exact model/data revisions, converts and validates LeRobot v3 data, runs the BFL preset with `--policy.path`, `--policy.video_vae_id`, `--policy.text_encoder_id`, the camera rename map, and the requested step count. Keep BFL's rank/alpha 32, batch 2, accumulation 4, BF16, learning rates, gradient checkpointing, and EMA settings unless the pinned preset proves otherwise. Use one GPU; check actual peak memory on the target GPU. A four-microstep smoke tests the runtime with one optimizer update, then the full configured 60,000 microsteps runs under a fresh ID. At accumulation 4, this is 15,000 optimizer updates.
 3. Expose that implementation through `npa workbench lerobot flux3-so101-finetune` and the SDK, with `--steps`, `--run-id`, and S3 `--output-path`. Pin the dataset, policy, base, and camera map in the recipe. Make the command exit nonzero on missing revisions, bad dataset contract, nonfinite training, missing checkpoint, upload failure, or failed readback. Refuse a nonempty run prefix.
 4. Add `workbench.lerobot.flux3_so101_finetune` to the catalog, route that exact toolRef to the new image, and switch the example YAML from `run.argv` to `toolRef`. Add CLI/SDK, command-argv, workflow-render, image, docs, and skill tests in the existing Workbench gates. Do not add a new top-level `npa` command or duplicate the generic LeRobot runner.
-5. Publish numbered raw checkpoints, EMA siblings, train config, source/model/data revision manifest, metrics/logs, and SHA-256 checksums to the run-scoped S3 `artifacts/` prefix. NPA keeps its workflow manifest at the parent prefix. Write `COMPLETE.json` last, after independent Object Storage readback and a successful adapter reload plus finite inference using the original base, encoders, and processors. If resume is added later, bind it to an exact raw checkpoint and its recorded recipe.
+5. Publish numbered raw checkpoints, EMA siblings, train config, source/model/data revision manifest, metrics/logs, and SHA-256 checksums to the run-scoped S3 `artifacts/` prefix. NPA keeps its workflow manifest at the parent prefix. Write `COMPLETE.json` last, after independent Object Storage readback and a successful adapter reload plus finite inference using the original base, encoders, and processors. Checkpoint recovery binds to an exact numbered checkpoint and its recorded recipe.
 
 ## Acceptance
 
 Local schema and render checks prove only that the workflow is well formed.
 On Nebius, require the exact managed job to reach terminal success, readable
 training logs and finite losses, the declared S3 `COMPLETE.json`, verified
-checkpoint hashes, and an adapter reload/inference check. A four-update smoke
+checkpoint hashes, and an adapter reload/inference check. A four-microstep smoke
 does not replace the 60,000-step run. To claim improved pick-orange policy
 quality, add paired closed-loop LeIsaac evaluation of the base and trained
 adapter on the same held-out starts/seeds, with the same camera mapping,

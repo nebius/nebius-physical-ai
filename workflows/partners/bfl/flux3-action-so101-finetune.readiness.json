@@ -4,14 +4,15 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "NPA validate-spec and plan-spec --check-render pass for the one-H100 task. A live four-microstep smoke reached terminal success; full 60,000-step acceptance remains pending.",
+      "reason": "NPA validate-spec and plan-spec --check-render pass for the one-H100 task. The four-microstep smoke and checkpoint-resumed 60,000-total-microstep run both reached independently verified terminal success.",
       "evidence": [
         "validate-spec and plan-spec --check-render PASS, one H100 task",
         "386 focused workflow/toolRef/readiness tests PASS",
         "target-cluster image pull with task-owned Secret PASS",
         "managed H100 smoke reached terminal SUCCEEDED",
         "recovery validate-spec and plan-spec --check-render PASS, 128 GiB memory and 105 GB disk",
-        "581 scoped runner, catalog, live-matrix, and packaging tests PASS"
+        "581 scoped runner, catalog, live-matrix, and packaging tests PASS",
+        "full checkpoint-resumed H100 run: live NPA SUCCEEDED and final S3 artifact checks PASS"
       ]
     },
     "task_fidelity": {
@@ -26,11 +27,14 @@
   "prerequisites": {
     "output_storage": {
       "status": "verified",
-      "reason": "The configured project bucket probe passed. The live smoke published COMPLETE.json and both numbered adapter variants; independent S3 reads and SHA-256 checks passed.",
+      "reason": "The configured project storage probe and smoke passed. Full-run COMPLETE.json, matching status.json, training diagnostics, and complete checkpoints 055000/060000 were independently read from S3. Both final adapter variants were independently stream-hashed against their checkpoint completion record.",
       "evidence": [
         "bucket upload/readback/delete PASS",
         "smoke checkpoint 000004 raw and EMA adapters independently stream-hashed",
-        "smoke COMPLETE.json and declared result files independently read from S3"
+        "smoke COMPLETE.json and declared result files independently read from S3",
+        "full-run COMPLETE.json equals status.json and matches the pinned recipe",
+        "full checkpoints 055000 and 060000: completion markers and nonempty optimizer/RNG/scheduler/EMA state verified",
+        "final raw and EMA adapters: each 471,775,248 bytes, independently stream-hashed"
       ]
     },
     "worker_input": {
@@ -54,32 +58,34 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "The original private image passed an H100 smoke. The recovery overlay adds native checkpoint restoration and verified-upload local checkpoint pruning; its exact immutable OCI digest passed independent manifest hashing, a complete restricted-payload scan, and target-cluster image/bootstrap preflight. Native GPU resume restored the saved state and advanced with finite reported losses; final full-run acceptance remains pending. Public publication remains quarantined.",
+      "reason": "The private recovery overlay adds native checkpoint restoration and verified-upload local checkpoint pruning. Its exact immutable OCI digest passed independent manifest hashing, a complete restricted-payload scan, target-cluster image/bootstrap preflight, and the H100 checkpoint-resumed run through terminal success, adapter reload, and S3 verification. Public publication remains quarantined.",
       "evidence": [
         "original smoke digest sha256:ef3fd51f957dfd511aef853b393eee66639cca62bd2a73e3e46157b6f597497d reached SUCCEEDED",
         "recovery digest sha256:958f1a6c1cef792a55ef30f147f4ef455b7d8a635492a5e21d084af434d162e2",
         "recovery registry manifest independently hashed and matched OCI index digest",
         "recovery full image scan: 114314 entries, zero restricted payload/history hits",
         "recovery target-cluster image pull and bootstrap compatibility preflight PASS",
-        "recovery digest on H100: native PEFT/data-order/EMA restoration and 64 remaining microsteps executed, first three losses finite"
+        "recovery digest on H100: native PEFT/data-order/EMA restoration and 64 remaining microsteps executed, first three losses finite",
+        "recovery digest on H100: 60,000 total microsteps, native resume, adapter reload, final S3 checks, and live terminal SUCCEEDED"
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "The H100 smoke succeeded. Full training saved checkpoint 50,000 before exit 137; the precise signal-9 cause is unavailable. Expired registry credentials blocked managed recovery, and exact job 4 was reconciled and cancelled. A first recovery candidate failed disk-capacity preflight and was independently confirmed absent from the managed-job queue. After reducing disk to 105 GB and adding local checkpoint pruning, one checkpoint-based successor was submitted. Live NPA reports RUNNING, verified job 5, and a running worker pod. Native GPU resume restored the saved adapter, training state, data order, and EMA, then advanced to total microstep 50,064. All three observed resumed losses are finite. Final 60,000-step training, adapter reload, checkpoint hashes, and terminal NPA success remain pending.",
+      "status": "verified",
+      "reason": "The H100 run completed 60,000 total microsteps and 15,000 optimizer updates using native recovery from the verified 50,000-microstep checkpoint. Exact managed job 5 reached live-verified SUCCEEDED. Independent S3 checks confirmed COMPLETE.json, the pinned recipe, all 500 finite resumed loss reports, restored finite checkpoint tensors, a finite six-value adapter reload action, and both final checkpoint SHA-256 hashes. The original attempt was interrupted with exit 137 and reconciled CANCELLED before recovery; its precise signal-9 cause and pre-interruption loss logs are unavailable. This verifies training, recovery, inference loading, and publication; closed-loop policy quality remains unmeasured.",
       "evidence": [
-        "live NPA job 4 PENDING after interruption; no training pod remained",
-        "controller recorded exit 137 and recovery at 2026-10-03T15:29:50Z",
-        "checkpoint 050000 COMPLETE.json available with raw/EMA hashes and native training state",
-        "exact-name/id reconciliation confirmed job 4 CANCELLED",
-        "60,000 total microsteps and final COMPLETE.json not yet verified",
-        "first recovery candidate: capacity preflight rejected before launch; exact-name managed job ABSENT",
-        "native LeRobot CPU configuration validation accepted the real saved smoke checkpoint with restored step 4 and accumulation 4",
-        "checkpoint-based successor: submit returned 0; live NPA status RUNNING, live_verified true, managed job 5",
-        "native trainer: PEFT checkpoint loaded, data order epoch 3/sample 17134 restored, EMA shadow restored",
-        "remaining-progress bar: 64/10000; total 50,064/60,000 microsteps",
-        "first three resumed losses: 0.117, 0.115, 0.120, all finite",
-        "original pre-interruption training logs unavailable; complete historical loss coverage is not established"
+        "completion finished_utc: 2026-10-03T23:57:59.064641+00:00",
+        "live NPA managed job 5: SUCCEEDED, live_verified true, automation_may_trust_state true",
+        "independent S3 COMPLETE.json and matching status.json: trained, microsteps 60000, optimizer_updates 15000",
+        "native resume: restored microsteps 50000, optimizer_updates 12500, checkpoint_tensors_finite true",
+        "native trainer restored PEFT adapter, optimizer/scheduler/RNG state, data order epoch 3/sample 17134, and EMA shadow",
+        "remaining training: 10000/10000 microsteps; 500 observed resumed losses, all finite; first 0.117, last 0.123",
+        "adapter reload: six finite action values using pinned base, encoders, and saved processors",
+        "checkpoint 060000 raw SHA-256: f6511a8ea168b328c81aa89503355fc9519128799cd2b50a5815239c4d19c85b",
+        "checkpoint 060000 EMA SHA-256: a135d2a84b6e40eb8c7bda7e8014917cbf86ffa5621ae5b6a9816bfb8bfbba09",
+        "both final adapters independently streamed from S3: 471775248 bytes each",
+        "checkpoints 055000/060000 COMPLETE records and native training-state files independently verified",
+        "original checkpoint 050000 retained; exact managed job 4 independently CANCELLED before successor launch",
+        "full historical loss-log coverage and closed-loop policy quality are not established"
       ]
     }
   }

@@ -20,8 +20,9 @@ For recovery, the optional `--input-path` (workflow `resume_checkpoint`, empty
 by default) accepts a complete numbered S3 checkpoint. Reconcile and cancel
 the interrupted job, then use a fresh run ID and output prefix. The tool checks
 checkpoint hashes and native training state before resuming to the requested
-total. Full training acceptance is still pending; the guide and readiness record
-track the live evidence.
+total. A checkpoint-resumed H100 run completed all 60,000 microsteps with verified
+artifacts and adapter reload; the guide and readiness record document that
+evidence and the remaining closed-loop quality evaluation.
 
 The [NuRec sample workflow](../docs/workbench/guides/neural-reconstruction.md)
 and [four-camera warehouse workflow](../docs/workbench/multicamera-rgbd-capture.md)
