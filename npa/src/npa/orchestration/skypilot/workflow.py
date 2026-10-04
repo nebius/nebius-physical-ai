@@ -1138,6 +1138,44 @@ def _preflight_prepared_submission(
     return env, libero_submission
 
 
+def _replace_configured_secret_values(
+    documents: Sequence[dict[str, Any]],
+    environment: Mapping[str, str],
+    secret_envs: Sequence[str] | None,
+) -> None:
+    """Keep requested task secrets out of scheduler-persisted YAML.
+
+    Execution preflight resolves storage credentials so it can verify the exact
+    target, and it can temporarily add those values to an in-memory task
+    document. SkyPilot must receive them only through its native ``--secret``
+    transport, so persisted task YAML carries a reference rather than a value.
+    A declared secret without a transport value is refused instead of falling
+    back to an inline task value.
+    """
+    names = tuple(
+        dict.fromkeys(
+            name.strip()
+            for name in secret_envs or ()
+            if isinstance(name, str) and name.strip()
+        )
+    )
+    if not names:
+        return
+    for document in documents:
+        envs = document.get("envs")
+        if not isinstance(envs, dict):
+            continue
+        for name in names:
+            if name not in envs:
+                continue
+            if not str(environment.get(name) or ""):
+                raise SkyPilotSubmitError(
+                    f"configured secret {name} has no native secret transport value",
+                    launch_attempted=False,
+                )
+            envs[name] = f"${{{name}}}"
+
+
 def _prepare_workflow_submission(
     yaml_path,
     run_id,
@@ -1151,6 +1189,7 @@ def _prepare_workflow_submission(
     extra_env=None,
     project="",
     execution_target=None,
+    secret_envs: Sequence[str] | None = None,
 ):
     runtime = resolve_config(
         sky_bin=sky_bin,
@@ -1187,6 +1226,7 @@ def _prepare_workflow_submission(
         extra_env=extra_env,
         target=execution_target,
     )
+    _replace_configured_secret_values(docs, env, secret_envs)
     # Refuse and sanitize before any submission artifact exists.
     directory = _submission_dir(
         submission_id if submission_id is not None else run_id,
@@ -1730,6 +1770,7 @@ def submit_workflow(
                 extra_env=extra_env,
                 project=project,
                 execution_target=execution_target,
+                secret_envs=secret_envs,
             )
             runtime_config = prepared.runtime_config
             docs, env = prepared.docs, prepared.env

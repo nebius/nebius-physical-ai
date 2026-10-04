@@ -2528,6 +2528,107 @@ def test_submit_workflow_secrets_can_come_from_extra_env(monkeypatch, tmp_path) 
     assert rendered["nebius"]["capabilities"] == ["storage"]
 
 
+def test_submit_workflow_keeps_configured_secrets_out_of_prepared_yaml(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    access_key = "test-access-key-must-not-be-rendered"
+    secret_key = "test-secret-key-must-not-be-rendered"
+    captured: dict[str, str] = {}
+    calls: list[list[str]] = []
+
+    def preflight(documents, **_kwargs):
+        documents[0].setdefault("envs", {}).update(
+            {
+                "AWS_ACCESS_KEY_ID": access_key,
+                "AWS_SECRET_ACCESS_KEY": secret_key,
+                "NPA_S3_BUCKET": "safe-bucket-name",
+            }
+        )
+        return (
+            None,
+            {"checks": {}},
+            {
+                "AWS_ACCESS_KEY_ID": access_key,
+                "AWS_SECRET_ACCESS_KEY": secret_key,
+            },
+        )
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        calls.append(list(cmd))
+        captured["prepared"] = Path(cmd[-1]).read_text(encoding="utf-8")
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 10\n", stderr=""
+        )
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    submit_workflow(
+        yaml_path,
+        "run-secret-rendering",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+    )
+
+    prepared = captured["prepared"]
+    assert access_key not in prepared
+    assert secret_key not in prepared
+    environment = yaml.safe_load(prepared)["envs"]
+    assert environment["AWS_ACCESS_KEY_ID"] == "${AWS_ACCESS_KEY_ID}"
+    assert environment["AWS_SECRET_ACCESS_KEY"] == "${AWS_SECRET_ACCESS_KEY}"
+    assert environment["NPA_S3_BUCKET"] == "safe-bucket-name"
+    launch = calls[0]
+    assert ["--secret", "AWS_ACCESS_KEY_ID"] == launch[
+        launch.index("--secret") : launch.index("--secret") + 2
+    ]
+    second_secret = launch.index("--secret", launch.index("--secret") + 1)
+    assert ["--secret", "AWS_SECRET_ACCESS_KEY"] == launch[
+        second_secret : second_secret + 2
+    ]
+
+
+def test_submit_workflow_refuses_declared_secret_without_native_transport(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    launched: list[list[str]] = []
+
+    def preflight(documents, **_kwargs):
+        documents[0].setdefault("envs", {})["AWS_ACCESS_KEY_ID"] = "inline-value"
+        return None, {"checks": {}}, {}
+
+    def fake_run(cmd, **_kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        launched.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="configured secret AWS_ACCESS_KEY_ID has no native secret transport value",
+    ):
+        submit_workflow(
+            yaml_path,
+            "run-missing-secret-transport",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+            secret_envs=("AWS_ACCESS_KEY_ID",),
+        )
+
+    assert launched == []
+
+
 def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
     monkeypatch, tmp_path
 ) -> None:
