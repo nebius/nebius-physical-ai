@@ -26,6 +26,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "each rank records positive attention and all-to-all execution",
         "generated MP4 fully decodes with camera and checkpoint provenance",
     ],
+    "lingbot-va": [
+        "future exact private candidate stages the pinned CC-BY-4.0 raw LIBERO v2.1 episodes and source receipt",
+        "full qualification materializes fresh Wan latents and a contiguous train-only native LeRobot subset",
+        "full qualification invokes the upstream LingBot-VA LIBERO-Long post-training recipe with its pinned attention and action contract",
+        "full qualification independently inspects closed-loop rollout metrics plus a decoded RRD and MP4 from the same workflow run",
+    ],
     "sam3": [
         "exact SAM 3.1 checkpoint access and pinned source/runtime fetch",
         "text-prompted masks propagate across the real source video on CUDA",

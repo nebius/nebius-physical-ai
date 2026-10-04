@@ -1147,6 +1147,37 @@ containers:
       timeout_seconds: unlimited
       status: gpu-gated
 
+  lingbot-va:
+    image: npa-lingbot-va
+    dockerfile: npa/docker/workbench/lingbot-va/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Six-stage native LingBot-VA LIBERO-Long post-training, closed-loop
+        rollout, numerical evaluation, and factual RRD/MP4 emission.
+    safety:
+      runs_as: ubuntu
+      base_image: npa-wan2-2 (digest-pinned parent; private candidate only)
+      network: >-
+        Runtime-only CUDA closure plus operator-authorized public raw
+        HuggingFaceVLA LIBERO source and LingBot checkpoints.
+      external_fetch: [pytorch-cu126, huggingface]
+      notes: >-
+        No image is currently qualified. The private source-only candidate
+        fetches CUDA, checkpoints, and the exact CC-BY-4.0 raw LeRobot source
+        at runtime; it does not accept terms or package data, weights, caches,
+        credentials, or outputs. The golden command performs actual raw-source
+        staging only. A full candidate acceptance additionally requires the
+        connected prepare, post-train, rollout, evaluate, and RRD/MP4 stages on
+        the exact private digest, followed by independent artifact inspection.
+    golden_eval:
+      kind: container-smoke
+      command: bash /usr/local/bin/lingbot-va-golden
+      gpu: required
+      timeout_seconds: unlimited
+      status: needs-image-update
+      artifact: ${NPA_SMOKE_OUTPUT_DIR}/lingbot-va-raw/npa-lingbot-va-source.json
+
   sam3:
     image: npa-sam3
     dockerfile: npa/docker/workbench/sam3/Dockerfile
