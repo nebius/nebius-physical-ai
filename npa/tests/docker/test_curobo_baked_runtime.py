@@ -23,7 +23,6 @@ else:
 DOCKERFILE = (
     Path(__file__).resolve().parents[3] / "npa/docker/workbench/curobo/Dockerfile"
 )
-PIP_BOOTSTRAP = DOCKERFILE.with_name("pip-bootstrap.lock")
 RUNTIME_IMPORT_CHECK = DOCKERFILE.with_name("verify_runtime_imports.py")
 RUNTIME_PAYLOAD = DOCKERFILE.with_name("runtime-payload.json")
 SKYPILOT_CORE_BOOTSTRAP_PACKAGES = (
@@ -62,7 +61,7 @@ def test_baked_identity_uses_checked_build_input_and_absolute_interpreter():
 
 
 def test_bakes_proved_skypilot_core_bootstrap_closure():
-    text = DOCKERFILE.read_text()
+    text = DOCKERFILE.read_text().rsplit("FROM ", 1)[1]
     install_layer = text.split("apt-get install -y --no-install-recommends", 1)[
         1
     ].split("&& dpkg-query -W", 1)[0]
@@ -128,16 +127,33 @@ def test_full_distro_source_and_notice_closure_is_baked_and_byte_bound():
 
 def test_pip_bootstrap_distribution_is_content_pinned():
     text = DOCKERFILE.read_text()
-    assert (
-        PIP_BOOTSTRAP.read_text()
-        == "# PyPI wheel: https://files.pythonhosted.org/packages/f3/6e/"
-        "1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/"
-        "pip-26.2.1-py3-none-any.whl\n"
-        "pip==26.2.1 \\\n"
-        "    --hash=sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e\n"
+    assert "AS secure-pip-builder" in text
+    assert "COPY docker/workbench/common/secure_pip" in text
+    assert "--work-dir /opt/secure-pip-work --output-dir /opt/secure-pip-wheels" in text
+    final = text.rsplit("FROM ", 1)[1]
+    assert "pip-bootstrap.lock" not in final
+    assert 'hashlib.sha256(w.read_bytes()).hexdigest() == r["sha256"]' in final
+    assert "pip-26.2.1+npa.1-py3-none-any.whl" in final
+    instructions = re.sub(r"\\\n\s*", " ", final).splitlines()
+    apt = next(line for line in instructions if line.startswith("RUN --mount="))
+    for boundary in (
+        "apt-get install",
+        "python3.12 /opt/install_security_apt.py",
+        "rm /usr/share/python-wheels/pip-24.0-py3-none-any.whl",
+        "install -m 0444 /opt/secure-pip-wheels/pip-26.2.1+npa.1-py3-none-any.whl",
+        "python3.12 -m venv /opt/npa-venv",
+        'assert pip.__version__ == "26.2.1+npa.1"',
+    ):
+        assert boundary in apt
+    assert apt.index("rm /usr/share/python-wheels/") < apt.index("python3.12 -m venv")
+    assert 'assert urllib3.__version__ == "2.8.0"' in apt
+    assert 'assert msgpack.__version__ == "1.2.1"' in apt
+    manifest = json.loads(
+        (DOCKERFILE.parent.parent / "common/secure_pip/inputs.json").read_text()
     )
-    assert "COPY docker/workbench/curobo/pip-bootstrap.lock" in text
-    assert "--require-hashes -r /opt/pip-bootstrap.lock" in text
+    donor = next(row for row in manifest["vendors"] if row["name"] == "setuptools")
+    assert f"{donor['sha256']}  /opt/{donor['filename']}" in apt
+    assert "COPY --from=secure-pip-builder --chmod=0444" in final
     assert "pip install --no-cache-dir --upgrade 'pip==" not in text
 
 

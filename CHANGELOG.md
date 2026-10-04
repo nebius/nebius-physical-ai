@@ -9,6 +9,12 @@ a versioned heading when a release is cut.
 
 ### cuRobo image dependency closure
 
+- A source-identified pip derivative repairs its separately vendored libraries;
+  an isolated builder and same-layer seed-wheel replacement retain real service
+  bootstrap without exporting the old installer bytes. Two hash-pinned OpenSSL
+  security binaries and their corresponding sources supplement the unchanged
+  distro snapshot. Rebuilt-image security and source-closure gates remain open
+  until verified against the actual artifact.
 - The image pins urllib3's streamed-response and HTTPS-proxy fixes and refreshes
   the lock against current NPA dependencies. The final build checks dependency
   compatibility after installing NPA; planner and numerical-library pins remain

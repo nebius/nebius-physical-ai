@@ -10,6 +10,18 @@ runtime exception to the compiler, shell tools, or their dependencies.
 
 ## Distro closure, including ancestor versions
 
+The immutable census below describes its recorded reference image, not automatic
+acceptance of a security successor. The current recipe additionally installs
+the two OpenSSL `3.0.13-0ubuntu3.16` security binaries from the separately signed
+`20261004T000000Z` snapshot, inside the original apt RUN before a layer is
+exported. `security-apt.lock.json` binds both binary files, the signed release and
+indexes, and all three corresponding-source archives; all five artifacts were
+downloaded and hash-checked. Other distro packages keep the original snapshot.
+`install_security_apt.py` verifies downloaded bytes, package control identities
+and the installed versions without resolving an unrelated package upgrade.
+Refresh the full package-database/notice closure against the actual rebuilt
+image before accepting that successor; these pins do not substitute for it.
+
 `distro-source-closure.json`, also delivered under `/usr/share/doc/npa-curobo/`,
 binds all 250 distinct binary package/version pairs from four actual layer
 package databases, including 29 source versions superseded in later layers.
@@ -117,6 +129,19 @@ accepted whole-image byte/security review and supported-image release.
   delivered. `runtime-payload.json` and the complete-layer verifier bind these
   identities; the image build additionally imports the real upstream benchmark
   through Pinocchio and checks all 800 MotionBenchMaker and 1800 MPiNets rows.
+- Bootstrap installer repair: `common/secure_pip` builds a source-identified
+  `26.2.1+npa.1` derivative with repaired vendored dependencies and retained
+  notices. The isolated builder's original bootstrap and tools do not cross
+  into final ancestors. The final apt RUN replaces the exact old system pip and
+  setuptools seed wheels before export, then exercises standard Python3.12
+  `venv`/ensurepip and checks the actual installed derivative versions. The
+  service installer remains available to SkyPilot; it is not replaced by a
+  shim. Actual wheel hash and complete provenance are retained under
+  `/usr/share/doc/npa-curobo/secure-pip-build.json` and inside the wheel. This
+  changes Ubuntu-owned wheel files without pretending their original dpkg
+  package versions changed; preserve original package notices and both source
+  identities. Exact built-layer vulnerability, byte, license and bootstrap
+  qualification remain mandatory, independent of installer unit controls.
 - Reproducible Python bytecode: the build helper and trusted workflow pass the
   exact source commit epoch as a build-only `SOURCE_DATE_EPOCH` argument. The
   pinned CPython compiler then uses PEP 552 checked-hash bytecode for newly

@@ -388,7 +388,7 @@ def test_minimal_curobo_base_gets_the_unchanged_critical_vulnerability_gate():
     base = (
         (ROOT / "npa/docker/workbench/curobo/Dockerfile")
         .read_text()
-        .split("FROM ", 1)[1]
+        .rsplit("FROM ", 1)[1]
         .splitlines()[0]
     )
     entries = [entry for entry in inventory if entry["image"] == base]
