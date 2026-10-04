@@ -63,6 +63,7 @@ def test_needs_image_update_exclusions_can_only_shrink() -> None:
         "isaac-arena",
         "isaac-lab",
         "lerobot",
+        "lerobot-vla-jepa",
         "lerobot-vlm-rl",
         "libero",
         "loop-eval",
