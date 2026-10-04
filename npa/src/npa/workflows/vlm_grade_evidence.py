@@ -75,6 +75,8 @@ def _evidence_block_details(
     evidence = report.get("evidence")
     if not isinstance(evidence, dict):
         return {"reason": "vlm_provider_evidence_missing"}
+    if not _has_inference_call_disclosure(report):
+        return {"reason": "vlm_non_inference_backend"}
     try:
         _validate_evidence(report, evidence, paired_audit=paired_audit)
     except _InvalidEvidence as exc:
@@ -88,6 +90,12 @@ def _evidence_block_details(
             "evidence_reason": "schema_invalid",
         }
     return {}
+
+
+def _has_inference_call_disclosure(report: dict[str, Any]) -> bool:
+    # Missing historical fields remain compatible; a newer explicit no-call or
+    # nonliteral disclosure cannot be overridden by copied consistent evidence.
+    return "provider_call_made" not in report or report["provider_call_made"] is True
 
 
 def _validate_evidence(

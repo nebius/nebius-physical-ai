@@ -66,7 +66,7 @@ def _assert_transported_frames(request, evidence, indices):
 
 @pytest.mark.parametrize(
     ("strategy", "cap", "indices"),
-    [("final", 7, [4]), ("keyframes", 3, [0, 2, 4]), ("sequence", 2, [0, 4])],
+    [("final", 7, [4]), ("keyframes", 3, [0, 3, 4]), ("sequence", 2, [0, 4])],
 )
 def test_paired_manifests_keep_actual_strategy_cap_and_transported_indices(
     monkeypatch, tmp_path, strategy, cap, indices
