@@ -297,11 +297,48 @@ def test_real_pixel_cross_check_rejects_disconnected_metrics(tmp_path: Path) -> 
     verified = switchworld._verify_pixel_measurement(upstream, independent)
     assert verified["status"] == "passed"
     assert verified["checked_metrics"] == ["psnr_db", "mae"]
+    decoded = switchworld._decoded_pixel_evidence(independent)
+    assert decoded["status"] == "passed"
+    assert decoded["engine"] == "npa.switchworld.independent_decoded_pixels.v1"
 
     disconnected = deepcopy(upstream)
     disconnected["per_frame"][0]["mae"] += 1.0
     with pytest.raises(switchworld.SwitchWorldError, match="decoded pixels"):
         switchworld._verify_pixel_measurement(disconnected, independent)
+
+
+def test_cv2_cross_check_and_pyav_evidence_are_separate_real_decodes(
+    tmp_path: Path,
+) -> None:
+    """Bind upstream values to OpenCV while retaining a distinct PyAV evidence path."""
+
+    target = tmp_path / "target.mp4"
+    prediction = tmp_path / "prediction.mp4"
+    _video(target, "testsrc=size=64x48:rate=4")
+    _video(prediction, "testsrc2=size=64x48:rate=4")
+
+    upstream_decoder = switchworld._independent_cv2_pixel_measurement(
+        target, prediction
+    )
+    upstream = {
+        "target_frames": upstream_decoder["evaluated_frames"],
+        "prediction_frames": upstream_decoder["evaluated_frames"],
+        "evaluated_frames": upstream_decoder["evaluated_frames"],
+        "per_frame": upstream_decoder["per_frame"],
+        "all_frames": upstream_decoder["all_frames"],
+        "future_frames_excluding_reference": upstream_decoder[
+            "future_frames_excluding_reference"
+        ],
+    }
+    assert (
+        switchworld._verify_pixel_measurement(upstream, upstream_decoder)["status"]
+        == "passed"
+    )
+    pyav_evidence = switchworld._decoded_pixel_evidence(
+        switchworld._independent_pixel_measurement(target, prediction)
+    )
+    assert pyav_evidence["status"] == "passed"
+    assert pyav_evidence["evaluated_frames"] == upstream_decoder["evaluated_frames"]
 
 
 def test_workflow_has_five_connected_real_stages() -> None:

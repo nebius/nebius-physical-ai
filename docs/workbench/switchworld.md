@@ -151,9 +151,13 @@ and the five connected stages.
    two hash-pinned canonical joint adapters.
 4. `measure-real-frames` invokes upstream `evaluate_video_pair.py` twice on
    decoded frames, reporting target/adapted and baseline/adapted PSNR, SSIM,
-   MAE, plus the actual declared source-video switch window. NPA separately decodes each exact
-   input pair and recomputes PSNR/MAE; it rejects the upstream report unless
-   every checked frame and aggregate agrees with those real pixels.
+   MAE, plus the actual declared source-video switch window. NPA separately
+   reimplements upstream PSNR/MAE over an OpenCV decode and rejects a report
+   that disagrees on any checked frame or aggregate. It also independently
+   decodes the exact MP4s through PyAV and retains per-frame evidence from that
+   second decoder. Decoder-specific YUV conversion rounding can differ, so the
+   two real-frame calculations are both retained rather than falsely requiring
+   their values to be identical.
 5. `emit-paired-artifacts` decodes all source videos, emits two paired H.264
    MP4s and a Rerun recording of real pixels, then runs `rerun rrd verify`.
    It also inspects the RRD entities after writing; its recording identity is
