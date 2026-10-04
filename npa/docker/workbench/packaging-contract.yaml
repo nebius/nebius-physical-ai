@@ -579,6 +579,22 @@ images:
       mandatory before publication. The supported release must resolve to the
       exact zero-payload digest in ltx2_image_manifest.json, whose operator-only
       runtime fetch and real GPU generation evidence are bound to the same bytes.
+  hy-world:
+    dockerfile: hy-world/Dockerfile
+    tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no SSH daemon is started by default, and no credential, Tencent source, checkpoint, cache, input, or generated asset is baked."
+    redistribution: public
+    notes: >-
+      Candidate zero-payload runtime-fetch bootstrap. Tencent HY-WORLD 2.0's
+      2026-04-15 Community License covers source and inference code as well as
+      weights, so all Tencent bytes are operator runtime fetches at immutable
+      references. The image itself has no Tencent payload, but it remains
+      unbuilt and publication-quarantined until its complete component closure,
+      OCI layers/history/SBOM, secret scan, source/weight absence scan and a
+      real exact-digest GPU result are accepted. The runtime has no synthetic
+      acceptance flag: territorial eligibility and the >1M-MAU Tencent-license
+      condition are external operator facts. HY-World output is never sent to a
+      trainer because Section 5(b) forbids using it to improve another AI model.
   mjlab:
     dockerfile: mjlab/Dockerfile
     tier: service

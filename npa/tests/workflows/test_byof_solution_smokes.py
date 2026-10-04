@@ -35,6 +35,15 @@ WAN_RUNTIME_SCRIPT_PATH = (
     ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "wan_runtime.sh"
 )
 ROBOMIMIC_SMOKE_PATH = ROOT / "npa" / "docker" / "workbench" / "robomimic" / "smoke.py"
+HY_WORLD_RUNTIME_SCRIPT_PATH = (
+    ROOT / "npa" / "docker" / "workbench" / "hy-world" / "hy_world_runtime.sh"
+)
+HY_WORLD_CONTRACT_PATH = (
+    ROOT / "npa" / "src" / "npa" / "workbench" / "hy_world" / "asset_contract.py"
+)
+HY_WORLD_REPORT_PATH = (
+    ROOT / "npa" / "docker" / "workbench" / "hy-world" / "hy_world_report.py"
+)
 SOLUTION_SPECS = sorted(
     path for path in WORKFLOW_DIR.glob("byof-*.yaml") if path.name != "byof.yaml"
 )
@@ -221,6 +230,16 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "world_model_rerun_visualization",  # 3-stream Rerun .rrd artifact
         ],
     },
+    "hy-world-2.0": {
+        "capability_name": "hy_world_2_image_conditioned_world_generation",
+        "smoke_artifact_name": "hy_world_image_to_world.json",
+        "spec": "byof-hy-world.yaml",
+        "must_exercise": [
+            "hy_world_2_image_conditioned_world_generation",
+            "hy_world_2_generated_scene_camera_render",
+            "hy_world_2_factual_scene_report",
+        ],
+    },
     "ltx2.5": {
         "capability_name": "ltx2_5_text_to_video",
         "smoke_artifact_name": "ltx2_5_text_to_video.json",
@@ -314,6 +333,37 @@ def test_byof_solution_smokes_are_not_import_only() -> None:
         smoke = _smoke_contract(path, config)
         if path.name == "byof-robotwin.yaml":
             assert smoke == ROBOTWIN_PHASE_A_SMOKE
+            continue
+        if path.name == "byof-hy-world.yaml":
+            runtime = HY_WORLD_RUNTIME_SCRIPT_PATH.read_text(encoding="utf-8")
+            assert "hy-world-runtime run-image-to-world" in smoke
+            for config_name in (
+                "prompt",
+                "input_image_uri",
+                "llm_addr",
+                "llm_port",
+                "llm_name",
+            ):
+                assert f"{{{{config.{config_name}|base64}}}}" in smoke
+            for command in (
+                "pipeline_with_qwen_image.py",
+                "traj_generate.py",
+                "traj_render.py",
+                "video_gen.py",
+                "gen_gs_data.py",
+                "world_gs_trainer",
+                "validate_scene.py",
+                "hy_world_report.py",
+            ):
+                assert command in runtime
+            for component in (
+                "naver-iv/zim-anything-vitl",
+                "IDEA-Research/grounding-dino-tiny",
+                "facebook/sam3",
+                "Ruicheng/moge-2-vitl-normal",
+                "ewrfcas/Uni3C",
+            ):
+                assert component in runtime
             continue
         assert ".write_text(" in smoke or ".write_bytes(" in smoke, path.name
         assert "json.dumps(" in smoke, path.name
@@ -445,6 +495,20 @@ def test_solution_capability_contracts_match_specs() -> None:
                 "robotwin_native_hdf5_collection",
                 "robotwin_rendered_mp4",
             }
+            continue
+        if solution == "hy-world-2.0":
+            runtime = "\n".join(
+                path.read_text(encoding="utf-8")
+                for path in (
+                    HY_WORLD_RUNTIME_SCRIPT_PATH,
+                    HY_WORLD_CONTRACT_PATH,
+                    HY_WORLD_REPORT_PATH,
+                )
+            )
+            assert "hy-world-runtime run-image-to-world" in smoke
+            assert expected["smoke_artifact_name"] in smoke
+            for capability in expected["must_exercise"]:
+                assert capability in runtime, (solution, capability)
             continue
         assert expected["capability_name"] in smoke
         assert expected["smoke_artifact_name"] in smoke

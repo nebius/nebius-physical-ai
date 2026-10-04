@@ -136,6 +136,7 @@ likewise predates its current coherent release.
 | `npa-sam2` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
 | `npa-robomimic` (quarantined neutral candidate) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; compatibility unknown; one-B200 hard gate deferred | unbuilt; not validated |
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
+| `npa-hy-world` (quarantined zero-payload candidate) | unbuilt; no runtime/architecture evidence | unbuilt; no runtime/architecture evidence | unbuilt; no runtime/architecture evidence | unbuilt; planned 8-GPU target only, not validated | unbuilt; no runtime/architecture evidence |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
 | `npa-libero` (payload-free public-development staging permitted; not qualified) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
@@ -213,6 +214,14 @@ RTX PRO 6000 operator collection/replay workload; see the
 and [container catalog](container-image-catalog.md). That evidence does not
 establish supported customer or agent worker acceptance. Rendering remains
 RTX-only and must not route to B200 or B300.
+
+`npa-hy-world` is likewise unbuilt and has no CUDA, PyTorch, renderer, image
+digest, or hardware evidence. Its 8×B200 workflow profile follows the released
+upstream multi-GPU sequence and is a future validation target, not a claim that
+the bootstrap or any model component can execute on B200. Tencent's
+territory/MAU eligibility fact or a Tencent grant is absent from the assigned
+private scope, so no Tencent source or model bytes have been fetched to measure
+an architecture list or perform a live run.
 
 ### Rendering is not portable across these columns
 

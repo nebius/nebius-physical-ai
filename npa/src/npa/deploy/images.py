@@ -193,6 +193,7 @@ CONTAINER_IMAGE_NAMES = {
     "sam2": "npa-sam2",
     "sam3": "npa-sam3",
     "ltx2": "npa-ltx2",
+    "hy-world": "npa-hy-world",
     "alpamayo2-super": "npa-alpamayo2-super",
     "flex-pi": "npa-flex-pi",
     "curobo": "npa-curobo",
@@ -304,7 +305,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Independent OSS catalog additions stay quarantined as soon as their image
 # names are registered. An absent tool is not added to the publication inventory.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore", "libero", "sam3"}
+    {"openpi", "curobo", "ncore", "libero", "sam3", "hy-world"}
 ) | frozenset({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset(
     {"antioch", "mjlab", "robocasa", "open3d"}
@@ -528,6 +529,7 @@ SUPPORTED_TOOL_VERSIONS = {
 # giving planning and private qualification a fail-closed, visibly unbuilt tag.
 UNBUILT_CANDIDATE_TOOL_VERSIONS: dict[str, str] = {
     "habitat-sim": "0.3.3-public-unbuilt",
+    "hy-world": "2.0-rtfetch-unbuilt",
 }
 
 

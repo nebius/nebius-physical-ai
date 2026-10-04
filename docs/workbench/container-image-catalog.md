@@ -74,9 +74,9 @@ complete SDXL generations. The opt-in FA4 inference profile improves selected
 attention calls; complete-model performance is effectively tied with FA2.
 These candidates do not change the accepted images listed below.
 
-The current source inventory has **60 packaging entries** (51 redistribution-eligible
-and nine restricted) and **51 mapped tools**: 26 public-release members, two
-restricted tools, and 23 quarantined tools. These counts come from
+The current source inventory has **61 packaging entries** (52 redistribution-eligible
+and nine restricted) and **52 mapped tools**: 26 public-release members, two
+restricted tools, and 24 quarantined tools. These counts come from
 `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
@@ -91,6 +91,14 @@ before package network access until the exact neutral-bootstrap package and
 corresponding-source closure exists. Runtime fetching later changes delivery
 only, not use, derivative, output, or service rights. No accepted release,
 anonymous pull, or current GPU capability is claimed.
+
+HY-World 2.0 is another quarantined, neutral runtime-fetch bootstrap. It has no
+public row because no image was built or pushed: Tencent source, weights, model
+caches, inputs and generated scenes are all excluded from its layers. Tencent's
+territory/MAU condition is unresolved in the assigned private operator scope, so
+there is no candidate digest, anonymous pull, GPU evidence, or supported
+release. The planned B200 profile is a future exact-digest validation target,
+not a compatibility statement. See [`byof-hy-world.md`](byof-hy-world.md).
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
