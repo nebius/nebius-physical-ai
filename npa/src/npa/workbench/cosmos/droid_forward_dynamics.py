@@ -510,22 +510,11 @@ def prepare_droid_forward_dynamics(
 def _download_checkpoint(revision: str) -> tuple[Path, dict[str, Any]]:
     """Fetch and independently bind the exported checkpoint to an immutable HF SHA."""
 
-    try:
-        from huggingface_hub import HfApi, snapshot_download
-    except ImportError as exc:
-        raise DroidForwardDynamicsError(
-            "huggingface_hub is required for checkpoint runtime fetch"
-        ) from exc
     if len(revision) != 40 or any(
         character not in "0123456789abcdef" for character in revision
     ):
         raise DroidForwardDynamicsError(
             "checkpoint revision must be a full immutable Git SHA"
-        )
-    info = HfApi().model_info(CHECKPOINT_REPOSITORY, revision=revision)
-    if str(getattr(info, "sha", "")) != revision:
-        raise DroidForwardDynamicsError(
-            "Hugging Face did not resolve the requested checkpoint SHA"
         )
     allow_patterns = [
         "LICENSE",
@@ -536,15 +525,66 @@ def _download_checkpoint(revision: str) -> tuple[Path, dict[str, Any]]:
         "model.safetensors.index.json",
         "model-*.safetensors",
     ]
-    # Hugging Face's immutable revision cache provides process-safe locks and ready
-    # markers.  Do not copy 30GB of weights into a per-stage directory.
-    local_dir = Path(
-        snapshot_download(
-            repo_id=CHECKPOINT_REPOSITORY,
-            revision=revision,
-            allow_patterns=allow_patterns,
+    try:
+        from huggingface_hub import HfApi, snapshot_download
+    except ImportError:
+        repo = Path(os.environ.get("COSMOS3_REPO") or "/opt/cosmos3/cosmos-framework")
+        framework_python = repo / ".venv" / "bin" / "python"
+        if not framework_python.is_file():
+            raise DroidForwardDynamicsError(
+                "checkpoint runtime fetch requires huggingface_hub in the source overlay "
+                "or qualified Cosmos framework interpreter"
+            )
+        code = (
+            "import json, sys; from huggingface_hub import HfApi, snapshot_download; "
+            "repo, revision, patterns = sys.argv[1:]; "
+            "info=HfApi().model_info(repo, revision=revision); "
+            "path=snapshot_download(repo_id=repo, revision=revision, "
+            "allow_patterns=json.loads(patterns)); "
+            "print(json.dumps({'sha': str(info.sha), 'path': path}))"
         )
-    )
+        result = subprocess.run(
+            [
+                str(framework_python),
+                "-c",
+                code,
+                CHECKPOINT_REPOSITORY,
+                revision,
+                json.dumps(allow_patterns),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+        if result.returncode:
+            raise DroidForwardDynamicsError(
+                "qualified Cosmos framework interpreter could not fetch the checkpoint"
+            )
+        try:
+            fetched = json.loads(result.stdout)
+            resolved_sha = str(fetched["sha"])
+            local_dir = Path(str(fetched["path"]))
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise DroidForwardDynamicsError(
+                "qualified Cosmos framework interpreter returned an invalid checkpoint receipt"
+            ) from exc
+    else:
+        info = HfApi().model_info(CHECKPOINT_REPOSITORY, revision=revision)
+        resolved_sha = str(getattr(info, "sha", ""))
+        # Hugging Face's immutable revision cache provides process-safe locks and ready
+        # markers.  Do not copy 30GB of weights into a per-stage directory.
+        local_dir = Path(
+            snapshot_download(
+                repo_id=CHECKPOINT_REPOSITORY,
+                revision=revision,
+                allow_patterns=allow_patterns,
+            )
+        )
+    if resolved_sha != revision:
+        raise DroidForwardDynamicsError(
+            "Hugging Face did not resolve the requested checkpoint SHA"
+        )
     expected = {
         "LICENSE",
         "README.md",
