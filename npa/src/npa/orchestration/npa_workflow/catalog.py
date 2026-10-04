@@ -159,6 +159,26 @@ _PAIDF_NATIVE_PIPELINE = ["python3", "-m", "npa.workflows.paidf_native"]
 _HABITAT_SIM_SMOKE = ["python3", "-m", "npa.workflows.habitat_sim_smoke"]
 
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workbench.flux_action.finetune": ToolEntry(
+        name="workbench.flux_action.finetune",
+        description="Fine-tune the pinned FLUX Action base for a declared LeRobot embodiment and export BF16 weights.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "flux-action",
+            "finetune",
+            "--input-path",
+            "{{config.flux_input_uri}}",
+            "--recipe-uri",
+            "{{config.flux_recipe_uri}}",
+            "--output-path",
+            "{{config.flux_output_uri}}",
+            "--processes",
+            "{{config.flux_processes}}",
+            "--output-format",
+            "json",
+        ],
+    ),
     "workflow.habitat_sim.smoke": ToolEntry(
         name="workflow.habitat_sim.smoke",
         description=(

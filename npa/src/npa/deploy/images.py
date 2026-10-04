@@ -150,6 +150,7 @@ LIBERO_SIGSTORE_PUBLICATION_REFERRERS = (
 )
 
 CONTAINER_IMAGE_NAMES = {
+    "flux-action": "npa-flux-action",
     "antioch": "npa-antioch",
     "openpi": "npa-openpi",
     "habitat-sim": "npa-habitat-sim",
@@ -303,7 +304,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Independent OSS catalog additions stay quarantined as soon as their image
 # names are registered. An absent tool is not added to the publication inventory.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore", "libero", "sam3", "lerobot-flux3"}
+    {"flux-action", "openpi", "curobo", "ncore", "libero", "sam3", "lerobot-flux3"}
 ) | frozenset({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "mjlab", "robocasa"})
 # A development candidate may use the trusted full-SHA builder before it has
@@ -450,6 +451,7 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
+    "flux-action": "0.1.0-cuda12-unbuilt",
     "antioch": "0.1.0-cli0.4.289",
     "openpi": "pi05-full-droid-rlds-cu128-unbuilt",
     # Default LeRobot image release. Selectable package versions and their

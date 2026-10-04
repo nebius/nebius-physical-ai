@@ -356,6 +356,17 @@ images:
       dependency closure remains private-registry-only pending a separate
       redistribution review; neither private access nor acceptance grants
       redistribution rights. Every future digest must repeat the gates.
+  flux-action:
+    dockerfile: flux-action/Dockerfile
+    tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
+    redistribution: public
+    notes: >-
+      Pinned Apache-2.0 FLUX Action source and locked CUDA 12.8 Torch runtime.
+      FLUX Kommunity model weights, training data, credentials, and populated
+      caches are fetched only at runtime. Unbuilt and publication-quarantined:
+      byte scans, runtime dependency licensing, and real GPU fine-tuning
+      qualification are required before release.
   openpi:
     dockerfile: openpi/Dockerfile
     tier: job

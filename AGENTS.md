@@ -35,6 +35,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/atomic/teardown-and-cost/SKILL.md`: stop spend safely — cancel-before-destroy ordering, cloud versus local state, and the orphan audit for leaked clusters, agent VMs, controllers, buckets, and cross-project fleets.
 - `skills/tools/token-factory/SKILL.md`: zero-GPU hosted inference (captioning, batch generation, Cosmos physical-AI reasoning) — the cheapest tier that produces a real artifact, with no cluster and no provisioning.
 - `skills/tools/vlm-eval/SKILL.md`: score rollouts with a VLM and turn the score into a gate — `run` vs `loop`, rubric/threshold benchmark sweeps, backend selection, and judging against a plan an earlier stage wrote.
+- `skills/tools/flux-action/SKILL.md`: native FLUX 3 Action fine-tuning for declared LeRobot robot embodiments; configurable controls, cameras, and rate, with verified checkpoint/export artifacts.
 - `skills/tools/golden-eval/SKILL.md`: prove a container image actually works — per-container hello-world manifest, dry-run/local/serverless tiers, batch runs, and the offline manifest validation that gates CI.
 - `skills/tools/alpamayo2-super/SKILL.md`: real Alpamayo 2 Super VLA inference, separate OpenMDW model and gated PhysicalAI-AV dataset terms, runtime-fetch packaging, and B200/RTX PRO 6000 validation.
 - `skills/tools/cosmos3-ray-serve/SKILL.md`: persistent Cosmos3-Nano serving through cosmos-framework's native Ray Serve batching path, authenticated readiness, S3 provenance, and independent B200/RTX PRO 6000 validation.

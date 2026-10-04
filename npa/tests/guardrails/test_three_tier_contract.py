@@ -912,6 +912,10 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # S3 artifact GC is a CLI-only maintenance verb (dry-run/apply against
         # manifests); it has no FastAPI service tier and no npa.workflow stage
         # surface to stay coherent with. Part of #525 (PR #576).
+        # Finite native GPU job, no persistent service. Recipe carries the
+        # robot/training contract; CLI/SDK/toolRef parity and failure artifacts
+        # are covered in test_flux_action_workflow and test_flux_action.
+        "flux-action",
         "gc-artifacts",
         "golden-eval",
         "groot",

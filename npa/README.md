@@ -687,3 +687,9 @@ image publication status.
 `eval --video` also publishes `rollout.mp4` and a self-contained `rollout.html`
 page alongside the measured evaluation manifest. The SDK and service expose the
 same behavior with `video=True`.
+
+### FLUX 3 Action full fine-tuning
+
+`npa workbench flux-action finetune` trains the action-pretrained trunk and new
+embodiment heads from an explicit LeRobot contract. See [the guide](../docs/workbench/flux-action.md)
+for recipe, S3 handoffs, and validation status.

@@ -213,6 +213,8 @@ render with the established effective `augment_control_weight` of `1.0`,
 and optional protection/segmentation disabled. Explicit spec config takes
 precedence over these compatibility defaults.
 
+| `workbench.flux_action.finetune` | Native FLUX Action full fine-tuning for a declared LeRobot embodiment; pinned base and verified BF16 export. |
+
 ## Tokens
 
 | Token | Meaning |

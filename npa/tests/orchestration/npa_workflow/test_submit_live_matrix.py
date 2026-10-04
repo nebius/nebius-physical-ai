@@ -1188,19 +1188,64 @@ def test_navigation_live_spec_uses_explicit_operator_inputs(tmp_path, monkeypatc
         )
 
 
-def test_flux3_live_materializer_requires_reviewed_image_and_pull_secret(monkeypatch, tmp_path):
+def test_flux3_live_materializer_requires_reviewed_image_and_pull_secret(
+    monkeypatch, tmp_path
+):
     helpers = _load_live_helpers()
     monkeypatch.delenv("NPA_E2E_FLUX3_IMAGE", raising=False)
     monkeypatch.delenv("NPA_E2E_FLUX3_PULL_SECRET", raising=False)
     with pytest.raises(pytest.fail.Exception, match="NPA_E2E_FLUX3_IMAGE"):
-        helpers.materialize_live_spec(tmp_path, "flux3-action-so101-finetune.yaml",
-                                      bucket="example-bucket", run_id="flux-fixture")
+        helpers.materialize_live_spec(
+            tmp_path,
+            "flux3-action-so101-finetune.yaml",
+            bucket="example-bucket",
+            run_id="flux-fixture",
+        )
     image = "registry.example.invalid/npa-lerobot-flux3@sha256:" + "a" * 64
     monkeypatch.setenv("NPA_E2E_FLUX3_IMAGE", image)
     monkeypatch.setenv("NPA_E2E_FLUX3_PULL_SECRET", "operator-pull-secret")
-    path = helpers.materialize_live_spec(tmp_path, "flux3-action-so101-finetune.yaml",
-                                         bucket="example-bucket", run_id="flux-fixture")
+    path = helpers.materialize_live_spec(
+        tmp_path,
+        "flux3-action-so101-finetune.yaml",
+        bucket="example-bucket",
+        run_id="flux-fixture",
+    )
     payload = yaml.safe_load(path.read_text())
     assert payload["config"]["flux3_image"] == image
     assert payload["config"]["image_pull_secret"] == "operator-pull-secret"
     assert payload["config"]["train_steps"] == "60000"
+
+
+def test_full_flux_materializer_requires_private_image_and_dataset(
+    monkeypatch, tmp_path
+):
+    helpers = _load_live_helpers()
+    for name in ("IMAGE", "PULL_SECRET", "INPUT_URI", "RECIPE_URI"):
+        monkeypatch.delenv("NPA_E2E_FLUX_ACTION_" + name, raising=False)
+    with pytest.raises(pytest.fail.Exception, match="NPA_E2E_FLUX_ACTION_IMAGE"):
+        helpers.materialize_live_spec(
+            tmp_path,
+            "flux-action-finetune.yaml",
+            bucket="test-bucket",
+            run_id="full-contract",
+        )
+
+    image = "registry.example.invalid/npa-flux-action@sha256:" + "a" * 64
+    values = {
+        "IMAGE": image,
+        "PULL_SECRET": "operator-pull-secret",
+        "INPUT_URI": "s3://test-bucket/data",
+        "RECIPE_URI": "s3://test-bucket/recipe.json",
+    }
+    for key, value in values.items():
+        monkeypatch.setenv("NPA_E2E_FLUX_ACTION_" + key, value)
+    path = helpers.materialize_live_spec(
+        tmp_path,
+        "flux-action-finetune.yaml",
+        bucket="test-bucket",
+        run_id="full-contract",
+    )
+    spec = yaml.safe_load(path.read_text())
+    assert spec["config"]["flux_image"] == image
+    assert spec["config"]["flux_input_uri"] == values["INPUT_URI"]
+    assert spec["config"]["flux_processes"] == "8"

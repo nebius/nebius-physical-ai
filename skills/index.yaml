@@ -37,6 +37,16 @@ licenses:
     applies_to:
       - neural-reconstruction
 skills:
+  - name: flux-action
+    category: tools
+    when_to_use: "Fine-tune FLUX 3 Action for a declared robot embodiment using LeRobot demonstrations, native distributed training, and S3 artifacts."
+    path: skills/tools/flux-action/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "flux-action", "finetune", "--help"]
+        contains: "recipe-uri"
+      - type: file_exists
+        path: workflows/testing/flux-action-finetune.yaml
   - name: ray-workbench
     category: tools
     when_to_use: "Choose or operate a supported Ray path: native Jobs/Core, guarded Train V2, Cosmos3 native Serve, or fixed CPU KubeRay; identify unsupported Ray libraries."

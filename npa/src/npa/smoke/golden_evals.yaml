@@ -1597,3 +1597,25 @@ containers:
       gpu: none
       timeout_seconds: 60
       status: ready
+
+  flux-action:
+    image: npa-flux-action
+    dockerfile: npa/docker/workbench/flux-action/Dockerfile
+    physical_ai:
+      useful: true
+      role: Full fine-tuning of FLUX Action on explicitly declared robot controls and LeRobot demonstrations.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12-slim-bookworm
+      network: outbound S3 and Hugging Face only; no service listener
+      external_fetch: ["pinned FLUX Action base and encoders with operator credentials", "operator LeRobot dataset"]
+      notes: Unbuilt candidate; weights and data are runtime-only; publication remains quarantined.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_flux_action_functional
+      command: python -m npa.smoke.test_flux_action_functional
+      gpu: required
+      serverless_gpu: h200
+      serverless_gpu_count: 8
+      timeout_seconds: unlimited
+      status: needs-image-update

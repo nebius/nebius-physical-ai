@@ -64,3 +64,22 @@ def test_probe_preserves_service_denial(storage, code, status):
 def test_probe_rejects_non_s3_destinations_before_request(storage, uri):
     with Stubber(storage.s3), pytest.raises(StorageError, match="Expected s3://"):
         storage.probe_list_access(uri)
+
+
+@pytest.mark.parametrize("occupied", [False, True])
+def test_require_empty_prefix_rejects_existing_objects(storage, occupied):
+    response = {"KeyCount": int(occupied)}
+    if occupied:
+        response["Contents"] = [{"Key": "run/result.json", "Size": 12}]
+    with Stubber(storage.s3) as stubber:
+        stubber.add_response(
+            "list_objects_v2",
+            response,
+            {"Bucket": "test-bucket", "Prefix": "run/", "MaxKeys": 1},
+        )
+        if occupied:
+            with pytest.raises(StorageError, match="must be empty"):
+                storage.require_empty_prefix("s3://test-bucket/run")
+        else:
+            storage.require_empty_prefix("s3://test-bucket/run")
+        stubber.assert_no_pending_responses()

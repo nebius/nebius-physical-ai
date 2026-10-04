@@ -1,0 +1,62 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "9f9fbc107ecb9dbea12578d2672994ec7ea685062f37f7e62a5482abb259bc5c",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Local schema, CLI, catalog, recipe and workflow checks pass; full-weight GPU acceptance remains unverified.",
+      "evidence": [
+        "native upstream CPU index/config/window checks passed for 3/7/14-channel contracts",
+        "workflow has explicit private image/pull Secret and S3 dataset/recipe inputs",
+        "1334 scoped repository tests passed on Python 3.12",
+        "validate-spec and plan-spec --check-render passed with one rendered GPU task"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The tool invokes the pinned standalone full-weight trainer, requires positive trunk/head learning rates, exports a native BF16 policy and reloads it in a fresh evaluator process.",
+      "evidence": [
+        "SOURCE_REVISION e2dd1d8dbc5977b54315d61f7548c63c043d6d4f",
+        "full mode counts optimizer updates; no PEFT/LoRA configuration"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Supply a fresh operator-owned output prefix and verify storage credentials. The completion receipt requires independent streamed export readback.",
+      "evidence": [
+        "corrupted remote export rejection tested"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Supply an embodiment-matched LeRobot dataset and recipe. Public ALOHA full/smoke examples are provided; no real dataset training qualification is claimed.",
+      "evidence": [
+        "explicit ordered channels/units, cameras, FPS, action representation and held-out episodes"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Operator S3, HF, and private registry access require live preflight for this separate full-weight runtime.",
+      "evidence": [
+        "no credentials are baked or committed"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Dedicated pinned Torch 2.10/CUDA 12.8 standalone image is unbuilt and publication-quarantined. The LoRA image does not qualify it.",
+      "evidence": [
+        "native CPU compatibility checks ran in the existing Torch 2.11 operator harness; intended exact training image unverified"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No full-weight GPU training/export/reload has run for this integration. The starting workflow requests one eight-H200 node.",
+      "evidence": [
+        "run the explicit four-update recipe on the chosen allocation before a full optimizer-update recipe",
+        "closed-loop policy quality remains unmeasured"
+      ]
+    }
+  }
+}

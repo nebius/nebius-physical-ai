@@ -9,6 +9,12 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "flux-action": [
+        "native LeRobot indexing with explicit robot channels, camera layout and control rate",
+        "pinned FLUX Action base full fine-tuning with single-node torchrun",
+        "requested final checkpoint and finite training metrics",
+        "BF16 export hashes verified before the S3 completion receipt",
+    ],
     "lerobot-flux3": [
         "pinned LeRobot FLUX 3, Torch 2.11, and NATTEN imports",
         "pinned SO-101 recipe and camera/action contract",

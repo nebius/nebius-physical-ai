@@ -65,6 +65,8 @@ WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(TOOL_REF_IMAGE_TOOL.values())
 #: it was removed rather than left standing as coverage it did not provide.
 EXEMPT_IMAGE_TOOLS: frozenset[str] = frozenset(
     {
+        "flux-action",  # Operator-supplied data and reviewed private image required.
+        "lerobot-flux3",  # Dedicated one-stage SO-101 LoRA workflow; private image.
         "cosmos3-reason",
         "alpamayo2-super",
         "flex-pi",

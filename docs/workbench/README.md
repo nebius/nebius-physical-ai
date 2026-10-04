@@ -80,3 +80,5 @@ terminal state. A plan, successful status response, or historical benchmark
 alone does not establish a new run's result.
 
 SAM 3.1 video segmentation is available as a [development container](../../npa/docker/workbench/sam3/README.md); checkpoint access and GPU qualification are required before release acceptance.
+
+- [FLUX 3 Action fine-tuning](flux-action.md): declared robot controls and LeRobot demonstrations, including a pinned public ALOHA example.
