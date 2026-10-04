@@ -200,8 +200,13 @@ npa workbench vlm-eval run \
 ```
 
 - `--frame-selection` is `final`, `keyframes` (default), or `sequence`. `final`
-  cannot distinguish "reached the goal" from "was already there"; `sequence`
-  costs the most tokens. `keyframes` is the default for a reason.
+  cannot distinguish "reached the goal" from "was already there". For a known
+  frame count, `sequence` samples uniformly across the span; `keyframes`
+  allocates half the budget to a terminal window covering at least the final
+  10%, widening for unique frames, with the rest spread over earlier evidence.
+  Short sources return every frame. This is temporal stratification, not event
+  detection. Unknown-count video keeps the shared bounded one-frame-per-second
+  fallback with null source indices/counts/timestamps and incomplete coverage.
 - `--max-frames` (default 4) bounds both cost and how much of the episode the
   judge can actually see. A four-frame view of a long episode judges a summary.
 - `--rubric` / `--rubric-path` carry the scoring instructions. The default rubric

@@ -1135,10 +1135,10 @@ def test_api_result_retains_image_sequence_sampling_coverage(
 
     assert result.evidence is not None
     frames = result.evidence.request.frames
-    assert [frame.source_index for frame in frames] == [0, 2, 4]
+    assert [frame.source_index for frame in frames] == [0, 3, 4]
     assert [frame.source_count for frame in frames] == [5, 5, 5]
     sampling = result.evidence.request.request_manifest["sampling"]
-    assert sampling["selected_indices"] == [0, 2, 4]
+    assert sampling["selected_indices"] == [0, 3, 4]
     assert sampling["source_count"] == 5
     assert sampling["selected_count"] == 3
     assert sampling["max_frames"] == 3
