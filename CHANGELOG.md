@@ -19,6 +19,7 @@ a versioned heading when a release is cut.
 - Both real VLM-eval backends require exact `finish_reason="stop"` before
   parsing a verdict. Truncated, filtered, aborted, tool-call, or metadata-missing
   responses fail closed even when they contain valid-looking JSON.
+
 ### Paired VLM output contract
 
 - Paired judge requests explicitly require bare JSON, with the same instruction
