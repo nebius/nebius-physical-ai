@@ -148,7 +148,9 @@ The adjacent
 [`readiness record`](../../workflows/testing/molmoact2-jetson-thor-edge.readiness.json)
 binds the final YAML hash and separates validated local planning from blocked
 target runtime, input, model-byte, and execution prerequisites. The private
-cloud evidence image has a separate byte/pull qualification gate; it cannot
+cloud evidence image has a separate byte/pull qualification gate; the recorded
+pre-merge digest does not certify a later changed image context and must be
+rebuilt and requalified privately before it is used again. No cloud image can
 contain or qualify the operator-fetched Thor plans. There is no public
 container-catalog row or target-image/live-run claim for this derivative.
 

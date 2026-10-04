@@ -49,12 +49,12 @@
       ]
     },
     "source_image": {
-      "status": "verified_private_delivery",
-      "reason": "The final-source CPU-only cloud-evidence image was built, byte-scanned, functionally exercised, pushed as an immutable private digest, and pulled through the configured Kubernetes imagePullSecret with the required SkyPilot bootstrap attestation. It remains an operator-private artifact and cannot qualify the target TensorRT plans.",
+      "status": "premerge_digest_qualified_rebuild_required",
+      "reason": "A CPU-only cloud-evidence image for the pre-merge source was built, byte-scanned, functionally exercised, pushed as an immutable private digest, and pulled through the configured Kubernetes imagePullSecret with the required SkyPilot bootstrap attestation. The merged tree changes copied image-context bytes, so it needs a new private digest and the same qualification sequence. Neither digest can qualify the target TensorRT plans.",
       "evidence": [
-        "2026-10-04: private final-source build, OCI byte scan, non-root functional adapter check, digest-bound Kubernetes pull preflight, and SkyPilot bootstrap-attestation receipts retained in the operator task evidence directory; no registry or infrastructure identifier is recorded in this repository.",
-        "2026-10-04: an NPA submission using that immutable private digest reached SUBMITTED after the mandatory image preflight; it is an operational cloud smoke, not Thor validation.",
-        "workflows/testing/molmoact2-jetson-thor-edge.yaml config.require_baked_npa=1 binds the submitted source SHA to the baked module; the Dockerfile contains only the cloud-evidence adapter and neutral Python dependencies."
+        "2026-10-04: the pre-merge private build, OCI byte scan, non-root functional adapter check, digest-bound Kubernetes pull preflight, and SkyPilot bootstrap-attestation receipts are retained in operator task evidence; no registry or infrastructure identifier is recorded in this repository.",
+        "2026-10-04: an NPA submission using the pre-merge immutable private digest reached SUBMITTED after mandatory image preflight; it is an operational cloud smoke, not Thor validation.",
+        "The Dockerfile copies pyproject.toml and the NPA source tree. The merged context differs from the pre-merge image context, so config.require_baked_npa=1 requires a fresh digest/source-SHA binding before a later submit."
       ]
     },
     "target_runtime": {
