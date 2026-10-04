@@ -24,6 +24,15 @@ a versioned heading when a release is cut.
   Reports add specificity and balanced accuracy,
   and rank configurations by balanced accuracy before existing tie-breakers.
 
+### Self-hosted VLM scores reject invalid literal verdicts
+
+- Self-hosted verdicts require boolean success, finite numeric scores in [0, 1],
+  and nonempty string rationale. Invalid values fail before scoring; completion
+  rejection remains enforced. Valid scores are rounded without legacy repair.
+- Retained self-hosted parser-v1 reports no longer pass the current promotion
+  contract, even with valid literal fields. Preserve them as history and obtain
+  newly evaluated evidence; do not relabel an old parser tag as new execution.
+
 ### VLM evaluation discloses served-model identity enforcement
 
 - Single results, loop rows, and benchmark cases report requested and returned
