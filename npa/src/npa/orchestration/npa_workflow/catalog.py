@@ -214,7 +214,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workflow.openwam.rollout",
         description=(
             "Serve the trained OpenWAM checkpoint and execute a real LIBERO "
-            "episode through OpenWAM's upstream evaluation bridge."
+            "trial range through OpenWAM's upstream evaluation bridge."
         ),
         argv_template=[
             *_OPENWAM_PIPELINE,
@@ -235,12 +235,20 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.rollout_uri}}",
             "--port",
             "{{config.policy_port}}",
+            "--suite",
+            "{{config.rollout_suite}}",
+            "--task-id",
+            "{{config.rollout_task_id}}",
+            "--trial-start",
+            "{{config.rollout_trial_start}}",
+            "--num-trials",
+            "{{config.rollout_num_trials}}",
         ],
     ),
     "workflow.openwam.evaluate": ToolEntry(
         name="workflow.openwam.evaluate",
         description=(
-            "Independently execute the next held-out LIBERO episode through "
+            "Independently execute a held-out LIBERO trial range through "
             "the deployed trained OpenWAM policy and persist its numerical result."
         ),
         argv_template=[
@@ -264,6 +272,14 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.evaluation_uri}}",
             "--port",
             "{{config.policy_port}}",
+            "--suite",
+            "{{config.evaluation_suite}}",
+            "--task-id",
+            "{{config.evaluation_task_id}}",
+            "--trial-start",
+            "{{config.evaluation_trial_start}}",
+            "--num-trials",
+            "{{config.evaluation_num_trials}}",
         ],
     ),
     "workflow.openwam.visualize": ToolEntry(

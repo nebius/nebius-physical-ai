@@ -1,22 +1,22 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "adb87728edd0906cc0fccd52a6479663743929b6489d34d0c351c3df39933e26",
+  "workflow_sha256": "76878730ed2615626e3c690216bf3c7a17ac0cbddcbda35d56e516230a08cf63",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The five-state workflow passed schema validation and rendered all five native OpenWAM/LIBERO/Rerun commands with run-scoped artifact URIs. Planning did not execute a workload.",
+      "reason": "The five-state workflow passed schema validation and rendered all five native OpenWAM/LIBERO/Rerun commands with run-scoped artifact URIs, including explicit suite, task, and non-overlapping trial-range controls. Planning did not execute a workload.",
       "evidence": [
-        "npa workbench workflow validate-spec workflows/testing/openwam-libero-four-stage.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/openwam-libero-four-stage.yaml --run-id openwam-libero-authoring --json",
-        "sha256:adb87728edd0906cc0fccd52a6479663743929b6489d34d0c351c3df39933e26 workflows/testing/openwam-libero-four-stage.yaml"
+        "npa/.venv/bin/python -m npa workbench workflow validate-spec workflows/testing/openwam-libero-four-stage.yaml --json",
+        "npa/.venv/bin/python -m npa workbench workflow plan-spec workflows/testing/openwam-libero-four-stage.yaml --run-id openwam-libero-authoring-continuation --json",
+        "sha256:76878730ed2615626e3c690216bf3c7a17ac0cbddcbda35d56e516230a08cf63 workflows/testing/openwam-libero-four-stage.yaml"
       ]
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused tests bind the immutable upstream revisions, five connected stages, native train/deploy/evaluator entrypoints, distinct Python 3.10 LIBERO client, safe archive restore, and decoded Rerun artifact contract. Test-only RRD inputs are not benchmark evidence.",
+      "reason": "Focused tests bind the immutable upstream revisions, five connected stages, native train/deploy/evaluator entrypoints, explicit suite/task/trial controls, distinct Python 3.10 LIBERO client, safe archive restore, and decoded Rerun artifact contract. Test-only RRD inputs are not benchmark evidence.",
       "evidence": [
-        "npa/tests/workflows/test_openwam_pipeline.py: 7 passed",
-        "npa/tests/docker/test_packaging_contract.py: 501 passed as part of the focused suite"
+        "npa/tests/workflows/test_openwam_pipeline.py: 8 passed",
+        "focused workflow, argv, matrix, and packaging suite: 774 passed"
       ]
     }
   },

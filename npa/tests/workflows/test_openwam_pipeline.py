@@ -62,6 +62,40 @@ def test_openwam_toolrefs_call_real_pipeline_stages() -> None:
         assert argv[3] == stage
         assert "--runtime-image" in argv
 
+    for tool_ref, prefix in (
+        ("workflow.openwam.rollout", "rollout"),
+        ("workflow.openwam.evaluate", "evaluation"),
+    ):
+        argv = TOOL_CATALOG[tool_ref].argv_template
+        for flag in ("--suite", "--task-id", "--trial-start", "--num-trials"):
+            index = argv.index(flag)
+            assert argv[index + 1] == f"{{{{config.{prefix}_{flag.removeprefix('--').replace('-', '_')}}}}}"
+
+
+def test_parser_exposes_native_libero_suite_task_and_trial_controls() -> None:
+    args = pipeline.build_parser().parse_args(
+        [
+            "rollout",
+            "--run-id", "contract",
+            "--runtime-image", DIGEST_IMAGE,
+            "--work-dir", "/tmp/openwam-contract",
+            "--prepared-assets-uri", "s3://bucket/prepared.json",
+            "--training-uri", "s3://bucket/training.json",
+            "--output-uri", "s3://bucket/rollout.json",
+            "--suite", "libero_goal",
+            "--task-id", "3",
+            "--trial-start", "8",
+            "--num-trials", "4",
+        ]
+    )
+
+    assert (args.suite, args.task_id, args.trial_start, args.num_trials) == (
+        "libero_goal",
+        3,
+        8,
+        4,
+    )
+
 
 def test_fine_tune_invokes_the_upstream_libero_entrypoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -148,17 +182,34 @@ def test_rollout_uses_the_separate_upstream_libero_client(
         del cwd
         calls.append((command, env))
         (result / "results.json").write_text(
-            '{"trial_start": 1, "num_trials": 1, "success_rate": 1.0, "trials": [{"policy_steps": 12}]}'
+            '{"suite": "libero_goal", "task_id": 3, "trial_start": 8, '
+            '"trial_stop": 12, "success_rate": 1.0, "trials": ['
+            '{"policy_steps": 12}, {"policy_steps": 13}, '
+            '{"policy_steps": 14}, {"policy_steps": 15}]}'
         )
 
     monkeypatch.setattr(pipeline, "_command", fake_command)
-    observed = pipeline._run_libero_trial(repo, tmp_path / "checkpoint", result, trial_start=1, port=8848)
+    observed = pipeline._run_libero_trial(
+        repo,
+        tmp_path / "checkpoint",
+        result,
+        suite="libero_goal",
+        task_id=3,
+        trial_start=8,
+        num_trials=4,
+        port=8848,
+    )
 
     assert calls[0][0][0] == str(client)
     assert calls[0][0][1:3] == ["benchmarks/libero/single_eval.py", "--config"]
+    assert calls[0][0][-10:] == [
+        "--suite", "libero_goal", "--task-id", "3", "--trial-start", "8",
+        "--num-trials", "4", "--result-dir", str(result),
+    ]
     assert calls[0][1]["LIBERO_PATH"] == str(source)
     assert str(source) in calls[0][1]["PYTHONPATH"]
     assert observed["success_rate"] == 1.0
+    assert observed["trial_stop"] == 12
     assert (result / "openwam-server.log").read_text() == "server stopped"
 
 
@@ -193,6 +244,8 @@ def test_visualize_writes_and_decodes_an_rrd_from_local_test_artifacts(tmp_path:
     assert Path(rrd_uri).is_file()
     assert report["verification"]["rerun_rrd_verify"] == "passed"
     assert report["heldout_success_rate"] == 1.0
+    assert report["rollout_trial_count"] == 1
+    assert report["heldout_mean_policy_steps"] == 9.0
 
 
 def test_archive_extraction_rejects_escaping_members_and_links(tmp_path: Path) -> None:

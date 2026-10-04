@@ -20,6 +20,16 @@ config:
   gpu_type: B200
   gpu_count: "1"
   policy_port: "8848"
+  # These are native OpenWAM/LIBERO controls, intentionally exposed so an
+  # operator can select a benchmark suite, task, and non-overlapping trial ranges.
+  rollout_suite: libero_spatial
+  rollout_task_id: "0"
+  rollout_trial_start: "0"
+  rollout_num_trials: "5"
+  evaluation_suite: libero_spatial
+  evaluation_task_id: "0"
+  evaluation_trial_start: "5"
+  evaluation_num_trials: "5"
 
   prepare_work_dir: /workspace/openwam/prepare
   training_work_dir: /workspace/openwam/fine-tune
@@ -96,7 +106,7 @@ states:
   deployed-policy-rollout:
     description: >
       Start the upstream OpenWAM policy server from the trained checkpoint and
-      execute a real native-action LIBERO spatial-suite episode through its
+      execute a real native-action LIBERO spatial-suite trial range through its
       WebSocket policy bridge.
     toolRef: workflow.openwam.rollout
     resources: openwam-gpu
@@ -112,8 +122,8 @@ states:
 
   evaluate-heldout-episode:
     description: >
-      Independently serve the same trained checkpoint and evaluate the next
-      held-out LIBERO episode, retaining numerical success and policy-step
+      Independently serve the same trained checkpoint and evaluate a
+      non-overlapping held-out LIBERO trial range, retaining numerical success and policy-step
       evidence rather than fabricating a benchmark aggregate.
     toolRef: workflow.openwam.evaluate
     resources: openwam-gpu

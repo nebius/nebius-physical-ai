@@ -392,7 +392,25 @@ def _apply_libero_patch(repo: Path, source: Path) -> None:
     _command(["patch", "--forward", "--strip=1", "--input", str(patch)], cwd=source)
 
 
-def _run_libero_trial(repo: Path, checkpoint_root: Path, result: Path, *, trial_start: int, port: int) -> dict[str, Any]:
+def _run_libero_trial(
+    repo: Path,
+    checkpoint_root: Path,
+    result: Path,
+    *,
+    suite: str,
+    task_id: int,
+    trial_start: int,
+    num_trials: int,
+    port: int,
+) -> dict[str, Any]:
+    """Run an explicit upstream LIBERO trial range against the deployed policy."""
+
+    if not suite:
+        raise OpenWAMPipelineError("LIBERO suite must not be empty")
+    if task_id < 0 or trial_start < 0 or num_trials <= 0:
+        raise OpenWAMPipelineError(
+            "LIBERO task ID and trial start must be non-negative and num_trials positive"
+        )
     source = repo / "assets" / "libero_source"
     _apply_libero_patch(repo, source)
     config = repo / "benchmarks" / "libero" / "policy_config.yml"
@@ -406,7 +424,26 @@ def _run_libero_trial(repo: Path, checkpoint_root: Path, result: Path, *, trial_
         _wait_for_port(process, port)
         python_path = os.pathsep.join((str(source), str(repo), os.environ.get("PYTHONPATH", "")))
         _command(
-            [client_python, "benchmarks/libero/single_eval.py", "--config", str(config), "--host", "127.0.0.1", "--port", str(port), "--suite", "libero_spatial", "--task-id", "0", "--trial-start", str(trial_start), "--num-trials", "1", "--result-dir", str(result)],
+            [
+                client_python,
+                "benchmarks/libero/single_eval.py",
+                "--config",
+                str(config),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--suite",
+                suite,
+                "--task-id",
+                str(task_id),
+                "--trial-start",
+                str(trial_start),
+                "--num-trials",
+                str(num_trials),
+                "--result-dir",
+                str(result),
+            ],
             cwd=repo,
             env={"LIBERO_PATH": str(source), "LIBERO_CONFIG_ROOT": str(result / "libero-config"), "MUJOCO_GL": "egl", "PYOPENGL_PLATFORM": "egl", "PYTHONPATH": python_path},
         )
@@ -414,13 +451,64 @@ def _run_libero_trial(repo: Path, checkpoint_root: Path, result: Path, *, trial_
         server_log = _stop_server(process)
         (result / "openwam-server.log").write_text(server_log, encoding="utf-8")
     payload = json.loads((result / "results.json").read_text(encoding="utf-8"))
-    if payload.get("num_trials", 1) != 1 or "success_rate" not in payload:
-        raise OpenWAMPipelineError("LIBERO result did not contain one numerical trial")
+    expected_stop = trial_start + num_trials
+    if (
+        payload.get("suite") != suite
+        or payload.get("task_id") != task_id
+        or payload.get("trial_start") != trial_start
+        or payload.get("trial_stop") != expected_stop
+        or len(payload.get("trials", [])) != num_trials
+        or not isinstance(payload.get("success_rate"), (int, float))
+    ):
+        raise OpenWAMPipelineError(
+            "LIBERO result did not match the requested suite, task, and trial range"
+        )
     return payload
 
 
+def _trial_request(args: argparse.Namespace) -> dict[str, int | str]:
+    """Return the explicit upstream evaluation request recorded with each result."""
+
+    return {
+        "suite": args.suite,
+        "task_id": args.task_id,
+        "trial_start": args.trial_start,
+        "num_trials": args.num_trials,
+    }
+
+
+def _ensure_heldout(request: dict[str, int | str], rollout_report: dict[str, Any]) -> None:
+    """Reject overlapping same-task evaluation ranges before consuming GPU time."""
+
+    prior = rollout_report.get("request")
+    if not isinstance(prior, dict):
+        raise OpenWAMPipelineError("Rollout report lacks the recorded LIBERO trial request")
+    if request["suite"] != prior.get("suite") or request["task_id"] != prior.get("task_id"):
+        return
+    start = int(request["trial_start"])
+    stop = start + int(request["num_trials"])
+    prior_start = int(prior.get("trial_start", -1))
+    prior_stop = prior_start + int(prior.get("num_trials", 0))
+    if start < prior_stop and prior_start < stop:
+        raise OpenWAMPipelineError(
+            "Held-out LIBERO trials overlap the rollout trial range for the same suite and task"
+        )
+
+
+def _trial_metrics(result: dict[str, Any]) -> tuple[int, float]:
+    """Return the trial count and mean policy steps from native evaluator output."""
+
+    trials = result.get("trials")
+    if not isinstance(trials, list) or not trials:
+        raise OpenWAMPipelineError("LIBERO result does not contain completed trial metrics")
+    steps = [trial.get("policy_steps") for trial in trials if isinstance(trial, dict)]
+    if len(steps) != len(trials) or not all(isinstance(value, (int, float)) for value in steps):
+        raise OpenWAMPipelineError("LIBERO trials do not contain numerical policy-step metrics")
+    return len(steps), sum(steps) / len(steps)
+
+
 def rollout(args: argparse.Namespace) -> dict[str, Any]:
-    """Deploy the exact trained checkpoint and run one upstream LIBERO rollout."""
+    """Deploy the exact trained checkpoint and run an upstream LIBERO trial range."""
 
     image = _runtime_image_provenance(args.runtime_image)
     prepared = _read_json(args.prepared_assets_uri)
@@ -432,14 +520,15 @@ def rollout(args: argparse.Namespace) -> dict[str, Any]:
     shutil.copytree(assets, repo / "assets")
     result_dir = workspace / "rollout"
     result_dir.mkdir(parents=True, exist_ok=True)
-    payload = _run_libero_trial(repo, trained, result_dir, trial_start=0, port=args.port)
-    report = {"schema": "npa.openwam.libero-rollout.v1", "run_id": args.run_id, "runtime_image": image, "training_uri": args.training_uri, "training_checkpoint_sha256": training["checkpoint"]["sha256"], "result": payload, "server_log_sha256": _sha256_file(result_dir / "openwam-server.log")}
+    request = _trial_request(args)
+    payload = _run_libero_trial(repo, trained, result_dir, port=args.port, **request)
+    report = {"schema": "npa.openwam.libero-rollout.v1", "run_id": args.run_id, "runtime_image": image, "training_uri": args.training_uri, "training_checkpoint_sha256": training["checkpoint"]["sha256"], "request": request, "result": payload, "server_log_sha256": _sha256_file(result_dir / "openwam-server.log")}
     _write_json(args.output_uri, report)
     return report
 
 
 def evaluate(args: argparse.Namespace) -> dict[str, Any]:
-    """Evaluate the trained checkpoint on an independently numbered LIBERO trial."""
+    """Evaluate the trained checkpoint on a non-overlapping LIBERO trial range."""
 
     image = _runtime_image_provenance(args.runtime_image)
     prepared = _read_json(args.prepared_assets_uri)
@@ -452,8 +541,10 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     shutil.copytree(assets, repo / "assets")
     result_dir = workspace / "evaluation"
     result_dir.mkdir(parents=True, exist_ok=True)
-    payload = _run_libero_trial(repo, trained, result_dir, trial_start=1, port=args.port)
-    report = {"schema": "npa.openwam.libero-heldout-evaluation.v1", "run_id": args.run_id, "runtime_image": image, "training_uri": args.training_uri, "rollout_uri": args.rollout_uri, "heldout_trial_start": 1, "rollout_trial_start": rollout_report["result"]["trial_start"], "result": payload, "server_log_sha256": _sha256_file(result_dir / "openwam-server.log"), "limitation": "one upstream debug-trained operational trial is not a full LIBERO benchmark result"}
+    request = _trial_request(args)
+    _ensure_heldout(request, rollout_report)
+    payload = _run_libero_trial(repo, trained, result_dir, port=args.port, **request)
+    report = {"schema": "npa.openwam.libero-heldout-evaluation.v1", "run_id": args.run_id, "runtime_image": image, "training_uri": args.training_uri, "rollout_uri": args.rollout_uri, "request": request, "rollout_request": rollout_report["request"], "result": payload, "server_log_sha256": _sha256_file(result_dir / "openwam-server.log"), "limitation": "The debug-trained operational smoke is not a full LIBERO benchmark result."}
     _write_json(args.output_uri, report)
     return report
 
@@ -468,16 +559,20 @@ def visualize(args: argparse.Namespace) -> dict[str, Any]:
     local_rrd.parent.mkdir(parents=True, exist_ok=True)
     import rerun as rr
 
+    rollout_count, rollout_mean_steps = _trial_metrics(rollout_report["result"])
+    evaluation_count, evaluation_mean_steps = _trial_metrics(evaluation["result"])
     recording = rr.RecordingStream("npa.openwam.libero", recording_id=args.run_id)
     recording.save(str(local_rrd))
     recording.log("provenance/run", rr.TextDocument(json.dumps({"training_uri": args.training_uri, "rollout_uri": args.rollout_uri, "evaluation_uri": args.evaluation_uri}, sort_keys=True), media_type="application/json"), static=True)
     recording.set_time("workflow_stage", sequence=1)
     recording.log("metrics/checkpoint_size_bytes", rr.Scalars(training["checkpoint"]["size_bytes"]))
     recording.log("metrics/rollout_success_rate", rr.Scalars(rollout_report["result"]["success_rate"]))
-    recording.log("metrics/rollout_policy_steps", rr.Scalars(rollout_report["result"]["trials"][0]["policy_steps"]))
+    recording.log("metrics/rollout_trial_count", rr.Scalars(rollout_count))
+    recording.log("metrics/rollout_mean_policy_steps", rr.Scalars(rollout_mean_steps))
     recording.set_time("workflow_stage", sequence=2)
     recording.log("metrics/heldout_success_rate", rr.Scalars(evaluation["result"]["success_rate"]))
-    recording.log("metrics/heldout_policy_steps", rr.Scalars(evaluation["result"]["trials"][0]["policy_steps"]))
+    recording.log("metrics/heldout_trial_count", rr.Scalars(evaluation_count))
+    recording.log("metrics/heldout_mean_policy_steps", rr.Scalars(evaluation_mean_steps))
     recording.flush()
     recording.disconnect()
     rerun_cli = Path(sys.executable).with_name("rerun")
@@ -488,7 +583,7 @@ def visualize(args: argparse.Namespace) -> dict[str, Any]:
     if "metrics/heldout_success_rate" not in inspected:
         raise OpenWAMPipelineError("Rerun inspection did not find held-out metric entity")
     _upload_file(args.rrd_uri, local_rrd)
-    report = {"schema": "npa.openwam.visualization.v1", "run_id": args.run_id, "rrd_uri": args.rrd_uri, "rrd_sha256": _sha256_file(local_rrd), "rrd_size_bytes": local_rrd.stat().st_size, "training_checkpoint_sha256": training["checkpoint"]["sha256"], "rollout_success_rate": rollout_report["result"]["success_rate"], "heldout_success_rate": evaluation["result"]["success_rate"], "verification": {"rerun_rrd_verify": "passed", "entity": "metrics/heldout_success_rate"}}
+    report = {"schema": "npa.openwam.visualization.v1", "run_id": args.run_id, "rrd_uri": args.rrd_uri, "rrd_sha256": _sha256_file(local_rrd), "rrd_size_bytes": local_rrd.stat().st_size, "training_checkpoint_sha256": training["checkpoint"]["sha256"], "rollout_success_rate": rollout_report["result"]["success_rate"], "rollout_trial_count": rollout_count, "rollout_mean_policy_steps": rollout_mean_steps, "heldout_success_rate": evaluation["result"]["success_rate"], "heldout_trial_count": evaluation_count, "heldout_mean_policy_steps": evaluation_mean_steps, "verification": {"rerun_rrd_verify": "passed", "entity": "metrics/heldout_success_rate"}}
     _write_json(args.output_uri, report)
     return report
 
@@ -525,6 +620,10 @@ def build_parser() -> argparse.ArgumentParser:
         stage.add_argument("--training-uri", required=True)
         stage.add_argument("--output-uri", required=True)
         stage.add_argument("--port", type=int, default=8848)
+        stage.add_argument("--suite", required=True)
+        stage.add_argument("--task-id", type=int, required=True)
+        stage.add_argument("--trial-start", type=int, required=True)
+        stage.add_argument("--num-trials", type=int, required=True)
         if name == "evaluate":
             stage.add_argument("--rollout-uri", required=True)
     visual = _add_stage_parser(subparsers, "visualize")
