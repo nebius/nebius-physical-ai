@@ -1903,6 +1903,36 @@ def test_runtime_readiness_uses_explicit_isolated_state_and_config(
     assert all(snapshot == snapshots[0] for snapshot in snapshots)
 
 
+def test_runtime_environment_carries_isolated_api_endpoint_to_runtime_waves(
+    mocker, tmp_path
+):
+    """A runtime wave must retain the controller intent established by preflight."""
+    from npa.cli.workbench.workflow import _runtime_submit_environment
+    from npa.orchestration.npa_workflow.submit import load_spec_for_submit
+
+    isolated = (tmp_path / "isolated").resolve()
+    api_root = isolated / "local-api"
+    mocker.patch(
+        "npa.orchestration.skypilot.cleanup.sky_environment",
+        return_value={
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:45123",
+            "NPA_SKYPILOT_ISOLATED_API_DIR": str(api_root),
+        },
+    )
+
+    environment = _runtime_submit_environment(
+        load_spec_for_submit(FANOUT),
+        run_id="isolated-api-intent",
+        secret_env_values={"AWS_ACCESS_KEY_ID": "selected-access"},
+        endpoint="https://selected.invalid",
+        isolated_config_dir=isolated,
+    )
+
+    assert environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] == str(isolated)
+    assert environment["NPA_SKYPILOT_ISOLATED_API_DIR"] == str(api_root)
+    assert environment["SKYPILOT_API_SERVER_ENDPOINT"] == "http://127.0.0.1:45123"
+
+
 @pytest.mark.parametrize("boundary", ["readiness", "runtime"])
 def test_runtime_environment_is_restored_after_failure(
     runtime_api_environment, mocker, boundary

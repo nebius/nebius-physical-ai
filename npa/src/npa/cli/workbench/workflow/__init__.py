@@ -3811,9 +3811,22 @@ def _runtime_submit_environment(
     if endpoint.strip():
         environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint.strip()))
     if isolated_config_dir is not None:
-        environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] = str(
-            Path(isolated_config_dir).expanduser().resolve()
-        )
+        isolated_root = Path(isolated_config_dir).expanduser().resolve()
+        environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] = str(isolated_root)
+        # The first accelerator preflight may already have created the owned
+        # isolated API intent.  Runtime waves run after that outer environment
+        # scope is restored, so carry the exact endpoint binding forward rather
+        # than making a later wave re-enter the controller without it.
+        from npa.orchestration.skypilot.cleanup import sky_environment
+
+        isolated_environment = sky_environment(isolated_root)
+        for name in (
+            "SKYPILOT_API_SERVER_ENDPOINT",
+            "NPA_SKYPILOT_ISOLATED_API_DIR",
+        ):
+            value = str(isolated_environment.get(name) or "")
+            if value:
+                environment[name] = value
     if config_path is not None:
         environment["SKYPILOT_GLOBAL_CONFIG"] = str(
             Path(config_path).expanduser().resolve()
