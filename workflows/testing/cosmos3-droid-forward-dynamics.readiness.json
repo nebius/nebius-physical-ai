@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "7818702a84c875ca8569f478723f8a8c490bcdc3958989b168d4478c9fdfdd78",
+  "workflow_sha256": "6a73e6963ab5147a6c7896e8a4bc79705458a1ba82204cae560b10bd9139d871",
   "planning": {
     "validation": {
       "status": "verified",
@@ -23,36 +23,36 @@
   "prerequisites": {
     "output_storage": {
       "status": "verified",
-      "reason": "The currently configured scoped profile completed an owned run-prefix put/get/delete probe. No DROID input or workflow artifact was staged while the independent image gate remains blocked.",
+      "reason": "The configured scoped profile completed its owned run-prefix probe, and the exact DROID input bundle was staged only to the private run prefix with a read-back hash check. No checkpoint or model output is stored in an image layer or public registry.",
       "evidence": [
         "access-controlled operator probe receipt"
       ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "A genuine 17-frame DROID window from the documented held-out split was re-emitted from observation.state.cartesian_position (including the upstream DROID-to-OpenCV rotation) and aligned source action.gripper_position values. It has not yet been staged and processed by the rebuilt private image.",
+      "status": "verified",
+      "reason": "A genuine 17-frame DROID window from the documented held-out split was re-emitted from observation.state.cartesian_position (including the upstream DROID-to-OpenCV rotation) and aligned source action.gripper_position values. The corrected manifest plus 51 frame objects was staged to the private run prefix and read back with hashes; native processing awaits the rebuilt image.",
       "evidence": [
         "access-controlled operator input-selection evidence"
       ]
     },
     "credentials": {
-      "status": "unverified",
-      "reason": "Nebius authentication and exact public Cosmos payload access pass. The derivative repository resolves exactly to the configured immutable revision and its export manifest identifies the card's framework commit, but full checkpoint-byte hashing still belongs to the selected worker's runtime fetch.",
+      "status": "verified",
+      "reason": "Nebius authentication and exact Cosmos payload access passed through the configured private route. The derivative repository resolves exactly to the configured immutable revision and its export manifest identifies the card's framework commit; full checkpoint-byte hashing remains a required recorded result of the selected worker's runtime fetch.",
       "evidence": [
         "access-controlled operator access and checkpoint-identity receipts"
       ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The configured public Cosmos3 image remains repository-quarantined. A private validation rebuild now pins the available OpenMDW-1.1 framework revision and writes a fail-closed source marker, but it still requires exact-digest scan, pull, and native capability qualification. This workflow does not bypass quarantine or publish an image.",
+      "reason": "The configured public Cosmos3 image remains repository-quarantined. The first private rebuild failed closed on a native action-interface mismatch; its exact upstream JSON-input repair has local contract evidence and the corrected source-marked rebuild is active. It still requires exact-digest scan, pull, and native capability qualification. This workflow does not bypass quarantine or publish an image.",
       "evidence": [
         "npa/deploy/public_release_manifest.json",
         "npa/docker/workbench/packaging-contract.yaml"
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "A compatible operator-configured GPU target and the rebuilt private image must be selected together before submission. No live acceptance, benchmark result, or robot claim is made.",
+      "status": "verified",
+      "reason": "The private route independently verified a one-GPU RTX PRO 6000 Kubernetes target, registry pull-secret preparation, and provider identity; the workflow explicitly requests that compatible accelerator. A native run remains required before any live acceptance, benchmark result, or robot claim.",
       "evidence": [
         "docs/workbench/cosmos3-droid-forward-dynamics.md"
       ]
