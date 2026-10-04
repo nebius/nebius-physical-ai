@@ -117,6 +117,19 @@
       "notes": "The current neutral-bootstrap candidate remains unbuilt, quarantined, and unvalidated. It contains no LIBERO source, GPU runtime, model, demonstration, task asset, cache, checkpoint, credential, or output payload. No datacenter Blackwell compatibility or public acceptance is claimed."
     },
     {
+      "name": "npa-openwam",
+      "dockerfile": "openwam/Dockerfile",
+      "verdict": "ready",
+      "validation": "pending-gpu",
+      "redistribution": "unvalidated",
+      "torch": "2.7.1+cu128 pinned by OpenWAM's upstream CUDA requirements",
+      "source_compiled_extensions": [
+        "OpenWAM/DeepSpeed CUDA runtime path"
+      ],
+      "smoke": "Run the complete private five-stage OpenWAM-alpha → LIBERO path: exact runtime fetch, native fine-tune checkpoint, checkpoint reload rollout, non-overlapping held-out evaluation, and decoded factual RRD.",
+      "notes": "The operator-private candidate has completed byte scanning, private pull preflight, and a non-device runtime bootstrap only. Its pinned CUDA 12.8 stack is a candidate for B200/B300 routing, but no current exact image has run on a datacenter target and no benchmark metric is claimed. RTX PRO 6000 execution is also pending the complete five-stage workflow; RTX evidence must never be treated as B200/B300 equivalence. Public publication remains quarantined."
+    },
+    {
       "name": "npa-cosmos3-nano-video",
       "dockerfile": "cosmos3-nano-video/Dockerfile",
       "verdict": "ready",

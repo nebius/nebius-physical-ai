@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 
@@ -41,4 +42,21 @@ def test_openwam_recipe_retains_runtime_fetch_and_private_quarantine() -> None:
     assert (
         "redistribution: unvalidated"
         in contract.split("  openwam:", 1)[1].split("  libero:", 1)[0]
+    )
+
+
+def test_openwam_datacenter_manifest_does_not_claim_a_device_result() -> None:
+    manifest = json.loads(
+        (ROOT / "npa" / "docker" / "workbench" / "blackwell-dc-images.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    entry = next(item for item in manifest["images"] if item["name"] == "npa-openwam")
+
+    assert entry["dockerfile"] == "openwam/Dockerfile"
+    assert entry["verdict"] == "ready"
+    assert entry["validation"] == "pending-gpu"
+    assert entry["redistribution"] == "unvalidated"
+    assert (
+        "RTX evidence must never be treated as B200/B300 equivalence" in entry["notes"]
     )

@@ -73,12 +73,13 @@ was necessary for this path, so none is added. Access and Apache labels still
 do not settle redistribution of a complete built image, runtime dependencies,
 data, trained checkpoints, or outputs. The
 [`REDISTRIBUTION.md`](../../npa/docker/workbench/openwam/REDISTRIBUTION.md)
-therefore classifies the recipe `unvalidated` and operator-private pending
-exact-built-byte review.
+therefore classifies the recipe `unvalidated` and operator-private pending a
+complete GPU workflow qualification and a separate public-redistribution
+decision.
 
 ## Image and execution readiness
 
-Build the candidate from
+For a new candidate, build from
 [`npa/docker/workbench/openwam/Dockerfile`](../../npa/docker/workbench/openwam/Dockerfile)
 only into an operator-controlled registry, scan the exact digest, then replace
 the workflow's placeholder `runtime_image` with that immutable digest. The

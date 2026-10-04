@@ -181,9 +181,9 @@ images:
       and a separate MIT LIBERO client environment. The two imageio-ffmpeg
       wheel-bundled executables are stripped in favor of the system ffmpeg.
       OpenWAM-alpha, Wan 2.2, LIBERO data, checkpoints, credentials, and
-      populated caches are fetched only at run time. No exact built-byte scan,
-      digest, or GPU workflow qualification exists yet; keep the candidate
-      operator-private.
+      populated caches are fetched only at run time. Exact private-byte scan and
+      private-pull receipts do not qualify a GPU workflow or public release;
+      keep the candidate operator-private.
   libero:
     dockerfile: libero/Dockerfile
     tier: job

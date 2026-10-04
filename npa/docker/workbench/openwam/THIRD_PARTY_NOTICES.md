@@ -33,5 +33,6 @@
   the mirror card label.
 
 The Dockerfile's upstream locked dependency environment includes additional
-components. A future exact image scan/SBOM is the authoritative inventory for
-their resolved licenses and notices; this notice does not substitute for it.
+components. The exact image scan/SBOM for each candidate digest is the
+authoritative inventory for their resolved licenses and notices; this notice
+does not substitute for it.
