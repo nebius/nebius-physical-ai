@@ -82,6 +82,9 @@ def test_candidate_image_removes_the_inherited_pip_cache() -> None:
     assert "PYTHONPATH=/opt/vla-jepa-npa/src:$PYTHONPATH" not in dockerfile
     assert "PYTHONPATH=/opt/vla-jepa-npa/src" in dockerfile
     assert "PATH=/opt/lerobot/venv/bin:$PATH" not in dockerfile
+    assert "h5py/tests/data_files -type f -name '*.h5' -delete" in dockerfile
+    assert "robosuite/models/assets/demonstrations -type f -name '*.hdf5'" in dockerfile
+    assert "botocore/data -type f -name 'examples-1.json' -delete" in dockerfile
 
 
 def test_task_disjoint_split_and_numeric_training_statistics() -> None:

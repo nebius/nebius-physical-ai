@@ -32,9 +32,18 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/vla-jepa-npa/src/npa
 # The inherited service image previously retained this populated pip cache.
 # Delete it after the final install so runtime-only package payloads cannot be
 # mistaken for an intentionally baked model/data cache.
+# These package test/demo/API-example fixtures are not LeRobot runtime
+# dependencies. Their HDF datasets and synthetic credential examples are
+# excluded from exact image bytes rather than weakening the payload scanner.
 RUN /opt/lerobot/venv/bin/pip install --no-cache-dir "rerun-sdk==0.38.1" \
     && rm -rf /home/ubuntu/.cache/pip \
     && test ! -e /home/ubuntu/.cache/pip \
+    && find /opt/lerobot/venv/lib/python3.12/site-packages/h5py/tests/data_files -type f -name '*.h5' -delete \
+    && find /opt/lerobot/venv/lib/python3.12/site-packages/robosuite/models/assets/demonstrations -type f -name '*.hdf5' -delete \
+    && find /opt/lerobot/venv/lib/python3.12/site-packages/botocore/data -type f -name 'examples-1.json' -delete \
+    && ! find /opt/lerobot/venv/lib/python3.12/site-packages/h5py/tests/data_files -type f -name '*.h5' -print -quit | grep -q . \
+    && ! find /opt/lerobot/venv/lib/python3.12/site-packages/robosuite/models/assets/demonstrations -type f -name '*.hdf5' -print -quit | grep -q . \
+    && ! find /opt/lerobot/venv/lib/python3.12/site-packages/botocore/data -type f -name 'examples-1.json' -print -quit | grep -q . \
     && PYTHONPATH=/opt/vla-jepa-npa/src /opt/lerobot/venv/bin/python - <<'PY'
 import rerun
 from npa.workflows import lerobot_vla_jepa
