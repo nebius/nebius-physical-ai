@@ -42,3 +42,17 @@ safety, generalization, an operational error rate, or final readiness. Current
 published-head CI, all accepted catalogue-fixture components, the immutable native
 binding, a final owner runner, full validation, and independent final-output review
 remain separate requirements.
+
+## Main44 audit-only capture bridge
+
+[Main44 source bridge](main44-source-bridge.json) binds the signed integration of
+landed audit-only rich-review capture, response journaling, CLI, and SDK interfaces
+to the PR838 disclosure source. The frozen request evidence, public writers, grade
+consumer, four public frame bytes, and scope protocol remain bound. The affected
+offline CPU selection passed 740 tests with three explicit live-provider skips;
+it made zero provider calls. The prior fixed four-hosted-response result remains
+all zero with two false negatives, accuracy 0.5, and F1 0.0. It was not retried,
+retuned, or treated as model-quality acceptance. This bridge is source evidence
+only: held full-fixture prerequisites, independent output review, anonymous
+publication verification, current-head CI, and coordinator lifecycle work remain
+separate.
