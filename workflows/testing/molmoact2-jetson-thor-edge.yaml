@@ -18,6 +18,7 @@ config:
   runtime_image: "registry.example.invalid/operator/molmoact2-jetson-thor@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   source_sha: ""
   require_baked_npa: "1"
+  baked_npa_import: npa.workflows.molmoact2_jetson_thor
   prefix: "molmoact2-jetson-thor/{{run.id}}"
   observations_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/observations.npz"
   prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepare/observations.npz"

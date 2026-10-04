@@ -262,6 +262,7 @@ def test_workflow_has_five_connected_real_stages() -> None:
     plan = build_plan(spec, run_id="thor-test")
     assert spec.config["source_sha"] == ""
     assert spec.config["require_baked_npa"] == "1"
+    assert spec.config["baked_npa_import"] == "npa.workflows.molmoact2_jetson_thor"
     assert spec.resources["cpu"]["image"] == "{{config.runtime_image}}"
     assert spec.config["runtime_image"].endswith("@sha256:" + "0" * 64)
     assert [step.state for step in plan.steps] == [
