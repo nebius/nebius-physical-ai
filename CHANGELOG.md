@@ -20,6 +20,14 @@ a versioned heading when a release is cut.
   benchmark populations. Requested modes are explicit, missing or extra cells
   still fail, and all frozen per-mode acceptance thresholds remain unchanged.
 
+### Audit-only rich visual review
+
+- Add `vlm-eval review-visual` and its SDK surface. Private records separate
+  visible task evidence, fidelity, reviewability, subjective impressiveness,
+  and unverified usefulness. Counterbalanced comparisons retain disagreement;
+  exact requests and responses survive parser failures. These records never
+  change the completion score or gate. Historical hosted failures are retained.
+
 ### Self-hosted VLM scores reject invalid literal verdicts
 
 - Self-hosted verdicts require boolean success, finite numeric scores in [0, 1],
