@@ -46,6 +46,10 @@ PINNED_CUDA_BASE_DIGEST = (
     "sha256:59436e8ac61921052d8f420be8b8cb8b117f1d7cc643397a289e37aaa0b83ea1"
 )
 PINNED_CUDA_BASE = f"{PINNED_CUDA_BASE_NAME}@{PINNED_CUDA_BASE_DIGEST}"
+PINNED_PIP_BUILDER = (
+    "python:3.12-slim@sha256:"
+    "2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9"
+)
 OPENCV_PROVIDERS = {
     "opencv-python",
     "opencv-python-headless",
@@ -392,7 +396,7 @@ def test_robocasa_public_runtime_excludes_restricted_optional_payloads() -> None
 
 
 def test_robocasa_system_install_layer_removes_builder_resolver_state() -> None:
-    text = DOCKERFILE.read_text(encoding="utf-8")
+    text = DOCKERFILE.read_text(encoding="utf-8").rsplit("\nFROM ", 1)[1]
     lines = text.splitlines(keepends=True)
     start = next(
         index
@@ -408,7 +412,7 @@ def test_robocasa_system_install_layer_removes_builder_resolver_state() -> None:
     install = next(
         index for index, command in enumerate(commands) if "apt-get install" in command
     )
-    venv = commands.index("python3.12 -m venv /opt/robocasa/venv")
+    venv = commands.index("python3.12 -m venv --without-pip /opt/robocasa/venv")
     cleanup = next(
         index
         for index, command in enumerate(commands)
@@ -426,7 +430,7 @@ def test_robocasa_system_install_layer_removes_builder_resolver_state() -> None:
 
 
 def test_robocasa_upgrades_inherited_os_packages_before_installing_runtime() -> None:
-    text = DOCKERFILE.read_text(encoding="utf-8")
+    text = DOCKERFILE.read_text(encoding="utf-8").rsplit("\nFROM ", 1)[1]
     upgrade = text.index("apt-get upgrade -y --no-install-recommends")
     assert text.index("RUN apt-get update") < upgrade
     assert upgrade < text.index("python3.12 -m venv")
@@ -582,7 +586,7 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     build_script = BUILD_SCRIPT.read_text(encoding="utf-8")
 
-    assert _from_refs(dockerfile) == [PINNED_CUDA_BASE]
+    assert _from_refs(dockerfile) == [PINNED_PIP_BUILDER, PINNED_CUDA_BASE]
     assert "ARG BASE_IMAGE" not in dockerfile
     assert "${BASE_IMAGE}" not in dockerfile
     assert "--base-image" not in build_script
@@ -896,14 +900,18 @@ def test_every_robocasa_from_base_has_one_security_inventory_entry() -> None:
     inventory = json.loads(BASE_INVENTORY.read_text(encoding="utf-8"))
     from_refs = _from_refs(dockerfile)
 
-    assert from_refs == [PINNED_CUDA_BASE]
+    assert from_refs == [PINNED_PIP_BUILDER, PINNED_CUDA_BASE]
     for image in from_refs:
         entries = [entry for entry in inventory if entry["image"] == image]
         assert len(entries) == 1, image
         assert entries[0] == {
-            "name": "nvidia-cuda-12-9-1-base-ubuntu22-04",
-            "image": PINNED_CUDA_BASE,
-            "purge_linux_libc_dev": True,
+            "name": (
+                "python-3-12-slim"
+                if image == PINNED_PIP_BUILDER
+                else "nvidia-cuda-12-9-1-base-ubuntu22-04"
+            ),
+            "image": image,
+            "purge_linux_libc_dev": image == PINNED_CUDA_BASE,
             "upgrade_os": True,
         }
 
@@ -914,7 +922,7 @@ def test_robocasa_python_locks_are_hash_complete_and_target_specific() -> None:
         assert "npa/docker/workbench/robocasa/generate-locks.sh" in text
         blocks = _requirement_blocks(lock)
         assert blocks and all("--hash=sha256:" in block for block in blocks)
-        assert "pip==26.2.1" in text
+        assert "pip" not in _locked_names(lock)
 
     runtime_names = _locked_names(RUNTIME_LOCK)
     assert runtime_names & OPENCV_PROVIDERS == {"opencv-python"}
@@ -928,6 +936,52 @@ def test_robocasa_python_locks_are_hash_complete_and_target_specific() -> None:
     } <= runtime_names
     assert "tianshou" not in runtime_names
     assert "protobuf" not in runtime_names
+
+
+def test_robocasa_pip_bootstrap_excludes_old_seed_layers() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    builder, runtime = text.rsplit("\nFROM ", 1)
+    assert f"FROM {PINNED_PIP_BUILDER} AS secure-pip-builder" in builder
+    assert "python /build/secure_pip/build.py" in builder
+    assert "--work-dir /build/work --output-dir /build/output" in builder
+    assert "python3-pip" not in runtime and "python3-venv" not in runtime
+    assert "python3.12-venv" not in runtime
+    assert "python3.12 -m venv --without-pip /opt/robocasa/venv" in runtime
+    for seed in (
+        "/usr/share/python-wheels",
+        "/usr/lib/python3.10/ensurepip",
+        "/usr/lib/python3.12/ensurepip",
+    ):
+        assert f"test ! -d {seed}" in runtime
+    stage_copy = runtime.split("COPY --from=secure-pip-builder", 1)[1].split(
+        "\nCOPY ", 1
+    )[0]
+    assert "/build/output/pip-26.2.1+npa.1-py3-none-any.whl" in stage_copy
+    assert "/build/output/build-receipt.json" in stage_copy
+    assert "/build/work" not in runtime
+    assert "/build/secure_pip" not in runtime
+    assert runtime.count("COPY --from=") == 1
+
+
+def test_robocasa_bootstraps_only_verified_derivative_offline() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8").rsplit("\nFROM ", 1)[1]
+    expected_hash = "7767c69586fcedb89b9b1dd692abb5b1c4328c19dffb2a40cad4fb17a62ff818"
+    lock = (IMAGE_DIR / "pip-bootstrap.lock").read_text(encoding="utf-8")
+    assert "pip==26.2.1+npa.1" in lock
+    assert f"--hash=sha256:{expected_hash}" in lock
+    assert _locked_names(IMAGE_DIR / "pip-bootstrap.lock") == {"pip"}
+    verify = text.index(f'"{expected_hash}  /opt/robocasa/pip-bootstrap/')
+    execute = text.index(
+        "/opt/robocasa/pip-bootstrap/pip-26.2.1+npa.1-py3-none-any.whl/pip"
+    )
+    assert verify < text.index("sha256sum --check --strict -", verify) < execute
+    assert "install --no-index --no-deps --no-cache-dir" in text
+    assert "--find-links /opt/robocasa/pip-bootstrap --require-hashes" in text
+    assert "-r /opt/robocasa/locks/pip-bootstrap.lock" in text
+    assert "importlib.util.find_spec('pip') is None" in text
+    assert "pip.__version__ == version('pip') == '26.2.1+npa.1'" in text
+    assert "urllib3.__version__ == '2.8.0'" in text
+    assert "msgpack.__version__ == '1.2.1'" in text
 
 
 def test_robocasa_lock_generation_uses_only_anonymous_indexes() -> None:

@@ -18,6 +18,20 @@
 #     the documented download_kitchen_assets script under the operator's own
 #     network access. No model weights are baked.
 #   * Any credentials, tokens, or EULA acceptance.
+# The original pip bootstrap and vendoring tools stay in this independent stage;
+# replacing them in a later runtime layer would leave their old bytes reachable.
+FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS secure-pip-builder
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY docker/workbench/common/secure_pip/ /build/secure_pip/
+RUN python /build/secure_pip/build.py \
+      --work-dir /build/work --output-dir /build/output \
+    && echo \
+      "7767c69586fcedb89b9b1dd692abb5b1c4328c19dffb2a40cad4fb17a62ff818  /build/output/pip-26.2.1+npa.1-py3-none-any.whl" \
+      | sha256sum --check --strict -
+
 FROM nvidia/cuda:12.9.1-base-ubuntu22.04@sha256:59436e8ac61921052d8f420be8b8cb8b117f1d7cc643397a289e37aaa0b83ea1
 
 ARG ROBOCASA_VERSION=0.1.1
@@ -77,7 +91,7 @@ RUN apt-get update \
           ge 3.0.2-0ubuntu1.30 || exit 1; \
     done \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        python3 python3-dev python3-pip python3-venv build-essential git \
+        python3 python3-dev build-essential git \
         ca-certificates curl \
         ffmpeg fuse netcat-openbsd pciutils procps wget \
         libegl1 libgl1 libglvnd0 libegl1-mesa-dev \
@@ -93,8 +107,11 @@ RUN apt-get update \
     && rm -f /tmp/deadsnakes-ppa.gpg.b64 \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        python3.12 python3.12-dev python3.12-venv \
-    && python3.12 -m venv /opt/robocasa/venv \
+        python3.12 python3.12-dev \
+    && test ! -d /usr/share/python-wheels \
+    && test ! -d /usr/lib/python3.10/ensurepip \
+    && test ! -d /usr/lib/python3.12/ensurepip \
+    && python3.12 -m venv --without-pip /opt/robocasa/venv \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && rm -rf /var/lib/apt/lists/* /run/systemd/resolve \
     && test ! -e /run/systemd/resolve \
@@ -105,7 +122,28 @@ WORKDIR /opt/robocasa
 # BuildKit applies COPY --chmod to destination directories it creates. Pre-create
 # these roots with execute bits so the non-root runtime can read the verifier and
 # retained build inputs.
-RUN install -d -m 0755 /opt/robocasa/locks /opt/robocasa/derivative
+RUN install -d -m 0755 /opt/robocasa/locks /opt/robocasa/derivative \
+    /opt/robocasa/pip-bootstrap
+
+# Only this source-identified wheel and its receipt cross the stage boundary.
+# Run the verified wheel directly because this environment has no seed installer.
+COPY --from=secure-pip-builder --chmod=0644 \
+    /build/output/pip-26.2.1+npa.1-py3-none-any.whl \
+    /build/output/build-receipt.json \
+    /opt/robocasa/pip-bootstrap/
+COPY --chmod=0644 docker/workbench/robocasa/pip-bootstrap.lock \
+    /opt/robocasa/locks/pip-bootstrap.lock
+RUN python -I -c "import importlib.util; assert importlib.util.find_spec('pip') is None; assert importlib.util.find_spec('setuptools') is None" \
+    && echo \
+      "7767c69586fcedb89b9b1dd692abb5b1c4328c19dffb2a40cad4fb17a62ff818  /opt/robocasa/pip-bootstrap/pip-26.2.1+npa.1-py3-none-any.whl" \
+      | sha256sum --check --strict - \
+    && PIP_CONFIG_FILE=/dev/null python \
+      /opt/robocasa/pip-bootstrap/pip-26.2.1+npa.1-py3-none-any.whl/pip \
+      install --no-index --no-deps --no-cache-dir --disable-pip-version-check \
+      --find-links /opt/robocasa/pip-bootstrap --require-hashes \
+      -r /opt/robocasa/locks/pip-bootstrap.lock \
+    && python -I -c "import pip; from pip._vendor import urllib3, msgpack; from importlib.metadata import version; assert pip.__version__ == version('pip') == '26.2.1+npa.1'; assert urllib3.__version__ == '2.8.0'; assert msgpack.__version__ == '1.2.1'" \
+    && python -m pip check
 
 # Install the reviewed CPython 3.12 linux/amd64 closure from hash locks generated
 # only against anonymous PyPI and PyTorch indexes. RoboCasa requires Gymnasium

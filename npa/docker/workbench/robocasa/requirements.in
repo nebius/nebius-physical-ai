@@ -7,8 +7,7 @@
 # checkpoint roundtrips before any GPU qualification.
 # Robosuite is installed separately from an immutable Git commit so its
 # direct_url.json can bind the checkout.
-# Pin the installer too: the Python venv seed is not a reviewed runtime pin.
-pip==26.2.1
+# The unseeded venv uses the source-identified installer in pip-bootstrap.lock.
 setuptools==83.0.0
 wheel==0.46.2
 

@@ -39,7 +39,17 @@ payloads remain outside the image.
 The recipe upgrades inherited Ubuntu packages and rejects versions older than
 the GnuPG and OpenSSL fixes identified by
 [USN-7946-1](https://ubuntu.com/security/notices/USN-7946-1) and
-[CVE-2026-84782](https://ubuntu.com/security/CVE-2026-84782). Pip is hash-locked,
-but a version pin is not proof that its vendored dependencies are vulnerability
-free. Full exact-image vulnerability, secret, byte, license and capability
+[CVE-2026-84782](https://ubuntu.com/security/CVE-2026-84782).
+
+The installer is `pip==26.2.1+npa.1`, an explicitly identified NPA derivative,
+not an upstream pip release. The shared `common/secure_pip` builder uses pinned
+upstream vendoring machinery, preserves notices and records the three repaired
+vendor sources. Its original bootstrap and build tools remain in an independent
+build stage. Only the hash-verified derivative wheel and build receipt enter
+the final image. Ubuntu pip/venv seed packages are not installed; the service
+venv is created with `--without-pip` and bootstrapped from that wheel offline.
+The wheel, receipt and `pip/NPA_VENDOR_REPAIR.json` remain available for audit.
+This avoids retaining old seed bytes in earlier final-image layers, rather than
+attempting to hide them with a later deletion. It does not prove an absence of
+all vulnerabilities. Full exact-image vulnerability, secret, byte, license and capability
 evidence remains required; this source document is not an acceptance receipt.

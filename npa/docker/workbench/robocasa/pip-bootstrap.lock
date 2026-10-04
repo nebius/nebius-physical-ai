@@ -1,0 +1,3 @@
+# Exact locally versioned output of common/secure_pip; never resolve from PyPI.
+pip==26.2.1+npa.1 \
+    --hash=sha256:7767c69586fcedb89b9b1dd692abb5b1c4328c19dffb2a40cad4fb17a62ff818
