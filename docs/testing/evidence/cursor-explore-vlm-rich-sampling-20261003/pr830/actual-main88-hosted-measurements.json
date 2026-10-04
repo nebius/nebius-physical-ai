@@ -1,0 +1,270 @@
+{
+  "schema": "npa.cursor_explore.sampler_actual_hosted_text_proof.v1",
+  "execution_head": "a52fb1b4e55c0114e8eb37204dfcbc42604e3be9",
+  "execution_tree": "cf8c3ef9b80635221dbda03ea9e83c50869f8f03",
+  "execution_base": "88fd1b1356c942745244e49d2316800634c530ae",
+  "model": "MiniMaxAI/MiniMax-M3",
+  "fixed_threshold": 0.8,
+  "actual_post_calls": 6,
+  "http_200": 6,
+  "finish_stop": 6,
+  "selected_cases_passed": 6,
+  "selected_cases_failed": 0,
+  "selected_cases_skipped": 0,
+  "strict_zero_negative_cases_passed": 4,
+  "source_bindings": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "2b7025eb5b0d703f10669c9d643f5843657fde43f01d5943af6a0686b7210596"
+    },
+    {
+      "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+      "sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e"
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+    },
+    {
+      "path": "npa/tests/e2e/test_vlm_frame_selection_live.py",
+      "sha256": "9e7be4b5a1a4ff4af04f57a947fe51f55663cd9eb0fad1a7abc2b235ec655ea5"
+    },
+    {
+      "path": "npa/tests/e2e/conftest.py",
+      "sha256": "4232d4fe9c0427e901f614de060ef48383b79b686a6fcf84967b90e39e44e16d"
+    },
+    {
+      "path": "npa/scripts/token_factory_live_recheck.py",
+      "sha256": "6a501fb2dda9304586f69f6380628fa379490b346352a60c73e0554f4a719643"
+    }
+  ],
+  "cells": [
+    {
+      "case": "complete-sequence",
+      "score": 1,
+      "success": true,
+      "decision": "promote_checkpoint",
+      "source_indices": [
+        0,
+        2,
+        5
+      ],
+      "request_sha256": "268306a6b2efbbffefc27e46dfd9b778122eb09889ef56388a7d386eec67aea0",
+      "raw_response_sha256": "fef7aff40c762793583e37c4a8e666a0c275f8852e934f293eba6ed72c554745",
+      "canonical_sha256": "e12be05604cc7919ec0e448886fb8e5a80f78c403e2df1af4c053b750915bb4f"
+    },
+    {
+      "case": "complete-keyframes",
+      "score": 1,
+      "success": true,
+      "decision": "promote_checkpoint",
+      "source_indices": [
+        0,
+        4,
+        5
+      ],
+      "request_sha256": "eacff5cff3a302ff671a1661a218ba7c800615cd400e95de212164aef8c7fa67",
+      "raw_response_sha256": "1f74645dc396313958a0ab8df6e7f57016c612a212f14252dcb83a679aa285b9",
+      "canonical_sha256": "9c4ad2a26aeb43198526a852ada54df3d74eec661bcb019b64e862b9158530dc"
+    },
+    {
+      "case": "incomplete-sequence",
+      "score": 0,
+      "success": false,
+      "decision": "loop_back",
+      "source_indices": [
+        0,
+        2,
+        5
+      ],
+      "request_sha256": "c071db1bb9311d313753b98cfd467003447c4f9f51ee4bb943ed97e1899b9aa3",
+      "raw_response_sha256": "248b7431721d5827610d0c0e3b033ef8ed9af4257661a2593dcef1fe6b2754f6",
+      "canonical_sha256": "b5ff260c20d19c31866f0abcbd50fd0f9609657f7e89d909b6a6ea69187aa5fb"
+    },
+    {
+      "case": "incomplete-keyframes",
+      "score": 0,
+      "success": false,
+      "decision": "loop_back",
+      "source_indices": [
+        0,
+        4,
+        5
+      ],
+      "request_sha256": "0050ea981ae7ac91f7212f33ce2d3b43043746f999da927c786eed0bb9a342ee",
+      "raw_response_sha256": "1a551223417f9a3d9af12ae52d2781105bfdfdb35ac8a7c3eee35a62fef9bea5",
+      "canonical_sha256": "d2da54f0b91e66e23da3ff2b4f2fb4c0a48a337a544f8c58fe4aeced181d2bf8"
+    },
+    {
+      "case": "gray-sequence",
+      "score": 0,
+      "success": false,
+      "decision": "loop_back",
+      "source_indices": [
+        0,
+        2,
+        5
+      ],
+      "request_sha256": "b028ce3e79e3eeeb9b0772f6b63a8fdcb30f8bca5a42f9c13d7104fbc3dbf012",
+      "raw_response_sha256": "5bbf03ed889ee7a9c1121b6220f0d0b72c5e9c9a4ff4fa5dcaf0eba5e3a7622c",
+      "canonical_sha256": "dc4dbc7eb99ec2c6c1139ef65acacf7d4727947efef567df09e70a77c0db8051"
+    },
+    {
+      "case": "gray-keyframes",
+      "score": 0,
+      "success": false,
+      "decision": "loop_back",
+      "source_indices": [
+        0,
+        4,
+        5
+      ],
+      "request_sha256": "b061575422f81793db4842faa9502de5c7e4d09080a068c2ded152ab0b516887",
+      "raw_response_sha256": "cbce89b02ec0c3743cbb283c8fdd3be8b32fef26bec81611f06c0347aed4bed2",
+      "canonical_sha256": "149a1b6587b68d4b7727945e1cc5493f5240260452e89f33db2af1a0bf913719"
+    }
+  ],
+  "original_source_images": [
+    {
+      "case": "complete",
+      "index": 0,
+      "png_sha256": "5c3f4531fdf87344d8a39deb3edcf8f77a03e12fb7177dbd9a8ae6ac7cecaa69",
+      "rgb_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+    },
+    {
+      "case": "complete",
+      "index": 1,
+      "png_sha256": "5c3f4531fdf87344d8a39deb3edcf8f77a03e12fb7177dbd9a8ae6ac7cecaa69",
+      "rgb_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+    },
+    {
+      "case": "complete",
+      "index": 2,
+      "png_sha256": "5c3f4531fdf87344d8a39deb3edcf8f77a03e12fb7177dbd9a8ae6ac7cecaa69",
+      "rgb_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+    },
+    {
+      "case": "complete",
+      "index": 3,
+      "png_sha256": "5c3f4531fdf87344d8a39deb3edcf8f77a03e12fb7177dbd9a8ae6ac7cecaa69",
+      "rgb_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+    },
+    {
+      "case": "complete",
+      "index": 4,
+      "png_sha256": "5c3f4531fdf87344d8a39deb3edcf8f77a03e12fb7177dbd9a8ae6ac7cecaa69",
+      "rgb_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+    },
+    {
+      "case": "complete",
+      "index": 5,
+      "png_sha256": "d545ded95659f50d2672af766bb26db1f83ae1529e9fd14d7b2e17a11b762b54",
+      "rgb_sha256": "6ece94ec5403568dc114a1a79012d789f7dfb4183efb64a098c34cd4b73cba3d"
+    },
+    {
+      "case": "incomplete",
+      "index": 0,
+      "png_sha256": "5c3f4531fdf87344d8a39deb3edcf8f77a03e12fb7177dbd9a8ae6ac7cecaa69",
+      "rgb_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+    },
+    {
+      "case": "incomplete",
+      "index": 1,
+      "png_sha256": "5c3f4531fdf87344d8a39deb3edcf8f77a03e12fb7177dbd9a8ae6ac7cecaa69",
+      "rgb_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+    },
+    {
+      "case": "incomplete",
+      "index": 2,
+      "png_sha256": "5c3f4531fdf87344d8a39deb3edcf8f77a03e12fb7177dbd9a8ae6ac7cecaa69",
+      "rgb_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+    },
+    {
+      "case": "incomplete",
+      "index": 3,
+      "png_sha256": "5c3f4531fdf87344d8a39deb3edcf8f77a03e12fb7177dbd9a8ae6ac7cecaa69",
+      "rgb_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+    },
+    {
+      "case": "incomplete",
+      "index": 4,
+      "png_sha256": "5c3f4531fdf87344d8a39deb3edcf8f77a03e12fb7177dbd9a8ae6ac7cecaa69",
+      "rgb_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+    },
+    {
+      "case": "incomplete",
+      "index": 5,
+      "png_sha256": "5c3f4531fdf87344d8a39deb3edcf8f77a03e12fb7177dbd9a8ae6ac7cecaa69",
+      "rgb_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+    },
+    {
+      "case": "gray",
+      "index": 0,
+      "png_sha256": "d7a63f76547125dc28785a1f1247a6996cc06bc935739115f9e3150c29956858",
+      "rgb_sha256": "c9dc64ed02415af8c5dde9356add5a5f3b928b938530e194e7bad0bb0efdf4d9"
+    },
+    {
+      "case": "gray",
+      "index": 1,
+      "png_sha256": "d7a63f76547125dc28785a1f1247a6996cc06bc935739115f9e3150c29956858",
+      "rgb_sha256": "c9dc64ed02415af8c5dde9356add5a5f3b928b938530e194e7bad0bb0efdf4d9"
+    },
+    {
+      "case": "gray",
+      "index": 2,
+      "png_sha256": "d7a63f76547125dc28785a1f1247a6996cc06bc935739115f9e3150c29956858",
+      "rgb_sha256": "c9dc64ed02415af8c5dde9356add5a5f3b928b938530e194e7bad0bb0efdf4d9"
+    },
+    {
+      "case": "gray",
+      "index": 3,
+      "png_sha256": "d7a63f76547125dc28785a1f1247a6996cc06bc935739115f9e3150c29956858",
+      "rgb_sha256": "c9dc64ed02415af8c5dde9356add5a5f3b928b938530e194e7bad0bb0efdf4d9"
+    },
+    {
+      "case": "gray",
+      "index": 4,
+      "png_sha256": "d7a63f76547125dc28785a1f1247a6996cc06bc935739115f9e3150c29956858",
+      "rgb_sha256": "c9dc64ed02415af8c5dde9356add5a5f3b928b938530e194e7bad0bb0efdf4d9"
+    },
+    {
+      "case": "gray",
+      "index": 5,
+      "png_sha256": "d7a63f76547125dc28785a1f1247a6996cc06bc935739115f9e3150c29956858",
+      "rgb_sha256": "c9dc64ed02415af8c5dde9356add5a5f3b928b938530e194e7bad0bb0efdf4d9"
+    }
+  ],
+  "independent_AI_review": {
+    "scope": "Traceability, original pixels and rationales, numeric controls; not calibrated quality.",
+    "offline_controls_passed": 12,
+    "offline_controls_skipped": 0,
+    "network_calls": 0
+  },
+  "cpu_bridge": {
+    "head": "f8321d6e9fe469e90fb28a8fe14b1c03fce76648",
+    "base": "935bc9de16aebd9c08600fdba195781615c15eca",
+    "responses": 6,
+    "network_calls": 0,
+    "report_comparison_exclusions": [
+      "generated_at",
+      "evidence.request.requested_at",
+      "evidence.provider.latency_s"
+    ],
+    "unchanged_all_other_report_fields": true,
+    "changed_evaluator_functions": [
+      "_hosted_structured_response",
+      "_strict_comparison_verdict",
+      "_verdict_with_evidence"
+    ],
+    "not_inference_at_bridge_head": true
+  },
+  "limits": [
+    "Both gray rationales incorrectly call uniform RGB(128,128,128) images white.",
+    "Blank evidence does not establish that the real task failed.",
+    "There are only three unique stylized visual states, not robot motion, simulation, causal, safety, calibrated model-quality or sampling-improvement acceptance.",
+    "Original six historical writer-harness failures, SO100 improvement failure, gray rationale errors and private JSON-writer oracle failure remain.",
+    "Original39 full has27 failures. Originala52 full aborted exit2 with unknown terminal population; two D-state residues remain untouched. Neither is a passing full.",
+    "Post-source hashes observed later at01:07 are not backdated. Contemporary before/after Githead/tree/clean and package equality are retained; missing contemporaneous after-module environment inventory is not invented.",
+    "Implementation publication, genuine passing full, current-head CI and coordinator queue acceptance are separate gates."
+  ]
+}
