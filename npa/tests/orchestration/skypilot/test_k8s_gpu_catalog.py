@@ -1413,6 +1413,51 @@ def test_validation_environment_recovers_stale_identity_raised_before_api_ensure
     ]
 
 
+def test_validation_environment_replaces_a_verified_parent_api_intent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A child validation API must not inherit its parent's local endpoint."""
+    from npa.orchestration.skypilot import cleanup, local_api
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    parent = tmp_path / "parent-controller"
+    parent_environment = local_api.isolated_api_environment(parent, {})
+    isolated_root = tmp_path / "isolated"
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
+    monkeypatch.setenv(
+        "SKYPILOT_API_SERVER_ENDPOINT",
+        parent_environment["SKYPILOT_API_SERVER_ENDPOINT"],
+    )
+    monkeypatch.setenv(
+        "NPA_SKYPILOT_ISOLATED_API_DIR",
+        parent_environment["NPA_SKYPILOT_ISOLATED_API_DIR"],
+    )
+    captured: list[dict[str, str]] = []
+
+    def fake_sky_environment(
+        _scope: Path, *, environment: dict[str, str]
+    ) -> dict[str, str]:
+        captured.append(dict(environment))
+        return {
+            **environment,
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:45123",
+        }
+
+    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
+
+    gpu_catalog.kubernetes_sky_environment(
+        context="exact-context",
+        kubeconfig=kubeconfig,
+        sky_executable="/opt/sky/bin/sky",
+    )
+
+    assert len(captured) == 1
+    assert "SKYPILOT_API_SERVER_ENDPOINT" not in captured[0]
+    assert "NPA_SKYPILOT_ISOLATED_API_DIR" not in captured[0]
+
+
 def test_validation_environment_migrates_changed_config_only_after_safe_recovery(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

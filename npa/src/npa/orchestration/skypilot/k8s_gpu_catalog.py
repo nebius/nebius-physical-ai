@@ -206,6 +206,38 @@ def _is_stale_validation_api_error(error: Exception) -> bool:
     return any(marker in detail for marker in markers)
 
 
+def _clear_owned_parent_api_intent(env: dict[str, str]) -> str:
+    """Remove only a verified parent API binding before opening a child scope.
+
+    GPU discovery uses a child ``cluster-validation`` API root.  An endpoint
+    belonging to the caller's *verified* isolated controller cannot be reused
+    by that child, but an ambient or unrecognized endpoint must still cause the
+    normal fail-closed ownership error.
+    """
+
+    parent_scope = str(env.get("NPA_SKYPILOT_ISOLATED_API_DIR") or "").strip()
+    endpoint = str(env.get("SKYPILOT_API_SERVER_ENDPOINT") or "").strip()
+    if not parent_scope or not endpoint:
+        return ""
+    from npa.orchestration.skypilot import local_api
+
+    try:
+        record = local_api._read(local_api._isolated_api_root(Path(parent_scope)))
+    except local_api.IsolatedApiError:
+        return ""
+    if record is None or local_api._endpoint(record) != endpoint:
+        return ""
+    for key in (
+        "SKYPILOT_API_SERVER_ENDPOINT",
+        "SKYPILOT_SERVER_PLUGINS_CONFIG",
+        "NPA_OWNED_SKYPILOT_API_ID",
+        "IS_SKYPILOT_SERVER",
+        "NPA_SKYPILOT_ISOLATED_API_DIR",
+    ):
+        env.pop(key, None)
+    return endpoint
+
+
 def kubernetes_sky_environment(
     *,
     context: str,
@@ -214,6 +246,7 @@ def kubernetes_sky_environment(
 ) -> dict[str, str]:
     """Bind cluster checks and discovery to one exact owned API session."""
     env = _kubeconfig_env(kubeconfig) or os.environ.copy()
+    parent_endpoint = _clear_owned_parent_api_intent(env)
     from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
     from npa.orchestration.skypilot.cluster_validation import current_validation_session
 
@@ -264,6 +297,15 @@ def kubernetes_sky_environment(
         config = yaml.safe_load(Path(inherited).read_text(encoding="utf-8")) or {}
         if not isinstance(config, dict):
             raise RuntimeError("SkyPilot configuration must be a mapping")
+    api_server = config.get("api_server")
+    if (
+        parent_endpoint
+        and isinstance(api_server, dict)
+        and api_server.get("endpoint") == parent_endpoint
+    ):
+        api_server = dict(api_server)
+        api_server.pop("endpoint", None)
+        config["api_server"] = api_server
     kubernetes = config.setdefault("kubernetes", {})
     if not isinstance(kubernetes, dict):
         raise RuntimeError("SkyPilot Kubernetes configuration must be a mapping")
