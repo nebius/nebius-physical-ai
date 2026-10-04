@@ -191,7 +191,7 @@ CONTAINER_IMAGE_NAMES = {
     "diffusers": "npa-diffusers",
     "lingbot-world": "npa-lingbot-world",
     # This is an operator-private candidate name, not a public image release.
-    "lingbot-world-switchworld-private": "switchworld-lingbot-private",
+    "lingbot-world-switchworld-private": "npa-lingbot-world-switchworld-private",
     "sam2": "npa-sam2",
     "sam3": "npa-sam3",
     "ltx2": "npa-ltx2",

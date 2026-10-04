@@ -1171,6 +1171,16 @@
       "validated_registry_scope": "public"
     },
     {
+      "name": "npa-lingbot-world-switchworld-private",
+      "dockerfile": "lingbot-world/Dockerfile.switchworld-private",
+      "verdict": "unknown",
+      "validation": "pending-gpu",
+      "redistribution": "unvalidated",
+      "runtime": "CUDA, checkpoints, adapter bytes, and case media are operator-runtime fetches",
+      "smoke": "Run the five connected native SwitchWorld stages over real control-conditioned frames, then independently decode the paired MP4s and inspect the RRD and factual transition metrics.",
+      "notes": "This is an operator-private, publication-quarantined SwitchWorld validation derivative. Its exact candidate bytes passed the required private byte, vulnerability, secret, SBOM, pull, and RTX startup/SDPA capability checks. It has no B200 or B300 run and no accepted five-stage native artifact result, so this row makes neither a datacenter-Blackwell nor a public-release claim. Keep the candidate private until those independent gates succeed."
+    },
+    {
       "name": "npa-sam2",
       "dockerfile": "sam2/Dockerfile",
       "verdict": "ready",
