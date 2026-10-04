@@ -60,7 +60,7 @@ benchmark randomizer.
 `npa/docker/workbench/libero-plus-assets/Dockerfile.private` is an
 operator-private derivative of the already inspected OpenWAM/original-LIBERO
 runtime. Its build helper requires an operator-private base, verifies the native
-MIT license identity, produces provenance/SBOM plus an OCI scan, refuses public
+MIT license identity and an independently observed local base-image ID, produces provenance/SBOM plus an OCI scan, refuses public
 registry targets, and leaves the asset archive runtime-fetch-only. It adds no
 EULA, `ACCEPT_*` flag, credential prerequisite, telemetry setting, or public
 publication path. A successful future run is still reported as the narrow

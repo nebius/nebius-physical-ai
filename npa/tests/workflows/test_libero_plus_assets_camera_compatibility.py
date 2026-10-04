@@ -218,6 +218,8 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
     assert "refusing public image target" in build
     assert "scan_image_omniverse_payload.py" in build
     assert "base image is not marked operator-private" in build
+    assert "EXPECTED_BASE_IMAGE_ID" in build
+    assert "LOCAL_BASE_TAG EXPECTED_BASE_IMAGE_ID" in build
     assert "built-local-not-pushed" in build
     assert "It is **not**" in notice
     assert "LIBERO-Plus benchmark image" in notice

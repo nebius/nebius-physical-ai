@@ -3,11 +3,12 @@
 set -euo pipefail
 umask 077
 
-image=${1:?usage: build-private.sh PRIVATE_IMAGE BASE_IMAGE OCI_ARCHIVE METADATA_JSON SCAN_JSON}
-base_image=${2:?usage: build-private.sh PRIVATE_IMAGE BASE_IMAGE OCI_ARCHIVE METADATA_JSON SCAN_JSON}
-oci_archive=${3:?usage: build-private.sh PRIVATE_IMAGE BASE_IMAGE OCI_ARCHIVE METADATA_JSON SCAN_JSON}
-metadata=${4:?usage: build-private.sh PRIVATE_IMAGE BASE_IMAGE OCI_ARCHIVE METADATA_JSON SCAN_JSON}
-scan=${5:?usage: build-private.sh PRIVATE_IMAGE BASE_IMAGE OCI_ARCHIVE METADATA_JSON SCAN_JSON}
+image=${1:?usage: build-private.sh PRIVATE_IMAGE LOCAL_BASE_TAG EXPECTED_BASE_IMAGE_ID OCI_ARCHIVE METADATA_JSON SCAN_JSON}
+base_image=${2:?usage: build-private.sh PRIVATE_IMAGE LOCAL_BASE_TAG EXPECTED_BASE_IMAGE_ID OCI_ARCHIVE METADATA_JSON SCAN_JSON}
+expected_base_image_id=${3:?usage: build-private.sh PRIVATE_IMAGE LOCAL_BASE_TAG EXPECTED_BASE_IMAGE_ID OCI_ARCHIVE METADATA_JSON SCAN_JSON}
+oci_archive=${4:?usage: build-private.sh PRIVATE_IMAGE LOCAL_BASE_TAG EXPECTED_BASE_IMAGE_ID OCI_ARCHIVE METADATA_JSON SCAN_JSON}
+metadata=${5:?usage: build-private.sh PRIVATE_IMAGE LOCAL_BASE_TAG EXPECTED_BASE_IMAGE_ID OCI_ARCHIVE METADATA_JSON SCAN_JSON}
+scan=${6:?usage: build-private.sh PRIVATE_IMAGE LOCAL_BASE_TAG EXPECTED_BASE_IMAGE_ID OCI_ARCHIVE METADATA_JSON SCAN_JSON}
 
 case "$image" in
   ghcr.io/nebius/nebius-physical-ai/*|docker.io/*|index.docker.io/*)
@@ -45,12 +46,16 @@ git -C "$repo_root" diff --quiet -- "${inputs[@]}"
 git -C "$repo_root" diff --cached --quiet -- "${inputs[@]}"
 
 base_metadata=$(docker image inspect "$base_image")
-NPA_BASE_IMAGE_METADATA="$base_metadata" "$repo_root/npa/.venv/bin/python" - <<'PY'
+NPA_BASE_IMAGE_METADATA="$base_metadata" \
+NPA_EXPECTED_BASE_IMAGE_ID="$expected_base_image_id" \
+"$repo_root/npa/.venv/bin/python" - <<'PY'
 import json
 import os
 
 image = json.loads(os.environ["NPA_BASE_IMAGE_METADATA"])[0]
 labels = image.get("Config", {}).get("Labels", {}) or {}
+if image.get("Id") != os.environ["NPA_EXPECTED_BASE_IMAGE_ID"]:
+    raise SystemExit("local OpenWAM base image ID does not match the supplied immutable identity")
 if labels.get("npa.tool") != "openwam":
     raise SystemExit("base image is not the inspected OpenWAM runtime")
 if labels.get("org.nebius.npa.redistribution") != "unvalidated-operator-private":
@@ -93,6 +98,7 @@ docker run --rm --entrypoint /bin/bash "$image" -c '\
 
 NPA_ASSETS_IMAGE="$image" \
 NPA_ASSETS_BASE_IMAGE="$base_image" \
+NPA_ASSETS_BASE_IMAGE_ID="$expected_base_image_id" \
 NPA_ASSETS_OCI="$oci_archive" \
 NPA_ASSETS_SCAN="$scan" \
 NPA_ASSETS_SHA="$source_sha" \
@@ -111,6 +117,7 @@ payload = {
     "image": image,
     "image_id": inspection["Id"],
     "base_image": os.environ["NPA_ASSETS_BASE_IMAGE"],
+    "base_image_id": os.environ["NPA_ASSETS_BASE_IMAGE_ID"],
     "npa_source_revision": os.environ["NPA_ASSETS_SHA"],
     "oci_archive_sha256": hashlib.sha256(Path(os.environ["NPA_ASSETS_OCI"]).read_bytes()).hexdigest(),
     "payload": {
