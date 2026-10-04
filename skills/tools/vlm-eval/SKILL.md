@@ -168,6 +168,24 @@ disagreement. Missing and non-boolean success values are rejected on both
 real backends. Stub and override provenance fields remain null.
 Never substitute the provider boolean for the score-derived gate.
 
+## Read calibration and limitation evidence correctly
+
+Every full result also emits
+`independent_human_label_calibration_established: false` and ordered
+`limitations`. The name is deliberate: `false` says the artifact does not
+establish independent-human-label calibration; it does not claim a caller could
+never have supplied human labels. Results produced by `stub` or `--score`
+identify those values as wiring or dry-validation inputs for which no VLM call
+occurred.
+
+Promotion rejects an explicit `provider_call_made` value unless it is literal
+`true`, even when retained evidence is internally consistent. Historical reports
+without this newer field remain subject to the full inference-evidence checks;
+the field and hashes do not authenticate a provider or establish model quality.
+
+Loop and benchmark reports carry report-level limitations. They are additive
+JSON keys, so strict consumers that reject unknown keys need a schema update.
+
 ## Scoring controls that actually change the verdict
 
 ```bash
@@ -182,8 +200,13 @@ npa workbench vlm-eval run \
 ```
 
 - `--frame-selection` is `final`, `keyframes` (default), or `sequence`. `final`
-  cannot distinguish "reached the goal" from "was already there"; `sequence`
-  costs the most tokens. `keyframes` is the default for a reason.
+  cannot distinguish "reached the goal" from "was already there". For a known
+  frame count, `sequence` samples uniformly across the span; `keyframes`
+  allocates half the budget to a terminal window covering at least the final
+  10%, widening for unique frames, with the rest spread over earlier evidence.
+  Short sources return every frame. This is temporal stratification, not event
+  detection. Unknown-count video keeps the shared bounded one-frame-per-second
+  fallback with null source indices/counts/timestamps and incomplete coverage.
 - `--max-frames` (default 4) bounds both cost and how much of the episode the
   judge can actually see. A four-frame view of a long episode judges a summary.
 - `--rubric` / `--rubric-path` carry the scoring instructions. The default rubric
@@ -206,7 +229,8 @@ npa workbench vlm-eval run \
   a correct numeric label alone is not grounded acceptance.
 - `--success-threshold` (default 0.8) is the gate. In `loop` it applies to the
   **mean** score across rollouts, which is a coarser claim than per-rollout
-  success — do not report it as a per-rollout success rate.
+  success — do not report it as a per-rollout success rate. The loop report
+  repeats that caveat in machine-readable `limitations`.
 - `--score <float>` overrides the score and skips the VLM call entirely. It exists
   for tests and dry validation. Never use it to produce a result you then report.
 
@@ -231,9 +255,37 @@ npa workbench vlm-eval benchmark \
 
 `--rubrics` accepts names from the dataset, inline text, or `@file` paths.
 `--dataset` defaults to a packaged sample fixture, which is useful for proving
-the sweep runs but tells you nothing about your task. `--use-fixture-scores`
-honors recorded `fixture_score` values for non-stub backends; stub always uses
-them when present.
+the sweep runs but tells you nothing about your task. Its reports declare
+`dataset_evidence_scope: illustrative_only`: four rollouts are synthetic 2x2
+color swatches with color-correlated caller labels; a fifth tiny synthetic
+sequence omits the terminal outcome. The resulting
+metrics are wiring examples, not task-validation or operational error-rate
+evidence. Custom manifests default to `dataset_evidence_scope: unspecified`;
+declare `evidence_scope` and ordered `limitations` in the manifest when their
+scope is known. Limitations must be nonempty strings without surrounding
+whitespace or control characters; invalid metadata is rejected before frame
+selection or provider work. Invalid `evidence_scope` values also reject the
+dataset rather than being ignored. Order and duplicates remain intact in JSON.
+`--use-fixture-scores` honors recorded `fixture_score` values for
+non-stub backends; stub always uses them when present.
+
+Benchmark `expected_label` values are caller-supplied; the manifest does not
+establish independent human authorship or independence. Reports therefore keep
+`independent_human_label_calibration_established` false and qualify accuracy,
+agreement, precision, recall, F1, and TP/TN/FP/FN as measurements of that one
+dataset, not operational error rates or evidence of generalization, physical
+correctness, or safety. Limitations name `fixture` and deterministic `stub`
+score sources when they occur so mixed reports do not imply those cases made a
+model call.
+
+Benchmark `expected_label` values are caller-supplied; the manifest does not
+establish independent human authorship or independence. Reports therefore keep
+`independent_human_label_calibration_established` false and qualify accuracy,
+agreement, precision, recall, F1, and TP/TN/FP/FN as measurements of that one
+dataset, not operational error rates or evidence of generalization, physical
+correctness, or safety. Limitations name `fixture` and deterministic `stub`
+score sources when they occur so mixed reports do not imply those cases made a
+model call.
 
 Every benchmark must contain at least one pass label and one fail label, and
 resolved item IDs must be unique. Both conditions are checked before frame
