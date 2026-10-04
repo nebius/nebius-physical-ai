@@ -2022,7 +2022,7 @@ def _result_from_structured(
     frame_count: int,
     rubric: str,
     structured: VlmStructuredResponse,
-    provider_call_made: bool = True,
+    provider_call_made: bool,
 ) -> VlmEvalResult:
     score = round(structured.score, 4)
     passed = score >= success_threshold
