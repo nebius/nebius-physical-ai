@@ -56,7 +56,8 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                allowPrivilegeEscalation: false
+                # Omitted deliberately: SkyPilot's non-root in-pod bootstrap
+                # invokes the image's passwordless sudo contract.
                 capabilities:
                   drop: [ALL]
   train:
@@ -81,7 +82,8 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                allowPrivilegeEscalation: false
+                # Omitted deliberately: SkyPilot's non-root in-pod bootstrap
+                # invokes the image's passwordless sudo contract.
                 capabilities:
                   drop: [ALL]
   rollout:
@@ -103,7 +105,8 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                allowPrivilegeEscalation: false
+                # Omitted deliberately: SkyPilot's non-root in-pod bootstrap
+                # invokes the image's passwordless sudo contract.
                 capabilities:
                   drop: [ALL]
   evidence:
@@ -124,7 +127,8 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                allowPrivilegeEscalation: false
+                # Omitted deliberately: SkyPilot's non-root in-pod bootstrap
+                # invokes the image's passwordless sudo contract.
                 capabilities:
                   drop: [ALL]
 

@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "fe16a6ebf9146fcb770ba411bfda08743386573de6338869aec163b5967cc8b6",
+  "workflow_sha256": "ff857ff8c01f30737b130df6dbc373eb903feee1074da5792b8ba370f5230fd3",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected; every Kubernetes resource declares SkyPilot's named non-root ray-node task container, and its configured RTX PRO train and rollout profiles retain the same GPU product.",
+      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected; every Kubernetes resource declares SkyPilot's named non-root ray-node task container, preserves seccomp/capability restrictions, and leaves no-new-privileges unset so the platform-required passwordless-sudo bootstrap can run. Its configured RTX PRO train and rollout profiles retain the same GPU product.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/openvla-oft-libero.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/openvla-oft-libero.yaml --waves --check-render --json",
@@ -30,8 +30,8 @@
       ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "Authoritative public source, model, suite-checkpoint, and modified LIBERO metadata were inspected, and exact-revision access probes succeeded. The runtime now uses the Apache-2.0 kvablack/dlimp revision with the reviewed deterministic one-line override, rather than fetching the unlicensed dlimp_openvla fork. Full RLDS materialization and OFT runtime execution on a worker remain unverified.",
+      "status": "verified",
+      "reason": "Authoritative public source, model, suite-checkpoint, and modified LIBERO metadata were inspected; exact-revision access probes succeeded; and the complete staged RLDS source tree was independently verified against its immutable source manifest. The runtime uses the Apache-2.0 kvablack/dlimp revision with the reviewed deterministic one-line override rather than fetching the unlicensed dlimp_openvla fork. OFT runtime execution on a worker remains a separate gate.",
       "evidence": [
         "docs/workbench/openvla-oft.md",
         "npa/tests/test_openvla_workbench.py"
@@ -46,8 +46,8 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The prior neutral private bootstrap image was built with SBOM/provenance, pushed only to the operator-private registry, independently pulled, manifest/config inspected, and nonroot-smoked with the native preparation parser. The Dockerfile now carries the required SkyPilot in-pod bootstrap prerequisites, so a replacement private image must repeat those byte and pull gates. It remains publication-quarantined.",
+      "status": "verified",
+      "reason": "The replacement neutral private bootstrap was built with SBOM/provenance, pushed only to the operator-private registry, independently pulled by immutable digest, manifest/config inspected, and nonroot-smoked with SkyPilot's rsync/passwordless-sudo bootstrap, readable notices, and the native preparation parser. It remains publication-quarantined.",
       "evidence": [
         "npa/docker/workbench/openvla-oft/build.sh",
         "docs/workbench/openvla-oft.md"
@@ -55,7 +55,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "An owned native prepare submission reached controller launch but the rendered pod omitted SkyPilot's required ray-node container, so the controller could not start a worker and the managed job was cancelled after evidence collection. The workflow and bootstrap now declare the verified Kubernetes contract; replacement-image qualification and a fresh native run are still required. No simulator metric, benchmark, convergence, or physical-robot claim is made.",
+      "reason": "An owned native prepare submission first exposed the absent ray-node container and was cancelled after evidence collection. A replacement image then passed private immutable pull and nonroot bootstrap qualification, and a second submission passed target image preflight and GPU readiness but was rejected before controller launch because no-new-privileges blocked SkyPilot's required sudo bootstrap. The corrected pod contract is now validated and a fresh native run is required. No simulator metric, benchmark, convergence, or physical-robot claim is made.",
       "evidence": [
         "docs/workbench/openvla-oft.md"
       ]
