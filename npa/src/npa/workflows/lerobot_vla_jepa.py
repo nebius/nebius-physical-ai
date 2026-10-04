@@ -75,6 +75,7 @@ def _snapshot(repo: str, revision: str, repo_type: str, cache_root: Path) -> Pat
         / "npa-vla-jepa-ready"
         / f"{repo.replace('/', '--')}--{revision}.json"
     )
+    marker.parent.mkdir(parents=True, exist_ok=True)
     temporary = marker.with_suffix(".tmp")
     write_json(
         temporary,

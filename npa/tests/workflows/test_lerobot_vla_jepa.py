@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -109,6 +110,32 @@ def test_native_commands_use_local_immutable_model_snapshots(tmp_path: Path) -> 
     assert f"--dataset.revision={vla.LIBERO_REVISION}" in command
     assert "--wandb.enable=false" in command
     assert "--wandb.mode=disabled" in command
+
+
+def test_snapshot_creates_its_atomic_ready_marker_parent(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The first real runtime fetch must not depend on a pre-created cache marker."""
+    snapshot = tmp_path / "pinned-snapshot"
+    snapshot.mkdir()
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        SimpleNamespace(snapshot_download=lambda **_: str(snapshot)),
+    )
+
+    assert (
+        vla._snapshot("author/payload", "deadbeef", "model", tmp_path / "cache")
+        == snapshot
+    )
+    marker = (
+        tmp_path / "cache" / "npa-vla-jepa-ready" / "author--payload--deadbeef.json"
+    )
+    assert json.loads(marker.read_text(encoding="utf-8")) == {
+        "repo": "author/payload",
+        "repo_type": "model",
+        "revision": "deadbeef",
+    }
 
 
 def test_evaluation_rejects_missing_or_out_of_range_native_success(
