@@ -66,11 +66,39 @@ docker run --rm --entrypoint /bin/bash "$base_image" -c '\
   test "$(sha256sum /opt/openwam-libero-source/LICENSE | awk "{print \$1}")" = e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6; \
   /opt/openwam-libero/bin/python -c "import libero, mujoco; assert mujoco.__version__ == \"3.3.2\""'
 
+# The scanner examines every OCI layer. Create a task-owned flattened base so
+# bytes removed for this camera-only profile cannot survive in a parent layer.
+flat_suffix=${source_sha:0:12}
+flat_container="npa-libero-plus-assets-flat-$flat_suffix"
+flat_image="npa-libero-plus-assets-flat:$flat_suffix"
+if docker container inspect "$flat_container" >/dev/null 2>&1 || \
+  docker image inspect "$flat_image" >/dev/null 2>&1; then
+  printf '%s\n' 'refusing to reuse an existing flattened private base' >&2
+  exit 64
+fi
+cleanup_flat_base() {
+  docker container rm -f "$flat_container" >/dev/null 2>&1 || true
+  docker image rm "$flat_image" >/dev/null 2>&1 || true
+}
+trap cleanup_flat_base EXIT
+docker create --name "$flat_container" --user root --entrypoint /bin/bash \
+  "$base_image" -c '\
+    set -euo pipefail; \
+    rm -f \
+      /opt/openwam-venv/lib/python3.12/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2 \
+      /opt/openwam-libero/lib/python3.10/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2; \
+    test ! -e /opt/openwam-venv/lib/python3.12/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2; \
+    test ! -e /opt/openwam-libero/lib/python3.10/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2' \
+  >/dev/null
+docker start -a "$flat_container" >/dev/null
+docker export "$flat_container" | docker import - "$flat_image" >/dev/null
+docker rm "$flat_container" >/dev/null
+
 docker buildx build \
   --platform linux/amd64 \
   --provenance=mode=max \
   --sbom=true \
-  --build-arg "BASE_IMAGE=$base_image" \
+  --build-arg "BASE_IMAGE=$flat_image" \
   --build-arg "NPA_SOURCE_SHA=$source_sha" \
   --build-arg "SOURCE_DATE_EPOCH=$source_epoch" \
   --label "org.opencontainers.image.revision=$source_sha" \
