@@ -244,7 +244,7 @@ def test_benchmark_deduplicates_resolved_models_in_caller_order(
                         "id": "negative",
                         "rollout": str(tmp_path / "negative.png"),
                         "expected_label": False,
-                    }
+                    },
                 ]
             }
         )
