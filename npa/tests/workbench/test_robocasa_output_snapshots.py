@@ -22,7 +22,11 @@ def _snapshot(root, path, content=b"verified snapshot"):
     )
 
 
-@pytest.mark.parametrize("content", [b"", b"verified snapshot", b"x" * 1048580])
+@pytest.mark.parametrize(
+    "content",
+    [b"", b"verified snapshot", b"x" * 1048580],
+    ids=["empty", "small", "over-read-chunk"],
+)
 def test_snapshot_is_private_seekable_and_closed(tmp_path, content):
     source = tmp_path / "output.bin"
     source.write_bytes(content)
