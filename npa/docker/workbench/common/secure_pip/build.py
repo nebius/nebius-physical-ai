@@ -86,7 +86,10 @@ def extract_source(archive: Path, destination: Path, commit: str) -> Path:
 
 
 def run(argv: list[str], *, cwd: Path, env: dict[str, str]) -> None:
-    subprocess.run(argv, cwd=cwd, env=env, check=True)
+    # Wheel ZIP member modes otherwise inherit the caller's umask and change
+    # the intermediate digest recorded by the final derivative. Only this
+    # child uses the fixed mask; task-owned work/output directories stay 0700.
+    subprocess.run(argv, cwd=cwd, env=env, check=True, umask=0o022)
 
 
 def build(work: Path, output: Path) -> Path:
