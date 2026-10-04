@@ -1,0 +1,24 @@
+{
+  "frame": "ordinary-native.png",
+  "frame_sha256": "248a5ed22737c81f6ed1c365bea461757eae7fc3b54bb7813c1f4f58ea4ebf43",
+  "frame_exists": true,
+  "capture_mechanism": "ffmpeg x11grab of the whole window, no --screenshot-to",
+  "outer_status": "0",
+  "harness_log": [
+    "window:      0x200002 \"Rerun Viewer\": (\"\" \"rerun\")  1600x1200+0+0  +0+0",
+    "requested: 1024x768  actual: 1024x768 at +0+0",
+    "ffmpeg_rc=0",
+    "captured_size=1024x768",
+    "viewer_rc=143"
+  ],
+  "viewer_log": [
+    "[2026-09-21T04:49:26Z WARN  winit::platform_impl::linux::x11::xdisplay] error setting XSETTINGS; Xft options won't reload automatically",
+    "[2026-09-21T04:49:26Z WARN  winit::platform_impl::linux::x11::util::randr] XRandR reported that the display's 0mm in size, which is certifiably insane",
+    "[2026-09-21T04:49:26Z INFO  winit::platform_impl::linux::x11::window] Guessed window scale factor: 1",
+    "[2026-09-21T04:49:26Z WARN  re_renderer::context] Software rasterizer detected - expect poor performance. See: https://www.rerun.io/docs/overview/installing-rerun/troubleshooting#graphics-issues",
+    "[2026-09-21T04:49:26Z INFO  re_renderer::context] wgpu adapter backend: Vulkan, device_type: Cpu, name: \"llvmpipe (LLVM 15.0.7, 256 bits)\", driver: \"llvmpipe\", driver_info: \"Mesa 23.2.1-1ubuntu3.1~22.04.4 (LLVM 15.0.7)\"",
+    "[2026-09-21T04:49:26Z INFO  re_grpc_server] Listening for gRPC connections on 0.0.0.0:9876. Connect by running `rerun --connect rerun+http://127.0.0.1:9876/proxy`",
+    "[2026-09-21T04:49:26Z INFO  re_data_loader::load_file] Loading \"/tmp/honest/point_cloud.rrd\"\u2026",
+    "X connection to :99 broken (explicit kill or server shutdown)."
+  ]
+}
