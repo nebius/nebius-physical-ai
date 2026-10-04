@@ -344,6 +344,17 @@
       "notes": "This integration is scoped to eight RTX PRO 6000 one-GPU nodes. CUDA-major compatibility is not inferred across sm_120 and datacenter Blackwell sm_100/sm_103, and no B200 prerequisite run is needed for the requested RTX PRO training."
     },
     {
+      "name": "npa-openvla-oft",
+      "dockerfile": "openvla-oft/Dockerfile",
+      "build_script": "openvla-oft/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-gpu",
+      "redistribution": "unvalidated",
+      "source_compiled_extensions": [],
+      "smoke": "Run the real five-stage OFT LIBERO workflow on an exact private image: deterministic RLDS preparation, upstream continuous-action/proprioception fine-tuning, closed-loop MP4 rollout, held-out numerical evaluation, and factual SVG/CSV comparison artifacts.",
+      "notes": "The neutral bootstrap was privately built and pull-qualified, but its OpenVLA-OFT source, custom Transformers runtime, CUDA/Torch runtime, OpenVLA base weights, OFT adapters, LIBERO RLDS payload, simulator assets, credentials, caches, and outputs are runtime-only. No B200 or B300 compatibility, native training, rollout, benchmark, or public-image result is claimed; the required target workflow remains pending."
+    },
+    {
       "name": "npa-alpamayo2-super",
       "dockerfile": "alpamayo2-super/Dockerfile",
       "build_script": "alpamayo2-super/build.sh",
