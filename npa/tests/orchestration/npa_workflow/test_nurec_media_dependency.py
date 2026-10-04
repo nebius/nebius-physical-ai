@@ -2,8 +2,8 @@
 
 from pathlib import Path
 import shlex
+import subprocess
 import sys
-from types import ModuleType
 
 import pytest
 
@@ -58,32 +58,57 @@ def test_nurec_decoder_setup_does_not_change_other_tool_setup():
     assert "nurec runtime deps ready" not in setup
 
 
-def test_nurec_probe_requires_decoder_import(monkeypatch, capsys):
-    for name in ("ncore", "rerun"):
-        monkeypatch.setitem(sys.modules, name, ModuleType(name))
-    monkeypatch.setitem(sys.modules, "imageio_ffmpeg", None)
-    with pytest.raises(ModuleNotFoundError, match="imageio_ffmpeg"):
-        exec(_probe(), {})
-    assert "nurec runtime deps ready" not in capsys.readouterr().out
+def _run_probe(tmp_path: Path, *, setup: str = "") -> subprocess.CompletedProcess[str]:
+    """Run the generated runtime probe in its own recorded Python interpreter."""
+    script = tmp_path / "nurec_dependency_probe.py"
+    script.write_text(
+        "import sys\n"
+        "from types import ModuleType\n"
+        "for name in ('ncore', 'rerun'):\n"
+        "    sys.modules[name] = ModuleType(name)\n" + setup + "\n" + _probe() + "\n"
+    )
+    return subprocess.run(
+        [sys.executable, "-I", str(script)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
-def test_nurec_probe_requires_actual_ffmpeg_executable(monkeypatch, capsys):
-    import imageio_ffmpeg
-
-    for name in ("ncore", "rerun"):
-        monkeypatch.setitem(sys.modules, name, ModuleType(name))
-
-    def unavailable():
-        raise RuntimeError("decoder executable unavailable")
-
-    monkeypatch.setattr(imageio_ffmpeg, "get_ffmpeg_exe", unavailable)
-    with pytest.raises(RuntimeError, match="decoder executable unavailable"):
-        exec(_probe(), {})
-    assert "nurec runtime deps ready" not in capsys.readouterr().out
+def test_nurec_probe_requires_decoder_import(tmp_path):
+    result = _run_probe(tmp_path, setup="sys.modules['imageio_ffmpeg'] = None\n")
+    assert result.returncode != 0
+    assert "ModuleNotFoundError" in result.stderr
+    assert "imageio_ffmpeg" in result.stderr
+    assert "nurec runtime deps ready" not in result.stdout
 
 
-def test_nurec_probe_accepts_installed_decoder(monkeypatch, capsys):
-    for name in ("ncore", "rerun"):
-        monkeypatch.setitem(sys.modules, name, ModuleType(name))
-    exec(_probe(), {})
-    assert capsys.readouterr().out == "nurec runtime deps ready\n"
+def test_nurec_probe_requires_actual_ffmpeg_executable(tmp_path):
+    result = _run_probe(
+        tmp_path,
+        setup=(
+            "import imageio_ffmpeg\n"
+            "def unavailable():\n"
+            "    raise RuntimeError('decoder executable unavailable')\n"
+            "imageio_ffmpeg.get_ffmpeg_exe = unavailable\n"
+        ),
+    )
+    assert result.returncode != 0
+    assert "RuntimeError: decoder executable unavailable" in result.stderr
+    assert "nurec runtime deps ready" not in result.stdout
+
+
+def test_nurec_probe_accepts_installed_decoder(tmp_path):
+    result = _run_probe(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "nurec runtime deps ready\n"
+
+
+def test_nurec_probe_ignores_ambient_pythonpath(tmp_path, monkeypatch):
+    (tmp_path / "imageio_ffmpeg.py").write_text(
+        "raise RuntimeError('ambient decoder must not replace installed package')\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    result = _run_probe(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "nurec runtime deps ready\n"
