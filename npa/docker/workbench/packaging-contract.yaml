@@ -165,6 +165,9 @@ redistribution:
 images:
   openvla-oft:
     dockerfile: openvla-oft/Dockerfile
+    # Numeric UID is required for Kubernetes runAsNonRoot admission of the
+    # SkyPilot task container; keep this exact final-image identity pinned.
+    final_user: "1000"
     tier: job
     redistribution: unvalidated
     notes: >-

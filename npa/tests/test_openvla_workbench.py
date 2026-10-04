@@ -191,7 +191,7 @@ def test_neutral_image_preserves_nonroot_access_to_its_notices() -> None:
         "install -d -m 0755 -o root -g root /usr/share/doc/npa-openvla-oft"
         in dockerfile
     )
-    assert "USER 1000:1000" in dockerfile
+    assert "\nUSER 1000\n" in dockerfile
     assert 'CMD ["sleep", "infinity"]' in dockerfile
 
 
