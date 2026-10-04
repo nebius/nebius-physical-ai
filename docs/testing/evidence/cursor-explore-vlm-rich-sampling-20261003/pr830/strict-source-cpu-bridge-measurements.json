@@ -1,0 +1,60 @@
+{
+  "schema": "cursor-explore.vlm-sampling-source-cpu-bridge/v1",
+  "pr": 830,
+  "original_inference": {
+    "head": "a52fb1b4e55c0114e8eb37204dfcbc42604e3be9",
+    "tree": "cf8c3ef9b80635221dbda03ea9e83c50869f8f03",
+    "request_integration_main": "88fd1b1356c942745244e49d2316800634c530ae",
+    "actual_calls": 6,
+    "scores": [1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    "threshold": 0.8,
+    "strict_zero_negative_count": 4,
+    "gray_rationale_error_retained": true,
+    "calibrated_model_quality_accepted": false
+  },
+  "cpu_execution": {
+    "head": "c699564d9dd7b9dc7da9674bfbbb9675bb7d0cf1",
+    "tree": "e7c9c19f8384bda677dee94f624185cdd9b831da",
+    "integration_main": "09548f6939e0216d15b76819c6cc9d7537bf8e40",
+    "replayed_original_responses": 6,
+    "network_calls": 0,
+    "new_provider_calls": 0,
+    "original_fields_equal_except": ["generated_at", "evidence.request.requested_at", "evidence.provider.latency_s"],
+    "new_model_match_enforcement_literal_true": true,
+    "legacy_absent_field_positive_controls": 6,
+    "invalid_enforcement_whole_grade_refusals": 30,
+    "canonical_writer_and_whole_grade": {"promote": 2, "loop_back": 4},
+    "affected": {"passed": 1466, "skipped": 1, "failed": 0, "warnings": 8, "full": false},
+    "precheck_passed": 270,
+    "source_modules_packages_before_after_stable": true
+  },
+  "exact_candidate_source_bridge": {
+    "head": "6b7d0ed16495787735d0bcccb2495ffbb83cae0b",
+    "tree": "451dab0d1df166a14d93c352c17917e23448d8d7",
+    "execution_base": "09548f6939e0216d15b76819c6cc9d7537bf8e40",
+    "only_changed_file_from_cpu_execution": "npa/tests/cli/test_main.py",
+    "production_docs_skills_workflows_equal": true,
+    "own_precheck_passed": 270,
+    "independent_ai_source_runner_review_accepted": true,
+    "full_pass_claimed": false,
+    "current_published_head_CI_claimed": false
+  },
+  "candidate_source_bindings": [
+    {"path": "npa/src/npa/workbench/vlm_eval/__init__.py", "sha256": "999de58c4b8441842142cb5dc4d8d5d06c4a0138843ae88e4e2ac85041deac95"},
+    {"path": "npa/src/npa/workbench/vlm_eval/visual_review.py", "sha256": "171061e1cf4f8b5e08481a609628e34fef22743b371b177a4da02555ed2f1722"},
+    {"path": "npa/src/npa/workbench/vlm_eval/visual_review_schema.py", "sha256": "adbd42173aa5b5bea303f3d57e94004a975623c13301628ba0a4047babd476c2"},
+    {"path": "npa/src/npa/workflows/vlm_grade_evidence.py", "sha256": "0bcb218a48299e475d1ff538fea17f8767bffe8db8e975c7110498d65bccd581"},
+    {"path": "npa/src/npa/clients/token_factory.py", "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"},
+    {"path": "npa/tests/cli/test_main.py", "sha256": "31198f4d79914a118cb2d3b02126914dda8918ddb40b47a673f9300e23d9135d"},
+    {"path": "npa/tests/cli/test_agent.py", "sha256": "f276cabf9d06df8bb4df8ff3af3914f75ae568bae611e65da90acb2c4ebf1ac7"}
+  ],
+  "scope_limits": [
+    "CPU retained-response replay is not new-head inference.",
+    "Compatible-parser-v1 historical self-hosted reports remain archival/ineligible; no retagging.",
+    "The original39 full failed; a52 and2ba aborted with unknown terminal populations.",
+    "A running6b full with observed inherited native fixture waits is not a passing gate.",
+    "Gray-white rationale errors, failed SO100 improvement and six historical writer failures remain.",
+    "No robot, causal, whole-episode, safety or calibrated model/sampler quality acceptance.",
+    "Final actual main integration, published head CI/signatures/proof/lifecycle are separate."
+  ]
+}
