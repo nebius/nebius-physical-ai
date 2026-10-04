@@ -98,6 +98,11 @@ def test_five_stage_contract_preserves_action_controller_boundary_and_real_artif
     monkeypatch.setattr(
         workflow, "_require_libero_checkpoint_contract", lambda role, checkpoint: None
     )
+    monkeypatch.setattr(
+        workflow,
+        "_write_noninteractive_libero_config",
+        lambda _: tmp_path / "libero-config",
+    )
     runtime = {
         "source": workflow.DM05_IMPLEMENTATION,
         "config_class": "lerobot.policies.dm05.configuration_dm05.DM05Config",
@@ -108,7 +113,8 @@ def test_five_stage_contract_preserves_action_controller_boundary_and_real_artif
     def native(command, *args, **kwargs):
         if command[0] != "lerobot-eval":
             return native_run(command, *args, **kwargs)
-        assert kwargs == {"check": True}
+        assert kwargs["check"] is True
+        assert "LIBERO_CONFIG_PATH" in kwargs["env"]
         output = Path(
             next(
                 item.split("=", 1)[1]
@@ -293,3 +299,26 @@ def test_generic_predecessor_is_rejected_without_an_action_state_adapter(tmp_pat
     with pytest.raises(ValueError, match="not LIBERO-compatible"):
         workflow._require_libero_checkpoint_contract("baseline", baseline)
     workflow._require_libero_checkpoint_contract("candidate", candidate)
+
+
+def test_libero_config_uses_installed_assets_without_interactive_setup(
+    tmp_path, monkeypatch
+):
+    package_root = tmp_path / "site-packages" / "libero"
+    benchmark_root = package_root / "libero"
+    for name in ("bddl_files", "init_files", "assets"):
+        (benchmark_root / name).mkdir(parents=True)
+    monkeypatch.setattr(
+        workflow.importlib.util,
+        "find_spec",
+        lambda name: types.SimpleNamespace(
+            submodule_search_locations=[str(package_root)]
+        ),
+    )
+
+    config_root = workflow._write_noninteractive_libero_config(tmp_path / "run")
+
+    config = json.loads((config_root / "config.yaml").read_text())
+    assert config["benchmark_root"] == str(benchmark_root)
+    assert config["assets"] == str(benchmark_root / "assets")
+    assert Path(config["datasets"]).is_dir()

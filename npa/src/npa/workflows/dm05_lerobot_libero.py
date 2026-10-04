@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -234,6 +235,49 @@ def _require_libero_checkpoint_contract(role: str, checkpoint: Path) -> None:
         raise ValueError("LIBERO candidate checkpoint must preserve absolute actions")
 
 
+def _write_noninteractive_libero_config(workspace: Path) -> Path:
+    """Point LIBERO at installed benchmark files without an interactive prompt.
+
+    The upstream LIBERO package creates ``~/.libero/config.yaml`` by asking an
+    interactive question on first import. A SkyPilot stage has no stdin, so use
+    a run-local config that points to already-installed upstream benchmark
+    files. This neither accepts terms nor downloads or redistributes datasets;
+    a missing installed closure remains an explicit runtime error.
+    """
+
+    spec = importlib.util.find_spec("libero")
+    roots = getattr(spec, "submodule_search_locations", None) if spec else None
+    if not roots:
+        raise RuntimeError("LIBERO package is not installed in the evaluation runtime")
+    libero_root = Path(next(iter(roots))) / "libero"
+    required = {
+        "bddl_files": libero_root / "bddl_files",
+        "init_states": libero_root / "init_files",
+        "assets": libero_root / "assets",
+    }
+    missing = [name for name, path in required.items() if not path.is_dir()]
+    if missing:
+        raise RuntimeError(
+            "Installed LIBERO benchmark closure is incomplete; missing "
+            + ", ".join(sorted(missing))
+        )
+    config_root = workspace / "libero-config"
+    config_root.mkdir(parents=True)
+    datasets = workspace / "libero-datasets"
+    datasets.mkdir()
+    write_json(
+        config_root / "config.yaml",
+        {
+            "benchmark_root": str(libero_root),
+            "bddl_files": str(required["bddl_files"]),
+            "init_states": str(required["init_states"]),
+            "datasets": str(datasets),
+            "assets": str(required["assets"]),
+        },
+    )
+    return config_root
+
+
 def _read_dm05_runtime_manifest() -> dict[str, Any]:
     """Require the exact source provenance emitted by the private image recipe."""
     manifest_path = Path(
@@ -368,7 +412,11 @@ def run_rollout(protocol_root: Path, output: Path, *, role: str, device: str) ->
         _require_libero_checkpoint_contract(role, checkpoint)
         runtime = _require_dm05_policy_runtime()
         command = rollout_command(protocol, checkpoint, output, device)
-        subprocess.run(command, check=True)
+        environment = os.environ.copy()
+        environment["LIBERO_CONFIG_PATH"] = str(
+            _write_noninteractive_libero_config(Path(temporary))
+        )
+        subprocess.run(command, check=True, env=environment)
     info_path = output / "native" / "eval_info.json"
     if not info_path.is_file():
         raise RuntimeError("lerobot-eval did not write its native eval_info.json")

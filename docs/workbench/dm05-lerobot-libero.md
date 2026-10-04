@@ -148,3 +148,12 @@ an uncredited action/state adapter or calling an invalid result a matched
 baseline. A complete comparison needs a released, provenance-pinned 8/7
 LIBERO-compatible predecessor or a separately documented native OpenDM
 baseline; neither is substituted automatically.
+
+### LIBERO runtime assets
+
+Upstream LIBERO prompts interactively to create its first user-level path
+configuration. The private noninteractive workflow instead writes a run-local
+`LIBERO_CONFIG_PATH/config.yaml` pointing only to the already-installed upstream
+LIBERO benchmark closure (BDDL files, initialization states, and assets). It
+does not answer a terms prompt, add an acceptance flag, or bake/download a
+dataset. A missing benchmark closure fails the rollout explicitly.
