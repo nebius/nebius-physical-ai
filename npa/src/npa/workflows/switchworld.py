@@ -1407,7 +1407,10 @@ def _build_rrd(
     if verified.returncode:
         raise SwitchWorldError(f"Rerun verification failed: {verified.stderr[-500:]}")
     inspected = subprocess.run(
-        [sys.executable, "-m", "rerun", "rrd", "print", "-vv", str(output)],
+        # The default RRD summary contains entity paths.  ``-vv`` expands image
+        # payloads into the captured text stream and can make a valid recording
+        # appear wedged before its artifact upload begins.
+        [sys.executable, "-m", "rerun", "rrd", "print", str(output)],
         capture_output=True,
         text=True,
         check=False,

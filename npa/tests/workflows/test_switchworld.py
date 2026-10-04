@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+import inspect
 import json
 from pathlib import Path
 import subprocess
@@ -275,6 +276,7 @@ def test_pair_and_rrd_use_decoded_media_not_manifests(tmp_path: Path) -> None:
     assert rrd["frame_count"] == 4
     assert rrd["rerun_verify"] == "passed"
     assert rrd["rerun_inspection"] == "passed"
+    assert '"-vv"' not in inspect.getsource(switchworld._build_rrd)
 
 
 def test_real_pixel_cross_check_rejects_disconnected_metrics(tmp_path: Path) -> None:
