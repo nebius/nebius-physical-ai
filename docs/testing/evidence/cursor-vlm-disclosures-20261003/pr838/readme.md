@@ -56,3 +56,17 @@ retuned, or treated as model-quality acceptance. This bridge is source evidence
 only: held full-fixture prerequisites, independent output review, anonymous
 publication verification, current-head CI, and coordinator lifecycle work remain
 separate.
+
+## Main4603 agency-calibration source bridge
+
+[Main4603 source bridge](main4603-source-bridge.json) records the exact source
+integration of landed agency-calibration and benchmark-input contracts. It names
+the changed evaluator surface rather than claiming evaluator equality, retains
+the fail-closed two-class and unique-ID checks, explicit-task precedence, and
+the append-only metrics constructor. Four Token Factory interfaces, the grade
+consumer, and storage client are byte-bound across main44 to main4603. The
+original fixed four-response evidence remains scores 0/0/0/0 with TN2/FN2; it
+was not rerun, retuned, or promoted as model-quality evidence. This is not a
+test, provider, full, current-head CI, or readiness result; held fixture/runner,
+independent-output-review, publication, and coordinator lifecycle requirements
+remain separate.
