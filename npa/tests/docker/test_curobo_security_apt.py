@@ -3,7 +3,6 @@
 import copy
 import hashlib
 import importlib.util
-import io
 import json
 from pathlib import Path
 
@@ -47,9 +46,7 @@ def test_manifest_retains_exact_binary_and_corresponding_source_inputs(manifest)
 def test_unexpected_manifest_rejected_before_network_or_process(
     manifest, monkeypatch, mutation
 ):
-    monkeypatch.setattr(
-        installer.urllib.request, "urlopen", lambda *_: pytest.fail("network")
-    )
+    monkeypatch.setattr(installer, "_download_https", lambda *_: pytest.fail("network"))
     monkeypatch.setattr(
         installer.subprocess, "run", lambda *_a, **_k: pytest.fail("process")
     )
@@ -79,11 +76,9 @@ def test_installer_verifies_bytes_metadata_and_final_state(
         row["bytes"] = len(data[row["url"]])
     calls = []
     monkeypatch.setattr(
-        installer.urllib.request,
-        "urlopen",
-        lambda url: io.BytesIO(
-            data[url] + (b"corrupt" if failure == "digest" else b"")
-        ),
+        installer,
+        "_download_https",
+        lambda url: data[url] + (b"corrupt" if failure == "digest" else b""),
     )
 
     def check_output(argv, **kwargs):

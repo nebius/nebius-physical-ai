@@ -2,13 +2,13 @@
 
 import argparse
 import hashlib
+import http.client
 import json
 from pathlib import Path
 import re
 import subprocess
 import tempfile
 from urllib.parse import urlsplit
-import urllib.request
 
 
 def verify_manifest(manifest: dict) -> list[dict]:
@@ -34,38 +34,45 @@ def verify_manifest(manifest: dict) -> list[dict]:
     return rows
 
 
+def _download_https(url: str) -> bytes:
+    """Fetch a manifest-validated snapshot path without redirects."""
+    parsed = urlsplit(url)
+    connection = http.client.HTTPSConnection(parsed.hostname)
+    try:
+        connection.request("GET", parsed.path)
+        with connection.getresponse() as response:
+            if response.status != 200:
+                raise ValueError("Security package HTTPS response is not 200")
+            return response.read()
+    finally:
+        connection.close()
+
+
+def _package_file(row: dict, scratch: Path) -> Path:
+    """Verify exact downloaded bytes and Debian control identity before use."""
+    data = _download_https(row["url"])
+    if len(data) != row["bytes"] or hashlib.sha256(data).hexdigest() != row["sha256"]:
+        raise ValueError("Security package bytes differ")
+    path = scratch / Path(urlsplit(row["url"]).path).name
+    path.write_bytes(data)
+    fields = subprocess.check_output(
+        ["dpkg-deb", "--field", str(path), "Package", "Version", "Architecture"],
+        text=True,
+    )
+    if fields != (
+        f"Package: {row['name']}\nVersion: {row['version']}\n"
+        f"Architecture: {row['architecture']}\n"
+    ):
+        raise ValueError("Security package control identity differs")
+    return path
+
+
 def install(manifest: dict) -> dict:
+    """Install only verified pinned binaries and verify their installed state."""
     rows = verify_manifest(manifest)
     # The directory is owned by this invocation and never exported as a layer.
     with tempfile.TemporaryDirectory(prefix="npa-curobo-security-") as scratch:
-        paths = []
-        for row in rows:
-            with urllib.request.urlopen(row["url"]) as response:
-                data = response.read()
-            if (
-                len(data) != row["bytes"]
-                or hashlib.sha256(data).hexdigest() != row["sha256"]
-            ):
-                raise ValueError("Security package bytes differ")
-            path = Path(scratch) / Path(urlsplit(row["url"]).path).name
-            path.write_bytes(data)
-            fields = subprocess.check_output(
-                [
-                    "dpkg-deb",
-                    "--field",
-                    str(path),
-                    "Package",
-                    "Version",
-                    "Architecture",
-                ],
-                text=True,
-            )
-            if fields != (
-                f"Package: {row['name']}\nVersion: {row['version']}\n"
-                f"Architecture: {row['architecture']}\n"
-            ):
-                raise ValueError("Security package control identity differs")
-            paths.append(str(path))
+        paths = [str(_package_file(row, Path(scratch))) for row in rows]
         # No resolver, shell interpolation, unrelated package upgrade or IAM.
         subprocess.run(["dpkg", "--install", *paths], check=True)
     installed = subprocess.check_output(
