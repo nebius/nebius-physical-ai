@@ -29,7 +29,7 @@ COPY docker/workbench/common/secure_pip/ /build/secure_pip/
 RUN python /build/secure_pip/build.py \
       --work-dir /build/work --output-dir /build/output \
     && echo \
-      "422c172b8b7d4fd1363e56a105cc6cc3ed50d16a7729eb5e2cba7265a6f0ca20  /build/output/pip-26.2.1+npa.1-py3-none-any.whl" \
+      "8e79a062e2df1f4569f4af1b2bc6d74a50c145ae8ff2a61b4cfb0b84979a5489  /build/output/pip-26.2.1+npa.1-py3-none-any.whl" \
       | sha256sum --check --strict -
 
 FROM nvidia/cuda:12.9.1-base-ubuntu22.04@sha256:59436e8ac61921052d8f420be8b8cb8b117f1d7cc643397a289e37aaa0b83ea1
@@ -135,7 +135,7 @@ COPY --chmod=0644 docker/workbench/robocasa/pip-bootstrap.lock \
     /opt/robocasa/locks/pip-bootstrap.lock
 RUN python -I -c "import importlib.util; assert importlib.util.find_spec('pip') is None; assert importlib.util.find_spec('setuptools') is None" \
     && echo \
-      "422c172b8b7d4fd1363e56a105cc6cc3ed50d16a7729eb5e2cba7265a6f0ca20  /opt/robocasa/pip-bootstrap/pip-26.2.1+npa.1-py3-none-any.whl" \
+      "8e79a062e2df1f4569f4af1b2bc6d74a50c145ae8ff2a61b4cfb0b84979a5489  /opt/robocasa/pip-bootstrap/pip-26.2.1+npa.1-py3-none-any.whl" \
       | sha256sum --check --strict - \
     && PIP_CONFIG_FILE=/dev/null python \
       /opt/robocasa/pip-bootstrap/pip-26.2.1+npa.1-py3-none-any.whl/pip \
