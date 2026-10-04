@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import shlex
+from ipaddress import IPv4Address
 from pathlib import Path
 
 import pytest
@@ -104,14 +105,15 @@ def _assert_clean_root_contract(text: str) -> None:
     assert actual["EXPOSE"] == "8791"
     assert actual["Env"]["NPA_IMAGE_SOURCE_SHA"] == SOURCE_SHA
     assert actual["Labels"]["org.opencontainers.image.revision"] == SOURCE_SHA
-    assert actual["CMD"] == [
+    assert actual["CMD"][:3] == [
         "uvicorn",
         "npa.workbench.robocasa.service:app",
         "--host",
-        "0.0.0.0",
-        "--port",
-        "8791",
     ]
+    # This reads metadata, not a socket. Container ingress requires the IPv4
+    # unspecified address; loopback, hostnames and IPv6 are not equivalent.
+    assert IPv4Address(actual["CMD"][3]).is_unspecified
+    assert actual["CMD"][4:] == ["--port", "8791"]
     assert (
         "--interval=30s --timeout=5s --start-period=15s --retries=3"
         in actual["HEALTHCHECK"]
@@ -120,6 +122,15 @@ def _assert_clean_root_contract(text: str) -> None:
 
 def test_clean_final_root_preserves_exact_runtime_configuration():
     _assert_clean_root_contract((IMAGE / "Dockerfile").read_text())
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::", "localhost"])
+def test_clean_root_contract_rejects_non_ingress_host_in_both_stages(host):
+    text = (IMAGE / "Dockerfile").read_text()
+    changed, count = re.subn(r'("--host",\s*)"[^"]+"', rf'\1"{host}"', text)
+    assert count == 2
+    with pytest.raises((AssertionError, ValueError)):
+        _assert_clean_root_contract(changed)
 
 
 @pytest.mark.parametrize(
