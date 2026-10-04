@@ -1,14 +1,13 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "8e173995610b121f9bb2dc373e7d2bffffa3b87c93f3fd37251dd835074f27c0",
+  "workflow_sha256": "7857e2a5e4a81f35af27308707f38c9ad22c4665b7b57ddf79b86a9099be5948",
   "planning": {
     "validation": {
       "status": "verified",
       "reason": "The final YAML passed validate-spec and a five-task production render check. GPU type, count, and runtime image resolve through run configuration rather than a fixed target request.",
       "evidence": [
         "npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --json (2026-10-04)",
-        "npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --run-id switchworld-configurable-gpu-readiness-20261004 --check-render --json (2026-10-04; render sha256 a35cce1ba46e62e8ff89ab631bc551d4da044a573ac892245ecdc23a83128435)",
-        "npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --run-id switchworld-private-runtime-config-20261004 --var runtime_image=registry.invalid/switchworld@sha256:<64-hex> --check-render --json (2026-10-04; five tasks resolve the supplied image; render sha256 369545eeff5eb97a211db5e113f3efd1754d84307e4d8e5de06703526a964318)",
+        "npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --run-id switchworld-runtime-launcher-readiness-20261004 --var runtime_image=registry.invalid/switchworld@sha256:<64-hex> --check-render --json (2026-10-04; five tasks resolve the supplied image and pinned runtime launcher; render sha256 842537076c624383d2f0d2a30179d365124e9a693b1fbdf1ed2263a131204498)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/independent-verification-20261003.json"
       ]
     },
@@ -16,7 +15,7 @@
       "status": "verified",
       "reason": "The resolved five-stage plan connects real case preparation, native baseline inference, canonical adapter inference, decoded-frame measurement, and paired MP4/RRD visualization without a mock metric backend; the evaluator output is independently checked against decoded pixels.",
       "evidence": [
-        "npa/tests/workflows/test_switchworld.py::test_workflow_has_five_connected_real_stages (7 passed, 2026-10-04)",
+        "npa/tests/workflows/test_switchworld.py::test_workflow_has_five_connected_real_stages (9 passed, 2026-10-04)",
         "npa/tests/workflows/test_switchworld.py::test_real_pixel_cross_check_rejects_disconnected_metrics",
         "docs/workbench/switchworld.md",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/source-comparison.md",
@@ -69,7 +68,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The approved private target has verified provider identity, RBAC, GPU capacity, and the selected exact-digest image bootstrap. The native input bundle is staged, but native generation and final artifact readback have not run.",
+      "reason": "The approved private target has verified provider identity, RBAC, GPU capacity, and the selected exact-digest image bootstrap. The native input bundle is staged. An admitted preparation stage exposed that generic image Python cannot import runtime-only PyTorch; the workflow now uses the documented Wan runtime launcher, but native generation and final artifact readback remain unverified.",
       "evidence": [
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/execution-route.json (private operator evidence, 2026-10-04)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/gpu-discovery-20261004-private.json",

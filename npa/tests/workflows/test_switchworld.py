@@ -218,7 +218,9 @@ def test_workflow_has_five_connected_real_stages() -> None:
     assert states["emit-paired-artifacts"]["terminal"] is True
 
     for state in states.values():
-        command = " ".join(state["run"]["argv"])
+        argv = state["run"]["argv"]
+        command = " ".join(argv)
+        assert argv[:3] == ["wan-runtime", "exec", "python3"]
         assert "npa.workflows.switchworld" in command
         assert "echo" not in command
         assert "mock" not in command.lower()

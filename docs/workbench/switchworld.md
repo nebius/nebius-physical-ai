@@ -13,6 +13,11 @@ The default `runtime_image` remains the catalog LingBot image. An operator may
 select a separately qualified private, immutable runtime with
 `--var runtime_image=...`; this does not suppress the workflow's required NPA
 source overlay and is not a public-image publication mechanism.
+Every stage invokes `wan-runtime exec python3`, which installs the pinned
+CUDA/PyTorch closure into the operator-writable Wan runtime cache before real
+case validation, generation, measurement, or visualization. The private image
+still contains no CUDA/PyTorch payload; this is the inherited Wan runtime-fetch
+mechanism, not a new SwitchWorld acceptance flag.
 Preparation fully decodes the target, verifies that the condition tensor agrees
 with its view schedule and switch index, and extracts actual before/after-switch
 context frames. It does not invent controls or frames.
@@ -138,8 +143,11 @@ claim.
 
 Local YAML/render validation and real H.264 pairing, decoding, RRD writing, and
 RRD verification tests have passed. A lawful original MuJoCo-derived case has
-passed strict native condition/control timing checks, but its manager-owned real
-VAE latent and UMT5 context encodings are not terminal. A real GPU workflow
-therefore remains unverified until that bundle, access, storage, pull,
-GPU-placement, full run, and artifact readback checks all complete. It must not
-be called a benchmark, convergence, or physical-robot result before then.
+passed strict native condition/control timing checks, and its real VAE latent
+and UMT5 context encodings have been staged with private readback verification.
+The first admitted native run stopped in preparation because its generic system
+interpreter did not expose the runtime-only PyTorch closure. The workflow now
+uses the existing `wan-runtime exec` launcher for every stage; that corrected
+path still requires a new native run, GPU-stage completion, and final artifact
+readback. It must not be called a benchmark, convergence, or physical-robot
+result before then.

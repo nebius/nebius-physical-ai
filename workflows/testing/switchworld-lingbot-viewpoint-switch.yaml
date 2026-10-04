@@ -60,6 +60,11 @@ states:
       before/after-switch context frames.
     run:
       argv:
+        # Keep CUDA/PyTorch runtime bytes out of the private image. This exact
+        # launcher installs the pinned Wan closure into the writable runtime
+        # cache and runs the real case validator with that interpreter.
+        - wan-runtime
+        - exec
         - python3
         - -m
         - npa.workflows.switchworld
@@ -106,6 +111,8 @@ states:
       prompt context, and reference image.
     run:
       argv:
+        - wan-runtime
+        - exec
         - python3
         - -m
         - npa.workflows.switchworld
@@ -133,6 +140,8 @@ states:
       same upstream entry point with its real perspective-switch conditioning.
     run:
       argv:
+        - wan-runtime
+        - exec
         - python3
         - -m
         - npa.workflows.switchworld
@@ -161,6 +170,8 @@ states:
       window. Mock SwitchWorld metrics are deliberately excluded.
     run:
       argv:
+        - wan-runtime
+        - exec
         - python3
         - -m
         - npa.workflows.switchworld
@@ -195,6 +206,8 @@ states:
       and the measured metrics.
     run:
       argv:
+        - wan-runtime
+        - exec
         - python3
         - -m
         - npa.workflows.switchworld
