@@ -1,0 +1,253 @@
+{
+  "schema": "npa_vlm_sampling_current_full_ci_v1",
+  "pr": 830,
+  "published_head": "757ce67584b7361edd93c9dd6b792f035ea6bf6e",
+  "candidate_tree": "6a827486c75446f375737e82d7cc76f05b7f99e0",
+  "base": "4603e7e1d8ffede505161448fe92368e7c6bda45",
+  "execution_commit": "f31622ac56062ecadc8dd34dfa27e60ca20ce1e6",
+  "observed_current_PR_merge_ref_not_execution": "9e60bffe3f5c5282a1fb69e8a85314eb1289657f",
+  "execution_identity_basis": "Original validated-candidate artifact and all six checkout logs plus immutable commit API; earlier current-ref observation retained as-issued with additive correction.",
+  "execution_parents": [
+    "4603e7e1d8ffede505161448fe92368e7c6bda45",
+    "757ce67584b7361edd93c9dd6b792f035ea6bf6e"
+  ],
+  "execution_tree_equals_candidate": true,
+  "run_id": 37178833342,
+  "attempt": 1,
+  "event": "pull_request",
+  "terminal_conclusion": "success",
+  "population": {
+    "complete_successful_shards": 6,
+    "unique_displayed_items": 42844,
+    "outcomes": {
+      "PASSED": 41990,
+      "SKIPPED": 853,
+      "XPASS": 1
+    },
+    "duplicates": 0,
+    "additional_nonitem_skip_reports": 42,
+    "summary_skips": 895
+  },
+  "coverage": {
+    "statements": 213755,
+    "missed": 47392,
+    "displayed_percent": 78,
+    "floor": 60,
+    "scope": "src/npa only; original SQLite file paths bound to immutable execution-tree tracked source; original databases not rewritten."
+  },
+  "per_shard": [
+    {
+      "name": "test-gate / pytest-3.12-shard-1",
+      "selected_items": 7141,
+      "outcomes": {
+        "PASSED": 6996,
+        "SKIPPED": 145
+      },
+      "additional_nonitem_skips": 7,
+      "xdist_workers": 2,
+      "installer_operation_observations": 85,
+      "log_sha256": "584ccd288d5810815bfcb8e5d2bc04f6607fd94d12620e1e250227575c480143"
+    },
+    {
+      "name": "test-gate / pytest-3.12-shard-2",
+      "selected_items": 7141,
+      "outcomes": {
+        "PASSED": 7001,
+        "SKIPPED": 140
+      },
+      "additional_nonitem_skips": 7,
+      "xdist_workers": 2,
+      "installer_operation_observations": 85,
+      "log_sha256": "7c160dd0dd112fbf59ccb5a444e45e84607db46e47443934e7ffdf89f8d580aa"
+    },
+    {
+      "name": "test-gate / pytest-3.12-shard-3",
+      "selected_items": 7140,
+      "outcomes": {
+        "PASSED": 7002,
+        "SKIPPED": 138
+      },
+      "additional_nonitem_skips": 7,
+      "xdist_workers": 2,
+      "installer_operation_observations": 85,
+      "log_sha256": "b88324c420af07c4c7d8d922988e4197ad14493f80b9809d6a4b9448ffba1eb4"
+    },
+    {
+      "name": "test-gate / pytest-3.12-shard-4",
+      "selected_items": 7141,
+      "outcomes": {
+        "PASSED": 7004,
+        "SKIPPED": 137
+      },
+      "additional_nonitem_skips": 7,
+      "xdist_workers": 2,
+      "installer_operation_observations": 85,
+      "log_sha256": "a16b418b9067a38d3eca835d31ae5e7295bceae1994916a9d4e931f86550daee"
+    },
+    {
+      "name": "test-gate / pytest-3.12-shard-5",
+      "selected_items": 7140,
+      "outcomes": {
+        "PASSED": 6990,
+        "SKIPPED": 149,
+        "XPASS": 1
+      },
+      "additional_nonitem_skips": 7,
+      "xdist_workers": 2,
+      "installer_operation_observations": 85,
+      "log_sha256": "c2b2014585400d143442e2865fc78808bc90b63875738093d447c07634e03ddb"
+    },
+    {
+      "name": "test-gate / pytest-3.12-shard-6",
+      "selected_items": 7141,
+      "outcomes": {
+        "PASSED": 6997,
+        "SKIPPED": 144
+      },
+      "additional_nonitem_skips": 7,
+      "xdist_workers": 2,
+      "installer_operation_observations": 85,
+      "log_sha256": "315ac34f2f6e3db4a5865788f642953d1341f62f72b7f79cfa1ead08251bf20a"
+    }
+  ],
+  "runtime": {
+    "python": "3.12.14",
+    "pytest": "9.1.1",
+    "xdist": "3.8.0",
+    "coverage_producer": "7.16.1",
+    "coverage_reporter": "7.16.0",
+    "CPU_torch": "2.14.0+cpu",
+    "FFmpeg": "6.1.1-3ubuntu5",
+    "command": ".venv/bin/python -m pytest tests/ -n auto --dist worksteal --cov=src/npa --cov-report=",
+    "coverage_command": ".venv/bin/python -m coverage report --show-missing --fail-under=60",
+    "complete_final_package_freeze_supplied": false
+  },
+  "source_bindings": [
+    {
+      "path": ".github/workflows/security-regression.yml",
+      "sha256": "0827e64c52dce8665f0f404232aff3331ac34207a751fc9ff89064399f7105dc",
+      "git_blob": "948245fb72d9177187ecb8a45318821e36af731d"
+    },
+    {
+      "path": ".github/workflows/test.yml",
+      "sha256": "10eadbfcd5b3bb93d34c12a0cb1271c0c201bb9c0068ce046fc2b966b037864a",
+      "git_blob": "13f4a87e634b24017235ecf8cdf1f42e23e491f2"
+    },
+    {
+      "path": "npa/ci/requirements.txt",
+      "sha256": "bb227e55b247618d733633efc93937df9587c8c41316cb9bc2fc63d3ee935a35",
+      "git_blob": "7c43d08b463bf5a37251330f6de288eed14d96f9"
+    },
+    {
+      "path": "npa/pyproject.toml",
+      "sha256": "91e044e814305e8643d3e3bc9216f66d6ccbe7337408b074a2f0ccb0b70329b2",
+      "git_blob": "4b764d21a0c6648cfb39bb3e854c79dea10969da"
+    },
+    {
+      "path": "npa/src/npa/clients/nebius.py",
+      "sha256": "b9c1b8683ae8659eb1a4bd936b0399407616436d31c6a511a5134cec9a5d0a48",
+      "git_blob": "addf4ecf7e55bd4703f2d3b8f854176ee1fd5bb5"
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "924d5a6ae4c6c86c96610919b297ae63cb642355041f06b4f7f00927bf875583",
+      "git_blob": "0ffea16fd8563da15250232319c50266f3222e96"
+    },
+    {
+      "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+      "sha256": "0bcb218a48299e475d1ff538fea17f8767bffe8db8e975c7110498d65bccd581",
+      "git_blob": "34f0cdf686e04f616cda01046c43f0e0a5113d80"
+    },
+    {
+      "path": "npa/tests/ci_test_durations.json",
+      "sha256": "3c7883f51541ac810672380b8efed468d618c352055d880ded177675f93b4ad5",
+      "git_blob": "708880ff600fb32e79ec67bb6cab114eb3cf4362"
+    },
+    {
+      "path": "npa/tests/cli/test_agent.py",
+      "sha256": "44fe95f879e5f806e42264815a2c48bd4c2f53abf85c9fd4be00f3955ca458c5",
+      "git_blob": "a3601df1f78e1686991c99b0b293ff98c5723fb9"
+    },
+    {
+      "path": "npa/tests/cli/test_cleanup_and_drain.py",
+      "sha256": "58a44714d420f5a8cda687af6880270e1bc33c9f84e506bdf3786a89483c0141",
+      "git_blob": "7fa28e8ea9ddaf5f7bc3b0ee46ebcf407f0a78c5"
+    },
+    {
+      "path": "npa/tests/cli/test_configure_fresh_user.py",
+      "sha256": "f49e769d1c0ec9f3cbe4df042a033dcae87c195e1c83e5cda6316c6ef50faada",
+      "git_blob": "b59592548be619e645c1c9ba5a82cd9cebf7f5ee"
+    },
+    {
+      "path": "npa/tests/cli/test_main.py",
+      "sha256": "31198f4d79914a118cb2d3b02126914dda8918ddb40b47a673f9300e23d9135d",
+      "git_blob": "bb056309fcd768f67addd551e940f1a3dbf7310c"
+    },
+    {
+      "path": "npa/tests/clients/test_nebius_profile_native.py",
+      "sha256": "1a98302ab54dac49090b5236da64006a35157b3e426939d7f6bb4850bdcf4ccb",
+      "git_blob": "2c783621d66839b30eba0685bab8b982f167cbcc"
+    },
+    {
+      "path": "npa/tests/conftest.py",
+      "sha256": "e7fc2a1d86c4e2ee8b4274463617cca7315e23bad607581c51d81692e37bfd2a",
+      "git_blob": "47e8106b948d9b09daa61ffc4f884f8543b4387a"
+    },
+    {
+      "path": "npa/tests/workbench/test_vlm_frame_selection.py",
+      "sha256": "c4a0ee6f4916e91cfcf1d04da49cc41c385e386796b7c743f1ddb964ef0fdf16",
+      "git_blob": "4ef40c1c166636ff5501a686669190580d8ae63a"
+    }
+  ],
+  "retained_evidence_hashes": [
+    {
+      "name": "source-inventory.json",
+      "sha256": "8f47719d109299f6aed61e67ed1502dd31a2d01bb25986bd95b4b12890c25e8c"
+    },
+    {
+      "name": "all-displayed-nodes.json",
+      "sha256": "f87e12ce8f1f7e2848fdcff5fa29fa16c8c92efb9fc81d58436195391967337b"
+    },
+    {
+      "name": "shard-population-tools-packages.json",
+      "sha256": "7530285cf5cd560cb800404fe6091bd68cbdfca71add521995ffc4bc82241be8"
+    },
+    {
+      "name": "coverage-source-mapping.json",
+      "sha256": "d5d3c791ec1eb23435b9077edbd7fd186073376d8a6a0b3131b1e266df98fb92"
+    },
+    {
+      "name": "native-signal-guarded-capability-mapping.json",
+      "sha256": "602fc859c3de61ed1d56dbb5bf51c00a7591becabc3f311c81b3fb65153e61ba"
+    },
+    {
+      "name": "retained-terminal-artifact-inventory.json",
+      "sha256": "9f01c20f29e84ebd48374748acfc1e59930fb870990b65bba78ca665c835d475"
+    },
+    {
+      "name": "receipt.json",
+      "sha256": "0f6b6f10ad8e0c36a9e7e6b7ddf774bbc0e47242a950eac9011589dddd41651e"
+    }
+  ],
+  "separate_capability_scope": {
+    "native_case_count": 4,
+    "native_actual_original_CLI_commands": 54,
+    "native_CI_outcome": "four skipped cases, not native execution",
+    "original_signal_control_count": 27,
+    "current_CI_same_signal_nodes_passed": 27,
+    "guarded_E005_cases": 2,
+    "guarded_execution_head": "3ec7a0c6d8517d31b47185e54cb37166709c763e",
+    "forbidden_direct_provider_attempts_in_that_two_case_gate": 0,
+    "no_repeated_native_signal_or_guarded_execution": true
+  },
+  "independent_full_acceptance": "Requested separately; this artifact records actual source-bound CI rather than overall readiness.",
+  "limitations": [
+    "No original CI JUnit, final package-freeze, before/after complete environment fingerprint or namespace/session telemetry is supplied. Logged installer operations are observations, not a complete cached environment inventory.",
+    "Displayed node IDs include original GitHub masking and embedded spaces. No unmasked parameter IDs or absent skip reasons are reconstructed. Item and nonitem skips remain distinct.",
+    "CI collects full tests/ with opt-in live/GPU skips; this is not a fabricated local make test invocation or live/native/cloud/GPU test pass.",
+    "Original39 full27 failures and a52/2ba/6b aborted UNKNOWN terminal populations remain unchanged. The priorfbeb run failed, three shards canceled and coverage skipped; those attempts are not combined into this run.",
+    "Original six hosted a52 responses and actual464 zero-network current writer/grade replay retain original execution identities. Both gray rationales misdescribe RGB128 as white; SO100 improvement and original writer-harness failures remain.",
+    "Three stylized states do not establish sampler/model improvement, continuous episode coverage, robot causality, physical safety or calibrated quality. No provider retry, changed label/threshold, third Claude or passing local full is claimed.",
+    "Final current-main/all-app CI/signatures/rules/publication/lifecycle and normal protected queue remain with the sole coordinator."
+  ]
+}
