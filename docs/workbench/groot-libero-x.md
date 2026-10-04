@@ -1,6 +1,6 @@
 # GR00T N1.7 LIBERO-X closed-loop evaluation
 
-[Workbench docs](README.md) · [GR00T training cookbook](cookbooks/groot-1-7-training.md) · [workflow](../../workflows/testing/groot-libero-x-closed-loop.yaml)
+[Workbench docs](README.md) · [GR00T training cookbook](cookbooks/groot-1-7-training.md) · [strict workflow](../../workflows/testing/groot-libero-x-closed-loop.yaml) · [observed-paired workflow](../../workflows/testing/groot-libero-x-observed-paired.yaml)
 
 `groot-libero-x-closed-loop.yaml` is a five-stage simulator evaluation for the
 public `rohansiva/gr00t-libero-x` derivative.  It is deliberately separate
@@ -86,6 +86,22 @@ The GPU placement is an NPA workflow configuration input
 against the selected target with `--var evaluation_accelerator=<catalog-name>:1`
 or the existing `NPA_WORKFLOW_GPU_ACCELERATOR` operator override; no hardware
 identifier or credential is embedded in a stage command.
+
+### Observed paired mode when coverage is unknown
+
+[`groot-libero-x-observed-paired.yaml`](../../workflows/testing/groot-libero-x-observed-paired.yaml)
+is a separate five-stage native comparison for the case where the derivative's
+exact training inventory remains unpublished. It accepts an
+`npa.groot_libero_x.observed_tasks.v1` manifest with the same safe BDDL and
+trajectory requirements as the strict evaluation manifest, binds the task/data
+hash and run seed once, and passes that exact protocol to both policy arms.
+
+Its protocol, rollout reports, comparison, RRD provenance, and evidence index
+carry `training_coverage: unknown`, `task_disjointness: unverified`, and
+`held_out: false` / `generalization: false`. It is useful factual closed-loop
+evidence for the observed tasks, but never a substitute for the strict workflow
+or a claim about unseen tasks. It adds no acceptance mechanism or new upstream
+terms.
 
 ## Readiness and acceptance
 

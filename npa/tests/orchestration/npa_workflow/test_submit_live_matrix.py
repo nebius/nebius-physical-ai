@@ -522,6 +522,22 @@ def test_groot_libero_x_case_requires_operator_inputs_without_downgrading_the_wo
     assert "Simulator evidence only" in case.notes
 
 
+def test_groot_observed_paired_case_preserves_unknown_training_coverage() -> None:
+    case = next(
+        item
+        for item in SUBMIT_LIVE_MATRIX
+        if item.spec == "groot-libero-x-observed-paired.yaml"
+    )
+
+    assert case.tier == "gpu"
+    assert case.image_tool == "groot"
+    assert not case.plan_only
+    assert case.rotation_skip
+    assert "training-task inventory remains unknown" in case.skip_reason
+    assert "Five connected substantive stages" in case.notes
+    assert "Training coverage unknown" in case.notes
+
+
 def test_robotwin_case_is_plan_only_until_worker_authorization_exists() -> None:
     case = next(
         item for item in SUBMIT_LIVE_MATRIX if item.spec == "byof-robotwin.yaml"

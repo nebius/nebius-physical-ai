@@ -18,6 +18,7 @@ from npa.orchestration.npa_workflow.submit import (
 
 ROOT = Path(__file__).resolve().parents[4]
 SPEC_PATH = ROOT / "workflows/testing/groot-libero-x-closed-loop.yaml"
+OBSERVED_SPEC_PATH = ROOT / "workflows/testing/groot-libero-x-observed-paired.yaml"
 STATES = [
     "prepare_disjoint_evaluation",
     "run_nvidia_baseline_closed_loop",
@@ -85,6 +86,25 @@ def test_closed_loop_workflow_has_five_connected_substantive_stages() -> None:
                 f"{state} does not consume an earlier artifact"
             )
         previous_outputs.update(artifact.uri for artifact in stage.outputs)
+
+
+def test_observed_paired_workflow_has_five_stages_without_held_out_input_claim() -> (
+    None
+):
+    spec = load_spec(OBSERVED_SPEC_PATH)
+    plan = build_plan(spec, run_id="groot-libero-x-observed-contract")
+
+    assert spec.api_version == "npa.workflow/v0.0.1"
+    assert len(plan.steps) == 5
+    assert plan.steps[0].state == "prepare_observed_paired_evaluation"
+    assert (
+        plan.steps[0].tool_ref
+        == "workflow.groot_libero_x.prepare_observed_paired_evaluation"
+    )
+    assert "training_task_manifest_uri" not in spec.config
+    assert "observed_task_manifest_uri" in spec.config
+    assert "held-out" in str(spec.metadata["description"]).lower()
+    assert "unknown" in spec.states[plan.steps[3].state].description.lower()
 
 
 def test_closed_loop_workflow_renders_current_toolrefs_and_vendor_image(

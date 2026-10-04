@@ -45,6 +45,7 @@ from npa.workflows.groot_visualization import (
 
 TRAINING_TASKS_SCHEMA = "npa.groot_libero_x.training_tasks.v1"
 EVALUATION_TASKS_SCHEMA = "npa.groot_libero_x.evaluation_tasks.v1"
+OBSERVED_TASKS_SCHEMA = "npa.groot_libero_x.observed_tasks.v1"
 DATASET_SCHEMA = "npa.groot_libero_x.evaluation_dataset.v1"
 PROTOCOL_SCHEMA = "npa.groot_libero_x.evaluation_protocol.v1"
 ROLLOUT_SCHEMA = "npa.groot_libero_x.closed_loop_rollout.v1"
@@ -77,6 +78,8 @@ RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v2"
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 LIBERO_X_BDDL_LEVELS = frozenset({"LEVEL1", "LEVEL2", "LEVEL3", "LEVEL4"})
+STRICT_HELD_OUT_MODE = "strict_held_out"
+OBSERVED_PAIRED_MODE = "observed_paired_coverage_unknown"
 
 
 # This overlay is appended to the private, runtime-fetched Apache-2.0 Isaac-GR00T
@@ -203,8 +206,12 @@ def _native_libero_x_env_name(task_id: str) -> str:
     return f"libero_sim/npa_groot_libero_x_{digest}"
 
 
-def _task_rows(payload: Mapping[str, Any], *, training: bool) -> list[dict[str, Any]]:
-    expected = TRAINING_TASKS_SCHEMA if training else EVALUATION_TASKS_SCHEMA
+def _task_rows(
+    payload: Mapping[str, Any], *, training: bool, schema: str | None = None
+) -> list[dict[str, Any]]:
+    expected = schema or (
+        TRAINING_TASKS_SCHEMA if training else EVALUATION_TASKS_SCHEMA
+    )
     if payload.get("schema") != expected:
         raise GrootVisualizationError(f"expected manifest schema {expected}")
     rows = payload.get("tasks")
@@ -248,6 +255,60 @@ def _task_rows(payload: Mapping[str, Any], *, training: bool) -> list[dict[str, 
             "the derivative training manifest must identify its documented 60 tasks"
         )
     return parsed
+
+
+def _protocol_upstream() -> dict[str, dict[str, str]]:
+    """Return pinned source credit and terms shared by both protocol modes."""
+
+    return {
+        "derivative": {
+            "repo": DERIVATIVE_REPO,
+            "revision": DERIVATIVE_REVISION,
+            "license": DERIVATIVE_LICENSE,
+            "model_card": DERIVATIVE_CARD,
+            "attribution": "rohansiva; fine-tuned from NVIDIA GR00T-N1.7-LIBERO libero_10",
+        },
+        "baseline": {
+            "repo": BASELINE_REPO,
+            "revision": BASELINE_REVISION,
+            "license": BASELINE_LICENSE,
+            "model_card": BASELINE_CARD,
+            "attribution": "NVIDIA",
+        },
+        "libero_x": {
+            "repo": LIBERO_X_REPO,
+            "revision": LIBERO_X_REVISION,
+            "license": LIBERO_X_LICENSE,
+            "dataset_card": LIBERO_X_CARD,
+            "attribution": "Meituan; Wang et al., LIBERO-X (2026)",
+        },
+        "isaac_groot": {
+            "repository": IMAGE_GROOT_REPOSITORY,
+            "revision": IMAGE_GROOT_REF,
+            "license": IMAGE_GROOT_LICENSE,
+            "attribution": "NVIDIA Isaac-GR00T",
+        },
+    }
+
+
+def _protocol_claims(mode: str) -> dict[str, Any]:
+    """Return immutable claim labels for strict or coverage-unknown evidence."""
+
+    if mode == STRICT_HELD_OUT_MODE:
+        return {
+            "training_coverage": "documented_60_task_manifest",
+            "task_disjointness": "verified",
+            "labels": {"held_out": True, "generalization": False},
+            "scope": "simulator closed-loop held-out evaluation only; no physical-robot or benchmark-convergence claim",
+        }
+    if mode == OBSERVED_PAIRED_MODE:
+        return {
+            "training_coverage": "unknown",
+            "task_disjointness": "unverified",
+            "labels": {"held_out": False, "generalization": False},
+            "scope": "simulator paired observed-task comparison only; training coverage and task disjointness are unknown, so this is not a held-out or generalization result",
+        }
+    raise GrootVisualizationError(f"unsupported evaluation protocol mode: {mode}")
 
 
 def _object_inventory(client: Any, uri: str) -> dict[str, Any]:
@@ -344,6 +405,7 @@ def prepare_evaluation(
         "schema": PROTOCOL_SCHEMA,
         "status": "prepared",
         "run_id": run_id,
+        "evaluation_mode": STRICT_HELD_OUT_MODE,
         "task_disjoint": True,
         "training_task_count": len(train_rows),
         "evaluation_task_count": len(eval_rows),
@@ -357,35 +419,48 @@ def prepare_evaluation(
         },
         "evaluation_tasks": eval_rows,
         "dataset": dataset,
-        "upstream": {
-            "derivative": {
-                "repo": DERIVATIVE_REPO,
-                "revision": DERIVATIVE_REVISION,
-                "license": DERIVATIVE_LICENSE,
-                "model_card": DERIVATIVE_CARD,
-                "attribution": "rohansiva; fine-tuned from NVIDIA GR00T-N1.7-LIBERO libero_10",
-            },
-            "baseline": {
-                "repo": BASELINE_REPO,
-                "revision": BASELINE_REVISION,
-                "license": BASELINE_LICENSE,
-                "model_card": BASELINE_CARD,
-                "attribution": "NVIDIA",
-            },
-            "libero_x": {
-                "repo": LIBERO_X_REPO,
-                "revision": LIBERO_X_REVISION,
-                "license": LIBERO_X_LICENSE,
-                "dataset_card": LIBERO_X_CARD,
-                "attribution": "Meituan; Wang et al., LIBERO-X (2026)",
-            },
-            "isaac_groot": {
-                "repository": IMAGE_GROOT_REPOSITORY,
-                "revision": IMAGE_GROOT_REF,
-                "license": IMAGE_GROOT_LICENSE,
-                "attribution": "NVIDIA Isaac-GR00T",
-            },
+        "claims": _protocol_claims(STRICT_HELD_OUT_MODE),
+        "upstream": _protocol_upstream(),
+    }
+    protocol["protocol_sha256"] = _json_hash(protocol)
+    _put_json(client, output_uri, protocol)
+    print(json.dumps(protocol, indent=2, sort_keys=True))
+    return protocol
+
+
+def prepare_observed_paired_evaluation(
+    observed_task_manifest_uri: str,
+    evaluation_dataset_manifest_uri: str,
+    output_uri: str,
+    run_id: str,
+    *,
+    s3_client: Any | None = None,
+) -> dict[str, Any]:
+    """Bind paired observed tasks without inventing derivative training coverage."""
+
+    client = _s3_client(s3_client)
+    observed = _read_s3_json(client, observed_task_manifest_uri)
+    tasks = _task_rows(observed, training=False, schema=OBSERVED_TASKS_SCHEMA)
+    task_hash = _json_hash(observed)
+    dataset = _validate_dataset_manifest(
+        client,
+        _read_s3_json(client, evaluation_dataset_manifest_uri),
+        evaluation_hash=task_hash,
+    )
+    protocol = {
+        "schema": PROTOCOL_SCHEMA,
+        "status": "prepared",
+        "run_id": run_id,
+        "evaluation_mode": OBSERVED_PAIRED_MODE,
+        "evaluation_task_count": len(tasks),
+        "observed_task_manifest": {
+            "uri": observed_task_manifest_uri,
+            "sha256": task_hash,
         },
+        "evaluation_tasks": tasks,
+        "dataset": dataset,
+        "claims": _protocol_claims(OBSERVED_PAIRED_MODE),
+        "upstream": _protocol_upstream(),
     }
     protocol["protocol_sha256"] = _json_hash(protocol)
     _put_json(client, output_uri, protocol)
@@ -400,7 +475,7 @@ def _load_protocol(client: Any, uri: str, run_id: str) -> dict[str, Any]:
         or protocol.get("status") != "prepared"
     ):
         raise GrootVisualizationError("closed-loop protocol is not prepared")
-    if protocol.get("run_id") != run_id or protocol.get("task_disjoint") is not True:
+    if protocol.get("run_id") != run_id:
         raise GrootVisualizationError(
             "closed-loop protocol does not belong to this run"
         )
@@ -412,6 +487,20 @@ def _load_protocol(client: Any, uri: str, run_id: str) -> dict[str, Any]:
     if not protocol.get("evaluation_tasks"):
         raise GrootVisualizationError(
             "closed-loop protocol contains no evaluation tasks"
+        )
+    mode = str(protocol.get("evaluation_mode") or STRICT_HELD_OUT_MODE)
+    claims = protocol.get("claims")
+    if not isinstance(claims, Mapping) or claims != _protocol_claims(mode):
+        raise GrootVisualizationError(
+            "closed-loop protocol claim classification is invalid"
+        )
+    if mode == STRICT_HELD_OUT_MODE and protocol.get("task_disjoint") is not True:
+        raise GrootVisualizationError(
+            "strict held-out protocol lacks task disjointness"
+        )
+    if mode == OBSERVED_PAIRED_MODE and "task_disjoint" in protocol:
+        raise GrootVisualizationError(
+            "observed paired protocol must not assert task disjointness"
         )
     return protocol
 
@@ -1005,6 +1094,8 @@ def run_policy(
         "policy": policy_name,
         "protocol_uri": protocol_uri,
         "protocol_sha256": protocol["protocol_sha256"],
+        "evaluation_mode": protocol["evaluation_mode"],
+        "claims": protocol["claims"],
         "model": model_identity,
         "runtime": {
             "bootstrap_image_groot_source_revision": bootstrap_ref or "unreported",
@@ -1062,6 +1153,13 @@ def compare_closed_loop(
         raise GrootVisualizationError("policies did not use the same prepared protocol")
     rows = {}
     for report in (baseline, derivative):
+        if (
+            report.get("evaluation_mode") != protocol["evaluation_mode"]
+            or report.get("claims") != protocol["claims"]
+        ):
+            raise GrootVisualizationError(
+                "rollout claim classification differs from prepared protocol"
+            )
         names = [task["task_id"] for task in report["closed_loop"]["tasks"]]
         if names != [task["task_id"] for task in protocol["evaluation_tasks"]]:
             raise GrootVisualizationError(
@@ -1076,6 +1174,8 @@ def compare_closed_loop(
         "run_id": run_id,
         "protocol_uri": protocol_uri,
         "protocol_sha256": protocol["protocol_sha256"],
+        "evaluation_mode": protocol["evaluation_mode"],
+        "claims": protocol["claims"],
         "baseline_uri": baseline_uri,
         "derivative_uri": derivative_uri,
         "closed_loop_success": {
@@ -1099,7 +1199,7 @@ def compare_closed_loop(
                 for key in ("mse", "mae")
             },
         },
-        "claim_scope": "simulator closed-loop evaluation only; no physical-robot or benchmark-convergence claim",
+        "claim_scope": protocol["claims"]["scope"],
     }
     _put_json(client, output_uri, result)
     print(json.dumps(result, indent=2, sort_keys=True))
@@ -1186,6 +1286,10 @@ def emit_evidence(
         or comparison.get("run_id") != run_id
     ):
         raise GrootVisualizationError("comparison report does not belong to this run")
+    mode = str(comparison.get("evaluation_mode") or "")
+    claims = comparison.get("claims")
+    if not isinstance(claims, Mapping) or claims != _protocol_claims(mode):
+        raise GrootVisualizationError("comparison claim classification is invalid")
     baseline = _load_rollout(client, baseline_uri, run_id, "baseline")
     derivative = _load_rollout(client, derivative_uri, run_id, "derivative")
     expected_entities = [
@@ -1206,6 +1310,7 @@ def emit_evidence(
                     {
                         "comparison_uri": comparison_uri,
                         "protocol_sha256": comparison["protocol_sha256"],
+                        "claims": claims,
                         "scope": comparison["claim_scope"],
                     },
                     sort_keys=True,
@@ -1263,6 +1368,8 @@ def emit_evidence(
         "status": "completed",
         "run_id": run_id,
         "comparison_uri": comparison_uri,
+        "evaluation_mode": mode,
+        "claims": claims,
         "rrd": {**rrd_artifact, "inspect": inspection},
         "native_rollout_mp4s": videos,
         "native_rollout_mp4_inspection": video_inspections,
@@ -1282,6 +1389,11 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--evaluation-dataset-manifest-uri", required=True)
     prepare.add_argument("--output-uri", required=True)
     prepare.add_argument("--run-id", required=True)
+    observed = commands.add_parser("prepare-observed-paired-evaluation")
+    observed.add_argument("--observed-task-manifest-uri", required=True)
+    observed.add_argument("--evaluation-dataset-manifest-uri", required=True)
+    observed.add_argument("--output-uri", required=True)
+    observed.add_argument("--run-id", required=True)
     policy = commands.add_parser("run-policy")
     policy.add_argument("--protocol-uri", required=True)
     policy.add_argument("--output-uri", required=True)
@@ -1319,6 +1431,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     command = values.pop("command")
     if command == "prepare-evaluation":
         prepare_evaluation(**values)
+    elif command == "prepare-observed-paired-evaluation":
+        prepare_observed_paired_evaluation(**values)
     elif command == "run-policy":
         run_policy(**values)
     elif command == "compare-closed-loop":

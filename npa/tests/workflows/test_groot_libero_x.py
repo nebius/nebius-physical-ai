@@ -161,6 +161,8 @@ def _rollout(
         "run_id": run_id,
         "policy": policy,
         "protocol_sha256": protocol["protocol_sha256"],
+        "evaluation_mode": protocol["evaluation_mode"],
+        "claims": protocol["claims"],
         "closed_loop_verified": True,
         "open_loop_action_error": {
             "mse": 0.1 if policy == "baseline" else 0.05,
@@ -188,6 +190,77 @@ def test_prepare_requires_exact_60_training_tasks_and_disjoint_evaluation() -> N
     protocol = _prepare(client)
 
     assert protocol["task_disjoint"] is True
+    assert protocol["claims"]["labels"]["held_out"] is True
+
+
+def test_observed_paired_protocol_refuses_held_out_or_generalization_labels() -> None:
+    client = FakeS3()
+    observed_uri = "s3://bucket/run/inputs/observed.json"
+    dataset_uri = "s3://bucket/run/inputs/dataset.json"
+    output_uri = "s3://bucket/run/prepared/observed-protocol.json"
+    observed = {"schema": workflow.OBSERVED_TASKS_SCHEMA, "tasks": [_task("seen-0")]}
+    _put_json(client, observed_uri, observed)
+    client.seed(
+        "s3://bucket/run/evaluation-data/meta/info.json", b"real-format-metadata"
+    )
+    inventory = workflow._object_inventory(client, "s3://bucket/run/evaluation-data/")
+    _put_json(
+        client,
+        dataset_uri,
+        {
+            "schema": workflow.DATASET_SCHEMA,
+            "source": {
+                "repo": workflow.LIBERO_X_REPO,
+                "revision": workflow.LIBERO_X_REVISION,
+                "license": "CC-BY-4.0",
+            },
+            "evaluation_task_manifest_sha256": workflow._json_hash(observed),
+            "materialized": {
+                "uri": "s3://bucket/run/evaluation-data/",
+                "object_inventory_sha256": inventory["sha256"],
+            },
+        },
+    )
+    protocol = workflow.prepare_observed_paired_evaluation(
+        observed_uri, dataset_uri, output_uri, "observed-run", s3_client=client
+    )
+
+    assert protocol["evaluation_mode"] == workflow.OBSERVED_PAIRED_MODE
+    assert protocol["claims"]["training_coverage"] == "unknown"
+    assert protocol["claims"]["task_disjointness"] == "unverified"
+    assert protocol["claims"]["labels"] == {"held_out": False, "generalization": False}
+    assert "training_task_manifest" not in protocol
+
+
+def test_observed_paired_comparison_rejects_mislabeled_rollout_claims() -> None:
+    client = FakeS3()
+    protocol = _prepare(client)
+    protocol["evaluation_mode"] = workflow.OBSERVED_PAIRED_MODE
+    protocol.pop("task_disjoint")
+    protocol["claims"] = workflow._protocol_claims(workflow.OBSERVED_PAIRED_MODE)
+    protocol["protocol_sha256"] = workflow._json_hash(
+        {key: value for key, value in protocol.items() if key != "protocol_sha256"}
+    )
+    _put_json(client, "s3://bucket/run/prepared/protocol.json", protocol)
+    baseline = _rollout(
+        "groot-libero-x-fixture", protocol, "baseline", "s3://bucket/a.mp4"
+    )
+    derivative = _rollout(
+        "groot-libero-x-fixture", protocol, "derivative", "s3://bucket/b.mp4"
+    )
+    derivative["claims"] = workflow._protocol_claims(workflow.STRICT_HELD_OUT_MODE)
+    _put_json(client, "s3://bucket/run/rollouts/baseline/report.json", baseline)
+    _put_json(client, "s3://bucket/run/rollouts/derivative/report.json", derivative)
+
+    with pytest.raises(workflow.GrootVisualizationError, match="claim classification"):
+        workflow.compare_closed_loop(
+            "s3://bucket/run/prepared/protocol.json",
+            "s3://bucket/run/rollouts/baseline/report.json",
+            "s3://bucket/run/rollouts/derivative/report.json",
+            "s3://bucket/run/reports/comparison.json",
+            "groot-libero-x-fixture",
+            s3_client=client,
+        )
     assert protocol["training_task_count"] == 60
     assert protocol["evaluation_task_count"] == 1
     assert protocol["dataset"]["source"]["repo"] == workflow.LIBERO_X_REPO

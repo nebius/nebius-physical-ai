@@ -1,0 +1,37 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "0af450a3dfa1fca148b399dcf770e1a9f14acb263d7f3acd9ead15f5a7b2a975",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The five-state observed-paired workflow passed spec validation and planning. It binds one run-scoped observed-task/data protocol to both native policy arms and retains the NPA-configured accelerator without invoking Isaac Sim or a new EULA control.",
+      "evidence": [
+        "npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/groot-libero-x-observed-paired.yaml",
+        "npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/groot-libero-x-observed-paired.yaml --run-id groot-libero-x-observed-plan"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Contract tests prove five connected substantive stages, hash-bound paired task/data inputs, same-protocol rollout comparison, real-result refusal, and a claim classification that rejects held-out or generalization labels when training coverage is unknown.",
+      "evidence": [
+        "npa/.venv/bin/python -m pytest npa/tests/workflows/test_groot_libero_x.py npa/tests/orchestration/npa_workflow/test_groot_libero_x_closed_loop_workflow.py npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py -q"
+      ]
+    }
+  },
+  "prerequisites": {
+    "source_image": {
+      "status": "unverified",
+      "reason": "Private candidate image build, digest resolution, security scans, and exact-target pull proof remain in progress.",
+      "evidence": [
+        "Private operator evidence under the assigned onboarding task directory"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The observed-paired path requires an operator-owned observed-task manifest and matching GR00T-format materialization inventory. The derivative's exact training cohort remains unknown, which is recorded as a claim boundary rather than inferred from seed 42.",
+      "evidence": [
+        "docs/workbench/groot-libero-x.md#observed-paired-mode-when-coverage-is-unknown"
+      ]
+    }
+  }
+}

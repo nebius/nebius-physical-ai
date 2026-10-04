@@ -3929,6 +3929,27 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workflow.groot_libero_x.prepare_observed_paired_evaluation": ToolEntry(
+        name="workflow.groot_libero_x.prepare_observed_paired_evaluation",
+        description=(
+            "Bind a paired native LIBERO-X task/data protocol when derivative "
+            "training coverage is unknown, forbidding held-out labels."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.groot_libero_x",
+            "prepare-observed-paired-evaluation",
+            "--observed-task-manifest-uri",
+            "{{config.observed_task_manifest_uri}}",
+            "--evaluation-dataset-manifest-uri",
+            "{{config.evaluation_dataset_manifest_uri}}",
+            "--output-uri",
+            "{{config.protocol_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "workbench.groot.libero_x_baseline": ToolEntry(
         name="workbench.groot.libero_x_baseline",
         access_capabilities=("groot-libero-x",),
