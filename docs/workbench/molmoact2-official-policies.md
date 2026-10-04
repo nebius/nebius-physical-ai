@@ -82,7 +82,9 @@ this integration.
 ## Packaging, terms, and execution boundary
 
 `npa/docker/workbench/molmoact2/Dockerfile` is an operator-private BYOF recipe,
-not a published NPA image. It clones the two pinned Apache-licensed sources
+not a published NPA image. Its private validation route requests one RTX PRO
+6000 (sm_120), not B200 hardware or a B200-equivalence claim. It clones the
+two pinned Apache-licensed sources
 with Git LFS smudging disabled, is digest-pinned to its CUDA base, runs as a
 non-root user, disables W&B telemetry, and has no checkpoints, datasets,
 caches, signed URLs, or credentials in its layers. A private build and a real
@@ -92,10 +94,16 @@ from the public container catalog until byte-level redistribution proof and
 anonymous-pull verification exist.
 
 No new NPA EULA, `ACCEPT_*` variable, or duplicate attestation is introduced.
-The public LIBERO artifacts use anonymous runtime fetch. The operator scope
-record is referenced privately by the onboarding run; it is not a declaration
-of commercial/noncommercial use or acceptance of any new vendor term. No
-optional telemetry or privacy consent is enabled.
+The active pinned foundation checkpoint and LIBERO dataset were each
+independently fetched at their exact revisions with Hub token environment
+variables and cached Hub login absent; a one-byte ranged foundation-weight
+read also succeeded anonymously. Consequently `HF_TOKEN` is not a required
+secret for the LIBERO live-matrix case. The normal runtime plumbing may still
+forward an operator-provided Hub credential when present; it is optional and
+does not represent a license acceptance mechanism. The operator scope record
+is referenced privately by the onboarding run; it is not a declaration of
+commercial/noncommercial use or acceptance of any new vendor term. No optional
+telemetry or privacy consent is enabled.
 
 Before a live submission, build into the operator-controlled registry, resolve
 the resulting immutable digest, and pass it through the workflow as

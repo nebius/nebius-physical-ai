@@ -257,6 +257,32 @@ def _latest_inference_checkpoint(root: Path) -> Path:
     return candidates[-1]
 
 
+def _download_base_checkpoint(work: Path) -> Path:
+    """Materialize the exact foundation revision before native training.
+
+    The upstream trainer accepts a local checkpoint directory but has no
+    revision argument for a Hugging Face model id.  Supplying the bare model
+    id would therefore make the manifest's immutable revision claim false.
+    Deliberately leave ``token`` unspecified: the public LIBERO path works
+    anonymously, while an operator-provided native Hub credential can still
+    be forwarded by the standard runtime plumbing when it is available.
+    """
+    from huggingface_hub import snapshot_download
+
+    checkpoint = work / "foundation-checkpoint"
+    snapshot_download(
+        repo_id=BASE_CHECKPOINT,
+        repo_type="model",
+        revision=BASE_CHECKPOINT_REVISION,
+        local_dir=str(checkpoint),
+    )
+    if not (checkpoint / "config.json").is_file():
+        raise MolmoAct2PipelineError(
+            "pinned foundation checkpoint did not materialize config.json"
+        )
+    return checkpoint
+
+
 def finetune(args: argparse.Namespace) -> dict[str, Any]:
     """Invoke the pinned upstream trainer, retaining its actual checkpoint bytes."""
     work = Path(args.work_root).resolve() / "finetune"
@@ -265,6 +291,7 @@ def finetune(args: argparse.Namespace) -> dict[str, Any]:
     )
     upstream = _upstream_root()
     output = work / "checkpoint"
+    base_checkpoint = _download_base_checkpoint(work)
     local_lerobot_root = work / "lerobot-data-root" / "allenai"
     local_lerobot_root.mkdir(parents=True, exist_ok=True)
     os.symlink(data_root, local_lerobot_root / "MolmoAct2-LIBERO-Dataset")
@@ -282,7 +309,7 @@ def finetune(args: argparse.Namespace) -> dict[str, Any]:
         "--standalone",
         "--nproc-per-node=1",
         "launch_scripts/train_lerobot.py",
-        BASE_CHECKPOINT,
+        str(base_checkpoint),
         "libero",
         f"--save_folder={output}",
         # This is the upstream LoRA recipe: it causes the trainer's native

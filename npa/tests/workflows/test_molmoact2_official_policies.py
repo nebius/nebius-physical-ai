@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
+from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 from npa.workflows.byof import molmoact2_pipeline as pipeline
 
 
@@ -39,6 +42,7 @@ def test_official_libero_workflow_has_five_connected_substantive_stages() -> Non
     assert plan.steps[4].inputs[0]["uri"] == plan.steps[2].outputs[0]["uri"]
     assert plan.steps[4].inputs[1]["uri"] == plan.steps[3].outputs[0]["uri"]
     assert plan.steps[2].argv[-1] == "50"
+    assert plan.steps[1].resources_profile["accelerators"] == "RTXPRO6000:1"
     assert "stub" not in SPEC.read_text(encoding="utf-8").lower()
 
 
@@ -92,6 +96,95 @@ def test_training_uses_upstream_lora_path_that_emits_an_inference_checkpoint() -
     assert '"--lora_enable=true"' in source
     assert '"--lora_rank=64"' in source
     assert 'root.glob("step*-merged")' in source
+
+
+def test_finetune_materializes_the_exact_foundation_revision(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls: list[dict[str, object]] = []
+    checkpoint = tmp_path / "foundation-checkpoint"
+
+    def fake_snapshot_download(**kwargs: object) -> str:
+        calls.append(kwargs)
+        target = Path(str(kwargs["local_dir"]))
+        target.mkdir(parents=True)
+        (target / "config.json").write_text("{}", encoding="utf-8")
+        return str(target)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=fake_snapshot_download),
+    )
+
+    assert pipeline._download_base_checkpoint(tmp_path) == checkpoint
+    assert calls == [
+        {
+            "repo_id": pipeline.BASE_CHECKPOINT,
+            "repo_type": "model",
+            "revision": pipeline.BASE_CHECKPOINT_REVISION,
+            "local_dir": str(checkpoint),
+        }
+    ]
+
+
+def test_finetune_passes_the_materialized_checkpoint_to_the_native_trainer(
+    tmp_path: Path, monkeypatch
+) -> None:
+    data_root = tmp_path / "prepared" / "train"
+    heldout_root = tmp_path / "prepared" / "heldout"
+    base_checkpoint = tmp_path / "exact-foundation"
+    data_root.mkdir(parents=True)
+    heldout_root.mkdir(parents=True)
+    base_checkpoint.mkdir()
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(
+        pipeline,
+        "_download_prepared",
+        lambda *_args: (
+            data_root,
+            heldout_root,
+            {"train_episode_indices": [0], "heldout_episode_indices": [1]},
+        ),
+    )
+    monkeypatch.setattr(pipeline, "_upstream_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        pipeline, "_download_base_checkpoint", lambda _work: base_checkpoint
+    )
+
+    def fake_run(command: list[str], **_kwargs: object) -> None:
+        commands.append(command)
+        output = Path(
+            next(arg for arg in command if arg.startswith("--save_folder="))[14:]
+        )
+        (output / "step-0001-merged").mkdir(parents=True)
+
+    monkeypatch.setattr(pipeline, "_run", fake_run)
+    monkeypatch.setattr(pipeline, "_upload", lambda _source, target: target)
+
+    manifest = pipeline.finetune(
+        types.SimpleNamespace(
+            work_root=str(tmp_path / "work"),
+            prepared_dataset_uri="prepared-input",
+            checkpoint_uri="checkpoint-output",
+        )
+    )
+
+    assert commands[0][4] == str(base_checkpoint)
+    assert manifest["training_command"][4] == str(base_checkpoint)
+    assert manifest["base_checkpoint"]["revision"] == pipeline.BASE_CHECKPOINT_REVISION
+
+
+def test_live_matrix_does_not_require_an_optional_hub_token() -> None:
+    case = next(
+        case
+        for case in SUBMIT_LIVE_MATRIX
+        if case.spec == "molmoact2-official-policies.yaml"
+    )
+
+    assert "HF_TOKEN" not in case.secret_envs
+    assert case.secret_envs == ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
 
 
 def test_runtime_image_removes_nonruntime_payloads_in_their_creating_layers() -> None:

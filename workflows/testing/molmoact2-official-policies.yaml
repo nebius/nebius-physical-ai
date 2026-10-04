@@ -41,7 +41,9 @@ resources:
     image: "{{config.runtime_image}}"
   gpu:
     cloud: kubernetes
-    accelerators: B200:1
+    # The qualified private route uses one RTX PRO 6000 (sm_120); it is not
+    # represented as B200-equivalent hardware.
+    accelerators: RTXPRO6000:1
     cpus: 16
     memory: 128Gi
     disk_size: 500

@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "cc05500e8e5e86ebf862b2ceca7d1567d5dde89b7f89f178f084575360f296eb",
+  "workflow_sha256": "27bbc0ba0623a8e864012eaf1fdfc2b41f01ec619c7e45e58befcd38788b5827",
   "planning": {
     "validation": {
       "status": "verified",
@@ -26,15 +26,15 @@
     },
     "worker_input": {
       "status": "verified",
-      "reason": "Exact immutable metadata probes succeeded for the foundation model, official LIBERO policy normalization statistics, and official LIBERO dataset. A ranged read of the pinned foundation-weight payload also succeeded under the operator's existing Hugging Face credential. The workflow still rechecks the full real dataset feature contract before any train stage.",
+      "reason": "Exact immutable metadata probes succeeded for the foundation model, official LIBERO policy normalization statistics, and official LIBERO dataset. With Hub token environment variables and cached Hub login absent, the pinned foundation config and dataset metadata downloaded successfully and a ranged foundation-weight read returned HTTP 206. The workflow still rechecks the full real dataset feature contract before any train stage.",
       "evidence": [
-        "Private sanitized exact-revision Hugging Face payload probe, 2026-10-03",
+        "Private sanitized anonymous exact-revision Hugging Face payload probe, 2026-10-04",
         "docs/workbench/molmoact2-official-policies.md"
       ]
     },
     "credentials": {
       "status": "verified",
-      "reason": "Nebius, object-storage, and Hugging Face health preflights passed for this operator session. The existing Hugging Face credential is forwarded through native secret plumbing for the exact foundation payload; no new EULA or acceptance mechanism is added.",
+      "reason": "Nebius and object-storage health preflights passed for this operator session. The active pinned LIBERO foundation/data path is anonymously accessible, so it does not require HF_TOKEN; standard runtime forwarding remains optional when an operator already supplies one. No new EULA or acceptance mechanism is added.",
       "evidence": [
         "Private sanitized npa workbench health preflight evidence, 2026-10-03"
       ]
