@@ -121,6 +121,25 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "research/lerobot-deploy/training/profile_train.py",
         ),
     ),
+    # The enhanced LIBERO checkpoint uses the exact, source-pinned DM05
+    # implementation rather than treating a current stock LeRobot release as
+    # compatible. Keep these imports in the audited surface so a source update
+    # cannot silently substitute a same-named policy registration.
+    (
+        "lerobot.configs",
+        "PreTrainedConfig",
+        ("npa/src/npa/workflows/dm05_lerobot_libero.py",),
+    ),
+    (
+        "lerobot.policies.dm05.configuration_dm05",
+        "DM05Config",
+        ("npa/src/npa/workflows/dm05_lerobot_libero.py",),
+    ),
+    (
+        "lerobot.policies.dm05.modeling_dm05",
+        "DM05Policy",
+        ("npa/src/npa/workflows/dm05_lerobot_libero.py",),
+    ),
     (
         "lerobot.configs.train",
         "TrainPipelineConfig",
@@ -158,6 +177,11 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "npa/src/npa/server/app.py",
             "research/lerobot-deploy/training/profile_train.py",
         ),
+    ),
+    (
+        "lerobot.policies.factory",
+        "get_policy_class",
+        ("npa/src/npa/workflows/dm05_lerobot_libero.py",),
     ),
     (
         "lerobot.policies.factory",
