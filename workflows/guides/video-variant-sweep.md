@@ -48,11 +48,13 @@ context and workflow variables; standard image security and target-pod checks
 still apply. Resume retains the recorded pins. Changing or removing them requires
 a new run ID. Keep private registry references outside the repository.
 
-Current live execution is blocked by Workbench's public Cosmos3 image quarantine.
-The configured release needs a rebuilt and accepted image; the operator stops at
-image preflight before staging or submitting GPU work. Do not reuse the old tag
-or digest to bypass that check. Offline matrix planning remains available. See
-[the current validation scope](#parameter-matrix-validation).
+The configured public Cosmos3 release remains quarantined. A rebuilt candidate
+passed publication checks and the eight-candidate B200 generation run. Its
+immutable reference is
+`ghcr.io/nebius/nebius-physical-ai/npa-cosmos3@sha256:f791a4f763aeb903a576f328b666d8f8427a2f98050948c3bbd9310e9033a2ff`.
+Select those tested bytes through `image_overrides`; do not reuse the old release
+to bypass quarantine. This establishes generation capability, not accepted video
+quality. See [the current validation scope](#parameter-matrix-validation).
 
 The current graph has two parallel workers. Each processes a disjoint partition
 of **every source × variant** combination. This does not limit the number of
@@ -277,6 +279,16 @@ finite score meeting the configured threshold. Its evenly spaced sampled frames
 include clip endpoints, but do not certify every frame. Inspect moving playback
 and transition points as well as the score. Retain rejected candidates as evidence.
 
+Every judge image places the source frame on the left and the generated frame on
+the right. Visible headers and interleaved text identify both videos and their
+actual frame indices/timestamps. This avoids relying on one label before a long
+sequence of independent images. The judge first identifies each side's appearance
+in its rationale, then applies the same fidelity criteria and threshold. Its
+provenance records the presentation version, exact comparison-image hashes,
+dimensions, sample timelines and rubric hash. Missing sample correspondence fails
+before the model call. These labels improve attribution; they do not establish
+judge accuracy or physical validity.
+
 ## Recovery, controls and export
 
 Each completed candidate gets an immutable receipt before the worker proceeds.
@@ -386,11 +398,28 @@ complete worker joins, fixed prompt reuse, immutable input protection and the
 mapping from recorded matrix cells to clips. The offline eight-candidate HTML
 preview passed desktop/mobile checks with no external requests or script errors.
 
-The live matrix attempt passed credential and exact-model access checks, then
-stopped at image preflight because current Workbench main quarantines the
-configured Cosmos3 release pending a rebuilt and accepted image. No matrix GPU
-jobs, generated clips or dataset were created. The six earlier native clips above
-predate this attempt and are not evidence that the new parameter matrix ran.
+The initial attempt stopped at the old release's image quarantine. A replacement
+built from `3b4c29a7e273295165529dbefaec1e04e0f7bc1e` passed the trusted
+[image publication workflow](https://github.com/nebius/nebius-physical-ai/actions/runs/37167266124),
+including vulnerability, secret, payload, bootstrap, revision, SBOM, attestation
+and anonymous-pull checks. It was then selected by immutable digest for the live
+matrix. The existing release quarantine was not removed.
+
+The complete matrix subsequently generated all eight candidates on two reserved
+B200 workers through the standard runtime. Live MiniMax-M3 source description
+and Nemotron-3.5-Lightning augmentation produced one shared enhanced prompt with
+five preservation and four avoidance constraints. An exact-media integration
+test passed, and independent tracking readback verified eight Postgres rows and
+eight finished MLflow records. The original sequential-image review rejected all
+eight at the unchanged 0.80 threshold (scores 0.15–0.35); no dataset was published.
+
+Those rationales described the procedural source and textured output in reverse.
+A subsequent diagnostic presented pixel-labelled source/output frame pairs and
+then swapped the inputs. The same model correctly attributed both videos in
+both orders. The review now uses that paired presentation and records its exact
+image hashes. This diagnostic establishes input attribution on one example;
+it does not qualify the judge or retroactively change the stored rejections.
+Full acceptance validation of the updated review path remains pending.
 
 A later hosted-only preparation test ran against the synthetic forklift source
 using eight timestamped frames, MiniMax-M3 description and Nemotron-3.5-Lightning
