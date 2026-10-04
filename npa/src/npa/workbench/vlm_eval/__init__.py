@@ -465,6 +465,9 @@ class _VlmBackendResponse:
     status_code: int | None
     request_id_header: str | None
     latency_s: float
+    raw_body_base64: str | None = None
+    raw_body_bytes_sha256: str | None = None
+    raw_body_byte_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -3019,6 +3022,8 @@ def _post_with_readiness_retry(
     timeout_s: float,
     response_sink: Callable[[_VlmBackendResponse], None] | None = None,
     error_response_sink: Callable[[_VlmBackendResponse], None] | None = None,
+    request_body: bytes | None = None,
+    response_bytes_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> _VlmBackendResponse:
     """POST while tolerating bounded self-hosted model warmup."""
     is_self_hosted = backend == "self-hosted"
@@ -3036,6 +3041,8 @@ def _post_with_readiness_retry(
                 started_at=started_at,
                 response_sink=response_sink,
                 error_response_sink=error_response_sink,
+                request_body=request_body,
+                response_bytes_sink=response_bytes_sink,
             )
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             if is_self_hosted and time.monotonic() < deadline:
@@ -3689,6 +3696,7 @@ class VlmPreferenceOutcome:
         provider: Provider metadata and raw response when any response was received.
         verdict: Strict parsed preference when successful.
         error: Typed failure when no verdict was produced.
+        response_bytes: Reversible HTTP bytes, absent for historical/text-only adapters.
 
     Returns:
         None.
@@ -3706,6 +3714,7 @@ class VlmPreferenceOutcome:
     provider: VlmProviderEvidence | None
     verdict: VlmPreferenceVerdict | None
     error: VlmPreferenceError | None
+    response_bytes: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -4073,6 +4082,7 @@ def _execute_preference_orders(
             request,
             *order,
             transport_sink=transport_sink,
+            response_bytes_sink=_preference_response_bytes_sink(journal, index),
         )
         _write_preference_journal(
             journal, f"response-{index:02d}.json", asdict(outcome)
@@ -4087,6 +4097,16 @@ def _preference_transport_sink(
 ) -> Callable[[_VlmBackendResponse], None]:
     def retain(response: _VlmBackendResponse) -> None:
         _journal_preference_transport(journal, index, response)
+
+    return retain
+
+
+def _preference_response_bytes_sink(
+    journal: _VlmPreferenceJournal,
+    index: int,
+) -> Callable[[dict[str, Any]], None]:
+    def retain(wire: dict[str, Any]) -> None:
+        _write_preference_journal(journal, f"response-bytes-{index:02d}.json", wire)
 
     return retain
 
@@ -4274,6 +4294,7 @@ def _call_preference_order(
     frames: tuple[SelectedFrame, SelectedFrame],
     *,
     transport_sink: Callable[[_VlmBackendResponse], None] | None = None,
+    response_bytes_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> VlmPreferenceOutcome:
     request_evidence = _preference_request_evidence(context, request, frames)
     headers = {
@@ -4286,6 +4307,7 @@ def _call_preference_order(
         request=request,
         timeout_s=context.timeout_s,
         response_sink=transport_sink,
+        response_bytes_sink=response_bytes_sink,
     )
     if error is not None:
         return _preference_transport_error(
@@ -4357,6 +4379,7 @@ def _preference_transport_error(
         stage=stage,
         error_type=error_type,
         error=error,
+        response=response,
     )
 
 
@@ -4393,6 +4416,7 @@ def _parse_preference_outcome(
         stage="",
         error_type="",
         error=None,
+        response=response,
     )
 
 
@@ -4417,6 +4441,7 @@ def _preference_response_error(
         stage="response_contract",
         error_type="response_contract_error",
         error=error,
+        response=response,
     )
 
 
@@ -4432,6 +4457,7 @@ def _preference_outcome(
     stage: str,
     error_type: str,
     error: VlmEvalError | None,
+    response: _VlmBackendResponse | None = None,
 ) -> VlmPreferenceOutcome:
     failure = (
         VlmPreferenceError(stage, error_type, str(error)[:1000])
@@ -4448,7 +4474,36 @@ def _preference_outcome(
         provider=provider,
         verdict=verdict,
         error=failure,
+        response_bytes=_backend_response_byte_evidence(response),
     )
+
+
+def _backend_response_byte_evidence(
+    response: _VlmBackendResponse | None,
+) -> dict[str, Any] | None:
+    if response is None or response.raw_body_base64 is None:
+        return None
+    if response.raw_body_bytes_sha256 is None or response.raw_body_byte_count is None:
+        raise VlmEvalError("provider response byte metadata is incomplete")
+    try:
+        body = base64.b64decode(response.raw_body_base64, validate=True)
+    except ValueError as exc:
+        raise VlmEvalError("provider response byte encoding is invalid") from exc
+    if (
+        len(body) != response.raw_body_byte_count
+        or hashlib.sha256(body).hexdigest() != response.raw_body_bytes_sha256
+    ):
+        raise VlmEvalError("provider response byte metadata does not match its body")
+    return {
+        "schema_version": "npa_vlm_http_response_bytes_v1",
+        "encoding": "base64",
+        "body_base64": response.raw_body_base64,
+        "body_sha256": response.raw_body_bytes_sha256,
+        "byte_count": response.raw_body_byte_count,
+        "status_code": response.status_code,
+        "request_id_header": response.request_id_header,
+        "latency_s": response.latency_s,
+    }
 
 
 def _strict_preference_verdict(
@@ -4836,6 +4891,7 @@ def _journal_preference_transport(
             "latency_s": round(response.latency_s, 6),
             "raw_body": response.raw_body,
             "raw_body_sha256": _sha256_text(response.raw_body),
+            "response_bytes": _backend_response_byte_evidence(response),
         },
     )
 
@@ -4966,6 +5022,8 @@ def _post_comparison_request(
     request: dict[str, Any],
     timeout_s: float,
     response_sink: Callable[[_VlmBackendResponse], None] | None = None,
+    request_body: bytes | None = None,
+    response_bytes_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[_VlmBackendResponse | None, VlmEvalError | None]:
     started_at = time.monotonic()
     captured: list[_VlmBackendResponse] = []
@@ -4981,6 +5039,8 @@ def _post_comparison_request(
             timeout_s=timeout_s,
             response_sink=retain,
             error_response_sink=captured.append,
+            request_body=request_body,
+            response_bytes_sink=response_bytes_sink,
         )
         response = _coerce_backend_response(
             raw_response,
@@ -5047,18 +5107,34 @@ def _post_backend_once(
     started_at: float,
     response_sink: Callable[[_VlmBackendResponse], None] | None,
     error_response_sink: Callable[[_VlmBackendResponse], None] | None,
+    request_body: bytes | None = None,
+    response_bytes_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> _VlmBackendResponse:
     with httpx.Client(timeout=timeout_s) as client:
-        response = client.post(url, headers=headers, json=request)
-        observed = _backend_response_from_http(response, data={}, started_at=started_at)
-        _retain_response(observed, response_sink)
-        _raise_for_backend_status(response, started_at, error_response_sink)
-        data = _decode_backend_json(response, started_at, error_response_sink)
-        return _backend_response_from_http(
-            response,
-            data=data,
-            started_at=started_at,
+        kwargs = (
+            {"content": request_body} if request_body is not None else {"json": request}
         )
+        response = client.post(url, headers=headers, **kwargs)
+        wire = _retain_response_bytes(response, started_at, response_bytes_sink)
+        observed = _backend_response_from_http(
+            response, data={}, started_at=started_at, wire=wire
+        )
+        has_decoded_text = getattr(response, "text", None) is not None
+        if has_decoded_text:
+            _retain_response(observed, response_sink)
+        consistent_error_sink = _response_sink_with_latency(
+            observed.latency_s, error_response_sink, wire=wire
+        )
+        _raise_for_backend_status(response, started_at, consistent_error_sink)
+        data = _decode_backend_json(response, started_at, consistent_error_sink)
+        decoded = replace(
+            observed,
+            data=data,
+            raw_body=observed.raw_body if has_decoded_text else _canonical_json(data),
+        )
+        if not has_decoded_text:
+            _retain_response(decoded, response_sink)
+        return decoded
 
 
 def _raise_for_backend_status(
@@ -5113,12 +5189,16 @@ def _captured_http_response(
     *,
     started_at: float,
 ) -> _VlmBackendResponse:
+    # Capture reversible bytes before json() or text can decode invalid UTF-8.
+    wire = _retain_response_bytes(response, started_at, None)
     try:
         payload = response.json()
     except ValueError:
         payload = {}
     data = payload if isinstance(payload, dict) else {}
-    return _backend_response_from_http(response, data=data, started_at=started_at)
+    return _backend_response_from_http(
+        response, data=data, started_at=started_at, wire=wire
+    )
 
 
 def _backend_response_from_http(
@@ -5126,7 +5206,10 @@ def _backend_response_from_http(
     *,
     data: dict[str, Any],
     started_at: float,
+    wire: dict[str, Any] | None = None,
 ) -> _VlmBackendResponse:
+    if wire is None:
+        wire = _retain_response_bytes(response, started_at, None)
     raw_body = getattr(response, "text", None)
     if raw_body is None:
         raw_body = _canonical_json(data)
@@ -5136,7 +5219,10 @@ def _backend_response_from_http(
         raw_body=raw_body,
         status_code=getattr(response, "status_code", None),
         request_id_header=_request_id_from_headers(response_headers),
-        latency_s=time.monotonic() - started_at,
+        latency_s=wire["latency_s"] if wire else time.monotonic() - started_at,
+        raw_body_base64=wire["body_base64"] if wire else None,
+        raw_body_bytes_sha256=wire["body_sha256"] if wire else None,
+        raw_body_byte_count=wire["byte_count"] if wire else None,
     )
 
 
@@ -5158,4 +5244,112 @@ __all__ += [
     "compare_vlm_preference",
     "preference_comparison_result_uri_for",
     "write_preference_report",
+]
+
+
+def _response_sink_with_latency(
+    latency_s: float,
+    sink: Callable[[_VlmBackendResponse], None] | None,
+    *,
+    wire: dict[str, Any] | None = None,
+) -> Callable[[_VlmBackendResponse], None] | None:
+    if sink is None:
+        return None
+
+    def retain(response: _VlmBackendResponse) -> None:
+        sink(
+            replace(
+                response,
+                latency_s=latency_s,
+                raw_body_base64=wire["body_base64"] if wire else None,
+                raw_body_bytes_sha256=wire["body_sha256"] if wire else None,
+                raw_body_byte_count=wire["byte_count"] if wire else None,
+            )
+        )
+
+    return retain
+
+
+def _retain_response_bytes(
+    response: Any,
+    started_at: float,
+    sink: Callable[[dict[str, Any]], None] | None,
+) -> dict[str, Any] | None:
+    content = getattr(response, "content", None)
+    if not isinstance(content, bytes):
+        return None
+    wire = {
+        "schema_version": "npa_vlm_http_response_bytes_v1",
+        "encoding": "base64",
+        "body_base64": base64.b64encode(content).decode("ascii"),
+        "body_sha256": hashlib.sha256(content).hexdigest(),
+        "byte_count": len(content),
+        "status_code": getattr(response, "status_code", None),
+        "request_id_header": _request_id_from_headers(getattr(response, "headers", {})),
+        "latency_s": time.monotonic() - started_at,
+    }
+    if sink is not None:
+        try:
+            sink(wire)
+        except VlmEvalError as exc:
+            raise _VlmEvidenceRetentionError(
+                "provider response bytes could not be retained"
+            ) from exc
+    return wire
+
+
+from .visual_review import (  # noqa: E402
+    DEFAULT_VISUAL_REVIEW_RUBRIC as DEFAULT_VISUAL_REVIEW_RUBRIC,
+    VISUAL_REVIEW_RESULT_FILENAME as VISUAL_REVIEW_RESULT_FILENAME,
+    VISUAL_REVIEW_SCHEMA_VERSION as VISUAL_REVIEW_SCHEMA_VERSION,
+    VlmVisualArmReview,
+    VlmVisualArtifactFidelity,
+    VlmVisualArtifactIssue,
+    VlmVisualAssertion,
+    VlmVisualBaselineComparison,
+    VlmVisualComparisonAssertion,
+    VlmVisualImpressiveness,
+    VlmVisualMappedComparisonAssertion,
+    VlmVisualPairComparison,
+    VlmVisualPairedVerdict,
+    VlmVisualReviewError as VlmVisualReviewError,
+    VlmVisualReviewFailure,
+    VlmVisualReviewOutcome,
+    VlmVisualReviewReport,
+    VlmVisualReviewRequest,
+    VlmVisualReviewability,
+    VlmVisualResponseBytes,
+    VlmVisualSingleVerdict,
+    VlmVisualSourceManifest,
+    VlmVisualTaskEvidence,
+    VlmVisualUsefulness,
+    parse_visual_review_response,
+    review_visual,
+    visual_review_result_uri_for,
+)
+
+__all__ += [
+    "VlmVisualArmReview",
+    "VlmVisualArtifactFidelity",
+    "VlmVisualArtifactIssue",
+    "VlmVisualAssertion",
+    "VlmVisualBaselineComparison",
+    "VlmVisualComparisonAssertion",
+    "VlmVisualImpressiveness",
+    "VlmVisualMappedComparisonAssertion",
+    "VlmVisualPairComparison",
+    "VlmVisualPairedVerdict",
+    "VlmVisualReviewFailure",
+    "VlmVisualReviewOutcome",
+    "VlmVisualReviewReport",
+    "VlmVisualReviewRequest",
+    "VlmVisualReviewability",
+    "VlmVisualResponseBytes",
+    "VlmVisualSingleVerdict",
+    "VlmVisualSourceManifest",
+    "VlmVisualTaskEvidence",
+    "VlmVisualUsefulness",
+    "parse_visual_review_response",
+    "review_visual",
+    "visual_review_result_uri_for",
 ]
