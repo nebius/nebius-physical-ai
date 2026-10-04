@@ -326,6 +326,13 @@ NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"lerobot-vla-jepa"}
 NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {
     "lerobot-vla-jepa": "0.6.1-vla-jepa-unbuilt",
 }
+# Keep neutral candidates out of CONTAINER_IMAGE_NAMES, whose members participate
+# in the public release-manifest inventory. This mapping exists only so an
+# explicitly operator-controlled registry can address a full-source-SHA build
+# candidate before it has earned a public release.
+NEUTRAL_UNBUILT_IMAGE_NAMES: dict[str, str] = {
+    "lerobot-vla-jepa": "npa-lerobot-vla-jepa",
+}
 # Previously accepted releases whose published bytes no longer satisfy the
 # repository's current security contract. Keep this separate from
 # UNVALIDATED_PUBLICATION_TOOLS: these images were built and capability-tested,
@@ -2526,7 +2533,17 @@ def container_image_for_tool(
                 f"Workload-specific image selection is only defined for SONIC, "
                 f"got tool={tool!r}"
             )
-        if tool == "gymnasium-robotics":
+        if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
+            if re.fullmatch(r"dev-[0-9a-f]{40}", tag or "") is None:
+                raise ValueError(
+                    f"{tool!r} is a neutral unbuilt candidate and requires an explicit "
+                    "dev-<full-source-sha> tag in an operator-controlled registry; "
+                    "workflow submission must use the separately qualified immutable "
+                    "image digest."
+                )
+            image_name = NEUTRAL_UNBUILT_IMAGE_NAMES[tool]
+            resolved_tag = str(tag)
+        elif tool == "gymnasium-robotics":
             # The neutral candidate is intentionally outside the supported-tool
             # release table.  This narrow resolver path exists only for explicit
             # development builds and the private neutral placeholder.
