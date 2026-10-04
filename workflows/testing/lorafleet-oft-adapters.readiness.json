@@ -1,7 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
   "workflow_sha256": "8bb0de242eb9aea093e0bce8c83ab9d362aa261ccf3c413930e1db82a1c8bca7",
-  "stage_count": 5,
   "planning": {
     "validation": {
       "status": "verified",

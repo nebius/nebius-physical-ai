@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -69,8 +71,8 @@ def test_readiness_is_bound_to_the_saved_five_stage_workflow() -> None:
         readiness["workflow_sha256"]
         == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
     )
-    assert readiness["stage_count"] == 5
-    assert len(workflow["states"]) == readiness["stage_count"]
+    assert "stage_count" not in readiness
+    assert len(workflow["states"]) == 5
 
 
 def test_reconstruction_metadata_rejects_non_exact_or_wrong_rank() -> None:
@@ -170,7 +172,7 @@ def test_dlimp_reader_regression_supplies_pinned_oft_normalization_argument() ->
     assert 'action_proprio_normalization_type="normal"' in source
 
 
-def test_s3_parser_requires_complete_s3_object_uri() -> None:
+def test_s3_parser_requires_complete_s3_object_uri(tmp_path: Path) -> None:
     """Avoid accidentally treating a local path or a bucket root as stage input."""
     assert qualification._s3_parts("s3://bucket/prefix/result.json") == (
         "bucket",
@@ -179,7 +181,63 @@ def test_s3_parser_requires_complete_s3_object_uri() -> None:
     with pytest.raises(ValueError, match="concrete s3"):
         qualification._s3_parts("s3://bucket")
     with pytest.raises(ValueError, match="concrete s3"):
-        qualification._s3_parts("/tmp/result.json")
+        qualification._s3_parts(str(tmp_path / "result.json"))
+
+
+def test_local_model_loader_is_revision_pinned_and_cannot_fall_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The actual loader boundary must not turn a missing staged model into a fetch."""
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeModel:
+        vision_backbone = SimpleNamespace(set_num_images_in_input=lambda _count: None)
+
+        def eval(self) -> "FakeModel":
+            return self
+
+        def to(self, _device: object) -> "FakeModel":
+            return self
+
+    class FakeAutoModel:
+        @staticmethod
+        def from_pretrained(path: str, **kwargs: object) -> FakeModel:
+            calls.append((path, kwargs))
+            return FakeModel()
+
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: True),
+        bfloat16=object(),
+        device=lambda value: value,
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setattr(
+        qualification,
+        "_register_openvla_classes",
+        lambda: (FakeAutoModel, object),
+    )
+    staged = tmp_path / "staged-base"
+    staged.mkdir()
+
+    qualification._load_base_vla(staged, revision=qualification.BASE_REVISION)
+
+    assert calls == [
+        (
+            str(staged),
+            {
+                "revision": qualification.BASE_REVISION,
+                "local_files_only": True,
+                "torch_dtype": fake_torch.bfloat16,
+                "low_cpu_mem_usage": True,
+                "trust_remote_code": True,
+            },
+        )
+    ]
+    with pytest.raises(FileNotFoundError, match="refusing network fallback"):
+        qualification._load_base_vla(
+            tmp_path / "missing-staged-base", revision=qualification.BASE_REVISION
+        )
+    assert len(calls) == 1
 
 
 def test_publisher_base_hash_extraction_is_complete() -> None:

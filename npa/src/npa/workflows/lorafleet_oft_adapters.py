@@ -608,15 +608,21 @@ def _register_openvla_classes() -> tuple[Any, Any]:
     return AutoModelForVision2Seq, OpenVLAConfig
 
 
-def _load_base_vla(base_root: Path) -> Any:
-    """Instantiate exactly the pinned unmerged base model on the available CUDA device."""
+def _load_base_vla(base_root: Path, *, revision: str) -> Any:
+    """Load a staged immutable VLA snapshot without allowing Hub fallback."""
     import torch  # type: ignore[import-not-found]
 
     if not torch.cuda.is_available():
         raise RuntimeError("OpenVLA-OFT qualification requires an assigned CUDA GPU")
+    if not base_root.is_dir():
+        raise FileNotFoundError(
+            "staged immutable model snapshot is absent; refusing network fallback"
+        )
     AutoModelForVision2Seq, _ = _register_openvla_classes()
     model = AutoModelForVision2Seq.from_pretrained(
         str(base_root),
+        revision=revision,
+        local_files_only=True,
         torch_dtype=torch.bfloat16,
         low_cpu_mem_usage=True,
         trust_remote_code=True,
@@ -690,7 +696,7 @@ def _reconstruct_stage(verification_uri: str, output: Path) -> None:
     base_hashes = _verify_base_shards(base_root, release_root)
     reports: dict[str, Any] = {}
     for suite in SUITES.values():
-        model = _load_base_vla(base_root)
+        model = _load_base_vla(base_root, revision=BASE_REVISION)
         samples = _apply_suite_factors(
             model,
             base_root,
@@ -743,7 +749,9 @@ def _stage_cfg(suite: SuiteSpec, checkpoint: Path) -> Any:
     )
 
 
-def _load_local_model(cfg: Any, checkpoint: Path) -> tuple[Any, Any, Any, Any, Any]:
+def _load_local_model(
+    cfg: Any, suite: SuiteSpec, checkpoint: Path
+) -> tuple[Any, Any, Any, Any, Any]:
     """Load a local immutable checkpoint without upstream cache-mutating sync helpers."""
     from experiments.robot.libero.run_libero_eval import check_unnorm_key
     from experiments.robot.openvla_utils import (
@@ -754,7 +762,7 @@ def _load_local_model(cfg: Any, checkpoint: Path) -> tuple[Any, Any, Any, Any, A
     )
     from experiments.robot.robot_utils import get_image_resize_size
 
-    model = _load_base_vla(checkpoint)
+    model = _load_base_vla(checkpoint, revision=suite.source_revision)
     _load_dataset_stats(model, str(checkpoint))
     check_unnorm_key(cfg, model)
     action_head = get_action_head(cfg, model.llm_dim)
@@ -775,7 +783,7 @@ def _load_reconstructed_model(
     )
     from experiments.robot.robot_utils import get_image_resize_size
 
-    model = _load_base_vla(base_root)
+    model = _load_base_vla(base_root, revision=BASE_REVISION)
     _apply_suite_factors(
         model,
         base_root,
@@ -936,7 +944,7 @@ def _rollout_stage(
         checkpoint = _source_snapshot(suite) if kind == "baseline" else base_root
         cfg = _stage_cfg(suite, checkpoint)
         model_parts = (
-            _load_local_model(cfg, checkpoint)
+            _load_local_model(cfg, suite, checkpoint)
             if kind == "baseline"
             else _load_reconstructed_model(cfg, suite, base_root, release_root)
         )
