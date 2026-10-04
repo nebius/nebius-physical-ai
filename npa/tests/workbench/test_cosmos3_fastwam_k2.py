@@ -11,6 +11,7 @@ from npa.workbench.cosmos.fastwam_k2 import (
     KEEP_GENERATED_VISION_FRAMES,
     PREPARED_SCHEMA,
     ROBOLAB_REPOSITORY,
+    ROBOLAB_ISAAC_PYTHON,
     TOKENS_PER_VISION_LATENT_FRAME,
     VARIANT_SCHEMA,
     EvaluationRequest,
@@ -20,6 +21,7 @@ from npa.workbench.cosmos.fastwam_k2 import (
     _rrd_recording_id,
     _run_robolab,
     _select_cuda_topology,
+    _sync_robolab,
     _sync_framework,
     apply_k2_runtime_overlay,
     compare_variants,
@@ -89,6 +91,25 @@ def test_overlay_retains_k2_generated_frames_and_native_condition_mask(tmp_path:
 def test_robolab_checkout_uses_the_upstream_published_repository() -> None:
     """Pin the repository namespace named by both upstream policy cards."""
     assert ROBOLAB_REPOSITORY == "https://github.com/NVlabs/RoboLab.git"
+
+
+def test_robolab_sync_selects_isaac_supported_python_runtime(tmp_path: Path, monkeypatch) -> None:
+    """Keep Isaac's runtime wheel selection independent from the control Python."""
+    calls: list[list[str]] = []
+
+    def fake_run(argv, *, cwd, env, log) -> None:
+        calls.append(list(argv))
+        assert env["UV_PROJECT_ENVIRONMENT"] == str(cwd / ".venv")
+
+    monkeypatch.setattr("npa.workbench.cosmos.fastwam_k2._run", fake_run)
+    robolab = tmp_path / "robolab"
+    robolab.mkdir()
+
+    returned = _sync_robolab(robolab, {"ACCEPT_EULA": "Y"}, tmp_path / "robolab-sync.log")
+
+    assert ROBOLAB_ISAAC_PYTHON == "3.11"
+    assert calls == [["uv", "sync", "--python", "3.11", "--extra", "isaac50"]]
+    assert returned == robolab / ".venv/bin/python"
 
 
 def test_framework_sync_uses_pinned_upstream_dependency_groups(

@@ -44,6 +44,7 @@ FRAMEWORK_REPOSITORY = "https://github.com/NVIDIA/cosmos-framework.git"
 FRAMEWORK_REVISION = "4e26181d87878a0b14c37ca021b0e2cd4f28dc5f"
 ROBOLAB_REPOSITORY = "https://github.com/NVlabs/RoboLab.git"
 ROBOLAB_REVISION = "ad45d4f974725d020f82c2b0d77d78533aeba2b3"
+ROBOLAB_ISAAC_PYTHON = "3.11"
 DERIVATIVE_REPOSITORY = "geonmin-kim/Cosmos3-Edge-Policy-DROID-FastWAM-K2"
 DERIVATIVE_REVISION = "04cc10f6f790153fa5db1ff90e95ecf9196e88c5"
 DERIVATIVE_SUBDIRECTORY = "step12000"
@@ -343,10 +344,21 @@ def _detect_cuda_topology(framework_python: Path, framework: Path, env: dict[str
 
 
 def _sync_robolab(robolab: Path, env: dict[str, str], log: Path) -> Path:
-    """Materialize the upstream RoboLab Isaac 5 runtime without baking it."""
+    """Materialize the upstream RoboLab Isaac 5 runtime without baking it.
+
+    The NPA control image currently defaults to CPython 3.13, while RoboLab's
+    pinned Isaac 5.0 wheel set supplies the supported CPython 3.11 runtime.
+    Ask uv for that interpreter explicitly so its runtime fetch is both
+    reproducible and independent from the control-image interpreter.
+    """
     runtime_env = _isaac_runtime_env(env)
     runtime_env["UV_PROJECT_ENVIRONMENT"] = str(robolab / ".venv")
-    _run(["uv", "sync", "--extra", "isaac50"], cwd=robolab, env=runtime_env, log=log)
+    _run(
+        ["uv", "sync", "--python", ROBOLAB_ISAAC_PYTHON, "--extra", "isaac50"],
+        cwd=robolab,
+        env=runtime_env,
+        log=log,
+    )
     return robolab / ".venv/bin/python"
 
 
