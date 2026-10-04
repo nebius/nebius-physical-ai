@@ -1,0 +1,319 @@
+{
+  "format": "ncore_model_profile_comparison_evidence_v1",
+  "source_execution_commit": "f01b7749e194b1929d65dde553f6ce457d3767e1",
+  "source_execution_tree": "1112f8db8e7a04210fca546845764342b2aa7442",
+  "source_module_sha256": "E6A958BC8F132E5CDBC9088D69E74FFD9BF4C28185558F76564BC65D10E13BD7",
+  "comparison_freeze_sha256": "67E1FCF4C62E5BB935B5DAAF720762A8E33E179397FAB0B59E10A558F3DFCF5A",
+  "original_failed_freeze_sha256": "35E0D595C9CDCA2C552F4FB754B4DE2E3CE7D2C501C2795EF817384B7600B81E",
+  "model": "MiniMaxAI/MiniMax-M3",
+  "profile": {
+    "default_extra": {
+      "chat_template_kwargs": {
+        "thinking_mode": "disabled"
+      }
+    },
+    "include_temperature": true,
+    "use_vlm_response_format": false,
+    "require_exact_model": true
+  },
+  "status": "fixed_controls_and_four_frame_final_pass",
+  "threshold": 0.8,
+  "confusion": {
+    "true_positives": 2,
+    "true_negatives": 2,
+    "false_positives": 0,
+    "false_negatives": 0
+  },
+  "actual_calls": 5,
+  "retries": 0,
+  "outcomes": [
+    {
+      "attempt_id": "case-9b0f5fde653b0b74",
+      "score": 0.2,
+      "success": false,
+      "rationale": "The sequence shows severe geometry and texture inconsistency. Frame 1 shows a wide view of a pond with a building and trees, but the central inset reveals a completely different scene (bushes, a person) that does not match the surrounding context. Frame 2 shows a concrete sculpture in the pond, but the inset shows a glass building facade that is inconsistent with the sculpture's geometry. Frames 3 and 4 show the same sculpture from different angles, but the insets contain distorted, melted-looking geometry that does not coherently match the surrounding sculpture. There are large regions of corrupted/blurred geometry, particularly in the inset regions, and the overall scene coherence is broken by these artifacts. The viewpoint changes are not consistent with a coherent static scene reconstruction.",
+      "finish_reason": "stop",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "usage": {
+        "completion_tokens": 171,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2698,
+        "prompt_tokens": 2698,
+        "prompt_tokens_details": null,
+        "total_tokens": 2869
+      },
+      "latency_ms": 3733,
+      "request_sha256": "88B19D01B2ED3DAC541009D3FF09C155F47F7DCD8E0F4FFBA22CA751709F4C58",
+      "response_sha256": "ABCBD8BFC15D34D59EE82E9D9BEA5CC32DE2569152B4649735B068BE56788639",
+      "outcome_sha256": "5BB4FDE96819A59DE4F3F750DC5B085BED241F7F01269E4F6F211FF64CBCC8CC",
+      "role": "render-local-seam-floater",
+      "expected_label": false,
+      "predicted_label": false
+    },
+    {
+      "attempt_id": "case-28fc2744fc42167c",
+      "score": 0.8,
+      "success": true,
+      "rationale": "The four frames depict the same static scene: a metallic abstract sculpture on a stone plinth in a greenish reflecting pool, with a modernist building and landscaping in the background. The sculpture's geometry (curved and blocky metallic forms), the plinth, the pool, and the background building remain consistent across views. The camera moves around the sculpture, showing it from different angles (front, distant side, and closer side views), which is consistent with an ordered view sequence. Lighting and shadows are coherent, and reflections in the pool match the surrounding structures. Minor issues: the second frame is taken from much farther away under a covered walkway, making the sculpture small and partially occluded by a concrete column, and the water surface shows some texture inconsistencies. Overall, the sequence is coherent and reviewable with only minor localized defects.",
+      "finish_reason": "stop",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "usage": {
+        "completion_tokens": 186,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_cache_hit_tokens": 384,
+        "prompt_cache_miss_tokens": 2358,
+        "prompt_tokens": 2742,
+        "prompt_tokens_details": null,
+        "total_tokens": 2928
+      },
+      "latency_ms": 7454,
+      "request_sha256": "6FF5ADE24DE32BA8EE1711233160C0304EC224F0E30350804CCFAA51A2F72617",
+      "response_sha256": "675512010582DF425E398B6FA5FDDF8BF81FB36161794363737CE928AC8F6361",
+      "outcome_sha256": "F42FE2F55595209B92D4B696F006E8AA0164C8D07467FDFB63A8910A8276B8CB",
+      "role": "source-camera:camera2",
+      "expected_label": true,
+      "predicted_label": true
+    },
+    {
+      "attempt_id": "case-ce11af7af01cfa49",
+      "score": 0.0,
+      "success": false,
+      "rationale": "All four frames are dominated by severe block corruption, appearing as a mosaic of small square tiles with no coherent scene structure. There is no recognizable object geometry, consistent background, or continuous surface across the frames. The pixel patterns shift chaotically between frames (e.g., frame 2 is bright with yellow/white tiles while frames 1, 3, and 4 are dark with olive/black tiles), indicating no coherent static scene. No reviewable scene content is present.",
+      "finish_reason": "stop",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "usage": {
+        "completion_tokens": 115,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2742,
+        "prompt_tokens": 2742,
+        "prompt_tokens_details": null,
+        "total_tokens": 2857
+      },
+      "latency_ms": 7166,
+      "request_sha256": "C5CFEF68A6344E697E0A53E46E2CF4019CECF60E729627EE0163347DB43CC9D3",
+      "response_sha256": "556DAD43028F8E84D89DA4BB6FDD03F0417B7DB02497BD94465D66894B60F0E5",
+      "outcome_sha256": "46BD82B75F0DB232B429DAA89C00D60BBD96953794C6C326AD2D87A17EA9D1FA",
+      "role": "block-global-permutation-32-v1",
+      "expected_label": false,
+      "predicted_label": false
+    },
+    {
+      "attempt_id": "case-d4bff0fc8d9d7504",
+      "score": 0.8,
+      "success": true,
+      "rationale": "The four frames depict the same static scene: a metallic abstract sculpture on a rectangular pedestal sitting in a shallow reflecting pool, with a glass-fronted building and trees in the background. The viewpoint clearly orbits the sculpture \u2014 frame 1 shows it from a distance under a concrete overhang, frame 2 from a closer frontal angle, frame 3 from a higher/closer angle revealing the curved letter-like forms, and frame 4 from a low side angle. Object shapes, the pedestal, the pool, the building facade, and the surrounding vegetation remain consistent across views. However, frame 3 exhibits a strong yellow color cast and washed-out highlights that do not match the natural lighting in the other frames, and frame 2 also shows a noticeable yellow tint in the water. These color/exposure inconsistencies are localized defects rather than scene incoherence, so the sequence is clearly the same scene but with minor rendering or color artifacts.",
+      "finish_reason": "stop",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "usage": {
+        "completion_tokens": 205,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_cache_hit_tokens": 384,
+        "prompt_cache_miss_tokens": 2314,
+        "prompt_tokens": 2698,
+        "prompt_tokens_details": null,
+        "total_tokens": 2903
+      },
+      "latency_ms": 8335,
+      "request_sha256": "1CFB6A388A778DECFF62ACDC5EE58E82FEAF5478C7D44437C3D921C7E891C306",
+      "response_sha256": "203C0AFF2ACA79287B1337685E89397B1FA72E33291DFFC490833A774CF142D5",
+      "outcome_sha256": "67A03C92C01C2ADC21895242A6B6B4A00D959897995520B00F9B0D5F4D46882A",
+      "role": "source-camera:camera1",
+      "expected_label": true,
+      "predicted_label": true
+    },
+    {
+      "attempt_id": "final-one-shot",
+      "score": 0.8,
+      "success": true,
+      "rationale": "The four frames depict a coherent static scene: a metallic geometric sculpture on a stone pedestal in a shallow greenish reflecting pool, with a glass-fronted building and trees in the background. The viewpoint clearly moves around the sculpture (from a distant under-canopy view, to a frontal view, to a close-up of the left side, to a close-up of the right side), and the sculpture's shape, the pedestal, the pool, and the background building remain consistent across frames. Reflections in the pool and lighting direction are consistent. Minor issues include some softness/blur on the sculpture's metallic surfaces (especially in frames 3 and 4) and slight smearing on the building's glass facade, but no large holes, block corruption, duplicate geometry, or unexplained motion are visible.",
+      "finish_reason": "stop",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "usage": {
+        "completion_tokens": 178,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2699,
+        "prompt_tokens": 2699,
+        "prompt_tokens_details": null,
+        "total_tokens": 2877
+      },
+      "latency_ms": 3709,
+      "request_sha256": "4C53377B5A87880A6FDF1089DEA9990FE75897EE4F1A1762BE9258BE2E14B34D",
+      "response_sha256": "E5F361058D75345384419871DF73FC401CB0C6EE7C6EE826027D86106E42466F",
+      "outcome_sha256": "28FD16F06373861D99FF3C9C593E8B22E04391788AE1AEC8ED9E9E19B7262E4F"
+    }
+  ],
+  "usage_total": {
+    "prompt_tokens": 13579,
+    "completion_tokens": 855,
+    "total_tokens": 14434
+  },
+  "authoritative_billed_cost": null,
+  "frames": [
+    {
+      "path": "controls/case-28fc2744fc42167c/frame-000.png",
+      "bytes": 2553163,
+      "sha256": "15C51E2C70C9F13E54B87BA1DA7B4C8D481EDE9DA1EC925EC5804DC950385583",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-28fc2744fc42167c/frame-000.png"
+    },
+    {
+      "path": "controls/case-28fc2744fc42167c/frame-001.png",
+      "bytes": 4017561,
+      "sha256": "7A1937F140656F15E31ABB575ADA180487D7DFF14CBFEC90A8443AB8A81E7886",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-28fc2744fc42167c/frame-001.png"
+    },
+    {
+      "path": "controls/case-28fc2744fc42167c/frame-002.png",
+      "bytes": 3583917,
+      "sha256": "35F366142C3CF07CF85A9CA0326E819114C7C985BDAAB3AE56ABFBB31B10CF61",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-28fc2744fc42167c/frame-002.png"
+    },
+    {
+      "path": "controls/case-28fc2744fc42167c/frame-003.png",
+      "bytes": 3782407,
+      "sha256": "15DBA65C346C5CB1A55430F7BF5E67B8B99D88D6FBAEC0F60C321BCA0083022F",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-28fc2744fc42167c/frame-003.png"
+    },
+    {
+      "path": "controls/case-9b0f5fde653b0b74/frame-000.png",
+      "bytes": 722902,
+      "sha256": "8A265C0C32DBD4CF757808B83BDDF3E52C1BA53CFB88A82DE7E6984CB97A5EAF",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-9b0f5fde653b0b74/frame-000.png"
+    },
+    {
+      "path": "controls/case-9b0f5fde653b0b74/frame-001.png",
+      "bytes": 768174,
+      "sha256": "FAAC46F91E055EA03DF3EA35B78B22D80C4936F93C275C329602FABAA11AD7A1",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-9b0f5fde653b0b74/frame-001.png"
+    },
+    {
+      "path": "controls/case-9b0f5fde653b0b74/frame-002.png",
+      "bytes": 713454,
+      "sha256": "51472E54682E67AB0E24FACCBCCFA5BB63EE855A0F068586A046DDE4ADDF0C3A",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-9b0f5fde653b0b74/frame-002.png"
+    },
+    {
+      "path": "controls/case-9b0f5fde653b0b74/frame-003.png",
+      "bytes": 618312,
+      "sha256": "DB1637665A34ACE2B0A16BE58EFE8996BA2B52E19E3669AE5018EF279113DD47",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-9b0f5fde653b0b74/frame-003.png"
+    },
+    {
+      "path": "controls/case-ce11af7af01cfa49/frame-000.png",
+      "bytes": 2609972,
+      "sha256": "1519DA53E3B09FD952B3E801595D4EAF853FA50D9FD8A4E043E956144F9209D6",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-ce11af7af01cfa49/frame-000.png"
+    },
+    {
+      "path": "controls/case-ce11af7af01cfa49/frame-001.png",
+      "bytes": 4119677,
+      "sha256": "33344CD16229B4BC6AAF14D7FFAE068B0D44A91019C3359B319997025CCB6F0D",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-ce11af7af01cfa49/frame-001.png"
+    },
+    {
+      "path": "controls/case-ce11af7af01cfa49/frame-002.png",
+      "bytes": 3664615,
+      "sha256": "38870F097CD1B85E8F54CBF9C9CBE02E387036E0EB881FC4FA2E7E7B05BE94B4",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-ce11af7af01cfa49/frame-002.png"
+    },
+    {
+      "path": "controls/case-ce11af7af01cfa49/frame-003.png",
+      "bytes": 3848617,
+      "sha256": "130DFB95938CAF113F08297B66DE285976727764E64BD77B9E3CE22855F3E4BE",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-ce11af7af01cfa49/frame-003.png"
+    },
+    {
+      "path": "controls/case-d4bff0fc8d9d7504/frame-000.png",
+      "bytes": 4925549,
+      "sha256": "25B89157890D246EA1FFA216E3447DF75F73E68CEE73F565617E0625B22F879D",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-d4bff0fc8d9d7504/frame-000.png"
+    },
+    {
+      "path": "controls/case-d4bff0fc8d9d7504/frame-001.png",
+      "bytes": 4308554,
+      "sha256": "82347E45F287D02D593C8938F7760A6766E24495794E0CCB13622587A7977FA9",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-d4bff0fc8d9d7504/frame-001.png"
+    },
+    {
+      "path": "controls/case-d4bff0fc8d9d7504/frame-002.png",
+      "bytes": 4488199,
+      "sha256": "8635ECFD4A0FE65912B13358E688F1CA4F991DFA9A38F471488384D0993D8CA0",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-d4bff0fc8d9d7504/frame-002.png"
+    },
+    {
+      "path": "controls/case-d4bff0fc8d9d7504/frame-003.png",
+      "bytes": 4862381,
+      "sha256": "09231C72A38F72270E15B21B2207AC8A409687B5E98B1A8467D619621DC86512",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/controls/case-d4bff0fc8d9d7504/frame-003.png"
+    },
+    {
+      "path": "final/frame-000.png",
+      "bytes": 682906,
+      "sha256": "95EEFA0C3EA7339389D377B936FB49A2E988A2FBE87B23FD89AC77B4D3A3AD19",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/final/frame-000.png"
+    },
+    {
+      "path": "final/frame-001.png",
+      "bytes": 761700,
+      "sha256": "1D86B2B9FEA04BD2C032E867DE3AC94E81FA460BEE3CDACDDD049A3F54CE1455",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/final/frame-001.png"
+    },
+    {
+      "path": "final/frame-002.png",
+      "bytes": 713069,
+      "sha256": "9AFBC9B555F2C3C74F138D6C5216A82CD9BD5586D548CFF636C460A5892BEE0E",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/final/frame-002.png"
+    },
+    {
+      "path": "final/frame-003.png",
+      "bytes": 621046,
+      "sha256": "450B949103B0CD6A3378A8CF692E86ECC1F94FD04705D2EFDD387EEBBB8C096D",
+      "media_url": "https://github.com/nebius/nebius-physical-ai/blob/aec8ba73668a8b7fd1122144e2a12fbc554669bc/docs/testing/evidence/ncore-vlm-failed-aa395-20261004/final/frame-003.png"
+    }
+  ],
+  "all_twenty_images_byte_identical_original": true,
+  "prompts_order_hidden_labels_threshold_unchanged": true,
+  "expected_labels_sent_to_model": false,
+  "scope": [
+    "Distinct explicitly authorized model-plus-mandatory-provider-profile comparison, not a MiniCPM retry or assumed general superiority.",
+    "Only four controls and camera1 final source indices0/88/177/266; no all-camera/all-population/heldout/generalized calibrated quality or physical safety claim.",
+    "Final rationale retains metallic-surface softness/blur and glass-facade smearing.",
+    "Actual five-request/response reconstruction and complete-evidence verifier pass; all5 conditional markers/raw ETags/complete prefix listing retained privately, source and raw142package inventories unchanged.",
+    "Original MiniCPM2TP1TN1FP0FN and withheld final remain unchanged; original failed GPU runs remain.",
+    "Source/profile freeze review accepted before execution; terminal response/consumer review pending when this proof was issued.",
+    "The later6fce consumer successor reconciles exact model compatibility; retained-response replay has synthetic nonvisual aggregate fields and does not establish whole-bundle/image/cleanup/publication acceptance.",
+    "All SHA256 strings use uppercase hexadecimal uniformly; encoding is lossless, no detector suppression."
+  ]
+}
