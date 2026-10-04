@@ -1,0 +1,155 @@
+{
+  "schema": "cursor-explore.vlm-strict-scores.incoming-main-source-bridge/v1",
+  "pr": 836,
+  "candidate_head": "8e46dcd528b2b3239e9730843aac0ea0fe448382",
+  "candidate_tree": "0baa46aea1b726de4f313f524f6497a6b685d16c",
+  "actual_integrated_main": "935bc9de16aebd9c08600fdba195781615c15eca",
+  "whole_tree_equal_previous_published_head": "df06bf4bb0c62e4d4b0a710c2a3cb7259403be9f",
+  "whole_tree_equal_previous_cpu_head": "642092971f3ad65e98abee34e636b0e01873d4fe",
+  "original_hosted_execution": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+  "original_hosted_evidence": "https://github.com/nebius/nebius-physical-ai/blob/64e4d2873b78933fa619aed2e32dcf53ed8a98b7/docs/testing/evidence/cursor-vlm-main634-20261003/pr836/evidence.json",
+  "original_local_full_execution": "71c51c4276938710fa5b8f6f02429999cbd4b7eb",
+  "original_local_full_counts": {
+    "passed": 39848,
+    "skipped": 213,
+    "non_strict_xpass": 1,
+    "coverage_percent": 77.47,
+    "coverage_floor": 60
+  },
+  "source_dependency_bridge": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "original_execution": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+      "sha256": "d0a0c0eba01a1b9035af636942355c58afd4c3caea2bf061c7363371183e35da",
+      "bytes_equal": true
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "original_execution": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "bytes_equal": true
+    },
+    {
+      "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+      "original_execution": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+      "sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e",
+      "bytes_equal": true
+    },
+    {
+      "path": "npa/pyproject.toml",
+      "original_execution": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+      "sha256": "91e044e814305e8643d3e3bc9216f66d6ccbe7337408b074a2f0ccb0b70329b2",
+      "bytes_equal": true
+    },
+    {
+      "path": "npa/ci/requirements.txt",
+      "original_execution": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+      "sha256": "bb227e55b247618d733633efc93937df9587c8c41316cb9bc2fc63d3ee935a35",
+      "bytes_equal": true
+    },
+    {
+      "path": "npa/requirements-lock.txt",
+      "original_execution": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+      "sha256": "480d9e046aa0144b5c9dc1683a9c5b77590e58c9dbfd111352b6b102e400e4f2",
+      "bytes_equal": true
+    }
+  ],
+  "selected_current_cpu_gates": {
+    "execution_head": "8e46dcd528b2b3239e9730843aac0ea0fe448382",
+    "affected_passed": 810,
+    "skipped_as_recorded": 2,
+    "warnings": 8,
+    "precheck_passed": 270,
+    "confidentiality": "PASS built-in diff patterns; not private CI denylist",
+    "gitleaks": "PASS complete reachable range from actual935 main",
+    "merge_precheck": "PASS committed current source"
+  },
+  "new_cpu_context_observation": {
+    "execution_head": "8e46dcd528b2b3239e9730843aac0ea0fe448382",
+    "distribution_count": 139,
+    "distribution_snapshot_sha256": "cd82286d0f92d1db664ca9534b85228b0cc78050ff51717edb4a37f0fa0119d5",
+    "before_after_equal": true,
+    "capture_scope": "Complete imported-module/distribution observations surround only NEW network-blocked four-report CPU bridge. Earlier original9e full/live/security contexts are not backfilled; old compact head/tree/clean/three source hashes stay distinct."
+  },
+  "retained_response_cpu_whole_path": {
+    "execution_head": "8e46dcd528b2b3239e9730843aac0ea0fe448382",
+    "original_live_execution": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+    "network_blocked": true,
+    "rows": [
+      {
+        "case": "api-MiniMax-M3-positive",
+        "original_execution": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+        "request_sha256": "bfe8bd814110f507abe10c66af894fab9cda7cbf1f1654660d708597a9ba3401",
+        "raw_response_sha256": "eba5a826f101f79ce32a80b2867cbfcb31aa23ddc5daea4d028672b67bcaa7d8",
+        "original_report_sha256": "a2deae48e84655c9db92a92ed1395741f1743bbdaddd891c0035fd183ccf0e89",
+        "score": 1,
+        "passed": true,
+        "request_object_equal": true,
+        "request_evidence_except_new_cpu_requested_at_equal": true,
+        "rationale_equal": true,
+        "real_current_writer_serialization_and_grade": "PASS",
+        "timestamps_kept_distinct": true
+      },
+      {
+        "case": "api-MiniMax-M3-negative",
+        "original_execution": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+        "request_sha256": "564a839383659cddd307dfcd747f332d402923cc0e0904dc9e4549ee51fa1dc3",
+        "raw_response_sha256": "248fdbeb9c785574136d9dc7194fb6cfeed11db40cecb0d00ea8df151d5793dd",
+        "original_report_sha256": "55b6960f4af18f676ae45a13ca55d2c6f1bddb95066f177986c9a60796b18637",
+        "score": 0,
+        "passed": false,
+        "request_object_equal": true,
+        "request_evidence_except_new_cpu_requested_at_equal": true,
+        "rationale_equal": true,
+        "real_current_writer_serialization_and_grade": "PASS",
+        "timestamps_kept_distinct": true
+      },
+      {
+        "case": "self-hosted-gemma-3-27b-it-positive",
+        "original_execution": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+        "request_sha256": "39f2a4ea09a804f215bbc9a65b56e5721f239576e256e16afa96b96d51a41fd4",
+        "raw_response_sha256": "dce93be8690100d6c04d7839dfbc55f488c29b2569f2f85ea5edb1b71d195296",
+        "original_report_sha256": "366dd2f2ffe2bdca4e1ef8c7fa46dbbfb1f2039c6b98bac02e370a14d66adede",
+        "score": 1,
+        "passed": true,
+        "request_object_equal": true,
+        "request_evidence_except_new_cpu_requested_at_equal": true,
+        "rationale_equal": true,
+        "real_current_writer_serialization_and_grade": "PASS",
+        "timestamps_kept_distinct": true
+      },
+      {
+        "case": "self-hosted-gemma-3-27b-it-negative",
+        "original_execution": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+        "request_sha256": "4a8e0e80cd23768e50a6dd2d2ed06d231043ff2fbe0166704a11982d065da25c",
+        "raw_response_sha256": "9ef2647a5f92c866d177f36ac66e5ea56cb1eb8dbab0e30c45b7923f41eb56fa",
+        "original_report_sha256": "a1fca07bc62fec045beea1d51d1d363a8e9a1d449b0eff7a30356588d691ae70",
+        "score": 0,
+        "passed": false,
+        "request_object_equal": true,
+        "request_evidence_except_new_cpu_requested_at_equal": true,
+        "rationale_equal": true,
+        "real_current_writer_serialization_and_grade": "PASS",
+        "timestamps_kept_distinct": true
+      }
+    ],
+    "new_provider_calls": 0,
+    "not_current_head_hosted_inference": true
+  },
+  "preserved_failed_attempts": [
+    "Private rehearsal used unsupported Git flags, then retained six merge conflicts before exact-owned resolution.",
+    "Actual safe FF source push succeeded; immediate API read lag stopped retarget; later agreed separate retarget passed, no repush.",
+    "New offline harness first used nonexistent result.success; second had syntax error before tests; third used actual provider_success, JSON serialization and distinct new CPU timestamps. Failed attempts retained, not relabeled passing."
+  ],
+  "review_scope": "Existing first-party Claude source reviews and independent completion/strict source/private identity interface scopes stay bound to their exact commits; this ancestry bridge confers no future-head approval.",
+  "limitations": [
+    "No new hosted inference, local full suite, GPU server, robot workload, calibrated quality or safety proof for incoming935 ancestry.",
+    "Original four MiniMax/Gemma responses remain original9e execution, scores1/0/1/0 and fixed0.8 geometry protocol.",
+    "MiniMax blank-image no-colors wording limitation remains; single synthetic geometry controls do not prove robot terminal performance.",
+    "Self-hosted client addressed hosted compatible Gemma service, not an operator-owned GPU deployment.",
+    "Malformed self-hosted verdicts and incomplete completions abort the whole loop; no score-zero provider answer is manufactured.",
+    "Old compatible-parser-v1 artifacts are archival/ineligible; parser tags must never be edited to fabricate new execution.",
+    "Present malformed/ineligible canonical reports block favorable legacy fallback; a separate manual reader after ignored producer failure can still use absent-canonical valid legacy. This remains disclosed lifecycle limitation.",
+    "Final current-head app-bound CI/main/rules/signatures/draft/queue decisions remain separate; coordinator alone queues/merges."
+  ]
+}
