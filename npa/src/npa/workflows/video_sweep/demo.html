@@ -895,7 +895,15 @@
         a.download = "evidence-summary.json";
         a.click();
       };
-      select(0);
+      let initial = 0;
+      S.candidates.forEach((row, index) => {
+        const selected = S.candidates[initial];
+        if (row.accepted && !selected.accepted) initial = index;
+        else if (row.accepted === selected.accepted && row.score > selected.score)
+          initial = index;
+      });
+      $("selection").value = initial;
+      select(initial);
       tick();
     </script>
   </body>

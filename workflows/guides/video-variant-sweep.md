@@ -56,6 +56,23 @@ Select those tested bytes through `image_overrides`; do not reuse the old releas
 to bypass quarantine. This establishes generation capability, not accepted video
 quality. See [the current validation scope](#parameter-matrix-validation).
 
+The executed configuration explicitly selected these available models and image:
+
+```json
+{
+  "reasoner_model": "MiniMaxAI/MiniMax-M3",
+  "merge_model": "nvidia/Nemotron-3_5-Lightning",
+  "image_overrides": {
+    "workflow.video_sweep.generate_cosmos3": "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3@sha256:f791a4f763aeb903a576f328b666d8f8427a2f98050948c3bbd9310e9033a2ff"
+  }
+}
+```
+
+Merge these fields into the private operator configuration to reproduce the
+tested selection. Model access and credentials remain operator-specific; `check`
+verifies them before submission. This does not promote the candidate to the
+global image catalog or claim that the reference Cosmos3 reasoner is available.
+
 The current graph has two parallel workers. Each processes a disjoint partition
 of **every source × variant** combination. This does not limit the number of
 sources or variants. Changing worker concurrency still requires corresponding
@@ -310,6 +327,10 @@ private handling.
 The output directory contains a standalone `index.html`, silent `demo.mp4`,
 `summary.json`, preview MP4s and posters. The HTML embeds all media and needs no
 external requests. Playback and scrubbing include the native control video.
+Posters show decoded mid-clip frames, so a shared first-frame appearance anchor
+does not hide the generated variation. Initial selection favors the highest-scored
+accepted clip, or the highest-scored held-out clip when none passed; every matrix
+row and its recorded decision remain visible.
 Threshold exploration does not alter recorded decisions or publication.
 
 When all candidates are rejected, publication fails and no dataset or next-run
@@ -419,7 +440,24 @@ then swapped the inputs. The same model correctly attributed both videos in
 both orders. The review now uses that paired presentation and records its exact
 image hashes. This diagnostic establishes input attribution on one example;
 it does not qualify the judge or retroactively change the stored rejections.
-Full acceptance validation of the updated review path remains pending.
+
+A new complete run regenerated all eight combinations on two reserved B200
+workers with the paired reviewer, unchanged source/settings and the same 0.80
+threshold. Four clips passed at 0.82; four were rejected at 0.15–0.35. The live
+integration test verified full matrix coverage, decoded media, effective native
+guardrails and tracking receipts. Independent readback matched all eight
+Postgres rows and eight finished MLflow runs, and recomputed all 64 comparison
+images and their rubric hashes from the actual source/output bytes. Publication
+retained only the four accepted clips and their next-run inventory.
+
+Separate controls rejected the reversed transformation (0.25), unchanged source
+(0.15) and blank output (0.00). One control explanation still misstated appearance,
+so correct control verdicts do not establish judge calibration. Decoded playback
+shows forklift translation and visibly different material/shadow quality; flatter
+rendering and geometry drift remain relevant to human review. This is a synthetic
+visual demonstration, not qualified robot training data or a physics benchmark.
+The B200 run used two GPUs on one node; multi-node scaling, multi-window
+continuity and Cosmos3 reasoning were not validated by it.
 
 A later hosted-only preparation test ran against the synthetic forklift source
 using eight timestamped frames, MiniMax-M3 description and Nemotron-3.5-Lightning

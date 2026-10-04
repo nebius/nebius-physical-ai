@@ -22,38 +22,42 @@
   "prerequisites": {
     "output_storage": {
       "status": "verified",
-      "reason": "The live native run stored source snapshots, both generated videos, actual edge controls, review and lineage receipts; verified offline export passed. Rejected clips did not enter a dataset.",
+      "reason": "The complete B200 matrix stored eight native videos, actual controls, paired review and lineage receipts. Four accepted clips were published with a next-run inventory; rejected clips remain excluded.",
       "evidence": [
-        "workflows/guides/video-variant-sweep.md#native-runtime-evidence"
+        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation",
+        "npa/tests/e2e/test_video_sweep_live.py::test_reviewed_native_parameter_matrix"
       ]
     },
     "worker_input": {
       "status": "verified",
-      "reason": "Both native workers consumed the same 93-frame synthetic warehouse drive. Their complete outputs decoded at 24 fps with zero timestamp error; this proves correspondence, not physical fidelity.",
+      "reason": "Both B200 workers consumed the same 93-frame synthetic warehouse drive across all eight combinations. Native checkpoints verified the complete 24 fps timeline and controls; temporal correspondence does not prove physical fidelity.",
       "evidence": [
-        "workflows/guides/video-variant-sweep.md#native-runtime-evidence"
+        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation",
+        "npa/tests/e2e/test_video_sweep_live.py::test_reviewed_native_parameter_matrix"
       ]
     },
     "credentials": {
-      "status": "blocked",
-      "reason": "Native Cosmos3 payload access passed. The default hosted Cosmos3 reasoner was unavailable in the tested account; generation does not prove hosted reasoning availability.",
+      "status": "verified",
+      "reason": "The executed configuration verified native Cosmos3 payload/guardrail access, MiniMaxAI/MiniMax-M3 description/review, Nemotron-3_5-Lightning augmentation, S3, Postgres and MLflow. The reference Cosmos3 reasoner was unavailable; use the explicit tested model selection documented in the guide.",
       "evidence": [
-        "health access --capability cosmos3"
+        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation",
+        "npa/tests/e2e/test_video_sweep_live.py::test_reviewed_native_parameter_matrix"
       ]
     },
     "source_image": {
-      "status": "blocked",
-      "reason": "Current Workbench main quarantines the configured public Cosmos3 release pending a rebuilt and accepted image. The new parameter matrix attempt stopped at image preflight before GPU submission; historical native runs predate this quarantine.",
+      "status": "verified",
+      "reason": "The rebuilt immutable candidate passed trusted image publication checks and both complete B200 matrices. The executed configuration explicitly pins the documented digest. The global old-release quarantine remains in place; unmodified catalog defaults are not the tested selection.",
       "evidence": [
-        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation"
+        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation",
+        "npa/tests/e2e/test_video_sweep_live.py::test_reviewed_native_parameter_matrix"
       ]
     },
     "target_runtime": {
-      "status": "blocked",
-      "reason": "Earlier explicit-variant runs completed Cosmos3-Nano generation, paired review and Postgres/MLflow tracking on RTX PRO 6000, with all six outputs rejected. The new parameter matrix has local coverage but no live GPU execution because image preflight blocks submission. B200 and multi-window execution remain unverified.",
+      "status": "verified",
+      "reason": "The standard runtime generated all eight Cartesian candidates on two reserved B200 workers on one node, with real VLM/LLM augmentation. The live integrity test passed; eight Postgres rows, eight finished MLflow runs and 64 exact paired judge images were independently verified. Four clips passed the unchanged 0.80 gate. Multi-node scaling, multi-window continuity, Cosmos3 reasoning and training-data qualification remain outside this evidence.",
       "evidence": [
-        "workflows/guides/video-variant-sweep.md#native-runtime-evidence",
-        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation"
+        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation",
+        "npa/tests/e2e/test_video_sweep_live.py::test_reviewed_native_parameter_matrix"
       ]
     }
   }

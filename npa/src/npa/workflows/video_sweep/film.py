@@ -21,9 +21,9 @@ def transcode(source: Path, target: Path, poster: Path) -> dict:
     Args:
         source: Verified source media.
         target: New H.264 MP4 path.
-        poster: New JPEG preview path.
+        poster: New JPEG preview path for the decoded middle frame.
     Returns:
-        Frame count, duration, and preview SHA-256.
+        Frame count, duration, preview MP4 SHA-256, and poster frame index.
     Raises:
         ValueError: Media has no usable video timeline.
         av.FFmpegError: Decoding or encoding fails.
@@ -39,18 +39,28 @@ def transcode(source: Path, target: Path, poster: Path) -> dict:
         count = 0
         for frame in incoming.decode(video=0):
             pixels = frame.to_image()
-            if count == 0:
-                pixels.save(poster)
             _encode(outgoing, stream, pixels)
             count += 1
         _flush(outgoing, stream)
     if count < 2:
         raise ValueError("Video has fewer than two frames")
+    _write_poster(source, poster, count // 2)
     return {
         "frames": count,
         "duration": count / float(rate),
         "sha256": file_digest(target),
+        "poster_frame": count // 2,
     }
+
+
+def _write_poster(source, poster, index):
+    # An appearance anchor can make every first frame identical across the sweep.
+    with av.open(str(source)) as incoming:
+        for number, frame in enumerate(incoming.decode(video=0)):
+            if number == index:
+                frame.to_image().save(poster)
+                return
+    raise ValueError("The decoded poster frame is missing")
 
 
 def render_movie(directory: Path, summary: dict) -> None:
