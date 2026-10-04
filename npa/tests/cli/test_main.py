@@ -1289,7 +1289,9 @@ def test_configure_manual_alias_falls_back_to_region(monkeypatch, tmp_path) -> N
     assert cfg["default_project"] == "us-central1"
 
 
-def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None:
+def test_configure_interactive_provisions_storage(
+    monkeypatch, tmp_path, mocker
+) -> None:
     import yaml
 
     from npa.clients import config as config_module
@@ -1302,6 +1304,13 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
     monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     _stub_nebius_defaults(monkeypatch, project="project-12345", tenant="tenant-abcde")
+
+    catalog = mocker.patch.object(
+        nebius_module, "list_projects_in_tenant", return_value=[]
+    )
+    process = mocker.patch(
+        "subprocess.Popen", side_effect=AssertionError("unexpected process escape")
+    )
 
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: False)
 
@@ -1412,6 +1421,8 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     assert project["tenant_id"] == "tenant-abcde"
     assert "container_registry" not in project
     assert oct(creds_path.stat().st_mode)[-3:] == "600"
+    catalog.assert_called_once_with("tenant-abcde")
+    process.assert_not_called()
 
 
 def test_configure_provision_reuses_explicit_bucket_without_size_prompt(
