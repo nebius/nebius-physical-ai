@@ -25,6 +25,12 @@ See the [scaling evidence](../../../../docs/workbench/evidence/cosmos3-wam-scali
 and [eight-GPU](../../../../docs/workbench/evidence/cosmos3-wam-full-8/README.md)
 and [sixteen-GPU full reports](../../../../docs/workbench/evidence/cosmos3-wam-full-16/README.md).
 
+A [fresh reproduction](../../../../docs/workbench/evidence/cosmos3-wam-reproduction-20261002/README.md)
+started from merged main on October 2, 2026. Its six completed timing runs
+measured **1.9407× speedup and 97.03% efficiency**. See that record for current
+full-schedule, profiling, and evaluation status, plus the native Slurm MEMLOCK
+fix exposed by the new deployment. Historical results below remain unchanged.
+
 Four 500-trial evaluations per topology completed without infrastructure errors.
 The [eight-GPU quality curve](../../../../docs/workbench/evidence/cosmos3-wam-quality-8/README.md)
 scored 45.4%, 85.6%, 92.8%, 95.0%; the
@@ -54,8 +60,11 @@ provide profiling and visual evidence. This Soperator cohort changes the driver,
 scheduler and storage; its timing ratios do not isolate GPU-count scaling.
 An earlier [four-GPU execution check](../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/README.md)
 was cancelled at observed update 535 after correcting the requested topology to
-**four nodes, eight B200s per node, 32 GPUs total**. Its checkpoint 500 is retained;
-it is excluded from scaling and quality results. Two GPUs are untested. The
+**four nodes, eight B200s per node, 32 GPUs total**. Its partial results are
+excluded from scaling and quality results. The original private checkpoints
+were removed during the operator-requested
+[post-merge cleanup](../../../../docs/workbench/evidence/cosmos3-wam-soperator-32/post-merge-cleanup.json);
+public numeric and visual evidence remains. Two GPUs are untested. The
 [32-GPU plan](../../../../docs/workbench/evidence/cosmos3-wam-plan-32/README.md)
 retains the original capacity rejection. Capacity subsequently became available;
 all 32 GPUs were deployed, qualified and used for the completed campaign.

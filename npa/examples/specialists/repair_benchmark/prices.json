@@ -1,0 +1,61 @@
+{
+  "observed_date": "2026-09-29",
+  "sources": [
+    "https://developers.openai.com/api/docs/pricing",
+    "https://tokenfactory.nebius.com/api/public/models_info"
+  ],
+  "description": "Published standard API-equivalent rates; not an invoice. Both Astra context tariffs retained unless per-request evidence proves short context. Full ToFa input tariff without an assumed cache discount. All routing/generation/recovery attempts included.",
+  "models": {
+    "gpt-6-astra": {
+      "cache_policy": "itemized",
+      "rate_options": [
+        {
+          "input_price_per_million_tokens": 10,
+          "output_price_per_million_tokens": 50,
+          "cached_input_price_per_million_tokens": 1,
+          "cache_write_price_per_million_tokens": 12.5
+        },
+        {
+          "input_price_per_million_tokens": 20,
+          "output_price_per_million_tokens": 75,
+          "cached_input_price_per_million_tokens": 2,
+          "cache_write_price_per_million_tokens": 25
+        }
+      ]
+    },
+    "zai-org/GLM-5.3": {
+      "cache_policy": "full-input",
+      "rate_options": [
+        {
+          "input_price_per_million_tokens": 1.4,
+          "output_price_per_million_tokens": 4.4
+        }
+      ]
+    },
+    "nvidia/Nemotron-3_5-Lightning": {
+      "cache_policy": "full-input",
+      "rate_options": [
+        {
+          "input_price_per_million_tokens": 0.06,
+          "output_price_per_million_tokens": 0.24
+        }
+      ]
+    },
+    "zai-org/GLM-5.3-Flash": {
+      "cache_policy": "full-input",
+      "rate_options": [
+        {
+          "input_price_per_million_tokens": 0.15,
+          "output_price_per_million_tokens": 0.5
+        }
+      ]
+    }
+  },
+  "astra_tariff_applicability": {
+    "threshold_input_tokens": 272000,
+    "standard_rate_option_index": 0,
+    "long_context_rate_option_index": 1,
+    "note": "A fresh turn with complete aggregate input and output usage totaling less than 272000 bounds every included request below the threshold. Otherwise retain both rates unless request-level proof exists. Confirm actual service tier before estimating; priority, batch and flex multipliers are not applied here."
+  },
+  "catalog_sha256": "44b1990bf1627176cca75da62b310084554bc40d49336459f9d34b4d9eb330ae"
+}

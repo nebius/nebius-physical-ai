@@ -1,0 +1,57 @@
+{
+  "created_at": "2026-10-02T16:22:10.363059+00:00",
+  "workbench_revision": "a26a2d1c08b3fc9feafe3d973bb6e7bb6a396974",
+  "sources": {
+    "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+    "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+    "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+    "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+    "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+  },
+  "deployment": "native Slurm on two reserved eight-B200 workers, STRICT capacity, us-central1",
+  "capacity_constraint": "Soperator needs 88 non-GPU vCPUs; provider reported 38 free; 32-GPU topology needs four workers, provider reported three available",
+  "full_training": {
+    "topologies": [
+      8,
+      16
+    ],
+    "steps": 2000,
+    "seed": 42,
+    "global_batch": 2048,
+    "sample_cap_per_rank": 64,
+    "checkpoint_steps": [
+      500,
+      1000,
+      1500,
+      2000
+    ]
+  },
+  "repeats": {
+    "per_topology": 3,
+    "steps": 200,
+    "warmup_steps_excluded": 50
+  },
+  "profiles": {
+    "topologies": [
+      8,
+      16
+    ],
+    "steps": 110,
+    "separate_runs": true
+  },
+  "evaluation": {
+    "tasks": 10,
+    "trials_per_task": 50,
+    "checkpoint_steps": [
+      500,
+      1000,
+      1500,
+      2000
+    ],
+    "threshold": 0.9,
+    "seed": 42
+  },
+  "comparison": "Same native pinned source, data, model, batch and seeds. Capture image, driver, Slurm, Torch, NCCL, storage and network; disclose every difference from historical results. No pooling RTX and B200 results.",
+  "failures": "Preserve failed attempts and logs. No workload changes to get a successful result."
+}
