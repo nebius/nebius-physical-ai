@@ -6,6 +6,24 @@ For a separate qualitative audit, use [rich visual review](../vlm-visual-review.
 Its private evidence, counterbalanced comparisons, and usefulness hypotheses
 never supply a completion score or pipeline gate.
 
+For known-count inputs, `sequence` remains uniform across the full span and
+`keyframes` allocates half its budget to a terminal window covering at least
+the final 10%, widening when needed for unique frames. Earlier samples span
+the remaining evidence; short inputs return all frames. This is deterministic
+temporal sampling, not content-aware event detection. Both preserve first and
+final frames when at least two are selected. Unknown-count video compatibility
+is unchanged and never invents source indices or timestamps. The original
+[hosted sampling failure](../evidence/vlm-frame-selection-semantics.md) remains
+separate from deterministic sampler correctness.
+
+The default deliberately favors terminal evidence when the budget is small:
+three of 100 frames select `[0, 90, 99]`, and four of 1,000 select
+`[0, 450, 900, 999]`. Only the first frame supplies early evidence in the
+three-frame case; unsampled middle events can be missed. This is not complete
+episode coverage or a demonstrated improvement in model judgment. Use the
+retained selected indices and frame hashes to audit what was actually shown;
+the original SO-100 failure and gray-control rationale errors remain failures.
+
 This runbook runs the sim-to-real VLM-eval loop on the self-hosted serving path:
 serve a VLM with vLLM, score rollout directories with `vlm-eval`, and write a
 task-success report.

@@ -18,6 +18,13 @@ optional `--baseline-path` compares both sources in both A/B orders. See the
 [visual-review guide](../docs/workbench/vlm-visual-review.md) for all options and
 the retained limitations. These records never affect the completion score or gate.
 
+VLM `--frame-selection sequence` samples uniformly. For known-count inputs,
+`keyframes` allocates half its frame budget to a terminal window covering at
+least the final 10%, widening when needed for unique samples. Both include the
+first and final frame when at least two are selected. This is temporal sampling,
+not event detection; unknown-count video compatibility is unchanged. See the
+[sampling evidence](../docs/workbench/evidence/vlm-frame-selection-semantics.md).
+
 The [NuRec sample workflow](../docs/workbench/guides/neural-reconstruction.md)
 and [four-camera warehouse workflow](../docs/workbench/multicamera-rgbd-capture.md)
 download public sample data automatically and publish compact, offline
