@@ -26,6 +26,7 @@ LABEL org.opencontainers.image.title="NPA LIBERO-Plus licensed-assets camera com
 COPY docker/workbench/libero-plus-assets/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-libero-plus-assets/THIRD_PARTY_NOTICES.md
 COPY docker/workbench/libero-plus-assets/native-executor-provenance.json /usr/share/doc/npa-libero-plus-assets/native-executor-provenance.json
 COPY docker/workbench/libero-plus-assets/entrypoint.sh /usr/local/bin/npa-libero-plus-assets-entrypoint
+COPY docker/workbench/libero-plus-assets/smoke.sh /usr/local/bin/npa-libero-plus-assets-smoke
 COPY src/npa/workflows/libero_plus_assets.py /opt/npa/src/npa/workflows/libero_plus_assets.py
 
 # Camera PNG and RRD output do not invoke bundled FFmpeg. The derived image
@@ -63,7 +64,7 @@ RUN set -eux; \
     chmod 0444 /opt/npa/src/npa/workflows/libero_plus_assets.py; \
     chmod 0444 /usr/share/doc/npa-libero-plus-assets/THIRD_PARTY_NOTICES.md \
       /usr/share/doc/npa-libero-plus-assets/native-executor-provenance.json; \
-    chmod 0555 /usr/local/bin/npa-libero-plus-assets-entrypoint; \
+    chmod 0555 /usr/local/bin/npa-libero-plus-assets-entrypoint /usr/local/bin/npa-libero-plus-assets-smoke; \
     rm -f \
       /opt/openwam-venv/lib/python3.12/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2 \
       /opt/openwam-libero/lib/python3.10/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2; \

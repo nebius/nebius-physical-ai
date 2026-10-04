@@ -12,14 +12,14 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+from http.client import HTTPSConnection
 import json
 import os
 from pathlib import Path
 import shutil
 import tempfile
 from typing import Any
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import urljoin, urlparse, urlsplit
 import zipfile
 
 
@@ -39,6 +39,12 @@ ASSET_CARD_URL = (
 ASSET_ARCHIVE_URL = (
     "https://huggingface.co/datasets/Sylvest/LIBERO-plus/resolve/"
     f"{ASSET_REVISION}/{ASSET_FILE}?download=true"
+)
+# The first URL is the author-published Hugging Face endpoint.  The current
+# immutable revision redirects to this exact provider CDN host.  Do not follow a
+# redirect to an arbitrary scheme or host: a transport change requires review.
+ASSET_DOWNLOAD_HOSTS = frozenset(
+    {"huggingface.co", "us.aws.cdn.hf.co", "cas-bridge.xethub.hf.co"}
 )
 # The author-published archive has a producer-specific leading directory.  Do
 # not persist that directory as an NPA contract: it is not the licensed scene
@@ -131,14 +137,72 @@ def _asset_cache_root() -> Path:
     return base / "libero-plus-assets" / ASSET_REVISION
 
 
+def _asset_download_target(url: str) -> tuple[str, str]:
+    """Return a fail-closed HTTPS target for the fixed asset download chain."""
+    parsed = urlsplit(url)
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise LiberoPlusAssetsError(
+            "MIT asset download URL has an invalid port"
+        ) from error
+    hostname = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "https"
+        or hostname not in ASSET_DOWNLOAD_HOSTS
+        or port not in (None, 443)
+        or parsed.username is not None
+        or parsed.password is not None
+        or not parsed.path.startswith("/")
+        or parsed.fragment
+    ):
+        raise LiberoPlusAssetsError("MIT asset download target is not approved HTTPS")
+    target = parsed.path
+    if parsed.query:
+        target = f"{target}?{parsed.query}"
+    return hostname, target
+
+
+def _asset_download_response() -> tuple[HTTPSConnection, Any]:
+    """Open the pinned archive using only reviewed HTTPS redirect targets."""
+    url = ASSET_ARCHIVE_URL
+    for _redirect in range(6):
+        hostname, target = _asset_download_target(url)
+        connection = HTTPSConnection(hostname, timeout=120)
+        try:
+            connection.request(
+                "GET", target, headers={"User-Agent": "npa-libero-assets/1"}
+            )
+            response = connection.getresponse()
+        except BaseException:
+            connection.close()
+            raise
+        if response.status == 200:
+            return connection, response
+        if response.status not in {301, 302, 303, 307, 308}:
+            connection.close()
+            raise LiberoPlusAssetsError(
+                f"MIT asset download returned unexpected HTTPS status {response.status}"
+            )
+        location = response.getheader("Location")
+        connection.close()
+        if not location:
+            raise LiberoPlusAssetsError("MIT asset download redirect has no location")
+        url = urljoin(url, location)
+    raise LiberoPlusAssetsError("MIT asset download exceeded approved redirect limit")
+
+
 def _download_archive(destination: Path) -> None:
     """Download the public immutable archive to a unique temporary path."""
-    request = Request(ASSET_ARCHIVE_URL, headers={"User-Agent": "npa-libero-assets/1"})
     temporary = destination.with_name(f".{destination.name}.{os.getpid()}.part")
     try:
-        with urlopen(request, timeout=120) as response, temporary.open("wb") as output:
-            while chunk := response.read(1024 * 1024):
-                output.write(chunk)
+        connection, response = _asset_download_response()
+        try:
+            with temporary.open("wb") as output:
+                while chunk := response.read(1024 * 1024):
+                    output.write(chunk)
+        finally:
+            connection.close()
         if temporary.stat().st_size != ASSET_ARCHIVE_BYTES:
             raise LiberoPlusAssetsError(
                 "MIT asset archive size mismatch; refusing incomplete or changed payload"

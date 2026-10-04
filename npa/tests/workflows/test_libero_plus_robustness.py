@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 import yaml
+import pytest
 
 from npa.workflows import libero_plus
 
@@ -147,6 +148,15 @@ def test_unlicensed_pinned_source_fails_before_any_upstream_fetch() -> None:
         assert "source execution is blocked" in str(error)
     else:
         raise AssertionError("unlicensed source fetch was not blocked")
+
+
+def test_approved_source_cache_requires_operator_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A future authorization must not silently use an ambient temporary cache."""
+    monkeypatch.delenv("NPA_MODEL_CACHE_DIR", raising=False)
+    with pytest.raises(libero_plus.LiberoPlusError, match="NPA_MODEL_CACHE_DIR"):
+        libero_plus._cache_root()
 
 
 def test_private_admission_image_contains_no_upstream_payload() -> None:

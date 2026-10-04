@@ -124,11 +124,18 @@ def _sha256_file(path: Path) -> str:
 
 
 def _cache_root() -> Path:
-    return (
-        Path(os.environ.get("NPA_MODEL_CACHE_DIR", "/tmp/npa-model-cache"))
-        / "libero-plus"
-        / UPSTREAM_REVISION
-    )
+    """Return the NPA-configured persistent cache for an approved source.
+
+    The license gate in :func:`_ensure_upstream` runs before this helper.  If an
+    authorization ever changes that gate, the source must still use the
+    operator-configured cache rather than an ambient shared temporary path.
+    """
+    configured = os.environ.get("NPA_MODEL_CACHE_DIR")
+    if not configured:
+        raise LiberoPlusError(
+            "NPA_MODEL_CACHE_DIR is required for any approved LIBERO-Plus source cache"
+        )
+    return Path(configured) / "libero-plus" / UPSTREAM_REVISION
 
 
 def _ensure_upstream() -> Path:

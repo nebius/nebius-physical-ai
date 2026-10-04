@@ -59,6 +59,16 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "trajectory-disjoint held-out loss and actions plus exact image and "
         "GPU evidence are required in libero-smoke.json",
     ],
+    "libero-plus-assets": [
+        "runtime fetch verifies the author-published MIT asset archive revision, "
+        "size, SHA-256, inventory, and one allowlisted scene hash",
+        "original MIT LIBERO TableArena compiles the selected scene and advances "
+        "MuJoCo before either camera is rendered",
+        "one RTX PRO 6000 EGL run renders distinct 256x256 agentview and "
+        "agentview_60 PNGs, decodes them, and measures pose and RGB differences",
+        "camera gallery, metrics, report, and factual RRD are retained with an "
+        "explicit non-benchmark, non-policy, non-robot limitation",
+    ],
     "ncore": [
         "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",

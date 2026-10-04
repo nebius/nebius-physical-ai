@@ -23,6 +23,7 @@ DOCKERFILE = ROOT / "npa/docker/workbench/libero-plus-assets/Dockerfile.private"
 BUILD = ROOT / "npa/docker/workbench/libero-plus-assets/build-private.sh"
 NOTICE = ROOT / "npa/docker/workbench/libero-plus-assets/THIRD_PARTY_NOTICES.md"
 ENTRYPOINT = ROOT / "npa/docker/workbench/libero-plus-assets/entrypoint.sh"
+SMOKE = ROOT / "npa/docker/workbench/libero-plus-assets/smoke.sh"
 
 
 def test_workflow_has_five_connected_native_asset_stages() -> None:
@@ -110,6 +111,21 @@ def test_allowlisted_scene_rejects_ambiguous_or_unsafe_archive_members(
 
     with pytest.raises(assets.LiberoPlusAssetsError, match="exactly one"):
         assets._extract_allowlisted_scene(archive)
+
+
+def test_asset_download_allows_only_reviewed_https_hosts() -> None:
+    """The pinned asset URL cannot redirect to a local or arbitrary endpoint."""
+    hostname, target = assets._asset_download_target(assets.ASSET_ARCHIVE_URL)
+    assert hostname == "huggingface.co"
+    assert target.startswith("/datasets/Sylvest/LIBERO-plus/resolve/")
+    for candidate in (
+        "http://huggingface.co/asset.zip",
+        "file:///tmp/assets.zip",
+        "https://example.invalid/asset.zip",
+        "https://user@huggingface.co/asset.zip",
+    ):
+        with pytest.raises(assets.LiberoPlusAssetsError, match="approved HTTPS"):
+            assets._asset_download_target(candidate)
 
 
 def _png(path: Path, pixel: tuple[int, int, int]) -> dict[str, object]:
@@ -225,6 +241,7 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
     build = BUILD.read_text()
     notice = NOTICE.read_text()
     entrypoint = ENTRYPOINT.read_text()
+    smoke = SMOKE.read_text()
     assert "ARG BASE_IMAGE" in dockerfile
     assert "FROM ${BASE_IMAGE}" in dockerfile
     assert 'org.nebius.npa.libero-plus-source="absent"' in dockerfile
@@ -248,6 +265,7 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
     assert "imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2" in dockerfile
     assert "chmod 0444 /opt/npa/src/npa/workflows/libero_plus_assets.py" in dockerfile
     assert "COPY src/npa/workflows/libero_plus_assets.py" in dockerfile
+    assert "COPY docker/workbench/libero-plus-assets/smoke.sh" in dockerfile
     assert "COPY assets.zip" not in dockerfile
     assert "ghcr.io/nebius/nebius-physical-ai/*|docker.io/*|index.docker.io/*" in build
     assert "refusing public image target" in build
@@ -267,3 +285,9 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
     assert "It is **not**" in notice
     assert "LIBERO-Plus benchmark image" in notice
     assert "not copied, fetched, imported, or executed" in notice
+    assert "export MUJOCO_GL=egl" in smoke
+    for stage in ("acquire", "assemble", "render", "validate", "report"):
+        assert f'"$python" "$workflow" {stage}' in smoke
+    assert 'report["benchmark_equivalence"] is False' in smoke
+    assert 'report["policy_rollout"] is False' in smoke
+    assert 'report["physical_robot"] is False' in smoke

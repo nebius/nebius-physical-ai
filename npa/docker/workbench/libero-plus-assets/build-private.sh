@@ -39,6 +39,7 @@ inputs=(
   npa/docker/workbench/libero-plus-assets/THIRD_PARTY_NOTICES.md
   npa/docker/workbench/libero-plus-assets/build-private.sh
   npa/docker/workbench/libero-plus-assets/entrypoint.sh
+  npa/docker/workbench/libero-plus-assets/smoke.sh
   npa/docker/workbench/libero-plus-assets/native-executor-provenance.json
   npa/src/npa/workflows/libero_plus_assets.py
 )
