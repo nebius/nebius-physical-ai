@@ -163,6 +163,9 @@ LIBERO_RUNTIME_MANIFEST = (
 #: one solution is forwarded into every other BYOF run whenever it happens to be
 #: set in the operator's shell. A solution that is not listed forwards none.
 OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
+    # EmbodiedGen's upstream URDF generator invokes the configured
+    # OpenAI-compatible Token Factory endpoint to estimate physical metadata.
+    "embodiedgen": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "openpi": ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
     # Hash of the owner-only manager authorization record. The RoboTwin smoke
     # records it without exposing private cluster, reservation, or registry IDs.

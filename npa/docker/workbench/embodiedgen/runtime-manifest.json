@@ -1,0 +1,39 @@
+{
+  "schema": "npa.embodiedgen.runtime-manifest.v1",
+  "solution": {
+    "name": "EmbodiedGen V2",
+    "source": "https://github.com/HorizonRobotics/EmbodiedGen.git",
+    "revision": "f0124197888c2b733e4eaa65acd81ad9cfda3b79",
+    "license": "Apache-2.0"
+  },
+  "backend": {
+    "name": "TRELLIS",
+    "source": "https://github.com/microsoft/TRELLIS.git",
+    "revision": "55a8e8164b195bbf927e0978f00e76c835e6011f",
+    "license": "MIT",
+    "model": "microsoft/TRELLIS-image-large",
+    "model_revision": "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+    "model_license": "MIT"
+  },
+  "property_estimator": {
+    "provider": "openai-compatible",
+    "model": "openbmb/MiniCPM-V-4_5",
+    "license": "Apache-2.0",
+    "semantics": "VLM estimates only; not calibrated ground truth"
+  },
+  "runtime": {
+    "cache_env": "NPA_EMBODIEDGEN_RUNTIME_CACHE",
+    "input_uri_env": "NPA_EMBODIEDGEN_INPUT_URI",
+    "output_env": "NPA_SMOKE_OUTPUT_DIR",
+    "credential_envs": ["NEBIUS_TOKEN_FACTORY_KEY", "NPA_TOKEN_FACTORY_API_KEY"],
+    "baked": {
+      "source": false,
+      "model": false,
+      "input": false,
+      "cache": false,
+      "output": false,
+      "credentials": false
+    }
+  },
+  "capability": "img3d-cli_trellis_image_to_urdf_pybullet"
+}

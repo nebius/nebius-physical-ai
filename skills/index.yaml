@@ -37,6 +37,16 @@ licenses:
     applies_to:
       - neural-reconstruction
 skills:
+  - name: embodiedgen
+    category: tools
+    when_to_use: "Run or review EmbodiedGen V2 image-to-rigid-object generation through the operator-private TRELLIS runtime, exported URDF/collision geometry, PyBullet validation, and factual view artifacts."
+    path: skills/tools/embodiedgen/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/embodiedgen.md
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/byof-embodiedgen.yaml
   - name: ray-workbench
     category: tools
     when_to_use: "Choose or operate a supported Ray path: native Jobs/Core, guarded Train V2, Cosmos3 native Serve, or fixed CPU KubeRay; identify unsupported Ray libraries."

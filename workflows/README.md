@@ -22,6 +22,7 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 | Label videos in Encord and export an annotated MP4 | [Encord partner workflows](partners/encord/README.md) — real object tracks, exported-label verification, and media roundtrip |
 | Augment a video or LeRobot episode | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) — public starter, local MP4, and episode/camera inputs |
 | Generate an image or video | [Cosmos 3](../docs/workbench/cosmos3-generate.md) |
+| Generate a rigid object from one image | [EmbodiedGen V2](../docs/workbench/embodiedgen.md) — operator-private TRELLIS → URDF → PyBullet; live qualification pending |
 | Compare Cosmos3-Super serving topologies | [Benchmark results and workflows](../benchmark/cosmos3-super/README.md) |
 | Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [native and operator adapter runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — sealed data/runtime required; GPU acceptance pending |
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
@@ -259,6 +260,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | --- | --- |
 | [`byof-apriltag.yaml`](testing/byof-apriltag.yaml) | Plan-only catalog definition; run pinned CPU fiducial detection and controls through the direct BYOF runner |
 | [`byof-droid-policy-learning.yaml`](testing/byof-droid-policy-learning.yaml) | OSS registry: DROID policy learning pinned image + RLDS config smoke |
+| [`byof-embodiedgen.yaml`](testing/byof-embodiedgen.yaml) | Operator-private EmbodiedGen V2 TRELLIS image-to-mesh/URDF generation, generated-collision validation, and PyBullet settling/view evidence |
 | [`byof-evo.yaml`](testing/byof-evo.yaml) | Plan-only catalog definition; run pinned evo APE/RPE controls and matched KITTI plots through the direct BYOF runner |
 | [`habitat-sim-smoke.yaml`](testing/habitat-sim-smoke.yaml) | Quarantined dedicated Habitat image: exact runtime-fetched Skokloster RGB/depth traversal, Bullet, and NVIDIA EGL on one STRICT-bound RTX PRO 6000 (never B200); image and live proof remain pending |
 | [`byof-ltx2.yaml`](testing/byof-ltx2.yaml) | LTX-2.5 video generation and FiftyOne curation; source and gated weights fetched at runtime |

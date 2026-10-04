@@ -225,6 +225,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "cosmos-curate",
         "cosmos-evaluator",
         "content-agents",
+        "embodiedgen",
         "ncore",
         "robotwin",
         "libero",
@@ -268,6 +269,7 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 # PAIDF AnomalyGen and Cosmos3-Super benchmark runtimes remain private.
 RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     {
+        "embodiedgen",
         "cosmos3-nano-video",
         "cosmos3-super-benchmark",
         "paidf-detection-sky",

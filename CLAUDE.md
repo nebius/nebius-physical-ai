@@ -98,6 +98,9 @@ making architecture, review, or domain judgments.
   reconstruction — real RANSAC/FPFH + ICP, multiway `global_optimization`,
   Poisson reconstruction, and a decode-verified `.rrd`. CPU-only by
   construction (Open3D's registration APIs have no CUDA path).
+- `skills/tools/embodiedgen/SKILL.md`: operator-private EmbodiedGen V2 TRELLIS
+  image-to-rigid-object generation, generated URDF/collision checks, and
+  factual PyBullet evidence.
 - `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from
  LanceDB materialized views (BDD100K failure-mode slices).
 - `skills/tools/artifact-viz-share/SKILL.md`: sim demos → LeRobotDataset →
