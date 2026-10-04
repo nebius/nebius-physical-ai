@@ -1048,6 +1048,7 @@ def test_single_state_workflow_runs_manifest_and_target_image_preflights(
     }
     path = tmp_path / "single-state.yaml"
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    digest = "sha256:" + "c" * 64
     checked: list[tuple[list[str], dict[str, object]]] = []
     bootstrap_service_accounts: list[dict[str, str]] = []
 
@@ -1070,7 +1071,12 @@ def test_single_state_workflow_runs_manifest_and_target_image_preflights(
     def bootstrap_contracts(*, images, service_accounts_by_image, **_kwargs):
         bootstrap_service_accounts.append(service_accounts_by_image)
         return [
-            {"_requested_image": item, "image": item, "state": "compatible"}
+            {
+                "_requested_image": item,
+                "image": item,
+                "digest": digest,
+                "state": "compatible",
+            }
             for item in images
         ]
 
@@ -1100,7 +1106,7 @@ def test_single_state_workflow_runs_manifest_and_target_image_preflights(
         image: ("task-service-account",)
     }
     assert bootstrap_service_accounts == [{image: "task-service-account"}]
-    assert result == {image: image}
+    assert result == {image: image.rsplit(":", 1)[0] + "@" + digest}
 
 
 def test_submit_preflight_preserves_explicit_empty_inherited_secret_layer(
@@ -1372,7 +1378,7 @@ def test_submit_image_preflight_checks_transition_free_spec(
     assert observed["images"]
 
 
-def test_submit_image_preflight_keys_partial_contract_pins_by_requested_image(
+def test_submit_image_preflight_keeps_requested_repository_when_contract_evidence_is_mirrored(
     monkeypatch: pytest.MonkeyPatch, spec_path: Path
 ) -> None:
     pull_only_image = "registry.example.invalid/operator/npa-retargeting:release"
@@ -1417,7 +1423,11 @@ def test_submit_image_preflight_keys_partial_contract_pins_by_requested_image(
         assume_decision="",
         enabled=True,
         infra="nebius",
-    ) == {contracted_image: immutable_image}
+    ) == {
+        contracted_image: (
+            "registry.example.invalid/operator/npa-cosmos-curate@sha256:" + "a" * 64
+        )
+    }
 
 
 def test_submit_image_preflight_defers_image_resolution_value_error(
