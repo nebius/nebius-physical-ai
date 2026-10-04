@@ -298,7 +298,7 @@ def _validate_native_condition(path: Path, controls: dict[str, Any]) -> None:
 
     import torch
 
-    condition = torch.load(path, map_location="cpu", weights_only=False)
+    condition = torch.load(path, map_location="cpu", weights_only=True)
     view_ids = condition.get("view_id") if isinstance(condition, dict) else None
     switches = condition.get("switch_mask") if isinstance(condition, dict) else None
     metadata = condition.get("meta") if isinstance(condition, dict) else None
@@ -364,7 +364,7 @@ def _validate_native_case(
 
     import torch
 
-    latent = torch.load(latent_path, map_location="cpu", weights_only=False)
+    latent = torch.load(latent_path, map_location="cpu", weights_only=True)
     if not isinstance(latent, dict):
         raise SwitchWorldError("native latent cache must be a mapping")
     expected_latent_shapes = {
@@ -377,7 +377,7 @@ def _validate_native_case(
         if value is None or tuple(value.shape) != shape:
             raise SwitchWorldError(f"native latent cache has invalid {key} shape")
 
-    condition = torch.load(condition_path, map_location="cpu", weights_only=False)
+    condition = torch.load(condition_path, map_location="cpu", weights_only=True)
     if not isinstance(condition, dict):
         raise SwitchWorldError("native condition must be a mapping")
     expected_condition_shapes = {
@@ -393,7 +393,7 @@ def _validate_native_case(
         if value is None or tuple(value.shape) != shape:
             raise SwitchWorldError(f"native condition has invalid {key} shape")
     gravity = condition.get("meta", {}).get("gravity")
-    contexts = torch.load(contexts_path, map_location="cpu", weights_only=False)
+    contexts = torch.load(contexts_path, map_location="cpu", weights_only=True)
     if (
         not isinstance(contexts, dict)
         or not isinstance(gravity, (str, int, float))

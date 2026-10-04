@@ -549,10 +549,10 @@ images:
       public Wan source/CPU bytes while replacing LingBot's easydict wheel with
       the retained Wan compatibility source. No CUDA, model checkpoint,
       adapter, case, credential, or populated cache is baked. This quarantined
-      entry has no public publication or release intent. Its first private
-      digest has completed exact built-byte scanning, the repository's
-      secret/fixed-CRITICAL Trivy policy scan, SPDX inventory, and target
-      bootstrap; native workflow evidence remains required. The hash-locked
+      entry has no public publication or release intent. Its prior private
+      digest completed exact built-byte scanning, the repository's
+      secret/fixed-CRITICAL Trivy policy scan, SPDX inventory, and exact-target
+      image-pull preflight only; native workflow evidence remains required. The hash-locked
       PyAV decoder requirement is fetched only into the operator-owned runtime
       cache for real-frame processing; it is not an image byte or public
       distribution payload.

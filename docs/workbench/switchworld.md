@@ -79,6 +79,14 @@ operator-private validation recipe also copies Wan's local compatibility
 configuration imports; its in-image redistribution notice records that narrow
 modification and preserves the upstream licenses.
 
+The same private recipe applies the reviewed current Wan source-local attention
+fallback to its older pinned source image: it redirects the model import from
+the optional FlashAttention 2 implementation to Wan's existing torch attention
+implementation. This follows the current NPA Wan recipe after the actual
+baseline run established that the optional implementation was unavailable. It
+does not fetch or redistribute FlashAttention and makes no performance-
+equivalence claim.
+
 ## Legal delivery decision
 
 The selected SwitchWorld code and adapter cards declare Apache-2.0, but base
@@ -113,11 +121,13 @@ It has an explicit no-publication disposition and must pass a fresh built-byte
 scan, target pull, real five-stage run, and artifact readback before becoming a
 usable private runtime. This is a remediation, not a public image claim.
 
-The private recipe's first digest has completed its built-layer/history scan,
-repository-pinned Trivy secret/fixed-CRITICAL policy scan, SPDX inventory, and a
-target-side SkyPilot bootstrap probe with verified cleanup. Those private
-receipts verify delivery and worker bootstrap only; they do not release the
-image or establish a model load, native generation, metric, benchmark, or
+The private recipe's prior digest completed its built-layer/history scan,
+repository-pinned Trivy secret/fixed-CRITICAL policy scan, SPDX inventory, and
+an exact-target image-pull preflight. That receipt establishes pullability only;
+it is not a startup or cleanup probe. A worker that prepares a real case can
+separately establish runtime startup for that exact image, but a source change
+still requires fresh image qualification. Neither type of receipt releases the
+image or establishes a model load, native generation, metric, benchmark, or
 artifact output. Those claims remain gated on the separately encoded real case
 and the five connected stages.
 
@@ -158,8 +168,10 @@ RRD verification tests have passed. A lawful original MuJoCo-derived case has
 passed strict native condition/control timing checks, and its real VAE latent
 and UMT5 context encodings have been staged with private readback verification.
 The first admitted native run stopped in preparation because its generic system
-interpreter did not expose the runtime-only PyTorch closure. The workflow now
-uses the existing `wan-runtime exec` launcher for every stage; that corrected
-path still requires a new native run, GPU-stage completion, and final artifact
-readback. It must not be called a benchmark, convergence, or physical-robot
-result before then.
+interpreter did not expose the runtime-only PyTorch closure. After the launcher
+correction, the replacement run prepared the real case and then reached native
+LingBot inference, where its older Wan source asserted that optional
+FlashAttention 2 was unavailable. The current private recipe carries the
+reviewed Wan torch-attention fallback and still requires a fresh source-bound
+native run, GPU-stage completion, and final artifact readback. It must not be
+called a benchmark, convergence, or physical-robot result before then.

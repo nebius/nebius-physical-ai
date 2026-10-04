@@ -313,8 +313,15 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
-NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
-NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
+# The SwitchWorld private runtime has no public image or release tag.  Keep its
+# packaging-contract entry in this separate neutral state so public selection
+# and publication fail before any non-canonical image name could be resolved.
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset(
+    {"lingbot-world-switchworld-private"}
+)
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {
+    "lingbot-world-switchworld-private": "switchworld-private-neutral-unbuilt"
+}
 # Previously accepted releases whose published bytes no longer satisfy the
 # repository's current security contract. Keep this separate from
 # UNVALIDATED_PUBLICATION_TOOLS: these images were built and capability-tested,

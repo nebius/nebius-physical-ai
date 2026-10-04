@@ -106,6 +106,15 @@ def test_native_condition_is_bound_to_the_real_control_sidecar(tmp_path: Path) -
         switchworld._validate_native_condition(path, controls)
 
 
+def test_native_tensor_loads_are_weights_only() -> None:
+    """Keep untrusted staged tensors on PyTorch's restricted deserialization path."""
+
+    source = Path(switchworld.__file__).read_text(encoding="utf-8")
+
+    assert "weights_only=False" not in source
+    assert source.count("weights_only=True") == 4
+
+
 def test_causal_transition_timing_uses_native_video_frames(tmp_path: Path) -> None:
     """Never linearly project a latent transition onto the real target timeline."""
 
@@ -242,7 +251,10 @@ def test_readiness_record_is_bound_to_configurable_runtime_workflow() -> None:
 
     readiness = json.loads(READINESS.read_text(encoding="utf-8"))
     assert readiness["schema_version"] == "workflow-readiness/v1"
-    assert readiness["workflow_sha256"] == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
+    assert (
+        readiness["workflow_sha256"]
+        == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
+    )
     assert readiness["prerequisites"]["worker_input"]["status"] == "verified"
     assert readiness["prerequisites"]["target_runtime"]["status"] == "unverified"
 
