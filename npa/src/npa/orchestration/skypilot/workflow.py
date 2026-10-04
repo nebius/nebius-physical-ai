@@ -1110,6 +1110,7 @@ def _preflight_prepared_submission(
             executable_profile_sha256=executable_profile_sha256,
             sky_bin=sky_executable,
             cwd=_stable_sky_cwd(runtime.isolated_config_dir),
+            resolved_sky_config_path=str(runtime.global_config_path),
         )
     except (ExecutionPreflightError, ValueError) as exc:
         raise SkyPilotSubmitError(str(exc), launch_attempted=False) from exc
