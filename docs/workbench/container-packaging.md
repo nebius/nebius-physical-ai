@@ -42,9 +42,14 @@ substitute scanner exceptions for rebuilt, validated image bytes.
 
 The GPU-role security closure separately pins PyJWT 2.14.0 for Transfer and
 Isaac. EnvGen uses the October Ubuntu snapshot and the explicit
-`LINUX_LIBC_DEV_VERSION=5.15.0-194.204` argument to the existing installer;
+`LINUX_LIBC_DEV_VERSION=5.15.0-198.208` argument to the existing installer;
 other installer callers retain their own release-specific defaults. The exact
-installed header version is checked before proceeding. These dependency pins
+installed header version is checked before proceeding. The frozen APT transaction
+already selects that version, above the security floor `5.15.0-194.204`.
+The [signed-index binding](validation/sim2real-envgen-headers-20261002.json)
+preserves both identities; requesting the lower floor after that transaction
+caused a real downgrade refusal, not an access or transport failure. No downgrade
+override is used. These dependency pins
 do not qualify an image without its fresh complete artifact gates.
 
 EnvGen also removes one hash-bound, inert `grass()` sample-download example

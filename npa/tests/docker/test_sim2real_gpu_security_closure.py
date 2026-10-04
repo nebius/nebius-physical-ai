@@ -1,8 +1,11 @@
 """Bind the three GPU-role repairs to the actual observed fixed package closures."""
 
+import json
 import re
+import subprocess
 from pathlib import Path
 
+import pytest
 from packaging.version import Version
 
 
@@ -33,7 +36,7 @@ def test_isaac_oss_closure_does_not_retain_vulnerable_pyjwt():
 def test_envgen_uses_explicit_fixed_headers_without_changing_other_callers():
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text()
     assert "ARG UBUNTU_SNAPSHOT=20261002T000000Z" in text
-    assert "ARG LINUX_LIBC_DEV_VERSION=5.15.0-194.204" in text
+    assert "ARG LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in text
     assert (
         'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${LINUX_LIBC_DEV_VERSION}"'
         in text
@@ -44,3 +47,27 @@ def test_envgen_uses_explicit_fixed_headers_without_changing_other_callers():
     assert 'linux_libc_dev_override="${2:-}"' in installer
     assert 'linux_libc_dev_version="5.15.0-190.200"' in installer
     assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
+
+
+@pytest.mark.parametrize(
+    ("requested", "no_downgrade"),
+    [("5.15.0-190.200", False), ("5.15.0-194.204", False), ("5.15.0-198.208", True)],
+)
+def test_envgen_header_pin_matches_the_frozen_apt_selection(requested, no_downgrade):
+    record = json.loads(
+        (
+            WORKBENCH.parents[2]
+            / "docs/workbench/validation/sim2real-envgen-headers-20261002.json"
+        ).read_text()
+    )
+    selected = record["selected_version"]
+    # Use Debian's actual version ordering, not PEP 440 or a lexical comparison.
+    result = subprocess.run(
+        ["dpkg", "--compare-versions", requested, "ge", selected], check=False
+    )
+    assert (result.returncode == 0) is no_downgrade
+    text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text()
+    assert f"ARG LINUX_LIBC_DEV_VERSION={selected}" in text
+    assert "--allow-downgrades" not in text
+    assert selected == record["package"]["Version"]
+    assert record["fixed_floor"] == "5.15.0-194.204"
