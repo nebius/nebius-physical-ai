@@ -47,16 +47,17 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The public digest resolves but cannot be pulled by the private target's available credentials. Its archived layers also fail the current fail-closed scanner because they retain historical easydict bytes and a stale Debian libssh2 build. A corrected LingBot child with a freshly built, separately scanned private Wan parent is being qualified; it is not published.",
+      "status": "verified",
+      "reason": "The public digest remains unsuitable for this private target, but the corrected LingBot child was built against a freshly scanned private Wan parent. Both local/archive and private-registry-byte scans passed, and the exact private digest passed the Kubernetes target pull preflight. The candidate remains operator-private and is not a public release.",
       "evidence": [
-        "private target image preflight receipt (2026-10-04): public manifest resolves but target pull is unverified",
-        "public archived-image scanner baseline (2026-10-04): fail-closed findings retained in private evidence"
+        "private Wan parent archive scan: zero findings (2026-10-04)",
+        "corrected LingBot child local/archive and registry-byte scans: zero findings (2026-10-04)",
+        "private target image preflight: exact immutable candidate pull verified (2026-10-04)"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The upstream topology is eight local FSDP/Ulysses ranks, while the accelerator product is selected through NPA workflow configuration. The coherent private route resolves the required compatible eight-GPU configuration, but the prior owned run is VERIFICATION_UNAVAILABLE and has no producer-stage evidence. It must be reconciled from original absence evidence or an explicit release procedure before another launch. This graph remains unverified until a compatible target admits it and its final MP4/RRD artifacts are independently inspected. No workflow manifest, model output, MP4, RRD, or GPU acceptance result exists for this graph. Historical single-workflow image qualification is not evidence for it.",
+      "reason": "The upstream topology is eight local FSDP/Ulysses ranks, while the accelerator product is selected through NPA workflow configuration. The coherent private route now resolves the required compatible configuration, with staged lawful input and an exact scanner-qualified, target-pull-qualified private image. The prior owned run is nevertheless VERIFICATION_UNAVAILABLE and has no producer-stage evidence. It must be reconciled from original absence evidence or an explicit release procedure before another launch. This graph remains unverified until a compatible target admits it and its final MP4/RRD artifacts are independently inspected. No workflow manifest, model output, MP4, RRD, or GPU acceptance result exists for this graph. Historical single-workflow image qualification is not evidence for it.",
       "evidence": [
         "private route scope/GPU preflight (2026-10-04)",
         "owned run status: VERIFICATION_UNAVAILABLE without producer-stage evidence (private receipt, 2026-10-04)",
