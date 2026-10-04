@@ -430,3 +430,6 @@ def test_in_cluster_build_script_is_executable_and_generic() -> None:
     assert "cr.us-central1" not in text and "cr.eu-north1" not in text
     for flag in ("--base", "--tag", "--dockerfile", "--pull-secret", "--namespace"):
         assert flag in text, f"build script should accept {flag}"
+    assert "NPA_BUILD_NODE_SELECTOR" in text
+    assert "nodeSelector:" in text
+    assert "one label=value pair" in text
