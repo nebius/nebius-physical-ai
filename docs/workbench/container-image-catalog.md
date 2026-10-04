@@ -859,5 +859,9 @@ operator builds and workflow overrides.
 
 The unpublished `npa-flux-action:0.1.0-cuda12-unbuilt` recipe packages the pinned
 standalone trainer. Base weights, encoders, and operator data are fetched at
-runtime. Public publication remains quarantined pending exact-image scans and
-GPU qualification. See [the FLUX Action guide](flux-action.md).
+runtime. A private image from committed source `7e56dfb4` passed four-update
+single-H100 BF16/no-EMA qualification, checkpoint/export, fresh held-out reload
+and independent S3 hash verification on 2026-10-04. The public pin remains
+unbuilt and quarantined; this private test does not establish a published GHCR
+release or qualify the default distributed FP32 recipe. See
+[the FLUX Action guide](flux-action.md).

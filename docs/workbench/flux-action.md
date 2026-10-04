@@ -278,13 +278,14 @@ written last. Failed stages retain logs/checkpoints without a success receipt.
 
 CPU validation exercised the pinned native indexer, real video decoding, native
 training configuration, and temporal windows for 3-, 7-, and 14-channel robots.
-The exact image also passed SSH startup, CLI help and all three native CPU
-channel-contract tests with Torch 2.10/CUDA 12.8. Its payload scan passed; pinned
-Trivy reported zero secret findings and zero critical vulnerabilities, with a
-331-package SPDX SBOM. Source and immutable image digest are recorded in the
-[readiness record](../../workflows/testing/flux-action-finetune.readiness.json).
-GPU train/export/reload remains unverified; the completed SO-101 LoRA run does
-not qualify this separate runtime.
+The qualified single-GPU image passed SSH startup, CLI help and native CPU
+training/inference/window checks with Torch 2.10/CUDA 12.8. Its whole-layer
+payload scan passed. Trivy reported zero secrets, zero fixable critical findings
+and zero library critical findings; 23 unfixed OS critical findings were retained
+under the repository policy. Its SPDX SBOM contains 1508 packages. Source and
+immutable digest are recorded in the
+[single-GPU readiness record](../../workflows/testing/flux-action-finetune-single-gpu.readiness.json).
+The default distributed FP32/two-EMA reference remains unqualified.
 
 ### Cloud acceptance attempts
 
@@ -332,7 +333,13 @@ An EMA export requires its corresponding value in `training.ema_sigma_rels`.
 Supported values are `0.1` and `0.05`; an empty list requires `export_profile`
 to be `model`. `training.param_dtype` accepts `float32` or `bfloat16`.
 
-The single-GPU candidate, eight-GPU reference workflow, and alternate
-four-process plan remain unqualified until complete checkpoint, export,
-fresh-process reload, remote checksums and native terminal success are verified.
-The 3,000-update recipe and closed-loop policy quality are unmeasured.
+On 2026-10-04 the repaired single-H100 recipe passed end to end: four native
+full-weight optimizer updates, a complete model/optimizer checkpoint, BF16
+model export, and a fresh CUDA evaluator reload on one held-out ALOHA window.
+All observed losses and all 14 action-channel metrics were finite. Independent
+S3 reads matched the export SHA-256 hashes, and live NPA and the native scheduler
+both reported `SUCCEEDED`. The exact committed image source is `7e56dfb4`.
+
+This qualifies the four-update BF16/no-EMA recipe. The default FP32/two-EMA
+recipe, eight-GPU reference, alternate four-process plan, optimizer resume,
+3,000-update training and closed-loop policy quality remain unqualified.

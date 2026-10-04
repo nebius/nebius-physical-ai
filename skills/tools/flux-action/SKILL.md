@@ -44,7 +44,8 @@ immutable `flux_image` and `image_pull_secret`; no public accepted image exists.
 
 For one-GPU qualification, use the explicit ALOHA single-GPU smoke recipe and
 workflow. Native BF16 parameters with `ema_sigma_rels: []` and `export_profile:
-model` avoid the default FP32 EMA copies. All trunk/head weights still train.
+model` avoid the default FP32 EMA copies. Native trainable trunk and robot-head
+weights still train.
 Require an already Bound disk PVC, mount it at `/npa-work`, and direct TMPDIR
 and HF_HOME there. Preserve system `/tmp` permissions for SkyPilot apt setup.
 The observed one-H100 FP32 attempt exhausted 79.18 GiB during EMA construction;
@@ -52,6 +53,10 @@ no optimizer update completed. A BF16 attempt completed four updates and export
 but failed reload because native training leaves sampler settings unset.
 Recipes must carry validated `inference` fields into the exported policy;
 validate the native inference config before GPU submission. The Euler/four-step
-ALOHA settings are diagnostic, not benchmarked. End-to-end acceptance remains
-unverified until the repaired image completes fresh-process reload and durable
-artifact verification.
+ALOHA settings are diagnostic, not benchmarked. The repaired single-H100
+BF16/no-EMA/direct-model recipe passed four-update end-to-end qualification on
+2026-10-04: complete native checkpoint, export, finite fresh CUDA reload on one
+held-out 14-channel window, independent S3 hashes and live NPA/native SUCCEEDED.
+Use its adjacent single-GPU readiness record. Default FP32/two-EMA, distributed
+and 3000-update recipes, optimizer resume and closed-loop quality remain
+unqualified.

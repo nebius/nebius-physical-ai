@@ -4,42 +4,42 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Single-GPU training and native inference contracts pass targeted checks; repaired end-to-end qualification remains pending.",
+      "reason": "The four-update single-H100 BF16 workflow passed live end-to-end qualification on 2026-10-04.",
       "evidence": [
-        "native upstream CPU index/config/window checks passed for 3/7/14-channel contracts",
-        "workflow has explicit private image/pull Secret and S3 dataset/recipe inputs",
-        "1334 scoped repository tests passed on Python 3.12",
-        "validate-spec and plan-spec --check-render passed with one rendered GPU task",
-        "Eight-H200, eight-H100 and four-L40S plans passed; their allocations failed before training. A later single-H100 attempt entered the real native trainer."
+        "46 scoped FLUX contract/CLI/workflow tests passed on Python 3.12.",
+        "Three built-image native CPU training/inference/index/window checks passed for 3/7/14-channel robots.",
+        "validate-spec, plan-spec --check-render and exact live submission planning passed."
       ]
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The tool invokes the pinned standalone full-weight trainer, requires positive trunk/head learning rates, exports a native BF16 policy and reloads it in a fresh evaluator process.",
+      "reason": "Pinned native full-weight trunk and robot-head training, native checkpoint/export and a fresh-process held-out reload completed. This is functional qualification, not a policy-quality benchmark.",
       "evidence": [
         "SOURCE_REVISION e2dd1d8dbc5977b54315d61f7548c63c043d6d4f",
-        "full mode counts optimizer updates; no PEFT/LoRA configuration",
-        "Native BF16 parameters, no EMA copies, direct model export, one worker and four full-trunk/head optimizer updates requested."
+        "Full mode; one H100, one native worker, BF16 parameters/compute, no EMA, direct model export.",
+        "6,909,046,016 trainable parameters; four optimizer updates; positive trunk/head learning rates in updates 2 through 4.",
+        "Explicit Euler sampler, four denoising steps, shift 1, video/action guidance 1, seed 0."
       ]
     }
   },
   "prerequisites": {
     "output_storage": {
-      "status": "unverified",
-      "reason": "Live storage authentication, input upload/readback and fresh output-prefix checks passed. Completion still requires independent remote checkpoint/export/reload evidence.",
+      "status": "verified",
+      "reason": "Independent remote checks confirmed the completion receipt, complete native model/optimizer checkpoint, finite metrics and export SHA-256 hashes.",
       "evidence": [
-        "corrupted remote export rejection tested",
-        "task-owned fresh output prefix checked before workflow planning"
+        "26 published objects; completed checkpoint state.step=4 and nonempty model/optimizer shards.",
+        "config.json SHA-256 bde55838db1db52afa44026098378cec8cf17a9da3b7777ddd5dae22923b1679",
+        "model.safetensors SHA-256 6b08057378f986a4a2e2bf5a5c51191165f25a6358e115f44c6245d8506bf622",
+        "Recipe, dataset index and statistics SHA-256 values independently matched the receipt."
       ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "The pinned ALOHA dataset is staged and independently checked. The new BF16/direct-export recipe must be uploaded and checked before submission.",
+      "status": "verified",
+      "reason": "Pinned public ALOHA inputs and the explicit inference recipe passed remote byte/hash readback and real native indexing.",
       "evidence": [
         "lerobot/aloha_sim_transfer_cube_human revision 6a43d500f101255823a9d2b9dc244eeb01a2cd31",
-        "50 episodes, 20000 frames; nine input objects uploaded",
-        "dataset metadata and smoke recipe independently SHA-256 checked after S3 readback",
-        "full-weight tool dry-run planned four optimizer updates"
+        "50 episodes, 20000 frames, 50 Hz, top camera and 14 ordered absolute state/action channels.",
+        "Published normalized recipe SHA-256 fd2efd2919d4daacc4358eecd2d48ee797d28f73deee7532dca071dbc0a832f2"
       ]
     },
     "credentials": {
@@ -52,19 +52,27 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The changed native precision/EMA integration requires an exact committed-source private image build and security checks before GPU qualification.",
-      "evidence": []
+      "status": "verified",
+      "reason": "An exact committed-source private image passed startup, native CPU checks, complete layer inspection, broad security policy checks and actual single-GPU execution.",
+      "evidence": [
+        "NPA source commit 7e56dfb45c3f4cd3822d5b21384909b12c6ba551",
+        "Private immutable image digest sha256:b7d24e21a03fc7e0de8d2a595f045f02dc413bf060eb662d8f5227fa421e55e4",
+        "Built-image nonroot runtime and SSH/CLI startup passed; security report matched all layer DiffIDs and source labels.",
+        "Whole-layer restricted-payload and all-severity secret scans passed.",
+        "Trivy 0.74.0: zero secret findings, zero fixable critical findings, zero library critical findings; 23 unfixed OS critical findings retained under repository trivy.yaml policy.",
+        "SPDX SBOM contains 1508 packages; public image publication remains quarantined."
+      ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "The first BF16 attempt completed four full-weight optimizer updates, a complete checkpoint and export, then failed fresh-process reload with invalid sampler. Exact native job FAILED and artifacts were preserved. The repaired inference-settings candidate is not yet qualified.",
+      "status": "verified",
+      "reason": "Live NPA and native scheduler both reported SUCCEEDED; the fresh evaluator returned finite held-out metrics for all 14 action channels.",
       "evidence": [
-        "One H100 passed real CUDA vector addition and 120-second stability checks; this is hardware evidence only.",
-        "Four observed GPU losses were finite: 1.0902739763259888, 1.3282651901245117, 1.4303573369979858, 1.0236011743545532.",
-        "Trunk and robot-head learning rates were positive in updates 2 through 4.",
-        "25 remote artifact objects preserved including model/optimizer checkpoint shards, export and reload assertion logs.",
-        "Pinned native PolicyConfig.validate_inference now runs in CPU compatibility tests."
+        "GPU: one H100; four optimizer updates completed on 2026-10-04.",
+        "Observed finite losses: 1.0902739763259888, 1.3282493352890015, 1.4307128190994263, 1.024110198020935.",
+        "One held-out validation window reloaded in a fresh CUDA evaluator process; recipe/export/reload inference settings agreed.",
+        "Standard NPA status was live_verified and automation_may_trust_state, all stages SUCCEEDED, durable manifest available; submission exit 0.",
+        "Earlier FP32 EMA OOM and BF16 missing-sampler failures were independently reconciled and preserved before retry.",
+        "The 3000-update recipe, default FP32/two-EMA reference, distributed GPU plans, optimizer resume and closed-loop policy quality remain unqualified."
       ]
     }
   }

@@ -64,14 +64,15 @@
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "Eight-GPU reference capacity remains unqualified. One H100 passed real CUDA and stability gates, but the FP32 recipe exhausted 79.18 GiB while allocating native EMA copies before the first update. The separate native BF16/direct-model-export single-GPU candidate requires a new exact image and complete acceptance run.",
+      "reason": "The default distributed FP32/two-EMA reference remains unqualified. A separate one-H100 BF16/no-EMA/direct-model recipe completed four updates, checkpoint/export, fresh reload, independent S3 hashes and live NPA/native SUCCEEDED on 2026-10-04.",
       "evidence": [
         "typed provider failures preserved privately and exact owned node-group states reconciled",
         "Single-H100 native training reported 6909046016 trainable parameters; preserved CUDA OOM traceback identifies PowerEMA construction; zero optimizer updates completed.",
         "Serverless exact-image dry-run also rejected the generated image label length; native VM placement lookup lacked ProjectService.List permission",
         "closed-loop policy quality and the 3000-update recipe remain unmeasured",
         "Dataset indexing and pinned weight loading completed in the real GPU attempt.",
-        "A CLI configuration notice caused false controller-failure reports; strict queue parsing regression tests now preserve STARTING/RUNNING and fail closed on malformed responses. Exact native job state is required for reconciliation."
+        "A CLI configuration notice caused false controller-failure reports; strict queue parsing regression tests now preserve STARTING/RUNNING and fail closed on malformed responses. Exact native job state is required for reconciliation.",
+        "Qualified single-GPU evidence: flux-action-finetune-single-gpu.readiness.json; this does not qualify the 3000-update or distributed reference recipes."
       ]
     }
   }
