@@ -34,9 +34,10 @@
       ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "The observed-paired path requires a selected pinned MIT LIBERO-X BDDL profile and matching GR00T-format materialization derived from native observations. The derivative's exact training cohort remains unknown, which is recorded as a claim boundary rather than inferred from seed 42.",
+      "status": "verified",
+      "reason": "A selected pinned MIT LIBERO-X BDDL profile and a run-scoped GR00T/LeRobot observation subset were materialized and hash-recorded through the scoped private route. The materialization explicitly records that its BDDL-to-dataset and initial-state bindings are unverified; those boundaries and the derivative's unknown training cohort remain claim constraints rather than inferred facts.",
       "evidence": [
+        "Sanitized private observed-input materialization receipt: completed GR00T/LeRobot observation subset, direct BDDL hash/language, and explicit non-binding classification",
         "docs/workbench/groot-libero-x.md#observed-paired-mode-when-coverage-is-unknown"
       ]
     },
