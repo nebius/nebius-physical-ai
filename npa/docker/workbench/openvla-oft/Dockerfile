@@ -69,6 +69,8 @@ RUN chown -R "${NPA_RUNTIME_USER}:${NPA_RUNTIME_USER}" /opt/npa-runtime \
     && find /opt/npa-runtime -type f -exec chmod 0644 {} +
 
 WORKDIR /workspace
-USER ${NPA_RUNTIME_USER}
+# Kubernetes runAsNonRoot admission requires a numeric image user so it can
+# prove the SkyPilot task container is not root before starting it.
+USER 1000:1000
 ENTRYPOINT ["python3", "/opt/npa/openvla-oft/entrypoint.py"]
 CMD ["python3", "--version"]

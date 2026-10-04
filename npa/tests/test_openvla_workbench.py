@@ -183,7 +183,7 @@ def test_neutral_image_is_private_validation_quarantined() -> None:
 
 
 def test_neutral_image_preserves_nonroot_access_to_its_notices() -> None:
-    """Runtime attribution stays readable after Docker COPY preserves file modes."""
+    """Runtime attribution stays readable under Kubernetes' numeric non-root user."""
     dockerfile = (
         Path(__file__).resolve().parents[1] / "docker/workbench/openvla-oft/Dockerfile"
     ).read_text(encoding="utf-8")
@@ -191,6 +191,7 @@ def test_neutral_image_preserves_nonroot_access_to_its_notices() -> None:
         "install -d -m 0755 -o root -g root /usr/share/doc/npa-openvla-oft"
         in dockerfile
     )
+    assert "USER 1000:1000" in dockerfile
 
 
 def test_workflow_resources_declare_the_skypilot_task_container() -> None:
