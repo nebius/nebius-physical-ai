@@ -1,0 +1,124 @@
+{
+  "schema": "cursor-explore.unchanged-request-source-bridge/v1",
+  "pr": 828,
+  "original_actual_provider_execution": "c5085c8757f50889cc296bce69b25cbb4ed77e40",
+  "published_source": "fdc5e88aea1c30b42ea2b4e525bb4d4f3db70b58",
+  "current_base": "3631cc98e9310d8015d1665e7cceed46f90aa9be",
+  "new_cpu_execution_head": "fdc5e88aea1c30b42ea2b4e525bb4d4f3db70b58",
+  "new_cpu_execution_tree": "177a62ef778b5908b9f8d7892f9254e77e6c9c42",
+  "exact_runtime_dependency_bridge": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "original_execution": "c5085c8757f50889cc296bce69b25cbb4ed77e40",
+      "sha256": "0e09a1d18677dd2ee85e8d34679f9de4c76ee3f37b13906fbceedf0065e0b31d",
+      "bytes_equal": true
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "original_execution": "c5085c8757f50889cc296bce69b25cbb4ed77e40",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "bytes_equal": true
+    },
+    {
+      "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+      "original_execution": "c5085c8757f50889cc296bce69b25cbb4ed77e40",
+      "sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e",
+      "bytes_equal": true
+    },
+    {
+      "path": "npa/pyproject.toml",
+      "original_execution": "c5085c8757f50889cc296bce69b25cbb4ed77e40",
+      "sha256": "91e044e814305e8643d3e3bc9216f66d6ccbe7337408b074a2f0ccb0b70329b2",
+      "bytes_equal": true
+    },
+    {
+      "path": "npa/ci/requirements.txt",
+      "original_execution": "c5085c8757f50889cc296bce69b25cbb4ed77e40",
+      "sha256": "bb227e55b247618d733633efc93937df9587c8c41316cb9bc2fc63d3ee935a35",
+      "bytes_equal": true
+    },
+    {
+      "path": "npa/requirements-lock.txt",
+      "original_execution": "c5085c8757f50889cc296bce69b25cbb4ed77e40",
+      "sha256": "480d9e046aa0144b5c9dc1683a9c5b77590e58c9dbfd111352b6b102e400e4f2",
+      "bytes_equal": true
+    }
+  ],
+  "current_module_hashes": [
+    {
+      "module": "npa",
+      "sha256": "a7a0d1bae2eb294163b49b005ae662576aac3ed2b1447d0ece572f4029ffcf81"
+    },
+    {
+      "module": "npa.clients.token_factory",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+    },
+    {
+      "module": "npa.workbench.vlm_eval",
+      "sha256": "0e09a1d18677dd2ee85e8d34679f9de4c76ee3f37b13906fbceedf0065e0b31d"
+    },
+    {
+      "module": "npa.workflows.vlm_grade_evidence",
+      "sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e"
+    }
+  ],
+  "new_cpu_distribution_context": {
+    "count": 146,
+    "sha256": "6dff460d0c5f97e966dd16a2e59e962affc13998bfde1833f5cff0e58e31e40e",
+    "capture_scope": "Before/after only the new four-report CPU replay; no historical module/distribution enumeration invented."
+  },
+  "cpu_replay_rows": [
+    {
+      "case": "api-MiniMax-M3-positive",
+      "source_report_sha256": "3ac156f61e7ac5a40ad1b151254c434f91bb9097ca08f66dd2dcbb23488bc8af",
+      "score": 1,
+      "gate": true,
+      "grade_block": {},
+      "response_sha256": "452bb99a935b056034719a79d539c6d441f9131196fa05bd98c557d069e7ce99"
+    },
+    {
+      "case": "api-MiniMax-M3-negative",
+      "source_report_sha256": "00eac2341fcd074ffe5c05d10eebae35ce8da4a5eb7112990c46ee2469994298",
+      "score": 0,
+      "gate": false,
+      "grade_block": {},
+      "response_sha256": "47ba18db0ec95eb3468c9a4880e8f70e40b519b7ebb989aebf4a06a36ca8b740"
+    },
+    {
+      "case": "self-hosted-gemma-3-27b-it-positive",
+      "source_report_sha256": "14f775472928f8ca5b45811c39e94896a2bd881ad9af628890580bb4b62b95cf",
+      "score": 1,
+      "gate": true,
+      "grade_block": {},
+      "response_sha256": "e72125cbcef35624d32573f8e545998a27b1e8e3f7073a627b461fd635e9e0fd"
+    },
+    {
+      "case": "self-hosted-gemma-3-27b-it-negative",
+      "source_report_sha256": "c25fdc1e8828933dc77d2cceefee61436cde287ee14258afea31da88e9da7cc5",
+      "score": 0,
+      "gate": false,
+      "grade_block": {},
+      "response_sha256": "59025d39dd144444bf9e0ee184210820db5ec970d7cb91b74417db84eebb5f7b"
+    }
+  ],
+  "new_provider_calls": 0,
+  "local_affected_integration": [
+    {
+      "base": "b6ae450ca1877a01798c5e4bd6e2bc54095fb0e0",
+      "execution_head": "866a35e0b1d76e5197fe3ce72d791532f07dc8a7",
+      "caption_sdk_cli_vlm_catalog_passed": 644,
+      "smoke_passed": 118,
+      "precheck_passed": 270
+    },
+    {
+      "base": "3631cc98e9310d8015d1665e7cceed46f90aa9be",
+      "execution_head": "fdc5e88aea1c30b42ea2b4e525bb4d4f3db70b58",
+      "vision_contract_required_caller_cli_passed": 307,
+      "precheck_passed": 270
+    }
+  ],
+  "source_before_after_equal": true,
+  "scans": "Aggregate confidentiality/gitleaks and merge-precheck PASS at each exact source.",
+  "incoming_scope": "External827 caption status classifier and external839 live-verification catalog/test context. VLM evaluator/client/grade and dependency files equal each original actual-provider execution.",
+  "historical_observation_correction": "Original main88 compact records bind head/tree/clean, three runtime hashes and successful own-checkout import check only. Earlier complete module/distribution wording was overstated; immutable0db/8eaf remain accessible and this addendum supersedes that wording."
+}

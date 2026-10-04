@@ -138,12 +138,12 @@
     "aggregate_confidentiality": "PASS",
     "aggregate_gitleaks": "PASS",
     "merge_precheck": "PASS",
-    "source_module_distributions_before_after": "equal",
+    "compact_source_before_after": "Equal head/tree/clean and three runtime hashes; own-checkout import check passed. Complete module paths/distribution enumerations were not captured.",
     "fresh_security": {
       "passed": 898,
       "skipped": 0,
       "cpu_torch": "2.14.0 official CPU wheel",
-      "scope": "Separate fresh owned loopback namespace execution; installation and fingerprints distinct from earlier environments."
+      "scope": "Separate fresh owned loopback namespace execution; later installation/compact source/import-check records, not complete historical module/distribution enumerations."
     }
   },
   "historical_full": {

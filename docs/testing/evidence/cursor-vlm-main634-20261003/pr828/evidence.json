@@ -155,7 +155,7 @@
     "aggregate_confidentiality": "PASS",
     "aggregate_gitleaks": "PASS",
     "merge_precheck": "PASS",
-    "source_module_distribution_before_after": "equal"
+    "compact_source_before_after": "Equal head/tree/clean and three runtime hashes; own-checkout import check passed. Complete module paths/distribution enumerations were not captured."
   },
   "historical": {
     "full_execution_head": "2bcc2badfb102a17341df354f95782316874e7e3",
