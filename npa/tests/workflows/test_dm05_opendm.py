@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +18,7 @@ from npa.workflows import dm05_opendm
 
 ROOT = Path(__file__).parents[3]
 SPEC = ROOT / "workflows" / "testing" / "dm05-opendm.yaml"
+READINESS = SPEC.with_suffix(".readiness.json")
 
 
 def test_normalization_contract_is_explicit_and_fixed() -> None:
@@ -89,6 +93,97 @@ def test_first_libero_observation_is_safe_and_uses_ordered_cameras(
     assert list(payload["observation"]["images"]) == ["1", "2"]
 
 
+def test_licensed_lerobot_conversion_preserves_camera_state_and_action_contract(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "libero"
+    state = [float(index) for index in range(8)]
+    action = [float(index) / 10 for index in range(7)]
+    rows = [
+        {
+            "observation.images.image": {"bytes": b"head-bytes"},
+            "observation.images.image2": {"bytes": b"wrist-bytes"},
+            "observation.state": state,
+            "action": action,
+        }
+    ]
+
+    assert (
+        dm05_opendm._write_lerobot_episode(
+            target=target, episode_index=3, prompt="Place the object", rows=rows
+        )
+        == 1
+    )
+    frame, images = dm05_opendm._first_libero_observation(target)
+
+    assert frame["prompt"] == "Place the object"
+    assert frame["state"] == state
+    assert frame["action"] == action
+    assert [path.read_bytes() for path in images] == [b"head-bytes", b"wrist-bytes"]
+    assert [path.parent.name for path in images] == ["episode_000003", "episode_000003"]
+
+
+def test_licensed_lerobot_converter_uses_pinned_metadata_layout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    metadata = source / "meta"
+    metadata.mkdir(parents=True)
+    (metadata / "info.json").write_text(
+        json.dumps(
+            {
+                "chunks_size": 1000,
+                "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
+                "features": {
+                    "observation.images.image": {"shape": [256, 256, 3]},
+                    "observation.images.image2": {"shape": [256, 256, 3]},
+                    "observation.state": {"shape": [8]},
+                    "action": {"shape": [7]},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (metadata / "episodes.jsonl").write_text(
+        json.dumps({"episode_index": 0, "tasks": ["Open the drawer"]}) + "\n",
+        encoding="utf-8",
+    )
+    parquet = source / "data/chunk-000/episode_000000.parquet"
+    parquet.parent.mkdir(parents=True)
+    parquet.touch()
+    rows = [
+        {
+            "observation.images.image": {"bytes": b"head"},
+            "observation.images.image2": {"bytes": b"wrist"},
+            "observation.state": [0.0] * 8,
+            "action": [0.0] * 7,
+        }
+    ]
+
+    class Table:
+        @staticmethod
+        def to_pylist() -> list[dict[str, object]]:
+            return rows
+
+    parquet_module = types.ModuleType("pyarrow.parquet")
+    parquet_module.read_table = lambda path: Table()  # type: ignore[attr-defined]
+    pyarrow_module = types.ModuleType("pyarrow")
+    pyarrow_module.__path__ = []  # type: ignore[attr-defined]
+    pyarrow_module.parquet = parquet_module  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pyarrow", pyarrow_module)
+    monkeypatch.setitem(sys.modules, "pyarrow.parquet", parquet_module)
+
+    target = tmp_path / "converted"
+    assert dm05_opendm._convert_licensed_lerobot_libero(
+        source=source, target=target
+    ) == {"episodes": 1, "frames": 1}
+    frame, images = dm05_opendm._first_libero_observation(target)
+    assert frame["prompt"] == "Open the drawer"
+    assert frame["state"] == [0.0] * 8
+    assert frame["action"] == [0.0] * 7
+    assert [path.read_bytes() for path in images] == [b"head", b"wrist"]
+
+
 def test_workflow_is_a_connected_five_stage_real_component_path() -> None:
     document = yaml.safe_load(SPEC.read_text(encoding="utf-8"))
     states = document["states"]
@@ -142,8 +237,24 @@ def test_workflow_does_not_invent_an_openpi_or_generic_terms_gate() -> None:
     assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in contents
     assert "ACCEPT_" not in contents
     assert "Dexmal/DM05" in contents
-    assert "Dexmal/libero" in contents
+    assert "HuggingFaceVLA/libero" in contents
     assert "dexbotic-benchmark" in contents
+
+
+def test_adjacent_readiness_binds_the_exact_workflow_and_stays_honest() -> None:
+    record = json.loads(READINESS.read_text(encoding="utf-8"))
+    assert record["schema_version"] == "workflow-readiness/v1"
+    assert record["workflow_sha256"] == hashlib.sha256(SPEC.read_bytes()).hexdigest()
+    assert record["planning"]["validation"]["status"] == "verified"
+    assert record["planning"]["task_fidelity"]["status"] == "verified"
+    for prerequisite in (
+        "real_input",
+        "source_image",
+        "registry_pull",
+        "target_runtime",
+        "final_artifacts",
+    ):
+        assert record["prerequisites"][prerequisite]["status"] == "unverified"
 
 
 def test_native_environment_keeps_upstream_launcher_in_its_pinned_venv(
@@ -214,6 +325,68 @@ def test_hf_download_uses_the_pinned_native_environment(
     environment = captured["env"]
     assert isinstance(environment, dict)
     assert environment["PATH"].split(":", 1)[0] == str(native_python.parent)
+
+
+def test_loopback_inference_refuses_redirects_and_never_uses_a_supplied_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Response:
+        status = 302
+
+        @staticmethod
+        def read() -> bytes:
+            return b""
+
+    class Connection:
+        def __init__(self, host: str, port: int, *, timeout: float) -> None:
+            captured.update(host=host, port=port, timeout=timeout)
+
+        def request(
+            self,
+            method: str,
+            path: str,
+            body: bytes | None = None,
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            captured.update(method=method, path=path, body=body, headers=headers)
+
+        @staticmethod
+        def getresponse() -> Response:
+            return Response()
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    monkeypatch.setattr(dm05_opendm.http.client, "HTTPConnection", Connection)
+    payload = {
+        "observation": {
+            "state": [0.0] * 8,
+            "images": {"1": "head", "2": "wrist"},
+        }
+    }
+    with pytest.raises(dm05_opendm.DM05WorkflowError, match="redirect"):
+        dm05_opendm._infer_once(port=7891, payload=payload)
+
+    assert captured == {
+        "host": "127.0.0.1",
+        "port": 7891,
+        "timeout": 600,
+        "method": "POST",
+        "path": "/v1/infer",
+        "body": json.dumps(payload).encode("utf-8"),
+        "headers": {"Content-Type": "application/json"},
+    }
+    source = (ROOT / "npa/src/npa/workflows/dm05_opendm.py").read_text(encoding="utf-8")
+    assert "urllib.request.urlopen" not in source
+
+
+@pytest.mark.parametrize("port", [0, -1, 65536, True])
+def test_loopback_inference_rejects_invalid_ports(port: int) -> None:
+    with pytest.raises(dm05_opendm.DM05WorkflowError, match="invalid loopback"):
+        dm05_opendm._loopback_port(port)
 
 
 def test_revision_check_scopes_git_trust_to_the_pinned_checkout(

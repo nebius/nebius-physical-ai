@@ -1,0 +1,56 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "139c71062228b2d645ae76922e8a5386631be48218bba5f82209d7bda2e26f65",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The saved five-stage workflow passed validate-spec and plan-spec --check-render using only its placeholder configuration; neither command submits a workload.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/dm05-opendm.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/dm05-opendm.yaml --run-id dm05-opendm-static-current --check-render --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Static contract coverage binds prepare, native training, HTTP rollout, closed-loop evaluation, and factual RRD/MP4 reporting into one artifact-connected path with explicit state, camera, action, and chunk normalization. This is not native execution evidence.",
+      "evidence": [
+        "npa/tests/workflows/test_dm05_opendm.py",
+        "docs/workbench/dm05-opendm.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The selected operator-private route passed its exact object-storage preflight. No identifier is retained in this repository record.",
+      "evidence": [
+        "sanitized private health-preflight receipt"
+      ]
+    },
+    "real_input": {
+      "status": "unverified",
+      "reason": "The runtime dataset conversion and full materialization have not yet completed. Metadata and range probes do not stand in for the converted native training input.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "No completed private image digest has passed source, dependency, license, complete-byte, and metadata inspection.",
+      "evidence": []
+    },
+    "registry_pull": {
+      "status": "unverified",
+      "reason": "A private registry pull cannot be qualified until an inspected immutable image digest exists.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No native training, HTTP rollout, or closed-loop evaluator workload has reached a terminal result on the selected target.",
+      "evidence": []
+    },
+    "final_artifacts": {
+      "status": "unverified",
+      "reason": "No evaluator metrics, RRD, or MP4 from a submitted run have been independently inspected.",
+      "evidence": []
+    }
+  }
+}

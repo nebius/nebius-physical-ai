@@ -15,7 +15,9 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import json
+import math
 import os
 import shutil
 import signal
@@ -23,8 +25,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -36,8 +36,8 @@ OPENDM_SOURCE_URL = "https://github.com/dexmal/opendm"
 OPENDM_SOURCE_REVISION = "7d52f1591437332cb0157be3303c1c46da811344"
 DM05_MODEL_ID = "Dexmal/DM05"
 DM05_MODEL_REVISION = "5cd18734814abb075a9ccfd9ad6d16777b5cf10e"
-LIBERO_DATASET_ID = "Dexmal/libero"
-LIBERO_DATASET_REVISION = "f15a66b3975f8cd210c746991f80adde5ab05ca4"
+LIBERO_DATASET_ID = "HuggingFaceVLA/libero"
+LIBERO_DATASET_REVISION = "affa19c0de0f6bce2a7edd26dddef8a532e7e6f6"
 DEXBOTIC_SOURCE_URL = "https://github.com/dexmal/dexbotic-benchmark"
 DEXBOTIC_SOURCE_REVISION = "789b87f50d9fadc7663d2e8bac057941221aab81"
 
@@ -48,6 +48,7 @@ LIBERO_ROBOT_TYPE = "Franka"
 LIBERO_STATE_DIM = 8
 LIBERO_ACTION_DIM = 7
 LIBERO_ACTION_CHUNK = 10
+LOOPBACK_INFERENCE_HOST = "127.0.0.1"
 
 
 class DM05WorkflowError(RuntimeError):
@@ -295,6 +296,197 @@ def _first_libero_observation(data_root: Path) -> tuple[dict[str, Any], list[Pat
     return frame, image_paths
 
 
+def _finite_vector(value: Any, *, field: str, dimension: int) -> list[float]:
+    """Decode one authoritative LeRobot vector without padding or remapping it."""
+    if isinstance(value, (str, bytes, bytearray, dict)):
+        raise DM05WorkflowError(f"LeRobot frame {field} is not a numeric vector")
+    try:
+        values = [float(item) for item in value]
+    except (TypeError, ValueError) as exc:
+        raise DM05WorkflowError(
+            f"LeRobot frame {field} is not a numeric vector"
+        ) from exc
+    if len(values) != dimension or not all(math.isfinite(item) for item in values):
+        raise DM05WorkflowError(
+            f"LeRobot frame {field} must contain {dimension} finite values"
+        )
+    return values
+
+
+def _lerobot_image_bytes(value: Any, *, field: str) -> bytes:
+    """Extract embedded v2.1 image bytes and reject path-based substitutions."""
+    if isinstance(value, dict):
+        value = value.get("bytes")
+    if isinstance(value, memoryview):
+        value = value.tobytes()
+    if isinstance(value, bytearray):
+        value = bytes(value)
+    if not isinstance(value, bytes) or not value:
+        raise DM05WorkflowError(f"LeRobot frame {field} has no embedded image bytes")
+    return value
+
+
+def _write_lerobot_episode(
+    *,
+    target: Path,
+    episode_index: int,
+    prompt: str,
+    rows: Iterable[dict[str, Any]],
+) -> int:
+    """Map one licensed LeRobot v2.1 episode to OpenDM's JSONL/image contract.
+
+    The source is authoritative for the two camera streams, 8D state, and 7D
+    action.  The adapter retains those values verbatim after finite-value and
+    shape checks; it does not synthesize a camera, pad an action, or translate
+    the action convention.
+    """
+    if episode_index < 0 or not prompt.strip():
+        raise DM05WorkflowError(
+            "LeRobot episode must have a non-negative index and task"
+        )
+    subset = target / LIBERO_DATASET_NAME
+    image_dir = subset / "image" / f"episode_{episode_index:06d}"
+    jsonl_dir = subset / "jsonl"
+    image_dir.mkdir(parents=True, exist_ok=False)
+    jsonl_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = jsonl_dir / f"episode_{episode_index:06d}.jsonl"
+    count = 0
+    with jsonl_path.open("x", encoding="utf-8") as handle:
+        for frame_index, row in enumerate(rows):
+            state = _finite_vector(
+                row.get("observation.state"),
+                field="observation.state",
+                dimension=LIBERO_STATE_DIM,
+            )
+            action = _finite_vector(
+                row.get("action"), field="action", dimension=LIBERO_ACTION_DIM
+            )
+            images = (
+                _lerobot_image_bytes(
+                    row.get("observation.images.image"),
+                    field="observation.images.image",
+                ),
+                _lerobot_image_bytes(
+                    row.get("observation.images.image2"),
+                    field="observation.images.image2",
+                ),
+            )
+            entries: dict[str, dict[str, str]] = {}
+            for camera_index, (key, image) in enumerate(
+                zip(LIBERO_IMAGE_KEYS, images), 1
+            ):
+                name = f"frame_{frame_index:06d}_camera_{camera_index}.image"
+                (image_dir / name).write_bytes(image)
+                entries[key] = {
+                    "type": "image",
+                    "url": str((image_dir.name + "/" + name)),
+                }
+            handle.write(
+                json.dumps(
+                    {
+                        "prompt": prompt,
+                        "state": state,
+                        "action": action,
+                        **entries,
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            count += 1
+    if count == 0:
+        raise DM05WorkflowError(f"LeRobot episode {episode_index} has no frames")
+    return count
+
+
+def _convert_licensed_lerobot_libero(*, source: Path, target: Path) -> dict[str, int]:
+    """Convert the pinned CC-BY LeRobot v2.1 LIBERO tree for native OpenDM."""
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:  # pragma: no cover - exercised in the private image
+        raise DM05WorkflowError(
+            "pyarrow is required to convert the licensed LeRobot LIBERO dataset"
+        ) from exc
+    try:
+        info = json.loads((source / "meta" / "info.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DM05WorkflowError(
+            "licensed LeRobot LIBERO metadata is unreadable"
+        ) from exc
+    chunk_size = info.get("chunks_size")
+    pattern = info.get("data_path")
+    features = info.get("features")
+    if (
+        not isinstance(chunk_size, int)
+        or chunk_size <= 0
+        or not isinstance(pattern, str)
+        or not isinstance(features, dict)
+    ):
+        raise DM05WorkflowError(
+            "licensed LeRobot LIBERO metadata has no valid data layout"
+        )
+    expected_shapes = {
+        "observation.images.image": [256, 256, 3],
+        "observation.images.image2": [256, 256, 3],
+        "observation.state": [LIBERO_STATE_DIM],
+        "action": [LIBERO_ACTION_DIM],
+    }
+    for name, shape in expected_shapes.items():
+        feature = features.get(name)
+        if not isinstance(feature, dict) or feature.get("shape") != shape:
+            raise DM05WorkflowError(
+                f"licensed LeRobot LIBERO feature {name!r} has an unexpected shape"
+            )
+    episodes_path = source / "meta" / "episodes.jsonl"
+    try:
+        lines = episodes_path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise DM05WorkflowError(
+            "licensed LeRobot LIBERO has no episodes metadata"
+        ) from exc
+    target.mkdir(parents=True, exist_ok=False)
+    frames = 0
+    episodes = 0
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            episode = json.loads(line)
+            episode_index = episode["episode_index"]
+            tasks = episode["tasks"]
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise DM05WorkflowError(
+                "licensed LeRobot episode metadata is invalid"
+            ) from exc
+        if isinstance(episode_index, bool) or not isinstance(episode_index, int):
+            raise DM05WorkflowError("licensed LeRobot episode index is invalid")
+        if (
+            not isinstance(tasks, list)
+            or len(tasks) != 1
+            or not isinstance(tasks[0], str)
+        ):
+            raise DM05WorkflowError("licensed LeRobot episode has no unambiguous task")
+        parquet_relative = pattern.format(
+            episode_chunk=episode_index // chunk_size, episode_index=episode_index
+        )
+        parquet_path = source / parquet_relative
+        if not parquet_path.is_file():
+            raise DM05WorkflowError(
+                f"licensed LeRobot episode payload is missing: {parquet_relative}"
+            )
+        rows = pq.read_table(parquet_path).to_pylist()
+        frames += _write_lerobot_episode(
+            target=target,
+            episode_index=episode_index,
+            prompt=tasks[0],
+            rows=rows,
+        )
+        episodes += 1
+    if episodes == 0 or frames == 0:
+        raise DM05WorkflowError("licensed LeRobot LIBERO conversion produced no frames")
+    return {"episodes": episodes, "frames": frames}
+
+
 def _request_payload(
     frame: dict[str, Any], image_paths: Iterable[Path]
 ) -> dict[str, Any]:
@@ -313,20 +505,62 @@ def _request_payload(
     }
 
 
-def _wait_for_http_server(process: subprocess.Popen[bytes], endpoint: str) -> None:
-    """Wait for the owned server until it responds or exits; never mask startup failure."""
+def _loopback_port(port: int) -> int:
+    """Accept only a concrete TCP port for the process-local inference service."""
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise DM05WorkflowError(f"invalid loopback inference port: {port!r}")
+    return port
+
+
+def _loopback_request(
+    *,
+    port: int,
+    method: str,
+    path: str,
+    body: bytes | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float,
+) -> tuple[int, bytes]:
+    """Issue one no-redirect request to the owned, process-local server.
+
+    The service hostname and only supported endpoint are constants rather than
+    caller-supplied URLs. ``http.client`` has no automatic redirect handling,
+    so a compromised local server cannot turn a readiness or inference request
+    into a request to another host.
+    """
+    if method not in {"GET", "POST"} or path != "/v1/infer":
+        raise DM05WorkflowError("invalid loopback inference request shape")
+    connection = http.client.HTTPConnection(
+        LOOPBACK_INFERENCE_HOST, _loopback_port(port), timeout=timeout
+    )
+    try:
+        connection.request(method, path, body=body, headers=headers or {})
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
+
+
+def _wait_for_http_server(process: subprocess.Popen[bytes], port: int) -> None:
+    """Wait for the owned loopback server until it responds or exits."""
+    _loopback_port(port)
     while True:
         if process.poll() is not None:
             raise DM05WorkflowError(
-                f"DM05 inference process exited before serving {endpoint}, rc={process.returncode}"
+                "DM05 inference process exited before serving its loopback endpoint, "
+                f"rc={process.returncode}"
             )
         try:
-            with urllib.request.urlopen(endpoint, timeout=5):
-                return
-        except urllib.error.HTTPError:
+            status, _ = _loopback_request(
+                port=port, method="GET", path="/v1/infer", timeout=5
+            )
+            if 300 <= status < 400:
+                raise DM05WorkflowError(
+                    "DM05 loopback readiness endpoint returned a redirect; refusing it"
+                )
             # Flask returns 404 for GET /v1/infer; the port is nevertheless ready.
             return
-        except urllib.error.URLError:
+        except (OSError, http.client.HTTPException):
             time.sleep(2)
 
 
@@ -338,6 +572,7 @@ def _start_server(
     port: int,
     cuda_visible_devices: str,
 ) -> subprocess.Popen[bytes]:
+    _loopback_port(port)
     command = [
         "bash",
         "script/dm05_launcher.sh",
@@ -378,14 +613,31 @@ def _stop_owned_process(process: subprocess.Popen[bytes]) -> None:
 
 
 def _infer_once(*, port: int, payload: dict[str, Any]) -> dict[str, Any]:
-    request = urllib.request.Request(
-        f"http://127.0.0.1:{port}/v1/infer",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=600) as response:
-        data = json.loads(response.read().decode("utf-8"))
+    try:
+        status, body = _loopback_request(
+            port=port,
+            method="POST",
+            path="/v1/infer",
+            body=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            timeout=600,
+        )
+    except (OSError, http.client.HTTPException) as exc:
+        raise DM05WorkflowError("DM05 loopback inference request failed") from exc
+    if 300 <= status < 400:
+        raise DM05WorkflowError(
+            "DM05 loopback inference endpoint returned a redirect; refusing it"
+        )
+    if not 200 <= status < 300:
+        raise DM05WorkflowError(
+            f"DM05 loopback inference endpoint returned HTTP {status}"
+        )
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DM05WorkflowError(
+            "DM05 loopback inference returned invalid JSON"
+        ) from exc
     actions = data.get("actions")
     if not isinstance(actions, list) or len(actions) != LIBERO_ACTION_CHUNK:
         raise DM05WorkflowError(
@@ -420,21 +672,7 @@ def prepare(args: argparse.Namespace) -> None:
             cwd=repo_root,
             native_python=native_python,
         )
-        _run(
-            [
-                "bash",
-                "script/libero_runner.sh",
-                "dataset",
-                "--dataset-repo",
-                LIBERO_DATASET_ID,
-                "--data-root",
-                str(data),
-                "--dataset-download-dir",
-                str(raw),
-            ],
-            cwd=repo_root,
-            env=_native_environment(native_python, repo_root=repo_root),
-        )
+        conversion = _convert_licensed_lerobot_libero(source=raw, target=data)
         norm_path = _compute_norm_stats(
             repo_root=repo_root,
             data_root=data,
@@ -457,6 +695,8 @@ def prepare(args: argparse.Namespace) -> None:
                 "dataset": {
                     "id": LIBERO_DATASET_ID,
                     "revision": LIBERO_DATASET_REVISION,
+                    "format": "LeRobot v2.1 converted to OpenDM JSONL/image",
+                    "conversion": conversion,
                 },
                 "normalization": normalization_contract(),
                 "artifacts": _tree_summary(output),
@@ -563,7 +803,7 @@ def serve_rollout(args: argparse.Namespace) -> None:
             cuda_visible_devices=args.server_cuda_visible_devices,
         )
         try:
-            _wait_for_http_server(server, f"http://127.0.0.1:{args.port}/v1/infer")
+            _wait_for_http_server(server, args.port)
             response = _infer_once(port=args.port, payload=payload)
         finally:
             _stop_owned_process(server)
@@ -626,7 +866,7 @@ def evaluate(args: argparse.Namespace) -> None:
             cuda_visible_devices=args.server_cuda_visible_devices,
         )
         try:
-            _wait_for_http_server(server, f"http://127.0.0.1:{args.port}/v1/infer")
+            _wait_for_http_server(server, args.port)
             _run(
                 [
                     evaluator_python,

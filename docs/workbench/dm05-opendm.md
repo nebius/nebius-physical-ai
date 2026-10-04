@@ -7,8 +7,9 @@ service, or original NPA research.
 
 The successful path has five connected executable stages:
 
-1. Fetch the exact Dexmal LIBERO dataset revision, organize it with upstream
-   `script/libero_runner.sh`, and compute genuine OpenDM normalization stats.
+1. Fetch the exact licensed LeRobot LIBERO dataset revision, map its actual
+   two-camera/8D-state/7D-action frames into OpenDM's JSONL/image contract,
+   and compute genuine OpenDM normalization stats.
 2. Fetch the exact DM05 base checkpoint and run upstream LIBERO full SFT.
 3. Serve the resulting checkpoint through upstream HTTP `/v1/infer` and record
    an actual action chunk from a prepared observation.
@@ -24,7 +25,7 @@ The successful path has five connected executable stages:
 | --- | --- | --- |
 | Training and HTTP-server code | [Dexmal OpenDM](https://github.com/dexmal/opendm) commit `7d52f1591437332cb0157be3303c1c46da811344`; Apache-2.0, Copyright 2026 Dexmal | Apache-2.0 source may be retained in the private BYOF image with its LICENSE and source metadata. Modifications are only the NPA wrapper; the upstream code remains attributed to Dexmal. |
 | Base checkpoint | [Dexmal/DM05](https://huggingface.co/Dexmal/DM05) revision `5cd18734814abb075a9ccfd9ad6d16777b5cf10e`; model card cites the Dexmal Team's July 2026 DM0.5 work | The card declares the [Gemma terms](https://ai.google.dev/gemma/terms). The checkpoint is runtime-fetched to the operator's run; it is neither copied into the image nor published or served as an NPA hosted service. Public, anonymous payload availability is operational access, not a redistribution finding. |
-| Training data | [Dexmal/libero](https://huggingface.co/datasets/Dexmal/libero) revision `f15a66b3975f8cd210c746991f80adde5ab05ca4`; card cites Liu et al., *LIBERO* (2023) | The exact card declares only `license: cc`, without a CC version or deed. It is runtime-fetched, run-scoped, and not included in a public image or redistribution package. This incomplete identifier must be resolved before any data redistribution claim; it does not justify a new NPA acceptance switch. |
+| Training data | [HuggingFaceVLA/libero](https://huggingface.co/datasets/HuggingFaceVLA/libero) revision `affa19c0de0f6bce2a7edd26dddef8a532e7e6f6`; Hugging Face VLA's LeRobot-v2.1 conversion of LIBERO, with the original LIBERO citation | The immutable card declares CC-BY-4.0. It is runtime-fetched, run-scoped, and not included in a public image or redistribution package. The adapter maps its embedded `image`/`image2`, 8D state, and 7D action fields to OpenDM's `images_1`/`images_2` JSONL contract with no action padding, inversion, or convention change. Preserve the CC-BY attribution and the original LIBERO citation in provenance. |
 | Closed-loop evaluator | [Dexmal Dexbotic Benchmark](https://github.com/dexmal/dexbotic-benchmark) commit `789b87f50d9fadc7663d2e8bac057941221aab81`; MIT, Copyright 2025 Dexmal | Its LIBERO gitlink is [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO) `8f1084e3132a39270c3a13ebe37270a43ece2a01`, MIT, Copyright 2023 Lifelong Robot Learning. Keep both notices when constructing the private image. |
 | CUDA/PyTorch/FlashAttention, Python and evaluator dependencies | Exact package/base identities are captured by the actual private image build receipt and its dependency inventory | They are separate runtime dependencies with their own terms. No conclusion about public redistribution follows from source access or from a successful image build. |
 
@@ -92,8 +93,9 @@ The build command must:
   submodule, then create the evaluator's Python 3.8 environment from the
   upstream LIBERO requirements. Install the standard `cmake` build tool too:
   the upstream `egl_probe` dependency compiles with CMake;
-- install `rerun-sdk` and the NPA runtime dependencies used by the staged
-  adapter;
+- install `rerun-sdk`, `pyarrow`, and the NPA runtime dependencies used by
+  the staged adapter; `pyarrow` reads the licensed LeRobot v2.1 Parquet
+  records before the adapter writes OpenDM's native JSONL/image representation;
 - emit source/dependency/license inventory into the private build evidence; and
 - scan the complete image before the private push. It remains outside public
   registry admission unless a separate, complete redistribution review passes.

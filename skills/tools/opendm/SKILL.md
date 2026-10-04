@@ -19,10 +19,11 @@ success. For generic packaging and workflow mechanics, load `byof-onboard`,
   `5cd18734814abb075a9ccfd9ad6d16777b5cf10e`; the card declares Gemma terms.
   Fetch it only at runtime and do not borrow OpenPI's acceptance environment
   switch.
-- Training data: `Dexmal/libero` at
-  `f15a66b3975f8cd210c746991f80adde5ab05ca4`. Its card says only `license: cc`
-  without a version. Keep it runtime-only and do not make a redistribution
-  claim until the exact data license is resolved.
+- Training data: `HuggingFaceVLA/libero` at
+  `affa19c0de0f6bce2a7edd26dddef8a532e7e6f6`, a CC-BY-4.0 LeRobot-v2.1
+  conversion attributed to Hugging Face VLA and the original LIBERO authors.
+  Fetch it only at runtime, preserve attribution, and do not make a public
+  image or redistribution claim.
 - Closed-loop evaluator: `dexmal/dexbotic-benchmark` at
   `789b87f50d9fadc7663d2e8bac057941221aab81`, MIT; its LIBERO submodule is
   `8f1084e3132a39270c3a13ebe37270a43ece2a01`, MIT.

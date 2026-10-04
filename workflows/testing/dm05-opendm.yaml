@@ -88,9 +88,10 @@ initial: prepare_libero
 states:
   prepare_libero:
     description: >
-      Runtime-fetch the exact Dexmal LIBERO revision, invoke upstream archive
-      organization, and calculate the actual OpenDM chunk-10 normalization
-      statistics before any model or GPU work starts.
+      Runtime-fetch the exact licensed LeRobot LIBERO revision, convert its
+      embedded two-camera/8D-state/7D-action records to OpenDM's JSONL/image
+      contract without action remapping, and calculate actual chunk-10
+      normalization statistics before any model or GPU work starts.
     resources: cpu
     run:
       shell: >
