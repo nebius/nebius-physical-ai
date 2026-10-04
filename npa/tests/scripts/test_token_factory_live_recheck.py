@@ -331,6 +331,19 @@ def test_required_job_missing_key_writes_failed_receipt_without_running_pytest(
     assert target.stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.parametrize("previous", [None, "", "0", "operator-value"])
+def test_trusted_runner_opt_in_restores_environment_on_failure(monkeypatch, previous):
+    if previous is None:
+        monkeypatch.delenv("NPA_INTEGRATION_E2E", raising=False)
+    else:
+        monkeypatch.setenv("NPA_INTEGRATION_E2E", previous)
+    with pytest.raises(RuntimeError, match="synthetic failure"):
+        with _runner()._required_live_opt_in():
+            assert os.environ["NPA_INTEGRATION_E2E"] == "1"
+            raise RuntimeError("synthetic failure")
+    assert os.environ.get("NPA_INTEGRATION_E2E") == previous
+
+
 def test_receipt_cannot_overwrite_prior_run(tmp_path):
     runner = _runner()
     path = tmp_path / "receipt.json"
@@ -369,7 +382,11 @@ def test_pytest_exception_emits_failed_receipt_without_exception_body(
 
 def test_direct_required_live_pytest_rejects_absent_key_before_collection(tmp_path):
     root = Path(__file__).resolve().parents[3]
-    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path)}
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(tmp_path),
+        "NPA_INTEGRATION_E2E": "1",
+    }
     result = subprocess.run(
         [
             sys.executable,
@@ -592,6 +609,7 @@ def test_nightly_executes_kimi_and_checks_both_visual_controls():
     assert live["env"]["NPA_TF_RECHECK_REQUIRED_MODELS"].startswith(
         "moonshotai/Kimi-K3,"
     )
+    assert live["env"]["NPA_INTEGRATION_E2E"] == "1"
     assert "token_factory_live_recheck.py" in live["run"]
     verify = next(
         step

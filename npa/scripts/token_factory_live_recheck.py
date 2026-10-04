@@ -193,6 +193,20 @@ def source_hashes(root: Path) -> dict[str, str]:
     }
 
 
+@contextlib.contextmanager
+def _required_live_opt_in():
+    """Opt in only while the trusted runner executes its selected live suites."""
+    previous = os.environ.get("NPA_INTEGRATION_E2E")
+    os.environ["NPA_INTEGRATION_E2E"] = "1"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("NPA_INTEGRATION_E2E", None)
+        else:
+            os.environ["NPA_INTEGRATION_E2E"] = previous
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, required=True)
@@ -252,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
         # only allowlisted observations/node outcomes in the exported receipt.
         try:
             with (
+                _required_live_opt_in(),
                 contextlib.redirect_stdout(io.StringIO()),
                 contextlib.redirect_stderr(io.StringIO()),
             ):

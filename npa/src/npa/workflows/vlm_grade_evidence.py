@@ -441,11 +441,13 @@ def _validate_result(
 def _validate_optional_provider_success(
     report: dict, success: bool, passed: bool
 ) -> None:
-    # Newer writers may expose these fields, but landed v1 results do not.
+    # Newer writers may expose these outcome/identity claims; old reports may
+    # omit them. All current hosted profiles require exact served identity.
     # The strict retained verdict, not truthiness or field presence, is authoritative.
     for field, expected in (
         ("provider_success", success),
         ("provider_success_matches_score_gate", success == passed),
+        ("served_model_match_enforced", report["backend"] == "api"),
     ):
         if field not in report:
             continue

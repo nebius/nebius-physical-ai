@@ -12,6 +12,38 @@ Each evaluation records the requested `model` and the endpoint's returned
 identity must be a nonempty string. Retain the serving deployment's checkpoint
 revision separately: a model name alone does not identify its weight bytes.
 
+Results, loop rows, and benchmark cases disclose
+`served_model_match_enforced`. It is true only when a real hosted response
+passed the shared profile's exact requested/returned identity check. Current
+profiles enforce this for every hosted model, including unknown identifiers.
+Self-hosted responses, stub scores, and score overrides report false. They
+must not be presented as exact identity enforcement.
+
+The aggregate model and each case's `requested_model` name the effective
+configured model after default/environment resolution. On a stub or score
+override, `requested_model` is configuration metadata, not proof that a request
+was sent; evidence remains absent and enforcement remains false. Promotion
+rechecks any present enforcement boolean against the retained backend/identity
+contract. A missing historical field remains compatible; nonliteral or false
+claims inconsistent with the retained real backend fail closed.
+
+Every scored response must report the exact value
+`choices[0].finish_reason="stop"`. Both real backends reject incomplete or
+missing completion metadata before parsing the verdict, including parseable
+JSON from a truncated response. Update self-hosted adapters that omit the field.
+
+Incomplete judge output aborts `run`, the entire `loop`, or the benchmark sweep;
+it is not converted to a score-zero valid verdict. The CLI exits nonzero. In a
+two-rollout loop, a completed first rollout's artifact may remain, but an
+incomplete second rollout produces neither its result nor a new aggregate
+`task_success_report.json`. Treat those earlier artifacts as partial evidence,
+not a successful run. Do not continue promotion after a failed judge command.
+Use a new run-specific output location: the evaluator does not erase artifacts
+from previous runs, and an independently invoked historical-artifact reader
+cannot infer which producer invocation failed. In particular, an absent
+canonical report can permit a valid legacy report to be read; malformed or
+ineligible **present** canonical reports never fall back to favorable legacy.
+
 Successful real-backend results also contain an `evidence` record. It binds the
 requested and returned model to:
 
@@ -56,15 +88,27 @@ If a model wraps one complete JSON object in a single Markdown JSON fence, the
 parser removes only that transport wrapper and appends `+markdown-fence-v1` to
 the retained parser version. Hosted `api` evaluation rejects surrounding prose,
 duplicate keys, non-finite numbers, invalid types, incomplete output and model
-substitution. The `self-hosted` backend retains its legacy compatibility parser:
-it can extract embedded JSON, accept duplicate keys and coerced types, clamp
-scores, and return a verdict with missing or non-`stop` completion metadata.
-Retained evidence does not make such a verdict eligible for promotion. The live
-provenance lane below separately requires complete output and checks its framing.
+substitution. The `self-hosted` backend retains compatible JSON framing:
+it can extract embedded JSON and accept duplicate keys, but requires a literal
+boolean `success`, a finite numeric `score` in [0, 1], and a nonempty string
+`rationale`. It never coerces these fields or clamps a model score; every real
+backend requires exact `stop` completion before parsing. Compatible framing is
+not hosted strict-JSON conformance. The live provenance lane below checks its
+framing separately.
 The promotion gate rejects compatibility-only results, requiring a completed,
 non-refused, strictly typed retained verdict for either backend.
 None of these fields turns a visual judgment into objective task, geometry,
 collision, or safety evidence.
+
+The strict self-hosted parser is `npa_vlm_eval_compatible_json_v2`. Retained
+parser-v1 evidence (with or without its framing suffix) no longer validates for
+promotion, even when its content contains otherwise valid literal fields. The
+grade decision is `loop_back` with `provider_metadata_mismatch`; a superseded
+parser contract can cause that reason, not only tampering. Preserve the old
+report and obtain a new evaluated report if promotion is required. Never change
+an old parser tag to claim new execution. A malformed numeric/type/success
+verdict also aborts the whole loop/sweep, without manufacturing score zero;
+correct the serving output contract before a new evaluation.
 
 For a consequential or disputed review, `compare-judges` preserves two hosted
 outcomes without averaging:
@@ -120,9 +164,9 @@ rounded to four decimal places for real, stub, and override evaluations. When
 a real backend actually returns a `success` boolean, the result records it as
 `provider_success` and reports whether it agrees in
 `provider_success_matches_score_gate`.
-Self-hosted responses that omit the boolean leave both fields null rather than
-presenting a score-derived fallback as provider output. Legacy non-boolean
-values such as `"true"` are likewise not promoted to provider booleans. A real
+Both real backends reject missing or non-boolean `success` values before
+publishing a result. Stub and explicit-score override provenance fields remain
+null; they are not provider output. A real
 disagreement is calibration evidence, not permission to replace the
 score-derived label. Before reviewing thin geometry or skeletons, compare
 retained submitted-frame dimensions with the source because normalization can
