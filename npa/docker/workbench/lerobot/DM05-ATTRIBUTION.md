@@ -17,9 +17,11 @@ including its `LICENSE`, is retained at `/opt/lerobot/dm05-source`.
   checkpoint, processor cache, Gemma payload, LIBERO data, or model-derived
   output is baked into the image. The model cards label the weights `gemma`;
   their terms govern those separate weights and any redistribution/service use.
-- LIBERO source is `Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01`,
-  MIT (Copyright 2023 Lifelong Robot Learning). Its dataset notice identifies
-  the data as CC BY 4.0; data is runtime-provided and not included here.
+- LIBERO benchmark source and simulator assets are
+  `Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01`,
+  MIT (Copyright 2023 Lifelong Robot Learning), retained with its `LICENSE` at
+  `/opt/lerobot/libero-benchmark`. Its dataset notice identifies demonstration
+  data as CC BY 4.0; demonstrations are runtime-provided and not included here.
 
 Credits and citations are recorded in
 `docs/workbench/dm05-lerobot-libero.md`. This image is an operator-private

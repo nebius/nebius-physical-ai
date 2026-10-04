@@ -73,9 +73,15 @@ DM05_IMPLEMENTATION = {
     "license": "Apache-2.0",
     "upstream_pull_request": "https://github.com/huggingface/lerobot/pull/4051",
     "checkpoint_processor_format": "dm05-pr-4051-original",
+    "libero_benchmark": {
+        "repository": "https://github.com/Lifelong-Robot-Learning/LIBERO",
+        "revision": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
+        "license": "MIT",
+    },
 }
 DM05_RUNTIME_MANIFEST_ENV = "NPA_DM05_RUNTIME_MANIFEST"
 DM05_RUNTIME_MANIFEST = Path("/opt/lerobot/dm05-runtime.json")
+DM05_LIBERO_BENCHMARK_ROOT_ENV = "NPA_DM05_LIBERO_BENCHMARK_ROOT"
 LEROBOT_RELEASE = DM05_IMPLEMENTATION["revision"]
 SUITES = ("libero_spatial", "libero_object", "libero_goal", "libero_10")
 CAMERA_MAPPING = {
@@ -249,7 +255,10 @@ def _write_noninteractive_libero_config(workspace: Path) -> Path:
     roots = getattr(spec, "submodule_search_locations", None) if spec else None
     if not roots:
         raise RuntimeError("LIBERO package is not installed in the evaluation runtime")
-    libero_root = Path(next(iter(roots))) / "libero"
+    packaged_root = Path(next(iter(roots))) / "libero"
+    libero_root = Path(
+        os.environ.get(DM05_LIBERO_BENCHMARK_ROOT_ENV, str(packaged_root))
+    )
     required = {
         "bddl_files": libero_root / "bddl_files",
         "init_states": libero_root / "init_files",

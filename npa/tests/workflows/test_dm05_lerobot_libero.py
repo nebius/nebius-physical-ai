@@ -265,6 +265,13 @@ def test_private_dm05_image_retains_bootstrap_attestation_and_telemetry_boundary
         'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"'
         in instructions
     )
+    assert "'/opt/lerobot/dm05-source[training,libero,dm05]'" in instructions
+    assert "Lifelong-Robot-Learning/LIBERO.git" in instructions
+    assert "checkout --detach 8f1084e3132a39270c3a13ebe37270a43ece2a01" in instructions
+    assert (
+        "NPA_DM05_LIBERO_BENCHMARK_ROOT=/opt/lerobot/libero-benchmark/libero"
+        in instructions
+    )
     assert "/opt/lerobot/venv/bin/python -m pip uninstall -y wandb" in instructions
 
 
@@ -313,8 +320,10 @@ def test_libero_config_uses_installed_assets_without_interactive_setup(
     tmp_path, monkeypatch
 ):
     package_root = tmp_path / "site-packages" / "libero"
-    benchmark_root = package_root / "libero"
+    packaged_root = package_root / "libero"
+    benchmark_root = tmp_path / "pinned-libero" / "libero"
     for name in ("bddl_files", "init_files", "assets"):
+        (packaged_root / name).mkdir(parents=True)
         (benchmark_root / name).mkdir(parents=True)
     monkeypatch.setattr(
         workflow.importlib.util,
@@ -323,12 +332,15 @@ def test_libero_config_uses_installed_assets_without_interactive_setup(
             submodule_search_locations=[str(package_root)]
         ),
     )
+    monkeypatch.setenv(workflow.DM05_LIBERO_BENCHMARK_ROOT_ENV, str(benchmark_root))
 
     config_root = workflow._write_noninteractive_libero_config(tmp_path / "run")
 
     config = json.loads((config_root / "config.yaml").read_text())
     assert config["benchmark_root"] == str(benchmark_root)
     assert config["assets"] == str(benchmark_root / "assets")
+    assert config["bddl_files"] == str(benchmark_root / "bddl_files")
+    assert config["init_states"] == str(benchmark_root / "init_files")
     assert Path(config["datasets"]).is_dir()
 
 

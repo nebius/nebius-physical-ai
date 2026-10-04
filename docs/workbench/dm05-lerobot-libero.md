@@ -60,9 +60,10 @@ patch the upstream policy: its changes are the external five-stage adapter,
 runtime-manifest check, and provenance/reporting logic only.
 
 `Lifelong-Robot-Learning/LIBERO` at the pinned revision declares MIT (Copyright
-2023 Lifelong Robot Learning) for code and CC BY 4.0 for its dataset. Neither
-LIBERO source nor data is copied into this derivative image. The enhanced
-checkpoint card identifies Dexmal Team as author, names
+2023 Lifelong Robot Learning) for its benchmark source and simulator assets,
+which the operator-private validation image retains with its `LICENSE` at
+`/opt/lerobot/libero-benchmark`. Its demonstration dataset is CC BY 4.0 and is
+not copied into this derivative image. The enhanced checkpoint card identifies Dexmal Team as author, names
 `Dexmal/DM05-Lerobot` as its base model, and labels the weights `gemma`. The
 model card's [Gemma Terms of Use](https://ai.google.dev/gemma/terms) are a
 separate weights/service/redistribution boundary. The image contains no model
@@ -153,7 +154,8 @@ baseline; neither is substituted automatically.
 
 Upstream LIBERO prompts interactively to create its first user-level path
 configuration. The private noninteractive workflow instead writes a run-local
-`LIBERO_CONFIG_PATH/config.yaml` pointing only to the already-installed upstream
-LIBERO benchmark closure (BDDL files, initialization states, and assets). It
-does not answer a terms prompt, add an acceptance flag, or bake/download a
-dataset. A missing benchmark closure fails the rollout explicitly.
+`LIBERO_CONFIG_PATH/config.yaml` pointing only to the pinned MIT benchmark
+closure (BDDL files, initialization states, and assets). It does not answer a
+terms prompt, add an acceptance flag, or bake/download a demonstration dataset.
+The runtime manifest binds this closure's source revision and license; a missing
+closure fails the rollout explicitly.
