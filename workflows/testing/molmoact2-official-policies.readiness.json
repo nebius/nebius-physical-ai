@@ -41,7 +41,7 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "A corrected source-pinned private BYOF image is rebuilding after the exact-byte scan caught test-fixture, LPIPS-weight, and bundled static-FFmpeg bytes retained in older layers. The replacement removes those bytes in their creating layers, but remote immutable-digest qualification is not complete yet.",
+      "reason": "A corrected source-pinned private BYOF image is rebuilding after the exact-byte scan caught test-fixture, torchmetrics reference-weight, and bundled static-FFmpeg bytes retained in older layers. The replacement removes those bytes in their creating layers, but remote immutable-digest qualification is not complete yet.",
       "evidence": [
         "npa/docker/workbench/molmoact2/Dockerfile",
         "npa/docker/workbench/molmoact2/REDISTRIBUTION.md",

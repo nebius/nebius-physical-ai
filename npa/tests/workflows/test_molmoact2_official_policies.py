@@ -104,4 +104,5 @@ def test_runtime_image_removes_nonruntime_payloads_in_their_creating_layers() ->
         "rm -rf /opt/molmoact2/.git"
     )
     assert "torchmetrics/functional/image/lpips_models" in dockerfile
+    assert "torchmetrics/functional/image/dists_models" in dockerfile
     assert "imageio_ffmpeg/binaries/*" in dockerfile

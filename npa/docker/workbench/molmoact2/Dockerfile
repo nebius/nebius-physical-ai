@@ -56,16 +56,19 @@ RUN git lfs install --skip-smudge \
 # installing it after LeRobot lets `pip check` verify the assembled runtime.
 # The editable LeRobot source has already had its test fixtures removed in the
 # source layer. Remove non-runtime wheel payloads in this same install layer:
-# LPIPS downloads a bundled VGG weight and imageio-ffmpeg bundles a static
-# executable, while the Ubuntu ffmpeg package remains the selected runtime.
+# Torchmetrics bundles LPIPS and DISTS reference weights, and imageio-ffmpeg
+# bundles a static executable, while the Ubuntu ffmpeg package remains the
+# selected runtime.
 RUN cd /opt/molmoact2/experiments \
     && pip install -e ".[all]" \
     && pip install -e "./lerobot[async,libero]" \
     && pip install "protobuf>=6.33.5,<7" \
     && pip check \
     && rm -rf /opt/venv/lib/python3.12/site-packages/torchmetrics/functional/image/lpips_models \
+    && rm -rf /opt/venv/lib/python3.12/site-packages/torchmetrics/functional/image/dists_models \
     && rm -rf /opt/venv/lib/python3.12/site-packages/imageio_ffmpeg/binaries/* \
     && test ! -e /opt/venv/lib/python3.12/site-packages/torchmetrics/functional/image/lpips_models/vgg.pth \
+    && test ! -e /opt/venv/lib/python3.12/site-packages/torchmetrics/functional/image/dists_models/weights.pt \
     && test -z "$(find /opt/venv/lib/python3.12/site-packages/imageio_ffmpeg/binaries -type f -print -quit)"
 
 COPY docker/workbench/molmoact2/THIRD_PARTY_NOTICES.md /usr/share/doc/molmoact2/THIRD_PARTY_NOTICES.md
