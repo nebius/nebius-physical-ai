@@ -738,16 +738,33 @@ class FakeSubmitter:
     def __call__(self, path: Path, job_name: str, **kwargs: Any) -> FakeResult:
         text = Path(path).read_text(encoding="utf-8")
         docs = [doc for doc in yaml.safe_load_all(text) if doc is not None]
+        task_docs = _task_docs(docs)
         self.calls.append(
             {
                 "job_name": job_name,
                 "yaml": text,
-                "header": docs[0],
-                "tasks": [doc["name"] for doc in docs[1:]],
+                "header": (
+                    docs[0]
+                    if _is_pipeline_header(docs[0])
+                    else {"name": docs[0]["name"], "execution": "serial"}
+                ),
+                "tasks": [doc["name"] for doc in task_docs],
                 "kwargs": kwargs,
             }
         )
         return FakeResult(job_id=str(len(self.calls)))
+
+
+def _is_pipeline_header(document: dict[str, Any]) -> bool:
+    return "execution" in document and "run" not in document
+
+
+def _task_docs(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return executable tasks from either a pipeline or one-task wave YAML."""
+
+    return (
+        documents[1:] if documents and _is_pipeline_header(documents[0]) else documents
+    )
 
 
 class FakeStatus:
@@ -1638,7 +1655,7 @@ def test_runtime_runs_full_budget_when_gate_keeps_looping(tmp_path: Path) -> Non
     for call in submitter.calls:
         if call["tasks"] != ["work"]:
             continue
-        task = [doc for doc in yaml.safe_load_all(call["yaml"]) if doc][1]
+        task = _task_docs([doc for doc in yaml.safe_load_all(call["yaml"]) if doc])[0]
         work_fences.append(int(task["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"]))
         assert task["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] == "1"
     assert work_fences == [1, 3, 5]
@@ -1653,7 +1670,7 @@ def test_runtime_refreshes_launch_dependencies_for_every_wave(tmp_path: Path) ->
 
     def refresh(path: Path) -> None:
         docs = [doc for doc in yaml.safe_load_all(path.read_text()) if doc]
-        refreshed.append([doc["name"] for doc in docs[1:]])
+        refreshed.append([doc["name"] for doc in _task_docs(docs)])
 
     options = RuntimeOptions(
         poll_seconds=0,
@@ -2111,23 +2128,23 @@ def test_wave_retry_recovers_from_a_transient_failure(tmp_path: Path) -> None:
     assert attempts[1]["status"] == "succeeded"
     first_docs = [doc for doc in yaml.safe_load_all(submitter.calls[0]["yaml"]) if doc]
     second_docs = [doc for doc in yaml.safe_load_all(submitter.calls[1]["yaml"]) if doc]
-    assert {doc["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] for doc in first_docs[1:]} == {
-        "1"
-    }
-    assert {doc["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] for doc in second_docs[1:]} == {
-        "2"
-    }
+    assert {
+        doc["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] for doc in _task_docs(first_docs)
+    } == {"1"}
+    assert {
+        doc["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] for doc in _task_docs(second_docs)
+    } == {"2"}
     first_attempt_ids = {
-        doc["envs"]["NPA_WORKFLOW_ATTEMPT_ID"] for doc in first_docs[1:]
+        doc["envs"]["NPA_WORKFLOW_ATTEMPT_ID"] for doc in _task_docs(first_docs)
     }
     second_attempt_ids = {
-        doc["envs"]["NPA_WORKFLOW_ATTEMPT_ID"] for doc in second_docs[1:]
+        doc["envs"]["NPA_WORKFLOW_ATTEMPT_ID"] for doc in _task_docs(second_docs)
     }
     assert len(first_attempt_ids) == len(second_attempt_ids) == 1
     assert first_attempt_ids.isdisjoint(second_attempt_ids)
-    assert {doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in first_docs[1:]} == {
-        doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in second_docs[1:]
-    }
+    assert {
+        doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in _task_docs(first_docs)
+    } == {doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] for doc in _task_docs(second_docs)}
 
 
 def test_launch_transaction_cannot_overwrite_the_scheduler_publication_fence() -> None:
@@ -2773,9 +2790,9 @@ def test_resume_with_explicit_retry_replays_success_and_retries_terminal_wave(
     assert [call["tasks"] for call in submitter.calls] == [["join"]]
     assert submitter.calls[0]["job_name"].endswith("-a2")
     assert [wave["replayed"] for wave in report.waves[:2]] == [True, True]
-    retry_doc = [doc for doc in yaml.safe_load_all(submitter.calls[0]["yaml"]) if doc][
-        1
-    ]
+    retry_doc = _task_docs(
+        [doc for doc in yaml.safe_load_all(submitter.calls[0]["yaml"]) if doc]
+    )[0]
     assert retry_doc["envs"]["NPA_WORKFLOW_FENCE_SEQUENCE"] == "3"
     assert retry_doc["envs"]["NPA_WORKFLOW_FENCE_ATTEMPT"] == "2"
     retried = next(wave for wave in report.waves if wave["states"] == ["join"])
@@ -3443,7 +3460,8 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
     refreshed = []
 
     def check_capacity(path: Path) -> None:
-        tasks = [doc["name"] for doc in yaml.safe_load_all(path.read_text()) if doc][1:]
+        documents = [doc for doc in yaml.safe_load_all(path.read_text()) if doc]
+        tasks = [doc["name"] for doc in _task_docs(documents)]
         refreshed.append(tasks)
         assert tasks == ["shard-c"] or tasks == ["join"]
         if capacity_blocked:
@@ -5131,9 +5149,8 @@ def test_runtime_default_sdk_records_wave_proof_without_poll_time_refresh(
         "rendered_wave_sha256": wave_hashes[0],
     }
     runtime_sdk_submission.preflight.assert_called_once()
-    assert [doc["name"] for doc in runtime_sdk_submission.preflight.call_args.args[0]][
-        1:
-    ] == ["gate"]
+    preflight_docs = runtime_sdk_submission.preflight.call_args.args[0]
+    assert [doc["name"] for doc in _task_docs(preflight_docs)] == ["gate"]
     assert now.return_value == "2026-08-30T02:00:00Z"
 
 

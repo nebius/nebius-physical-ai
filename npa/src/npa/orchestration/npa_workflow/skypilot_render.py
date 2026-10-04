@@ -2887,6 +2887,25 @@ def render_skypilot_steps_yaml(
         )
     if not steps:
         raise NpaWorkflowRenderError(f"workflow {spec.name!r} planned zero steps")
+    if execution == "serial" and len(steps) == 1:
+        # Runtime execution submits serial waves one at a time.  The pinned
+        # managed-jobs launcher interprets the first document as the task, so a
+        # pipeline header with no ``run`` makes a one-task wave fail before the
+        # stage command starts.  Keep the header-based form for complete
+        # multi-task plans, but submit this wave as the one executable task.
+        task_docs = build_skypilot_task_docs(spec, steps, run_id=run_id, options=opts)
+        assert len(task_docs) == 1
+        rendered = (
+            yaml.safe_dump(
+                task_docs[0],
+                sort_keys=False,
+                default_flow_style=False,
+                width=10_000,
+            ).rstrip()
+            + "\n"
+        )
+        assert_literal_python_heredocs_compile(rendered)
+        return rendered
     return _render_docs(
         spec,
         steps,
