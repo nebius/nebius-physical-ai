@@ -353,7 +353,9 @@ def test_archive_extraction_rejects_escaping_members_and_links(tmp_path: Path) -
                 pipeline._safe_extract(archive, tmp_path / "extract")
 
 
-def test_safe_archive_extraction_materializes_only_regular_files(tmp_path: Path) -> None:
+def test_safe_archive_extraction_materializes_only_regular_files(
+    tmp_path: Path,
+) -> None:
     archive_path = tmp_path / "prepared.tar.gz"
     with tarfile.open(archive_path, "w:gz") as archive:
         directory = tarfile.TarInfo("payload")

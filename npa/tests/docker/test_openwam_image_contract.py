@@ -25,8 +25,7 @@ def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
     assert "COPY --chmod=0755 src/npa /opt/npa/src/npa" in dockerfile
     assert (
         "runuser -u ubuntu -- env HOME=/home/ubuntu /opt/openwam-venv/bin/python "
-        "-m npa.workflows.openwam_pipeline"
-        in dockerfile
+        "-m npa.workflows.openwam_pipeline" in dockerfile
     )
     assert "sudo -u ubuntu" not in dockerfile
 
