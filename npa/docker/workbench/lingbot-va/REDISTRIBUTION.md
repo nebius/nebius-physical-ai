@@ -24,9 +24,12 @@ workflow input. Source access is not treated as a license grant for weights,
 data, outputs, or caches.
 
 CUDA and Python dependencies are built into an operator-owned writable runtime
-cache by `lingbot-va-runtime ensure`. Runtime installation uses the exact
-upstream PyTorch 2.9/CUDA 12.6 major/minor contract and does not add an EULA,
-acceptance variable, telemetry consent, or vendor-specific attestation.
+cache by `lingbot-va-runtime ensure`. Runtime installation retains CUDA 12.6
+while using the security-maintained PyTorch 2.13 line permitted by the
+upstream project's Torch lower bound. The pinned source has no TorchAudio or
+Accelerate import, so those scanner-blocked unused packages are absent. This
+does not add an EULA, acceptance variable, telemetry consent, or
+vendor-specific attestation.
 Public release is not authorized by this source-only record. The only permitted
 near-term use is operator-private validation after exact image scans, a native
 GPU execution, and independently inspected candidate-digest evidence. See

@@ -460,12 +460,12 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
 
     assert L.SOURCE_REF in dockerfile
     assert L.POSTTRAIN_MODEL_REF in dockerfile
-    assert "torch==2.9.1+cu126" in requirements
-    assert "torchvision==0.24.1+cu126" in requirements
-    assert "torchaudio==2.9.1+cu126" in requirements
+    assert "torch==2.13.0+cu126" in requirements
+    assert "torchvision==0.28.0+cu126" in requirements
+    assert "torchaudio==" not in requirements
     assert "diffusers==0.38.0" in requirements
     assert "transformers==5.10.0" in requirements
-    assert "accelerate==1.14.0" in requirements
+    assert "accelerate==" not in requirements
     assert "Pillow==12.3.0" in requirements
     assert "datasets==5.0.1" in requirements
     assert "deepdiff==8.6.2" in requirements
@@ -473,7 +473,7 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
     assert "pyarrow==25.0.1" in requirements
     assert "lerobot==0.3.3" in runtime_script
     assert "--no-deps" in runtime_script
-    assert "torch==2.9.1+cu126" in runtime_script
+    assert "torch==2.13.0+cu126" in runtime_script
     assert "ACCEPT_" not in dockerfile
     assert "robbyant/libero-long-lerobot" not in dockerfile
     assert "npa-wan2-2@sha256:" in dockerfile
