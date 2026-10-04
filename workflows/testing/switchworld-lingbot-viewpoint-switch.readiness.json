@@ -51,8 +51,8 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The rejected digest-equal mirror is not selected. The prior source-controlled operator-private snapshot passed immutable delivery, byte-scan, vulnerability/secret, SPDX, and target-bootstrap checks, but it omitted the runtime-only PyAV decoder needed by the first real preparation stage. The replacement keeps the decoder as a hash-locked operator-cache fetch and must receive a fresh private build, byte scan, security scan, and target bootstrap before native retry.",
+      "status": "verified",
+      "reason": "The rejected digest-equal mirror is not selected. After r7 exposed the missing runtime-only PyAV decoder, the source-controlled replacement was privately rebuilt with the hash-locked operator-cache requirement, resolved to an immutable digest, passed its payload scan and repository-pinned secret/fixed-critical policy scan with SPDX inventory, and completed an exact multi-target pull/bootstrap probe with verified cleanup. Its disposition remains operator-private validation only; this proves image delivery, not native generation.",
       "evidence": [
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/execution-route.json (private operator evidence, 2026-10-04)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/image-preflight-20261004-private.json (public-source status ok, digest-bound bootstrap and cleanup verified, 2026-10-04)",
@@ -63,7 +63,11 @@
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-inspection-20261004-private.json (immutable digest and no-publication OCI disposition, 2026-10-04)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-byte-scan-20261004-private.json (18 archives, no findings, 2026-10-04)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-preflight-multi-20261004-r2-private.json (exact multi-target bootstrap probe compatible with verified cleanup, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-security-20261004-private.json (repository-pinned Trivy no-secret/no-fixed-CRITICAL policy result and SPDX inventory, private only, 2026-10-04)"
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-security-20261004-private.json (superseded private image: r7 omitted the actual PyAV runtime decoder, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-r8-inspection-20261004-private.json (replacement immutable digest and no-publication OCI disposition, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-r8-byte-scan-20261004-private.json (replacement payload scan, no findings, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-r8-security-20261004-private.json (replacement repository-pinned Trivy no-secret/no-fixed-CRITICAL policy result and SPDX inventory, private only, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-r8-preflight-20261004-private.json (replacement exact multi-target pull/bootstrap probe compatible with verified cleanup, 2026-10-04)"
       ]
     },
     "target_runtime": {
