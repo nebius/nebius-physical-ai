@@ -224,6 +224,7 @@ which is the failure this exists to remove.
 | `HF_LEROBOT_HOME`, `LEROBOT_HF_HOME` | `lerobot` | LeRobot datasets and policies |
 | `NPA_SAM3_CACHE` | `sam3` | SAM 3.1 source, runtime closure and gated checkpoint |
 | `WAN22_CACHE_DIR`, `NPA_LTX_MODEL_CACHE` | `wan2.2`, `ltx-2.5` | the BYOF video models |
+| `NPA_LINGBOT_VA_RUNTIME_CACHE` | `runtimes/lingbot-va` | runtime-installed CUDA/Python closure for the private LingBot-VA candidate; model weights remain separately runtime-fetched |
 | `NPA_CONTENT_AGENTS_RUNTIME_CACHE` | `runtimes/content-agents` | exact OVRTX SDK delivered directly by NVIDIA to the operator |
 
 `MODEL_CACHE_LAYOUT` in `npa/src/npa/workbench/model_cache.py` is the source of

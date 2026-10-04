@@ -190,6 +190,7 @@ CONTAINER_IMAGE_NAMES = {
     "wan2-2": "npa-wan2-2",
     "diffusers": "npa-diffusers",
     "lingbot-world": "npa-lingbot-world",
+    "lingbot-va": "npa-lingbot-va",
     "sam2": "npa-sam2",
     "sam3": "npa-sam3",
     "ltx2": "npa-ltx2",
@@ -282,6 +283,13 @@ RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
         "paidf-event-video-sky",
     }
 )
+# These restricted first-class images have no default operator tag either.  A
+# private registry changes who can pull bytes, not what has been qualified: a
+# caller must select a fresh source-bound candidate explicitly, and a real
+# workflow must bind the pushed image by digest.  This deliberately does not
+# reuse the public ``UNVALIDATED_PUBLICATION_TOOLS`` state, which would imply a
+# potentially public neutral bootstrap rather than a private-only candidate.
+PRIVATE_VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"lingbot-va"})
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 # A pending source-delivery proof is not a permanent upstream license restriction.
 PENDING_REDISTRIBUTION_TOOLS: frozenset[str] = frozenset()
@@ -2123,7 +2131,11 @@ def public_release_manifest() -> dict[str, Any]:
     redistribution_eligible = {
         tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
     }
-    expected_releases = redistribution_eligible - PUBLICATION_QUARANTINE_TOOLS
+    expected_releases = (
+        redistribution_eligible
+        - PUBLICATION_QUARANTINE_TOOLS
+        - PRIVATE_VALIDATION_CANDIDATE_TOOLS
+    )
     if set(releases) != expected_releases:
         raise RuntimeError(
             "Public release manifest releases must match every currently publishable tool"
@@ -2458,6 +2470,13 @@ def container_image_for_tool(
             f"<your-registry> --push) and point NPA_REGISTRY at that registry; see "
             f"docs/workbench/container-packaging.md."
         )
+    if tool in PRIVATE_VALIDATION_CANDIDATE_TOOLS:
+        if not re.fullmatch(r"dev-[0-9a-f]{40}", tag or ""):
+            raise ValueError(
+                f"{tool!r} has no default private image either. Supply an explicit "
+                "operator-private dev-<full-source-sha> candidate for qualification, "
+                "or bind the real workflow directly to the scanned IMAGE@sha256:DIGEST."
+            )
     # SONIC has a capability-aware manifest with independently accepted and
     # quarantined image packages. Defer its tool-level decision until after
     # resolving the variant, then gate the selected package below. This keeps
@@ -2575,9 +2594,12 @@ def build_and_push_command(image: str) -> str:
     tool = tool_for_image_name(image_name)
     if not tool:
         return ""
-    if tool in UNBUILT_CANDIDATE_TOOL_VERSIONS:
+    if tool in set(UNBUILT_CANDIDATE_TOOL_VERSIONS) | set(
+        PRIVATE_VALIDATION_CANDIDATE_TOOLS
+    ):
         # Quarantined candidates require their dedicated, reviewed build and
-        # byte-scan transaction; never suggest the generic push shortcut.
+        # byte-scan transaction; never suggest the generic push shortcut.  The
+        # private candidate inventory has no release tag to substitute here.
         return ""
     if tool == "ncore":
         # The generic recipe omits the mandatory source revision and would build
@@ -2838,6 +2860,7 @@ def publicly_publishable_tools() -> list[str]:
         for tool in CONTAINER_IMAGE_NAMES
         if is_publicly_redistributable(tool)
         and tool not in PUBLICATION_QUARANTINE_TOOLS
+        and tool not in PRIVATE_VALIDATION_CANDIDATE_TOOLS
     )
 
 

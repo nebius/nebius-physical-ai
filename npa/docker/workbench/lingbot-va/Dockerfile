@@ -49,6 +49,7 @@ RUN GIT_LFS_SKIP_SMUDGE=1 git clone --filter=blob:none --no-checkout "${LINGBOT_
 
 COPY --chmod=0444 docker/workbench/lingbot-va/runtime-requirements.txt /opt/npa/lingbot-va/runtime-requirements.txt
 COPY --chmod=0755 docker/workbench/lingbot-va/lingbot_va_runtime.sh /usr/local/bin/lingbot-va-runtime
+COPY --chmod=0755 docker/workbench/lingbot-va/lingbot_va_golden.sh /usr/local/bin/lingbot-va-golden
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/local/bin/npa-job-entrypoint
 # `COPY --chmod` is intentional for source files, but its destination parents
 # must remain traversable by the non-root workload user.
