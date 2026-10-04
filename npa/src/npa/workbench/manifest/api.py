@@ -33,7 +33,12 @@ def create_app(runtime: Runtime) -> FastAPI:
                 backend=req.backend,
             )
         except (KeyError, ValueError) as e:
+            # Caller errors: unknown tool/command/backend, bad inputs.
             raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            # Anything else is a backend/infrastructure failure, not a
+            # bad request.
+            raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
         return res.verification_record()
 
     @app.get("/tools")

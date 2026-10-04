@@ -15,10 +15,10 @@ def build_runtime(descriptors: str, records: str, backend: str) -> Runtime:
     backend_objs: dict = {"local": LocalDockerBackend()}
     try:
         from .nebius_backend import NebiusBackend
-
-        backend_objs["nebius"] = NebiusBackend()
-    except Exception:
+    except ImportError:
         pass
+    else:
+        backend_objs["nebius"] = NebiusBackend()
     if backend not in backend_objs:
         raise SystemExit(f"backend {backend!r} unavailable")
     return Runtime(Catalog(descriptors), backend_objs, records_dir=records)

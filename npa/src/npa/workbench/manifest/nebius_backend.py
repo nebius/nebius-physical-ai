@@ -171,21 +171,50 @@ class NebiusBackend:
             time.sleep(self.poll_s)
         raise TimeoutError(f"pod {pod_name} did not finish in {self.timeout_s}s")
 
+    @staticmethod
+    def _strip_marker(line: str, prefix: str) -> str | None:
+        """Return the marker body, or None if the line isn't that marker.
+
+        The trailing @@ is stripped only when present; a truncated marker
+        line still yields its body rather than silently mis-parsing.
+        """
+        if not line.startswith(prefix):
+            return None
+        body = line[len(prefix) :]
+        if body.endswith("@@"):
+            body = body[:-2]
+        return body
+
     def _parse(self, logs: str, outputs, elapsed: float) -> BackendResult:
         exit_code = 1
         artifacts: dict[str, str] = {}
         for line in logs.splitlines():
-            if line.startswith("@@EXIT:"):
+            body = self._strip_marker(line, "@@EXIT:")
+            if body is not None:
                 try:
-                    exit_code = int(line[len("@@EXIT:") : -2])
+                    exit_code = int(body)
                 except ValueError:
                     pass
-            elif line.startswith("@@ARTIFACT:"):
-                body = line[len("@@ARTIFACT:") : -2]
+                continue
+            missing = self._strip_marker(line, "@@ARTIFACT_MISSING:")
+            if missing is not None:
+                continue  # artifact stays absent; required-check catches it
+            body = self._strip_marker(line, "@@ARTIFACT:")
+            if body is not None:
                 oname, _, blob = body.partition(":")
-                artifacts[oname] = base64.b64decode(blob).decode()
-        # stdout for source=stdout outputs: strip our marker lines.
-        stdout_lines = [line for line in logs.splitlines() if not line.startswith("@@")]
+                try:
+                    artifacts[oname] = base64.b64decode(blob).decode()
+                except (ValueError, UnicodeDecodeError):
+                    pass
+        # stdout for source=stdout outputs: marker lines are stripped; any
+        # other line beginning with @@ passes through untouched.
+        stdout_lines = [
+            line
+            for line in logs.splitlines()
+            if self._strip_marker(line, "@@EXIT:") is None
+            and self._strip_marker(line, "@@ARTIFACT:") is None
+            and self._strip_marker(line, "@@ARTIFACT_MISSING:") is None
+        ]
         return BackendResult(
             exit_code=exit_code,
             logs=logs,

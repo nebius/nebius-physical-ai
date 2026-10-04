@@ -39,7 +39,12 @@ class LocalDockerBackend:
             payload = payload or {}
             # Bind-mount a host dir at /work/out and rewrite container output
             # paths to land there, so artifacts survive --rm.
-            remap = {cpath: f"/work/out/{oname}.dat" for oname, cpath in outputs}
+            # Only file-source outputs with a declared path are remapped;
+            # stdout-source outputs have no path and must not participate
+            # (str.replace with an empty pattern corrupts every token).
+            remap = {
+                cpath: f"/work/out/{oname}.dat" for oname, cpath in outputs if cpath
+            }
             rewritten = []
             for token in argv:
                 for cpath, mpath in remap.items():

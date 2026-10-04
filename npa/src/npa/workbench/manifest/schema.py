@@ -85,9 +85,13 @@ class CommandSpec:
             rendered.append(_substitute(token, inputs, self.params, self.name))
         # Any supplied param not consumed by a placeholder is appended as
         # --kebab-case value (booleans render as bare --flag when true).
+        # Params left at their None default are omitted: rendering the
+        # literal string "None" would silently corrupt the command line.
         consumed = {p for token in self.argv for p in _placeholders(token)}
         for pname, value in inputs.items():
             if pname in consumed or pname not in self.params:
+                continue
+            if value is None:
                 continue
             spec = self.params[pname]
             flag = "--" + pname.replace("_", "-")
@@ -185,7 +189,13 @@ def _substitute(
     for pname in _placeholders(token):
         if pname not in params:
             raise DescriptorError(f"command {cmd!r}: placeholder {pname!r} not a param")
-        token = token.replace("{{" + pname + "}}", str(inputs[pname]))
+        value = inputs[pname]
+        if value is None:
+            raise DescriptorError(
+                f"command {cmd!r}: placeholder {pname!r} has no value"
+            )
+        text = str(value).lower() if isinstance(value, bool) else str(value)
+        token = token.replace("{{" + pname + "}}", text)
     return token
 
 
@@ -218,16 +228,27 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
             )
             for pname, pdef in (cdef.get("params") or {}).items()
         }
-        outputs = {
-            oname: OutputSpec(
+        outputs = {}
+        for oname, odef in (cdef.get("outputs") or {}).items():
+            source = odef.get("source", "file")
+            path = odef.get("path", "")
+            if source == "file" and not path:
+                raise DescriptorError(
+                    f"{source}: command {cname!r} output {oname!r}: "
+                    "file-source outputs require a path"
+                )
+            if source not in ("file", "stdout"):
+                raise DescriptorError(
+                    f"{source}: command {cname!r} output {oname!r}: "
+                    f"unknown source {source!r}"
+                )
+            outputs[oname] = OutputSpec(
                 name=oname,
-                path=odef.get("path", ""),
+                path=path,
                 format=odef.get("format", "json"),
                 required=bool(odef.get("required", True)),
-                source=odef.get("source", "file"),
+                source=source,
             )
-            for oname, odef in (cdef.get("outputs") or {}).items()
-        }
         commands[cname] = CommandSpec(
             name=cname, argv=list(cdef["argv"]), params=params, outputs=outputs
         )

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,6 +61,7 @@ class InvocationResult:
     checks: list[dict[str, Any]]
     success: bool
     elapsed_s: float
+    error: str | None = None
     timestamp: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -78,6 +80,7 @@ class InvocationResult:
             "artifacts": self.artifacts,
             "checks": self.checks,
             "success": self.success,
+            "error": self.error,
             "elapsed_s": round(self.elapsed_s, 3),
             "timestamp": self.timestamp,
         }
@@ -117,54 +120,58 @@ class Runtime:
         if backend not in self.backends:
             raise KeyError(f"unknown backend {backend!r}")
         be = self.backends[backend]
-        outputs = [(o.name, o.path) for o in spec.outputs.values()]
-        payload: dict[str, str] = {}
-        for cpath, hpath in descriptor.payload_files:
-            p = Path(hpath)
-            if not p.is_absolute():
-                # Relative to the descriptor's catalog dir parent (project root).
-                p = self.catalog.descriptor_dir.parent / hpath
-            payload[cpath] = p.read_text()
-        bres = be.run(
-            image_pinned=descriptor.image.pinned(),
-            argv=argv,
-            gpu=descriptor.resources.gpu,
-            outputs=outputs,
-            payload=payload,
-        )
 
+        # Everything from here on is evidence-producing: backend failures,
+        # timeouts, and malformed artifacts must still leave a verification
+        # record. Only caller errors (above) raise.
+        error: str | None = None
+        exit_code = -1
         artifacts: dict[str, Any] = {}
-        for oname, ospec in spec.outputs.items():
-            if ospec.source == "stdout":
-                raw: str | None = bres.stdout or None
-            else:
-                raw = bres.artifacts_raw.get(oname)
-            if raw is None:
-                continue
-            artifacts[oname] = json.loads(raw) if ospec.format == "json" else raw
-
         check_results: list[dict[str, Any]] = []
-        all_ok = bres.exit_code == 0
-        for check in descriptor.success_checks:
-            ok, msg = check.evaluate(artifacts)
-            check_results.append(
-                {
-                    "check": f"{check.artifact}.{check.json_path}",
-                    "ok": ok,
-                    "detail": msg,
-                }
+        all_ok = False
+        try:
+            outputs = [(o.name, o.path) for o in spec.outputs.values()]
+            payload: dict[str, str] = {}
+            for cpath, hpath in descriptor.payload_files:
+                p = Path(hpath)
+                if not p.is_absolute():
+                    # Relative to the descriptor's catalog dir parent.
+                    p = self.catalog.descriptor_dir.parent / hpath
+                payload[cpath] = p.read_text()
+            bres = be.run(
+                image_pinned=descriptor.image.pinned(),
+                argv=argv,
+                gpu=descriptor.resources.gpu,
+                outputs=outputs,
+                payload=payload,
             )
-            all_ok = all_ok and ok
-        for oname, ospec in spec.outputs.items():
-            if ospec.required and oname not in artifacts:
-                all_ok = False
+            exit_code = bres.exit_code
+            artifacts, parse_errors = self._collect_artifacts(spec, bres)
+            check_results.extend(parse_errors)
+            all_ok = bres.exit_code == 0 and not parse_errors
+            for check in descriptor.success_checks:
+                ok, msg = check.evaluate(artifacts)
                 check_results.append(
                     {
-                        "check": f"artifact:{oname}",
-                        "ok": False,
-                        "detail": "required output missing",
+                        "check": f"{check.artifact}.{check.json_path}",
+                        "ok": ok,
+                        "detail": msg,
                     }
                 )
+                all_ok = all_ok and ok
+            for oname, ospec in spec.outputs.items():
+                if ospec.required and oname not in artifacts:
+                    all_ok = False
+                    check_results.append(
+                        {
+                            "check": f"artifact:{oname}",
+                            "ok": False,
+                            "detail": "required output missing",
+                        }
+                    )
+        except Exception as e:
+            error = f"{type(e).__name__}: {e}"
+            check_results.append({"check": "invoke", "ok": False, "detail": error})
 
         result = InvocationResult(
             descriptor_id=descriptor.id,
@@ -174,13 +181,48 @@ class Runtime:
             backend=be.name,
             inputs=resolved,
             argv=argv,
-            exit_code=bres.exit_code,
+            exit_code=exit_code,
             artifacts=artifacts,
             checks=check_results,
             success=all_ok,
             elapsed_s=time.time() - t0,
+            error=error,
         )
         # Verification evidence, stored separately from the author's descriptor.
-        rec_path = self.records_dir / f"{descriptor.name}-{int(t0)}-{surface}.json"
+        # Millisecond timestamp + uuid: two runs in the same second never collide.
+        rec_path = (
+            self.records_dir
+            / f"{descriptor.name}-{int(t0 * 1000)}-{uuid.uuid4().hex[:8]}-{surface}.json"
+        )
         rec_path.write_text(json.dumps(result.verification_record(), indent=2))
         return result
+
+    @staticmethod
+    def _collect_artifacts(
+        spec: CommandSpec, bres: BackendResult
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Collect declared outputs; malformed JSON becomes a failed check,
+        not an exception."""
+        artifacts: dict[str, Any] = {}
+        errors: list[dict[str, Any]] = []
+        for oname, ospec in spec.outputs.items():
+            if ospec.source == "stdout":
+                raw: str | None = bres.stdout or None
+            else:
+                raw = bres.artifacts_raw.get(oname)
+            if raw is None:
+                continue
+            if ospec.format == "json":
+                try:
+                    artifacts[oname] = json.loads(raw)
+                except json.JSONDecodeError as e:
+                    errors.append(
+                        {
+                            "check": f"artifact:{oname}:parse",
+                            "ok": False,
+                            "detail": f"invalid JSON: {e}",
+                        }
+                    )
+            else:
+                artifacts[oname] = raw
+        return artifacts, errors
