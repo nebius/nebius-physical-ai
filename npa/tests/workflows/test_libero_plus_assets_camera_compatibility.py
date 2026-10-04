@@ -212,6 +212,9 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
     assert 'org.nebius.npa.libero-plus-source="absent"' in dockerfile
     assert 'org.nebius.npa.libero-plus-assets="runtime-fetch-only"' in dockerfile
     assert "boto3==1.42.91 rerun-sdk==0.38.1" in dockerfile
+    assert "import libero, mujoco" in dockerfile
+    assert "scanner-quarantined" in dockerfile
+    assert "imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2" in dockerfile
     assert "COPY src/npa/workflows/libero_plus_assets.py" in dockerfile
     assert "COPY assets.zip" not in dockerfile
     assert "ghcr.io/nebius/nebius-physical-ai/*|docker.io/*|index.docker.io/*" in build
