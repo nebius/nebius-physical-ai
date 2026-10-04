@@ -212,7 +212,10 @@ def generate_camera_video(
     import torch
     from PIL import Image
 
-    if degree not in SUPPORTED_DISTRIBUTED_DEGREES or torch.cuda.device_count() != degree:
+    if (
+        degree not in SUPPORTED_DISTRIBUTED_DEGREES
+        or torch.cuda.device_count() != degree
+    ):
         raise ValueError(
             "LingBot camera capability requires exactly 2, 4, or 8 CUDA GPUs"
         )

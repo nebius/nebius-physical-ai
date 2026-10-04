@@ -135,9 +135,7 @@ def _input_provenance(image: Path) -> dict[str, object]:
     }
 
 
-def _write_input_provenance(
-    storage: MemoryStorage, uri: str, image: Path
-) -> None:
+def _write_input_provenance(storage: MemoryStorage, uri: str, image: Path) -> None:
     """Publish one fixture provenance record where the preparation stage expects it."""
 
     target = storage._path(uri)
@@ -185,8 +183,13 @@ def test_workflow_has_five_real_stages_with_exact_artifact_handoffs() -> None:
     assert all("npa.workflows.lingbot_world" in step.shell for step in plan.steps)
     assert "prepare" in prepare.shell
     assert "--input-provenance-uri" in prepare.shell
-    assert "generate" in prescribed.shell and "--controls prescribed" in prescribed.shell
-    assert "generate" in alternative.shell and "--controls alternative" in alternative.shell
+    assert (
+        "generate" in prescribed.shell and "--controls prescribed" in prescribed.shell
+    )
+    assert (
+        "generate" in alternative.shell
+        and "--controls alternative" in alternative.shell
+    )
     assert "evaluate" in evaluate.shell
     assert "visualize" in visualize.shell
     spec = load_spec(SPEC)
@@ -321,9 +324,10 @@ def test_connected_stages_publish_and_reconsume_real_media(
     )
     assert alternative["control"] == "alternative"
     assert alternative["consumed_prescribed"]["manifest_uri"] == prescribed_uri
-    assert alternative["consumed_prescribed"]["video_sha256"] == prescribed[
-        "native_generation"
-    ]["observed"]["sha256"]
+    assert (
+        alternative["consumed_prescribed"]["video_sha256"]
+        == prescribed["native_generation"]["observed"]["sha256"]
+    )
     assert report["visual_response"]["mean_absolute_rgb_delta"] > 0.001
     assert visualization["comparison_mp4"]["frame_count"] == FRAME_COUNT
     assert visualization["comparison_rrd"]["frames"] == FRAME_COUNT

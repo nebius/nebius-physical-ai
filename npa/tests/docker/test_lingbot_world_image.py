@@ -21,7 +21,9 @@ def test_lingbot_reuses_apache_easydict_compat_not_lgpl_distribution() -> None:
     assert "no `easydict` distribution is shipped" in " ".join(notice.split())
 
 
-def test_lingbot_defaults_to_immutable_public_parent_but_allows_private_requalification() -> None:
+def test_lingbot_defaults_to_immutable_public_parent_but_allows_private_requalification() -> (
+    None
+):
     """Private validation can use a scanned parent without retagging the public default."""
 
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
