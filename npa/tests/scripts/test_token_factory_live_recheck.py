@@ -158,6 +158,34 @@ def test_missing_configured_model_fails_catalog_and_still_requests_it():
     assert any(call["model"] == "synthetic/required-model" for call in client.calls)
 
 
+@pytest.mark.parametrize("minimax_available", [True, False])
+def test_independent_minimax_catalog_pin_survives_default_drift(
+    monkeypatch: pytest.MonkeyPatch, minimax_available: bool
+):
+    from npa.live_verification import token_factory_contract as contract
+
+    # A changed default must not silently remove the independent catalog pin.
+    monkeypatch.setattr(contract, "DEFAULT_TEXT_MODEL", LIGHTNING)
+    monkeypatch.setattr(contract, "DEFAULT_REASONER_MODEL", LIGHTNING)
+    monkeypatch.setattr(contract, "DEFAULT_VISION_MODEL", LIGHTNING)
+    client = FakeProvider()
+    client.list_models = lambda: [LIGHTNING, *([MINIMAX] if minimax_available else [])]
+    report = contract.run_contract(client)
+    catalog = report["checks"][0]
+    assert catalog["check"] == "required_model_catalog"
+    assert catalog["required_count"] == 2
+    assert catalog["missing_models"] == ([] if minimax_available else [MINIMAX])
+    assert catalog["passed"] is minimax_available
+    assert report["passed"] is minimax_available
+    assert set(report["required_models"]) == {LIGHTNING, MINIMAX}
+    inferred = {
+        check["requested_model"]
+        for check in report["checks"]
+        if check["check"] == "required_model_inference"
+    }
+    assert inferred == {LIGHTNING}
+
+
 @pytest.mark.parametrize(
     "mutation,error",
     [
@@ -258,6 +286,7 @@ def test_counts_require_every_suite_executed_with_no_skips():
         "failed": 0,
         "skipped": 1,
         "collection_errors": 0,
+        "deselected": 0,
     }
 
 
@@ -265,6 +294,13 @@ def test_no_collection_or_missing_suite_cannot_pass():
     assert not _runner().Results().complete(0)
     results = _completed_results()
     results.collected.pop()
+    assert not results.complete(0)
+
+
+def test_deselected_required_inference_cannot_pass():
+    results = _completed_results()
+    results.pytest_deselected([SimpleNamespace(nodeid="test_required_visual_verdict")])
+    assert results.summary()["deselected"] == 1
     assert not results.complete(0)
 
 
@@ -293,6 +329,19 @@ def test_required_job_missing_key_writes_failed_receipt_without_running_pytest(
     assert report["counts"]["executed"] == report["counts"]["skipped"] == 0
     assert "NEBIUS_TOKEN_FACTORY_KEY" in report["failure"]
     assert target.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("previous", [None, "", "0", "operator-value"])
+def test_trusted_runner_opt_in_restores_environment_on_failure(monkeypatch, previous):
+    if previous is None:
+        monkeypatch.delenv("NPA_INTEGRATION_E2E", raising=False)
+    else:
+        monkeypatch.setenv("NPA_INTEGRATION_E2E", previous)
+    with pytest.raises(RuntimeError, match="synthetic failure"):
+        with _runner()._required_live_opt_in():
+            assert os.environ["NPA_INTEGRATION_E2E"] == "1"
+            raise RuntimeError("synthetic failure")
+    assert os.environ.get("NPA_INTEGRATION_E2E") == previous
 
 
 def test_receipt_cannot_overwrite_prior_run(tmp_path):
@@ -333,7 +382,11 @@ def test_pytest_exception_emits_failed_receipt_without_exception_body(
 
 def test_direct_required_live_pytest_rejects_absent_key_before_collection(tmp_path):
     root = Path(__file__).resolve().parents[3]
-    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path)}
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(tmp_path),
+        "NPA_INTEGRATION_E2E": "1",
+    }
     result = subprocess.run(
         [
             sys.executable,
@@ -455,6 +508,7 @@ def test_actual_pytest_failure_diagnostics_exclude_private_exception_data(
         "failed": 4,
         "skipped": 0,
         "collection_errors": 0,
+        "deselected": 0,
     }
     expected = {
         "test_call": (
@@ -524,6 +578,10 @@ def test_workflow_limits_credentialed_code_to_reviewed_branches():
     assert uploads[0]["with"]["path"].splitlines() == [
         "${{ runner.temp }}/token-factory-live/receipt.json",
         "${{ runner.temp }}/token-factory-missing-key/receipt.json",
+        "${{ runner.temp }}/vlm-preference-audit/receipt.json",
+        "${{ runner.temp }}/vlm-preference-missing-key/receipt.json",
+        "${{ runner.temp }}/vlm-paired-audit/receipt.json",
+        "${{ runner.temp }}/vlm-paired-missing-key/receipt.json",
     ]
     negative = next(
         step
@@ -533,6 +591,37 @@ def test_workflow_limits_credentialed_code_to_reviewed_branches():
     assert negative["env"] == {"NEBIUS_TOKEN_FACTORY_KEY": ""}
     assert 'receipt["pytest_exit_code"] == 2' in negative["run"]
     assert 'all(value == 0 for value in receipt["counts"].values())' in negative["run"]
+
+
+def test_nightly_executes_kimi_and_checks_both_visual_controls():
+    import yaml
+
+    root = Path(__file__).resolve().parents[3]
+    workflow = yaml.safe_load(
+        (root / ".github/workflows/token-factory-live.yml").read_text()
+    )
+    steps = workflow["jobs"]["token-factory-live"]["steps"]
+    live = next(
+        step
+        for step in steps
+        if step.get("name") == "Run credentialed suites and Kimi provenance contracts"
+    )
+    assert live["env"]["NPA_TF_RECHECK_REQUIRED_MODELS"].startswith(
+        "moonshotai/Kimi-K3,"
+    )
+    assert live["env"]["NPA_INTEGRATION_E2E"] == "1"
+    assert "token_factory_live_recheck.py" in live["run"]
+    verify = next(
+        step
+        for step in steps
+        if step.get("name") == "Require executed Kimi visual controls"
+    )
+    assert (
+        "test_live_visual_judge_distinguishes_completion[moonshotai/Kimi-K3-"
+        in verify["run"]
+    )
+    assert "assert len(kimi) == 2" in verify["run"]
+    assert 'receipt["counts"]["deselected"]' in verify["run"]
 
 
 def test_migration_agent_defaults_match_shared_client():

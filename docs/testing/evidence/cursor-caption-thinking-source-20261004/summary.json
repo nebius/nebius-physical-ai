@@ -1,0 +1,141 @@
+{
+  "schema": "npa.sanitized-caption-thinking-source-bridge/v1",
+  "pr": 832,
+  "measured_source_head": "46735ee9e4af85020aaad5ac7a28ec239af5b469",
+  "measured_source_tree": "3b1472b054b74703f897dc13e92377738746be0f",
+  "integrated_main": "a5a934af1516b78d88b2b2755247ec59bb1559b5",
+  "original_hosted_execution": "26e6f8abec78d4c7bf0bd988c61b0a21d65d5122",
+  "original_public_proof_commit": "32febf7bae6b45f4ed58a50d5dad7d0338ebfbc9",
+  "original_summary": {
+    "path": "docs/testing/evidence/cursor-vlm-disclosures-20261003/pr832/summary.json",
+    "sha256": "f5c7937f455e3cb66bf458ffc96ec59a14de41ecbd3d8df7b288520754f63887"
+  },
+  "source_bindings": [
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "5622cf44b6ed00c76b8cce6323aa92532e97e5630e89251d2b97b19511f00c44",
+      "equal_marker_review_source": true,
+      "equal_original_hosted_source": false,
+      "changed_function_asts_from_original": ["thinking_chat_extra"]
+    },
+    {
+      "path": "npa/src/npa/workbench/token_factory/__init__.py",
+      "sha256": "271157275009cf01d2c9152e22826d5e4bdfc0054edc0bd30fc4a67b2b770d49",
+      "equal_marker_review_source": true,
+      "equal_original_hosted_source": true
+    },
+    {
+      "path": "npa/src/npa/cli/workbench/token_factory.py",
+      "sha256": "7ba8623f6308cf6cae1ce523a6657b74807f923a29d4ddb460fef4024d0993a0",
+      "equal_marker_review_source": true,
+      "equal_original_hosted_source": true
+    },
+    {
+      "path": "npa/src/npa/sdk/workbench/token_factory.py",
+      "sha256": "58fc897fbc3a93eca88618eb14a1ce47a7d8b3cd8e92593e8e59c1f57ad4bbc0",
+      "equal_marker_review_source": true,
+      "equal_original_hosted_source": true
+    }
+  ],
+  "independent_original_response_bridge": {
+    "head": "6712138684724625e27067980f8d4a541cf93ce6",
+    "tree": "21390777d4ab139ca271a208c962a010309bdb04",
+    "passed": 114,
+    "skipped": 0,
+    "retained_responses_replayed": 8,
+    "new_provider_calls": 0,
+    "original_request_objects_and_outcomes_unchanged": true,
+    "reviewer_lane": "Independent Codex AI, not human approval",
+    "default_live_child": "SKIP, no activity",
+    "explicit_live_child": "Expected blocked-spy failure, zero provider calls"
+  },
+  "actual_local_gates": [
+    {
+      "head": "46735ee9e4af85020aaad5ac7a28ec239af5b469",
+      "kind": "19-file affected caption, identity, grade, protected caller and registration integration",
+      "passed": 2579,
+      "skipped": 1,
+      "warnings": 8,
+      "elapsed_seconds": 23.84,
+      "source_before_after_clean_equal": true,
+      "full_suite": false
+    },
+    {
+      "head": "5dc751a829d04399bf94492a87a266ae85e2d8f5",
+      "kind": "16-file affected caption, completion and protected caller integration",
+      "passed": 1322,
+      "skipped": 1,
+      "warnings": 8,
+      "elapsed_seconds": 21.75,
+      "source_before_after_clean_equal": true,
+      "full_suite": false
+    },
+    {
+      "head": "5dc751a829d04399bf94492a87a266ae85e2d8f5",
+      "kind": "precheck",
+      "passed": 270,
+      "exit_code": 0,
+      "source_before_after_clean_equal": true,
+      "full_suite": false
+    },
+    {
+      "head": "5dc751a829d04399bf94492a87a266ae85e2d8f5",
+      "kind": "make docs-check",
+      "exit_code": 0,
+      "source_before_after_clean_equal": true,
+      "full_suite": false
+    }
+  ],
+  "preserved_failed_full": {
+    "head": "1a67411c0262340fcf807d624f63db9bc8be9cd8",
+    "failed": 1,
+    "passed": 40089,
+    "skipped": 213,
+    "unexpected_passes": 1,
+    "coverage_percent": 77.48,
+    "state": "FAILED; inherited temporary-root fixture oracle, not retroactively passed"
+  },
+  "claude_reviews": [
+    {
+      "head": "261953ea7a857e0785a13263126f5a206bd56fa2",
+      "base": "432ea8b0478872f59ce364fa1435f9f81a6a9e56",
+      "tree": "a823935af87d8b2ab98586755db0fc206b06d3ac",
+      "pass": 1,
+      "model": "claude-opus-5",
+      "provider": "firstParty",
+      "packet_sha256": "2270f599430c22e5643e42cc827c4a797fed8a9950421bfa146bf65b606b210e",
+      "review_text_sha256": "8e7b388e9ddd2d13e3908382697d716b54babdea8718c1bb9d71abcf34779474",
+      "result_sha256": "5a5ed3d9c7f8e4a87521e04e36cd1eb5a6a633722a23a56678eb3d956b4a186f",
+      "worker_reported_raw_output_sha256": "b5f6d6e3fd1c7198ce12a0a147674d8e4e5fb81044393802f9a6008f584681cf",
+      "raw_output_bytes_verified_locally": false,
+      "original_verdict": "Changes required, not approval"
+    },
+    {
+      "head": "9939783f1841496510da804081065711c0ac5b97",
+      "base": "261953ea7a857e0785a13263126f5a206bd56fa2",
+      "tree": "0eebe3124995cd42dc0ac5963d5330a237a4db51",
+      "pass": 2,
+      "model": "claude-opus-5",
+      "provider": "firstParty",
+      "packet_sha256": "61b9433c112c6ad0cf14ce607f1354b92bf8210ca95e610a2e914c00cd90f6b5",
+      "review_text_sha256": "2511095bd07f51b4e6251b1a4d555ee44f3e2374c9e1d0cac877c66056ca740a",
+      "result_sha256": "935f3b4c05357dcbdea43ebc30451e10f33b21152e02041ae897822ce03aee91",
+      "worker_reported_raw_output_sha256": "797d235b60bff518615df1d9600ef9f609dd4872be45792b41f60d55849c9043",
+      "raw_output_bytes_verified_locally": false,
+      "original_verdict": "Changes required, not approval"
+    }
+  ],
+  "material_findings": [
+    "Known reasoning-effort boolean override refuses before HTTP; omitted defaults remain central",
+    "Periodless observed sentinel and historical source scopes corrected without rewriting original responses",
+    "Standard e2e marker and actual default-skip/explicit blocked-spy controls prevent default credentialed live activity"
+  ],
+  "limits": [
+    "No new inference, GPU execution, calibrated model quality, physical-task correctness or safety acceptance",
+    "Original live record lacks contemporaneous after-state source fields; later observations are not backdated",
+    "Binary media omitted from Claude packets; no Claude pixel inspection or human approval",
+    "Supported request fields reaching a provider do not establish provider honor",
+    "All reported skips and unexpected passes retain their original meanings",
+    "Passing full, final-head CI, current-main integration and lifecycle/queue gates remain separate"
+  ]
+}

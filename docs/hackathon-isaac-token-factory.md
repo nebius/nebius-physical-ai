@@ -29,9 +29,11 @@ Prerequisites for the **serverless** stage match
 
 ## What the visuals look like
 
-Sample frames (stylized stand-ins for Isaac Sim RGB) shipped in-repo for offline
-SDK runs. On a real L40S job, `capture_isaac_lab_scene_frames.py` writes
-photoreal frames like these from `Isaac-Lift-Cube-Franka-v0`:
+Sample frames (stylized stand-ins, not Isaac Sim renders) ship in-repo for
+offline SDK runs. A real L40S job uses the same file contract but
+`capture_isaac_lab_scene_frames.py` writes actual rendered pixels from
+`Isaac-Lift-Cube-Franka-v0`; these diagrams are not an example of their visual
+fidelity:
 
 | Frame | Sim step (approx.) |
 |-------|-------------------|
@@ -41,6 +43,14 @@ photoreal frames like these from `Isaac-Lift-Cube-Franka-v0`:
 
 Full sequence: `docs/assets/hackathon/isaac-franka-lift-cube/frame_00.png` …
 `frame_05.png`.
+
+In this bundled sequence the red cube rises by 60 pixels while the arm remains
+separated and retracts: the minimum measured horizontal gap is 50 pixels. It is
+therefore valid as an elevated-object example, but not as evidence that the arm
+grasped or lifted the cube. The packaged `vlm-eval` `isaac-agency` calibration
+uses both claims on the same bytes to catch that outcome-versus-agency error;
+see the
+[VLM-eval loop runbook](workbench/cookbooks/vlm-eval-loop-runbook.md#separate-outcome-from-agency).
 
 ---
 

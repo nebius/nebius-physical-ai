@@ -1,0 +1,37 @@
+# VLM call and calibration disclosures
+
+[Sanitized numeric/source evidence](summary.json) records six actual hosted calls at `3558dec259f1f783efcf1805b3e0b5d18df9cea7` after landed provenance `f1ecd4255131374c417cdbb1f6c3e0d84b2a3514`. Original six-call schema-v1 execution at `ff54571dadae0158ad9a7d38e335df995a584ab2` is separately retained, never presented as v2 or publication-head execution. Reviewable generated inputs: [green](green.png), [red](red.png), [blank](blank.png).
+
+Both fixed loop and benchmark protocols preserve green=1, red=0, blank=0. Loop mean is1/3, gate false at0.8; two failed rollout controls are not hidden by the aggregate. Direct real results say provider_call_made=true, uncalibrated. Caller override0.9 makes zero calls, has no evidence, says provider_call_made=false and retains the no-call limitation. No model/rubric/threshold/labels were tuned. Frozen task/rubric and exact request sampling/frames/prompt/response hashes are bound in the numeric artifact; provider request identities/endpoints and raw private artifacts are excluded.
+
+Actual v2 sampling controls remain keyframes/max_frames4, one source image at index0/count1, null video timestamps. The test recomputes canonical request-manifest hashes. Coverage_complete is provenance completeness, not full episode coverage.
+
+## Current-source continuity
+
+[Current-source continuity evidence](current-main-09548-bridge.json) binds the one-shot selected 12-transport protocol to source candidate `8a42af1ba863c5187a2596de22d36086c17c0c8a`, which incorporates main `09548f6939e0216d15b76819c6cc9d7537bf8e40` and the accepted catalogue fixtures. It is a socket-blocked retained-response CPU bridge: all six scalar and six paired response hashes re-parse under the current evaluator, the scalar writer/grade artifacts retain green=1, red=0, blank=0, and paired outside/blank remain `judges_agree_needs_iteration`. Its direct structured-result helper requires an explicit call-origin declaration; the synthetic strict control explicitly declares `provider_call_made=false`. It made no new provider call and does not claim final-head execution.
+
+The current bridge keeps the original result digest and only sanitized frame/request/response hashes. It does not disclose response text, provider identifiers, credential material, endpoints, private paths, or runtime resource identifiers. A clean full suite, independent receipt, published head, anonymous byte verification, and current-head CI remain separate requirements.
+
+## Main44 continuity
+
+[Main44 continuity evidence](current-main-44-bridge.json) binds exact landed main `44b65b71eb6cde8e62876d5768674b2717b48481` to successor `5eeb388a72dc79ebb925953ffd06490b349d8d20`. It retains the original twelve-response identity and re-parses all six scalar and six paired private responses under the successor with zero socket connects. The scalar population remains two scores of1.0 and four of0.0; paired inside remains passed, while outside and blank remain `judges_agree_needs_iteration`.
+
+Main44 adds visual-review, response-byte, preference, CLI, and SDK surfaces. A network-isolated current-source selection of 354 consumer, grade, registration, response-byte, workflow, benchmark, and strict-score controls passed. The frozen scalar/paired request, frame, task, rubric, model, parser, loop, benchmark, and judge protocol ASTs are unchanged from the 76d proof source; this is not a whole-evaluator equality claim. No provider transport, retry, model-quality claim, or new Claude review was made. Later main changes, named fixture repairs, a new owner runner and genuine full, publication byte verification, and final-head CI remain distinct gates.
+
+## Main4603 continuity
+
+[Main4603 continuity evidence](current-main-4603-bridge.json) binds successor `d1cd2241c648ba63dbeb942b58c1fae11fdcc103` to landed main `4603e7e1d8ffede505161448fe92368e7c6bda45`. Main4603 adds agency and benchmark input semantics, two-class and unique-ID refusal, ranking, and append-only metrics behavior. A no-network current-source selection passed 561 tests with zero failures or errors and one skip. Its JUnit is retained privately.
+
+The original scalar and paired request/frame/model/parser protocol symbols remain unchanged, and all twelve retained original responses re-parse without a socket connection. The four Token Factory caption/client/CLI/SDK modules are byte-identical to main44. These facts support bounded source continuity only: they do not claim whole-evaluator equality, a second hosted call, model quality, independent human calibration, robotics physics, or safety. Pending adjacent fixtures, a final runner/full, publication byte verification, and final-head CI remain separate gates.
+
+## Guarded fixture and native-profile controls
+
+[Guarded component evidence](current-main-4603-guarded-components.json) binds the final accepted fixture files to the current composed source. Six guarded fixture controls passed with zero denied direct provider spawns. The existing four native-profile rollback cases also passed in their reviewed disposable local chroot, recording 54 local CLI commands with no host mount mapping or credential copy. This is bounded no-spawn/rollback evidence: it is not a shell or SDK network sandbox, a cloud check, a model-quality result, or a repository full-suite result.
+
+The direct-spawn guard and native adapter are identified only by immutable hashes; their raw journals, earlier runner setup failures, executable details, and task paths remain private. No hosted request, retry, or additional Claude review was run. The local docs drift check did not produce a terminal result in task isolation and is deliberately not claimed; published-head CI, coverage aggregation, anonymous byte verification, and final lifecycle checks remain separate.
+
+Distinct immutable strict/model/disclosure integration `696cebd2d1fab59f1f3f347f432ddf8c60c0804d` passed265, skipped one inherited opt-in GPU case, and passed the separate six-call hosted protocol. Invalid score/type/NaN/Infinity/out-of-range and missing/string success reject before publication. The strict numeric regression explicitly uses provider_call_made=false and retains its clamp-failure spy and0.74268→0.7427 gate assertion. Every hosted profile, including unknown/custom IDs, retains exact requested/served equality. This integration-only execution is not the PR publication head.
+
+Commands: `NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_vlm_disclosures_live_e2e.py -q -s`; composed unit union covers strict_scores, model_enforcement, VLM backend/token_factory/loop/CLI, token_factory client policy-AST mutation controls and sampling_evidence.
+
+Independent Codex accepted the exact original disclosure source/evidence, not final readiness; fresh successor/composition review is required. Native Claude was unavailable as measured, not replaced or labeled by another model. Initial wrong hash-field and no-call assertions, composition fingerprint mismatch and landed compatibility-test mismatch remain retained with commands/results. Only test expectations were corrected to preserve strict rejection; no product gate was weakened. These synthetic controls establish traceability and disclosure, not model quality, independent human approval, robotics/safety or GPU serving. Full gates, publication scans, anonymous byte verification and final CI remain separate readiness conditions.

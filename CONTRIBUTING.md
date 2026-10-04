@@ -145,7 +145,7 @@ Workload verbs are chosen by domain:
 - FiftyOne: `launch`, `load-dataset`, `curate`, `eval`, `open`.
 - Genesis: `train-teacher`, `generate-demos`, `eval-teacher`, `diagnose`, `tune`.
 - Isaac Lab: `train`, `eval`, `export-lerobot`.
-- Cosmos: `serve`, `train`, `finetune`, `optimize`, `infer`.
+- Cosmos: `serve`, `train`, `infer`.
 - GR00T: `download`, `finetune`, `eval`, `serve`, `infer`, `convert`.
 - LanceDB: `import-bdd100k`, `backfill`, `create-mv`, `query-table`.
 - SONIC: `train`, `serve`.
@@ -982,6 +982,14 @@ Required workflow checks include:
 
 E2E tests live under `npa/tests/e2e/` and are gated by
 `NPA_INTEGRATION_E2E=1`. The gate is implemented in `npa/tests/e2e/conftest.py`.
+The terminal-evidence lane additionally opts in through
+`NPA_VLM_TERMINAL_LIVE_CONFIG`, an operator-owned private configuration with
+reviewed frozen rollout controls. Without it, the lane skips even in the broad
+`make test-e2e` target; a supplied missing, malformed or invalid file fails closed.
+See the [terminal live-check prerequisites](docs/workbench/cookbooks/vlm-eval-loop-runbook.md#terminal-evidence-live-check).
+Run this panel serially. Configured acceptance requires all four cases to pass
+without skips or deselections; an unconfigured skip is not live evidence.
+The nightly hosted smoke runner does not select the terminal-evidence file.
 
 Smoke tests live under `npa/tests/smoke/` or tool-specific CLI test files. Heavy
 smoke tests must skip unless their environment variable is set. See
