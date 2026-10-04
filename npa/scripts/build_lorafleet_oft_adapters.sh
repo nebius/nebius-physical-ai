@@ -28,6 +28,13 @@ python3 -m virtualenv /opt/byof/.venv
   numpy==1.26.4 imageio[ffmpeg] bddl easydict cloudpickle gym numba scipy \
   mujoco Pillow opencv-python-headless==4.8.1.78 termcolor boto3 \
   rerun-sdk==0.20.3 tensorflow-metadata==1.14.0
+# The imageio-ffmpeg wheel carries a static FFmpeg binary. Keep its Python
+# plugin but remove that binary from this private image; the renderer base
+# supplies /usr/bin/ffmpeg, which imageio-ffmpeg discovers at runtime.
+test -x /usr/bin/ffmpeg
+find /opt/byof/.venv/lib -path '*/site-packages/imageio_ffmpeg/binaries/ffmpeg-*' \
+  -type f -delete
+test -z "$(find /opt/byof/.venv/lib -path '*/site-packages/imageio_ffmpeg/binaries/ffmpeg-*' -type f -print -quit)"
 
 git clone --filter=blob:none https://github.com/kvablack/dlimp.git /opt/dlimp
 git -C /opt/dlimp checkout --detach 92e3eca97af3b14d0b6aa15182c0dc240407698d

@@ -818,6 +818,10 @@ def _protocol(suites: Iterable[SuiteSpec]) -> list[dict[str, Any]]:
 
 def _configure_libero_runtime() -> None:
     """Create the non-interactive LIBERO path record before importing its benchmark."""
+    # The private base provides the Ubuntu FFmpeg executable. The imageio plugin
+    # is retained without its wheel-bundled static binary, so make this source
+    # explicit rather than silently downloading or using a vendored executable.
+    os.environ.setdefault("IMAGEIO_FFMPEG_EXE", "/usr/bin/ffmpeg")
     source_root = Path("/opt/libero/libero")
     package_root = source_root / "libero"
     if not (package_root / "__init__.py").is_file():

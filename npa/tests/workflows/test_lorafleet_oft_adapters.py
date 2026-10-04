@@ -144,6 +144,8 @@ def test_dlimp_build_recipe_excludes_unlicensed_fork_and_pins_replacement() -> N
     assert qualification.DLIMP_REVISION in recipe
     assert "options.deterministic = True" in recipe
     assert "NPA_MODIFICATIONS.md" in recipe
+    assert "test -x /usr/bin/ffmpeg" in recipe
+    assert "imageio_ffmpeg/binaries/ffmpeg-*" in recipe
 
 
 def test_s3_parser_requires_complete_s3_object_uri() -> None:

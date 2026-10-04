@@ -60,6 +60,14 @@ installs OFT with `--no-deps`, so the historical fork cannot be resolved
 transitively, then pins both licensed replacement sources. The resulting image
 is operator-private; no public registry upload or public image claim is made.
 
+For retained MP4 evidence, the private Ubuntu base supplies its distribution
+`ffmpeg` executable. The exact installed package/copyright record is retained
+with private image evidence. The recipe deletes the `imageio-ffmpeg`
+wheel-bundled static executable and the image scan rejects that path, so the
+private image uses `/usr/bin/ffmpeg` without treating the wheel copy as an
+accepted payload. This is a private runtime dependency only; it does not alter
+the no-publication disposition or introduce a new acceptance mechanism.
+
 ## Reconstruction and behavioral boundary
 
 The release marks these as approximate reconstructions, not original training
