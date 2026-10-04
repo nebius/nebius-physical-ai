@@ -111,18 +111,18 @@ def test_every_unbuilt_tool_says_so_in_all_four_records() -> None:
 
 
 def test_no_built_tool_is_left_carrying_an_unbuilt_tag() -> None:
-    """The other direction: build day must not leave the tag behind."""
+    """Only explicitly quarantined unbuilt states may retain an unbuilt tag."""
 
+    permitted_unbuilt = UNVALIDATED_PUBLICATION_TOOLS | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
     stale = sorted(
         tool
         for tool, version in _declared_versions().items()
-        if str(version).endswith(UNBUILT_TAG_SUFFIX)
-        and tool not in UNVALIDATED_PUBLICATION_TOOLS
+        if str(version).endswith(UNBUILT_TAG_SUFFIX) and tool not in permitted_unbuilt
     )
 
     assert stale == [], (
         f"{stale} still carry an {UNBUILT_TAG_SUFFIX} tag but are no longer listed "
-        "as unvalidated for publication"
+        "as unvalidated or neutral-quarantined for publication"
     )
 
 
@@ -133,6 +133,7 @@ def test_neutral_unbuilt_candidate_has_no_ordinary_supported_tag() -> None:
     containers = _golden_eval_containers()
     for tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
         assert tool not in SUPPORTED_TOOL_VERSIONS
+        assert tool in PUBLICATION_QUARANTINE_TOOLS
         assert supported_tool_version(tool).endswith("-unbuilt")
         assert containers[tool]["golden_eval"]["status"] != "ready"
 

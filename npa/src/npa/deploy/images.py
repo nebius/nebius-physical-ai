@@ -532,6 +532,7 @@ SUPPORTED_TOOL_VERSIONS = {
 # giving planning and private qualification a fail-closed, visibly unbuilt tag.
 UNBUILT_CANDIDATE_TOOL_VERSIONS: dict[str, str] = {
     "habitat-sim": "0.3.3-public-unbuilt",
+    "molmoact2-jetson-thor": NEUTRAL_UNBUILT_DISPLAY_TAGS["molmoact2-jetson-thor"],
 }
 
 
@@ -2451,12 +2452,26 @@ def container_image_for_tool(
             "image after its source/delivery gates pass; see "
             "docs/workbench/byof-habitat-sim.md."
         )
-    if not is_publicly_redistributable(tool) and public_registry:
+    # The neutral planning sentinel and an explicit dev candidate must reach
+    # the quarantine gate below.  That gate permits no release consumption:
+    # it only renders the checked-in sentinel for planning or an exact source
+    # candidate reference for an operator-private qualification transaction.
+    neutral_quarantine_reference = tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS and (
+        public_unbuilt_planning_ref
+        or str(tag) == NEUTRAL_UNBUILT_DISPLAY_TAGS[tool]
+        or re.fullmatch(r"dev-[0-9a-f]{40}", str(tag or "")) is not None
+    )
+    if (
+        not is_publicly_redistributable(tool)
+        and public_registry
+        and not neutral_quarantine_reference
+    ):
         raise ValueError(
-            f"{tool!r} is not publicly redistributable and is never distributed from a "
-            f"public registry, so {resolved_registry!r} cannot serve it. Build it into "
-            f"your own registry (npa/docker/workbench/<tool>/build.sh --registry "
-            f"<your-registry> --push) and point NPA_REGISTRY at that registry; see "
+            f"{tool!r} is publication-quarantined, not publicly redistributable, and "
+            f"never distributed from a public registry, so {resolved_registry!r} cannot "
+            f"serve it. Build it into your own registry "
+            f"(npa/docker/workbench/<tool>/build.sh --registry <your-registry> --push) "
+            f"and point NPA_REGISTRY at that registry; see "
             f"docs/workbench/container-packaging.md."
         )
     # SONIC has a capability-aware manifest with independently accepted and
