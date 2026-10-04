@@ -10,7 +10,9 @@ case "${1:-health}" in
     ;;
   run-smoke)
     shift
-    exec /usr/bin/python3 "$root/runtime-bootstrap.py" run-smoke \
+    # SkyPilot needs the image's constrained sudo contract during bootstrap.
+    # Runtime-fetched source and its installers must not inherit that power.
+    exec /usr/bin/setpriv --no-new-privs /usr/bin/python3 "$root/runtime-bootstrap.py" run-smoke \
       --manifest "$root/runtime-manifest.json" \
       --smoke "$root/capability_smoke.py" \
       --cache-root "${NPA_EMBODIEDGEN_RUNTIME_CACHE:-$cache_default}" "$@"

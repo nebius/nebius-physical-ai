@@ -26,9 +26,13 @@ resources:
               runAsUser: 1000
               runAsGroup: 1000
               privileged: false
-              allowPrivilegeEscalation: false
+              # SkyPilot's verified bootstrap needs passwordless sudo before the
+              # runtime command starts. The entrypoint applies no_new_privs to
+              # fetched EmbodiedGen/TRELLIS code before it executes.
+              allowPrivilegeEscalation: true
               capabilities:
                 drop: [ALL]
+                add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, SYS_CHROOT, NET_BIND_SERVICE]
 envs:
   NPA_BYOF_RUN_ID: "<run-id>"
   BYOF_REPO_ROOT: "/opt/byof"

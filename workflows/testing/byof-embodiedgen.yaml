@@ -50,10 +50,15 @@ resources:
             - name: ray-node
               securityContext:
                 runAsNonRoot: true
+                runAsUser: 1000
+                runAsGroup: 1000
                 privileged: false
-                allowPrivilegeEscalation: false
+                # SkyPilot bootstrap uses the image's constrained sudo contract.
+                # The entrypoint applies no_new_privs before fetched source runs.
+                allowPrivilegeEscalation: true
                 capabilities:
                   drop: [ALL]
+                  add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, SYS_CHROOT, NET_BIND_SERVICE]
 initial: byof-run
 states:
   byof-run:

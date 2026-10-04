@@ -109,10 +109,20 @@ def test_prebuilt_image_and_standalone_profile_keep_the_byof_contract() -> None:
         / "byof-solution-smoke-embodiedgen-rtxpro-gpu.yaml"
     ).read_text(encoding="utf-8")
     build = (IMAGE / "build.sh").read_text(encoding="utf-8")
+    workflow = (ROOT / "workflows/testing/byof-embodiedgen.yaml").read_text(
+        encoding="utf-8"
+    )
     assert "/opt/byof/npa_source_metadata.json" in dockerfile
     assert "git status --porcelain --untracked-files=all" in build
     assert "npa_byof_summary.json" in profile
     assert "client.head_object" in profile
+    assert "allowPrivilegeEscalation: true" in profile
+    assert "SETUID" in profile
+    assert "allowPrivilegeEscalation: true" in workflow
+    assert "SETUID" in workflow
+    assert "setpriv --no-new-privs" in (IMAGE / "entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_token_factory_key_is_forwarded_only_to_embodiedgen() -> None:

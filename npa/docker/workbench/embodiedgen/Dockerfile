@@ -27,7 +27,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       ca-certificates git libegl1 libgl1 libglib2.0-0 openssh-server \
-      python3 python3-pip python3-venv rsync sudo; \
+      python3 python3-pip python3-venv rsync sudo util-linux; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     rm -f /etc/ssh/ssh_host_*; \
     useradd --uid 1000 --create-home --shell /bin/bash ubuntu; \
