@@ -135,16 +135,37 @@ def _download_file(uri: str, destination: Path) -> None:
 
 
 def _runtime_image_provenance(expected_image: str) -> dict[str, str]:
-    if "@sha256:" not in expected_image:
+    declared_digest = _image_digest(expected_image)
+    if declared_digest is None:
         raise OpenWAMPipelineError(
             "runtime image must be supplied as an immutable digest"
         )
     observed = os.environ.get("NPA_TASK_IMAGE", "").strip()
-    if observed and "@sha256:" in observed and observed != expected_image:
+    observed_digest = _image_digest(observed) if observed else None
+    if observed and "@sha256:" in observed and observed_digest is None:
+        raise OpenWAMPipelineError("worker image exposes an invalid immutable digest")
+    if observed_digest is not None and observed_digest != declared_digest:
         raise OpenWAMPipelineError(
-            f"worker image {observed!r} differs from declared image {expected_image!r}"
+            "worker image digest differs from the declared image digest"
         )
-    return {"declared": expected_image, "observed": observed or "not_exposed"}
+    return {
+        "declared": expected_image,
+        "declared_digest": declared_digest,
+        "observed": observed or "not_exposed",
+        "observed_digest": observed_digest or "not_exposed",
+    }
+
+
+def _image_digest(image: str) -> str | None:
+    """Return a validated OCI SHA-256 digest from an immutable image reference."""
+
+    prefix, marker, digest = image.rpartition("@sha256:")
+    if not prefix or not marker or len(digest) != 64:
+        return None
+    normalized = digest.lower()
+    if any(character not in "0123456789abcdef" for character in normalized):
+        return None
+    return normalized
 
 
 def _require_repository(root: Path) -> Path:

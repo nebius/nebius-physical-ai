@@ -20,6 +20,34 @@ SPEC = ROOT / "workflows" / "testing" / "openwam-libero-four-stage.yaml"
 DIGEST_IMAGE = "registry.example.invalid/operator/openwam@sha256:" + "0" * 64
 
 
+def test_runtime_image_provenance_accepts_equivalent_digest_references(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    digest = "a" * 64
+    declared = f"registry.example.invalid/operator/openwam:submission@sha256:{digest}"
+    observed = f"registry.example.invalid/operator/openwam@sha256:{digest}"
+    monkeypatch.setenv("NPA_TASK_IMAGE", observed)
+
+    provenance = pipeline._runtime_image_provenance(declared)
+
+    assert provenance["declared"] == declared
+    assert provenance["observed"] == observed
+    assert provenance["declared_digest"] == digest
+    assert provenance["observed_digest"] == digest
+
+
+def test_runtime_image_provenance_rejects_a_different_worker_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "NPA_TASK_IMAGE",
+        "registry.example.invalid/operator/openwam@sha256:" + "b" * 64,
+    )
+
+    with pytest.raises(pipeline.OpenWAMPipelineError, match="digest differs"):
+        pipeline._runtime_image_provenance(DIGEST_IMAGE)
+
+
 def test_openwam_sources_are_pinned_to_the_documented_architecture() -> None:
     assert pipeline.OPENWAM_SOURCE_REF == "48bd67b89d489b14d03b8d92bc66e65d306df32e"
     assert pipeline.FOUNDATION_REVISION == "52df4e66c82c5c8b480adcc8d01f4db7415dfb56"
