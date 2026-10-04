@@ -1426,7 +1426,7 @@ def test_configure_interactive_provisions_storage(
 
 
 def test_configure_provision_reuses_explicit_bucket_without_size_prompt(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, mocker
 ) -> None:
     import yaml
 
@@ -1439,6 +1439,12 @@ def test_configure_provision_reuses_explicit_bucket_without_size_prompt(
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    catalog = mocker.patch.object(
+        nebius_module, "list_projects_in_tenant", return_value=[]
+    )
+    process = mocker.patch(
+        "subprocess.Popen", side_effect=AssertionError("unexpected process escape")
+    )
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
 
     sizes: list[int] = []
@@ -1475,6 +1481,8 @@ def test_configure_provision_reuses_explicit_bucket_without_size_prompt(
     assert sizes == [0]
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["bucket"] == "s3://existing-bucket/"
+    catalog.assert_called_once_with("tenant-1")
+    process.assert_not_called()
 
 
 def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key: str):
