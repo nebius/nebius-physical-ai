@@ -1,0 +1,23 @@
+{
+  "schema": "npa.specialists.repair-benchmark.v1",
+  "baseline_ref": "2031b3ee55d54bf8d6272a4be55049736db2c875",
+  "pairs": [
+    ["astra-only", "astra-tofa"],
+    ["astra-tofa", "astra-only"],
+    ["astra-only", "astra-tofa"]
+  ],
+  "coordination": "completion",
+  "astra_model": "gpt-6-astra",
+  "astra_effort": "medium",
+  "routing_model": "nvidia/Nemotron-3_5-Lightning",
+  "worker_models": ["zai-org/GLM-5.3-Flash", "zai-org/GLM-5.3"],
+  "quality": "All three final-source regression and native checks pass; merged patches pass the same regressions and an independent six-case simulation/export/replay/native-reader check.",
+  "primary_comparison": "Equal or higher verified completion, lower median end-to-end elapsed time, and lower median total model API-equivalent cost. Report all pairs and worst-case pricing uncertainty; no failed or expensive arm is discarded.",
+  "timing": "From coordinator process launch through worker shutdown and combined-patch verification. Includes repair attempts, model calls, simulation, conversion and independent verification.",
+  "cost": "All measured Astra delegation, work and recovery calls; all ToFa classifier, worker, rejected and fallback responses. Missing usage stays unknown. Cached subsets are not double counted. Setup response uncertainty is retained separately.",
+  "excluded": ["Benchmark development conversation", "One-time environment installation and calibration", "CPU hosting, storage and network charges"],
+  "workload_limits": null,
+  "historical_regression_replay": true,
+  "newly_discovered_production_bugs_claimed": false,
+  "private_repository_dependencies": false
+}

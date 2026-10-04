@@ -63,6 +63,15 @@ def test_configuration_updates_only_intended_controller_fields(
     assert "NodeName=synthetic-worker NodeAddr=10.0.0.2 CPUs=160" in updated
     assert f"Nodes=synthetic-controller,synthetic-worker{partition_suffix}\n" in updated
     assert "AccountingStorageHost=10.0.0.1\n" in updated
+    # A systemd submitter can have an 8 MiB lock limit despite an unlimited
+    # worker daemon. Preserve the RDMA policy when expanding to two workers.
+    fields = dict(
+        line.split("=", 1)
+        for line in updated.splitlines()
+        if "=" in line and not line.startswith("#")
+    )
+    assert fields["PropagateResourceLimitsExcept"] == "MEMLOCK"
+    assert "PropagateResourceLimits" not in fields
     assert peers == {
         "controller_name": "synthetic-controller",
         "controller_address": "10.0.0.1",

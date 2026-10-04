@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+import json
 import os
 from pathlib import Path
 import re
@@ -21,6 +21,8 @@ from npa.workbench import vlm_eval
 from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
     DEFAULT_SAMPLE_BENCHMARK_PATH,
+    VlmBenchmarkCaseResult,
+    VlmEvalResult,
     VlmStructuredResponse,
     benchmark_vlm_eval,
     evaluate_stub,
@@ -144,11 +146,13 @@ def test_contract_matches_stub_scalar_score_range(tmp_path: Path) -> None:
         input_path="rollouts",
         output_path=str(tmp_path / "stub"),
         score=0.61,
+        rubric="Retain this stub rubric.",
     )
     real = evaluate_vlm(
         input_path="rollouts",
         output_path=str(tmp_path / "real"),
         score=0.61,
+        rubric="Retain this override rubric.",
     )
 
     assert set(asdict(real)) == set(asdict(stub))
@@ -156,16 +160,126 @@ def test_contract_matches_stub_scalar_score_range(tmp_path: Path) -> None:
         assert isinstance(result.score, float)
         assert 0.0 <= result.score <= 1.0
         assert isinstance(result.passed, bool)
+        assert result.provider_success is None
+        assert result.provider_success_matches_score_gate is None
+    assert stub.rubric == "Retain this stub rubric."
+    assert real.rubric == "Retain this override rubric."
 
 
-def test_parse_structured_response_clamps_score() -> None:
+def test_exported_dataclasses_keep_legacy_positional_constructors() -> None:
+    result = VlmEvalResult(
+        "passed",
+        "api",
+        "input",
+        "output",
+        "result-uri",
+        "task",
+        "model",
+        0.9,
+        0.8,
+        True,
+        "timestamp",
+        "keyframes",
+        1,
+        "rationale",
+        "served-model",
+        None,
+    )
+    structured = VlmStructuredResponse(
+        True, 0.9, "rationale", "served-model", None, "parser-v1"
+    )
+    case = VlmBenchmarkCaseResult(
+        "item",
+        "rollout",
+        True,
+        True,
+        0.9,
+        "passed",
+        True,
+        "task",
+        "rationale",
+        1,
+        "provider",
+        None,
+    )
+
+    assert result.served_model == "served-model"
+    assert result.evidence is None
+    assert result.provider_success is None
+    assert structured.served_model == "served-model"
+    assert structured.parser_version == "parser-v1"
+    assert structured.provider_success is None
+    assert case.evidence is None
+    assert case.provider_success is None
+
+
+def test_result_uri_uses_neutral_default_and_preserves_explicit_json() -> None:
+    assert vlm_eval.result_uri_for("s3://bucket/scores/") == (
+        "s3://bucket/scores/vlm_eval.json"
+    )
+    assert vlm_eval.result_uri_for("custom-result.json") == "custom-result.json"
+    assert vlm_eval.RESULT_FILENAME == "vlm_eval.json"
+    assert vlm_eval.LEGACY_RESULT_FILENAME == "vlm_eval_stub.json"
+
+
+def test_write_result_preserves_explicit_path_and_uses_canonical_s3_name(
+    tmp_path: Path,
+) -> None:
+    payload = {"backend": "api", "score": 0.5}
+    output_dir = tmp_path / "scores"
+    written = vlm_eval.write_result(payload, result_uri=str(output_dir))
+    assert written == str(output_dir / vlm_eval.RESULT_FILENAME)
+
+    explicit = tmp_path / "chosen.json"
+    assert vlm_eval.write_result(payload, result_uri=str(explicit)) == str(explicit)
+
+    class RecordingStorage:
+        def __init__(self) -> None:
+            self.uploaded_name = ""
+            self.uploaded_payload: dict[str, object] = {}
+
+        def upload_file(self, source: str, target: str) -> str:
+            self.uploaded_name = Path(source).name
+            self.uploaded_payload = json.loads(Path(source).read_text())
+            return target
+
+    storage = RecordingStorage()
+    result_uri = vlm_eval.result_uri_for("s3://bucket/scores/")
+    assert (
+        vlm_eval.write_result(payload, result_uri=result_uri, storage_client=storage)
+        == result_uri
+    )
+    assert storage.uploaded_name == vlm_eval.RESULT_FILENAME
+    assert storage.uploaded_payload == payload
+
+
+def test_parse_structured_response_preserves_valid_score() -> None:
     parsed = parse_structured_response(
-        '{"success": true, "score": 1.4, "rationale": "clear completion"}'
+        '{"success": true, "score": 0.93, "rationale": "clear completion"}'
     )
 
     assert parsed.success is True
-    assert parsed.score == 1.0
+    assert parsed.provider_success is True
+    assert parsed.score == 0.93
     assert parsed.rationale == "clear completion"
+
+
+def test_parse_structured_response_rejects_omitted_success() -> None:
+    with pytest.raises(vlm_eval.VlmEvalError, match="success must be a boolean"):
+        parse_structured_response('{"score":0.7,"rationale":"partial completion"}')
+
+
+@pytest.mark.parametrize(
+    "raw_success",
+    ['"false"', "null", "1"],
+)
+def test_parse_structured_response_rejects_non_boolean_provider_success(
+    raw_success: str,
+) -> None:
+    with pytest.raises(vlm_eval.VlmEvalError, match="success must be a boolean"):
+        parse_structured_response(
+            f'{{"success":{raw_success},"score":0.7,"rationale":"legacy"}}'
+        )
 
 
 def test_mocked_self_hosted_endpoint_returns_structured_score(
@@ -204,6 +318,71 @@ def test_mocked_self_hosted_endpoint_returns_structured_score(
         "rationale": "mocked endpoint saw the expected frame sequence",
     }
     assert 0.0 <= structured["score"] <= 1.0
+
+
+def test_self_hosted_omitted_success_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rollout = _write_image_rollout(tmp_path / "rollout", [(20, 120, 40)])
+    completion = {
+        "model": "deployed-model-revision",
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": '{"score":0.7,"rationale":"partial completion"}'
+                },
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: completion
+    )
+
+    with pytest.raises(vlm_eval.VlmEvalError, match="success must be a boolean"):
+        evaluate_vlm(
+            input_path=str(rollout),
+            output_path=str(tmp_path / "result.json"),
+            task="identify visible task progress",
+            backend="self-hosted",
+            success_threshold=0.8,
+        )
+
+
+@pytest.mark.parametrize("raw_success", ["false", None, 1])
+def test_self_hosted_non_boolean_success_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, raw_success: object
+) -> None:
+    rollout = _write_image_rollout(tmp_path / "rollout", [(20, 120, 40)])
+    completion = {
+        "model": "deployed-model-revision",
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "success": raw_success,
+                            "score": 0.7,
+                            "rationale": "legacy response",
+                        }
+                    )
+                },
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: completion
+    )
+
+    with pytest.raises(vlm_eval.VlmEvalError, match="success must be a boolean"):
+        evaluate_vlm(
+            input_path=str(rollout),
+            output_path=str(tmp_path / "result.json"),
+            task="identify visible task progress",
+            backend="self-hosted",
+            success_threshold=0.8,
+        )
 
 
 def test_http_status_error_includes_bounded_server_detail(
@@ -293,6 +472,297 @@ def test_select_rollout_frames_from_numpy_final_frame(tmp_path: Path) -> None:
     assert selected[0].label == "obs_workspace.npy:4"
     assert selected[0].media_type == "image/png"
     assert selected[0].data.startswith(b"\x89PNG")
+
+
+def test_select_rollout_frames_retains_numpy_sampling_coverage(tmp_path: Path) -> None:
+    rollout = tmp_path / "episode_0000"
+    rollout.mkdir()
+    frames = np.zeros((6, 8, 8, 3), dtype=np.uint8)
+    np.save(rollout / "obs_workspace.npy", frames)
+
+    selected = select_rollout_frames(rollout, frame_selection="keyframes", max_frames=3)
+
+    assert [frame.source_index for frame in selected] == [0, 2, 5]
+    assert [frame.source_count for frame in selected] == [6, 6, 6]
+    assert all(frame.source_kind == "numpy-episode" for frame in selected)
+
+
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+    reason="ffmpeg and ffprobe are required for video sampling provenance",
+)
+def test_select_rollout_frames_retains_video_indices_and_timestamps(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "rollout.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=16x16:rate=2:duration=3",
+            "-c:v",
+            "mpeg4",
+            "-pix_fmt",
+            "yuv420p",
+            str(video),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    selected = select_rollout_frames(video, frame_selection="sequence", max_frames=3)
+
+    assert [frame.source_index for frame in selected] == [0, 2, 5]
+    assert [frame.source_count for frame in selected] == [6, 6, 6]
+    assert [frame.source_timestamp_s for frame in selected] == pytest.approx(
+        [0.0, 1.0, 2.5]
+    )
+    assert all(frame.source_kind == "video" for frame in selected)
+
+
+def _write_multistream_provenance_video(path: Path) -> None:
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=red:size=16x16:rate=10:duration=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=blue:size=32x32:rate=20:duration=1",
+            "-map",
+            "0:v",
+            "-map",
+            "1:v",
+            "-c:v",
+            "mpeg4",
+            "-disposition:v:0",
+            "0",
+            "-disposition:v:1",
+            "default",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+    reason="ffmpeg and ffprobe are required for video sampling provenance",
+)
+@pytest.mark.parametrize("strategy", ["sequence", "final"])
+@pytest.mark.parametrize("unknown_count", [False, True])
+def test_video_pixels_and_provenance_use_the_same_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    strategy: str,
+    unknown_count: bool,
+) -> None:
+    from io import BytesIO
+
+    video = tmp_path / "two-streams.mp4"
+    _write_multistream_provenance_video(video)
+    if unknown_count:
+        monkeypatch.setattr(vlm_eval, "_video_frame_count", lambda _path: None)
+    selected = select_rollout_frames(video, frame_selection=strategy, max_frames=3)
+    assert selected
+    for frame in selected:
+        with Image.open(BytesIO(frame.data)) as image:
+            assert image.size == (16, 16)
+            red, green, blue = image.convert("RGB").getpixel((0, 0))
+            assert red > 200 and green < 30 and blue < 30
+        if unknown_count:
+            assert frame.source_count is None
+            assert frame.source_timestamp_s is None
+        else:
+            assert frame.source_count == 10
+            assert frame.source_timestamp_s == pytest.approx(frame.source_index / 10)
+
+
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+    reason="ffmpeg and ffprobe are required for video sampling provenance",
+)
+@pytest.mark.parametrize("strategy", ["sequence", "final"])
+def test_inaccurate_video_count_cannot_claim_complete_sampling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, strategy: str
+) -> None:
+    video = tmp_path / "two-streams.mp4"
+    _write_multistream_provenance_video(video)
+    # A stale frame count plans samples beyond the ten actual source frames.
+    # Exercise real extraction: ffmpeg exits successfully with fewer outputs.
+    monkeypatch.setattr(vlm_eval, "_video_frame_count", lambda _path: 110)
+
+    with pytest.raises(vlm_eval.VlmEvalError, match="sampling provenance"):
+        select_rollout_frames(video, frame_selection=strategy, max_frames=4)
+
+
+def test_video_timestamps_use_structured_ffprobe_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    response = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout=json.dumps(
+            {
+                "frames": [
+                    {"best_effort_timestamp_time": "0.0"},
+                    {"best_effort_timestamp_time": "0.5"},
+                    {"best_effort_timestamp_time": "1.0"},
+                ]
+            }
+        ),
+        stderr="input filename pts_time:999 must not be parsed",
+    )
+    monkeypatch.setattr(vlm_eval.shutil, "which", lambda _name: "/usr/bin/ffprobe")
+    monkeypatch.setattr(vlm_eval.subprocess, "run", lambda *_args, **_kwargs: response)
+
+    timestamps = vlm_eval._video_frame_timestamps(tmp_path / "pts_time:999.mp4", [0, 2])
+
+    assert timestamps == [0.0, 1.0]
+
+
+def test_video_timestamps_fail_closed_on_incomplete_frame_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    response = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout='{"frames":[{"best_effort_timestamp_time":"0.0"}]}',
+        stderr="",
+    )
+    monkeypatch.setattr(vlm_eval.shutil, "which", lambda _name: "/usr/bin/ffprobe")
+    monkeypatch.setattr(vlm_eval.subprocess, "run", lambda *_args, **_kwargs: response)
+
+    assert vlm_eval._video_frame_timestamps(tmp_path / "video.mp4", [0, 2]) == [
+        None,
+        None,
+    ]
+
+
+def test_extracted_video_frames_sort_by_numeric_ordinal() -> None:
+    frames = [
+        Path("frame-1000.png"),
+        Path("frame-101.png"),
+        Path("frame-099.png"),
+    ]
+
+    assert sorted(frames, key=vlm_eval._video_output_frame_number) == [
+        Path("frame-099.png"),
+        Path("frame-101.png"),
+        Path("frame-1000.png"),
+    ]
+
+
+def test_unknown_video_count_does_not_infer_sampling_coverage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    video = tmp_path / "rollout.mp4"
+    video.write_bytes(b"placeholder")
+    monkeypatch.setattr(vlm_eval.shutil, "which", lambda _name: "/usr/bin/tool")
+    monkeypatch.setattr(vlm_eval, "_video_frame_count", lambda _path: None)
+
+    def fake_sample(
+        _video_path: Path, output_dir: Path, *, max_frames: int
+    ) -> list[float | None]:
+        assert max_frames == 2
+        Image.new("RGB", (8, 8), "green").save(output_dir / "frame-001.png")
+        return []
+
+    monkeypatch.setattr(vlm_eval, "_extract_video_sample", fake_sample)
+
+    selected = select_rollout_frames(video, frame_selection="sequence", max_frames=2)
+    sampling = vlm_eval._sampling_manifest(
+        selected, frame_selection="sequence", max_frames=2
+    )
+
+    assert selected[0].source_index is None
+    assert selected[0].source_count is None
+    assert selected[0].source_timestamp_s is None
+    assert sampling["selected_indices"] == [None]
+    assert sampling["coverage_complete"] is False
+    assert sampling["timestamps_complete"] is False
+
+    partial = [
+        vlm_eval.SelectedFrame(
+            "frame-0",
+            "image/png",
+            b"",
+            source_kind="image-sequence",
+            source_index=0,
+            source_count=2,
+        ),
+        vlm_eval.SelectedFrame(
+            "frame-1",
+            "image/png",
+            b"",
+            source_kind="image-sequence",
+            source_index=1,
+        ),
+    ]
+    partial_sampling = vlm_eval._sampling_manifest(
+        partial, frame_selection="sequence", max_frames=2
+    )
+    assert partial_sampling["source_count"] is None
+    assert partial_sampling["coverage_complete"] is False
+
+    empty_kind = [
+        vlm_eval.SelectedFrame(
+            "frame-0",
+            "image/png",
+            b"",
+            source_kind="",
+            source_index=0,
+            source_count=1,
+        )
+    ]
+    empty_kind_sampling = vlm_eval._sampling_manifest(
+        empty_kind, frame_selection="final", max_frames=1
+    )
+    assert empty_kind_sampling["source_kind"] is None
+    assert empty_kind_sampling["coverage_complete"] is False
+
+
+@pytest.mark.parametrize(
+    "kinds", [(None, None), ("unknown", "unknown"), ("video", "image-sequence")]
+)
+def test_sampling_needs_a_known_uniform_source_kind(kinds) -> None:
+    frames = [
+        vlm_eval.SelectedFrame(
+            "frame", "image/png", b"", source_kind=kind, source_index=i, source_count=2
+        )
+        for i, kind in enumerate(kinds)
+    ]
+
+    sampling = vlm_eval._sampling_manifest(
+        frames, frame_selection="sequence", max_frames=2
+    )
+
+    assert sampling["source_kind"] is None
+    assert sampling["coverage_complete"] is False
+
+
+def test_frame_evidence_preserves_legacy_constructor() -> None:
+    frame = vlm_eval.VlmFrameEvidence("label", "image/png", "sha256", 10, 8, 6)
+    assert frame.source_kind is None
+    assert frame.source_index is None
+    assert frame.source_count is None
+    assert frame.source_timestamp_s is None
 
 
 def _structured_eval_payload(result) -> dict[str, object]:
@@ -579,24 +1049,195 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
         models=[DEFAULT_MODEL],
     )
 
-    assert report.item_count == 4
+    assert report.item_count == 5
     assert report.best_config.config.success_threshold == 0.8
     assert report.best_config.metrics.accuracy == 1.0
     assert report.best_config.metrics.precision == 1.0
     assert report.best_config.metrics.recall == 1.0
     assert report.best_config.metrics.true_positives == 2
-    assert report.best_config.metrics.true_negatives == 2
+    assert report.best_config.metrics.true_negatives == 3
+    assert report.schema_version == "npa_vlm_eval_benchmark_report_v2"
+    assert asdict(report.best_config.metrics.confusion_matrix) == {
+        "actual_positive": {
+            "predicted_positive": 2,
+            "predicted_negative": 0,
+        },
+        "actual_negative": {
+            "predicted_positive": 0,
+            "predicted_negative": 3,
+        },
+    }
+    assert report.best_config.metrics.false_positive_rate == 0.0
+    assert report.best_config.metrics.false_negative_rate == 0.0
+    assert report.best_config.metrics.false_positive_item_ids == ()
+    assert report.best_config.metrics.false_negative_item_ids == ()
     assert all(0.0 <= case.score <= 1.0 for case in report.best_config.results)
     assert {case.score_source for case in report.best_config.results} == {"fixture"}
+
+
+def _benchmark_case(
+    item_id: str, *, expected_label: bool, predicted_label: bool
+) -> VlmBenchmarkCaseResult:
+    return VlmBenchmarkCaseResult(
+        item_id=item_id,
+        rollout=f"retained://{item_id}",
+        expected_label=expected_label,
+        predicted_label=predicted_label,
+        score=float(predicted_label),
+        status="passed" if predicted_label else "needs_iteration",
+        passed=predicted_label,
+        task="retained labelled control",
+        rationale="retained response",
+        frame_count=1,
+        score_source="retained",
+        evidence=None,
+    )
+
+
+def test_benchmark_metrics_expose_ordered_false_positive_and_negative_cases() -> None:
+    results = [
+        _benchmark_case("tp-a", expected_label=True, predicted_label=True),
+        _benchmark_case(
+            "mismatched-run-negative",
+            expected_label=False,
+            predicted_label=True,
+        ),
+        _benchmark_case(
+            "missing-outcome-a", expected_label=True, predicted_label=False
+        ),
+        _benchmark_case("tn-a", expected_label=False, predicted_label=False),
+        _benchmark_case("tp-b", expected_label=True, predicted_label=True),
+        _benchmark_case("tn-b", expected_label=False, predicted_label=False),
+        _benchmark_case(
+            "missing-outcome-b", expected_label=True, predicted_label=False
+        ),
+        _benchmark_case("tn-c", expected_label=False, predicted_label=False),
+    ]
+
+    metrics = vlm_eval._benchmark_metrics(results)
+
+    assert metrics.false_positive_item_ids == ("mismatched-run-negative",)
+    assert metrics.false_negative_item_ids == (
+        "missing-outcome-a",
+        "missing-outcome-b",
+    )
+    assert asdict(metrics.confusion_matrix) == {
+        "actual_positive": {"predicted_positive": 2, "predicted_negative": 2},
+        "actual_negative": {"predicted_positive": 1, "predicted_negative": 3},
+    }
+    matrix = metrics.confusion_matrix
+    assert matrix.actual_positive.predicted_positive == metrics.true_positives == 2
+    assert matrix.actual_positive.predicted_negative == metrics.false_negatives == 2
+    assert matrix.actual_negative.predicted_positive == metrics.false_positives == 1
+    assert matrix.actual_negative.predicted_negative == metrics.true_negatives == 3
+    assert metrics.false_positive_rate == 0.25
+    assert metrics.false_negative_rate == 0.5
+    assert (
+        sum(asdict(metrics.confusion_matrix)["actual_positive"].values())
+        + sum(asdict(metrics.confusion_matrix)["actual_negative"].values())
+        == metrics.total
+    )
+
+
+@pytest.mark.parametrize(
+    ("results", "undefined_rate"),
+    [
+        (
+            [_benchmark_case("positive", expected_label=True, predicted_label=True)],
+            "false_positive_rate",
+        ),
+        (
+            [_benchmark_case("negative", expected_label=False, predicted_label=False)],
+            "false_negative_rate",
+        ),
+    ],
+)
+def test_benchmark_error_rates_are_null_without_required_label_class(
+    results, undefined_rate
+) -> None:
+    metrics = vlm_eval._benchmark_metrics(results)
+
+    assert getattr(metrics, undefined_rate) is None
+
+
+def test_legacy_benchmark_metrics_constructor_keeps_additive_defaults() -> None:
+    metrics = vlm_eval.VlmBenchmarkMetrics(
+        total=1,
+        correct=1,
+        agreement=1.0,
+        accuracy=1.0,
+        precision=1.0,
+        recall=1.0,
+        f1=1.0,
+        true_positives=1,
+        true_negatives=0,
+        false_positives=0,
+        false_negatives=0,
+    )
+
+    assert metrics.confusion_matrix is None
+    assert metrics.false_positive_item_ids == ()
+    assert metrics.false_negative_item_ids == ()
+
+
+def test_legacy_benchmark_report_constructor_keeps_legacy_schema_default() -> None:
+    config = vlm_eval.VlmBenchmarkConfig(
+        backend="stub",
+        model="fixture-model",
+        rubric_name="default",
+        rubric="fixture",
+        success_threshold=0.8,
+        frame_selection="final",
+        max_frames=1,
+    )
+    result = vlm_eval.VlmBenchmarkConfigResult(
+        rank=1,
+        config=config,
+        metrics=vlm_eval._benchmark_metrics(
+            [_benchmark_case("positive", expected_label=True, predicted_label=True)]
+        ),
+        results=[],
+    )
+    report = vlm_eval.VlmBenchmarkReport(
+        status="completed",
+        dataset_path="retained://legacy",
+        dataset_format="npa_vlm_eval_benchmark_v1",
+        item_count=1,
+        generated_at="2026-09-20T00:00:00Z",
+        sweep={},
+        best_config=result,
+        ranked_configs=[result],
+    )
+
+    assert report.schema_version == "npa_vlm_eval_benchmark_report_v1"
 
 
 def test_load_benchmark_dataset_resolves_relative_rollouts() -> None:
     dataset = load_benchmark_dataset(str(DEFAULT_SAMPLE_BENCHMARK_PATH))
 
     assert dataset.format == "npa_vlm_eval_benchmark_v1"
-    assert len(dataset.items) == 4
+    assert len(dataset.items) == 5
     assert all(Path(item.rollout).exists() for item in dataset.items)
     assert {"default", "strict"} <= set(dataset.rubrics)
+
+
+def test_load_benchmark_dataset_rejects_duplicate_item_ids(tmp_path) -> None:
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (8, 8), "black").save(frame)
+    manifest = tmp_path / "benchmark.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"id": "duplicate", "rollout": frame.name, "expected_label": True},
+                    {"id": "duplicate", "rollout": frame.name, "expected_label": False},
+                ]
+            }
+        )
+    )
+
+    with pytest.raises(vlm_eval.VlmEvalError, match="item IDs must be unique"):
+        load_benchmark_dataset(str(manifest))
 
 
 def test_select_rollout_frames_accepts_sample_ppm_fixture() -> None:
@@ -647,7 +1288,12 @@ class _FakeResp:
 
 _OK_PAYLOAD = {
     "choices": [
-        {"message": {"content": '{"success": true, "score": 0.9, "rationale": "ok"}'}}
+        {
+            "finish_reason": "stop",
+            "message": {
+                "content": '{"success": true, "score": 0.9, "rationale": "ok"}'
+            },
+        }
     ]
 }
 

@@ -1,0 +1,807 @@
+{
+  "best_background": {
+    "background_luminance": 0.0,
+    "low_contrast_fraction": 0.005239629942099714,
+    "median_contrast": 174.28879999999998,
+    "p05_contrast": 76.9186
+  },
+  "content_luminance_percentiles": {
+    "1": 33.6636,
+    "25": 125.2166,
+    "5": 76.9186,
+    "50": 174.28879999999998,
+    "75": 191.28879999999998,
+    "95": 223.36100000000002,
+    "99": 252.7874
+  },
+  "content_pixels": 968389,
+  "frames_measured": [
+    "baseline_scan_and_surface__opposite.png",
+    "baseline_scan_and_surface__overview.png",
+    "baseline_scan_and_surface__topdown.png",
+    "baseline_surface_only__overview.png",
+    "candidate_scan_and_surface__opposite.png",
+    "candidate_scan_and_surface__overview.png",
+    "candidate_scan_and_surface__topdown.png",
+    "candidate_surface_only__overview.png",
+    "observed_scan_only__overview.png"
+  ],
+  "reading": "I expected this to be a trade -- a light floor against dark sensor gaps, with no background serving both -- and the measurement says otherwise. The content is not bimodal: it is overwhelmingly light, with a median luminance near 177 and only about 1% below 33. So there is no trade to balance, and darkening the page improves both the worst-served content and the typical content at once. The light floor the review called washed out is most of the picture, which is exactly why putting it on a near-white page cost so much.",
+  "shipped_background": {
+    "background_luminance": 250.0,
+    "low_contrast_fraction": 0.0473642306965486,
+    "median_contrast": 75.71120000000002,
+    "p05_contrast": 26.63899999999998
+  },
+  "sweep": [
+    {
+      "background_luminance": 0.0,
+      "low_contrast_fraction": 0.005239629942099714,
+      "median_contrast": 174.28879999999998,
+      "p05_contrast": 76.9186
+    },
+    {
+      "background_luminance": 2.0,
+      "low_contrast_fraction": 0.00568263373499699,
+      "median_contrast": 172.28879999999998,
+      "p05_contrast": 74.9186
+    },
+    {
+      "background_luminance": 4.0,
+      "low_contrast_fraction": 0.006211346886426839,
+      "median_contrast": 170.28879999999998,
+      "p05_contrast": 72.9186
+    },
+    {
+      "background_luminance": 6.0,
+      "low_contrast_fraction": 0.006468474962024558,
+      "median_contrast": 168.28879999999998,
+      "p05_contrast": 70.9186
+    },
+    {
+      "background_luminance": 8.0,
+      "low_contrast_fraction": 0.0073988861913962265,
+      "median_contrast": 166.28879999999998,
+      "p05_contrast": 68.9186
+    },
+    {
+      "background_luminance": 10.0,
+      "low_contrast_fraction": 0.010467900812586677,
+      "median_contrast": 164.28879999999998,
+      "p05_contrast": 66.9186
+    },
+    {
+      "background_luminance": 12.0,
+      "low_contrast_fraction": 0.013344843859234254,
+      "median_contrast": 162.28879999999998,
+      "p05_contrast": 64.9186
+    },
+    {
+      "background_luminance": 14.0,
+      "low_contrast_fraction": 0.016180481190926372,
+      "median_contrast": 160.28879999999998,
+      "p05_contrast": 62.9186
+    },
+    {
+      "background_luminance": 16.0,
+      "low_contrast_fraction": 0.017635475000232343,
+      "median_contrast": 158.28879999999998,
+      "p05_contrast": 60.9186
+    },
+    {
+      "background_luminance": 18.0,
+      "low_contrast_fraction": 0.019626410461085368,
+      "median_contrast": 156.28879999999998,
+      "p05_contrast": 58.9186
+    },
+    {
+      "background_luminance": 20.0,
+      "low_contrast_fraction": 0.021106187699364613,
+      "median_contrast": 154.28879999999998,
+      "p05_contrast": 56.9186
+    },
+    {
+      "background_luminance": 22.0,
+      "low_contrast_fraction": 0.021895126855013842,
+      "median_contrast": 152.28879999999998,
+      "p05_contrast": 54.9186
+    },
+    {
+      "background_luminance": 24.0,
+      "low_contrast_fraction": 0.01889323402062601,
+      "median_contrast": 150.28879999999998,
+      "p05_contrast": 52.9186
+    },
+    {
+      "background_luminance": 26.0,
+      "low_contrast_fraction": 0.019705923962374625,
+      "median_contrast": 148.28879999999998,
+      "p05_contrast": 50.9186
+    },
+    {
+      "background_luminance": 28.0,
+      "low_contrast_fraction": 0.019987835466945617,
+      "median_contrast": 146.28879999999998,
+      "p05_contrast": 48.9186
+    },
+    {
+      "background_luminance": 30.0,
+      "low_contrast_fraction": 0.020667314477962884,
+      "median_contrast": 144.28879999999998,
+      "p05_contrast": 46.9186
+    },
+    {
+      "background_luminance": 32.0,
+      "low_contrast_fraction": 0.02160701949319953,
+      "median_contrast": 142.28879999999998,
+      "p05_contrast": 44.9186
+    },
+    {
+      "background_luminance": 34.0,
+      "low_contrast_fraction": 0.02277597122643896,
+      "median_contrast": 140.28879999999998,
+      "p05_contrast": 42.9186
+    },
+    {
+      "background_luminance": 36.0,
+      "low_contrast_fraction": 0.024030632318210968,
+      "median_contrast": 138.28879999999998,
+      "p05_contrast": 40.9186
+    },
+    {
+      "background_luminance": 38.0,
+      "low_contrast_fraction": 0.02615168078117368,
+      "median_contrast": 136.28879999999998,
+      "p05_contrast": 38.9186
+    },
+    {
+      "background_luminance": 40.0,
+      "low_contrast_fraction": 0.028292349458740238,
+      "median_contrast": 134.28879999999998,
+      "p05_contrast": 39.144400000000005
+    },
+    {
+      "background_luminance": 42.0,
+      "low_contrast_fraction": 0.030213065204168985,
+      "median_contrast": 132.28879999999998,
+      "p05_contrast": 37.4344
+    },
+    {
+      "background_luminance": 44.0,
+      "low_contrast_fraction": 0.03226286130883354,
+      "median_contrast": 130.28879999999998,
+      "p05_contrast": 35.4384
+    },
+    {
+      "background_luminance": 46.0,
+      "low_contrast_fraction": 0.03443244398686891,
+      "median_contrast": 128.28879999999998,
+      "p05_contrast": 33.5506
+    },
+    {
+      "background_luminance": 48.0,
+      "low_contrast_fraction": 0.03666295259446359,
+      "median_contrast": 126.28879999999998,
+      "p05_contrast": 31.77316000000004
+    },
+    {
+      "background_luminance": 50.0,
+      "low_contrast_fraction": 0.03829349569233025,
+      "median_contrast": 124.28879999999998,
+      "p05_contrast": 29.791399999999996
+    },
+    {
+      "background_luminance": 52.0,
+      "low_contrast_fraction": 0.042909409338602565,
+      "median_contrast": 122.28879999999998,
+      "p05_contrast": 28.072199999999995
+    },
+    {
+      "background_luminance": 54.0,
+      "low_contrast_fraction": 0.04466696750995726,
+      "median_contrast": 120.28879999999998,
+      "p05_contrast": 26.14439999999999
+    },
+    {
+      "background_luminance": 56.0,
+      "low_contrast_fraction": 0.047748373845634344,
+      "median_contrast": 118.28879999999998,
+      "p05_contrast": 24.14439999999999
+    },
+    {
+      "background_luminance": 58.0,
+      "low_contrast_fraction": 0.05117261761544173,
+      "median_contrast": 116.28879999999998,
+      "p05_contrast": 23.4512
+    },
+    {
+      "background_luminance": 60.0,
+      "low_contrast_fraction": 0.05600848419385185,
+      "median_contrast": 114.28879999999998,
+      "p05_contrast": 22.706000000000003
+    },
+    {
+      "background_luminance": 62.0,
+      "low_contrast_fraction": 0.060110141688928725,
+      "median_contrast": 112.28879999999998,
+      "p05_contrast": 21.14439999999999
+    },
+    {
+      "background_luminance": 64.0,
+      "low_contrast_fraction": 0.06437082618658412,
+      "median_contrast": 110.28879999999998,
+      "p05_contrast": 20.14439999999999
+    },
+    {
+      "background_luminance": 66.0,
+      "low_contrast_fraction": 0.06944833119748366,
+      "median_contrast": 108.28879999999998,
+      "p05_contrast": 18.679600000000008
+    },
+    {
+      "background_luminance": 68.0,
+      "low_contrast_fraction": 0.08069794266560236,
+      "median_contrast": 106.28879999999998,
+      "p05_contrast": 17.144400000000005
+    },
+    {
+      "background_luminance": 70.0,
+      "low_contrast_fraction": 0.08626698568447184,
+      "median_contrast": 104.28879999999998,
+      "p05_contrast": 15.144400000000005
+    },
+    {
+      "background_luminance": 72.0,
+      "low_contrast_fraction": 0.09203016556363197,
+      "median_contrast": 102.28879999999998,
+      "p05_contrast": 14.14439999999999
+    },
+    {
+      "background_luminance": 74.0,
+      "low_contrast_fraction": 0.09872582195791155,
+      "median_contrast": 100.28879999999998,
+      "p05_contrast": 13.0
+    },
+    {
+      "background_luminance": 76.0,
+      "low_contrast_fraction": 0.10626824550877798,
+      "median_contrast": 98.28879999999998,
+      "p05_contrast": 12.144400000000005
+    },
+    {
+      "background_luminance": 78.0,
+      "low_contrast_fraction": 0.11276976504276691,
+      "median_contrast": 96.28879999999998,
+      "p05_contrast": 11.072199999999995
+    },
+    {
+      "background_luminance": 80.0,
+      "low_contrast_fraction": 0.11986815215786219,
+      "median_contrast": 94.28879999999998,
+      "p05_contrast": 10.14439999999999
+    },
+    {
+      "background_luminance": 82.0,
+      "low_contrast_fraction": 0.12686017705694716,
+      "median_contrast": 92.28879999999998,
+      "p05_contrast": 8.159999999999997
+    },
+    {
+      "background_luminance": 84.0,
+      "low_contrast_fraction": 0.13327805251815128,
+      "median_contrast": 90.28879999999998,
+      "p05_contrast": 7.1444000000000045
+    },
+    {
+      "background_luminance": 86.0,
+      "low_contrast_fraction": 0.14078020299693614,
+      "median_contrast": 88.28879999999998,
+      "p05_contrast": 6.301000000000016
+    },
+    {
+      "background_luminance": 88.0,
+      "low_contrast_fraction": 0.1498261545721812,
+      "median_contrast": 86.28879999999998,
+      "p05_contrast": 6.526800000000009
+    },
+    {
+      "background_luminance": 90.0,
+      "low_contrast_fraction": 0.15891547714812954,
+      "median_contrast": 84.28879999999998,
+      "p05_contrast": 6.502600000000001
+    },
+    {
+      "background_luminance": 92.0,
+      "low_contrast_fraction": 0.16656529555788016,
+      "median_contrast": 82.28879999999998,
+      "p05_contrast": 6.8555999999999955
+    },
+    {
+      "background_luminance": 94.0,
+      "low_contrast_fraction": 0.17534482527166254,
+      "median_contrast": 80.4262,
+      "p05_contrast": 6.1444000000000045
+    },
+    {
+      "background_luminance": 96.0,
+      "low_contrast_fraction": 0.1810666994358672,
+      "median_contrast": 78.4476,
+      "p05_contrast": 6.144399999999976
+    },
+    {
+      "background_luminance": 98.0,
+      "low_contrast_fraction": 0.18844699805553347,
+      "median_contrast": 76.5704,
+      "p05_contrast": 6.8555999999999955
+    },
+    {
+      "background_luminance": 100.0,
+      "low_contrast_fraction": 0.19349042585159476,
+      "median_contrast": 74.78739999999999,
+      "p05_contrast": 6.85560000000001
+    },
+    {
+      "background_luminance": 102.0,
+      "low_contrast_fraction": 0.20162145584057647,
+      "median_contrast": 72.84800000000001,
+      "p05_contrast": 6.2166
+    },
+    {
+      "background_luminance": 104.0,
+      "low_contrast_fraction": 0.21336570324528675,
+      "median_contrast": 71.2642,
+      "p05_contrast": 6.14439999999999
+    },
+    {
+      "background_luminance": 106.0,
+      "low_contrast_fraction": 0.21664331172700227,
+      "median_contrast": 69.28880000000001,
+      "p05_contrast": 5.7834
+    },
+    {
+      "background_luminance": 108.0,
+      "low_contrast_fraction": 0.21777302303103402,
+      "median_contrast": 68.2166,
+      "p05_contrast": 5.14439999999999
+    },
+    {
+      "background_luminance": 110.0,
+      "low_contrast_fraction": 0.22000353163862868,
+      "median_contrast": 66.28880000000001,
+      "p05_contrast": 5.14439999999999
+    },
+    {
+      "background_luminance": 112.0,
+      "low_contrast_fraction": 0.2240267082752902,
+      "median_contrast": 64.28880000000001,
+      "p05_contrast": 4.85560000000001
+    },
+    {
+      "background_luminance": 114.0,
+      "low_contrast_fraction": 0.2251533216507003,
+      "median_contrast": 62.28880000000001,
+      "p05_contrast": 4.8555999999999955
+    },
+    {
+      "background_luminance": 116.0,
+      "low_contrast_fraction": 0.2204909390751031,
+      "median_contrast": 60.28880000000001,
+      "p05_contrast": 5.042600000000007
+    },
+    {
+      "background_luminance": 118.0,
+      "low_contrast_fraction": 0.2227565575404099,
+      "median_contrast": 59.14559999999997,
+      "p05_contrast": 5.2166
+    },
+    {
+      "background_luminance": 120.0,
+      "low_contrast_fraction": 0.22661864188874511,
+      "median_contrast": 57.28879999999998,
+      "p05_contrast": 5.191199999999995
+    },
+    {
+      "background_luminance": 122.0,
+      "low_contrast_fraction": 0.22739002611553827,
+      "median_contrast": 55.28879999999998,
+      "p05_contrast": 5.067000000000007
+    },
+    {
+      "background_luminance": 124.0,
+      "low_contrast_fraction": 0.2280953211984027,
+      "median_contrast": 53.74159999999998,
+      "p05_contrast": 4.5075999999999965
+    },
+    {
+      "background_luminance": 126.0,
+      "low_contrast_fraction": 0.2290691034284776,
+      "median_contrast": 52.28879999999998,
+      "p05_contrast": 4.362200000000001
+    },
+    {
+      "background_luminance": 128.0,
+      "low_contrast_fraction": 0.23104351660334846,
+      "median_contrast": 50.4648,
+      "p05_contrast": 4.7834
+    },
+    {
+      "background_luminance": 130.0,
+      "low_contrast_fraction": 0.23163728625583313,
+      "median_contrast": 49.28879999999998,
+      "p05_contrast": 4.7834
+    },
+    {
+      "background_luminance": 132.0,
+      "low_contrast_fraction": 0.2321123019778209,
+      "median_contrast": 48.28879999999998,
+      "p05_contrast": 4.7834
+    },
+    {
+      "background_luminance": 134.0,
+      "low_contrast_fraction": 0.23086177145754444,
+      "median_contrast": 47.28880000000001,
+      "p05_contrast": 5.7834
+    },
+    {
+      "background_luminance": 136.0,
+      "low_contrast_fraction": 0.2295337927217265,
+      "median_contrast": 45.85560000000001,
+      "p05_contrast": 5.7834
+    },
+    {
+      "background_luminance": 138.0,
+      "low_contrast_fraction": 0.22644309260018444,
+      "median_contrast": 45.28879999999998,
+      "p05_contrast": 5.548400000000015
+    },
+    {
+      "background_luminance": 140.0,
+      "low_contrast_fraction": 0.22648852888663543,
+      "median_contrast": 43.85560000000001,
+      "p05_contrast": 5.7834
+    },
+    {
+      "background_luminance": 142.0,
+      "low_contrast_fraction": 0.22682413782064853,
+      "median_contrast": 42.85560000000001,
+      "p05_contrast": 5.7834
+    },
+    {
+      "background_luminance": 144.0,
+      "low_contrast_fraction": 0.23430460279908177,
+      "median_contrast": 41.39259999999996,
+      "p05_contrast": 5.783400000000029
+    },
+    {
+      "background_luminance": 146.0,
+      "low_contrast_fraction": 0.23873877129955007,
+      "median_contrast": 40.36099999999999,
+      "p05_contrast": 5.548399999999987
+    },
+    {
+      "background_luminance": 148.0,
+      "low_contrast_fraction": 0.24077927361834964,
+      "median_contrast": 39.28880000000001,
+      "p05_contrast": 5.584000000000003
+    },
+    {
+      "background_luminance": 150.0,
+      "low_contrast_fraction": 0.2455139411951189,
+      "median_contrast": 38.36099999999999,
+      "p05_contrast": 5.783399999999972
+    },
+    {
+      "background_luminance": 152.0,
+      "low_contrast_fraction": 0.2480759281652311,
+      "median_contrast": 37.32039999999998,
+      "p05_contrast": 5.7834
+    },
+    {
+      "background_luminance": 154.0,
+      "low_contrast_fraction": 0.26264755175864246,
+      "median_contrast": 36.28879999999998,
+      "p05_contrast": 5.711199999999991
+    },
+    {
+      "background_luminance": 156.0,
+      "low_contrast_fraction": 0.27820225136799365,
+      "median_contrast": 34.36099999999999,
+      "p05_contrast": 5.711200000000019
+    },
+    {
+      "background_luminance": 158.0,
+      "low_contrast_fraction": 0.2952976541451834,
+      "median_contrast": 33.28879999999998,
+      "p05_contrast": 5.711199999999991
+    },
+    {
+      "background_luminance": 160.0,
+      "low_contrast_fraction": 0.31136454461998225,
+      "median_contrast": 32.28879999999998,
+      "p05_contrast": 5.288799999999981
+    },
+    {
+      "background_luminance": 162.0,
+      "low_contrast_fraction": 0.328141893392015,
+      "median_contrast": 30.36099999999999,
+      "p05_contrast": 4.78619999999998
+    },
+    {
+      "background_luminance": 164.0,
+      "low_contrast_fraction": 0.3477063452806672,
+      "median_contrast": 29.28879999999998,
+      "p05_contrast": 4.288799999999981
+    },
+    {
+      "background_luminance": 166.0,
+      "low_contrast_fraction": 0.37293484333258636,
+      "median_contrast": 28.28880000000001,
+      "p05_contrast": 3.7834000000000003
+    },
+    {
+      "background_luminance": 168.0,
+      "low_contrast_fraction": 0.42509466753546354,
+      "median_contrast": 27.28879999999998,
+      "p05_contrast": 3.711199999999991
+    },
+    {
+      "background_luminance": 170.0,
+      "low_contrast_fraction": 0.45907894451506576,
+      "median_contrast": 26.28879999999998,
+      "p05_contrast": 3.7112000000000194
+    },
+    {
+      "background_luminance": 172.0,
+      "low_contrast_fraction": 0.47731645031077385,
+      "median_contrast": 25.36099999999999,
+      "p05_contrast": 3.288800000000009
+    },
+    {
+      "background_luminance": 174.0,
+      "low_contrast_fraction": 0.489689577225681,
+      "median_contrast": 24.976399999999984,
+      "p05_contrast": 3.2165999999999997
+    },
+    {
+      "background_luminance": 176.0,
+      "low_contrast_fraction": 0.49498290459722283,
+      "median_contrast": 24.36099999999999,
+      "p05_contrast": 2.2887999999999806
+    },
+    {
+      "background_luminance": 178.0,
+      "low_contrast_fraction": 0.49937886531135733,
+      "median_contrast": 24.28879999999998,
+      "p05_contrast": 2.213799999999992
+    },
+    {
+      "background_luminance": 180.0,
+      "low_contrast_fraction": 0.5009598415512775,
+      "median_contrast": 23.7834,
+      "p05_contrast": 1.8178000000000054
+    },
+    {
+      "background_luminance": 182.0,
+      "low_contrast_fraction": 0.5008266306205461,
+      "median_contrast": 23.78739999999999,
+      "p05_contrast": 1.7112000000000194
+    },
+    {
+      "background_luminance": 184.0,
+      "low_contrast_fraction": 0.49755934856756945,
+      "median_contrast": 24.36099999999999,
+      "p05_contrast": 1.7966000000000122
+    },
+    {
+      "background_luminance": 186.0,
+      "low_contrast_fraction": 0.4959401645413155,
+      "median_contrast": 24.71119999999999,
+      "p05_contrast": 1.711199999999991
+    },
+    {
+      "background_luminance": 188.0,
+      "low_contrast_fraction": 0.4923393388400736,
+      "median_contrast": 25.15859999999998,
+      "p05_contrast": 1.63900000000001
+    },
+    {
+      "background_luminance": 190.0,
+      "low_contrast_fraction": 0.48510154493700364,
+      "median_contrast": 25.7834,
+      "p05_contrast": 1.1677999999999997
+    },
+    {
+      "background_luminance": 192.0,
+      "low_contrast_fraction": 0.4744322787640091,
+      "median_contrast": 26.71120000000002,
+      "p05_contrast": 0.7112000000000194
+    },
+    {
+      "background_luminance": 194.0,
+      "low_contrast_fraction": 0.46523762661492435,
+      "median_contrast": 27.71120000000002,
+      "p05_contrast": 1.63900000000001
+    },
+    {
+      "background_luminance": 196.0,
+      "low_contrast_fraction": 0.45719540391309693,
+      "median_contrast": 28.71119999999999,
+      "p05_contrast": 2.2887999999999806
+    },
+    {
+      "background_luminance": 198.0,
+      "low_contrast_fraction": 0.4478406921185598,
+      "median_contrast": 30.71119999999999,
+      "p05_contrast": 2.7112000000000194
+    },
+    {
+      "background_luminance": 200.0,
+      "low_contrast_fraction": 0.43403735482331995,
+      "median_contrast": 31.7834,
+      "p05_contrast": 3.63900000000001
+    },
+    {
+      "background_luminance": 202.0,
+      "low_contrast_fraction": 0.41170438738977827,
+      "median_contrast": 32.71119999999999,
+      "p05_contrast": 4.289999999999964
+    },
+    {
+      "background_luminance": 204.0,
+      "low_contrast_fraction": 0.38910603073764777,
+      "median_contrast": 34.041799999999995,
+      "p05_contrast": 4.935000000000025
+    },
+    {
+      "background_luminance": 206.0,
+      "low_contrast_fraction": 0.36459315419733185,
+      "median_contrast": 35.71119999999999,
+      "p05_contrast": 5.74139999999997
+    },
+    {
+      "background_luminance": 208.0,
+      "low_contrast_fraction": 0.34046132287748004,
+      "median_contrast": 37.04220000000001,
+      "p05_contrast": 6.711200000000019
+    },
+    {
+      "background_luminance": 210.0,
+      "low_contrast_fraction": 0.324332473830248,
+      "median_contrast": 38.22179999999997,
+      "p05_contrast": 7.711200000000019
+    },
+    {
+      "background_luminance": 212.0,
+      "low_contrast_fraction": 0.29930121056724107,
+      "median_contrast": 39.71120000000002,
+      "p05_contrast": 8.63900000000001
+    },
+    {
+      "background_luminance": 214.0,
+      "low_contrast_fraction": 0.267079654973363,
+      "median_contrast": 40.0,
+      "p05_contrast": 9.304599999999994
+    },
+    {
+      "background_luminance": 216.0,
+      "low_contrast_fraction": 0.20586252012362802,
+      "median_contrast": 41.71120000000002,
+      "p05_contrast": 10.388599999999997
+    },
+    {
+      "background_luminance": 218.0,
+      "low_contrast_fraction": 0.1659291875475661,
+      "median_contrast": 43.71120000000002,
+      "p05_contrast": 11.63900000000001
+    },
+    {
+      "background_luminance": 220.0,
+      "low_contrast_fraction": 0.14122423943270732,
+      "median_contrast": 45.71120000000002,
+      "p05_contrast": 12.28879999999998
+    },
+    {
+      "background_luminance": 222.0,
+      "low_contrast_fraction": 0.12355262193188894,
+      "median_contrast": 47.71120000000002,
+      "p05_contrast": 11.711200000000048
+    },
+    {
+      "background_luminance": 224.0,
+      "low_contrast_fraction": 0.11085627779745535,
+      "median_contrast": 49.71120000000002,
+      "p05_contrast": 12.752999999999957
+    },
+    {
+      "background_luminance": 226.0,
+      "low_contrast_fraction": 0.10018391369583918,
+      "median_contrast": 51.71120000000002,
+      "p05_contrast": 14.060400000000016
+    },
+    {
+      "background_luminance": 228.0,
+      "low_contrast_fraction": 0.09419768295591957,
+      "median_contrast": 53.71120000000002,
+      "p05_contrast": 14.71120000000002
+    },
+    {
+      "background_luminance": 230.0,
+      "low_contrast_fraction": 0.09063299975526364,
+      "median_contrast": 55.71120000000002,
+      "p05_contrast": 15.409400000000034
+    },
+    {
+      "background_luminance": 232.0,
+      "low_contrast_fraction": 0.09004129538852672,
+      "median_contrast": 57.71120000000002,
+      "p05_contrast": 15.71120000000002
+    },
+    {
+      "background_luminance": 234.0,
+      "low_contrast_fraction": 0.08379587128726163,
+      "median_contrast": 59.71120000000002,
+      "p05_contrast": 16.6378
+    },
+    {
+      "background_luminance": 236.0,
+      "low_contrast_fraction": 0.0775153373282844,
+      "median_contrast": 61.71120000000002,
+      "p05_contrast": 16.63900000000001
+    },
+    {
+      "background_luminance": 238.0,
+      "low_contrast_fraction": 0.07331970933168386,
+      "median_contrast": 63.71120000000002,
+      "p05_contrast": 16.0
+    },
+    {
+      "background_luminance": 240.0,
+      "low_contrast_fraction": 0.06827008567837925,
+      "median_contrast": 65.71120000000002,
+      "p05_contrast": 16.63899999999998
+    },
+    {
+      "background_luminance": 242.0,
+      "low_contrast_fraction": 0.06360047460266484,
+      "median_contrast": 67.71120000000002,
+      "p05_contrast": 18.63899999999998
+    },
+    {
+      "background_luminance": 244.0,
+      "low_contrast_fraction": 0.05939142224870377,
+      "median_contrast": 69.71120000000002,
+      "p05_contrast": 20.63899999999998
+    },
+    {
+      "background_luminance": 246.0,
+      "low_contrast_fraction": 0.05388846837376302,
+      "median_contrast": 71.71120000000002,
+      "p05_contrast": 22.63899999999998
+    },
+    {
+      "background_luminance": 248.0,
+      "low_contrast_fraction": 0.04937375372913158,
+      "median_contrast": 73.71120000000002,
+      "p05_contrast": 24.63899999999998
+    },
+    {
+      "background_luminance": 250.0,
+      "low_contrast_fraction": 0.0473642306965486,
+      "median_contrast": 75.71120000000002,
+      "p05_contrast": 26.63899999999998
+    },
+    {
+      "background_luminance": 252.0,
+      "low_contrast_fraction": 0.045537485452643515,
+      "median_contrast": 77.71120000000002,
+      "p05_contrast": 28.63899999999998
+    },
+    {
+      "background_luminance": 254.0,
+      "low_contrast_fraction": 0.043807808638883755,
+      "median_contrast": 79.71120000000002,
+      "p05_contrast": 30.63899999999998
+    }
+  ],
+  "what": "Contrast a reader actually gets from the delivered content, as a function of background luminance. Content luminances are taken from the delivered frames and never altered; only the page changes."
+}

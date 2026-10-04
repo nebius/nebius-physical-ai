@@ -1,0 +1,74 @@
+{
+  "schema": "npa.cosmos3.wam-simulation-reproduction.v1",
+  "original_record": "../cosmos3-wam-simulation-runtime.json",
+  "original_sha256": "cc3fc8df93b147bb7ed6c115c653899e59ecd8f0249b9c5225485b7ed208e19c",
+  "fresh_record": "simulation-readiness.json",
+  "fresh_sha256": "9960535fe1d4a86241a23f90b078b3e3a3f7f638230ab0ed94f383f4f3901ac6",
+  "same_runtime_package_versions": true,
+  "same_source_revisions": true,
+  "tasks": [
+    {
+      "task_id": 0,
+      "same_initial_state_array_sha256": true,
+      "same_both_camera_pixel_sha256": true,
+      "same_both_camera_png_sha256": true
+    },
+    {
+      "task_id": 1,
+      "same_initial_state_array_sha256": true,
+      "same_both_camera_pixel_sha256": true,
+      "same_both_camera_png_sha256": true
+    },
+    {
+      "task_id": 2,
+      "same_initial_state_array_sha256": true,
+      "same_both_camera_pixel_sha256": true,
+      "same_both_camera_png_sha256": true
+    },
+    {
+      "task_id": 3,
+      "same_initial_state_array_sha256": true,
+      "same_both_camera_pixel_sha256": true,
+      "same_both_camera_png_sha256": true
+    },
+    {
+      "task_id": 4,
+      "same_initial_state_array_sha256": true,
+      "same_both_camera_pixel_sha256": true,
+      "same_both_camera_png_sha256": true
+    },
+    {
+      "task_id": 5,
+      "same_initial_state_array_sha256": true,
+      "same_both_camera_pixel_sha256": true,
+      "same_both_camera_png_sha256": true
+    },
+    {
+      "task_id": 6,
+      "same_initial_state_array_sha256": true,
+      "same_both_camera_pixel_sha256": true,
+      "same_both_camera_png_sha256": true
+    },
+    {
+      "task_id": 7,
+      "same_initial_state_array_sha256": true,
+      "same_both_camera_pixel_sha256": true,
+      "same_both_camera_png_sha256": true
+    },
+    {
+      "task_id": 8,
+      "same_initial_state_array_sha256": true,
+      "same_both_camera_pixel_sha256": true,
+      "same_both_camera_png_sha256": true
+    },
+    {
+      "task_id": 9,
+      "same_initial_state_array_sha256": true,
+      "same_both_camera_pixel_sha256": true,
+      "same_both_camera_png_sha256": true
+    }
+  ],
+  "verified_initial_states": 500,
+  "matching_camera_frames": 20,
+  "scope": "Pinned CPU simulator inputs and initial camera renders match the historical record. This is not model-policy execution or a success-rate measurement."
+}
