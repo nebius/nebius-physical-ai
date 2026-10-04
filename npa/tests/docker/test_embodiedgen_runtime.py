@@ -95,6 +95,8 @@ def test_capability_smoke_requires_real_generation_and_simulation() -> None:
         "linear_speed_m_per_s",
         "decoded_video_frames",
         "VLM_estimated_not_calibrated_ground_truth",
+        "http.client.HTTPSConnection",
+        "defusedxml",
     ):
         assert token in text
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import math
 import os
@@ -11,11 +12,10 @@ import subprocess
 import sys
 import time
 import urllib.parse
-import urllib.request
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
+from defusedxml import ElementTree as ET
 import imageio.v3 as iio
 import numpy as np
 import pybullet as bullet
@@ -51,11 +51,37 @@ def atomic_json(path: Path, payload: dict[str, Any]) -> None:
 
 def fetch_input(uri: str, destination: Path) -> None:
     parsed = urllib.parse.urlparse(uri)
-    if parsed.scheme in {"http", "https"}:
-        with urllib.request.urlopen(uri, timeout=60) as response:
-            destination.write_bytes(response.read())
+    if parsed.scheme == "https":
+        if (
+            not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.port not in {None, 443}
+            or parsed.fragment
+        ):
+            raise ValueError("input HTTPS URI has an unsafe authority or fragment")
+        request_path = parsed.path or "/"
+        if parsed.query:
+            request_path = f"{request_path}?{parsed.query}"
+        connection = http.client.HTTPSConnection(parsed.hostname, 443, timeout=60)
+        temporary = destination.with_name(f".{destination.name}.download")
+        try:
+            connection.request(
+                "GET", request_path, headers={"User-Agent": "npa-embodiedgen"}
+            )
+            response = connection.getresponse()
+            if response.status != 200:
+                raise RuntimeError(f"input HTTPS request returned {response.status}")
+            with temporary.open("wb") as handle:
+                while block := response.read(1024 * 1024):
+                    handle.write(block)
+        finally:
+            connection.close()
+        temporary.replace(destination)
         return
     if parsed.scheme == "s3":
+        if not parsed.netloc or not parsed.path.lstrip("/"):
+            raise ValueError("input S3 URI must name a bucket and object")
         import boto3
 
         boto3.client("s3").download_file(

@@ -180,7 +180,18 @@ def _install(source: Path, venv: Path, cache: Path) -> None:
         env=env,
     )
     _run(["bash", "install/install_basic.sh"], cwd=source, env=env)
-    _run([pip, "-m", "pip", "install", "pybullet==3.2.7", "boto3==1.35.99"], env=env)
+    _run(
+        [
+            pip,
+            "-m",
+            "pip",
+            "install",
+            "pybullet==3.2.7",
+            "boto3==1.35.99",
+            "defusedxml==0.7.1",
+        ],
+        env=env,
+    )
     freeze = subprocess.check_output(
         [pip, "-m", "pip", "freeze", "--all"], env=env, text=True
     )
