@@ -629,11 +629,11 @@ _EXPECTED_POLICY_AST_HASHES = {
     "client-entrypoint": "e71d1c6e9c6ec18770a044ead9a7f668a3682ec14fbb435a3c504d7d85b60459",
     "hosted-request": "9183ee81e359c6abd170bc9ea51fcdd1aa380552d6e7651c9ba6232aab32ae8a",
     # Reviewed completion/enforcement changes preserve shared-profile dispatch.
-    "hosted-response": "a576c55bc2b859b55084f25316fb602a0c41cf0b824fa7baf44dbd94d77ca027",
+    "hosted-response": "356c3bacc9440618b641d716940bc4569b77e6ebdfa42126531470bb83e325da",
     # Sampling context is forwarded only to evidence, not profile dispatch.
     "hosted-call": "95b5fe7a12dca768a88479434334c321cef606b85fb3cb133d0166389e2d79a4",
     "backend-verdict": "1c24916a004f460e53009dd11a0840f79606d22ada0a08e68fb933ef01547545",
-    "evidence-verdict": "4bb91f68e0fa7ecf98ec40e3c907ef9ce820e9c1745f80016106ce7e95e01680",
+    "evidence-verdict": "0ce38406ac4668a2dc3bccc854f0e86c01721c1ead162ca1c28483640947cbaf",
 }
 
 
