@@ -2155,7 +2155,7 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     require(0 <= float(metrics["test/lpips"]) <= 0.5, "maximum LPIPS")
     visual = record(proof, "visual_review")
     equal(visual, "status", "pass")
-    equal(visual, "model", "openbmb/MiniCPM-V-4_5")
+    equal(visual, "model", "MiniMaxAI/MiniMax-M3")
     equal(visual, "served_model", visual["model"])
     equal(visual, "threshold", 0.8)
     equal(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -187,8 +188,8 @@ def accepted():
             },
             "visual_review": {
                 "status": "pass",
-                "model": "openbmb/MiniCPM-V-4_5",
-                "served_model": "openbmb/MiniCPM-V-4_5",
+                "model": "MiniMaxAI/MiniMax-M3",
+                "served_model": "MiniMaxAI/MiniMax-M3",
                 "threshold": 0.8,
                 "rubric_sha256": "0669fb4ad6c762ce12df4c11092e9f1752ae6e50026e4cb646ad944710bd2624",
                 "calibration_task_sha256": "1eac4c5ef02ef5b8a17084b1474fa04df7d0025c07e5ee117dbbdd2c16d466d9",
@@ -293,6 +294,35 @@ def test_checked_in_ncore_remains_unaccepted():
 
 def test_acceptance_validates_complete_evidence(accepted):
     assert images.validate_ncore_accepted_image_manifest(accepted) == accepted
+
+
+def test_acceptance_uses_current_frozen_judge(accepted, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts"))
+    from ncore_publication.vlm_evidence import MODEL
+
+    visual = accepted["rtx_proof"]["visual_review"]
+    visual.update(model=MODEL, served_model=MODEL)
+    assert images.validate_ncore_accepted_image_manifest(accepted) == accepted
+
+
+@pytest.mark.parametrize(
+    ("model", "served_model"),
+    [
+        ("openbmb/MiniCPM-V-4_5", "openbmb/MiniCPM-V-4_5"),
+        ("other/model", "other/model"),
+        ("minimaxai/minimax-m3", "minimaxai/minimax-m3"),
+        (None, None),
+        ("", ""),
+        ("MiniMaxAI/MiniMax-M3", "openbmb/MiniCPM-V-4_5"),
+        ("MiniMaxAI/MiniMax-M3", "other/model"),
+    ],
+)
+def test_acceptance_rejects_substituted_visual_judge(accepted, model, served_model):
+    accepted["rtx_proof"]["visual_review"].update(
+        model=model, served_model=served_model
+    )
+    with pytest.raises(RuntimeError, match="valid (model|served_model)"):
+        images.validate_ncore_accepted_image_manifest(accepted)
 
 
 def test_clean_byte_manifest_needs_no_attribution(accepted):

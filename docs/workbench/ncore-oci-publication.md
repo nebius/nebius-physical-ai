@@ -18,6 +18,13 @@ never reuse their responses as evidence for the selected model or retry until
 the gate passes. Prompts, pixels, labels and thresholds remain independently
 bound, and no expected labels are sent to the judge.
 
+The aggregate acceptance consumer requires that same exact MiniMax identifier
+and rejects old or substituted models. Earlier model-profile-only revisions still
+required MiniCPM in the aggregate consumer: results from those revisions were
+comparison evidence, not aggregate publication acceptance. A passing comparison
+does not fill an acceptance record or authorize publication; every image,
+scientific-evidence and cleanup requirement remains separately enforced.
+
 The shared `publish-public-images.yml` workflow excludes NCore from automatic
 selection and rejects explicit NCore requests. No authorized private acceptance-
 bundle transport is configured for Actions. Use the private
