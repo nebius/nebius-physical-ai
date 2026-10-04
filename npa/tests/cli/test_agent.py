@@ -1407,6 +1407,20 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
     from npa.cli.agent import deploy_cmd
 
     events: list[tuple[str, dict]] = []
+    project_lookups: list[str] = []
+    provider_queries: list[list[str]] = []
+
+    def _project_region(project_id: str) -> str:
+        project_lookups.append(project_id)
+        assert project_id == "project-1"
+        return "us-central1"
+
+    def _unexpected_provider_query(args, **_kwargs):
+        provider_queries.append(list(args))
+        raise AssertionError("state-persistence test attempted a real provider query")
+
+    monkeypatch.setattr("npa.clients.nebius.get_project_region", _project_region)
+    monkeypatch.setattr("npa.clients.nebius._run_json", _unexpected_provider_query)
     creds = {
         "service_account_id": "sa-agent",
         "nebius_api_key": "ak-agent",
@@ -1500,6 +1514,8 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
 
     assert [event for event, _payload in events].count("write_config") >= 2
     assert any(event == "apply" for event, _payload in events)
+    assert project_lookups == ["project-1"]
+    assert provider_queries == []
 
 
 def test_deploy_feedback_names_bounded_phases_and_quiet_period() -> None:
