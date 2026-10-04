@@ -144,8 +144,16 @@ accepted whole-image byte/security review and supported-image release.
   `/usr/share/doc/npa-curobo/secure-pip-build.json` and inside the wheel. This
   changes Ubuntu-owned wheel files without pretending their original dpkg
   package versions changed; preserve original package notices and both source
-  identities. Exact built-layer vulnerability, byte, license and bootstrap
-  qualification remain mandatory, independent of installer unit controls.
+  identities. The complete setuptools seed is separately locked to the same
+  MIT-licensed 84.0.0 wheel as the service runtime. Its fixed Unicode-normalized
+  manifest exclusions prevent the demonstrated NFC/NFD filename bypass present
+  in the former full 80.9.0 seed. This does not change the installer's separately
+  reviewed, limited `pkg_resources` donor or claim that all 80.9.0 code was
+  removed from that derivative. The isolated builder hash-checks the complete
+  wheel, and the final apt RUN replaces the old seed before export; a later-layer
+  deletion would leave vulnerable bytes in an ancestor. Exact built-layer
+  vulnerability, byte, license and bootstrap qualification remain mandatory,
+  independent of installer unit controls.
 - Reproducible Python bytecode: the build helper and trusted workflow pass the
   exact source commit epoch as a build-only `SOURCE_DATE_EPOCH` argument. The
   pinned CPython compiler then uses PEP 552 checked-hash bytecode for newly

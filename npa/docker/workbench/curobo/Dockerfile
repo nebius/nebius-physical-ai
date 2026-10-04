@@ -1,4 +1,4 @@
-# Only the source-identified derivative wheel/receipt cross this build boundary.
+# Only the derivative wheel/receipt and hash-locked full seed cross this boundary.
 # Old bootstrap wheels and build-tool dependencies are never final ancestors.
 FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS secure-pip-builder
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
@@ -6,6 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 COPY docker/workbench/common/secure_pip /opt/secure-pip-builder
 RUN python /opt/secure-pip-builder/build.py \
     --work-dir /opt/secure-pip-work --output-dir /opt/secure-pip-wheels
+COPY docker/workbench/curobo/setuptools-seed.lock /opt/setuptools-seed.lock
+RUN python -m pip --isolated download --no-cache-dir --no-deps \
+    --only-binary=:all: --require-hashes --index-url https://pypi.org/simple \
+    --requirement /opt/setuptools-seed.lock --dest /opt/setuptools-seed
 
 # Pinned Apache-2.0 cuRobo V2 plus MIT/BSD benchmark data; no model weights.
 FROM nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701
@@ -42,7 +46,7 @@ RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
     && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
     && [[ "$UBUNTU_SNAPSHOT" == "20260920T000000Z" ]]
 RUN --mount=type=bind,from=secure-pip-builder,source=/opt/secure-pip-wheels,target=/opt/secure-pip-wheels,ro \
-    --mount=type=bind,from=secure-pip-builder,source=/opt/secure-pip-work/vendors/setuptools-80.9.0-py3-none-any.whl,target=/opt/setuptools-80.9.0-py3-none-any.whl,ro \
+    --mount=type=bind,from=secure-pip-builder,source=/opt/setuptools-seed/setuptools-84.0.0-py3-none-any.whl,target=/opt/setuptools-84.0.0-py3-none-any.whl,ro \
     rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources \
     && printf '%s\n' \
        'Types: deb' \
@@ -67,11 +71,11 @@ RUN --mount=type=bind,from=secure-pip-builder,source=/opt/secure-pip-wheels,targ
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
     && chmod 0440 /etc/sudoers.d/npa-runtime \
     && python3.12 -c 'import hashlib,json,pathlib; p=pathlib.Path("/opt/secure-pip-wheels"); r=json.loads((p/"build-receipt.json").read_text()); w=p/r["wheel"]; assert w.name == "pip-26.2.1+npa.1-py3-none-any.whl"; assert hashlib.sha256(w.read_bytes()).hexdigest() == r["sha256"]' \
-    && echo '062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922  /opt/setuptools-80.9.0-py3-none-any.whl' | sha256sum -c - \
+    && echo '51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670  /opt/setuptools-84.0.0-py3-none-any.whl' | sha256sum -c - \
     && python3.12 -c 'from pathlib import Path; p=Path("/usr/share/python-wheels"); assert {f.name for f in p.glob("*.whl")} == {"pip-24.0-py3-none-any.whl", "setuptools-68.1.2-py3-none-any.whl"}' \
     && rm /usr/share/python-wheels/pip-24.0-py3-none-any.whl /usr/share/python-wheels/setuptools-68.1.2-py3-none-any.whl \
     && install -m 0444 /opt/secure-pip-wheels/pip-26.2.1+npa.1-py3-none-any.whl /usr/share/python-wheels/ \
-    && install -m 0444 /opt/setuptools-80.9.0-py3-none-any.whl /usr/share/python-wheels/ \
+    && install -m 0444 /opt/setuptools-84.0.0-py3-none-any.whl /usr/share/python-wheels/ \
     && python3.12 -m venv /opt/npa-venv \
     && /opt/npa-venv/bin/python -c 'import pip; from pip._vendor import urllib3,msgpack; assert pip.__version__ == "26.2.1+npa.1"; assert urllib3.__version__ == "2.8.0"; assert msgpack.__version__ == "1.2.1"'
 COPY --from=secure-pip-builder --chmod=0444 /opt/secure-pip-wheels/build-receipt.json /usr/share/doc/npa-curobo/secure-pip-build.json

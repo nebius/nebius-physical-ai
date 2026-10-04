@@ -1,0 +1,4 @@
+# The full system seed is separate from secure-pip's limited pkg_resources donor.
+# Keep the same fixed wheel as the service runtime; do not permit an sdist build.
+setuptools==84.0.0 \
+    --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670

@@ -9,6 +9,10 @@ a versioned heading when a release is cut.
 
 ### cuRobo image dependency closure
 
+- Lock the full system setuptools seed independently to the runtime's 84.0.0
+  wheel, preserving its Unicode-normalized manifest exclusions. Replace it in
+  the original apt layer, without changing the shared installer's limited donor
+  files or treating the source correction as rebuilt-image qualification.
 - A source-identified pip derivative repairs its separately vendored libraries;
   an isolated builder and same-layer seed-wheel replacement retain real service
   bootstrap without exporting the old installer bytes. Two hash-pinned OpenSSL

@@ -148,13 +148,54 @@ def test_pip_bootstrap_distribution_is_content_pinned():
     assert apt.index("rm /usr/share/python-wheels/") < apt.index("python3.12 -m venv")
     assert 'assert urllib3.__version__ == "2.8.0"' in apt
     assert 'assert msgpack.__version__ == "1.2.1"' in apt
+    assert "COPY --from=secure-pip-builder --chmod=0444" in final
+    assert "pip install --no-cache-dir --upgrade 'pip==" not in text
+
+
+def test_full_setuptools_seed_has_its_own_fixed_wheel_lock():
+    seed_lock = DOCKERFILE.with_name("setuptools-seed.lock").read_text()
+    lock_lines = [line for line in seed_lock.splitlines() if not line.startswith("#")]
+    digest = "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
+    assert lock_lines == ["setuptools==84.0.0 \\", f"    --hash=sha256:{digest}"]
+    runtime_lock = DOCKERFILE.with_name("requirements.lock").read_text()
+    assert f"setuptools==84.0.0 \\\n    --hash=sha256:{digest}" in runtime_lock
+    text = DOCKERFILE.read_text()
+    builder, final = text.rsplit("FROM ", 1)
+    assert (
+        "COPY docker/workbench/curobo/setuptools-seed.lock /opt/setuptools-seed.lock"
+    ) in builder
+    assert "python -m pip --isolated download --no-cache-dir --no-deps" in builder
+    assert "--only-binary=:all: --require-hashes" in builder
+    assert "--index-url https://pypi.org/simple" in builder
+    assert (
+        "--requirement /opt/setuptools-seed.lock --dest /opt/setuptools-seed" in builder
+    )
+    # The full vulnerable package must not be reused as a seed just because its
+    # separate pkg_resources-only donor remains a reviewed installer input.
     manifest = json.loads(
         (DOCKERFILE.parent.parent / "common/secure_pip/inputs.json").read_text()
     )
     donor = next(row for row in manifest["vendors"] if row["name"] == "setuptools")
-    assert f"{donor['sha256']}  /opt/{donor['filename']}" in apt
-    assert "COPY --from=secure-pip-builder --chmod=0444" in final
-    assert "pip install --no-cache-dir --upgrade 'pip==" not in text
+    assert donor["filename"] == "setuptools-80.9.0-py3-none-any.whl"
+    assert donor["filename"] not in final
+    assert donor["sha256"] not in final
+
+
+def test_full_seed_replacement_occurs_before_the_apt_layer_is_committed():
+    final = DOCKERFILE.read_text().rsplit("FROM ", 1)[1]
+    instructions = re.sub(r"\\\n\s*", " ", final).splitlines()
+    apt = next(line for line in instructions if line.startswith("RUN --mount="))
+    wheel = "setuptools-84.0.0-py3-none-any.whl"
+    digest = "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
+    mount = f"source=/opt/setuptools-seed/{wheel},target=/opt/{wheel},ro"
+    verified = f"{digest}  /opt/{wheel}"
+    old_removed = "rm /usr/share/python-wheels/pip-24.0-py3-none-any.whl"
+    installed = f"install -m 0444 /opt/{wheel} /usr/share/python-wheels/"
+    assert mount in apt
+    assert apt.index(verified) < apt.index(old_removed) < apt.index(installed)
+    assert apt.index(installed) < apt.index("python3.12 -m venv /opt/npa-venv")
+    assert "setuptools-68.1.2-py3-none-any.whl" in apt
+    assert final.count(installed) == 1
 
 
 def test_runtime_http_dependency_retains_fixed_streaming_and_proxy_boundary():
