@@ -35,7 +35,11 @@ remains unsupported by this candidate.
   `8f1084e3132a39270c3a13ebe37270a43ece2a01`; fetched only into the
   operator-owned runtime cache.
 - LeRobot 0.3.3 is isolated to this runtime because upstream LingBot-VA requires
-  it; this is distinct from newer NPA LeRobot tool runtimes.
+  it; this is distinct from newer NPA LeRobot tool runtimes. The contiguous
+  training-subset regression executes the cumulative-index body from upstream
+  [`lerobot.datasets.utils.get_episode_data_index`](https://github.com/huggingface/lerobot/blob/b883328e6c95681ca90a18b102e4ae5e1f91e2bf/src/lerobot/datasets/utils.py)
+  at `b883328e6c95681ca90a18b102e4ae5e1f91e2bf` (Apache-2.0), with a
+  test-only CPU tensor carrier; production uses the installed native package.
 - Raw data: [HuggingFaceVLA/libero](https://huggingface.co/datasets/HuggingFaceVLA/libero)
   at `affa19c0de0f6bce2a7edd26dddef8a532e7e6f6`, whose immutable card declares
   CC-BY-4.0. It is the HuggingFace VLA Team's LeRobot v2.1 conversion of the

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from itertools import accumulate
 from pathlib import Path
 
 import pyarrow as pa
@@ -20,6 +21,52 @@ from npa.solutions import lingbot_va as L
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows/testing/lingbot-va-libero-long.yaml"
 DOCKERFILE = ROOT / "npa/docker/workbench/lingbot-va/Dockerfile"
+
+
+class _PinnedLeRobotTensor:
+    """Small CPU-only carrier for the pinned LeRobot index function's output."""
+
+    def __init__(self, values: list[int]) -> None:
+        self._values = values
+
+    def tolist(self) -> list[int]:
+        return list(self._values)
+
+
+class _PinnedLeRobotTorch:
+    """The only ``torch`` surface used by ``get_episode_data_index``."""
+
+    @staticmethod
+    def LongTensor(values: list[int]) -> _PinnedLeRobotTensor:
+        return _PinnedLeRobotTensor(values)
+
+
+torch = _PinnedLeRobotTorch()
+
+
+def _pinned_v033_get_episode_data_index(
+    episode_dicts: dict[dict], episodes: list[int] | None = None
+) -> dict[str, _PinnedLeRobotTensor]:
+    """Execute the exact v0.3.3 cumulative-index body against fixture records.
+
+    This is the body of ``lerobot.datasets.utils.get_episode_data_index`` at
+    Hugging Face LeRobot ``b883328e6c95681ca90a18b102e4ae5e1f91e2bf`` (Apache-2.0),
+    with only the local function name and test-only tensor annotation changed.
+    The production image still installs and invokes LeRobot itself.  Keeping the
+    body here makes the native positional-index contract deterministic without
+    requiring a CUDA Torch installation in the repository test environment.
+    """
+    episode_lengths = {
+        ep_idx: ep_dict["length"] for ep_idx, ep_dict in episode_dicts.items()
+    }
+    if episodes is not None:
+        episode_lengths = {ep_idx: episode_lengths[ep_idx] for ep_idx in episodes}
+
+    cumulative_lengths = list(accumulate(episode_lengths.values()))
+    return {
+        "from": torch.LongTensor([0] + cumulative_lengths[:-1]),
+        "to": torch.LongTensor(cumulative_lengths),
+    }
 
 
 def _raw_dataset(root: Path) -> Path:
@@ -188,6 +235,24 @@ def test_training_subset_physically_reindexes_parquet_videos_and_latents(
     info = json.loads((prepared_dataset / "meta/info.json").read_text())
     assert info["total_episodes"] == 10
     assert info["total_frames"] == 40
+    # This executes the exact pinned LeRobot 0.3.3 cumulative-index behavior
+    # that LingBot's native loader uses.  The first selected record after the
+    # excluded episode and the final selected record must resolve contiguous
+    # frame offsets, rather than their original sparse prepared episode IDs.
+    native_metas = {record["episode_index"]: record for record in records}
+    native_index = _pinned_v033_get_episode_data_index(native_metas)
+    assert native_index["from"].tolist() == list(range(0, 40, 4))
+    assert records[1]["prepared_episode_index"] == 2
+    assert native_index["from"].tolist()[records[1]["episode_index"]] == 4
+    assert records[-1]["prepared_episode_index"] == 18
+    assert native_index["from"].tolist()[records[-1]["episode_index"]] == 36
+    assert {
+        record["prepared_episode_index"] for record in native_metas.values()
+    }.isdisjoint(prepared["heldout_episode_indices"])
+    assert all(
+        record["action_config"][0]["action_text"] == record["tasks"][0]
+        for record in native_metas.values()
+    )
     for native_index, record in enumerate(records):
         prepared_index = record["prepared_episode_index"]
         assert record["episode_index"] == native_index
@@ -208,6 +273,12 @@ def test_training_subset_physically_reindexes_parquet_videos_and_latents(
         assert table.column("episode_index").to_pylist() == [native_index] * 4
         assert table.column("index").to_pylist() == list(
             range(native_index * 4, native_index * 4 + 4)
+        )
+        assert (
+            table.column("index").to_pylist()[0]
+            == _pinned_v033_get_episode_data_index(native_metas)["from"].tolist()[
+                native_index
+            ]
         )
         assert table.column("action").to_pylist() == [
             [
