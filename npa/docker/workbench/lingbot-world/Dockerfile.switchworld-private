@@ -67,6 +67,13 @@ COPY --from=wan-source /opt/byof /opt/byof
 COPY --from=wan-source /opt/wan-base /opt/wan-base
 COPY --from=wan-source /opt/npa/wan2-2 /opt/npa/wan2-2
 COPY --from=wan-source /usr/local/bin/wan-runtime /usr/local/bin/wan-runtime
+# Keep PyAV's exact wheel choice runtime-only alongside the existing CUDA
+# closure. The fetch goes through wan-runtime's cache lock and atomic ready
+# marker; no MP4 decoder package is copied into this image layer.
+COPY --chmod=0444 docker/workbench/lingbot-world/switchworld-runtime-requirements.txt /tmp/npa-switchworld-runtime-requirements.txt
+RUN printf '\n' >> /opt/npa/wan2-2/runtime-requirements.txt \
+    && cat /tmp/npa-switchworld-runtime-requirements.txt >> /opt/npa/wan2-2/runtime-requirements.txt \
+    && rm -f /tmp/npa-switchworld-runtime-requirements.txt
 
 COPY --chmod=0755 docker/workbench/common/model_source.sh /opt/npa/model_source.sh
 COPY --chmod=0755 docker/workbench/common/model_runtime.sh /usr/local/bin/model-runtime

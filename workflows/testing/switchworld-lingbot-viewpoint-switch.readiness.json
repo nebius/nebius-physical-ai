@@ -51,8 +51,8 @@
       ]
     },
     "source_image": {
-      "status": "verified",
-      "reason": "The rejected digest-equal mirror is not selected. The source-controlled operator-private snapshot rebuild has a resolved immutable digest, clean complete layer/history scan, repository-pinned Trivy secret/fixed-CRITICAL policy result, SPDX inventory, and a multi-target exact-digest bootstrap probe with verified cleanup. This verifies private image delivery and bootstrap compatibility only; native SwitchWorld generation and final artifact readback remain unverified.",
+      "status": "unverified",
+      "reason": "The rejected digest-equal mirror is not selected. The prior source-controlled operator-private snapshot passed immutable delivery, byte-scan, vulnerability/secret, SPDX, and target-bootstrap checks, but it omitted the runtime-only PyAV decoder needed by the first real preparation stage. The replacement keeps the decoder as a hash-locked operator-cache fetch and must receive a fresh private build, byte scan, security scan, and target bootstrap before native retry.",
       "evidence": [
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/execution-route.json (private operator evidence, 2026-10-04)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/image-preflight-20261004-private.json (public-source status ok, digest-bound bootstrap and cleanup verified, 2026-10-04)",

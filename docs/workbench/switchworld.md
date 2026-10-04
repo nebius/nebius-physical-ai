@@ -18,6 +18,11 @@ CUDA/PyTorch closure into the operator-writable Wan runtime cache before real
 case validation, generation, measurement, or visualization. The private image
 still contains no CUDA/PyTorch payload; this is the inherited Wan runtime-fetch
 mechanism, not a new SwitchWorld acceptance flag.
+The private runtime appends a hash-locked PyAV 17.1.0 requirement to that same
+operator cache so preparation and evaluation can decode actual MP4 frames.
+PyAV source is BSD-3-Clause; its runtime-fetched wheel is never an image layer
+or public NPA distribution, and its exact component notice remains part of the
+private runtime receipt. This is not an additional EULA or acceptance switch.
 Preparation fully decodes the target, verifies that the condition tensor agrees
 with its view schedule and switch index, and extracts actual before/after-switch
 context frames. It does not invent controls or frames.
@@ -81,6 +86,13 @@ models, CUDA/PyTorch runtime packages, case data, inputs, and generated outputs
 remain separately governed. The existing `npa-lingbot-world` image contains no
 weights, CUDA Python distributions, user media, credentials, or term
 acceptance; it fetches runtime dependencies into an operator-owned cache.
+
+PyAV source declares BSD-3-Clause. Linux wheels may contain FFmpeg components,
+so their exact component terms remain attached to the operator runtime receipt;
+this integration neither bakes nor publicly redistributes those wheels. Rerun
+is deferred until the final visualization path is qualified; its source
+repository offers Apache-2.0/MIT terms. Neither package adds a
+SwitchWorld-specific click-through or `ACCEPT_*` variable.
 
 No SwitchWorld-specific NPA EULA, `ACCEPT_*` variable, duplicate attestation,
 or telemetry consent is added. The inherited Wan runtime keeps only its

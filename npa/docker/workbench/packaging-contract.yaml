@@ -552,7 +552,10 @@ images:
       entry has no public publication or release intent. Its first private
       digest has completed exact built-byte scanning, the repository's
       secret/fixed-CRITICAL Trivy policy scan, SPDX inventory, and target
-      bootstrap; native workflow evidence remains required.
+      bootstrap; native workflow evidence remains required. The hash-locked
+      PyAV decoder requirement is fetched only into the operator-owned runtime
+      cache for real-frame processing; it is not an image byte or public
+      distribution payload.
   sam3:
     dockerfile: sam3/Dockerfile
     tier: job

@@ -11,6 +11,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 DOCKERFILE = ROOT / "npa/docker/workbench/lingbot-world/Dockerfile.switchworld-private"
 CONTRACT = ROOT / "npa/docker/workbench/packaging-contract.yaml"
+RUNTIME_REQUIREMENTS = (
+    ROOT / "npa/docker/workbench/lingbot-world/switchworld-runtime-requirements.txt"
+)
 
 
 def test_private_recipe_uses_audited_snapshot_and_no_easydict_wheel() -> None:
@@ -28,6 +31,19 @@ def test_private_recipe_uses_audited_snapshot_and_no_easydict_wheel() -> None:
     assert "import easydict" in text  # The build proves that it remains absent.
     assert 'npa.disposition="operator-private-validation-no-publication"' in text
     assert "ACCEPT_" not in text
+
+
+def test_private_recipe_runtime_fetches_the_hash_locked_real_frame_decoder() -> None:
+    """Keep PyAV out of image bytes while retaining reproducible real-frame decoding."""
+
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    requirements = RUNTIME_REQUIREMENTS.read_text(encoding="utf-8")
+
+    assert "switchworld-runtime-requirements.txt" in text
+    assert "runtime-requirements.txt" in text
+    assert "av==17.1.0" in requirements
+    assert requirements.count("--hash=sha256:") >= 30
+    assert "rerun-sdk" not in requirements
 
 
 def test_private_recipe_is_quarantined_without_a_public_catalog_entry() -> None:
