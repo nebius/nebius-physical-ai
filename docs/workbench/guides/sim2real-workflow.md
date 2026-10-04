@@ -192,6 +192,41 @@ controller alone, but not for the canonical Sim2Real CPU states.
 If the preflight reports no fitting CPU node, remove `NoSchedule`/`NoExecute`
 taints that the tasks do not tolerate or add/resize this pool.
 
+### The Isaac GPU pool needs operator-mounted RTX drivers
+
+Stage 7 rollouts, Stage 9 PPO, and Stage 10 held-out eval render camera
+observations inside Isaac Sim. On Kubernetes that path is validated only against
+the **GPU-Operator mounted RTX driver stack**, which
+`npa cluster up --gpu-workload-profile rtx-rendering` provisions together with
+its GLX/EGL/Vulkan readiness gate.
+
+A Nebius managed-driver image (`nebius.com/driverful=true`, no
+`nvidia.com/gpu.deploy.operands=true`) still satisfies pure-compute CUDA, so
+Cosmos Transfer and EnvGen succeed on it. The mismatch stays invisible until
+Stage 7 renders and then fails as an opaque Warp illegal-memory-access, after the
+earlier GPU stages have already been paid for. Preflight therefore rejects eligible RTX
+PRO 6000 nodes serving managed drivers before submission:
+
+```bash
+kubectl get nodes -L nvidia.com/gpu.product,nebius.com/driverful,nvidia.com/gpu.deploy.operands
+```
+
+The check resolves the three Isaac states' GPU, CPU, and memory requirements,
+including resource overrides, and merges global, selected-context, and task pod
+placement with the same rules used by SkyPilot. Cordoned or unready nodes,
+untolerated taints, node allowlists, selectors, and required node affinity exclude
+pools that cannot host these tasks. A managed compute pool excluded from Isaac
+placement does not block a separate operator-mounted render pool. Missing node
+readiness/resource evidence or unsupported placement constraints block validation
+instead of establishing compatibility.
+
+This label check detects a known unsupported driver configuration. It does not
+replace the real graphics-readiness gate or prove that unlabelled drivers work.
+
+Expected for the Isaac pool: the RTX PRO 6000 rows report
+`gpu.deploy.operands=true`. If they report `driverful=true` instead, reprovision
+that pool with `--gpu-workload-profile rtx-rendering`.
+
 ## 4. Warm Isaac once
 
 The canonical workflow relies on SkyPilot and the Kubernetes scheduler directly;

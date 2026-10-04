@@ -1773,11 +1773,13 @@ def test_live_non_root_verifier_defers_only_root_private_paths() -> None:
 
 @pytest.mark.parametrize(
     "root",
-    [Path("/"), Path(tempfile.gettempdir()) / "..", Path("/proc/self/root")],
+    [Path("/"), Path("/") / "..", Path("/proc/self/root")],
 )
 def test_uid_zero_verifier_refuses_every_live_root_spelling(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # A configurable nested TMPDIR's parent is not necessarily the live root.
+    assert root.resolve() == Path("/")
     monkeypatch.setattr(VERIFIER.os, "geteuid", lambda: 0)
     with pytest.raises(ValueError, match="non-root runtime user"):
         VERIFIER.verify(root)
@@ -1791,6 +1793,23 @@ def test_uid_zero_verifier_refuses_live_root_symlink(
     monkeypatch.setattr(VERIFIER.os, "geteuid", lambda: 0)
     with pytest.raises(ValueError, match="non-root runtime user"):
         VERIFIER.verify(alias)
+
+
+def test_uid_zero_verifier_rejects_nested_tmp_parent_as_offline_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    nested_tmp = tmp_path / "nested-tmp"
+    nested_tmp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(nested_tmp))
+    monkeypatch.setattr(tempfile, "tempdir", None)
+    offline_root = Path(tempfile.gettempdir()) / ".."
+    assert offline_root.resolve() == tmp_path.resolve()
+    assert offline_root.resolve() != Path("/")
+    monkeypatch.setattr(VERIFIER.os, "geteuid", lambda: 0)
+    with pytest.raises(
+        ValueError, match="reviewed neutral image file changed: source-lock.json"
+    ):
+        VERIFIER.verify(offline_root)
 
 
 def test_exact_shadow_asset_byte_refuses_at_an_innocent_path(

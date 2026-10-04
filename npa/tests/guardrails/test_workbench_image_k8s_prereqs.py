@@ -56,6 +56,7 @@ SKYPILOT_HOSTED_IMAGES = (
     "isaac-lab",
     "lancedb",
     "lerobot",
+    "open3d",
     "sim2real-control",
     "sim2real-envgen",
     "sim2real-eval",

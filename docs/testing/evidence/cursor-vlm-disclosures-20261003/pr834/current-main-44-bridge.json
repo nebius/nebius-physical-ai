@@ -1,0 +1,41 @@
+{
+  "schema": "npa.sanitized-vlm-disclosure-current-source-bridge/v1",
+  "candidate": {
+    "head": "5eeb388a72dc79ebb925953ffd06490b349d8d20",
+    "tree": "f226c4204b7be838e2cec27b3f95cff3e7296c45",
+    "main_parent": "44b65b71eb6cde8e62876d5768674b2717b48481",
+    "later_main_gate": "4603e7e1d8ffede505161448fe92368e7c6bda45"
+  },
+  "completed_protocol": {
+    "execution_head": "961a6199f03fc8efa4141c862b564a273b19768b",
+    "private_result_sha256": "b1d017ad6b4b5f1e98d30d8808ff20343e905460ebbbec2eadcf4f722012569f",
+    "sanitized_observation_sha256": "786872d5b5b3a1c8404e7aa3fc530e0d6e610f3b75dbae977fd3dafeb23c24d8",
+    "provider_transports": 12,
+    "manual_retries": 0,
+    "provider_calls_in_current_bridge": 0
+  },
+  "current_source": {
+    "vlm_eval_sha256": "fe3a38469f439af9c2c5cfef702454b283905ee695dc218fb02a01f46146292c",
+    "vlm_eval_cli_sha256": "d7e6e9d08267dccf64015f91baf7fd55b3217141441a963b495a41566f2978a6",
+    "vlm_eval_sdk_sha256": "35e7c0bd637299894bb7641e29d771fe51f2a9dcc25677c4a0b6c2c494254d3f",
+    "strict_score_test_sha256": "a8aa7d2cc8bfe0967f9a3849a3ba419f7ff2dae1c95c049e89dbf67159f78493",
+    "original_scalar_live_test_sha256": "5988fea369e3f50d3978859b57c77e64a0dc6b4673cd485644d92d473099655e",
+    "unchanged_protocol_ast_symbols": 18,
+    "main44_consumer_grade_registration_controls": 354,
+    "retained_response_replay_sha256": "c21c86afbf50e3f2b4ecbbc5078c385d8d78f6393f5b3554e7a8f247e1a34eb4",
+    "network_connects_in_replay": 0
+  },
+  "retained_outcomes": {
+    "scalar_scores": {"1.0": 2, "0.0": 4},
+    "paired": {
+      "inside": "judges_agree_passed",
+      "outside": "judges_agree_needs_iteration",
+      "blank": "judges_agree_needs_iteration"
+    }
+  },
+  "limitations": [
+    "This binds main44 source behavior to retained private responses and no-network CPU controls. It is not a second provider inference, calibration, safety claim, or final-head proof.",
+    "Main44 adds visual-review, response-byte, preference, CLI, and SDK interfaces. Their controls are current-source CPU evidence; unchanged scalar and paired protocol ASTs do not imply whole-evaluator equality.",
+    "The later main4603 boundary, fixture repairs, a final owner runner/full, publication, anonymous byte verification, and current-head CI remain separate requirements."
+  ]
+}

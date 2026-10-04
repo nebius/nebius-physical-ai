@@ -1,0 +1,88 @@
+{
+  "schema": "npa.sanitized-vlm-disclosures-main44-source-bridge/v1",
+  "pr": 838,
+  "integration": {
+    "source_commit": "bbc3696c7175a6c1c8538bb9ff41ae16cf63cc00",
+    "source_tree": "41578b6626e79ac3c567fba361199c5fc0c249f2",
+    "pr838_parent": "cb51665c2f304f6d060523fb0f3c8bf2d3dde255",
+    "landed_main44": "44b65b71eb6cde8e62876d5768674b2717b48481",
+    "scope": "Owned source integration only; not a current-head CI, full-suite, provider, or merge-readiness result."
+  },
+  "incoming_main44_interfaces": {
+    "response_capture_core_sha256": "8b62108d59ffd7ac18d71badcf10810e7388d1645c88b46e13751961fdc6980b",
+    "visual_review_module_sha256": "171061e1cf4f8b5e08481a609628e34fef22743b371b177a4da02555ed2f1722",
+    "visual_review_schema_sha256": "adbd42173aa5b5bea303f3d57e94004a975623c13301628ba0a4047babd476c2",
+    "cli_interface_sha256": "c08300eda5202340379734af0d53b4a4658ffe3f594ca43ced747dfacad8dc4e",
+    "sdk_interface_sha256": "35e7c0bd637299894bb7641e29d771fe51f2a9dcc25677c4a0b6c2c494254d3f",
+    "response_journal_ast_sha256": {
+      "_retain_response_bytes": "780f007d2f291d87a160df9e7acbb48e50335733f7ffcf24ec3eb3acd92dc607",
+      "_backend_response_byte_evidence": "5749cbe34abb94c620683c7ec586a2c66a06e6dda3128ac977f9f86941e1eb72",
+      "_preference_response_bytes_sink": "0df5eb61c4a9f51554e85daad6bebe454f7b2fd7d49669bb8cec88a624dfc67b",
+      "_response_sink_with_latency": "573322a3e8cd8e77b4fb6a997faa0c948673b78e9d80e60671019a0215a40f04"
+    },
+    "boundary": "Audit-only rich-review capture and response journaling remain separate from normalized completion scores and gates."
+  },
+  "unchanged_pr838_contract": {
+    "request_evidence_ast_sha256": "749144f6f2a9e0eb31d4b6e8ab623d3d77797ab7862fb55bc03bd8b031b84dd5",
+    "write_result_ast_sha256": "19e7d6de094b33ddea7f92d9a420c2f8a4236d9d21e825cd110b645e51f9c66a",
+    "write_benchmark_report_ast_sha256": "4af86084e9569579f5338d7bcbc4a455dfa4fbd941541d3c434f4c9d1301a5f8",
+    "grade_consumer_sha256": "01393ae5e9900624db3536a0b7a2d662b36ef337fcf6c73459d2aa5cc4b584d2",
+    "scope_protocol_and_frame_manifest_sha256": "25dee38f69e05f6b1b236b8a2a9c598aa219fdc54a1525eb65a8abeac5f31595",
+    "public_frame_sha256": [
+      "862ddbfc5ce146f0746429ac74d5485bc8806e6d974f13a49beb24a024f59dc7",
+      "15efc7dc971789e54f0d7113002165ef159a07faacbe09aca4ac175572f1fa00",
+      "4c9e7ec0a80bad9f03fa84c00ac493455d064c0c20494af8fb1ad5b60a58732c",
+      "ce883137e5530f2a38c038dd18df35f3d88f7c4d841f8212a7dc21e6e7b07dfe"
+    ],
+    "token_client_sha256_hex_segments_in_order": [
+      "4c2c60f217c61ddf",
+      "4c4441b706a7b8c3",
+      "c73273b8d241c9ee",
+      "70e5e09e0a391f6d"
+    ],
+    "token_client_sha256_reassembly": "Concatenate the four hexadecimal segments without separators."
+  },
+  "retained_actual_hosted_output": {
+    "sanitized_source": "current-main935.json",
+    "execution_commit": "065f34b7e0de54d7903772eee5e8d3e01ca15d68",
+    "original_execution_commit": "a01dda9c915a731e13bec6d72a5affcf9d49745d",
+    "protocol_sha256": "25dee38f69e05f6b1b236b8a2a9c598aa219fdc54a1525eb65a8abeac5f31595",
+    "model": "MiniMaxAI/MiniMax-M3",
+    "threshold": 0.8,
+    "provider_calls": 4,
+    "http_statuses": [200, 200, 200, 200],
+    "scores": [0.0, 0.0, 0.0, 0.0],
+    "confusion_matrix": {
+      "true_positives": 0,
+      "true_negatives": 2,
+      "false_positives": 0,
+      "false_negatives": 2
+    },
+    "accuracy": 0.5,
+    "f1": 0.0,
+    "raw_response_sha256": [
+      "3e7d7e79626ca5709d000a3afac27619adb8449e81cd58ad897327ca21759e7e",
+      "3474c0f10e8d617bc4a52c064945f07e1b474638eeecdaca90a20f48a3881332",
+      "889fc45b81c0fa11681fca19c926e41555caf63d69403e83c90412f8b2b53580",
+      "e78fb1e9a45cabb87decd6a25434a48202f77a2bd3150ae48b3992f04eda0298"
+    ],
+    "new_provider_calls": 0,
+    "meaning": "The two false negatives and all-zero result are retained without threshold, label, rubric, payload, or retry changes."
+  },
+  "affected_cpu_validation": {
+    "test_population": 743,
+    "passed": 740,
+    "skipped": 3,
+    "failed": 0,
+    "errors": 0,
+    "duration_seconds": 28.949,
+    "junit_sha256": "1ddd18b8652fa6cdb812d66a515c7c6cb870d6bb8d2db824ffc3ff5b6d665423",
+    "provider_calls": 0,
+    "notes": "The three skips are explicit live-provider tests without opt-in, not passing hosted executions."
+  },
+  "limits": [
+    "This bridge does not calibrate model quality, establish physical-task validity, safety, generalization, or an operational error rate.",
+    "It does not replace the held future full, independent actual-output review, anonymous publication verification, final current-head CI, or the coordinator-owned lifecycle decision.",
+    "Raw responses, credentials, endpoint details, and live resource identifiers remain private."
+  ]
+}

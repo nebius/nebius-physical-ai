@@ -1,0 +1,53 @@
+{
+  "schema": "npa.sanitized-vlm-current-main-source-bridge/v1",
+  "integration": {
+    "head": "b20fa78f41751a73ff526ee98c31ed554daeb0b8",
+    "tree": "4924527c5947d5f31da17826a3cb5a6262f3538d",
+    "base": "09548f6939e0216d15b76819c6cc9d7537bf8e40",
+    "source_change": "landed strict self-hosted verdict-field validation; PR838 disclosures remain present"
+  },
+  "cpu_bridge": {
+    "first_attempt": {
+      "passed": 464,
+      "failed": 1,
+      "skipped": 1,
+      "failure_class": "a direct no-transport test helper needed the existing explicit provider_call_made argument"
+    },
+    "repair": "test-only provider_call_made=false argument for a direct synthetic structured-result control",
+    "final_attempt": {
+      "passed": 466,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "coverage": "strict verdict, evaluator, token-factory, identity, disclosure/promotion, sampling and selected provenance controls"
+    },
+    "precheck": {
+      "passed": 270,
+      "failed": 0
+    }
+  },
+  "source_sha256": {
+    "npa/src/npa/workbench/vlm_eval/__init__.py": "a8ddd78da70cdb5b4404489205f21488f564e261196167ad700413c7fdfa49f5",
+    "npa/tests/workbench/test_vlm_strict_scores.py": "a8aa7d2cc8bfe0967f9a3849a3ba419f7ff2dae1c95c049e89dbf67159f78493",
+    "npa/tests/workbench/test_vlm_model_enforcement.py": "0e54286b19d437db403fba3aaafd7db43ab00b50581efcb4d06eba03d2f7eb03",
+    "npa/tests/workflows/test_vlm_disclosure_promotion.py": "37fe63725a7618ab7679e77ea50816774dcb7dbfe21240ec16be490f6ce56014"
+  },
+  "execution_scope": {
+    "hosted_provider_calls": 0,
+    "new_native_or_gpu_workload": false,
+    "new_full_run": false,
+    "new_claude_review": false,
+    "description": "The bridge used synthetic or mocked completions. It does not relabel the earlier hosted execution, any historical full run, or its failures."
+  },
+  "prior_hosted_execution": {
+    "evidence": "current-main935.json",
+    "head": "065f34b7e0de54d7903772eee5e8d3e01ca15d68",
+    "protocol_sha256": "25dee38f69e05f6b1b236b8a2a9c598aa219fdc54a1525eb65a8abeac5f31595",
+    "statement": "The fixed four-request execution predates this source bridge and remains its own evidence; it was not repeated for ancestry or strict-parser integration."
+  },
+  "limits": [
+    "The source bridge is not a hosted-model, physical-task, calibration, safety, generalization, or operational-error-rate result.",
+    "The current main integration still requires its own published-head CI after this proof commit.",
+    "The catalogued fixture population, native binding, final full runner, full validation, and independent final-output review remain separate prerequisites."
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "sources": {
+    "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+    "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+    "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+    "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+    "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+  },
+  "data": {
+    "frames": 101469,
+    "episodes": 379,
+    "tasks": 10,
+    "video_files_sample_decoded": 4,
+    "fps": 20
+  },
+  "dataset_payload_sha256": {
+    "libero_10/Untitled": "de997276711427a22744eb8beef2d7aefc4a9a9bbf1fb04d30ebf2c73dda4e55",
+    "libero_10/data/chunk-000/file-000.parquet": "daa1a9c1de7a2ea41ca5c80272e52cd534906c8956db818815fcec4581f942e0",
+    "libero_10/data/chunk-000/file-001.parquet": "f5c0c203a06d12adc033928438f585f4d18c576f60a77264ba6dce3f738b151e",
+    "libero_10/meta/episodes/chunk-000/file-000.parquet": "3f28bdd48bf28bbc3183f601113acc6c616c1add1ef49bb3d359d4a3ab75f73a",
+    "libero_10/meta/episodes/chunk-000/file-001.parquet": "8ad134a64c05a676129da1da58c0c99d3199b3eb6db95a43ece1b076e69dab5f",
+    "libero_10/meta/info.json": "ba10b105378537846d33f826a5080216ab0e04b82827f7a70b4862ddb1a77168",
+    "libero_10/meta/stats.json": "e7dabff910260e202c1463a65d3b4ff1971baebe67c4a67aa079ca2bcc8db73b",
+    "libero_10/meta/tasks.parquet": "27571e721a87eea9965467e1d45a5ba39b98bd2259449574800ed144969c1311",
+    "libero_10/videos/observation.images.image/chunk-000/file-000.mp4": "d35b45aaeac289af110e6c4e6f1187a1502734794ea6a3401fcca094a3a3b501",
+    "libero_10/videos/observation.images.image/chunk-000/file-001.mp4": "650c95d703d0e7c9565488be339d6d5e4d3c8b6043ec2e665504b0cdb63e4d73",
+    "libero_10/videos/observation.images.wrist_image/chunk-000/file-000.mp4": "caccfdeb08470b16065bffeb4c50c47d073333b7354b3abc87b6ce4a6861ddd6",
+    "libero_10/videos/observation.images.wrist_image/chunk-000/file-001.mp4": "a0db06e23a1ff6b01fb76c29681f601d9f8883d6857a19776a1a5c4575374c2a"
+  },
+  "prepared_receipt_sha256": "07514e0cdbac2660c4b1b9e13bc5dd2228fb61af7ea9a3924e780854bf7323e2"
+}

@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "robot-workcell",
+      "fa2": {
+        "median_seconds": 2.022068117999652,
+        "block_medians": [
+          2.022302275999664,
+          2.0218339599996398
+        ],
+        "minimum_seconds": 2.0109706309999638,
+        "maximum_seconds": 2.051394068999798,
+        "warmup_seconds": [
+          3.0422783699996216,
+          2.7929111399998874
+        ]
+      },
+      "fa4": {
+        "median_seconds": 2.010404835000145,
+        "block_medians": [
+          2.009085187999972,
+          2.011724482000318
+        ],
+        "minimum_seconds": 2.0036408830001164,
+        "maximum_seconds": 2.1033337520002533,
+        "warmup_seconds": [
+          4.435022103999927,
+          4.409357995999926
+        ]
+      },
+      "fa2_time_over_fa4_time": 1.0058014598833305
+    },
+    {
+      "name": "warehouse",
+      "fa2": {
+        "median_seconds": 3.1431734344996585,
+        "block_medians": [
+          3.1420862770000895,
+          3.1442605919992275
+        ],
+        "minimum_seconds": 3.1383392900002036,
+        "maximum_seconds": 3.1543982819998746,
+        "warmup_seconds": [
+          3.150542469999891,
+          3.1570393809997768
+        ]
+      },
+      "fa4": {
+        "median_seconds": 3.138085086500041,
+        "block_medians": [
+          3.139979535999828,
+          3.1361906370002544
+        ],
+        "minimum_seconds": 3.1284434429999237,
+        "maximum_seconds": 3.1445183619998716,
+        "warmup_seconds": [
+          3.1436031430002913,
+          3.1491128409998055
+        ]
+      },
+      "fa2_time_over_fa4_time": 1.0016214818462084
+    },
+    {
+      "name": "sensor-rig",
+      "fa2": {
+        "median_seconds": 3.1856721644996924,
+        "block_medians": [
+          3.186002642999938,
+          3.185341685999447
+        ],
+        "minimum_seconds": 3.18125659099951,
+        "maximum_seconds": 3.193457791000128,
+        "warmup_seconds": [
+          3.1918152130001545,
+          3.2030365029995664
+        ]
+      },
+      "fa4": {
+        "median_seconds": 3.1790224095002486,
+        "block_medians": [
+          3.18197744400004,
+          3.176067375000457
+        ],
+        "minimum_seconds": 3.172429593000288,
+        "maximum_seconds": 3.2219424579998304,
+        "warmup_seconds": [
+          3.195709251000153,
+          3.1813146069998766
+        ]
+      },
+      "fa2_time_over_fa4_time": 1.002091760970156
+    }
+  ],
+  "fa4_tile": null,
+  "fa4_tuning": null,
+  "images": {
+    "fa2": "sha256:b8bf7067f54bbce01a568d940a098733a1fc41c0bdd154d88e4a451605324718",
+    "fa4": "sha256:6a94f7d90751f1679687d0f10d7eed122ab2a9998e5892c6b5ff63b1ab10dace"
+  },
+  "interpretation": "Ratios above 1 favor FA4; below 1 favor FA2. Block variation is descriptive, not a significance test."
+}

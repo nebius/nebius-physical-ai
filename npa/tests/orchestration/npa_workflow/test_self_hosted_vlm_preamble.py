@@ -25,6 +25,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     assert_no_unresolved_placeholders,
     render_run_preamble_for_tool,
     render_self_hosted_vlm_preamble,
+    render_setup_for_tool,
     render_skypilot_yaml,
     render_task_run_script,
 )
@@ -33,6 +34,22 @@ from npa.workbench.vlm_eval import DEFAULT_ENDPOINT_URL, DEFAULT_MODEL
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SPECS = REPO_ROOT / "workflows" / "testing"
+
+
+@pytest.mark.parametrize("backend", ["self-hosted", "self_hosted", "api"])
+def test_paired_judge_never_inherits_local_serving(backend) -> None:
+    config = {"vlm_backend": backend}
+    tool_ref = "workbench.vlm_eval.compare_judges"
+    assert render_run_preamble_for_tool(tool_ref, config=config) == ""
+    setup = render_setup_for_tool(
+        tool_ref, config=config, options=SkypilotRenderOptions()
+    )
+    assert "vllm" not in setup
+    assert "NEBIUS_TOKEN_FACTORY_KEY is required" in setup
+    if backend != "api":
+        assert "vllm serve" in render_run_preamble_for_tool(
+            "workbench.vlm_eval.run", config=config
+        )
 
 
 def test_preamble_serves_the_model_the_tool_will_ask_for() -> None:

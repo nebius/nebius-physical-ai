@@ -10,6 +10,7 @@ Physical AI workbench tools.
 Options
 --help  Show this message and exit.
 Commands
+specialists  Self-hosted specialist agents and durable task monitoring.
 antioch  Run Antioch simulations and collect policy-compatible data.
 lerobot  LeRobot policy training, evaluation, serving, and inference.
 cosmos  NVIDIA Cosmos world model serving and inference endpoints.
@@ -33,6 +34,7 @@ namespace  Create or select Kubernetes namespaces.
 molmoact  MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
 openvla  OpenVLA-OFT LIBERO preparation, training, rollout, and evidence.
 openarm  Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab.
+open3d  Open3D point-cloud registration and surface reconstruction.
 robocasa  RoboCasa kitchen-task simulation workbench.
 newton  Newton physics engine: teacher training, demo generation, evaluation.
 lichtblick  Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer.
@@ -65,6 +67,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 
 | Command | Description |
 | --- | --- |
+| `specialists` | Self-hosted specialist agents and durable task monitoring. |
 | `antioch` | Run Antioch simulations and collect policy-compatible data. |
 | `lerobot` | LeRobot policy training, evaluation, serving, and inference. |
 | `cosmos` | NVIDIA Cosmos world model serving and inference endpoints. |
@@ -87,6 +90,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `molmoact` | MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented). |
 | `openvla` | OpenVLA-OFT LIBERO preparation, training, rollout, and evidence. |
 | `openarm` | Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab. |
+| `open3d` | Open3D point-cloud registration and surface reconstruction. |
 | `robocasa` | RoboCasa kitchen-task simulation workbench. |
 | `newton` | Newton physics engine: teacher training, demo generation, evaluation. |
 | `lichtblick` | Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer. |
@@ -111,7 +115,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 
 ```bash
 npa workbench --help
-npa workbench antioch --help
+npa workbench specialists --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `workbench`.

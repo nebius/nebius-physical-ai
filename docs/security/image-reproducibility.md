@@ -59,18 +59,25 @@ To update, resolve the new tag's commit via the GitHub refs API and bump both
 
 ### npa Image Tags
 
-npa-published runtime images use two tag families:
+Workbench build guidance uses two canonical CUDA tag families:
 
 - `cuda12`: CUDA 12.x runtime for H200, L40S, A100, and earlier supported GPUs.
   This is the production tag family for current H200/L40S validation.
-- `cuda13-b300`: CUDA 13.x runtime for Blackwell validation images, including
-  B300 and RTX PRO 6000 `sm_120` targets. Production readiness still depends on
+- `cuda13-blackwell`: CUDA 13.x runtime for Blackwell validation images, including
+  B200, B300 and RTX PRO 6000 `sm_120` targets. Production readiness still depends on
   each upstream framework and the target fleet's CUDA 13-compatible host driver.
 
 Customers should select the tag family by target GPU:
 
 - H200 / L40S: `cuda12`
-- B300 / RTX PRO 6000 Blackwell: `cuda13-b300` when that path is declared stable
+- B200 / B300 / RTX PRO 6000 Blackwell: `cuda13-blackwell` when that path is declared stable
+
+`cuda13-b300` is a declared legacy alias, accepted for existing immutable
+releases and consumers. The shared base build produces both prefixes with the
+same suffix for the same image. Its old build entrypoint forwards to
+`base/cuda13-blackwell/build.sh`; Dockerfile and script paths use the canonical directory. The rename does not republish existing tags or change
+accepted release digests. Use the exact image reference from the relevant
+release record; a family name alone is not a published artifact or GPU result.
 
 The canonical mapping is maintained in `npa/docker/workbench/tags.yaml`, and CI runs
 `npa/docker/workbench/check_tag_consistency.py` to reject tag-family drift.
@@ -229,5 +236,6 @@ using the image in a customer environment.
   normalization.
 - Customer-facing image catalog: which image exists, what it contains, and which
   GPU or workload each image targets.
-- `cuda13-b300` remains blocked on upstream Blackwell support in Taichi and
-  flash-attn plus host driver readiness.
+- `cuda13-blackwell` still requires per-image Blackwell qualification: Taichi
+  support, FA4 feature/shape restrictions and CUDA 13 host driver readiness vary
+  by workload. See the [FA4 qualification scope](../workbench/flash-attention.md).

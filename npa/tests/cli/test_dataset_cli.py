@@ -177,11 +177,17 @@ def test_dataset_service_storage_denial_is_a_command_error(
     client = TestClient(create_app(auth_mode="none"))
 
     def fake_request(method: str, url: str, **kwargs: Any):
-        return client.request(
+        response = client.request(
             method,
             url.removeprefix("http://dataset.example"),
             json=kwargs.get("json"),
             params=kwargs.get("params"),
+        )
+        # TestClient may use httpx2; the patched CLI transport is still httpx.
+        return cli_module.httpx.Response(
+            response.status_code,
+            content=response.content,
+            request=cli_module.httpx.Request(method, url),
         )
 
     monkeypatch.setattr(cli_module.httpx, "request", fake_request)
