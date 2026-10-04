@@ -31,6 +31,15 @@ node-local ephemeral storage, with durable reuse still unapproved.
 
 ## SkyPilot worker bootstrap contract
 
+The Sim2Real controller and Rerun viewer upgrade inherited Debian packages from
+the pinned `DEBIAN_SNAPSHOT=20261002T000000Z` closure. Their `MIN_*_VERSION`
+build arguments encode the observed fixed security floors: Perl for both roles,
+plus GLib and mbedcrypto for the viewer. An unreadable or below-floor installed
+version stops the build. The [package-index receipt](validation/sim2real-cpu-security-snapshot-20261002.json)
+binds the snapshot and exact package hashes; it is not replacement-image
+security, bootstrap or runtime acceptance. Do not lower these floors or
+substitute scanner exceptions for rebuilt, validated image bytes.
+
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
 effective user; root or verified passwordless sudo; `openssh-server`, `rsync`,
 and compatible service/init behavior; writable `/tmp` and home; and an

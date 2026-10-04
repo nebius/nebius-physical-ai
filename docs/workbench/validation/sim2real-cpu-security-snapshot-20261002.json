@@ -1,0 +1,33 @@
+{
+  "timestamp": "20261002T000000Z",
+  "signed_index_authority": "open3d-security-snapshot-20261002.json",
+  "verification_scope": "Complete fresh Packages.xz downloads match the committed signed-index hashes and byte counts. Package floors use real dpkg ordering. This is package-index evidence, not a built image scan or a new signature-verification execution.",
+  "indexes": {
+    "debian": {
+      "sha256": "7778d3e3f303b7ddb8ce0fe7c8d57473a076c6bf2e8f241f75421d2396352498",
+      "bytes": 9678380
+    },
+    "debian-security": {
+      "sha256": "ccec1667443a165d6989e8c531fa168c0b8b2ac1f7a2c35c4aa28d0f094ccd26",
+      "bytes": 263496
+    }
+  },
+  "packages": {
+    "perl-base": {
+      "version": "5.40.1-6+deb13u1",
+      "fixed_floor": "5.40.1-6+deb13u1",
+      "sha256": "b795464137a0f4d443fc9284f4b93e883fb83883cb533adf300ac660807a352a"
+    },
+    "libglib2.0-0t64": {
+      "version": "2.84.4-3~deb13u5",
+      "fixed_floor": "2.84.4-3~deb13u4",
+      "sha256": "e2baf92c57d1db1753e5781a61450d9a01e7833c7bd2dfe87776a6811c11ecc2"
+    },
+    "libmbedcrypto16": {
+      "version": "3.6.6-0.1~deb13u1",
+      "fixed_floor": "3.6.6-0.1~deb13u1",
+      "sha256": "b38baf2ecaca7b28b3005d34b8108ee9b17681426b20662813995e939aea6dfa"
+    }
+  },
+  "image_scope": "Controller requires the Perl floor; viewer requires all three floors. Both recipes upgrade inherited packages from the pinned closure and reject unreadable/below-floor installed versions. Actual replacement image security, bootstrap, byte confidentiality and capability evidence remain separate required gates."
+}
