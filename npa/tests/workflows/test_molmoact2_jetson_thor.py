@@ -48,7 +48,9 @@ def _write_observations(path: Path) -> None:
         image=np.arange(rows * 2 * 3 * 3, dtype=np.uint8).reshape(rows, 2, 3, 3),
         wrist_image=np.full((rows, 2, 3, 3), 37, dtype=np.uint8),
         state=np.arange(rows * 8, dtype=np.float32).reshape(rows, 8),
-        instruction=np.asarray(["open drawer", "open drawer", "close drawer", "close drawer"]),
+        instruction=np.asarray(
+            ["open drawer", "open drawer", "close drawer", "close drawer"]
+        ),
         episode_id=np.asarray(["episode-0", "episode-1", "episode-2", "episode-3"]),
         split=np.asarray(["calibration", "calibration", "evaluation", "evaluation"]),
         seed=np.asarray([11, 12, 13, 14], dtype=np.int64),
@@ -154,12 +156,24 @@ def test_connected_artifact_pipeline_emits_verified_rrd(tmp_path: Path) -> None:
     assert verified_result["rows"] == 2
     assert evaluation_result["action_mae"] == pytest.approx(0.25)
     assert evaluation_result["action_rmse"] == pytest.approx(0.25)
-    assert evaluation_result["closed_loop_rollout_status"] == "not_evaluated_by_vla_edge"
+    assert (
+        evaluation_result["closed_loop_rollout_status"] == "not_evaluated_by_vla_edge"
+    )
     assert visualization_result["rrd_bytes"] > 1024
     rerun = Path(sys.executable).with_name("rerun")
-    verified = subprocess.run([str(rerun), "rrd", "verify", str(rrd)], capture_output=True, text=True, check=False)
+    verified = subprocess.run(
+        [str(rerun), "rrd", "verify", str(rrd)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert verified.returncode == 0, verified.stderr
-    printed = subprocess.run([str(rerun), "rrd", "print", "-vv", str(rrd)], capture_output=True, text=True, check=False)
+    printed = subprocess.run(
+        [str(rerun), "rrd", "print", "-vv", str(rrd)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert printed.returncode == 0, printed.stderr
     assert "evaluation_row" in printed.stdout
     assert "latency/target_ms" in printed.stdout
@@ -253,8 +267,14 @@ def test_workflow_has_five_connected_real_stages() -> None:
         "evaluate-target-action-trace",
         "visualize-target-evidence",
     ]
-    assert all(step.argv[:3] == ["python3", "-m", "npa.workflows.molmoact2_jetson_thor"] for step in plan.steps)
-    assert spec.states["visualize-target-evidence"].outputs[0].schema == "application/vnd.rerun.rrd"
+    assert all(
+        step.argv[:3] == ["python3", "-m", "npa.workflows.molmoact2_jetson_thor"]
+        for step in plan.steps
+    )
+    assert (
+        spec.states["visualize-target-evidence"].outputs[0].schema
+        == "application/vnd.rerun.rrd"
+    )
 
 
 def test_readiness_record_binds_workflow_and_target_blocker() -> None:
