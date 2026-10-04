@@ -106,13 +106,17 @@ RUN git clone --filter=blob:none --no-checkout "${LIBERO_SOURCE_URL}" /opt/openw
     && rm -rf /tmp/openwam-uv-cache
 
 COPY pyproject.toml README.md /opt/npa/
-COPY src/npa /opt/npa/src/npa
+# The stage process runs as ``ubuntu``.  Preserve executable directories and
+# make the baked adapter source readable regardless of this isolated checkout's
+# private source-file mode.
+COPY --chmod=0755 src/npa /opt/npa/src/npa
 # Each upstream environment declares imageio-ffmpeg, whose wheel bundles a
 # second static executable. Each install layer removes it before that layer is
 # committed; the Ubuntu ffmpeg package above is sufficient for the runtime.
 RUN /opt/openwam-venv/bin/python -m pip install --no-cache-dir --no-deps /opt/npa \
     && test -z "$(find /opt/openwam-venv /opt/openwam-libero -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
+    && sudo -u ubuntu -H /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
     && /opt/openwam-venv/bin/rerun rrd --help >/dev/null \
     && test -z "$(find /opt/openwam /opt/openwam-venv /opt/openwam-libero /opt/openwam-libero-source -type f \
       \( -iname '*.safetensors' -o -iname '*.ckpt' -o -iname 'pytorch_model*.bin' \) -print -quit)" \
