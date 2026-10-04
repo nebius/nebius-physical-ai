@@ -1705,6 +1705,8 @@ def default_npa_setup() -> str:
 #: not exist and silently fell back to this literal, so its "cannot drift" promise
 #: never actually engaged.)
 NUREC_RERUN_PIN = "rerun-sdk==0.38.1"
+# Receipt decoding uses this Python wrapper, not merely the ffmpeg executable.
+NUREC_FFMPEG_PIN = "imageio-ffmpeg==0.6.0"
 # Keep the independent NuRec consumer stable when it reads newly converted V4
 # sequences. This official Apache-2.0 wheel is fetched at runtime, not rebaked
 # into NVIDIA's proprietary NRE image.
@@ -2055,8 +2057,9 @@ def render_setup_for_tool(
             "    return 1\n"
             "  fi\n"
             "}\n"
-            f"npa_nurec_pip 'huggingface_hub>=0.30' '{NUREC_NCORE_PIN}' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
-            '"$npa_nurec_py" -c \'import ncore, rerun; print("nurec runtime deps ready")\'\n'
+            f"npa_nurec_pip 'huggingface_hub>=0.30' '{NUREC_NCORE_PIN}' '{NUREC_RERUN_PIN}' '{NUREC_FFMPEG_PIN}' 'pillow>=10.0'\n"
+            '"$npa_nurec_py" -c \'import ncore, rerun, imageio_ffmpeg; '
+            'imageio_ffmpeg.get_ffmpeg_exe(); print("nurec runtime deps ready")\'\n'
         )
     return "".join(parts)
 

@@ -203,6 +203,17 @@ that are unrelated to COLMAP lineage remain optional for other visualization
 workflows.
 Source attribution and the conversion report identify a COLMAP run; a rig
 sidecar alone also occurs in preconverted NCore and does not trigger this rule.
+An external, previously qualified NCore prefix does not automatically populate
+these run-local documents. Preserve the exact conversion and rig bytes and
+source attribution in the new run layout before visualization; do not remove
+the reconstruction's conversion hash to bypass this requirement.
+
+NuRec stage setup installs and probes `imageio-ffmpeg==0.6.0` in the same
+interpreter as NPA before native work starts. The system `ffmpeg` command alone
+does not satisfy the Python decoder used to produce render receipts. Local
+qualification uses the matching `nurec-audit` extra. A missing render receipt is
+not completed qualification even if native rendering returned successfully;
+retain that failure and audit the original output bytes separately.
 
 ## Run with an operator-selected development image
 

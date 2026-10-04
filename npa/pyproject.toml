@@ -115,6 +115,8 @@ leisaac = [
 # NuRec USDZ packages during objective qualification.
 nurec-audit = [
     "usd-core==26.8",
+    # Decode every retained MP4 using the same wrapper as the native receipt.
+    "imageio-ffmpeg==0.6.0",
 ]
 genesis = [
     "genesis-world>=1.4.1,<2.0",
