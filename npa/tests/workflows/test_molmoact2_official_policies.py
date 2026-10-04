@@ -220,9 +220,10 @@ def test_runtime_image_bakes_the_npa_console_for_skypilot_setup() -> None:
     """The worker setup clears PYTHONPATH before discovering the image CLI."""
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "COPY pyproject.toml README.md /opt/npa-src/" in dockerfile
-    assert "COPY src/npa /opt/npa-src/src/npa" in dockerfile
-    assert "pip install --no-deps /opt/npa-src" in dockerfile
+    assert "COPY pyproject.toml README.md /opt/npa/" in dockerfile
+    assert "COPY src/npa /opt/npa/src/npa" in dockerfile
+    assert "pip install --no-deps /opt/npa" in dockerfile
     assert "command -v npa" in dockerfile
     assert "env -u PYTHONPATH python3 -c" in dockerfile
     assert "from npa.workflows.byof import molmoact2_pipeline" in dockerfile
+    assert "chown -R ubuntu:ubuntu /opt/npa /opt/molmoact2" not in dockerfile

@@ -77,9 +77,9 @@ COPY docker/workbench/molmoact2/REDISTRIBUTION.md /usr/share/doc/molmoact2/REDIS
 # the image bootstrap. Copying the package source alone is therefore not
 # sufficient: install the NPA console entry point into the selected runtime
 # venv, so ``command -v npa`` remains true during that guarded setup phase.
-COPY pyproject.toml README.md /opt/npa-src/
-COPY src/npa /opt/npa-src/src/npa
-RUN pip install --no-deps /opt/npa-src \
+COPY pyproject.toml README.md /opt/npa/
+COPY src/npa /opt/npa/src/npa
+RUN pip install --no-deps /opt/npa \
     && command -v npa \
     && env -u PYTHONPATH python3 -c \
       'from npa.workflows.byof import molmoact2_pipeline; assert callable(molmoact2_pipeline.main)'
@@ -87,8 +87,7 @@ RUN pip install --no-deps /opt/npa-src \
 RUN useradd --create-home --shell /bin/bash --uid 1000 ubuntu \
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
     && chmod 0440 /etc/sudoers.d/npa-runtime \
-    && install -d -o ubuntu -g ubuntu /work /opt/cache \
-    && chown -R ubuntu:ubuntu /opt/npa /opt/molmoact2 /usr/share/doc/molmoact2
+    && install -d -o ubuntu -g ubuntu /work /opt/cache
 
 # This config-only instruction is deliberately last: it binds the immutable
 # private image manifest to the verified worker contract without invalidating
