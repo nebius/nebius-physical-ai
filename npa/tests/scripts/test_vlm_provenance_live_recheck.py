@@ -486,7 +486,7 @@ def test_provenance_parser_tag_matches_retained_framing(fenced, monkeypatch):
             ],
         }
     )
-    base = "npa_vlm_eval_compatible_json_v1"
+    base = "npa_vlm_eval_compatible_json_v2"
     provider = {
         "raw_response": raw,
         "raw_response_sha256": hashlib.sha256(raw.encode()).hexdigest(),
