@@ -92,6 +92,14 @@ corresponding-source closure exists. Runtime fetching later changes delivery
 only, not use, derivative, output, or service rights. No accepted release,
 anonymous pull, or current GPU capability is claimed.
 
+`npa-lingbot-va` is likewise excluded from public publication. Its source-only
+candidate preserves Apache-2.0 LingBot-VA attribution and leaves model, data,
+CUDA runtime, and caches outside image layers, but it remains restricted to
+operator-private validation until exact bytes are scanned, pulled by digest,
+exercised on a compatible GPU, and its real multi-stage artifacts are
+independently inspected. It has no accepted release row or anonymous-pull
+claim.
+
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
 digest recorded in `lerobot_version_manifest.json`; the `0.6.0` tag is only a
