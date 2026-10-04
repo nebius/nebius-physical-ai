@@ -30,7 +30,7 @@
     },
     "worker_input": {
       "status": "verified",
-      "reason": "A genuine 17-frame DROID window from the documented held-out split was re-emitted from observation.state.cartesian_position (including the upstream DROID-to-OpenCV rotation) and aligned source action.gripper_position values. The corrected manifest plus 51 frame objects was staged to the private run prefix and read back with hashes; native processing awaits the rebuilt image.",
+      "reason": "A genuine 17-frame DROID window from the documented held-out split was re-emitted from observation.state.cartesian_position (including the upstream DROID-to-OpenCV rotation) and aligned source action.gripper_position values. The corrected manifest plus 51 frame objects was staged to the private run prefix and read back with hashes; native processing awaits a fresh source-overlay five-stage run against the already-qualified private image.",
       "evidence": [
         "access-controlled operator input-selection evidence"
       ]
