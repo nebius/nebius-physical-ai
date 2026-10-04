@@ -20,6 +20,7 @@ from npa.workbench.cosmos.fastwam_k2 import (
     _rrd_recording_id,
     _run_robolab,
     _select_cuda_topology,
+    _sync_framework,
     apply_k2_runtime_overlay,
     compare_variants,
     server_argv,
@@ -88,6 +89,36 @@ def test_overlay_retains_k2_generated_frames_and_native_condition_mask(tmp_path:
 def test_robolab_checkout_uses_the_upstream_published_repository() -> None:
     """Pin the repository namespace named by both upstream policy cards."""
     assert ROBOLAB_REPOSITORY == "https://github.com/NVlabs/RoboLab.git"
+
+
+def test_framework_sync_uses_pinned_upstream_dependency_groups(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The pinned framework exposes policy-server as a uv group, not an extra."""
+    calls: list[list[str]] = []
+
+    def fake_run(argv, *, cwd, env, log) -> None:
+        calls.append(list(argv))
+
+    monkeypatch.setattr("npa.workbench.cosmos.fastwam_k2._run", fake_run)
+    framework = tmp_path / "framework"
+    returned = _sync_framework(framework, {}, tmp_path / "framework-sync.log")
+
+    assert calls[0] == [
+        "uv",
+        "sync",
+        "--frozen",
+        "--group",
+        "policy-server",
+        "--group",
+        "cu130-train",
+    ]
+    assert calls[1] == [
+        str(framework / ".venv/bin/python"),
+        "-c",
+        "import torch; assert torch.cuda.is_available()",
+    ]
+    assert returned == framework / ".venv/bin/python"
 
 
 def test_server_argv_never_uses_k0_drop_generated_vision(tmp_path: Path) -> None:
