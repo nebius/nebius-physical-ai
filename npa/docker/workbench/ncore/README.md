@@ -60,8 +60,14 @@ independent-review or release gate.
 For COLMAP conversion, NPA preserves each frame's actual camera-to-world poses
 in `T_sensor_worlds`, including composition through downsampled camera parents.
 The derived `npa_rig` group uses explicitly virtual identity camera-to-rig
-calibrations and the reference camera's world trajectory for scene extent.
-NRE's native per-frame pose override restores each camera's independent world
+calibrations and a merged world trajectory over disjoint photographic intervals.
+The converter assigns disjoint virtual photographic intervals to independent
+cameras (downsampled aliases share their parent's interval), and the derived rig
+matches every camera pose at its exact timestamp knot. These are not capture
+times or physical rig motion. The report retains image hashes and original/new
+indices. This corrects the earlier overlapping-timeline contract: native training
+interpolates the shared rig even when per-frame world poses are exported. The
+native per-frame pose field alone does not restore each camera's independent world
 trajectory. This does not assert a measured physical multi-camera rig. Original
 poses, image bytes, calibration, masks and point records remain independently
 audited; malformed or contradictory pose contracts fail before reconstruction.

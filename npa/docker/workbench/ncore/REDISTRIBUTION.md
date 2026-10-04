@@ -121,8 +121,11 @@ and build/licensing metadata, applies NVIDIA's original
 valid under NumPy 1 and 2; text readers distinguish blank records from EOF;
 downsampled cameras use their own calibration and verified resized masks; and
 each frame retains its actual camera-to-world poses in `T_sensor_worlds`. The
-last change composes parent poses for downsampled cameras and enables NRE's
-native independent-camera pose override. Patches fail on source-context drift.
+last change composes parent poses for downsampled cameras. Independent cameras
+also receive disjoint virtual photographic intervals; downsampled aliases retain
+their parent's interval. A merged virtual rig preserves the poses consumed by
+native training. No physical capture timing is inferred. Patches fail on
+source-context drift.
 Every retained post-patch source file is hashed in `source-inventory.json`.
 The actual converter is NVIDIA's `//tools/data_converter/colmap:convert` Python
 module, not a replacement conversion implementation or PyPI's unrelated pycolmap.

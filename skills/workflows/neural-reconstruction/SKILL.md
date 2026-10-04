@@ -183,8 +183,11 @@ contract is documented in `docs/workbench/guides/nurec-colmap-reconstruct.md`.
   checked OCI archive's immutable loaded ID with `--pull=never`, then submit
   `nurec-reconstruct-render.yaml`. Observe and bind the reconstruct and render
   pod image IDs separately; a requested digest is never observed identity.
-- Preserve virtual per-camera **1 FPS** timestamps as photographic ordering,
-  not synchronized capture time. Sparse SfM points are not physical LiDAR.
+- Preserve **1 FPS** ordering within each camera, assigning disjoint virtual
+  intervals to independent cameras and the same interval to their downsample
+  aliases. Bind original image hashes and frame indices to the new timestamps.
+  These are photographic indices, not synchronized capture time or a physical
+  rig trajectory. Sparse SfM points are not physical LiDAR.
   Record upstream's near-origin point filtering and any derived rig changes.
 - Reopen every image/calibration/pose/point, compare full source counts and
   finite geometry, and retain hashes, source notices and CC-BY-4.0 attribution
@@ -274,14 +277,18 @@ Some captures carry camera-to-world transforms only in the per-frame
 dynamic camera pose edges exist; dynamic edges remain preferred.
 
 NPA's COLMAP conversion records each real frame world pose, including
-downsample-parent composition. For these declared conversions, the derived group
-carries virtual static camera calibrations and reconstruction selects NRE's native
-per-frame pose override. This preserves independently moving cameras without
-inventing fixed extrinsics. Original camera trajectories remain in the default
-group and are independently compared against every frame pose. Conflicting
-overrides, malformed frame data, and reference trajectories that omit camera
-frames fail before reconstruction. This repair does not establish a successful
-NRE run; exact image, conversion and downstream RTX evidence remain required.
+downsample-parent composition. Declared virtual-time-v2 conversions assign
+disjoint photographic intervals to independently moving cameras, then merge
+their original world poses into one exact-knot virtual rig with identity
+calibrations. Every global-shutter frame must match its unique rig knot. The
+native training consumer defaults to shared-rig interpolation even when the
+dataset stores per-camera frame poses; the old overlapping virtual-time-v1
+representation is therefore rejected, not accepted through a dataset flag.
+Original camera trajectories remain in the default group and are independently
+compared against every frame pose. Conflicting overrides, malformed frame data,
+missing or mismatched knots fail before reconstruction. This repair does not
+establish a successful NRE run; exact image, canonical conversion, effective
+native poses/rays and downstream RTX evidence remain required.
 
 `npa workbench nurec fetch` fixes this by default. For a single-camera capture
 the rig **is** the camera, so `rig -> world` is exactly that camera's pose

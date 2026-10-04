@@ -52,7 +52,7 @@ WORLD_FRAME = "world"
 #: ``dataset.poses_component_group=<this>``, which is why the derived component
 #: replaces the pose set rather than merging with it. Legacy derivation copies
 #: original edges; COLMAP frame-pose mode uses virtual static calibrations and
-#: NRE's native per-frame world-pose override instead.
+#: one disjoint photographic timeline containing every original camera pose.
 DERIVED_POSES_GROUP = "npa_rig"
 #: Store-file suffix for the derived store: ``<sequence>.ncore4-<group>.zarr.itar``.
 DERIVED_GROUP_NAME = "npa_rig"
@@ -303,6 +303,10 @@ def derive_rig_poses(
         trajectories, pose_source = _camera_world_trajectories(reader)
         chosen = select_reference_camera(trajectories, preferred=reference_camera)
         poses, timestamps = trajectories[chosen]
+        if frame_pose_overwrite:
+            from npa.workbench.nurec.colmap_timeline import merge_world_trajectories
+
+            poses, timestamps = merge_world_trajectories(trajectories)
     except NurecError:
         raise
     except Exception as exc:  # noqa: BLE001 - surface library/IO failures as a result
@@ -362,8 +366,9 @@ def derive_rig_poses(
             generic_meta_data={
                 "derived_by": "npa.workbench.nurec.ncore_rig",
                 "derivation": (
-                    "rig == reference camera; rig->world is that camera's "
-                    "sensor-to-world trajectory"
+                    "virtual rig matches each independent camera at disjoint photographic indices"
+                    if frame_pose_overwrite
+                    else "rig == reference camera; rig->world is that camera's sensor-to-world trajectory"
                 ),
                 "reference_camera": chosen,
                 "pose_source": pose_source,
@@ -474,7 +479,7 @@ def derive_rig_poses(
                 "pose_count": int(len(timestamps)),
                 "cameras": sorted(trajectories),
                 **(
-                    {"frame_pose_mode": "independent-camera-world-v1"}
+                    {"frame_pose_mode": "independent-camera-virtual-time-v2"}
                     if frame_pose_overwrite
                     else {}
                 ),

@@ -252,6 +252,34 @@ MASK_SOURCE = """                if mask_path is not None:
 """
 
 FRAME_POSE_SOURCE = "                generic_data: dict[str, np.ndarray] = {}\n"
+VIRTUAL_TIME_SOURCE = (
+    '    reference_frame: str = "world"\n'
+    "start_time_sec + np.linspace(0.0, self.n_images - 1, self.n_images)\n"
+    "        # Use this to calculate the time span\n"
+    "        max_poses = np.max([camera.n_images for camera in self.cameras.values()])\n"
+)
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_virtual_time_patch_rejects_missing_or_duplicate_anchor(tmp_path, count):
+    source = tmp_path / "converter.py"
+    original = VIRTUAL_TIME_SOURCE * count
+    source.write_text(original)
+    with pytest.raises(ValueError, match="virtual timeline source changed"):
+        _stager().patch_virtual_camera_times(source)
+    assert source.read_text() == original
+
+
+def test_virtual_time_patch_is_exact_and_rejects_reapplication(tmp_path):
+    source = tmp_path / "converter.py"
+    source.write_text(VIRTUAL_TIME_SOURCE)
+    _stager().patch_virtual_camera_times(source)
+    patched = source.read_text()
+    assert "camera.virtual_start_index = max_poses" in patched
+    assert "self.cameras[camera.reference_frame].virtual_start_index" in patched
+    with pytest.raises(ValueError, match="virtual timeline source changed"):
+        _stager().patch_virtual_camera_times(source)
+    assert source.read_text() == patched
 
 
 @pytest.mark.parametrize("count", [0, 2])
@@ -324,7 +352,10 @@ def test_staging_records_postpatch_converter_inventory(monkeypatch, tmp_path):
     contents = {
         "ncore": {
             "tools/data_converter/colmap/converter.py": (
-                DOWNSAMPLE_SOURCE + FRAME_POSE_SOURCE + MASK_SOURCE
+                DOWNSAMPLE_SOURCE
+                + FRAME_POSE_SOURCE
+                + MASK_SOURCE
+                + VIRTUAL_TIME_SOURCE
             ),
             "deps/pycolmap/fix-python3-map.patch": "synthetic patch boundary",
         },

@@ -34,6 +34,7 @@ from npa.workbench.ncore_staging import (
     private_staging_directory,
 )
 from npa.workbench.nurec.nurec import NurecError
+from npa.workbench.nurec.colmap_timeline import camera_timestamps, source_time_mapping
 
 NCORE_REVISION = "59c698d206da92b406a4f72619fce3b3a2c64bfd"
 DEFAULT_CONVERTER = "/opt/ncore/bin/colmap-convert"
@@ -592,8 +593,12 @@ def _validate_rig_sidecar(
         "sequence_id": sequence_id,
         "reference_camera": reference,
         "poses_component_group": "npa_rig",
-        "frame_pose_mode": "independent-camera-world-v1",
-        "pose_count": len(source["cameras"][reference]["frames"]),
+        "frame_pose_mode": "independent-camera-virtual-time-v2",
+        "pose_count": sum(
+            len(camera["frames"])
+            for camera in source["cameras"].values()
+            if camera["target"] == "world"
+        ),
         "cameras": sorted(
             name
             for name, camera in source["cameras"].items()
@@ -635,7 +640,12 @@ def _validate_derived_rig(
     reference = _rig_reference(source, reference_camera)
     _validate_rig_sidecar(meta_path, source, str(reader.sequence_id), reference)
     _validate_frame_pose_contract(reader)
-    frames = source["cameras"][reference]["frames"]
+    frames = [
+        frame
+        for name, camera in sorted(source["cameras"].items())
+        if camera["target"] == "world"
+        for frame in camera["frames"]
+    ]
     expected_ts = np.arange(len(frames), dtype=np.uint64) * 1_000_000
     edge = ("rig", "world")
     if edge not in trajectories["npa_rig"]:
@@ -814,12 +824,12 @@ def validate_ncore_sequence(
         n_frames = len(expected["frames"])
         if timestamps.shape != (n_frames, 2) or camera.frames_count != n_frames:
             raise NcoreConversionError("source and NCore image counts differ")
-        expected_ts = np.arange(n_frames, dtype=np.uint64) * 1_000_000
+        expected_ts = camera_timestamps(source["cameras"])[camera_id]
         if not np.array_equal(timestamps[:, 0], expected_ts) or not np.array_equal(
             timestamps[:, 1], expected_ts
         ):
             raise NcoreConversionError(
-                "NCore image timeline differs from upstream's 1 FPS mapping"
+                "NCore image timeline differs from the independent virtual mapping"
             )
         edge = (camera_id, expected["target"])
         # Check original AND copied derived trajectories; neither may hide bad geometry.
@@ -1185,7 +1195,8 @@ def convert_colmap(
                 "poses_component_group": "npa_rig"
                 if request.rig_mode == "derive"
                 else "default",
-                "time_mapping": "upstream assigns per-camera image order timestamps at 1 FPS",
+                "time_mapping": "disjoint virtual photographic camera intervals, 1 FPS within each; not capture time",
+                "source_frame_mapping": source_time_mapping(source["cameras"]),
                 "point_filter": "upstream excludes float32 SfM points whose norm is <= 1e-6",
             }
             report_path = meta.parent / CONVERSION_REPORT

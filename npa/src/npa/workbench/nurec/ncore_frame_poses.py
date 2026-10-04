@@ -1,4 +1,4 @@
-"""Preserve independent COLMAP camera poses through NRE's native pose override."""
+"""Bind independent photographs to exact knots consumed by NRE's virtual rig."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from typing import Any
 
 import numpy as np
 
+from npa.workbench.nurec.colmap_timeline import FRAME_POSE_MODE
 from npa.workbench.nurec.nurec import NurecConfig, NurecError, read_rig_sidecar
 
-FRAME_POSE_MODE = "independent-camera-world-v1"
 _OVERRIDE = "dataset.frame_generic_data_pose_overwrite"
 
 
@@ -53,8 +53,8 @@ def _require_frame_poses(actual: np.ndarray, expected: np.ndarray) -> None:
 
 
 def _write_static_calibrations(writer: Any, cameras: set[str]) -> None:
-    # These are virtual calibrations, not a physical multi-camera rig. NRE's
-    # per-sensor override restores each independently moving camera's world poses.
+    # These are virtual calibrations, not a physical multi-camera rig. Each
+    # photograph has its own exact world-pose knot on the shared virtual timeline.
     for camera in sorted(cameras):
         writer.store_static_pose(camera, "rig", np.eye(4, dtype=np.float32))
 
@@ -74,6 +74,25 @@ def _validate_static_calibrations(reader: Any, cameras: set[str]) -> None:
     if set(dynamic) != {("rig", "world")}:
         raise NurecError("virtual rig group contains an unexpected dynamic camera edge")
     _require_reference_coverage(reader, dynamic[("rig", "world")][1])
+    _require_rig_frame_knots(reader, *dynamic[("rig", "world")])
+
+
+def _require_rig_frame_knots(reader: Any, poses: np.ndarray, times: np.ndarray) -> None:
+    from ncore.data.v4 import CameraSensorComponent
+
+    for camera in reader.open_component_readers(CameraSensorComponent.Reader).values():
+        for timestamp in camera.frames_timestamps_us:
+            if timestamp[0] != timestamp[1]:
+                raise NurecError("virtual photographic frames require global shutter")
+            indices = np.flatnonzero(times == timestamp[1])
+            if len(indices) != 1:
+                raise NurecError(
+                    "virtual rig must contain each frame's exact time knot"
+                )
+            actual = camera.get_frame_generic_data(int(timestamp[1]), "T_sensor_worlds")
+            _require_frame_poses(
+                np.asarray(actual), np.repeat(poses[indices[0]][None], 2, axis=0)
+            )
 
 
 def _require_reference_coverage(reader: Any, timestamps: np.ndarray) -> None:
@@ -106,7 +125,7 @@ def _require_native_overrides(config: NurecConfig) -> None:
 
 
 def plan_frame_poses(config: NurecConfig, ncore_json: str) -> NurecConfig:
-    """Bind declared independent camera poses to NRE's supported native override.
+    """Validate the shared rig and per-frame paths against the same exact poses.
 
     Args:
         config: Resolved reconstruction configuration.

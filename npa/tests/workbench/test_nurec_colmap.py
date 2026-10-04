@@ -163,7 +163,16 @@ def fake_conversion(monkeypatch, tmp_path):
         colmap,
         "inspect_colmap_source",
         lambda *a, **kw: {
-            "counts": {"images": 2, "cameras": 1, "poses": 2, "points": 3}
+            "counts": {"images": 2, "cameras": 1, "poses": 2, "points": 3},
+            "cameras": {
+                "camera1": {
+                    "target": "world",
+                    "frames": [
+                        {"name": f"{index}.png", "encoded_sha256": "0" * 64}
+                        for index in range(2)
+                    ],
+                }
+            },
         },
     )
 
@@ -2132,7 +2141,8 @@ def test_independent_frame_pose_contract_rejects_replaced_pose_group(
         plan_frame_poses(NurecConfig(extra_overrides=(override,)), str(meta))
 
 
-def test_independent_frame_pose_contract_rejects_unknown_mode(tmp_path):
+@pytest.mark.parametrize("mode", ["unknown-mode", "independent-camera-world-v1"])
+def test_independent_frame_pose_contract_rejects_unknown_mode(tmp_path, mode):
     from npa.workbench.nurec.ncore_frame_poses import plan_frame_poses
     from npa.workbench.nurec.nurec import NurecConfig, NurecError
 
@@ -2140,7 +2150,7 @@ def test_independent_frame_pose_contract_rejects_unknown_mode(tmp_path):
     colmap._derive_in_place(meta, "camera1")
     sidecar_path = meta.parent / "npa-rig.json"
     sidecar = json.loads(sidecar_path.read_text())
-    sidecar["frame_pose_mode"] = "unknown-mode"
+    sidecar["frame_pose_mode"] = mode
     sidecar_path.write_text(json.dumps(sidecar))
     with pytest.raises(NurecError, match="unsupported or conflicting"):
         plan_frame_poses(NurecConfig(), str(meta))
@@ -2160,6 +2170,61 @@ def test_reference_extent_cannot_drop_camera_frames(tmp_path):
     with pytest.raises(NurecError, match="does not cover every camera frame"):
         _require_reference_coverage(reader, np.array([0, 500_000], dtype=np.uint64))
     _require_reference_coverage(reader, np.array([0, 1_000_000], dtype=np.uint64))
+
+
+@pytest.mark.parametrize("corruption", ["missing", "duplicate", "wrong_pose"])
+def test_virtual_rig_requires_each_original_frame_at_one_exact_knot(
+    tmp_path, corruption
+):
+    import numpy as np
+
+    pytest.importorskip("ncore.data.v4")
+    from ncore.data.v4 import PosesComponent, SequenceComponentGroupsReader
+    from upath import UPath
+    from npa.workbench.nurec.ncore_frame_poses import _require_rig_frame_knots
+    from npa.workbench.nurec.nurec import NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    reader = SequenceComponentGroupsReader([UPath(meta)])
+    component = reader.open_component_readers(PosesComponent.Reader)["npa_rig"]
+    poses, times = dict(component.get_dynamic_poses())[("rig", "world")]
+    _require_rig_frame_knots(reader, poses, times)
+    poses, times = poses.copy(), times.copy()
+    if corruption == "missing":
+        times[1] += 1
+    elif corruption == "duplicate":
+        poses, times = np.concatenate([poses, poses[:1]]), np.r_[times, times[0]]
+    else:
+        poses[1, 0, 3] += 1
+    with pytest.raises(NurecError, match="exact time knot|original camera trajectory"):
+        _require_rig_frame_knots(reader, poses, times)
+
+
+def test_virtual_photographs_reject_nonzero_shutter_interval(tmp_path, monkeypatch):
+    import numpy as np
+    from types import SimpleNamespace
+
+    pytest.importorskip("ncore.data.v4")
+    from ncore.data.v4 import CameraSensorComponent, SequenceComponentGroupsReader
+    from upath import UPath
+    from npa.workbench.nurec.ncore_frame_poses import _require_rig_frame_knots
+    from npa.workbench.nurec.nurec import NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    reader = SequenceComponentGroupsReader([UPath(meta)])
+    camera = reader.open_component_readers(CameraSensorComponent.Reader)["camera1"]
+    times = camera.frames_timestamps_us.copy()
+    times[0, 1] += 1
+    monkeypatch.setattr(
+        reader,
+        "open_component_readers",
+        lambda component: {"camera1": SimpleNamespace(frames_timestamps_us=times)},
+    )
+    with pytest.raises(NurecError, match="require global shutter"):
+        _require_rig_frame_knots(
+            reader, np.repeat(np.eye(4)[None], 2, axis=0), times[:, 1]
+        )
 
 
 @pytest.mark.parametrize(

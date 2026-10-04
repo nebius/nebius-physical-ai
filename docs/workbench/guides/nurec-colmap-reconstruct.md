@@ -48,9 +48,12 @@ directory discovery rejects an archive with multiple captures; keep
 `dataset_root: struktur28` for this ZIP. Images, calibration, camera poses and
 sparse points all come from the real COLMAP reconstruction.
 
-Upstream assigns per-camera image-order timestamps at **1 FPS**. These are
-virtual photographic timestamps, not measured timing or evidence of camera
-synchronization. V4 stores the sparse SfM cloud as a point-cloud component in
+NPA assigns disjoint virtual intervals to independent cameras, preserving
+image order at **1 FPS** within each camera. Downsampled aliases share their
+original camera's interval. The conversion report binds every image hash and
+original per-camera index to its new virtual timestamp. These are photographic
+indices, not measured timing, synchronized capture or physical rig motion.
+V4 stores the sparse SfM cloud as a point-cloud component in
 the world frame; it is not physical LiDAR. The upstream converter excludes
 float32 points at distance `<= 1e-6` from the origin, and provenance records
 that count. Available downsampled image directories become additional cameras;
@@ -110,23 +113,27 @@ Conversion independently reopens every output image, calibration, camera pose
 and sparse point, compares them with the source, checks finite geometry, and
 records hashes before publishing the discovery meta-file. `rig_mode: derive`
 uses the existing rig adapter and `poses_component_group: npa_rig` feeds NRE.
-The reference camera defaults to the longest trajectory; this supplies NRE's
-required rig edge without claiming that independently photographed cameras
-formed a measured synchronized rig.
+The reference-camera selection is retained for provenance; the virtual rig
+contains every independent camera's observed pose at its own timestamp knots.
 
 For COLMAP conversion, NPA preserves each frame's actual camera-to-world poses
 in `T_sensor_worlds`, including composition through downsampled camera parents.
 The derived `npa_rig` group uses explicitly virtual identity camera-to-rig
-calibrations and the reference camera's world trajectory for scene extent.
-NRE's native per-frame pose override restores each camera's independent world
-trajectory. This does not assert a measured physical multi-camera rig. Original
+calibrations and a merged world trajectory over disjoint photographic intervals.
+NRE's default rig-interpolating training and rendering consumers therefore read
+the correct world pose at every global-shutter frame. The earlier overlapping
+per-camera timeline contract is rejected: exporting correct per-frame poses did
+not make the native training consumer use them. This does not assert a measured
+physical multi-camera rig. Original
 poses, image bytes, calibration, masks and point records remain independently
 audited; malformed or contradictory pose contracts fail before reconstruction.
 
 The native `dataset.frame_generic_data_pose_overwrite=true` setting is selected
 from the validated conversion sidecar. Explicitly disabling it or replacing
-`npa_rig` is rejected. The reference trajectory must cover every camera frame;
-training budgets and input membership are unchanged.
+`npa_rig` is rejected. Every frame must coincide with exactly one matching rig
+pose knot; coverage alone is insufficient. Training budgets and input membership
+are unchanged. This source correction still requires fresh effective-consumer
+and RTX workload evidence; original failed quality results remain failures.
 
 Reconstruction selects all discovered cameras. With the default native
 `configs/experimental/3dgut/3dgut_colmap.yaml` recipe and a derived rig, selecting
