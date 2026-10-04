@@ -1201,6 +1201,10 @@ def _strict_comparison_verdict(
     if response.data.get("model") != model:
         raise VlmEvalError("Paired judge returned a different model identity")
     choice, message = _response_choice_and_content(response.data)
+    if choice.get("finish_reason") != "stop":
+        raise VlmEvalError(
+            "Paired judge response did not complete with finish_reason=stop"
+        )
     if not isinstance(message, str):
         raise VlmEvalError("Hosted VLM response content must be a JSON string")
     if _deframe_json_text(message)[1]:
@@ -2536,10 +2540,6 @@ def _hosted_structured_response(
     model: str,
     profile: TokenFactoryChatProfile,
 ) -> VlmStructuredResponse:
-    if data["choices"][0].get("finish_reason") != "stop":
-        raise VlmEvalError(
-            "Hosted VLM response did not complete with finish_reason=stop"
-        )
     served_model = data.get("model")
     if not isinstance(served_model, str) or not served_model.strip():
         raise VlmEvalError("Hosted VLM response must identify the served model")
@@ -2602,6 +2602,10 @@ def _verdict_with_evidence(
     response: _VlmBackendResponse,
 ) -> VlmStructuredResponse:
     choice, message = _response_choice_and_content(response.data)
+    if choice.get("finish_reason") != "stop":
+        raise VlmEvalError(
+            "VLM backend response did not complete with finish_reason=stop"
+        )
     result = _parse_backend_verdict(
         backend=backend,
         requested_model=model,
