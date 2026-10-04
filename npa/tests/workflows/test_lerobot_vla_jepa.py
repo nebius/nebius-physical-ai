@@ -189,6 +189,16 @@ def test_snapshot_creates_its_atomic_ready_marker_parent(
     }
 
 
+def test_runtime_cache_preserves_operator_home_and_uses_system_temp_fallback(
+    monkeypatch,
+) -> None:
+    """Avoid a fixed world-writable cache path when the operator did not set one."""
+    monkeypatch.setenv("HF_HOME", "/operator-owned/hf-cache")
+    assert vla._runtime_cache() == Path("/operator-owned/hf-cache")
+    monkeypatch.delenv("HF_HOME")
+    assert vla._runtime_cache() == Path(vla.tempfile.gettempdir()) / "npa-vla-jepa-hf-cache"
+
+
 def test_evaluation_rejects_missing_or_out_of_range_native_success(
     tmp_path: Path,
 ) -> None:
@@ -263,6 +273,12 @@ def test_readiness_is_hash_bound_and_does_not_claim_live_acceptance() -> None:
             DOCKERFILE.parent / "entrypoint.sh"
         ),
         "npa/src/npa/deploy/images.py": ROOT / "npa/src/npa/deploy/images.py",
+        "npa/src/npa/smoke/golden_evals.yaml": (
+            ROOT / "npa/src/npa/smoke/golden_evals.yaml"
+        ),
+        "npa/src/npa/smoke/capabilities.py": (
+            ROOT / "npa/src/npa/smoke/capabilities.py"
+        ),
         "npa/src/npa/workflows/lerobot_vla_jepa.py": (
             ROOT / "npa/src/npa/workflows/lerobot_vla_jepa.py"
         ),

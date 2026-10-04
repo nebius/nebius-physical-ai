@@ -318,8 +318,14 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
-NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
-NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
+# These entries have an explicit neutral bootstrap packaging contract but no
+# accepted image bytes. They may be built and qualified only in an
+# operator-controlled registry; neither a public development tag nor a release
+# tag exists while this set contains them.
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"lerobot-vla-jepa"})
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {
+    "lerobot-vla-jepa": "0.6.1-vla-jepa-unbuilt",
+}
 # Previously accepted releases whose published bytes no longer satisfy the
 # repository's current security contract. Keep this separate from
 # UNVALIDATED_PUBLICATION_TOOLS: these images were built and capability-tested,

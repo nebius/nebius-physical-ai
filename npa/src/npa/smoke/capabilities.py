@@ -133,6 +133,13 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "policy eval on checkpoint",
         "eval output artifact written",
     ],
+    "lerobot-vla-jepa": [
+        "operator-private exact-image qualification before any runtime use",
+        "pinned LIBERO task-disjoint preparation and native VLA-JEPA fine-tuning",
+        "checkpoint reload, closed-loop held-out LIBERO rollout, and bounded native success",
+        "independently decoded MP4/RRD and checkpoint provenance from the five connected stages",
+        "neutral unbuilt registration is not current image or native capability evidence",
+    ],
     "lerobot-policy": [
         "short LeRobot train step (policy_container train CLI)",
         "short eval on produced checkpoint (policy_container eval CLI)",

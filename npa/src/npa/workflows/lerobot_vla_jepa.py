@@ -87,7 +87,10 @@ def _snapshot(repo: str, revision: str, repo_type: str, cache_root: Path) -> Pat
 
 def _runtime_cache() -> Path:
     """Choose the operator cache without embedding fetched bytes in an image."""
-    return Path(os.environ.get("HF_HOME") or "/tmp/npa-vla-jepa-hf-cache")
+    configured = os.environ.get("HF_HOME")
+    if configured:
+        return Path(configured)
+    return Path(tempfile.gettempdir()) / "npa-vla-jepa-hf-cache"
 
 
 def _dataset_rows(dataset: Path, info: dict[str, Any]) -> list[dict[str, Any]]:
