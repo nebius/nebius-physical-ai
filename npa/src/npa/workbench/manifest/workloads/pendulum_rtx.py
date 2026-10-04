@@ -226,9 +226,9 @@ def main() -> None:
 
     summary = {
         "device_ok": torch.cuda.is_available(),
-        "device": torch.cuda.get_device_name(0)
-        if torch.cuda.is_available()
-        else "none",
+        "device": (
+            torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none"
+        ),
         "renderer": "cycles-cuda",
         "blender": "4.2.3",
         "steps": args.steps,

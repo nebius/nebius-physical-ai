@@ -13,9 +13,9 @@ image:
   digest: sha256:417bd75df6365104c283ea4c1651fb3530d9eb5a4c2fafa51943cff2a94e6385
 environment:
   pip:
-    - newton
-    - matplotlib
-    - imageio-ffmpeg
+    - newton==1.6.0
+    - matplotlib==3.11.2
+    - imageio-ffmpeg==0.6.0
 artifact_store:
   type: s3
   bucket: my-bucket  # operator overrides via MANIFEST_S3_BUCKET

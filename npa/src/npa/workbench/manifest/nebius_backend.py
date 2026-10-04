@@ -35,7 +35,7 @@ s3_prefix = os.environ.get("MANIFEST_S3_PREFIX", "")
 s3 = None
 if s3_inputs or s3_outputs:
     subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-q", "boto3"], check=False
+        [sys.executable, "-m", "pip", "install", "-q", "boto3==1.43.108"], check=False
     )
     import boto3
 
@@ -130,8 +130,12 @@ class NebiusBackend:
         self,
         *args: str,
         input_text: str | None = None,
-        timeout: int = 120,
+        timeout: int | None = None,
     ) -> subprocess.CompletedProcess:
+        # No default time limit on control-plane calls: a job is bounded only
+        # by the operator's timeout_s (also enforced as activeDeadlineSeconds
+        # on the Job and as the _wait_done poll deadline). Repo convention:
+        # no time/cost/job-count limits unless the operator asks for them.
         cmd = [self.kubectl]
         if self.kube_context:
             cmd += ["--context", self.kube_context]
@@ -143,8 +147,12 @@ class NebiusBackend:
     def _s3_env(self) -> dict[str, str]:
         """Load S3 credentials for in-pod use from the configured profile.
 
-        Read-only access to the operator's own credential store; values are
-        passed to the pod as env vars, never logged or persisted.
+        Read-only access to the operator's own credential store. The two
+        credential values travel to the pod via a per-run Secret referenced
+        with secretKeyRef (created in run(), deleted with the run) -- never
+        as plaintext env values in the Job spec, where anyone with
+        get job/get pod in the namespace could read them. Nothing here is
+        logged.
         """
         if not self.s3_profile:
             return {}
@@ -185,7 +193,35 @@ class NebiusBackend:
         env = self._s3_env()
         if s3_env:
             env.update(s3_env)
+        # Fail fast before anything is created or scheduled: without S3
+        # credentials the runner would die with a bare KeyError on
+        # AWS_ENDPOINT_URL after the job already took a GPU node.
+        if s3_output_names or s3_inputs:
+            missing = [
+                k
+                for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+                if not env.get(k)
+            ]
+            if "AWS_ENDPOINT_URL" not in env:
+                missing.append("AWS_ENDPOINT_URL")
+            if missing:
+                raise RuntimeError(
+                    "S3 transport requested but S3 credentials are incomplete "
+                    f"(missing: {', '.join(missing)}; "
+                    f"s3_profile={self.s3_profile!r}); refusing to schedule the job"
+                )
+        # Credentials travel via a per-run Secret referenced with secretKeyRef
+        # (never as plaintext env values in the Job spec); the Secret is
+        # deleted with the run in the finally below. The endpoint URL is not
+        # a secret and stays a plain env value.
+        secret_name = f"manifest-{run_id}-s3"
+        secret_keys = [
+            k for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY") if k in env
+        ]
+        secret_data = {k: env.pop(k) for k in secret_keys}
         try:
+            if secret_data:
+                self._create_secret(secret_name, secret_data)
             payload_map = self._create_configmap(cm_name, payload or {})
             self._create_job(
                 job_name,
@@ -202,6 +238,8 @@ class NebiusBackend:
                 env,
                 pip_packages or [],
                 apt_packages or [],
+                secret_name=secret_name if secret_data else "",
+                secret_keys=tuple(secret_keys),
             )
             self._wait_done(job_name)
             logs = self._kc("logs", f"job/{job_name}").stdout
@@ -209,6 +247,19 @@ class NebiusBackend:
         finally:
             self._kc("delete", "job", job_name, "--wait=false")
             self._kc("delete", "configmap", cm_name, "--wait=false")
+            if secret_data:
+                self._kc("delete", "secret", secret_name, "--wait=false")
+
+    def _create_secret(self, secret_name: str, data: dict[str, str]) -> None:
+        secret = {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {"name": secret_name, "labels": dict(STANDARD_LABELS)},
+            "stringData": data,
+        }
+        r = self._kc("create", "-f", "-", input_text=json.dumps(secret))
+        if r.returncode != 0:
+            raise RuntimeError(f"secret create failed: {r.stderr[:500]}")
 
     def _create_configmap(
         self, cm_name: str, payload: dict[str, str]
@@ -260,6 +311,8 @@ class NebiusBackend:
         env,
         pip_packages,
         apt_packages,
+        secret_name: str = "",
+        secret_keys: tuple[str, ...] = (),
     ) -> None:
         # Rewrite payload container paths to their ConfigMap mount locations.
         rewritten = []
@@ -291,7 +344,15 @@ class NebiusBackend:
                 {"name": "MANIFEST_PIP", "value": json.dumps(pip_packages)},
                 {"name": "MANIFEST_APT", "value": json.dumps(apt_packages)},
             ]
-            + [{"name": k, "value": v} for k, v in env.items()],
+            + [{"name": k, "value": v} for k, v in env.items()]
+            # Secret-backed credentials: valueFrom, never plaintext value.
+            + [
+                {
+                    "name": k,
+                    "valueFrom": {"secretKeyRef": {"name": secret_name, "key": k}},
+                }
+                for k in secret_keys
+            ],
             "volumeMounts": [
                 {"name": "runner", "mountPath": "/runner"},
                 {"name": "payload", "mountPath": "/payload"},
@@ -353,7 +414,14 @@ class NebiusBackend:
         # promptly rather than burning the whole timeout.
         deadline = time.time() + self.timeout_s
         while time.time() < deadline:
-            r = self._kc("get", "job", job_name, "-o", "json")
+            # Bound each status call by the operator's own remaining deadline,
+            # not by a hardcoded cap: the only time limit in the system is
+            # the one the operator passed as timeout_s.
+            remaining = max(1, int(deadline - time.time()))
+            try:
+                r = self._kc("get", "job", job_name, "-o", "json", timeout=remaining)
+            except subprocess.TimeoutExpired:
+                continue  # loop re-checks the deadline; raises TimeoutError below
             if r.returncode == 0:
                 try:
                     data = json.loads(r.stdout or "{}")

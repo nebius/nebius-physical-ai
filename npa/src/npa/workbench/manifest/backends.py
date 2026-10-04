@@ -26,8 +26,12 @@ class LocalDockerBackend:
     name = "local"
     s3_upload = False
 
-    def __init__(self, docker_bin: str = "docker"):
+    def __init__(self, docker_bin: str = "docker", timeout_s: int | None = None):
+        # No default time limit: a run is bounded only when the operator
+        # passes timeout_s explicitly (repo convention: no time/cost/job-count
+        # limits unless the operator asks for them).
         self.docker_bin = docker_bin
+        self.timeout_s = timeout_s
 
     def run(
         self,
@@ -85,7 +89,9 @@ class LocalDockerBackend:
             if memory_gb > 0:
                 cmd += ["--memory", f"{memory_gb}g"]
             cmd += [image_pinned] + rewritten
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=self.timeout_s
+            )
 
             by_name = {oname: (fmt, source) for oname, _, fmt, source in outputs}
             artifacts: dict[str, str] = {}

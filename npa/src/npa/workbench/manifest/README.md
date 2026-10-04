@@ -55,12 +55,19 @@ without an `artifact_store` fails fast with a clear error instead of a
 silent log blowup. `inputs` (`s3_uri` -> container path) are staged in-pod
 by the runner, so large inputs never transit the 1 MiB ConfigMap limit.
 
+**Operator note — S3 lifecycle.** Every run writes to
+`manifest-mvp/<tool>/<run_id>/` under the store prefix, so repeated runs
+accumulate objects indefinitely (~1 GiB per `large-artifact` run). Put a
+lifecycle/expiry rule on the bucket (or prefix) before this sees regular
+use; the runtime deliberately sets no retention policy itself.
+
 ## Design rules
 
 1. **One execution path.** Surfaces translate syntax only, never semantics.
 2. **Zero per-tool branches** in the runtime. Watch the count; zero is the goal.
 3. **Immutable image refs.** The schema rejects descriptors without a
-   `sha256:` digest pin.
+   `sha256:` digest pin, and `environment.pip` entries must carry exact
+   `==` pins — a floating install would void the digest pin.
 4. **Verification separate from declaration.** Records live apart from
    descriptors; a private run never implies shared-catalog admission.
 5. **Reuse, don't rebuild.** Backends translate into existing launch/storage

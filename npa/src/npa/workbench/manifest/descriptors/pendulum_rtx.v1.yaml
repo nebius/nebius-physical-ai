@@ -12,7 +12,7 @@ image:
   digest: sha256:417bd75df6365104c283ea4c1651fb3530d9eb5a4c2fafa51943cff2a94e6385
 environment:
   pip:
-    - newton
+    - newton==1.6.0
   apt:
     - libx11-6
     - libxi6

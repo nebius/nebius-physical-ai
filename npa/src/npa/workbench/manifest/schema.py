@@ -259,17 +259,19 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
             )
         outputs = {}
         for oname, odef in (cdef.get("outputs") or {}).items():
-            source = odef.get("source", "file")
+            # NB: the loop-local is named osource so it never rebinds the
+            # `source` parameter (the descriptor path used in error messages).
+            osource = odef.get("source", "file")
             path = odef.get("path", "")
-            if source == "file" and not path:
+            if osource == "file" and not path:
                 raise DescriptorError(
                     f"{source}: command {cname!r} output {oname!r}: "
                     "file-source outputs require a path"
                 )
-            if source not in ("file", "stdout"):
+            if osource not in ("file", "stdout"):
                 raise DescriptorError(
                     f"{source}: command {cname!r} output {oname!r}: "
-                    f"unknown source {source!r}"
+                    f"unknown source {osource!r}"
                 )
             fmt = odef.get("format", "json")
             if fmt not in ("json", "text", "binary"):
@@ -282,7 +284,7 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
                 path=path,
                 format=fmt,
                 required=bool(odef.get("required", True)),
-                source=source,
+                source=osource,
             )
         commands[cname] = CommandSpec(
             name=cname, argv=list(cdef["argv"]), params=params, outputs=outputs
@@ -352,6 +354,15 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
         if not isinstance(pkgs, list) or not all(isinstance(p, str) for p in pkgs):
             raise DescriptorError(
                 f"{source}: environment.{field_name} must be a list of strings"
+            )
+    # The digest pin is meaningless if the pod then pip-installs floating
+    # versions: every pip entry must carry an exact == pin so two runs of
+    # the same descriptor resolve the same software.
+    for p in pip_pkgs:
+        if "==" not in p:
+            raise DescriptorError(
+                f"{source}: environment.pip entries must be version-pinned "
+                f"with '==': {p!r}"
             )
     return Descriptor(
         api_version=raw["apiVersion"],

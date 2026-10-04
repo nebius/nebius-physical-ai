@@ -580,6 +580,16 @@ def test_unknown_param_type_rejected() -> None:
         parse_descriptor(d)
 
 
+def test_unpinned_pip_entry_rejected() -> None:
+    # The digest pin is void if the pod pip-installs floating versions.
+    d = _desc_dict()
+    d["environment"] = {"pip": ["newton"]}
+    with pytest.raises(DescriptorError, match=r"version-pinned with '=='"):
+        parse_descriptor(d)
+    d["environment"] = {"pip": ["newton==1.6.0"]}
+    parse_descriptor(d)  # pinned entries pass
+
+
 def test_check_naming_undeclared_artifact_rejected() -> None:
     d = _desc_dict()
     d["success"] = {"checks": [{"artifact": "ghost", "json_path": "a", "equals": True}]}
@@ -595,6 +605,16 @@ def test_payload_traversal_rejected() -> None:
     d["payload_files"] = [{"container_path": "/work/x.py", "host_path": "/abs/x.py"}]
     with pytest.raises(DescriptorError, match="host_path"):
         parse_descriptor(d)
+
+
+def test_error_after_output_parse_keeps_descriptor_source() -> None:
+    # Regression: the outputs loop used to rebind the `source` parameter
+    # (the descriptor path) to the output's source field, so every error
+    # raised after the first output parsed lost the filename.
+    d = _desc_dict()
+    d["success"] = {"checks": [{"artifact": "ghost", "json_path": "a", "equals": True}]}
+    with pytest.raises(DescriptorError, match="my_tool.v1.yaml"):
+        parse_descriptor(d, source="descriptors/my_tool.v1.yaml")
 
 
 def test_invalid_s3_uri_rejected() -> None:
@@ -690,7 +710,7 @@ class _FakeKc(NebiusBackend):
         self.created: list[dict] = []
         self.kc_calls: list[tuple] = []
 
-    def _kc(self, *args, input_text=None, timeout=120):
+    def _kc(self, *args, input_text=None, timeout=None):
         self.last_timeout = timeout
         full = [self.kubectl]
         if self.kube_context:
@@ -790,9 +810,9 @@ def test_configmap_returns_per_run_payload_map() -> None:
 
 def test_environment_pip_parses() -> None:
     d = _desc_dict()
-    d["environment"] = {"pip": ["newton", "matplotlib"]}
+    d["environment"] = {"pip": ["newton==1.6.0", "matplotlib==3.11.2"]}
     desc = parse_descriptor(d)
-    assert desc.environment.pip == ("newton", "matplotlib")
+    assert desc.environment.pip == ("newton==1.6.0", "matplotlib==3.11.2")
 
 
 def test_environment_pip_must_be_list_of_strings() -> None:
@@ -813,10 +833,10 @@ def test_environment_defaults_empty() -> None:
 def test_pip_packages_reach_backend(tmp_path: Path) -> None:
     rt, stub = make_runtime(tmp_path)
     d = _desc_dict()
-    d["environment"] = {"pip": ["newton"]}
+    d["environment"] = {"pip": ["newton==1.6.0"]}
     rt.catalog._entries["piptest@0.1.0"] = parse_descriptor(d)
     rt.invoke("piptest", "0.1.0", "run", {}, backend="stub")
-    assert stub.calls[0]["pip_packages"] == ["newton"]
+    assert stub.calls[0]["pip_packages"] == ["newton==1.6.0"]
 
 
 def test_manifest_pip_env_in_job_spec() -> None:
@@ -834,7 +854,7 @@ def test_manifest_pip_env_in_job_spec() -> None:
         [],
         "",
         {},
-        ["newton", "matplotlib"],
+        ["newton==1.6.0", "matplotlib==3.11.2"],
         [],
     )
     job = be.created[0]
@@ -842,7 +862,7 @@ def test_manifest_pip_env_in_job_spec() -> None:
         e["name"]: e["value"]
         for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
     }
-    assert json.loads(env["MANIFEST_PIP"]) == ["newton", "matplotlib"]
+    assert json.loads(env["MANIFEST_PIP"]) == ["newton==1.6.0", "matplotlib==3.11.2"]
 
 
 def test_parse_pip_markers_stripped() -> None:
@@ -860,13 +880,100 @@ def test_parse_pipfail_marks_failure() -> None:
     assert res.exit_code == 3
 
 
+def test_s3_credentials_use_secretkeyref_not_plaintext() -> None:
+    # Blocking review item: credential values must not land in the Job spec
+    # as plaintext env, where get job/get pod exposes them.
+    be = _FakeKc()
+    be._create_job(
+        "job-1",
+        "cm-1",
+        "img@sha256:abc",
+        ["python", "a.py"],
+        1,
+        0,
+        [("out", "/work/o", "json", "file")],
+        {},
+        [],
+        [],
+        "",
+        {"AWS_ENDPOINT_URL": "https://s3.example"},
+        [],
+        [],
+        secret_name="manifest-ab12cd34-s3",
+        secret_keys=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+    )
+    job = be.created[0]
+    env = job["spec"]["template"]["spec"]["containers"][0]["env"]
+    by_name = {e["name"]: e for e in env}
+    for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        assert "value" not in by_name[k], f"{k} must not be plaintext in the job spec"
+        assert by_name[k]["valueFrom"] == {
+            "secretKeyRef": {"name": "manifest-ab12cd34-s3", "key": k}
+        }
+    # Non-secret values stay plain env.
+    assert by_name["AWS_ENDPOINT_URL"]["value"] == "https://s3.example"
+
+
+def test_run_creates_and_deletes_per_run_secret() -> None:
+    # The per-run Secret is created before the job and deleted with it.
+    created_kinds: list[str] = []
+    deleted: list[str] = []
+
+    class _SecretKc(_FakeKc):
+        def _kc(self, *args, input_text=None, timeout=None):
+            if args[:1] == ("create",) and input_text:
+                kind = json.loads(input_text).get("kind", "")
+                created_kinds.append(kind)
+            if args[:1] == ("delete",):
+                deleted.append(f"{args[1]}/{args[2]}")
+            if args[:2] == ("get", "job"):
+                import json as _json
+
+                return subprocess.CompletedProcess(
+                    args=list(args),
+                    returncode=0,
+                    stdout=_json.dumps(
+                        {
+                            "status": {
+                                "conditions": [{"type": "Complete", "status": "True"}]
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+            if args[:1] == ("logs",):
+                return subprocess.CompletedProcess(
+                    args=list(args), returncode=0, stdout="@@EXIT:0@@\n", stderr=""
+                )
+            return super()._kc(*args, input_text=input_text, timeout=timeout)
+
+    be = _SecretKc()
+    be.run(
+        "img@sha256:abc",
+        ["python", "x.py"],
+        0,
+        [],
+        s3_output_names=["o"],
+        s3_prefix="s3://bkt/pfx/run/",
+        s3_env={
+            "AWS_ACCESS_KEY_ID": "ak",
+            "AWS_SECRET_ACCESS_KEY": "sk",
+            "AWS_ENDPOINT_URL": "https://s3.example",
+        },
+    )
+    assert created_kinds == ["Secret", "ConfigMap", "Job"]
+    assert any(d.startswith("secret/manifest-") for d in deleted)
+    assert any(d.startswith("job/manifest-") for d in deleted)
+    assert any(d.startswith("configmap/manifest-") for d in deleted)
+
+
 def test_pendulum_viz_descriptor_validates(tmp_path: Path) -> None:
     rt, _ = make_runtime(tmp_path)
     desc = rt.catalog.get("pendulum-viz", "0.1.0")
     assert set(desc.environment.pip) == {
-        "newton",
-        "matplotlib",
-        "imageio-ffmpeg",
+        "newton==1.6.0",
+        "matplotlib==3.11.2",
+        "imageio-ffmpeg==0.6.0",
     }
     assert desc.artifact_store is not None
     assert "pendulum-viz@0.1.0" in rt.catalog.list()
@@ -885,7 +992,7 @@ def test_openvla_predict_descriptor_validates(tmp_path: Path) -> None:
 def test_pendulum_rtx_descriptor_validates(tmp_path: Path) -> None:
     rt, _ = make_runtime(tmp_path)
     desc = rt.catalog.get("pendulum-rtx", "0.1.0")
-    assert desc.environment.pip == ("newton",)
+    assert desc.environment.pip == ("newton==1.6.0",)
     # Multi-file payload: shared sim module + workload.
     cpaths = [c for c, _ in desc.payload_files]
     assert cpaths == ["/work/pendulum_sim.py", "/work/pendulum_rtx.py"]
@@ -899,7 +1006,7 @@ def test_wait_done_returns_on_failed_condition() -> None:
     calls = {"n": 0}
 
     class _StatusKc(_FakeKc):
-        def _kc(self, *args, input_text=None, timeout=120):
+        def _kc(self, *args, input_text=None, timeout=None):
             calls["n"] += 1
             conds = [{"type": "Failed", "status": "True"}] if calls["n"] >= 2 else []
             import json as _json
@@ -915,6 +1022,43 @@ def test_wait_done_returns_on_failed_condition() -> None:
     be = _StatusKc(timeout_s=3600)
     be._wait_done("job-1")
     assert calls["n"] == 2  # polled, then saw Failed
+
+
+def test_wait_done_status_calls_bounded_by_operator_timeout() -> None:
+    # No hardcoded per-call cap: each status poll is bounded by the
+    # operator's own remaining timeout_s.
+    seen: dict = {}
+
+    class _TimeoutKc(_FakeKc):
+        def _kc(self, *args, input_text=None, timeout=None):
+            if args[:2] == ("get", "job"):
+                seen["timeout"] = timeout
+            import json as _json
+
+            return subprocess.CompletedProcess(
+                args=list(args),
+                returncode=0,
+                stdout=_json.dumps(
+                    {"status": {"conditions": [{"type": "Complete", "status": "True"}]}}
+                ),
+                stderr="",
+            )
+
+    be = _TimeoutKc(timeout_s=600)
+    be._wait_done("job-1")
+    assert seen["timeout"] is not None and seen["timeout"] <= 600
+
+
+def test_wait_done_poll_timeout_becomes_timeout_error() -> None:
+    # A hung status call surfaces as the clean TimeoutError, never a leaked
+    # subprocess.TimeoutExpired.
+    class _HungKc(_FakeKc):
+        def _kc(self, *args, input_text=None, timeout=None):
+            raise subprocess.TimeoutExpired(cmd=list(args), timeout=timeout or 0)
+
+    be = _HungKc(timeout_s=1)
+    with pytest.raises(TimeoutError, match="no terminal condition"):
+        be._wait_done("job-1")
 
 
 def test_configmap_keys_preserve_basenames_and_dedupe() -> None:
@@ -937,6 +1081,67 @@ def test_manifest_s3_bucket_env_override(tmp_path: Path, monkeypatch) -> None:
             "/work/config.json",
         )
     ]
+
+
+def test_s3_preflight_fails_before_anything_is_scheduled() -> None:
+    # No S3 credentials -> the run must fail before a ConfigMap/Job exists,
+    # not with a KeyError inside the pod after taking a GPU node.
+    be = _FakeKc()  # no s3_profile -> _s3_env() is {}
+    with pytest.raises(RuntimeError, match="refusing to schedule"):
+        be.run(
+            "img@sha256:abc",
+            ["python", "x.py"],
+            1,
+            [("o", "/work/o", "binary", "file")],
+            s3_output_names=["o"],
+            s3_prefix="s3://bkt/pfx/run/",
+        )
+    assert be.kc_calls == []  # nothing reached kubectl
+
+
+def test_s3_preflight_passes_with_explicit_s3_env() -> None:
+    # Explicit per-call s3_env satisfies the preflight without a profile.
+    class _OkKc(_FakeKc):
+        def _kc(self, *args, input_text=None, timeout=None):
+            if args[:2] == ("get", "job"):
+                import json as _json
+
+                return subprocess.CompletedProcess(
+                    args=list(args),
+                    returncode=0,
+                    stdout=_json.dumps(
+                        {
+                            "status": {
+                                "conditions": [{"type": "Complete", "status": "True"}]
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+            if args[:1] == ("logs",):
+                return subprocess.CompletedProcess(
+                    args=list(args),
+                    returncode=0,
+                    stdout="@@EXIT:0@@\n",
+                    stderr="",
+                )
+            return super()._kc(*args, input_text=input_text, timeout=timeout)
+
+    be = _OkKc()
+    be.run(
+        "img@sha256:abc",
+        ["python", "x.py"],
+        0,
+        [],
+        s3_output_names=["o"],
+        s3_prefix="s3://bkt/pfx/run/",
+        s3_env={
+            "AWS_ACCESS_KEY_ID": "ak",
+            "AWS_SECRET_ACCESS_KEY": "sk",
+            "AWS_ENDPOINT_URL": "https://s3.example",
+        },
+    )
+    assert any("job" in " ".join(c[0]) for c in be.kc_calls)
 
 
 def test_environment_apt_parses_and_reaches_backend(tmp_path: Path) -> None:

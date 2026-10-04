@@ -16,7 +16,7 @@ environment:
     - transformers==4.40.1
     - timm==0.9.10
     - tokenizers==0.19.1
-    - pillow
+    - pillow==12.3.0
 artifact_store:
   type: s3
   bucket: my-bucket  # operator overrides via MANIFEST_S3_BUCKET
