@@ -7,6 +7,17 @@ RTX NRE training/rendering and readback acceptance. This command publishes only
 `ghcr.io/nebius/nebius-physical-ai/npa-ncore:dev-<full-source-sha>`. It does not
 fill acceptance records, change a release tag or add a public catalog row.
 
+The separate one-shot visual-evidence helper selects `MiniMaxAI/MiniMax-M3`
+through the existing Token Factory model profile. That profile disables thinking
+and omits provider JSON-mode enforcement; the unchanged local parser still
+requires strict JSON, literal verdicts, the exact served model and a completed
+response. Selecting this model does not establish better quality. A new model
+requires its own immutable freeze and four controls, followed by a final call
+only if the fixed calibration gate passes. Preserve earlier model failures;
+never reuse their responses as evidence for the selected model or retry until
+the gate passes. Prompts, pixels, labels and thresholds remain independently
+bound, and no expected labels are sent to the judge.
+
 The shared `publish-public-images.yml` workflow excludes NCore from automatic
 selection and rejects explicit NCore requests. No authorized private acceptance-
 bundle transport is configured for Actions. Use the private

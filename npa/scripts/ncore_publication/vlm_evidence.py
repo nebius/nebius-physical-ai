@@ -22,7 +22,7 @@ import httpx
 
 from PIL import Image
 
-from npa.clients.token_factory import default_chat_extra
+from npa.clients.token_factory import default_chat_extra, token_factory_chat_profile
 from npa.workbench.nurec.colmap import (
     ColmapConversionRequest,
     extract_colmap_zip,
@@ -38,7 +38,7 @@ ATTEMPT_FORMAT = "npa_ncore_vlm_attempt_v2"
 TRANSPORT_FORMAT = "npa_ncore_vlm_transport_manifest_v2"
 FREEZE_REVIEW_FORMAT = "npa_ncore_vlm_freeze_review_v1"
 FREEZE_ACCEPTANCE_FORMAT = "npa_ncore_vlm_freeze_acceptance_v1"
-MODEL = "openbmb/MiniCPM-V-4_5"
+MODEL = "MiniMaxAI/MiniMax-M3"
 ENDPOINT = "https://api.tokenfactory.nebius.com/v1/chat/completions"
 THRESHOLD = 0.8
 FRAME_COUNT = 4
@@ -461,13 +461,16 @@ def _build_request(*, task: str, rubric: str, frames: list[bytes]) -> tuple[byte
         }
         for frame in frames
     )
+    profile = token_factory_chat_profile(MODEL)
     request_payload = {
         "model": MODEL,
-        "temperature": 0,
-        "response_format": {"type": "json_object"},
         "messages": [{"role": "user", "content": content}],
         **default_chat_extra(MODEL),
     }
+    if profile.include_temperature:
+        request_payload["temperature"] = 0
+    if profile.use_vlm_response_format:
+        request_payload["response_format"] = {"type": "json_object"}
     return _canonical(request_payload), prompt
 
 

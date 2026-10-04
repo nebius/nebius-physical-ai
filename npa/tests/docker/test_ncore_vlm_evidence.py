@@ -85,6 +85,44 @@ def _response(*, model: str = vlm_evidence.MODEL):
     }
 
 
+def test_minimax_request_changes_only_model_and_required_provider_profile(monkeypatch):
+    frames = [b"first exact image", b"second exact image"]
+    arguments = {
+        "task": "Review scene geometry.",
+        "rubric": "Reject defects.",
+        "frames": frames,
+    }
+    monkeypatch.setattr(vlm_evidence, "MODEL", "openbmb/MiniCPM-V-4_5")
+    original_bytes, original_prompt = vlm_evidence._build_request(**arguments)
+    original = json.loads(original_bytes)
+    assert original["response_format"] == {"type": "json_object"}
+    assert "chat_template_kwargs" not in original
+    monkeypatch.setattr(vlm_evidence, "MODEL", "MiniMaxAI/MiniMax-M3")
+    current_bytes, current_prompt = vlm_evidence._build_request(**arguments)
+    current = json.loads(current_bytes)
+    assert current_prompt == original_prompt
+    assert current["model"] == "MiniMaxAI/MiniMax-M3"
+    assert current["chat_template_kwargs"] == {"thinking_mode": "disabled"}
+    assert "response_format" not in current
+    assert current["temperature"] == original["temperature"] == 0
+    original.pop("model")
+    original.pop("response_format")
+    current.pop("model")
+    current.pop("chat_template_kwargs")
+    assert current == original
+
+
+def test_request_respects_profile_without_temperature(monkeypatch):
+    monkeypatch.setattr(vlm_evidence, "MODEL", "moonshotai/Kimi-K3")
+    body, _ = vlm_evidence._build_request(
+        task="Visible scene.", rubric="Visible geometry.", frames=[b"image"]
+    )
+    payload = json.loads(body)
+    assert "temperature" not in payload
+    assert payload["reasoning_effort"] == "low"
+    assert payload["response_format"] == {"type": "json_object"}
+
+
 def _ambiguous_response(corruption: str) -> bytes:
     payload = _response()
     message = payload["choices"][0]["message"]
