@@ -31,22 +31,34 @@ def _invoke(function: Callable[..., dict[str, Any]], **kwargs: Any) -> None:
 
 @json_stdout_contract
 def droid_fd_prepare_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="Held-out DROID selection manifest S3 URI."),
-    output_path: str = typer.Option(..., "--output-path", help="Run-scoped preparation S3 prefix."),
+    input_path: str = typer.Option(
+        ..., "--input-path", help="Held-out DROID selection manifest S3 URI."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="Run-scoped preparation S3 prefix."
+    ),
 ) -> None:
     """Build the exact 17-frame composite and 16-step DROID action contract."""
 
     validate_read_path(input_path, tool="cosmos3 droid-fd-prepare", allow_hf=False)
     validate_write_path(output_path, tool="cosmos3 droid-fd-prepare", required=True)
-    _invoke(prepare_droid_forward_dynamics, input_path=input_path, output_path=output_path)
+    _invoke(
+        prepare_droid_forward_dynamics, input_path=input_path, output_path=output_path
+    )
 
 
 @json_stdout_contract
 def droid_fd_predict_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="Prepared DROID handoff manifest S3 URI."),
-    output_path: str = typer.Option(..., "--output-path", help="Run-scoped true-prediction S3 prefix."),
+    input_path: str = typer.Option(
+        ..., "--input-path", help="Prepared DROID handoff manifest S3 URI."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="Run-scoped true-prediction S3 prefix."
+    ),
     seed: int = typer.Option(0, "--seed", min=0),
-    checkpoint_revision: str = typer.Option(CHECKPOINT_REVISION, "--checkpoint-revision"),
+    checkpoint_revision: str = typer.Option(
+        CHECKPOINT_REVISION, "--checkpoint-revision"
+    ),
 ) -> None:
     """Run native Cosmos forward dynamics with the held-out sample's true actions."""
 
@@ -63,10 +75,16 @@ def droid_fd_predict_cmd(
 
 @json_stdout_contract
 def droid_fd_controls_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="Prepared DROID handoff manifest S3 URI."),
-    output_path: str = typer.Option(..., "--output-path", help="Run-scoped controls S3 prefix."),
+    input_path: str = typer.Option(
+        ..., "--input-path", help="Prepared DROID handoff manifest S3 URI."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="Run-scoped controls S3 prefix."
+    ),
     seed: int = typer.Option(0, "--seed", min=0),
-    checkpoint_revision: str = typer.Option(CHECKPOINT_REVISION, "--checkpoint-revision"),
+    checkpoint_revision: str = typer.Option(
+        CHECKPOINT_REVISION, "--checkpoint-revision"
+    ),
 ) -> None:
     """Run matched temporal-permutation and zero-action native controls."""
 
@@ -83,10 +101,18 @@ def droid_fd_controls_cmd(
 
 @json_stdout_contract
 def droid_fd_evaluate_cmd(
-    prepared_path: str = typer.Option(..., "--prepared-path", help="Prepared handoff manifest S3 URI."),
-    prediction_path: str = typer.Option(..., "--prediction-path", help="True-prediction manifest S3 URI."),
-    controls_path: str = typer.Option(..., "--controls-path", help="Control-prediction manifest S3 URI."),
-    output_path: str = typer.Option(..., "--output-path", help="Run-scoped metrics S3 prefix."),
+    prepared_path: str = typer.Option(
+        ..., "--prepared-path", help="Prepared handoff manifest S3 URI."
+    ),
+    prediction_path: str = typer.Option(
+        ..., "--prediction-path", help="True-prediction manifest S3 URI."
+    ),
+    controls_path: str = typer.Option(
+        ..., "--controls-path", help="Control-prediction manifest S3 URI."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="Run-scoped metrics S3 prefix."
+    ),
 ) -> None:
     """Measure actual held-out RGB error and true-vs-control sensitivity."""
 
@@ -95,7 +121,9 @@ def droid_fd_evaluate_cmd(
         ("--prediction-path", prediction_path),
         ("--controls-path", controls_path),
     ):
-        validate_read_path(value, tool="cosmos3 droid-fd-evaluate", option=option, allow_hf=False)
+        validate_read_path(
+            value, tool="cosmos3 droid-fd-evaluate", option=option, allow_hf=False
+        )
     validate_write_path(output_path, tool="cosmos3 droid-fd-evaluate", required=True)
     _invoke(
         evaluate_droid_forward_dynamics,
@@ -112,7 +140,9 @@ def droid_fd_visualize_cmd(
     prediction_path: str = typer.Option(..., "--prediction-path"),
     controls_path: str = typer.Option(..., "--controls-path"),
     evaluation_path: str = typer.Option(..., "--evaluation-path"),
-    output_path: str = typer.Option(..., "--output-path", help="Run-scoped RRD S3 prefix."),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="Run-scoped RRD S3 prefix."
+    ),
 ) -> None:
     """Write and independently verify a synchronized observation/prediction RRD."""
 
@@ -122,7 +152,9 @@ def droid_fd_visualize_cmd(
         ("--controls-path", controls_path),
         ("--evaluation-path", evaluation_path),
     ):
-        validate_read_path(value, tool="cosmos3 droid-fd-visualize", option=option, allow_hf=False)
+        validate_read_path(
+            value, tool="cosmos3 droid-fd-visualize", option=option, allow_hf=False
+        )
     validate_write_path(output_path, tool="cosmos3 droid-fd-visualize", required=True)
     _invoke(
         visualize_droid_forward_dynamics,

@@ -133,10 +133,18 @@ def check_action_inference_contract() -> str:
     from cosmos_framework.inference.args import ActionDataOverrides, ModelMode
 
     if EMBODIMENT_TO_RAW_ACTION_DIM.get("droid_lerobot") != 10:
-        raise RuntimeError("droid_lerobot must retain its 10-channel raw action contract")
+        raise RuntimeError(
+            "droid_lerobot must retain its 10-channel raw action contract"
+        )
     if get_domain_id("droid_lerobot") != 8:
         raise RuntimeError("droid_lerobot must retain embodiment domain id 8")
-    required = {"action_path", "domain_name", "action_chunk_size", "image_size", "view_point"}
+    required = {
+        "action_path",
+        "domain_name",
+        "action_chunk_size",
+        "image_size",
+        "view_point",
+    }
     absent = sorted(required - set(ActionDataOverrides.model_fields))
     if absent:
         raise RuntimeError(f"native action sample JSON is missing fields: {absent}")

@@ -80,9 +80,9 @@ class DroidForwardDynamicsError(RuntimeError):
 
 
 def _canonical_json(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode(
-        "utf-8"
-    )
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -110,7 +110,9 @@ def _finite_vector(value: Any, length: int, name: str) -> list[float]:
 def _matrix3(value: Any, name: str) -> np.ndarray:
     if not isinstance(value, list) or len(value) != 3:
         raise DroidForwardDynamicsError(f"{name} must be a 3x3 rotation matrix")
-    rows = [_finite_vector(row, 3, f"{name}[{index}]") for index, row in enumerate(value)]
+    rows = [
+        _finite_vector(row, 3, f"{name}[{index}]") for index, row in enumerate(value)
+    ]
     matrix = np.asarray(rows, dtype=np.float64)
     if not np.allclose(matrix.T @ matrix, np.eye(3), atol=1e-4) or not np.isclose(
         np.linalg.det(matrix), 1.0, atol=1e-4
@@ -128,7 +130,9 @@ def _card_holdout_metadata(selection: dict[str, Any]) -> dict[str, Any]:
     if method == "scene_or_building" and group_key in {"scene_id", "building_id"}:
         group_id = str(split.get("group_id") or "")
         if not group_id:
-            raise DroidForwardDynamicsError("scene/building held-out selection needs group_id")
+            raise DroidForwardDynamicsError(
+                "scene/building held-out selection needs group_id"
+            )
         return {
             "scope": "scene_or_building_heldout",
             "method": method,
@@ -147,13 +151,18 @@ def _card_holdout_metadata(selection: dict[str, Any]) -> dict[str, Any]:
         )
     subset = str(split.get("subset") or "")
     expected_total = {"success": 57639, "failure": 14268}.get(subset)
-    if expected_total is None or int(split.get("subset_episode_count", -1)) != expected_total:
+    if (
+        expected_total is None
+        or int(split.get("subset_episode_count", -1)) != expected_total
+    ):
         raise DroidForwardDynamicsError(
             "card_episode_3pct must name success/57639 or failure/14268 exactly"
         )
     episode_index = split.get("episode_index")
     if not isinstance(episode_index, int) or not 0 <= episode_index < expected_total:
-        raise DroidForwardDynamicsError("card_episode_3pct needs an in-range episode_index")
+        raise DroidForwardDynamicsError(
+            "card_episode_3pct needs an in-range episode_index"
+        )
     try:
         import torch
     except ImportError as exc:
@@ -194,11 +203,15 @@ def _read_hashed_image(value: Any, label: str) -> Image.Image:
         raise DroidForwardDynamicsError(f"{label} must declare uri, bytes, and sha256")
     payload = read_bytes_uri(uri)
     if len(payload) != expected_bytes or _sha256_bytes(payload) != expected_digest:
-        raise DroidForwardDynamicsError(f"{label} content does not match its source manifest")
+        raise DroidForwardDynamicsError(
+            f"{label} content does not match its source manifest"
+        )
     try:
         image = Image.open(io.BytesIO(payload)).convert("RGB")
     except Exception as exc:  # Pillow reports a family of decoder exceptions.
-        raise DroidForwardDynamicsError(f"{label} is not a decodable RGB image") from exc
+        raise DroidForwardDynamicsError(
+            f"{label} is not a decodable RGB image"
+        ) from exc
     if image.size != (SOURCE_VIEW_WIDTH, SOURCE_VIEW_HEIGHT):
         raise DroidForwardDynamicsError(
             f"{label} must be {SOURCE_VIEW_WIDTH}x{SOURCE_VIEW_HEIGHT}; got {image.size}"
@@ -208,7 +221,9 @@ def _read_hashed_image(value: Any, label: str) -> Image.Image:
 
 def _composite_frame(frame: dict[str, Any], frame_index: int) -> Image.Image:
     views = _expect_mapping(frame.get("views"), f"frames[{frame_index}].views")
-    wrist = _read_hashed_image(views.get("wrist_image_left"), f"frame {frame_index} wrist")
+    wrist = _read_hashed_image(
+        views.get("wrist_image_left"), f"frame {frame_index} wrist"
+    )
     exterior_one = _read_hashed_image(
         views.get("exterior_image_1_left"), f"frame {frame_index} exterior 1"
     )
@@ -221,7 +236,8 @@ def _composite_frame(frame: dict[str, Any], frame_index: int) -> Image.Image:
     canvas.paste(wrist, (0, 0))
     canvas.paste(exterior_one.resize(lower_size, resampling), (0, SOURCE_VIEW_HEIGHT))
     canvas.paste(
-        exterior_two.resize(lower_size, resampling), (SOURCE_VIEW_WIDTH // 2, SOURCE_VIEW_HEIGHT)
+        exterior_two.resize(lower_size, resampling),
+        (SOURCE_VIEW_WIDTH // 2, SOURCE_VIEW_HEIGHT),
     )
     return canvas
 
@@ -230,7 +246,9 @@ def _write_video(frames: Iterable[Image.Image], destination: Path) -> None:
     try:
         import av
     except ImportError as exc:
-        raise DroidForwardDynamicsError("PyAV is required to encode DROID evidence video") from exc
+        raise DroidForwardDynamicsError(
+            "PyAV is required to encode DROID evidence video"
+        ) from exc
     destination.parent.mkdir(parents=True, exist_ok=True)
     frame_list = list(frames)
     if not frame_list:
@@ -247,23 +265,31 @@ def _write_video(frames: Iterable[Image.Image], destination: Path) -> None:
             for packet in stream.encode():
                 container.mux(packet)
     except Exception as exc:
-        raise DroidForwardDynamicsError("could not encode the synchronized evidence MP4") from exc
+        raise DroidForwardDynamicsError(
+            "could not encode the synchronized evidence MP4"
+        ) from exc
 
 
 def _decode_video(path: Path) -> list[np.ndarray]:
     try:
         import av
     except ImportError as exc:
-        raise DroidForwardDynamicsError("PyAV is required to evaluate generated video") from exc
+        raise DroidForwardDynamicsError(
+            "PyAV is required to evaluate generated video"
+        ) from exc
     try:
         with av.open(str(path), mode="r") as container:
-            frames = [frame.to_ndarray(format="rgb24") for frame in container.decode(video=0)]
+            frames = [
+                frame.to_ndarray(format="rgb24") for frame in container.decode(video=0)
+            ]
     except Exception as exc:
         raise DroidForwardDynamicsError(f"could not decode video {path.name}") from exc
     if not frames:
         raise DroidForwardDynamicsError(f"decoded video {path.name} contains no frames")
     if any(frame.shape != frames[0].shape for frame in frames):
-        raise DroidForwardDynamicsError(f"decoded video {path.name} has inconsistent frame geometry")
+        raise DroidForwardDynamicsError(
+            f"decoded video {path.name} has inconsistent frame geometry"
+        )
     return frames
 
 
@@ -271,17 +297,23 @@ def _relative_actions(
     poses: list[dict[str, Any]], raw_gripper_actions: list[float]
 ) -> list[list[float]]:
     if len(poses) != FRAME_COUNT:
-        raise DroidForwardDynamicsError(f"poses_abs must contain exactly {FRAME_COUNT} entries")
+        raise DroidForwardDynamicsError(
+            f"poses_abs must contain exactly {FRAME_COUNT} entries"
+        )
     if len(raw_gripper_actions) != PREDICTION_FRAME_COUNT:
         raise DroidForwardDynamicsError(
             "gripper_actions_raw must contain exactly 16 source action values"
         )
     if any(not 0.0 <= value <= 1.0 for value in raw_gripper_actions):
-        raise DroidForwardDynamicsError("gripper_actions_raw values must be within [0, 1]")
+        raise DroidForwardDynamicsError(
+            "gripper_actions_raw values must be within [0, 1]"
+        )
     decoded: list[tuple[np.ndarray, np.ndarray]] = []
     for index, raw_pose in enumerate(poses):
         pose = _expect_mapping(raw_pose, f"poses_abs[{index}]")
-        position = np.asarray(_finite_vector(pose.get("position_m"), 3, f"pose {index} position"))
+        position = np.asarray(
+            _finite_vector(pose.get("position_m"), 3, f"pose {index} position")
+        )
         rotation = _matrix3(pose.get("rotation_matrix"), f"pose {index} rotation")
         decoded.append((position, rotation))
     actions: list[list[float]] = []
@@ -298,12 +330,16 @@ def _relative_actions(
         # relative end-effector pose action.
         raw = [*translation.tolist(), *rot6d.tolist(), 1.0 - raw_gripper_actions[index]]
         if len(raw) != RAW_ACTION_DIM or not all(math.isfinite(value) for value in raw):
-            raise DroidForwardDynamicsError(f"action {index} does not satisfy the raw 10-D contract")
+            raise DroidForwardDynamicsError(
+                f"action {index} does not satisfy the raw 10-D contract"
+            )
         actions.append([*raw, *([0.0] * (PADDED_ACTION_DIM - RAW_ACTION_DIM))])
     return actions
 
 
-def _action_payload(actions: list[list[float]], *, control: str = "true") -> dict[str, Any]:
+def _action_payload(
+    actions: list[list[float]], *, control: str = "true"
+) -> dict[str, Any]:
     if len(actions) != PREDICTION_FRAME_COUNT or any(
         len(action) != PADDED_ACTION_DIM for action in actions
     ):
@@ -330,15 +366,21 @@ def _native_raw_actions(actions: list[list[float]]) -> list[list[float]]:
     """
 
     payload = _action_payload(actions)
-    if any(any(value != 0.0 for value in action[RAW_ACTION_DIM:]) for action in actions):
-        raise DroidForwardDynamicsError("DROID's padded 64-D action suffix must be zero")
+    if any(
+        any(value != 0.0 for value in action[RAW_ACTION_DIM:]) for action in actions
+    ):
+        raise DroidForwardDynamicsError(
+            "DROID's padded 64-D action suffix must be zero"
+        )
     raw_actions = [action[:RAW_ACTION_DIM] for action in payload["actions"]]
     if any(len(action) != RAW_ACTION_DIM for action in raw_actions):
         raise DroidForwardDynamicsError("native action JSON must be exactly [16, 10]")
     return raw_actions
 
 
-def prepare_droid_forward_dynamics(*, input_path: str, output_path: str) -> dict[str, Any]:
+def prepare_droid_forward_dynamics(
+    *, input_path: str, output_path: str
+) -> dict[str, Any]:
     """Prepare one selected held-out DROID window and its exact action tensor."""
 
     selection = read_json_uri(input_path)
@@ -346,7 +388,9 @@ def prepare_droid_forward_dynamics(*, input_path: str, output_path: str) -> dict
         raise DroidForwardDynamicsError(f"expected {SELECTION_SCHEMA} input")
     source = _expect_mapping(selection.get("source"), "source")
     if str(source.get("dataset_repository") or "") != COSMOS3_DROID_REPOSITORY:
-        raise DroidForwardDynamicsError("selection must identify the Cosmos3-DROID source dataset")
+        raise DroidForwardDynamicsError(
+            "selection must identify the Cosmos3-DROID source dataset"
+        )
     if str(source.get("dataset_version") or "") != COSMOS3_DROID_DATASET_VERSION:
         raise DroidForwardDynamicsError(
             "selection must identify the checkpoint card's exact DROID conversion version"
@@ -357,7 +401,9 @@ def prepare_droid_forward_dynamics(*, input_path: str, output_path: str) -> dict
     heldout = _card_holdout_metadata(selection)
     frames = selection.get("frames")
     if not isinstance(frames, list) or len(frames) != FRAME_COUNT:
-        raise DroidForwardDynamicsError(f"selection frames must contain exactly {FRAME_COUNT} observations")
+        raise DroidForwardDynamicsError(
+            f"selection frames must contain exactly {FRAME_COUNT} observations"
+        )
     poses = selection.get("poses_abs")
     if not isinstance(poses, list):
         raise DroidForwardDynamicsError("selection must provide absolute DROID poses")
@@ -371,7 +417,10 @@ def prepare_droid_forward_dynamics(*, input_path: str, output_path: str) -> dict
     with policy_workspace(output_path, "droid-fd-prepare") as root:
         artifacts = root / "artifacts"
         artifacts.mkdir()
-        composite = [_composite_frame(_expect_mapping(frame, f"frames[{index}]"), index) for index, frame in enumerate(frames)]
+        composite = [
+            _composite_frame(_expect_mapping(frame, f"frames[{index}]"), index)
+            for index, frame in enumerate(frames)
+        ]
         reference_video = artifacts / "reference_composite.mp4"
         _write_video(composite, reference_video)
         initial_frame = artifacts / "initial_composite.png"
@@ -413,12 +462,20 @@ def _download_checkpoint(revision: str) -> tuple[Path, dict[str, Any]]:
     try:
         from huggingface_hub import HfApi, snapshot_download
     except ImportError as exc:
-        raise DroidForwardDynamicsError("huggingface_hub is required for checkpoint runtime fetch") from exc
-    if len(revision) != 40 or any(character not in "0123456789abcdef" for character in revision):
-        raise DroidForwardDynamicsError("checkpoint revision must be a full immutable Git SHA")
+        raise DroidForwardDynamicsError(
+            "huggingface_hub is required for checkpoint runtime fetch"
+        ) from exc
+    if len(revision) != 40 or any(
+        character not in "0123456789abcdef" for character in revision
+    ):
+        raise DroidForwardDynamicsError(
+            "checkpoint revision must be a full immutable Git SHA"
+        )
     info = HfApi().model_info(CHECKPOINT_REPOSITORY, revision=revision)
     if str(getattr(info, "sha", "")) != revision:
-        raise DroidForwardDynamicsError("Hugging Face did not resolve the requested checkpoint SHA")
+        raise DroidForwardDynamicsError(
+            "Hugging Face did not resolve the requested checkpoint SHA"
+        )
     allow_patterns = [
         "LICENSE",
         "README.md",
@@ -448,10 +505,16 @@ def _download_checkpoint(revision: str) -> tuple[Path, dict[str, Any]]:
     missing = [name for name in sorted(expected) if not (local_dir / name).is_file()]
     weights = sorted(local_dir.glob("model-*.safetensors"))
     if missing or len(weights) != 7:
-        raise DroidForwardDynamicsError("checkpoint snapshot lacks the expected config/provenance/7 shards")
-    export_manifest = json.loads((local_dir / "export_manifest.json").read_text(encoding="utf-8"))
+        raise DroidForwardDynamicsError(
+            "checkpoint snapshot lacks the expected config/provenance/7 shards"
+        )
+    export_manifest = json.loads(
+        (local_dir / "export_manifest.json").read_text(encoding="utf-8")
+    )
     if export_manifest.get("framework_commit") != CARD_FRAMEWORK_REVISION:
-        raise DroidForwardDynamicsError("export manifest no longer identifies the pinned card framework commit")
+        raise DroidForwardDynamicsError(
+            "export manifest no longer identifies the pinned card framework commit"
+        )
     return local_dir, {
         "repository": CHECKPOINT_REPOSITORY,
         "revision": revision,
@@ -470,11 +533,17 @@ def _runtime_framework_revision(repo: Path) -> str:
     marker = repo / NATIVE_SOURCE_MARKER
     if marker.is_file():
         revision = marker.read_text(encoding="utf-8").strip()
-        if len(revision) == 40 and all(character in "0123456789abcdef" for character in revision):
+        if len(revision) == 40 and all(
+            character in "0123456789abcdef" for character in revision
+        ):
             return revision
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=False
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
         )
     except OSError:
         return "unavailable"
@@ -502,7 +571,9 @@ def _native_inference_argv(
 
     python = repo / ".venv" / "bin" / "python"
     if not python.is_file():
-        raise DroidForwardDynamicsError("the npa-cosmos3 image lacks its framework interpreter")
+        raise DroidForwardDynamicsError(
+            "the npa-cosmos3 image lacks its framework interpreter"
+        )
     return [
         str(python),
         "-m",
@@ -526,7 +597,9 @@ def _native_forward_dynamics_input(
 
     reference_video = prepared / "reference_composite.mp4"
     if not reference_video.is_file():
-        raise DroidForwardDynamicsError("prepared handoff lacks the 17-frame reference composite")
+        raise DroidForwardDynamicsError(
+            "prepared handoff lacks the 17-frame reference composite"
+        )
     return {
         "model_mode": "forward_dynamics",
         "name": f"droid-{control}",
@@ -543,7 +616,13 @@ def _native_forward_dynamics_input(
 
 
 def _run_native_inference(
-    *, root: Path, prepared: Path, actions: list[list[float]], control: str, seed: int, revision: str
+    *,
+    root: Path,
+    prepared: Path,
+    actions: list[list[float]],
+    control: str,
+    seed: int,
+    revision: str,
 ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
     root.mkdir(parents=True, exist_ok=True)
     action_path = root / f"actions_{control}.json"
@@ -552,7 +631,9 @@ def _run_native_inference(
     action_path.write_bytes(_canonical_json(native_actions) + b"\n")
     repo = Path(os.environ.get("COSMOS3_REPO") or "/opt/cosmos3/cosmos-framework")
     if not (repo / "cosmos_framework" / "scripts" / "inference.py").is_file():
-        raise DroidForwardDynamicsError("native cosmos-framework inference is absent from this image")
+        raise DroidForwardDynamicsError(
+            "native cosmos-framework inference is absent from this image"
+        )
     runtime_framework_revision = _require_pinned_runtime_framework(repo)
     checkpoint, checkpoint_identity = _download_checkpoint(revision)
     input_json = root / "forward_dynamics_input.json"
@@ -578,9 +659,13 @@ def _run_native_inference(
     )
     log = root / "native-inference.log"
     with log.open("wb") as stream:
-        result = subprocess.run(argv, cwd=repo, stdout=stream, stderr=subprocess.STDOUT, check=False)
+        result = subprocess.run(
+            argv, cwd=repo, stdout=stream, stderr=subprocess.STDOUT, check=False
+        )
     if result.returncode:
-        raise DroidForwardDynamicsError(f"native forward-dynamics inference failed (exit {result.returncode})")
+        raise DroidForwardDynamicsError(
+            f"native forward-dynamics inference failed (exit {result.returncode})"
+        )
     videos = sorted(path for path in output_dir.rglob("*.mp4") if path.is_file())
     if len(videos) != 1:
         raise DroidForwardDynamicsError(
@@ -612,18 +697,26 @@ def _materialize_prepared(input_path: str, target: Path) -> tuple[Path, dict[str
     expected = {"reference_composite.mp4", "initial_composite.png", "actions_true.json"}
     missing = [name for name in sorted(expected) if not (target / name).is_file()]
     if missing:
-        raise DroidForwardDynamicsError(f"prepared handoff is missing {', '.join(missing)}")
+        raise DroidForwardDynamicsError(
+            f"prepared handoff is missing {', '.join(missing)}"
+        )
     return target, report
 
 
 def predict_droid_forward_dynamics(
-    *, input_path: str, output_path: str, seed: int, checkpoint_revision: str = CHECKPOINT_REVISION
+    *,
+    input_path: str,
+    output_path: str,
+    seed: int,
+    checkpoint_revision: str = CHECKPOINT_REVISION,
 ) -> dict[str, Any]:
     """Run native forward dynamics with the held-out sample's true actions."""
 
     with policy_workspace(output_path, "droid-fd-predict") as root:
         prepared, prepared_report = _materialize_prepared(input_path, root / "prepared")
-        true_actions = json.loads((prepared / "actions_true.json").read_text())["actions"]
+        true_actions = json.loads((prepared / "actions_true.json").read_text())[
+            "actions"
+        ]
         video, native, _ = _run_native_inference(
             root=root,
             prepared=prepared,
@@ -635,7 +728,9 @@ def predict_droid_forward_dynamics(
         artifacts = root / "artifacts"
         artifacts.mkdir()
         shutil.copyfile(video, artifacts / "prediction_true.mp4")
-        shutil.copyfile(root / "native-inference.log", artifacts / "native-inference.log")
+        shutil.copyfile(
+            root / "native-inference.log", artifacts / "native-inference.log"
+        )
         report = {
             "schema": PREDICTION_SCHEMA,
             "status": "succeeded",
@@ -647,7 +742,9 @@ def predict_droid_forward_dynamics(
         return publish_bundle(artifacts, output_path, report, "prediction.json")
 
 
-def _permuted_actions(actions: list[list[float]], seed: int) -> tuple[list[list[float]], list[int]]:
+def _permuted_actions(
+    actions: list[list[float]], seed: int
+) -> tuple[list[list[float]], list[int]]:
     permutation = list(range(len(actions)))
     random.Random(seed).shuffle(permutation)
     if permutation == list(range(len(actions))):
@@ -661,15 +758,23 @@ def _permuted_actions(actions: list[list[float]], seed: int) -> tuple[list[list[
 
 
 def controls_droid_forward_dynamics(
-    *, input_path: str, output_path: str, seed: int, checkpoint_revision: str = CHECKPOINT_REVISION
+    *,
+    input_path: str,
+    output_path: str,
+    seed: int,
+    checkpoint_revision: str = CHECKPOINT_REVISION,
 ) -> dict[str, Any]:
     """Generate matched temporal-shuffle and zero-action native controls."""
 
     with policy_workspace(output_path, "droid-fd-controls") as root:
         prepared, prepared_report = _materialize_prepared(input_path, root / "prepared")
-        true_actions = json.loads((prepared / "actions_true.json").read_text())["actions"]
+        true_actions = json.loads((prepared / "actions_true.json").read_text())[
+            "actions"
+        ]
         permuted, permutation = _permuted_actions(true_actions, seed)
-        zero_actions = [[0.0] * PADDED_ACTION_DIM for _ in range(PREDICTION_FRAME_COUNT)]
+        zero_actions = [
+            [0.0] * PADDED_ACTION_DIM for _ in range(PREDICTION_FRAME_COUNT)
+        ]
         perm_video, perm_native, _ = _run_native_inference(
             root=root / "perm",
             prepared=prepared,
@@ -690,8 +795,12 @@ def controls_droid_forward_dynamics(
         artifacts.mkdir()
         shutil.copyfile(perm_video, artifacts / "prediction_permuted.mp4")
         shutil.copyfile(zero_video, artifacts / "prediction_zero.mp4")
-        shutil.copyfile(root / "perm" / "native-inference.log", artifacts / "permuted-inference.log")
-        shutil.copyfile(root / "zero" / "native-inference.log", artifacts / "zero-inference.log")
+        shutil.copyfile(
+            root / "perm" / "native-inference.log", artifacts / "permuted-inference.log"
+        )
+        shutil.copyfile(
+            root / "zero" / "native-inference.log", artifacts / "zero-inference.log"
+        )
         report = {
             "schema": CONTROLS_SCHEMA,
             "status": "succeeded",
@@ -711,26 +820,41 @@ def _future_frames(frames: list[np.ndarray], label: str) -> list[np.ndarray]:
     raise DroidForwardDynamicsError(f"{label} must decode to 16 or 17 frames")
 
 
-def _frame_metrics(prediction: list[np.ndarray], reference: list[np.ndarray]) -> list[dict[str, float]]:
+def _frame_metrics(
+    prediction: list[np.ndarray], reference: list[np.ndarray]
+) -> list[dict[str, float]]:
     if len(prediction) != PREDICTION_FRAME_COUNT or len(reference) != FRAME_COUNT:
-        raise DroidForwardDynamicsError("evaluation requires 16 predictions and a 17-frame reference")
+        raise DroidForwardDynamicsError(
+            "evaluation requires 16 predictions and a 17-frame reference"
+        )
     target = reference[1:]
     if any(pred.shape != ref.shape for pred, ref in zip(prediction, target)):
-        raise DroidForwardDynamicsError("prediction and held-out reference frame geometry differ")
+        raise DroidForwardDynamicsError(
+            "prediction and held-out reference frame geometry differ"
+        )
     metrics: list[dict[str, float]] = []
     for index, (predicted, expected) in enumerate(zip(prediction, target), start=1):
-        mse = float(np.mean((predicted.astype(np.float32) - expected.astype(np.float32)) ** 2))
+        mse = float(
+            np.mean((predicted.astype(np.float32) - expected.astype(np.float32)) ** 2)
+        )
         psnr = float("inf") if mse == 0 else 10.0 * math.log10((255.0**2) / mse)
         metrics.append({"frame": index, "mse": mse, "psnr_db": psnr})
     return metrics
 
 
-def _mean_frame_difference(left: list[np.ndarray], right: list[np.ndarray], label: str) -> float:
+def _mean_frame_difference(
+    left: list[np.ndarray], right: list[np.ndarray], label: str
+) -> float:
     if len(left) != len(right) or any(a.shape != b.shape for a, b in zip(left, right)):
-        raise DroidForwardDynamicsError(f"{label} videos do not have matching decoded geometry")
+        raise DroidForwardDynamicsError(
+            f"{label} videos do not have matching decoded geometry"
+        )
     return float(
         np.mean(
-            [np.mean((a.astype(np.float32) - b.astype(np.float32)) ** 2) for a, b in zip(left, right)]
+            [
+                np.mean((a.astype(np.float32) - b.astype(np.float32)) ** 2)
+                for a, b in zip(left, right)
+            ]
         )
     )
 
@@ -741,14 +865,22 @@ def evaluate_droid_forward_dynamics(
     """Measure held-out visual error and true-vs-control action sensitivity."""
 
     with policy_workspace(output_path, "droid-fd-evaluate") as root:
-        prepared, prepared_report = _materialize_prepared(prepared_path, root / "prepared")
-        prediction_report = materialize_bundle(prediction_path, root / "prediction", PREDICTION_SCHEMA)
-        controls_report = materialize_bundle(controls_path, root / "controls", CONTROLS_SCHEMA)
+        prepared, prepared_report = _materialize_prepared(
+            prepared_path, root / "prepared"
+        )
+        prediction_report = materialize_bundle(
+            prediction_path, root / "prediction", PREDICTION_SCHEMA
+        )
+        controls_report = materialize_bundle(
+            controls_path, root / "controls", CONTROLS_SCHEMA
+        )
         true_video = root / "prediction" / "prediction_true.mp4"
         perm_video = root / "controls" / "prediction_permuted.mp4"
         zero_video = root / "controls" / "prediction_zero.mp4"
         if not all(path.is_file() for path in (true_video, perm_video, zero_video)):
-            raise DroidForwardDynamicsError("prediction handoffs are missing their decoded-video evidence")
+            raise DroidForwardDynamicsError(
+                "prediction handoffs are missing their decoded-video evidence"
+            )
         reference = _decode_video(prepared / "reference_composite.mp4")
         true = _future_frames(_decode_video(true_video), "true prediction")
         permuted = _future_frames(_decode_video(perm_video), "permuted control")
@@ -777,7 +909,9 @@ def evaluate_droid_forward_dynamics(
             "schema": EVALUATION_SCHEMA,
             "status": "succeeded",
             "prepared_manifest_sha256": _sha256_bytes(_canonical_json(prepared_report)),
-            "prediction_manifest_sha256": _sha256_bytes(_canonical_json(prediction_report)),
+            "prediction_manifest_sha256": _sha256_bytes(
+                _canonical_json(prediction_report)
+            ),
             "controls_manifest_sha256": _sha256_bytes(_canonical_json(controls_report)),
             "evaluation_scope": prepared_report["heldout"],
             "visual_error": {
@@ -803,17 +937,27 @@ def _rerun_binary() -> str:
         return str(candidate)
     found = shutil.which("rerun")
     if not found:
-        raise DroidForwardDynamicsError("rerun CLI is unavailable; cannot verify a recording")
+        raise DroidForwardDynamicsError(
+            "rerun CLI is unavailable; cannot verify a recording"
+        )
     return found
 
 
 def _record_rrd(
-    *, destination: Path, reference: list[np.ndarray], true: list[np.ndarray], permuted: list[np.ndarray], zero: list[np.ndarray], evaluation: dict[str, Any]
+    *,
+    destination: Path,
+    reference: list[np.ndarray],
+    true: list[np.ndarray],
+    permuted: list[np.ndarray],
+    zero: list[np.ndarray],
+    evaluation: dict[str, Any],
 ) -> None:
     try:
         import rerun as rr
     except ImportError as exc:
-        raise DroidForwardDynamicsError("rerun-sdk is required for synchronized evidence") from exc
+        raise DroidForwardDynamicsError(
+            "rerun-sdk is required for synchronized evidence"
+        ) from exc
     recording = rr.RecordingStream("npa_cosmos3_droid_forward_dynamics")
     recording.save(str(destination))
     for index, source in enumerate(reference):
@@ -826,11 +970,21 @@ def _record_rrd(
             continue
         future_index = index - 1
         rr.log("predictions/true", rr.Image(true[future_index]), recording=recording)
-        rr.log("predictions/temporal_permutation", rr.Image(permuted[future_index]), recording=recording)
-        rr.log("predictions/zero_action", rr.Image(zero[future_index]), recording=recording)
+        rr.log(
+            "predictions/temporal_permutation",
+            rr.Image(permuted[future_index]),
+            recording=recording,
+        )
+        rr.log(
+            "predictions/zero_action", rr.Image(zero[future_index]), recording=recording
+        )
         metrics = evaluation["visual_error"]["frame_metrics"][future_index]
         rr.log("metrics/visual_mse", rr.Scalars(metrics["mse"]), recording=recording)
-        rr.log("metrics/visual_psnr_db", rr.Scalars(metrics["psnr_db"]), recording=recording)
+        rr.log(
+            "metrics/visual_psnr_db",
+            rr.Scalars(metrics["psnr_db"]),
+            recording=recording,
+        )
     summary = json.dumps(
         {
             "schema": VISUALIZATION_SCHEMA,
@@ -859,31 +1013,53 @@ def _record_rrd(
     if not destination.is_file() or destination.stat().st_size <= 64:
         raise DroidForwardDynamicsError("Rerun did not produce a nonempty recording")
     verified = subprocess.run(
-        [_rerun_binary(), "rrd", "verify", str(destination)], capture_output=True, check=False
+        [_rerun_binary(), "rrd", "verify", str(destination)],
+        capture_output=True,
+        check=False,
     )
     if verified.returncode:
         detail = verified.stderr.decode("utf-8", errors="replace").strip()
         raise DroidForwardDynamicsError(
-            "Rerun rejected the synchronized recording" + (f": {detail}" if detail else "")
+            "Rerun rejected the synchronized recording"
+            + (f": {detail}" if detail else "")
         )
 
 
 def visualize_droid_forward_dynamics(
-    *, prepared_path: str, prediction_path: str, controls_path: str, evaluation_path: str, output_path: str
+    *,
+    prepared_path: str,
+    prediction_path: str,
+    controls_path: str,
+    evaluation_path: str,
+    output_path: str,
 ) -> dict[str, Any]:
     """Emit a verified RRD from actual observation, prediction, and metric bytes."""
 
     with policy_workspace(output_path, "droid-fd-visualize") as root:
-        prepared, prepared_report = _materialize_prepared(prepared_path, root / "prepared")
-        prediction_report = materialize_bundle(prediction_path, root / "prediction", PREDICTION_SCHEMA)
-        controls_report = materialize_bundle(controls_path, root / "controls", CONTROLS_SCHEMA)
-        evaluation_report = materialize_bundle(evaluation_path, root / "evaluation", EVALUATION_SCHEMA)
-        reference = _decode_video(prepared / "reference_composite.mp4")
-        true = _future_frames(_decode_video(root / "prediction" / "prediction_true.mp4"), "true prediction")
-        permuted = _future_frames(
-            _decode_video(root / "controls" / "prediction_permuted.mp4"), "permuted control"
+        prepared, prepared_report = _materialize_prepared(
+            prepared_path, root / "prepared"
         )
-        zero = _future_frames(_decode_video(root / "controls" / "prediction_zero.mp4"), "zero control")
+        prediction_report = materialize_bundle(
+            prediction_path, root / "prediction", PREDICTION_SCHEMA
+        )
+        controls_report = materialize_bundle(
+            controls_path, root / "controls", CONTROLS_SCHEMA
+        )
+        evaluation_report = materialize_bundle(
+            evaluation_path, root / "evaluation", EVALUATION_SCHEMA
+        )
+        reference = _decode_video(prepared / "reference_composite.mp4")
+        true = _future_frames(
+            _decode_video(root / "prediction" / "prediction_true.mp4"),
+            "true prediction",
+        )
+        permuted = _future_frames(
+            _decode_video(root / "controls" / "prediction_permuted.mp4"),
+            "permuted control",
+        )
+        zero = _future_frames(
+            _decode_video(root / "controls" / "prediction_zero.mp4"), "zero control"
+        )
         artifacts = root / "artifacts"
         artifacts.mkdir()
         rrd = artifacts / "droid_forward_dynamics.rrd"
@@ -899,7 +1075,9 @@ def visualize_droid_forward_dynamics(
             "schema": "npa.cosmos3.droid-fd.provenance.v1",
             "checkpoint": {
                 "repository": CHECKPOINT_REPOSITORY,
-                "revision": prediction_report["native"]["checkpoint_identity"]["revision"],
+                "revision": prediction_report["native"]["checkpoint_identity"][
+                    "revision"
+                ],
                 "export_framework_commit": CARD_FRAMEWORK_REVISION,
                 "card_url": CARD_URL,
             },

@@ -88,8 +88,14 @@ def _prediction_artifacts(prepared_dir: Path, output: Path) -> tuple[Path, Path]
     perm_video = output / "perm-source.mp4"
     zero_video = output / "zero-source.mp4"
     _write_video(frames, true_video)
-    _write_video([Image.new("RGB", (640, 540), (70, index, 10)) for index in range(16)], perm_video)
-    _write_video([Image.new("RGB", (640, 540), (10, 70, index)) for index in range(16)], zero_video)
+    _write_video(
+        [Image.new("RGB", (640, 540), (70, index, 10)) for index in range(16)],
+        perm_video,
+    )
+    _write_video(
+        [Image.new("RGB", (640, 540), (10, 70, index)) for index in range(16)],
+        zero_video,
+    )
 
     true_root = output / "true"
     true_root.mkdir()
@@ -132,7 +138,9 @@ def test_prepare_evaluate_and_visualize_use_real_media_bytes(tmp_path: Path) -> 
     assert len(actions["actions"]) == 16
     assert all(len(action) == 64 and action[9] != 0.0 for action in actions["actions"])
 
-    prediction_path, controls_path = _prediction_artifacts(prepared_output, tmp_path / "predictions")
+    prediction_path, controls_path = _prediction_artifacts(
+        prepared_output, tmp_path / "predictions"
+    )
     evaluation_output = tmp_path / "evaluation-published"
     evaluation = evaluate_droid_forward_dynamics(
         prepared_path=str(prepared_output / "prepared.json"),
@@ -167,19 +175,27 @@ def test_prepare_rejects_an_unrecognized_heldout_split(tmp_path: Path) -> None:
     selection["heldout_split"] = {"method": "random"}
     path.write_text(json.dumps(selection))
     with pytest.raises(DroidForwardDynamicsError, match="heldout_split"):
-        prepare_droid_forward_dynamics(input_path=str(path), output_path=str(tmp_path / "out"))
+        prepare_droid_forward_dynamics(
+            input_path=str(path), output_path=str(tmp_path / "out")
+        )
 
 
-def test_prepare_requires_the_source_action_gripper_not_pose_state(tmp_path: Path) -> None:
+def test_prepare_requires_the_source_action_gripper_not_pose_state(
+    tmp_path: Path,
+) -> None:
     path = _selection(tmp_path)
     selection = json.loads(path.read_text())
     selection.pop("gripper_actions_raw")
     path.write_text(json.dumps(selection))
     with pytest.raises(DroidForwardDynamicsError, match="gripper_actions_raw"):
-        prepare_droid_forward_dynamics(input_path=str(path), output_path=str(tmp_path / "out"))
+        prepare_droid_forward_dynamics(
+            input_path=str(path), output_path=str(tmp_path / "out")
+        )
 
 
-def test_native_inference_uses_the_upstream_action_json_contract(tmp_path: Path) -> None:
+def test_native_inference_uses_the_upstream_action_json_contract(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "framework"
     (repo / ".venv/bin").mkdir(parents=True)
     (repo / ".venv/bin/python").touch()
@@ -194,7 +210,11 @@ def test_native_inference_uses_the_upstream_action_json_contract(tmp_path: Path)
         output_dir=tmp_path / "out",
         seed=7,
     )
-    assert argv[:3] == [str(repo / ".venv/bin/python"), "-m", "cosmos_framework.scripts.inference"]
+    assert argv[:3] == [
+        str(repo / ".venv/bin/python"),
+        "-m",
+        "cosmos_framework.scripts.inference",
+    ]
     assert "--action-path" not in argv
     assert argv[argv.index("-i") + 1].endswith("input.json")
     assert argv[argv.index("--seed") + 1] == "7"
@@ -220,9 +240,13 @@ def test_native_runtime_requires_the_qualified_framework_marker(tmp_path: Path) 
         _require_pinned_runtime_framework(repo)
 
 
-def test_relative_action_contract_is_not_accidentally_normalized(tmp_path: Path) -> None:
+def test_relative_action_contract_is_not_accidentally_normalized(
+    tmp_path: Path,
+) -> None:
     path = _selection(tmp_path)
-    prepared = prepare_droid_forward_dynamics(input_path=str(path), output_path=str(tmp_path / "out"))
+    prepared = prepare_droid_forward_dynamics(
+        input_path=str(path), output_path=str(tmp_path / "out")
+    )
     action_data = json.loads((tmp_path / "out/actions_true.json").read_text())
     first = np.asarray(action_data["actions"][0])
     assert first.shape == (64,)
@@ -232,8 +256,12 @@ def test_relative_action_contract_is_not_accidentally_normalized(tmp_path: Path)
     assert prepared["action_contract"]["normalization"] == "none"
 
 
-def test_native_action_file_uses_raw_width_and_framework_does_the_padding(tmp_path: Path) -> None:
-    prepare_droid_forward_dynamics(input_path=str(_selection(tmp_path)), output_path=str(tmp_path / "out"))
+def test_native_action_file_uses_raw_width_and_framework_does_the_padding(
+    tmp_path: Path,
+) -> None:
+    prepare_droid_forward_dynamics(
+        input_path=str(_selection(tmp_path)), output_path=str(tmp_path / "out")
+    )
     action_data = json.loads((tmp_path / "out/actions_true.json").read_text())
     raw = _native_raw_actions(action_data["actions"])
     assert len(raw) == 16

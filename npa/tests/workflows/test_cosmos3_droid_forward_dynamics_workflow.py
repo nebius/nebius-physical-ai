@@ -10,10 +10,19 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
 
 def test_droid_forward_dynamics_has_five_connected_substantive_stages() -> None:
-    path = Path(__file__).parents[3] / "workflows/testing/cosmos3-droid-forward-dynamics.yaml"
+    path = (
+        Path(__file__).parents[3]
+        / "workflows/testing/cosmos3-droid-forward-dynamics.yaml"
+    )
     spec = yaml.safe_load(path.read_text())
     states = spec["states"]
-    assert list(states) == ["prepare", "predict_true", "predict_controls", "evaluate", "visualize"]
+    assert list(states) == [
+        "prepare",
+        "predict_true",
+        "predict_controls",
+        "evaluate",
+        "visualize",
+    ]
     assert [states[name].get("next") for name in list(states)[:-1]] == [
         "predict_true",
         "predict_controls",
@@ -30,21 +39,39 @@ def test_droid_forward_dynamics_has_five_connected_substantive_stages() -> None:
         "workbench.cosmos3.droid_fd_visualize",
     ]
     assert all(TOOL_CATALOG[ref].stub is False for ref in refs)
-    assert TOOL_CATALOG["workbench.cosmos3.droid_fd_predict"].access_capabilities == ("cosmos3",)
-    assert TOOL_CATALOG["workbench.cosmos3.droid_fd_controls"].access_capabilities == ("cosmos3",)
+    assert TOOL_CATALOG["workbench.cosmos3.droid_fd_predict"].access_capabilities == (
+        "cosmos3",
+    )
+    assert TOOL_CATALOG["workbench.cosmos3.droid_fd_controls"].access_capabilities == (
+        "cosmos3",
+    )
     assert "prepared.json" in str(states["predict_true"]["inputs"])
     predict_argv = TOOL_CATALOG["workbench.cosmos3.droid_fd_predict"].argv_template
     controls_argv = TOOL_CATALOG["workbench.cosmos3.droid_fd_controls"].argv_template
-    assert predict_argv[predict_argv.index("--input-path") + 1].endswith("prepared.json")
-    assert controls_argv[controls_argv.index("--input-path") + 1].endswith("prepared.json")
+    assert predict_argv[predict_argv.index("--input-path") + 1].endswith(
+        "prepared.json"
+    )
+    assert controls_argv[controls_argv.index("--input-path") + 1].endswith(
+        "prepared.json"
+    )
     assert "prediction.json" in str(states["evaluate"]["inputs"])
     assert "controls.json" in str(states["evaluate"]["inputs"])
     assert "evaluation.json" in str(states["visualize"]["inputs"])
 
 
-def test_droid_forward_dynamics_keeps_the_immutable_checkpoint_and_rerun_output() -> None:
-    path = Path(__file__).parents[3] / "workflows/testing/cosmos3-droid-forward-dynamics.yaml"
+def test_droid_forward_dynamics_keeps_the_immutable_checkpoint_and_rerun_output() -> (
+    None
+):
+    path = (
+        Path(__file__).parents[3]
+        / "workflows/testing/cosmos3-droid-forward-dynamics.yaml"
+    )
     spec = yaml.safe_load(path.read_text())
-    assert spec["config"]["checkpoint_revision"] == "1dfff3cc3b86548b208341bb123d1c4f71043114"
+    assert (
+        spec["config"]["checkpoint_revision"]
+        == "1dfff3cc3b86548b208341bb123d1c4f71043114"
+    )
     outputs = spec["states"]["visualize"]["outputs"]
-    assert any(output["uri"].endswith("droid_forward_dynamics.rrd") for output in outputs)
+    assert any(
+        output["uri"].endswith("droid_forward_dynamics.rrd") for output in outputs
+    )
