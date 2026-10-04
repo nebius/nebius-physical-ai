@@ -1,0 +1,101 @@
+{
+  "schema": "ncore.photometry-proof.v1",
+  "created_at": "2026-10-04T11:55:13.296764+00:00",
+  "original_workflow_source": "10b3c34dd6033a1de8798d0013b062848c73a3a0",
+  "current_consumer_source": "aa3958d9d63de78a127e55ad1759311dd9848374",
+  "current_consumer_tree": "1cc813fb800e3f0eebce9f2d50bbb8735ae12340",
+  "native_image_digest": "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284",
+  "workflow_stages": {
+    "reconstruct": "SUCCEEDED",
+    "render": "SUCCEEDED",
+    "visualize": "SUCCEEDED",
+    "finalize": "SUCCEEDED"
+  },
+  "source_frames": 518,
+  "source_cameras": 3,
+  "source_sfm_points": 163453,
+  "scientific_change": "Native supported PPISP subtree only; geometry/population/seed42/30000/Gaussian schedule/losses/frozen gates unchanged.",
+  "fitted_metrics": {
+    "psnr": 23.871788024902344,
+    "ssim": 0.6742462515830994,
+    "lpips": 0.4939148724079132
+  },
+  "frozen_gates": {
+    "psnr_minimum": 15,
+    "ssim_minimum": 0.5,
+    "lpips_maximum": 0.5
+  },
+  "all_fitted_gates_pass": true,
+  "complete_readback": {
+    "objects": 2192,
+    "bytes": 4828795521
+  },
+  "decoded_media": {
+    "png_images": 2072,
+    "videos": 12,
+    "video_frames": 2072
+  },
+  "public_media": {
+    "fixed_png_images": 18,
+    "complete_rgb_videos": 6,
+    "bytes": 65981407
+  },
+  "closed_native_journal": {
+    "bytes": 1626065960,
+    "records": 23166,
+    "all_header_and_payload_crc32c_valid": true,
+    "main_training_points": 600,
+    "scalar_tags": 43,
+    "image_events": 1554
+  },
+  "recording": {
+    "bytes": 5950422,
+    "sha256": "08f5580f4af89e3f47bcc0adc86fdc99e23ef674fbc3787dccfaaec433f63fef",
+    "rows": 322,
+    "exact_novel_image_rows": 72,
+    "public": false
+  },
+  "consumer_replay": "PASS on unchanged original completed run, after two retained real consumer refusals; not a new model execution.",
+  "current_source_local_checks": {
+    "affected_pass": 396,
+    "precheck_pass": 270
+  },
+  "current_head_CI": "Pending at proof preparation; prior accepted10b CI is separately scoped in README.",
+  "new_independent_complete_output_review": "Pending at proof preparation; machine decode is not all-pixel human review.",
+  "new_visual_protocol": {
+    "frames": 20,
+    "provider_calls": 0,
+    "unchanged_requests": 3,
+    "changed_requests": 2,
+    "state": "Pending actual-pixel and complete-schedule/reuse review; historical responses are not new calls."
+  },
+  "cleanup": {
+    "owned_gpu_pods_absent": true,
+    "owned_controller_absent": true,
+    "other_controllers_preserved": 4,
+    "result": "degraded_local_metadata",
+    "other_cluster_owner_record_unchanged": true,
+    "local_api_retained": true
+  },
+  "receipt_sha256": {
+    "canonical_conversion": "6ce24c423c24f97fc4a2fbc76fdc53a5b8eab510e1265b0aa4de19c0d0f1892c",
+    "complete_terminal_readback": "17286f3b983315aa7611b21a32dd9c13898654a182684b0ee6ffc11e878da676",
+    "closed_native_journal_archive": "af01521cc77dd9602ffd63b20008d5554cbf9504dededa7dc61eb435e3b4ef88",
+    "strict_journal_audit": "7ed671389bc0c62e22e41957c166d0f4f25886f8056a7335e98d6b3693a4f08b",
+    "paired_all_frame_metrics": "e7aa46475f3658e1e651eda4e12fcab9398623677e4668bb638f67df5367dfdf",
+    "original_consumer_refusal": "11d7a17a1e75edc220bb55fd7a13bb7a096c4503f16bb2837798e0477320dbc2",
+    "staged_recording_identity_refusal": "18ca9a5f8356349f202e92db45223e2126f3b7fde2a548742bebfd0440ec05fd",
+    "unchanged_byte_successor_audit": "c86b9e6278066598f637709945fc20e0033fdd2319ed05b75f691ac07385c91c",
+    "successor_source_bridge": "00f7735d7a2b7169e18a3779a5703057151c19fb74ba96c44ed68d3695d5ff3e",
+    "independent_terminal_review_request": "9e66c2ae752985ab743c4a2aef8b568c2ce8a9babcb767ee53578216cb98d5e2",
+    "lossless_hash_presentation_proof": "660b5122bb1cced3b72a60dc9889068a62327c03b4654652f748044b49e9f2fc"
+  },
+  "limits": [
+    "Fitted same-population metrics, not held-out generalization or calibrated visual usefulness.",
+    "Novel frame index -1 skips per-frame exposure/color; native PPISP controller absent.",
+    "Original all-gate failures, geometry-only PSNR/LPIPS failures, missing lineage, truncated older journal and historical VLM disagreement remain unchanged.",
+    "Private image qualification is not public image release authorization; narrower exact-literal scan is not complete customer inventory.",
+    "No model, private image, vendor payload or operational resource identifiers published.",
+    "No independent human approval or PR merge-readiness claim."
+  ]
+}
