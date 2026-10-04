@@ -12,16 +12,22 @@ Apache-2.0 checkpoint identities are runtime-only:
 - `robbyant/lingbot-va-base@68b7bc1b35da6ddc67ea94c4ceb58d768fbb3f9c`
 - `robbyant/lingbot-va-posttrain-libero-long@0e89d1e753019988aba484e8da2dc0810e264d9f`
 
-The official `robbyant/libero-long-lerobot@8c0313b1c7cd9fa3798798479cbf59b11af8979d`
-dataset declares CC BY-NC-SA 4.0. It is neither fetched nor packaged here. The
-workflow accepts only an operator-staged source URI and records that NPA has not
-made a use, redistribution, commercial, or noncommercial assertion. Source
-access is not treated as a license grant for weights, data, outputs, or caches.
+The workflow accepts only an operator-staged copy of
+`HuggingFaceVLA/libero@affa19c0de0f6bce2a7edd26dddef8a532e7e6f6`. Its immutable
+card declares CC-BY-4.0 and credits the original LIBERO dataset. The raw data,
+its source image bytes, and fresh derived MP4/latent/output artifacts are
+neither fetched during image construction nor packaged into an image. The
+runtime manifest retains the source revision, task/episode mapping, license,
+and LIBERO citation so downstream run-scoped artifacts preserve attribution.
+The separate `robbyant/libero-long-lerobot` CC-BY-NC-SA latent dataset is not a
+workflow input. Source access is not treated as a license grant for weights,
+data, outputs, or caches.
 
 CUDA and Python dependencies are built into an operator-owned writable runtime
 cache by `lingbot-va-runtime ensure`. Runtime installation uses the exact
 upstream PyTorch 2.9/CUDA 12.6 major/minor contract and does not add an EULA,
 acceptance variable, telemetry consent, or vendor-specific attestation.
-Publication is not authorized by this source-only record: it requires exact
-image scans, a native GPU execution, and separate evidence for the candidate
-digest. See `THIRD_PARTY_NOTICES.md` for attribution and dependency lineage.
+Public release is not authorized by this source-only record. The only permitted
+near-term use is operator-private validation after exact image scans, a native
+GPU execution, and independently inspected candidate-digest evidence. See
+`THIRD_PARTY_NOTICES.md` for attribution and dependency lineage.

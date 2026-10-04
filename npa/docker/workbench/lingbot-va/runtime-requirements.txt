@@ -28,6 +28,7 @@ Pillow==11.3.0
 # upstream LingBot-VA instructions require: its metadata caps Torch below the
 # source-required 2.9.0. Keep the non-Torch 0.3.3 data dependencies explicit.
 datasets==3.6.0
+pyarrow==25.0.1
 cmake==4.0.3
 av==16.0.1
 jsonlines==4.0.0
