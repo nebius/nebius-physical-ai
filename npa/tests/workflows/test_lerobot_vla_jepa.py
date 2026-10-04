@@ -17,9 +17,10 @@ from npa.deploy.images import SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS
 from npa.workflows import lerobot_vla_jepa as vla
 
 
-WORKFLOW = Path("workflows/testing/lerobot-vla-jepa.yaml")
+ROOT = Path(__file__).resolve().parents[3]
+WORKFLOW = ROOT / "workflows" / "testing" / "lerobot-vla-jepa.yaml"
 READINESS = WORKFLOW.with_suffix(".readiness.json")
-DOCKERFILE = Path("npa/docker/workbench/lerobot-vla-jepa/Dockerfile")
+DOCKERFILE = ROOT / "npa" / "docker" / "workbench" / "lerobot-vla-jepa" / "Dockerfile"
 
 
 def test_workflow_has_five_connected_native_stages() -> None:
@@ -255,22 +256,26 @@ def test_readiness_is_hash_bound_and_does_not_claim_live_acceptance() -> None:
         readiness["workflow_sha256"]
         == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
     )
-    expected = (
-        WORKFLOW,
-        DOCKERFILE,
-        Path("npa/docker/workbench/lerobot-vla-jepa/entrypoint.sh"),
-        Path("npa/src/npa/deploy/images.py"),
-        Path("npa/src/npa/workflows/lerobot_vla_jepa.py"),
-        Path("npa/tests/workflows/test_lerobot_vla_jepa.py"),
-    )
+    expected = {
+        "workflows/testing/lerobot-vla-jepa.yaml": WORKFLOW,
+        "npa/docker/workbench/lerobot-vla-jepa/Dockerfile": DOCKERFILE,
+        "npa/docker/workbench/lerobot-vla-jepa/entrypoint.sh": (
+            DOCKERFILE.parent / "entrypoint.sh"
+        ),
+        "npa/src/npa/deploy/images.py": ROOT / "npa/src/npa/deploy/images.py",
+        "npa/src/npa/workflows/lerobot_vla_jepa.py": (
+            ROOT / "npa/src/npa/workflows/lerobot_vla_jepa.py"
+        ),
+        "npa/tests/workflows/test_lerobot_vla_jepa.py": Path(__file__).resolve(),
+    }
     hashes = {
         item.split(" ", 1)[1]: item.split(" ", 1)[0].removeprefix("sha256:")
         for item in readiness["planning"]["task_fidelity"]["evidence"]
         if item.startswith("sha256:")
     }
-    assert set(hashes) == {str(path) for path in expected}
-    for path in expected:
-        assert hashes[str(path)] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert set(hashes) == set(expected)
+    for relative_path, path in expected.items():
+        assert hashes[relative_path] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert readiness["planning"]["validation"]["status"] == "verified"
     assert readiness["planning"]["task_fidelity"]["status"] == "verified"
     assert readiness["prerequisites"]["source_image"]["status"] == "unverified"
