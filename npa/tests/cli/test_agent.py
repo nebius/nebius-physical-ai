@@ -4813,7 +4813,7 @@ def test_agent_preflight_nebius_fail(monkeypatch, tmp_path) -> None:
 
 
 def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
-    """Deploy aborts on a missing SSH key BEFORE any cloud IAM side effects."""
+    """Deploy aborts on a missing SSH key before any cloud mutations."""
     from npa.cli.agent import deploy_cmd
 
     project_region_calls: list[str] = []
