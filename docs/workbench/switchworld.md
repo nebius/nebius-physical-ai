@@ -92,6 +92,12 @@ It has an explicit no-publication disposition and must pass a fresh built-byte
 scan, target pull, real five-stage run, and artifact readback before becoming a
 usable private runtime. This is a remediation, not a public image claim.
 
+The private recipe's first digest has now completed its built-layer/history
+scan and a target-side SkyPilot bootstrap probe with verified cleanup. Those
+receipts verify private delivery and worker bootstrap only. They do not prove a
+model load, native generation, metric, benchmark, or artifact output; those
+remain gated on the separately encoded real case and the five connected stages.
+
 ## Real stages and measurements
 
 1. `prepare-real-case` decodes the target and validates its native controls.
