@@ -171,6 +171,12 @@ def test_runtime_install_graph_cannot_follow_the_unlicensed_dlimp_fork(
     assert pipe.DLIMP_REPOSITORY == "https://github.com/kvablack/dlimp.git"
     assert re.fullmatch(r"[0-9a-f]{40}", pipe.DLIMP_REVISION)
     assert "tensorflow-metadata==1.14.0" in pipe.OFT_PYPI_DIRECT_DEPENDENCIES
+    assert pipe.TENSORFLOW_NUMPY_REQUIREMENT in pipe.OFT_PYPI_DIRECT_DEPENDENCIES
+    # LIBERO's requirements are resolved last and previously upgraded NumPy 2,
+    # which makes TensorFlow 2.15 fail before dlimp can read RLDS.  Keep the
+    # compatible pin in that exact resolver call rather than trusting its
+    # earlier installation to survive.
+    assert commands[-1][-1] == pipe.TENSORFLOW_NUMPY_REQUIREMENT
 
 
 def test_neutral_image_is_private_validation_quarantined() -> None:

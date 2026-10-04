@@ -74,6 +74,10 @@ DEFAULT_TRIALS = 50
 # Apache-2.0 parent above is byte-identical except for its LICENSE and this
 # deterministic default. Install all editable sources with ``--no-deps`` so
 # pip never follows that fork, and preserve the needed one-line behavior here.
+# LIBERO's own unconstrained requirements upgrade NumPy after TensorFlow has
+# been installed.  TensorFlow 2.15 wheels are built against NumPy 1.x, so keep
+# the compatible version in that final resolver invocation as well.
+TENSORFLOW_NUMPY_REQUIREMENT = "numpy==1.26.4"
 OFT_PYPI_DIRECT_DEPENDENCIES: tuple[str, ...] = (
     "accelerate>=0.25.0",
     "draccus==0.8.0",
@@ -82,6 +86,7 @@ OFT_PYPI_DIRECT_DEPENDENCIES: tuple[str, ...] = (
     "json-numpy",
     "jsonlines",
     "matplotlib",
+    TENSORFLOW_NUMPY_REQUIREMENT,
     "peft==0.11.1",
     "protobuf",
     "rich",
@@ -500,6 +505,7 @@ def _runtime_install_commands(
             "install",
             "-r",
             str(source / "experiments/robot/libero/libero_requirements.txt"),
+            TENSORFLOW_NUMPY_REQUIREMENT,
         ),
     )
 
