@@ -57,7 +57,9 @@ def test_normalization_contract_rejects_shape_drift(
         )
 
 
-def test_first_libero_observation_is_safe_and_uses_ordered_cameras(tmp_path: Path) -> None:
+def test_first_libero_observation_is_safe_and_uses_ordered_cameras(
+    tmp_path: Path,
+) -> None:
     data = tmp_path / "libero"
     image_root = data / "libero_pi0_all" / "image"
     jsonl = data / "libero_pi0_all" / "jsonl" / "episode.jsonl"
@@ -96,12 +98,28 @@ def test_workflow_is_a_connected_five_stage_real_component_path() -> None:
         "evaluate_libero",
         "emit_reviewable_artifacts",
     ]
-    assert all("python3 -m npa.workflows.dm05_opendm" in state["run"]["shell"] for state in states.values())
-    assert states["train_dm05"]["inputs"][0]["uri"] == "{{config.prepared_manifest_uri}}"
-    assert states["serve_rollout"]["inputs"][1]["uri"] == "{{config.checkpoint_manifest_uri}}"
-    assert states["evaluate_libero"]["inputs"][2]["uri"] == "{{config.rollout_manifest_uri}}"
-    assert states["emit_reviewable_artifacts"]["inputs"][3]["uri"] == "{{config.evaluation_manifest_uri}}"
-    assert states["emit_reviewable_artifacts"]["outputs"][1]["uri"] == "{{config.rrd_uri}}"
+    assert all(
+        "python3 -m npa.workflows.dm05_opendm" in state["run"]["shell"]
+        for state in states.values()
+    )
+    assert (
+        states["train_dm05"]["inputs"][0]["uri"] == "{{config.prepared_manifest_uri}}"
+    )
+    assert (
+        states["serve_rollout"]["inputs"][1]["uri"]
+        == "{{config.checkpoint_manifest_uri}}"
+    )
+    assert (
+        states["evaluate_libero"]["inputs"][2]["uri"]
+        == "{{config.rollout_manifest_uri}}"
+    )
+    assert (
+        states["emit_reviewable_artifacts"]["inputs"][3]["uri"]
+        == "{{config.evaluation_manifest_uri}}"
+    )
+    assert (
+        states["emit_reviewable_artifacts"]["outputs"][1]["uri"] == "{{config.rrd_uri}}"
+    )
     adapter_source = (ROOT / "npa/src/npa/workflows/dm05_opendm.py").read_text(
         encoding="utf-8"
     )
@@ -113,7 +131,9 @@ def test_workflow_is_a_connected_five_stage_real_component_path() -> None:
 
 
 def test_workflow_does_not_invent_an_openpi_or_generic_terms_gate() -> None:
-    contents = SPEC.read_text(encoding="utf-8") + (ROOT / "npa/src/npa/workflows/dm05_opendm.py").read_text(encoding="utf-8")
+    contents = SPEC.read_text(encoding="utf-8") + (
+        ROOT / "npa/src/npa/workflows/dm05_opendm.py"
+    ).read_text(encoding="utf-8")
     assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in contents
     assert "ACCEPT_" not in contents
     assert "Dexmal/DM05" in contents

@@ -56,7 +56,9 @@ class DM05WorkflowError(RuntimeError):
 
 def _json_dump(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -80,7 +82,9 @@ def _tree_summary(root: Path) -> dict[str, Any]:
     }
 
 
-def _run(command: Sequence[str], *, cwd: Path, env: dict[str, str] | None = None) -> None:
+def _run(
+    command: Sequence[str], *, cwd: Path, env: dict[str, str] | None = None
+) -> None:
     rendered = " ".join(command)
     print(f"[dm05-opendm] running: {rendered}", flush=True)
     merged = os.environ.copy()
@@ -130,7 +134,9 @@ def assert_normalization_contract(
     try:
         [float(value) for value in state]
     except (TypeError, ValueError) as exc:
-        raise DM05WorkflowError("LIBERO state must contain only numeric values") from exc
+        raise DM05WorkflowError(
+            "LIBERO state must contain only numeric values"
+        ) from exc
     if action_dim is not None and action_dim != LIBERO_ACTION_DIM:
         raise DM05WorkflowError(
             f"LIBERO DM05 requires {LIBERO_ACTION_DIM} action values, got {action_dim}"
@@ -253,14 +259,19 @@ def _first_libero_observation(data_root: Path) -> tuple[dict[str, Any], list[Pat
         if not isinstance(value, str):
             raise DM05WorkflowError(f"LIBERO frame {key} has no image URL")
         candidate = (image_root / value).resolve()
-        if not candidate.is_relative_to(image_root.resolve()) or not candidate.is_file():
+        if (
+            not candidate.is_relative_to(image_root.resolve())
+            or not candidate.is_file()
+        ):
             raise DM05WorkflowError(f"LIBERO image escapes or is missing: {value!r}")
         image_paths.append(candidate)
     assert_normalization_contract(state=state, image_count=len(image_paths))
     return frame, image_paths
 
 
-def _request_payload(frame: dict[str, Any], image_paths: Iterable[Path]) -> dict[str, Any]:
+def _request_payload(
+    frame: dict[str, Any], image_paths: Iterable[Path]
+) -> dict[str, Any]:
     state = frame["state"]
     images = {
         str(index): base64.b64encode(path.read_bytes()).decode("ascii")
@@ -328,7 +339,9 @@ def _start_server(
     }
     # dm05_launcher intentionally uses the image's ``python``.  Put the native
     # interpreter first rather than altering upstream source or its arguments.
-    native_dir = str(Path(native_python).parent) if Path(native_python).is_absolute() else ""
+    native_dir = (
+        str(Path(native_python).parent) if Path(native_python).is_absolute() else ""
+    )
     if native_dir:
         env["PATH"] = native_dir + os.pathsep + env.get("PATH", "")
     print(f"[dm05-opendm] running: {' '.join(command)}", flush=True)
@@ -357,7 +370,9 @@ def _infer_once(*, port: int, payload: dict[str, Any]) -> dict[str, Any]:
         data = json.loads(response.read().decode("utf-8"))
     actions = data.get("actions")
     if not isinstance(actions, list) or len(actions) != LIBERO_ACTION_CHUNK:
-        raise DM05WorkflowError("DM05 v1 response has an unexpected action-chunk length")
+        raise DM05WorkflowError(
+            "DM05 v1 response has an unexpected action-chunk length"
+        )
     for action in actions:
         if not isinstance(action, list):
             raise DM05WorkflowError("DM05 v1 response action is not a vector")
@@ -415,8 +430,14 @@ def prepare(args: argparse.Namespace) -> None:
             output / "manifest.json",
             {
                 "schema": "npa.dm05-opendm.prepare.v1",
-                "opendm": {"url": OPENDM_SOURCE_URL, "revision": OPENDM_SOURCE_REVISION},
-                "dataset": {"id": LIBERO_DATASET_ID, "revision": LIBERO_DATASET_REVISION},
+                "opendm": {
+                    "url": OPENDM_SOURCE_URL,
+                    "revision": OPENDM_SOURCE_REVISION,
+                },
+                "dataset": {
+                    "id": LIBERO_DATASET_ID,
+                    "revision": LIBERO_DATASET_REVISION,
+                },
                 "normalization": normalization_contract(),
                 "artifacts": _tree_summary(output),
             },
@@ -470,7 +491,9 @@ def train(args: argparse.Namespace) -> None:
             cwd=repo_root,
         )
         if not checkpoint.is_dir() or not any(checkpoint.iterdir()):
-            raise DM05WorkflowError("OpenDM training completed without a checkpoint directory")
+            raise DM05WorkflowError(
+                "OpenDM training completed without a checkpoint directory"
+            )
         shutil.copy2(norm_stats, checkpoint / "norm_stats.json")
         output = work / "output"
         shutil.copytree(checkpoint, output / "checkpoint")
@@ -478,7 +501,10 @@ def train(args: argparse.Namespace) -> None:
             output / "manifest.json",
             {
                 "schema": "npa.dm05-opendm.train.v1",
-                "opendm": {"url": OPENDM_SOURCE_URL, "revision": OPENDM_SOURCE_REVISION},
+                "opendm": {
+                    "url": OPENDM_SOURCE_URL,
+                    "revision": OPENDM_SOURCE_REVISION,
+                },
                 "base_model": {"id": DM05_MODEL_ID, "revision": DM05_MODEL_REVISION},
                 "prepared_uri": args.prepared_uri,
                 "train_steps": int(args.train_steps),
@@ -501,7 +527,9 @@ def serve_rollout(args: argparse.Namespace) -> None:
         trained = store.download_tree(args.checkpoint_uri, work / "trained")
         checkpoint = trained / "checkpoint"
         if not (checkpoint / "norm_stats.json").is_file():
-            raise DM05WorkflowError("trained checkpoint lacks its exact norm_stats.json")
+            raise DM05WorkflowError(
+                "trained checkpoint lacks its exact norm_stats.json"
+            )
         frame, images = _first_libero_observation(prepared / "data" / "libero")
         payload = _request_payload(frame, images)
         server = _start_server(
@@ -523,7 +551,10 @@ def serve_rollout(args: argparse.Namespace) -> None:
                 "schema": "npa.dm05-opendm.http-rollout.v1",
                 "checkpoint_uri": args.checkpoint_uri,
                 "normalization": normalization_contract(),
-                "request": {"prompt": payload["observation"]["prompt"], "camera_slots": ["1", "2"]},
+                "request": {
+                    "prompt": payload["observation"]["prompt"],
+                    "camera_slots": ["1", "2"],
+                },
                 "response": response,
             },
         )
@@ -544,7 +575,9 @@ def evaluate(args: argparse.Namespace) -> None:
     repo_root = Path(args.repo_root).resolve()
     evaluator_root = Path(args.evaluator_root).resolve()
     assert_pinned_checkout(repo_root, OPENDM_SOURCE_REVISION, "OpenDM")
-    assert_pinned_checkout(evaluator_root, DEXBOTIC_SOURCE_REVISION, "Dexbotic benchmark")
+    assert_pinned_checkout(
+        evaluator_root, DEXBOTIC_SOURCE_REVISION, "Dexbotic benchmark"
+    )
     native_python = _native_python(args.opendm_python)
     evaluator_python = _native_python(args.evaluator_python)
     store = ArtifactStore()
@@ -557,7 +590,9 @@ def evaluate(args: argparse.Namespace) -> None:
             raise DM05WorkflowError("serve-rollout stage did not publish rollout.json")
         checkpoint = trained / "checkpoint"
         if not (checkpoint / "norm_stats.json").is_file():
-            raise DM05WorkflowError("trained checkpoint lacks its exact norm_stats.json")
+            raise DM05WorkflowError(
+                "trained checkpoint lacks its exact norm_stats.json"
+            )
         _first_libero_observation(prepared / "data" / "libero")
         results = work / "evaluation"
         server = _start_server(
@@ -599,28 +634,45 @@ def evaluate(args: argparse.Namespace) -> None:
             _stop_owned_process(server)
         results_file = results / "results.json"
         if not results_file.is_file():
-            raise DM05WorkflowError("upstream Dexbotic evaluation produced no results.json")
+            raise DM05WorkflowError(
+                "upstream Dexbotic evaluation produced no results.json"
+            )
         parsed = json.loads(results_file.read_text(encoding="utf-8"))
-        for field in ("total_tasks", "total_episodes", "successful_episodes", "success_rate"):
+        for field in (
+            "total_tasks",
+            "total_episodes",
+            "successful_episodes",
+            "success_rate",
+        ):
             if field not in parsed:
                 raise DM05WorkflowError(f"Dexbotic results.json has no {field!r}")
         videos = sorted((results / "videos").glob("*.mp4"))
         if not videos:
-            raise DM05WorkflowError("Dexbotic evaluation produced no factual rollout MP4")
+            raise DM05WorkflowError(
+                "Dexbotic evaluation produced no factual rollout MP4"
+            )
         output = work / "output"
         shutil.copytree(results, output / "evaluation")
         _json_dump(
             output / "manifest.json",
             {
                 "schema": "npa.dm05-opendm.closed-loop-evaluation.v1",
-                "dexbotic": {"url": DEXBOTIC_SOURCE_URL, "revision": DEXBOTIC_SOURCE_REVISION},
+                "dexbotic": {
+                    "url": DEXBOTIC_SOURCE_URL,
+                    "revision": DEXBOTIC_SOURCE_REVISION,
+                },
                 "prepared_uri": args.prepared_uri,
                 "checkpoint_uri": args.checkpoint_uri,
                 "rollout_uri": args.rollout_uri,
                 "eval_trials_per_task": int(args.eval_trials),
                 "metrics": {
                     key: parsed[key]
-                    for key in ("total_tasks", "total_episodes", "successful_episodes", "success_rate")
+                    for key in (
+                        "total_tasks",
+                        "total_episodes",
+                        "successful_episodes",
+                        "success_rate",
+                    )
                 },
                 "rollout_mp4_count": len(videos),
                 "normalization": normalization_contract(),
@@ -651,9 +703,16 @@ def report(args: argparse.Namespace) -> None:
         report_doc = {
             "schema": "npa.dm05-opendm.provenance.v1",
             "opendm": {"url": OPENDM_SOURCE_URL, "revision": OPENDM_SOURCE_REVISION},
-            "base_model": {"id": DM05_MODEL_ID, "revision": DM05_MODEL_REVISION, "license": "Gemma"},
+            "base_model": {
+                "id": DM05_MODEL_ID,
+                "revision": DM05_MODEL_REVISION,
+                "license": "Gemma",
+            },
             "dataset": {"id": LIBERO_DATASET_ID, "revision": LIBERO_DATASET_REVISION},
-            "dexbotic": {"url": DEXBOTIC_SOURCE_URL, "revision": DEXBOTIC_SOURCE_REVISION},
+            "dexbotic": {
+                "url": DEXBOTIC_SOURCE_URL,
+                "revision": DEXBOTIC_SOURCE_REVISION,
+            },
             "inputs": {
                 "prepared_uri": args.prepared_uri,
                 "checkpoint_uri": args.checkpoint_uri,
@@ -664,7 +723,12 @@ def report(args: argparse.Namespace) -> None:
             "evaluator_observation_contract": evaluator_observation_contract(),
             "metrics": {
                 key: results[key]
-                for key in ("total_tasks", "total_episodes", "successful_episodes", "success_rate")
+                for key in (
+                    "total_tasks",
+                    "total_episodes",
+                    "successful_episodes",
+                    "success_rate",
+                )
             },
             "claims": {
                 "operational_smoke": False,
@@ -687,7 +751,9 @@ def report(args: argparse.Namespace) -> None:
             "evaluation-manifest.json": evaluation / "manifest.json",
         }.items():
             if not source.is_file():
-                raise DM05WorkflowError(f"missing required upstream-stage manifest: {source}")
+                raise DM05WorkflowError(
+                    f"missing required upstream-stage manifest: {source}"
+                )
             (output / "stage-manifests").mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, output / "stage-manifests" / name)
         _json_dump(
@@ -707,14 +773,26 @@ def _write_rrd(path: Path, provenance: dict[str, Any], video: Path) -> None:
     try:
         import rerun as rr
     except ImportError as exc:  # pragma: no cover - exercised in the runtime image
-        raise DM05WorkflowError("rerun-sdk is required to emit the requested factual RRD") from exc
-    rr.init("npa.dm05-opendm", recording_id=f"dm05-{hashlib.sha256(str(path).encode()).hexdigest()[:16]}")
+        raise DM05WorkflowError(
+            "rerun-sdk is required to emit the requested factual RRD"
+        ) from exc
+    rr.init(
+        "npa.dm05-opendm",
+        recording_id=f"dm05-{hashlib.sha256(str(path).encode()).hexdigest()[:16]}",
+    )
     rr.save(str(path))
     metrics = provenance["metrics"]
     rr.log("metrics/success_rate", rr.Scalars(float(metrics["success_rate"])))
     rr.log("metrics/total_episodes", rr.Scalars(float(metrics["total_episodes"])))
-    rr.log("metrics/successful_episodes", rr.Scalars(float(metrics["successful_episodes"])))
-    rr.log("provenance", rr.TextDocument(json.dumps(provenance, sort_keys=True), media_type="application/json"))
+    rr.log(
+        "metrics/successful_episodes", rr.Scalars(float(metrics["successful_episodes"]))
+    )
+    rr.log(
+        "provenance",
+        rr.TextDocument(
+            json.dumps(provenance, sort_keys=True), media_type="application/json"
+        ),
+    )
     # The MP4 is kept alongside the RRD as the evaluator wrote it.  Its path and
     # checksum make the relationship inspectable without pretending it was made
     # by Rerun or re-encoding it into an unrelated visualization format.
@@ -824,7 +902,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         args.handler(args)
-    except (DM05WorkflowError, subprocess.CalledProcessError, OSError, ValueError) as exc:
+    except (
+        DM05WorkflowError,
+        subprocess.CalledProcessError,
+        OSError,
+        ValueError,
+    ) as exc:
         print(f"[dm05-opendm] failed: {exc}", file=sys.stderr)
         return 1
     return 0
