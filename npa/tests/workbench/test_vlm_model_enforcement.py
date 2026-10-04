@@ -229,6 +229,7 @@ def test_benchmark_deduplicates_resolved_models_in_caller_order(
         else "vendor/environment-model"
     )
     Image.new("RGB", (8, 8), "green").save(tmp_path / "frame.png")
+    Image.new("RGB", (8, 8), "red").save(tmp_path / "negative.png")
     manifest = tmp_path / "benchmark.json"
     manifest.write_text(
         json.dumps(
@@ -238,15 +239,25 @@ def test_benchmark_deduplicates_resolved_models_in_caller_order(
                         "id": "positive",
                         "rollout": str(tmp_path / "frame.png"),
                         "expected_label": True,
+                    },
+                    {
+                        "id": "negative",
+                        "rollout": str(tmp_path / "negative.png"),
+                        "expected_label": False,
                     }
                 ]
             }
         )
     )
     calls = []
+    all_calls = []
 
     def post(**kwargs):
-        calls.append(kwargs["request"])
+        all_calls.append(kwargs["request"])
+        # Preserve the original per-configuration order/count oracle while
+        # recording both required label classes for every configuration.
+        if len(all_calls) % 2 == 1:
+            calls.append(kwargs["request"])
         return {
             "model": kwargs["request"]["model"],
             "choices": [
@@ -271,6 +282,17 @@ def test_benchmark_deduplicates_resolved_models_in_caller_order(
     assert report.sweep["models"] == [effective, "vendor/second-model"]
     assert len(report.ranked_configs) == len(calls) == 2
     assert [request["model"] for request in calls] == [effective, "vendor/second-model"]
+    assert len(all_calls) == 2 * len(calls) == 4
+    assert [request["model"] for request in all_calls] == [
+        effective,
+        effective,
+        "vendor/second-model",
+        "vendor/second-model",
+    ]
+    for config in report.ranked_configs:
+        assert [case.expected_label for case in config.results] == [True, False]
+        assert [case.score for case in config.results] == [0.9, 0.9]
+        assert all(case.predicted_label for case in config.results)
 
 
 def test_current_hosted_profiles_pin_exact_identity_for_promotion():
