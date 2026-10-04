@@ -1426,7 +1426,7 @@ def test_configure_interactive_provisions_storage(
 
 
 def test_configure_provision_reuses_explicit_bucket_without_size_prompt(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, mocker
 ) -> None:
     import yaml
 
@@ -1439,6 +1439,12 @@ def test_configure_provision_reuses_explicit_bucket_without_size_prompt(
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    catalog = mocker.patch.object(
+        nebius_module, "list_projects_in_tenant", return_value=[]
+    )
+    process = mocker.patch(
+        "subprocess.Popen", side_effect=AssertionError("unexpected process escape")
+    )
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
 
     sizes: list[int] = []
@@ -1475,6 +1481,8 @@ def test_configure_provision_reuses_explicit_bucket_without_size_prompt(
     assert sizes == [0]
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["bucket"] == "s3://existing-bucket/"
+    catalog.assert_called_once_with("tenant-1")
+    process.assert_not_called()
 
 
 def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key: str):
@@ -1485,6 +1493,8 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
     Token Factory, and NGC.
     """
 
+    from unittest.mock import Mock
+
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
     import npa.clients.nebius as nebius_module
@@ -1494,6 +1504,10 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    catalog = Mock(return_value=[])
+    process = Mock(side_effect=AssertionError("unexpected process escape"))
+    monkeypatch.setattr(nebius_module, "list_projects_in_tenant", catalog)
+    monkeypatch.setattr("subprocess.Popen", process)
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
 
     def fake_bootstrap(
@@ -1530,7 +1544,23 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
         )
         + "\n"
     )
-    return runner.invoke(app, ["configure", "--interactive"], input=answers)
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+    catalog.assert_called_once_with("tenant-1")
+    process.assert_not_called()
+    return result
+
+
+def _stub_configure_project_catalog(monkeypatch):
+    """Isolate explicitly opted-in configure cases from native catalogue calls."""
+    from unittest.mock import Mock
+
+    import npa.clients.nebius as nebius_module
+
+    catalog = Mock(return_value=[])
+    process = Mock(side_effect=AssertionError("unexpected process escape"))
+    monkeypatch.setattr(nebius_module, "list_projects_in_tenant", catalog)
+    monkeypatch.setattr("subprocess.Popen", process)
+    return catalog, process
 
 
 def _note_line(output: str) -> str:
@@ -1780,6 +1810,7 @@ def _prepopulate_config(monkeypatch, tmp_path):
 
 
 def test_configure_rerun_all_defaults_is_idempotent(monkeypatch, tmp_path) -> None:
+    catalog, process = _stub_configure_project_catalog(monkeypatch)
     import yaml
 
     creds_path, config_path, nebius_module = _prepopulate_config(monkeypatch, tmp_path)
@@ -1815,8 +1846,12 @@ def test_configure_rerun_all_defaults_is_idempotent(monkeypatch, tmp_path) -> No
     assert creds["storage"]["aws_secret_access_key"] == "SK_existing"
     assert creds["storage"]["bucket"] == "s3://npa-bucket-existing/"
 
+    catalog.assert_called_once_with("tenant-existing")
+    process.assert_not_called()
+
 
 def test_configure_rerun_updates_selected_values(monkeypatch, tmp_path) -> None:
+    catalog, process = _stub_configure_project_catalog(monkeypatch)
     import yaml
 
     creds_path, config_path, nebius_module = _prepopulate_config(monkeypatch, tmp_path)
@@ -1856,10 +1891,14 @@ def test_configure_rerun_updates_selected_values(monkeypatch, tmp_path) -> None:
     assert creds["tokens"]["HF_TOKEN"] == "hf_new"
     assert creds["storage"]["aws_access_key_id"] == "AK_existing"
 
+    catalog.assert_called_once_with("tenant-existing")
+    process.assert_not_called()
+
 
 def test_configure_rerun_can_reprovision_storage_when_declined(
     monkeypatch, tmp_path
 ) -> None:
+    catalog, process = _stub_configure_project_catalog(monkeypatch)
     import yaml
 
     creds_path, config_path, nebius_module = _prepopulate_config(monkeypatch, tmp_path)
@@ -1925,10 +1964,14 @@ def test_configure_rerun_can_reprovision_storage_when_declined(
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AK_new"
 
+    catalog.assert_called_once_with("tenant-existing")
+    process.assert_not_called()
+
 
 def test_configure_provision_falls_back_to_manual_on_error(
     monkeypatch, tmp_path
 ) -> None:
+    catalog, process = _stub_configure_project_catalog(monkeypatch)
     import yaml
 
     from npa.clients import config as config_module
@@ -1991,6 +2034,9 @@ def test_configure_provision_falls_back_to_manual_on_error(
     assert creds["storage"]["bucket"] == "s3://manual-bucket/"
     assert "api_key" not in creds.get("ngc", {})
 
+    catalog.assert_called_once_with("tenant-1")
+    process.assert_not_called()
+
 
 def _bootstrap_capture(calls: list[dict]):
     def fake_bootstrap(
@@ -2025,6 +2071,7 @@ def test_configure_skips_storage_and_still_writes_tokens_on_provision_failure(
     monkeypatch, tmp_path
 ) -> None:
     """Storage AccessDenied must not dead-end: skip storage, still write tokens."""
+    catalog, process = _stub_configure_project_catalog(monkeypatch)
     import yaml
 
     from npa.clients import config as config_module
@@ -2081,10 +2128,14 @@ def test_configure_skips_storage_and_still_writes_tokens_on_provision_failure(
     # No storage stanza (or empty) was written.
     assert not creds.get("storage")
 
+    catalog.assert_called_once_with("tenant-1")
+    process.assert_not_called()
+
 
 def test_configure_accepts_region_without_registry_prompt(
     monkeypatch, tmp_path
 ) -> None:
+    catalog, process = _stub_configure_project_catalog(monkeypatch)
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
     import npa.clients.nebius as nebius_module
@@ -2117,6 +2168,9 @@ def test_configure_accepts_region_without_registry_prompt(
     assert result.exit_code == 0, result.output
     assert "Container registry" not in result.output
     assert config_module.resolve_environment().region == "us-central1"
+
+    catalog.assert_called_once_with("tenant-1")
+    process.assert_not_called()
 
 
 def test_normalize_pasted_secret_strips_quotes_and_auth_prefixes() -> None:
@@ -2167,6 +2221,7 @@ def test_configure_normalizes_tokens_and_warns_on_bad_token_factory_key(
     monkeypatch, tmp_path
 ) -> None:
     """Pasted Bearer/quoted tokens are stored bare; a non-v1. TF key warns."""
+    catalog, process = _stub_configure_project_catalog(monkeypatch)
     import yaml
 
     from npa.clients import config as config_module
@@ -2207,11 +2262,15 @@ def test_configure_normalizes_tokens_and_warns_on_bad_token_factory_key(
     assert creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "nebius-iam-looking-token"
     assert creds["ngc"]["api_key"] == "nvapi-xyz"
 
+    catalog.assert_called_once_with("tenant-1")
+    process.assert_not_called()
+
 
 def test_configure_typed_existing_bucket_is_reused_without_create_prompts(
     monkeypatch, tmp_path
 ) -> None:
     """A typed name that already exists is reused; no storage-class/size prompts."""
+    catalog, process = _stub_configure_project_catalog(monkeypatch)
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
     import npa.clients.nebius as nebius_module
@@ -2262,11 +2321,15 @@ def test_configure_typed_existing_bucket_is_reused_without_create_prompts(
     assert calls and calls[0]["bucket_name"] == "my-existing-bucket"
     assert calls[0]["bucket_max_size_bytes"] == 0
 
+    catalog.assert_called_once_with("tenant-1")
+    process.assert_not_called()
+
 
 def test_configure_bucket_search_failure_fails_closed_before_create(
     monkeypatch, tmp_path
 ) -> None:
     """When existence can't be verified, npa skips create prompts and get-or-creates."""
+    catalog, process = _stub_configure_project_catalog(monkeypatch)
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
     import npa.clients.nebius as nebius_module
@@ -2311,6 +2374,9 @@ def test_configure_bucket_search_failure_fails_closed_before_create(
     assert "will not create or adopt it" in result.output
     assert "New bucket storage class" not in result.output
     assert calls == []
+
+    catalog.assert_called_once_with("tenant-1")
+    process.assert_not_called()
 
 
 def test_noninteractive_bucket_collision_uses_a_fresh_collision_safe_name(
@@ -2648,6 +2714,7 @@ def test_configure_detects_existing_nebius_profile(monkeypatch, tmp_path) -> Non
 def test_configure_existing_profile_writes_config_with_explicit_ids(
     monkeypatch, tmp_path
 ) -> None:
+    catalog, process = _stub_configure_project_catalog(monkeypatch)
     import yaml
 
     from npa.clients import config as config_module
@@ -2701,10 +2768,14 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
     assert config["projects"]["eu-north1"]["region"] == "eu-north1"
     assert "container_registry" not in config["projects"]["eu-north1"]
 
+    catalog.assert_called_once_with("tenant-from-profile")
+    process.assert_not_called()
+
 
 def test_configure_uses_default_region_without_registry_discovery(
     monkeypatch, tmp_path
 ) -> None:
+    catalog, process = _stub_configure_project_catalog(monkeypatch)
     import yaml
 
     from npa.clients import config as config_module
@@ -2738,6 +2809,9 @@ def test_configure_uses_default_region_without_registry_discovery(
     stanza = next(iter(config["projects"].values()))
     assert "container_registry" not in stanza
     assert stanza["region"] == "eu-north1"
+
+    catalog.assert_called_once_with("tenant-1")
+    process.assert_not_called()
 
 
 def test_configure_stale_profile_shows_activate_guidance(monkeypatch, tmp_path) -> None:
@@ -2869,6 +2943,7 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
     monkeypatch, tmp_path
 ) -> None:
     """Interactive configure without stubbing _ensure_nebius_profile."""
+    catalog, process = _stub_configure_project_catalog(monkeypatch)
     import yaml
 
     from npa.clients import config as config_module
@@ -2931,6 +3006,9 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AKIAPROVISIONED"
     assert creds["tokens"]["HF_TOKEN"] == "hf_secret_token"
+
+    catalog.assert_called_once_with("tenant-abcde")
+    process.assert_not_called()
 
 
 def test_configure_missing_nebius_cli_shows_install_guidance(
