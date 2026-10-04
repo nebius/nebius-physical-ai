@@ -33,7 +33,7 @@ def _raw_dataset(root: Path) -> Path:
     }
     (root / "meta/info.json").write_text(json.dumps(info) + "\n")
     tasks = [
-        {"task_index": task_id, "task": f"long task {task_id} and finish"}
+        {"task_index": task_id, "task": L.LIBERO_LONG_TASKS[task_id]}
         if task_id < 10
         else {"task_index": task_id, "task": f"short task {task_id}"}
         for task_id in range(40)
