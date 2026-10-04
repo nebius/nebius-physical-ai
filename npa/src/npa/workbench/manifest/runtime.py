@@ -71,6 +71,7 @@ class InvocationResult:
     success: bool
     elapsed_s: float
     error: str | None = None
+    logs: str = ""  # backend logs, truncated for debuggability
     timestamp: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -90,6 +91,7 @@ class InvocationResult:
             "checks": self.checks,
             "success": self.success,
             "error": self.error,
+            "logs": self.logs,
             "elapsed_s": round(self.elapsed_s, 3),
             "timestamp": self.timestamp,
         }
@@ -138,6 +140,7 @@ class Runtime:
         exit_code = -1
         artifacts: dict[str, Any] = {}
         check_results: list[dict[str, Any]] = []
+        backend_logs = ""
         all_ok = False
         try:
             outputs = [
@@ -190,6 +193,7 @@ class Runtime:
                 pip_packages=list(descriptor.environment.pip),
             )
             exit_code = bres.exit_code
+            backend_logs = (bres.logs or "")[-20000:]
             artifacts, parse_errors = self._collect_artifacts(spec, bres)
             check_results.extend(parse_errors)
             all_ok = bres.exit_code == 0 and not parse_errors
@@ -231,6 +235,7 @@ class Runtime:
             success=all_ok,
             elapsed_s=time.time() - t0,
             error=error,
+            logs=backend_logs,
         )
         # Verification evidence, stored separately from the author's descriptor.
         # run_id correlates the record with the S3 prefix; two runs never
