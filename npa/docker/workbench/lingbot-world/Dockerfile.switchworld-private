@@ -1,0 +1,112 @@
+# Operator-private SwitchWorld validation runtime. It is deliberately not a
+# public replacement for npa-lingbot-world: the final image is quarantined as
+# unvalidated until its exact built-byte and native-workflow evidence exists.
+#
+# Rebuild the system layer from the exact Debian snapshot audited by the Wan
+# payload scanner. The first stage is used only as a pinned OSS Wan source and
+# CPU-Python closure; none of its operating-system layers enter the final image.
+ARG PYTHON_BASE=python:3.10-slim-bookworm@sha256:019e31cc1f52e4139d338bca44f27b71339a9da261738fd80fab9cf4595152fc
+ARG WAN_SOURCE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837
+
+FROM ${WAN_SOURCE_IMAGE} AS wan-source
+
+FROM ${PYTHON_BASE}
+
+ARG DEBIAN_SNAPSHOT=20260906T183022Z
+ARG NPA_SOURCE_SHA=unknown
+
+LABEL npa.tool="lingbot-world-switchworld-private" \
+      npa.version="a43bec7f8091c83e9b30b16b912f6fc906236fa6-switchworld-private" \
+      npa.source_revision="${NPA_SOURCE_SHA}" \
+      npa.byof.repo="https://github.com/Robbyant/lingbot-world.git" \
+      npa.byof.ref="a43bec7f8091c83e9b30b16b912f6fc906236fa6" \
+      npa.wan.source.repo="https://github.com/Wan-Video/Wan2.2.git" \
+      npa.wan.source.ref="42bf4cfaa384bc21833865abc2f9e6c0e67233dc" \
+      npa.disposition="operator-private-validation-no-publication" \
+      npa.weights="runtime-only" \
+      org.opencontainers.image.title="NPA SwitchWorld private LingBot runtime" \
+      org.opencontainers.image.description="Pinned OSS LingBot and Wan CPU closure; runtime-only CUDA, checkpoints, adapters, and case data" \
+      org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    NPA_WAN_BASE_PYTHON=/opt/wan-base/bin/python \
+    NPA_WAN_RUNTIME_REQUIREMENTS=/opt/npa/wan2-2/runtime-requirements.txt \
+    NPA_WAN_RUNTIME_CACHE=/workspace/.cache/npa/wan2-2/runtime \
+    WAN22_CACHE_DIR=/workspace/model-cache/wan2.2 \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+SHELL ["/bin/bash", "-lc"]
+USER root
+
+# The fixed snapshot supplies the exact libssh2 bytes independently audited in
+# ncore/native-bootstrap-lock.json. No package acquisition occurs at pod time.
+RUN sed -ri \
+      -e "s|https?://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+      -e "s|https?://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+      /etc/apt/sources.list.d/debian.sources \
+    && printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99snapshot \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates ffmpeg git git-lfs libgl1 libglib2.0-0 \
+      openssh-server procps rsync sudo util-linux \
+    && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+    && useradd -m -s /bin/bash -u 1000 ubuntu \
+    && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/npa-runtime \
+    && chmod 0440 /etc/sudoers.d/npa-runtime \
+    && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)"
+
+# Copy only the pinned Wan source/CPU closure and its runtime launcher from the
+# source stage. The source-stage OS layers are not ancestors of this image.
+COPY --from=wan-source /opt/byof /opt/byof
+COPY --from=wan-source /opt/wan-base /opt/wan-base
+COPY --from=wan-source /opt/npa/wan2-2 /opt/npa/wan2-2
+COPY --from=wan-source /usr/local/bin/wan-runtime /usr/local/bin/wan-runtime
+
+COPY --chmod=0755 docker/workbench/common/model_source.sh /opt/npa/model_source.sh
+COPY --chmod=0755 docker/workbench/common/model_runtime.sh /usr/local/bin/model-runtime
+COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/local/bin/npa-job-entrypoint
+COPY --chmod=0444 docker/workbench/lingbot-world/SWITCHWORLD_PRIVATE_REDISTRIBUTION.md /usr/share/doc/npa-switchworld-lingbot-private/REDISTRIBUTION.md
+COPY src/npa/solutions/video_generation.py src/npa/solutions/lingbot_camera.py \
+     src/npa/solutions/perception_video.py src/npa/solutions/native_image_smoke.py \
+     /opt/npa-native/npa/solutions/
+
+# LingBot's only baked dependency outside Wan's reviewed CPU closure was
+# easydict==1.13. Use the copied, audited Wan compatibility implementation
+# instead, preserving LingBot's configuration interface without shipping that
+# historical LGPL distribution. scipy/protobuf remain explicit OSS CPU wheels.
+RUN /opt/npa/model_source.sh \
+      https://github.com/Robbyant/lingbot-world.git \
+      a43bec7f8091c83e9b30b16b912f6fc906236fa6 \
+      wan generate.py generate_fast.py pyproject.toml requirements.txt LICENSE.txt README.md \
+    && cp /opt/npa/wan2-2/source/wan/utils/easydict.py /opt/byof/wan/utils/easydict.py \
+    && sed -i 's/^from easydict import EasyDict$/from wan.utils.easydict import EasyDict/' \
+      /opt/byof/wan/configs/*.py \
+    && ! grep -Rqs '^from easydict import EasyDict$' /opt/byof/wan/configs \
+    && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps \
+      protobuf==6.33.6 scipy==1.15.3 \
+    && ! /opt/wan-base/bin/python -c 'import easydict' \
+    && /opt/wan-base/bin/python -m pip freeze --all > /opt/byof/npa_baked_python_inventory.txt \
+    && ! grep -Eiq '^(torch|torchvision|torchaudio|nvidia-|easydict)' /opt/byof/npa_baked_python_inventory.txt \
+    && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \
+    && rm -rf /root/.cache /tmp/pip-*
+
+RUN install -d -m 0755 -o ubuntu -g ubuntu \
+      /workspace /workspace/.cache/npa/wan2-2/runtime \
+      /workspace/model-cache/wan2.2 \
+    && chmod 0755 /opt/npa \
+    && test -r /opt/byof/LICENSE.txt \
+    && test -r /opt/npa/wan2-2/runtime-requirements.txt \
+    && su ubuntu -s /bin/bash -c 'model-runtime health && test -w /workspace/.cache/npa/wan2-2/runtime && sudo -n true && command -v rsync && test -x /usr/sbin/sshd'
+
+VOLUME ["/workspace/.cache/npa/wan2-2/runtime", "/workspace/model-cache/wan2.2"]
+USER ubuntu
+WORKDIR /opt/byof
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["model-runtime", "health"]
+ENTRYPOINT ["npa-job-entrypoint"]
+CMD ["model-runtime", "health"]

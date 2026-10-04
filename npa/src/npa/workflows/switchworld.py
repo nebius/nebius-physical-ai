@@ -250,16 +250,46 @@ def _load_controls(path: Path, target_frames: int) -> dict[str, Any]:
             "each viewpoint control needs pose and intrinsic evidence"
         )
     switch = controls["switch_frame"]
-    if (
-        type(switch) is not int
-        or not 0 < switch < len(views)
-        or views[switch - 1] == views[switch]
-    ):
+    transitions = [
+        index for index in range(1, len(views)) if views[index - 1] != views[index]
+    ]
+    if type(switch) is not int or switch not in transitions:
         raise SwitchWorldError(
             "switch_frame must identify an actual viewpoint transition"
         )
-    if target_frames < len(views):
-        raise SwitchWorldError("target video has fewer frames than viewpoint controls")
+    unit = controls.get("switch_frame_unit")
+    source_switches = controls.get("source_video_switch_frames")
+    if unit is None and source_switches is None:
+        # Older, frame-for-frame sidecars have no causal resampling boundary.
+        # Do not infer one when their video and conditioning schedules differ.
+        if target_frames != len(views):
+            raise SwitchWorldError(
+                "controls with a resampled latent schedule require source_video_switch_frames"
+            )
+        resolved_switches = transitions
+        resolved_unit = "video_frame_index"
+    elif unit == "latent_frame_index":
+        if (
+            not isinstance(source_switches, list)
+            or len(source_switches) != len(transitions)
+            or any(type(frame) is not int for frame in source_switches)
+            or any(frame <= 0 or frame >= target_frames for frame in source_switches)
+            or source_switches != sorted(set(source_switches))
+        ):
+            raise SwitchWorldError(
+                "latent-frame controls require ordered in-range source video transitions"
+            )
+        resolved_switches = source_switches
+        resolved_unit = "source_video_frame_index"
+    else:
+        raise SwitchWorldError(
+            "switch_frame_unit must be omitted or latent_frame_index"
+        )
+    primary_index = transitions.index(switch)
+    controls["_npa_transition_latent_frames"] = transitions
+    controls["_npa_transition_video_frames"] = resolved_switches
+    controls["_npa_primary_video_switch_frame"] = resolved_switches[primary_index]
+    controls["_npa_transition_video_frame_unit"] = resolved_unit
     return controls
 
 
@@ -282,8 +312,28 @@ def _validate_native_condition(path: Path, controls: dict[str, Any]) -> None:
         raise SwitchWorldError(
             "native condition view_ids differ from supplied controls"
         )
-    if observed_switches[int(controls["switch_frame"])] != 1:
+    expected_transitions = [
+        index
+        for index in range(1, len(observed_views))
+        if observed_views[index - 1] != observed_views[index]
+    ]
+    marked_transitions = [
+        index for index, value in enumerate(observed_switches) if value == 1
+    ]
+    if marked_transitions != expected_transitions:
+        raise SwitchWorldError("native condition switch_mask differs from view changes")
+    if int(controls["switch_frame"]) not in marked_transitions:
         raise SwitchWorldError("native condition does not mark the supplied transition")
+
+    metadata_switches = metadata.get("switch_frames")
+    expected_video_switches = controls.get("_npa_transition_video_frames")
+    if expected_video_switches is None:
+        expected_video_switches = controls.get("source_video_switch_frames")
+    if expected_video_switches is not None:
+        if metadata_switches != expected_video_switches:
+            raise SwitchWorldError(
+                "native condition source-video transitions differ from controls"
+            )
 
     camera = condition.get("camera_c2w")
     intrinsics = condition.get("camera_intrinsics")
@@ -408,11 +458,7 @@ def prepare_case(
             root / "contexts.pt",
             root / "conditions/case.pt",
         )
-        switch = round(
-            controls["switch_frame"]
-            * (len(frames) - 1)
-            / (len(controls["view_ids"]) - 1)
-        )
+        switch = int(controls["_npa_primary_video_switch_frame"])
         Image.fromarray(frames[max(0, switch - 1)]).save(root / "context_before.png")
         Image.fromarray(frames[switch]).save(root / "context_after.png")
         manifest = _prepared_manifest(root, source_uris, controls)
@@ -445,6 +491,16 @@ def _prepared_manifest(
             "sha256": _sha256(root / "controls.json"),
             "switch_frame": controls["switch_frame"],
             "view_count": len(controls["view_ids"]),
+        },
+        "transitions": {
+            "latent_frame_indices": controls["_npa_transition_latent_frames"],
+            "source_video_frame_indices": controls["_npa_transition_video_frames"],
+            "primary_latent_frame_index": controls["switch_frame"],
+            "primary_source_video_frame_index": controls[
+                "_npa_primary_video_switch_frame"
+            ],
+            "source_video_frame_unit": controls["_npa_transition_video_frame_unit"],
+            "comparison_alignment": "decoded_frame_index",
         },
     }
 
@@ -829,9 +885,11 @@ def _switch_window(report: dict[str, Any], controls: dict[str, Any]) -> dict[str
     """Summarize native per-frame measurements only around the declared transition."""
 
     frames = report["per_frame"]
-    switch = round(
-        controls["switch_frame"] * (len(frames) - 1) / (len(controls["view_ids"]) - 1)
-    )
+    switch = int(controls["_npa_primary_video_switch_frame"])
+    if switch >= len(frames):
+        raise SwitchWorldError(
+            "decoded evaluator output ends before the declared source-video transition"
+        )
     start, stop = max(0, switch - 1), min(len(frames), switch + 2)
     values = frames[start:stop]
     return {
@@ -883,7 +941,9 @@ def measure(
             root / "baseline_vs_adapter",
             "SWITCHWORLD",
         )
-        controls = json.loads(files["controls.json"].read_text(encoding="utf-8"))
+        controls = _load_controls(
+            files["controls.json"], _video_evidence(files["target.mp4"])["frame_count"]
+        )
         report = {
             "schema": "npa.switchworld.real_frame_metrics.v1",
             "engine": "SwitchWorld inference/evaluate_video_pair.py",

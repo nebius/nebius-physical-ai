@@ -85,7 +85,10 @@ def test_native_condition_is_bound_to_the_real_control_sidecar(tmp_path: Path) -
         "intrinsics": [[900.0, 900.0, 320.0, 176.0] for _ in views],
     }
     condition = {
-        "meta": {"condition_schema": "physicalworld_lingbot_v3_causal_multihot"},
+        "meta": {
+            "condition_schema": "physicalworld_lingbot_v3_causal_multihot",
+            "switch_frames": [7],
+        },
         "view_id": torch.tensor(views),
         "switch_mask": torch.tensor([0] * 7 + [1] + [0] * 7),
         "camera_c2w": torch.eye(4).repeat(15, 1, 1),
@@ -99,6 +102,36 @@ def test_native_condition_is_bound_to_the_real_control_sidecar(tmp_path: Path) -
     controls["intrinsics"][0][0] = 901.0
     with pytest.raises(switchworld.SwitchWorldError, match="intrinsics"):
         switchworld._validate_native_condition(path, controls)
+
+
+def test_causal_transition_timing_uses_native_video_frames(tmp_path: Path) -> None:
+    """Never linearly project a latent transition onto the real target timeline."""
+
+    controls = {
+        "schema": "npa.switchworld.controls.v1",
+        "prompt": "A real simulated object changes camera viewpoints.",
+        "view_ids": [2, 2, 2, 2, 1, 1, 2, 2, 2, 1, 1, 2, 2, 2, 2],
+        "switch_frame": 4,
+        "switch_frame_unit": "latent_frame_index",
+        "source_video_switch_frames": [13, 21, 33, 41],
+        "camera_poses": [
+            [[1.0 if row == column else 0.0 for column in range(4)] for row in range(4)]
+            for _ in range(15)
+        ],
+        "intrinsics": [[900.0, 900.0, 320.0, 176.0] for _ in range(15)],
+    }
+    path = tmp_path / "controls.json"
+    path.write_text(json.dumps(controls), encoding="utf-8")
+
+    resolved = switchworld._load_controls(path, target_frames=57)
+    assert resolved["_npa_primary_video_switch_frame"] == 13
+    assert resolved["_npa_transition_video_frames"] == [13, 21, 33, 41]
+
+    report = {
+        "per_frame": [{"psnr_db": 20.0, "ssim": 0.5, "mae": 10.0} for _ in range(57)]
+    }
+    window = switchworld._switch_window(report, resolved)
+    assert (window["first_frame"], window["last_frame"]) == (12, 14)
 
 
 def test_pair_and_rrd_use_decoded_media_not_manifests(tmp_path: Path) -> None:

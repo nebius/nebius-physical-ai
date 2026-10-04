@@ -49,11 +49,14 @@
       ]
     },
     "source_image": {
-      "status": "verified",
-      "reason": "The approved exact target completed an owned image-pull and digest-bound bootstrap capability probe with verified cleanup. This qualifies the selected image only for pull/startup on that private target, not for native SwitchWorld generation or public publication.",
+      "status": "unverified",
+      "reason": "The public source image and digest-equal private mirror passed only exact-target pull preflights; neither receipt proves startup or native capability. The mirror's complete byte scan also rejected a baked easydict wheel and an unaudited older libssh2 layer. It is not a qualified native runtime. The operator-private snapshot-rebuilt replacement is source-controlled and must pass fresh byte, pull, startup, native-generation, and artifact-readback gates.",
       "evidence": [
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/execution-route.json (private operator evidence, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/image-preflight-20261004-private.json (status ok, digest-bound bootstrap and cleanup verified, 2026-10-04)"
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/image-preflight-20261004-private.json (public-source status ok, digest-bound bootstrap and cleanup verified, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/neutral-private-image-mirror-20261004-private.json (source/destination digest parity, private only, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/neutral-private-image-preflight-20261004-private.json (exact-target pull preflight only; no startup claim, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/neutral-private-image-byte-scan-20261004-private.json (rejected findings; remediation required, 2026-10-04)"
       ]
     },
     "target_runtime": {

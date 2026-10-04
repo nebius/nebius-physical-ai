@@ -19,6 +19,15 @@ entry point): `view_ids`, a `switch_frame`, 4×4 `camera_poses`, and four-value
 shapes against the native condition and the case's named prompt context before
 any GPU generation is scheduled.
 
+For a causally resampled LingBot case, the sidecar must additionally state
+`switch_frame_unit: latent_frame_index` and ordered
+`source_video_switch_frames`. Preparation verifies those source-video indices
+against `condition.meta.switch_frames`, uses the matching primary source frame
+for its decoded before/after contexts, and records the exact mapping in
+`prepared.json`. The evaluator's comparison is explicitly decoded-frame-index
+alignment; it is not a claim that the 30 fps raw simulation, 40 fps condition
+resampling, and 16 fps generated MP4 share wall-clock dynamics.
+
 ## Provenance and attribution
 
 | Component | Pinned identity | Credit and license | Delivery |
@@ -50,8 +59,11 @@ also record the canonical adapter revision and verified checkpoint file hashes.
 The inspected source commit and both adapter cards supply neither a
 `CITATION.cff` nor a BibTeX citation block, so this integration preserves that
 absence rather than inventing a citation. Existing LingBot-World and Wan
-attribution stays in the immutable runtime's retained notices; no new image is
-built here, so no SwitchWorld OCI-label claim is made.
+attribution stays in the immutable runtime's retained notices. The separate
+operator-private validation recipe also copies Wan's local compatibility
+`EasyDict` module into the pinned LingBot source and changes only its two
+configuration imports; its in-image redistribution notice records that narrow
+modification and preserves the upstream licenses.
 
 ## Legal delivery decision
 
@@ -68,6 +80,17 @@ tokenizer were public and ungated at their pinned revisions during inspection.
 Technical payload access does not establish a new redistribution or service
 right. The workflow never bakes the 39 GB adapter release, model cache, input
 case, target media, credentials, or outputs, and adds no public container row.
+A digest-equal private mirror proved only that the selected public image can
+pull on the operator target; it did not prove a startup or native capability.
+Its byte scan correctly rejected an inherited
+`easydict` wheel and an older unaudited system-library layer. It is not used for
+native execution. The replacement `Dockerfile.switchworld-private` is an
+operator-private, `unvalidated` recipe: it rebuilds the OS layer from the
+already-audited Debian snapshot, preserves exact Wan/LingBot source credit, and
+uses the retained Wan compatibility module instead of the historical wheel.
+It has an explicit no-publication disposition and must pass a fresh built-byte
+scan, target pull, real five-stage run, and artifact readback before becoming a
+usable private runtime. This is a remediation, not a public image claim.
 
 ## Real stages and measurements
 
@@ -78,7 +101,7 @@ case, target media, credentials, or outputs, and adds no public container row.
    two hash-pinned canonical joint adapters.
 4. `measure-real-frames` invokes upstream `evaluate_video_pair.py` twice on
    decoded frames, reporting target/adapted and baseline/adapted PSNR, SSIM,
-   MAE, plus the declared switch window. NPA separately decodes each exact
+   MAE, plus the actual declared source-video switch window. NPA separately decodes each exact
    input pair and recomputes PSNR/MAE; it rejects the upstream report unless
    every checked frame and aggregate agrees with those real pixels.
 5. `emit-paired-artifacts` decodes all source videos, emits two paired H.264
