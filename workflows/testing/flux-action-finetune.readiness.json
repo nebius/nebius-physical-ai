@@ -4,12 +4,13 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Local schema, CLI, catalog, recipe and workflow checks pass; full-weight GPU acceptance remains unverified.",
+      "reason": "Local schema, CLI, catalog, recipe and workflow checks pass. Cloud plans passed, but GPU allocation is blocked before training; full-weight GPU acceptance remains unverified.",
       "evidence": [
         "native upstream CPU index/config/window checks passed for 3/7/14-channel contracts",
         "workflow has explicit private image/pull Secret and S3 dataset/recipe inputs",
         "1334 scoped repository tests passed on Python 3.12",
-        "validate-spec and plan-spec --check-render passed with one rendered GPU task"
+        "validate-spec and plan-spec --check-render passed with one rendered GPU task",
+        "isolated cloud workflow plans passed for eight-H200, eight-H100 and four-L40S allocations; no training submission was attempted"
       ]
     },
     "task_fidelity": {
@@ -24,38 +25,51 @@
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "Supply a fresh operator-owned output prefix and verify storage credentials. The completion receipt requires independent streamed export readback.",
+      "reason": "Live storage authentication, input upload/readback and fresh output-prefix checks passed. Completion still requires independent remote checkpoint/export/reload evidence.",
       "evidence": [
-        "corrupted remote export rejection tested"
+        "corrupted remote export rejection tested",
+        "task-owned fresh output prefix checked before workflow planning"
       ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "Supply an embodiment-matched LeRobot dataset and recipe. Public ALOHA full/smoke examples are provided; no real dataset training qualification is claimed.",
+      "status": "verified",
+      "reason": "The pinned public ALOHA dataset and four-update recipe were staged in task-owned object-storage prefixes and metadata matched the 14-channel, 50 Hz contract. GPU video ingestion remains part of runtime acceptance.",
       "evidence": [
-        "explicit ordered channels/units, cameras, FPS, action representation and held-out episodes"
+        "lerobot/aloha_sim_transfer_cube_human revision 6a43d500f101255823a9d2b9dc244eeb01a2cd31",
+        "50 episodes, 20000 frames; nine input objects uploaded",
+        "dataset metadata and smoke recipe independently SHA-256 checked after S3 readback",
+        "full-weight tool dry-run planned four optimizer updates"
       ]
     },
     "credentials": {
-      "status": "unverified",
-      "reason": "Operator S3, HF, and private registry access require live preflight for this separate full-weight runtime.",
+      "status": "verified",
+      "reason": "Live object-storage, Nebius and exact pinned base-model access passed. Private runtime credentials are external to Git and the image; registry pull on the target worker remains part of runtime acceptance.",
       "evidence": [
-        "no credentials are baked or committed"
+        "S3/HF/Nebius health preflight passed",
+        "authenticated access to the pinned BFL trunk, video VAE and text encoder verified",
+        "private registry login, push and immutable digest resolution passed"
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "Dedicated pinned Torch 2.10/CUDA 12.8 standalone image is unbuilt and publication-quarantined. The LoRA image does not qualify it.",
+      "status": "verified",
+      "reason": "The exact committed full-weight candidate was built and privately published at an independently resolved digest. Public publication and GPU rotation remain quarantined pending runtime qualification.",
       "evidence": [
-        "native CPU compatibility checks ran in the existing Torch 2.11 operator harness; intended exact training image unverified"
+        "source a69ecbd1a3cd0e86a5ee50d811a1a541bf8c2f89",
+        "image sha256:498359516576e17451b42451317d7f5c0551861b8c90c93ed0950a460d4e7324",
+        "Torch 2.10.0+cu128 and NATTEN 0.21.6+torch2100cu128",
+        "exact image passed SSH service startup, CLI help and three native CPU channel-contract tests",
+        "payload scan passed; Trivy 0.74.0 reported zero secret findings and zero critical vulnerabilities; SPDX SBOM contains 331 packages",
+        "581 scoped client, FLUX workflow and packaging tests passed for the startup and explicit-disk changes"
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "No full-weight GPU training/export/reload has run for this integration. The starting workflow requests one eight-H200 node.",
+      "status": "blocked",
+      "reason": "Cloud allocation failed before training: eight-H200 and four-L40S node requests returned NotEnoughResources; eight-H100 returned QuotaFailure. Obtain available eight-GPU capacity and sufficient H100 quota, then run the four-update acceptance recipe. Neither this workflow nor the alternate four-process plan is GPU-qualified.",
       "evidence": [
-        "run the explicit four-update recipe on the chosen allocation before a full optimizer-update recipe",
-        "closed-loop policy quality remains unmeasured"
+        "typed provider failures preserved privately and exact owned node-group states reconciled",
+        "no full-weight training job submitted; GPU train/checkpoint/export/reload and terminal success remain unverified",
+        "Serverless exact-image dry-run also rejected the generated image label length; native VM placement lookup lacked ProjectService.List permission",
+        "closed-loop policy quality and the 3000-update recipe remain unmeasured"
       ]
     }
   }

@@ -6,9 +6,10 @@ rather than assuming SO-101 controls. The same operation is available as
 `npa.sdk.workbench.flux_action.finetune` and workflow step
 `workbench.flux_action.finetune`.
 
-**Status:** implemented integration with CPU contract tests. The container is
-an unbuilt candidate, excluded from public publication and automatic GPU
-rotation. Real GPU fine-tuning and robot task performance are not yet qualified.
+**Status:** implemented integration with CPU contract tests. The exact candidate
+image has been built, scanned and privately published. Public publication and
+automatic GPU rotation remain quarantined. GPU train/export/reload and robot
+task performance are not yet qualified.
 
 ## Inputs
 
@@ -277,5 +278,21 @@ written last. Failed stages retain logs/checkpoints without a success receipt.
 
 CPU validation exercised the pinned native indexer, real video decoding, native
 training configuration, and temporal windows for 3-, 7-, and 14-channel robots.
-The full-weight image build and GPU train/export/reload remain unverified; the
-completed SO-101 LoRA run does not qualify this separate runtime.
+The exact image also passed SSH startup, CLI help and all three native CPU
+channel-contract tests with Torch 2.10/CUDA 12.8. Its payload scan passed; pinned
+Trivy reported zero secret findings and zero critical vulnerabilities, with a
+331-package SPDX SBOM. Source and immutable image digest are recorded in the
+[readiness record](../../workflows/testing/flux-action-finetune.readiness.json).
+GPU train/export/reload remains unverified; the completed SO-101 LoRA run does
+not qualify this separate runtime.
+
+### Cloud acceptance attempt
+
+The candidate image and pinned ALOHA smoke inputs passed their build, scan,
+access and planning checks. Cloud allocation then failed before training:
+eight H200s and four L40S GPUs returned `NotEnoughResources`; eight H100s
+returned `QuotaFailure`. No full-weight training job was submitted. Obtain
+available eight-GPU capacity and sufficient quota, then run the four-update
+recipe and verify the checkpoint, export, fresh-process reload and terminal
+status. The eight-GPU reference workflow and alternate four-process plan
+remain unqualified; the 3,000-update recipe and policy quality are unmeasured.
