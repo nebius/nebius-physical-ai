@@ -152,7 +152,11 @@ def assert_sampling_evidence(
         AssertionError: Claimed payload or sampling fields differ from the source.
         KeyError: Required evidence is missing.
     """
-    indices = [5] if strategy == "final" else [0, 2, 5]
+    indices = {
+        "final": [5],
+        "sequence": [0, 2, 5],
+        "keyframes": [0, 4, 5],
+    }[strategy]
     timestamps = (
         [index / 2 for index in indices] if kind == "video" else [None] * len(indices)
     )

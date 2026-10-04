@@ -12,6 +12,19 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+`npa workbench vlm-eval review-visual` and its SDK write a separate private rich
+visual audit. Choose an exact hosted model, neutral task, and fresh output path;
+optional `--baseline-path` compares both sources in both A/B orders. See the
+[visual-review guide](../docs/workbench/vlm-visual-review.md) for all options and
+the retained limitations. These records never affect the completion score or gate.
+
+VLM `--frame-selection sequence` samples uniformly. For known-count inputs,
+`keyframes` allocates half its frame budget to a terminal window covering at
+least the final 10%, widening when needed for unique samples. Both include the
+first and final frame when at least two are selected. This is temporal sampling,
+not event detection; unknown-count video compatibility is unchanged. See the
+[sampling evidence](../docs/workbench/evidence/vlm-frame-selection-semantics.md).
+
 The [NuRec sample workflow](../docs/workbench/guides/neural-reconstruction.md)
 and [four-camera warehouse workflow](../docs/workbench/multicamera-rgbd-capture.md)
 download public sample data automatically and publish compact, offline
@@ -436,6 +449,27 @@ make precheck  # CI pins, lint, formatting, and CI contract regressions
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
 ```
 
+VLM score, loop, and benchmark artifacts disclose that independent human-label
+calibration is not established. Their ordered limitations distinguish sampled
+observations, mean-score loop gates, and fixture/stub inputs from real provider
+evidence. Direct results also emit `provider_call_made`, which is false for
+stub and score-override paths.
+
+Packaged VLM benchmark samples are four synthetic 2x2 color swatches plus a
+tiny truncated-progress sequence with an omitted terminal outcome. Benchmark
+reports preserve their `illustrative_only` evidence scope and ordered dataset
+limitations; custom manifests without scope metadata remain `unspecified`.
+These sample metrics demonstrate wiring and do not validate physical tasks.
+
+See the
+[VLM runbook](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#outputs).
+
+Token Factory captions accept `--thinking` and `--no-thinking`; omitting both
+preserves the selected model's defaults. The SDK's `thinking` argument accepts
+a literal boolean or `None`. See the
+[Token Factory guide](../docs/workbench/token-factory.md) for model-specific
+controls and reasoning-only failures.
+
 For GPU VLM provenance, use the
 [operator verification lane](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#live-provenance-verification).
 It requires `NPA_INTEGRATION_E2E=1`, an owner-only JSON file selected by
@@ -446,6 +480,23 @@ with a fresh private directory outside the checkout. The lane fails on missing
 configuration or skipped inference and leaves endpoint provisioning and cleanup
 to the operator. Hosted Kimi-K3 visual inference runs in the separate
 `token_factory_live_recheck.py` lane with `NEBIUS_TOKEN_FACTORY_KEY`.
+
+The `vlm-eval benchmark --dataset isaac-agency` alias packages six stylized
+frames with a positive elevated-object claim and a negative grasp-and-lift
+claim. Its structural preflight checks the exact bytes before model inference;
+it is an illustrative calibration, not Isaac rendering or policy qualification.
+Use sequence selection with six frames. The
+[agency calibration record](../docs/workbench/evidence/vlm-isaac-agency-calibration.md)
+describes the fixed labels, measurements and limits.
+
+The hosted live test `npa/tests/e2e/test_vlm_agency_calibration_live.py` executes
+both claims once per model and retains the measured confusion counts. It uses
+the configured Token Factory key and defaults to the hosted vision model.
+`NPA_VLM_AGENCY_LIVE_MODELS` accepts comma-separated model IDs;
+`NPA_VLM_AGENCY_EVIDENCE_DIR` selects a new private evidence directory for the
+raw provider reports, defaulting to the test's temporary directory. A passing
+test proves complete, traceable execution; label disagreement remains visible
+in the report and does not establish calibrated model quality.
 
 After committing, run `git fetch origin main` and `make merge-precheck` before
 pushing. This checks committed HEAD's merge with current main for conflicts and
