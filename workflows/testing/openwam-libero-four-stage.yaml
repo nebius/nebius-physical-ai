@@ -17,7 +17,9 @@ config:
   # immutable digest produced from npa/docker/workbench/openwam/Dockerfile.
   runtime_image: "registry.example.invalid/operator/openwam@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   openwam_root: /opt/openwam
-  gpu_type: B200
+  # OpenWAM's CUDA 12.8 closure is routed only to the verified RTX PRO 6000
+  # sm_120 path. This is not a B200/B300 compatibility claim.
+  gpu_type: RTXPRO6000
   gpu_count: "1"
   policy_port: "8848"
   # These are native OpenWAM/LIBERO controls, intentionally exposed so an

@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "76878730ed2615626e3c690216bf3c7a17ac0cbddcbda35d56e516230a08cf63",
+  "workflow_sha256": "11f0e63ea4aab5c67e41dbdaad480c8a1b9588a75d9c73ea590fe4798c63b75f",
   "planning": {
     "validation": {
       "status": "verified",
@@ -8,7 +8,7 @@
       "evidence": [
         "npa/.venv/bin/python -m npa workbench workflow validate-spec workflows/testing/openwam-libero-four-stage.yaml --json",
         "npa/.venv/bin/python -m npa workbench workflow plan-spec workflows/testing/openwam-libero-four-stage.yaml --run-id openwam-libero-authoring-continuation --json",
-        "sha256:76878730ed2615626e3c690216bf3c7a17ac0cbddcbda35d56e516230a08cf63 workflows/testing/openwam-libero-four-stage.yaml"
+        "sha256:11f0e63ea4aab5c67e41dbdaad480c8a1b9588a75d9c73ea590fe4798c63b75f workflows/testing/openwam-libero-four-stage.yaml"
       ]
     },
     "task_fidelity": {
@@ -50,7 +50,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "No NPA/SkyPilot/Kubernetes job was submitted because the workflow has no verified private image digest or task-owned output storage. No numerical LIBERO result, RRD, MP4, convergence result, or robot result is claimed.",
+      "reason": "The workflow is explicitly routed to RTX PRO 6000 sm_120 rather than B200/B300, but no NPA/SkyPilot/Kubernetes job has executed its five stages with an exact-current private image digest. No numerical LIBERO result, RRD, MP4, convergence result, or robot result is claimed.",
       "evidence": []
     }
   }

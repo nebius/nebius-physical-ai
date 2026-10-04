@@ -116,7 +116,7 @@ COPY --chmod=0755 src/npa /opt/npa/src/npa
 RUN /opt/openwam-venv/bin/python -m pip install --no-cache-dir --no-deps /opt/npa \
     && test -z "$(find /opt/openwam-venv /opt/openwam-libero -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
-    && sudo -u ubuntu -H /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
+    && runuser -u ubuntu -- env HOME=/home/ubuntu /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
     && /opt/openwam-venv/bin/rerun rrd --help >/dev/null \
     && test -z "$(find /opt/openwam /opt/openwam-venv /opt/openwam-libero /opt/openwam-libero-source -type f \
       \( -iname '*.safetensors' -o -iname '*.ckpt' -o -iname 'pytorch_model*.bin' \) -print -quit)" \
@@ -129,7 +129,7 @@ COPY --chmod=0444 docker/workbench/openwam/THIRD_PARTY_NOTICES.md /usr/share/doc
 RUN install -d -m 0755 -o ubuntu -g ubuntu /workspace /workspace/.cache /workspace/.cache/huggingface \
     && chmod 0755 /usr/share/doc/npa-openwam \
     && chown -R ubuntu:ubuntu /home/ubuntu /workspace /opt/openwam \
-    && sudo -u ubuntu -H /opt/openwam-venv/bin/rerun analytics disable >/dev/null 2>&1 \
+    && runuser -u ubuntu -- env HOME=/home/ubuntu /opt/openwam-venv/bin/rerun analytics disable >/dev/null 2>&1 \
     && test -r /usr/share/doc/npa-openwam/REDISTRIBUTION.md \
     && test -r /usr/share/doc/npa-openwam/THIRD_PARTY_NOTICES.md \
     && test -s /home/ubuntu/.config/rerun/analytics.json

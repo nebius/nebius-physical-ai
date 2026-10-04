@@ -242,10 +242,16 @@ def _safe_extract(archive: tarfile.TarFile, destination: Path) -> None:
             )
         if member.issym() or member.islnk():
             raise OpenWAMPipelineError(f"Archive links are not accepted: {member.name}")
-    # ``filter=`` is a Python 3.12 addition.  The explicit path and link
-    # checks above retain the same safety property on the supported Python 3.10
-    # image used by the upstream LIBERO client.
-    archive.extractall(destination)
+        if not (member.isdir() or member.isfile()):
+            raise OpenWAMPipelineError(
+                f"Archive member is not a regular file or directory: {member.name}"
+            )
+    # ``filter=`` is a Python 3.12 addition.  Validate every member first, then
+    # extract each approved regular file/directory individually.  This retains
+    # the same safety property on the supported Python 3.10 LIBERO client and
+    # deliberately avoids tarfile.extractall's unsafe default API.
+    for member in archive.getmembers():
+        archive.extract(member, path=destination)
 
 
 def _restore_archive(manifest: Mapping[str, Any], destination: Path) -> Path:

@@ -24,9 +24,11 @@ def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
     assert "rm -rf /tmp/openwam-uv-cache" in dockerfile
     assert "COPY --chmod=0755 src/npa /opt/npa/src/npa" in dockerfile
     assert (
-        "sudo -u ubuntu -H /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline"
+        "runuser -u ubuntu -- env HOME=/home/ubuntu /opt/openwam-venv/bin/python "
+        "-m npa.workflows.openwam_pipeline"
         in dockerfile
     )
+    assert "sudo -u ubuntu" not in dockerfile
 
 
 def test_openwam_recipe_retains_runtime_fetch_and_private_quarantine() -> None:

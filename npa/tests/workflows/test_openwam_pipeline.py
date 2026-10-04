@@ -119,7 +119,9 @@ def test_openwam_toolrefs_call_real_pipeline_stages() -> None:
             )
 
 
-def test_parser_exposes_native_libero_suite_task_and_trial_controls() -> None:
+def test_parser_exposes_native_libero_suite_task_and_trial_controls(
+    tmp_path: Path,
+) -> None:
     args = pipeline.build_parser().parse_args(
         [
             "rollout",
@@ -128,7 +130,7 @@ def test_parser_exposes_native_libero_suite_task_and_trial_controls() -> None:
             "--runtime-image",
             DIGEST_IMAGE,
             "--work-dir",
-            "/tmp/openwam-contract",
+            str(tmp_path / "openwam-contract"),
             "--prepared-assets-uri",
             "s3://bucket/prepared.json",
             "--training-uri",
@@ -349,3 +351,22 @@ def test_archive_extraction_rejects_escaping_members_and_links(tmp_path: Path) -
         with tarfile.open(archive_path, "r:gz") as archive:
             with pytest.raises(pipeline.OpenWAMPipelineError):
                 pipeline._safe_extract(archive, tmp_path / "extract")
+
+
+def test_safe_archive_extraction_materializes_only_regular_files(tmp_path: Path) -> None:
+    archive_path = tmp_path / "prepared.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        directory = tarfile.TarInfo("payload")
+        directory.type = tarfile.DIRTYPE
+        directory.mode = 0o755
+        archive.addfile(directory)
+        contents = b"prepared OpenWAM inputs"
+        regular_file = tarfile.TarInfo("payload/manifest.json")
+        regular_file.size = len(contents)
+        archive.addfile(regular_file, io.BytesIO(contents))
+
+    destination = tmp_path / "extract"
+    with tarfile.open(archive_path, "r:gz") as archive:
+        pipeline._safe_extract(archive, destination)
+
+    assert (destination / "payload" / "manifest.json").read_bytes() == contents
