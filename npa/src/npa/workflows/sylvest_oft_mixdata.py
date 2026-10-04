@@ -1,4 +1,4 @@
-"""Run a source-pinned, paired LIBERO-Plus comparison for the Sylvest checkpoint.
+"""Run a source-pinned, paired LIBERO comparison for the Sylvest checkpoint.
 
 The workflow intentionally does not treat a mixed-data checkpoint as an
 improvement.  It either selects task names outside a supplied training inventory
@@ -10,6 +10,7 @@ reports paired success differences and a factual Rerun recording.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import importlib
 import json
@@ -26,13 +27,23 @@ from npa.clients.storage import StorageClient
 
 WORKFLOW_SCHEMA = "npa.sylvest-oft-mixdata.v1"
 OFT_SOURCE_REPOSITORY = "https://github.com/moojink/openvla-oft"
+OFT_LICENSE_SHA256 = "53f449ef3886b1ccd71039d9a75a9f503fda1a6912e4095d1d72e2ac7b8767bd"
 LIBERO_PLUS_SOURCE_REPOSITORY = "https://github.com/sylvestf/LIBERO-plus"
+LIBERO_SOURCE_REPOSITORY = "https://github.com/Lifelong-Robot-Learning/LIBERO"
+LIBERO_SOURCE_REVISION = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+LIBERO_LICENSE_SHA256 = (
+    "e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6"
+)
+LIBERO_CODE_LICENSE = "MIT"
+LIBERO_DATASET_LICENSE = "CC-BY-4.0"
+_LIBERO_TASK_MAP_FILE = Path("libero/libero/benchmark/libero_suite_task_map.py")
 DLIMP_SOURCE_REPOSITORY = "https://github.com/kvablack/dlimp"
 DLIMP_SOURCE_REVISION = "92e3eca97af3b14d0b6aa15182c0dc240407698d"
 DLIMP_LICENSE_SHA256 = (
     "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
 )
 _DLIMP_READY_FILE = ".npa-dlimp-ready.json"
+_SOURCE_READY_FILE = ".npa-source-ready.json"
 _DLIMP_DATASET_FILE = Path("dlimp/dataset.py")
 _DLIMP_DETERMINISTIC_BEFORE = "options.deterministic = False"
 _DLIMP_DETERMINISTIC_AFTER = "options.deterministic = True"
@@ -41,6 +52,12 @@ _CHECKPOINT_MUTABLE_FILES = {
     "config.json",
     "configuration_prismatic.py",
     "modeling_prismatic.py",
+}
+_ORIGINAL_LIBERO_SUITES = {
+    "libero_spatial",
+    "libero_object",
+    "libero_goal",
+    "libero_10",
 }
 
 
@@ -163,6 +180,17 @@ def _parse_initial_state_indices(value: str) -> list[int]:
     return indices
 
 
+def _parse_bool(value: str | bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes"}:
+        return True
+    if normalized in {"0", "false", "no"}:
+        return False
+    raise argparse.ArgumentTypeError(f"expected a boolean value, got {value!r}")
+
+
 def _task_names(payload: Any) -> set[str]:
     if isinstance(payload, list) and all(isinstance(item, str) for item in payload):
         return set(payload)
@@ -197,6 +225,80 @@ def _verified_source_root(root: str, revision: str, repository: str) -> Path:
     return path
 
 
+def _runtime_source_metadata(
+    root: Path, repository: str, revision: str
+) -> dict[str, str]:
+    return {
+        "repository": repository,
+        "revision": revision,
+        "tree": str(root),
+    }
+
+
+def _materialize_runtime_source(root: str, revision: str, repository: str) -> Path:
+    """Fetch an immutable, source-only runtime checkout with an atomic marker.
+
+    Licensed source is fetched on the operator's worker instead of copied into
+    an image. A cache directory is never reused without both its Git identity
+    and the marker written after that identity was verified.
+    """
+
+    destination = Path(root).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    import fcntl
+    import subprocess
+
+    lock_path = destination.parent / f".{destination.name}.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        marker = destination / _SOURCE_READY_FILE
+        if marker.is_file():
+            payload = _read_json(marker)
+            if isinstance(payload, dict) and payload == _runtime_source_metadata(
+                destination, repository, revision
+            ):
+                return _verified_source_root(str(destination), revision, repository)
+            raise SylvestComparisonError(
+                "runtime source cache has an incompatible ready marker"
+            )
+        if destination.exists():
+            raise SylvestComparisonError(
+                "runtime source cache exists without a matching atomic ready marker"
+            )
+        staging = Path(
+            tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent)
+        )
+        try:
+            for argv in (
+                [
+                    "git",
+                    "clone",
+                    "--filter=blob:none",
+                    "--no-checkout",
+                    repository,
+                    str(staging),
+                ],
+                ["git", "-C", str(staging), "checkout", "--detach", revision],
+            ):
+                result = subprocess.run(
+                    argv, capture_output=True, check=False, text=True
+                )
+                if result.returncode:
+                    raise SylvestComparisonError(
+                        f"failed to materialize pinned runtime source for {repository}"
+                    )
+            _verified_source_root(str(staging), revision, repository)
+            _write_json(
+                staging / _SOURCE_READY_FILE,
+                _runtime_source_metadata(destination, repository, revision),
+            )
+            os.replace(staging, destination)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+    return destination
+
+
 def _require_libero_plus_license(root: Path) -> Path:
     candidates = [
         root / "LICENSE",
@@ -212,6 +314,98 @@ def _require_libero_plus_license(root: Path) -> Path:
             "not an NPA EULA requirement."
         )
     return license_file
+
+
+def _require_original_libero_license(root: Path) -> Path:
+    """Verify the exact MIT license of the original LIBERO source."""
+
+    license_file = root / "LICENSE"
+    if (
+        not license_file.is_file()
+        or _sha256_file(license_file) != LIBERO_LICENSE_SHA256
+    ):
+        raise SylvestComparisonError(
+            "original LIBERO source is missing its expected MIT LICENSE"
+        )
+    return license_file
+
+
+def _require_oft_license(root: Path) -> Path:
+    """Verify the exact OpenVLA-OFT MIT notice before executing its evaluator."""
+
+    license_file = root / "LICENSE"
+    if not license_file.is_file() or _sha256_file(license_file) != OFT_LICENSE_SHA256:
+        raise SylvestComparisonError(
+            "OpenVLA-OFT source is missing its expected MIT LICENSE"
+        )
+    return license_file
+
+
+def _original_libero_suite_cases(
+    root: Path, suite: str
+) -> tuple[list[dict[str, Any]], Path]:
+    """Read the source-pinned original LIBERO task map without importing its runtime."""
+
+    if suite not in _ORIGINAL_LIBERO_SUITES:
+        raise SylvestComparisonError(
+            "original LIBERO comparison supports libero_spatial, libero_object, "
+            "libero_goal, or libero_10 only"
+        )
+    task_map_path = root / _LIBERO_TASK_MAP_FILE
+    try:
+        tree = ast.parse(task_map_path.read_text(encoding="utf-8"), str(task_map_path))
+        assignment = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "libero_task_map"
+                for target in node.targets
+            )
+        )
+        task_map = ast.literal_eval(assignment.value)
+    except (OSError, StopIteration, SyntaxError, ValueError) as exc:
+        raise SylvestComparisonError(
+            "unable to read the original LIBERO task map as a literal source mapping"
+        ) from exc
+    names = task_map.get(suite) if isinstance(task_map, dict) else None
+    if (
+        not isinstance(names, list)
+        or not names
+        or not all(isinstance(name, str) and name for name in names)
+    ):
+        raise SylvestComparisonError(
+            f"original LIBERO task map has no usable task list for {suite!r}"
+        )
+    return (
+        [
+            {
+                "id": index,
+                "name": name,
+                "category": suite,
+                "difficulty_level": 0,
+            }
+            for index, name in enumerate(names)
+        ],
+        task_map_path,
+    )
+
+
+def _original_libero_initial_state_hashes(
+    root: Path, suite: str, cases: Sequence[Mapping[str, Any]]
+) -> dict[str, str]:
+    """Bind each original LIBERO task identity to its upstream init-state bytes."""
+
+    hashes: dict[str, str] = {}
+    for case in cases:
+        name = str(case["name"])
+        path = root / "libero/libero/init_files" / suite / f"{name}.pruned_init"
+        if not path.is_file():
+            raise SylvestComparisonError(
+                f"original LIBERO initial-state payload is missing for {name!r}"
+            )
+        hashes[name] = _sha256_file(path)
+    return hashes
 
 
 def _require_dlimp_license(root: Path) -> Path:
@@ -329,7 +523,7 @@ def _prepare_deterministic_dlimp_runtime(source: Path, destination: Path) -> Pat
                 source,
                 staging,
                 dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns(".git"),
+                ignore=shutil.ignore_patterns(".git", _SOURCE_READY_FILE),
             )
             derived_dataset = staging / _DLIMP_DATASET_FILE
             derived_text = derived_dataset.read_text(encoding="utf-8")
@@ -364,23 +558,45 @@ def _prepare_deterministic_dlimp_runtime(source: Path, destination: Path) -> Pat
 
 
 def _prepare_protocol(args: argparse.Namespace, output: Path) -> None:
-    libero_root = _verified_source_root(
-        args.libero_plus_root, args.libero_plus_revision, LIBERO_PLUS_SOURCE_REPOSITORY
-    )
-    license_file = _require_libero_plus_license(libero_root)
-    classification_path = (
-        libero_root / "libero/libero/benchmark/task_classification.json"
-    )
-    classification = _read_json(classification_path)
-    suite_cases = (
-        classification.get(args.task_suite)
-        if isinstance(classification, dict)
-        else None
-    )
-    if not isinstance(suite_cases, list):
-        raise SylvestComparisonError(
-            f"classification has no task list for {args.task_suite!r}"
+    source = _comparison_source(args.benchmark, args.libero_revision)
+    if args.benchmark == "original_libero":
+        libero_root = _materialize_runtime_source(
+            args.libero_root, args.libero_revision, source["repository"]
         )
+        license_file = _require_original_libero_license(libero_root)
+        suite_cases, suite_map_path = _original_libero_suite_cases(
+            libero_root, args.task_suite
+        )
+        initial_state_hashes = _original_libero_initial_state_hashes(
+            libero_root, args.task_suite, suite_cases
+        )
+    else:
+        libero_root = _verified_source_root(
+            args.libero_root, args.libero_revision, source["repository"]
+        )
+        license_file = _require_libero_plus_license(libero_root)
+        suite_map_path = (
+            libero_root / "libero/libero/benchmark/task_classification.json"
+        )
+        classification = _read_json(suite_map_path)
+        suite_cases = (
+            classification.get(args.task_suite)
+            if isinstance(classification, dict)
+            else None
+        )
+        if not isinstance(suite_cases, list):
+            raise SylvestComparisonError(
+                f"classification has no task list for {args.task_suite!r}"
+            )
+        initial_state_hashes = {}
+    openvla_root = _materialize_runtime_source(
+        args.openvla_oft_root, args.openvla_oft_revision, OFT_SOURCE_REPOSITORY
+    )
+    openvla_license = _require_oft_license(openvla_root)
+    dlimp_root = _materialize_runtime_source(
+        args.dlimp_root, args.dlimp_revision, DLIMP_SOURCE_REPOSITORY
+    )
+    dlimp_license = _require_dlimp_license(dlimp_root)
     training_names, inventory_sha256 = _training_inventory(args.training_task_ids_uri)
     if args.comparison_scope == "held_out":
         if not training_names:
@@ -408,15 +624,18 @@ def _prepare_protocol(args: argparse.Namespace, output: Path) -> None:
         )
     if not selected_cases:
         raise SylvestComparisonError(
-            "selected comparison population has no LIBERO-Plus tasks"
+            "selected comparison population has no benchmark tasks"
         )
     protocol_cases = _protocol_cases(
-        selected_cases, _parse_initial_state_indices(args.initial_state_indices)
+        selected_cases,
+        _parse_initial_state_indices(args.initial_state_indices),
+        initial_state_hashes,
     )
-    source_hash = _sha256_file(classification_path)
+    checkpoints = _prepare_checkpoints(args)
     protocol = {
         "schema": WORKFLOW_SCHEMA,
-        "kind": "paired_libero_plus_protocol",
+        "kind": "paired_libero_protocol",
+        "benchmark": args.benchmark,
         "task_suite": args.task_suite,
         "initial_state_indices": _parse_initial_state_indices(
             args.initial_state_indices
@@ -426,18 +645,136 @@ def _prepare_protocol(args: argparse.Namespace, output: Path) -> None:
         "selected_task_count": len(selected_cases),
         "training_inventory_count": len(training_names),
         "training_inventory_sha256": inventory_sha256,
+        "checkpoints": checkpoints,
+        "runtime_sources": {
+            "openvla_oft": {
+                "repository": OFT_SOURCE_REPOSITORY,
+                "revision": args.openvla_oft_revision,
+                "license_file": openvla_license.name,
+                "license_sha256": _sha256_file(openvla_license),
+            },
+            "dlimp": {
+                "repository": DLIMP_SOURCE_REPOSITORY,
+                "revision": args.dlimp_revision,
+                "license_file": dlimp_license.name,
+                "license_sha256": _sha256_file(dlimp_license),
+            },
+        },
         "source": {
-            "repository": LIBERO_PLUS_SOURCE_REPOSITORY,
-            "revision": args.libero_plus_revision,
-            "classification_sha256": source_hash,
+            **source,
+            "suite_map_sha256": _sha256_file(suite_map_path),
             "license_file": license_file.name,
             "license_sha256": _sha256_file(license_file),
+            **(
+                {
+                    "code_license": LIBERO_CODE_LICENSE,
+                    "initial_state_data_license": LIBERO_DATASET_LICENSE,
+                }
+                if args.benchmark == "original_libero"
+                else {}
+            ),
         },
+        "evaluation_config": _evaluation_config(args),
         "population_definition": population_definition,
     }
     protocol["protocol_sha256"] = hashlib.sha256(_canonical_bytes(protocol)).hexdigest()
+    notices = _third_party_notices(
+        protocol, license_file, openvla_license, dlimp_license
+    )
     _write_json(output / "protocol.json", protocol)
+    _write_json(output / "notices.json", notices)
     _write_json(output / "provenance.json", _prepare_provenance(args, protocol))
+
+
+def _third_party_notices(
+    protocol: Mapping[str, Any],
+    benchmark_license: Path,
+    oft_license: Path,
+    dlimp_license: Path,
+) -> dict[str, Any]:
+    """Produce attribution carried from preparation to the final report stage."""
+
+    source = protocol["source"]
+    runtime_sources = protocol["runtime_sources"]
+    checkpoints = protocol["checkpoints"]
+    return {
+        "schema": WORKFLOW_SCHEMA,
+        "kind": "third_party_notices",
+        "protocol_sha256": protocol["protocol_sha256"],
+        "components": [
+            {
+                "name": "LIBERO",
+                "repository": source["repository"],
+                "revision": source["revision"],
+                "license": source.get("code_license", "unresolved"),
+                "license_file": benchmark_license.name,
+                "license_sha256": _sha256_file(benchmark_license),
+                "license_text": benchmark_license.read_text(encoding="utf-8"),
+                "data_license": source.get("initial_state_data_license", "unresolved"),
+                "credit": "Bo Liu, Yifeng Zhu, Chongkai Gao, Yihao Feng, Qiang Liu, Yuke Zhu, and Peter Stone",
+                "citation": "Liu et al., LIBERO: Benchmarking Knowledge Transfer for Lifelong Robot Learning (2023)",
+            },
+            {
+                "name": "OpenVLA-OFT",
+                "repository": runtime_sources["openvla_oft"]["repository"],
+                "revision": runtime_sources["openvla_oft"]["revision"],
+                "license": "MIT",
+                "license_file": oft_license.name,
+                "license_sha256": _sha256_file(oft_license),
+                "license_text": oft_license.read_text(encoding="utf-8"),
+                "credit": "Moo Jin Kim, Chelsea Finn, and Percy Liang",
+                "citation": "Kim, Finn, and Liang, Fine-Tuning Vision-Language-Action Models (2025)",
+            },
+            {
+                "name": "dlimp deterministic private derivative",
+                "repository": runtime_sources["dlimp"]["repository"],
+                "revision": runtime_sources["dlimp"]["revision"],
+                "license": "Apache-2.0",
+                "license_file": dlimp_license.name,
+                "license_sha256": _sha256_file(dlimp_license),
+                "license_text": dlimp_license.read_text(encoding="utf-8"),
+                "credit": "Kevin Black",
+                "modification": "dlimp/dataset.py: options.deterministic = False -> True; preserve LICENSE and NPA_MODIFICATIONS.md",
+            },
+            {
+                "name": "Official OpenVLA-OFT baseline checkpoint",
+                "repository": f"https://huggingface.co/{checkpoints['baseline']['repo_id']}",
+                "revision": checkpoints["baseline"]["revision"],
+                "credit": "OpenVLA-OFT authors",
+                "lineage": "stage-one checkpoint inventory",
+            },
+            {
+                "name": "Sylvest mixed-data candidate checkpoint",
+                "repository": f"https://huggingface.co/{checkpoints['candidate']['repo_id']}",
+                "revision": checkpoints["candidate"]["revision"],
+                "credit": "Sylvest",
+                "lineage": "stage-one checkpoint inventory",
+            },
+        ],
+    }
+
+
+def _prepare_checkpoints(args: argparse.Namespace) -> dict[str, Mapping[str, Any]]:
+    """Fetch and inventory both exact model inputs before either rollout arm.
+
+    The later stages independently revalidate their local cache against these
+    complete inventories. That keeps a successful pre-rollout verification from
+    becoming a substitute for validating the bytes a GPU worker actually loads.
+    """
+
+    requested = {
+        "baseline": (args.baseline_checkpoint_id, args.baseline_checkpoint_revision),
+        "candidate": (args.candidate_checkpoint_id, args.candidate_checkpoint_revision),
+    }
+    if requested["baseline"] == requested["candidate"]:
+        raise SylvestComparisonError(
+            "baseline and candidate checkpoint identities must be distinct"
+        )
+    root = Path(args.model_cache_root)
+    return {
+        role: _checkpoint_provenance(_snapshot_checkpoint(repo_id, revision, root))
+        for role, (repo_id, revision) in requested.items()
+    }
 
 
 def _training_inventory(uri: str) -> tuple[set[str], str | None]:
@@ -449,7 +786,9 @@ def _training_inventory(uri: str) -> tuple[set[str], str | None]:
 
 
 def _protocol_cases(
-    rows: Iterable[Mapping[str, Any]], initial_state_indices: Iterable[int]
+    rows: Iterable[Mapping[str, Any]],
+    initial_state_indices: Iterable[int],
+    initial_state_hashes: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
     for row in sorted(
@@ -458,7 +797,7 @@ def _protocol_cases(
         name = str(row.get("name") or "")
         if not name:
             raise SylvestComparisonError(
-                "classification contains a task without a name"
+                "benchmark task map contains a task without a name"
             )
         for initial_state_index in initial_state_indices:
             cases.append(
@@ -468,9 +807,43 @@ def _protocol_cases(
                     "category": str(row.get("category") or "unspecified"),
                     "difficulty_level": int(row.get("difficulty_level") or 0),
                     "initial_state_index": initial_state_index,
+                    **(
+                        {"initial_state_source_sha256": initial_state_hashes[name]}
+                        if initial_state_hashes and name in initial_state_hashes
+                        else {}
+                    ),
                 }
             )
     return cases
+
+
+def _comparison_source(benchmark: str, revision: str) -> dict[str, str]:
+    if benchmark == "original_libero":
+        if revision != LIBERO_SOURCE_REVISION:
+            raise SylvestComparisonError(
+                f"original LIBERO requires revision {LIBERO_SOURCE_REVISION}"
+            )
+        return {
+            "repository": LIBERO_SOURCE_REPOSITORY,
+            "revision": LIBERO_SOURCE_REVISION,
+        }
+    if benchmark == "libero_plus":
+        return {
+            "repository": LIBERO_PLUS_SOURCE_REPOSITORY,
+            "revision": revision,
+        }
+    raise SylvestComparisonError("benchmark must be original_libero or libero_plus")
+
+
+def _evaluation_config(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "seed": args.seed,
+        "env_image_resolution": args.env_image_resolution,
+        "center_crop": args.center_crop,
+        "num_images_in_input": args.num_images_in_input,
+        "num_open_loop_steps": args.num_open_loop_steps,
+        "action_transform": "openvla_normalize_then_invert_gripper",
+    }
 
 
 def _prepare_provenance(
@@ -488,9 +861,13 @@ def _prepare_provenance(
             "No benchmark improvement is inferred at preparation time.",
         ],
         "sources": {
-            "libero_plus_revision": args.libero_plus_revision,
+            "benchmark": args.benchmark,
+            "libero_revision": args.libero_revision,
+            "openvla_oft_revision": args.openvla_oft_revision,
+            "dlimp_revision": args.dlimp_revision,
             "training_task_ids_uri": args.training_task_ids_uri,
             "comparison_scope": protocol["comparison_scope"],
+            "evaluation_config": protocol["evaluation_config"],
         },
     }
 
@@ -658,23 +1035,50 @@ def _rollout(args: argparse.Namespace, output: Path) -> None:
         )
         protocol = _read_json(protocol_path)
     _validate_protocol(protocol)
-    libero_root = _verified_source_root(
-        args.libero_plus_root, args.libero_plus_revision, LIBERO_PLUS_SOURCE_REPOSITORY
-    )
-    _require_libero_plus_license(libero_root)
-    dlimp_source = _verified_source_root(
+    source = protocol["source"]
+    if not isinstance(source, Mapping):
+        raise SylvestComparisonError("protocol has no benchmark-source provenance")
+    benchmark = str(protocol.get("benchmark") or "")
+    if args.benchmark != benchmark:
+        raise SylvestComparisonError(
+            "supplied benchmark does not match protocol benchmark provenance"
+        )
+    expected_source = _comparison_source(benchmark, args.libero_revision)
+    observed_source = {
+        "repository": source.get("repository"),
+        "revision": source.get("revision"),
+    }
+    if observed_source != expected_source:
+        raise SylvestComparisonError(
+            "protocol benchmark provenance does not match the supplied source"
+        )
+    if benchmark == "original_libero":
+        libero_root = _materialize_runtime_source(
+            args.libero_root, args.libero_revision, expected_source["repository"]
+        )
+        _require_original_libero_license(libero_root)
+    else:
+        libero_root = _verified_source_root(
+            args.libero_root, args.libero_revision, expected_source["repository"]
+        )
+        _require_libero_plus_license(libero_root)
+    dlimp_source = _materialize_runtime_source(
         args.dlimp_root, args.dlimp_revision, DLIMP_SOURCE_REPOSITORY
     )
+    _require_dlimp_license(dlimp_source)
     deterministic_dlimp_root = _prepare_deterministic_dlimp_runtime(
         dlimp_source, Path(args.dlimp_runtime_root)
     )
-    openvla_root = _verified_source_root(
+    openvla_root = _materialize_runtime_source(
         args.openvla_oft_root, args.openvla_oft_revision, OFT_SOURCE_REPOSITORY
     )
+    _require_oft_license(openvla_root)
+    _require_prepared_runtime_sources(protocol, args)
     checkpoint_snapshot = _snapshot_checkpoint(
         args.checkpoint_id, args.checkpoint_revision, Path(args.model_cache_root)
     )
     checkpoint_provenance = _checkpoint_provenance(checkpoint_snapshot)
+    _require_prepared_checkpoint(protocol, checkpoint_provenance)
     with tempfile.TemporaryDirectory(
         prefix="sylvest-checkpoint-workspace-"
     ) as temporary:
@@ -697,7 +1101,7 @@ def _rollout(args: argparse.Namespace, output: Path) -> None:
         _collect_rollout_clips(runtime_workspace, output, expected_count=len(results))
     payload = {
         "schema": WORKFLOW_SCHEMA,
-        "kind": "openvla_oft_libero_plus_rollouts",
+        "kind": "openvla_oft_libero_rollouts",
         "checkpoint": {
             "id": args.checkpoint_id,
             "revision": args.checkpoint_revision,
@@ -706,13 +1110,70 @@ def _rollout(args: argparse.Namespace, output: Path) -> None:
         },
         "protocol_sha256": protocol["protocol_sha256"],
         "task_suite": protocol["task_suite"],
+        "benchmark": benchmark,
+        "source": protocol["source"],
+        "runtime_sources": protocol["runtime_sources"],
         "comparison_scope": protocol["comparison_scope"],
+        "evaluation_config": protocol["evaluation_config"],
         "episodes": results,
         "summary": _rollout_summary(results),
     }
     _write_json(output / "rollouts.json", payload)
     _write_json(output / "clips" / "manifest.json", _clip_manifest(output / "clips"))
     _write_json(output / "provenance.json", _rollout_provenance(args, payload))
+
+
+def _require_prepared_checkpoint(
+    protocol: Mapping[str, Any], observed: Mapping[str, Any]
+) -> None:
+    """Require the GPU-loaded checkpoint bytes to match stage-one inventory."""
+
+    checkpoints = protocol.get("checkpoints")
+    if not isinstance(checkpoints, Mapping):
+        raise SylvestComparisonError("protocol lacks prepared checkpoint provenance")
+    matches = [
+        value
+        for value in checkpoints.values()
+        if isinstance(value, Mapping)
+        and value.get("repo_id") == observed.get("repo_id")
+        and value.get("revision") == observed.get("revision")
+    ]
+    if len(matches) != 1 or dict(matches[0]) != dict(observed):
+        raise SylvestComparisonError(
+            "GPU checkpoint inventory differs from stage-one prepared provenance"
+        )
+
+
+def _require_prepared_runtime_sources(
+    protocol: Mapping[str, Any], args: argparse.Namespace
+) -> None:
+    """Bind evaluator dependencies on the GPU worker to stage-one source pins."""
+
+    sources = protocol.get("runtime_sources")
+    expected = {
+        "openvla_oft": {
+            "repository": OFT_SOURCE_REPOSITORY,
+            "revision": args.openvla_oft_revision,
+            "license_sha256": OFT_LICENSE_SHA256,
+        },
+        "dlimp": {
+            "repository": DLIMP_SOURCE_REPOSITORY,
+            "revision": args.dlimp_revision,
+            "license_sha256": DLIMP_LICENSE_SHA256,
+        },
+    }
+    if not isinstance(sources, Mapping):
+        raise SylvestComparisonError(
+            "protocol lacks prepared runtime source provenance"
+        )
+    for name, identity in expected.items():
+        observed = sources.get(name)
+        if not isinstance(observed, Mapping) or any(
+            observed.get(key) != value for key, value in identity.items()
+        ):
+            raise SylvestComparisonError(
+                "GPU runtime source differs from stage-one prepared provenance"
+            )
 
 
 def _validate_protocol(protocol: Any) -> None:
@@ -724,6 +1185,67 @@ def _validate_protocol(protocol: Any) -> None:
     comparison_scope = protocol.get("comparison_scope")
     if comparison_scope not in {"held_out", "training_coverage_unknown"}:
         raise SylvestComparisonError("protocol has no valid comparison scope")
+    benchmark = protocol.get("benchmark")
+    source = protocol.get("source")
+    if benchmark not in {"original_libero", "libero_plus"} or not isinstance(
+        source, dict
+    ):
+        raise SylvestComparisonError(
+            "protocol has no valid benchmark-source provenance"
+        )
+    if source.get("repository") != _comparison_source(
+        str(benchmark), str(source.get("revision") or "")
+    ).get("repository"):
+        raise SylvestComparisonError("protocol benchmark source is not canonical")
+    if benchmark == "original_libero" and any(
+        not isinstance(case, Mapping)
+        or not isinstance(case.get("initial_state_source_sha256"), str)
+        or not case["initial_state_source_sha256"]
+        for case in cases
+    ):
+        raise SylvestComparisonError(
+            "original LIBERO protocol lacks initial-state byte provenance"
+        )
+    checkpoints = protocol.get("checkpoints")
+    if (
+        not isinstance(checkpoints, dict)
+        or set(checkpoints) != {"baseline", "candidate"}
+        or any(
+            not isinstance(value, dict)
+            or not isinstance(value.get("repo_id"), str)
+            or not isinstance(value.get("revision"), str)
+            or not isinstance(value.get("inventory_sha256"), str)
+            for value in checkpoints.values()
+        )
+    ):
+        raise SylvestComparisonError("protocol lacks prepared checkpoint inventories")
+    runtime_sources = protocol.get("runtime_sources")
+    expected_sources = {
+        "openvla_oft": (OFT_SOURCE_REPOSITORY, OFT_LICENSE_SHA256),
+        "dlimp": (DLIMP_SOURCE_REPOSITORY, DLIMP_LICENSE_SHA256),
+    }
+    if (
+        not isinstance(runtime_sources, dict)
+        or set(runtime_sources) != set(expected_sources)
+        or any(
+            not isinstance(runtime_sources[name], dict)
+            or runtime_sources[name].get("repository") != repository
+            or not isinstance(runtime_sources[name].get("revision"), str)
+            or runtime_sources[name].get("license_sha256") != license_sha256
+            for name, (repository, license_sha256) in expected_sources.items()
+        )
+    ):
+        raise SylvestComparisonError("protocol lacks prepared runtime source pins")
+    evaluation_config = protocol.get("evaluation_config")
+    if not isinstance(evaluation_config, dict) or not {
+        "seed",
+        "env_image_resolution",
+        "center_crop",
+        "num_images_in_input",
+        "num_open_loop_steps",
+        "action_transform",
+    } <= set(evaluation_config):
+        raise SylvestComparisonError("protocol lacks paired evaluator configuration")
     if comparison_scope == "held_out" and not protocol.get("training_inventory_sha256"):
         raise SylvestComparisonError(
             "held-out protocol lacks immutable training-inventory provenance"
@@ -746,6 +1268,9 @@ def _run_upstream_rollouts(
     runtime_workspace: Path,
 ) -> list[dict[str, Any]]:
     evaluator = _runtime_modules(openvla_root, libero_root, deterministic_dlimp_root)
+    evaluation_config = protocol["evaluation_config"]
+    if not isinstance(evaluation_config, Mapping):
+        raise SylvestComparisonError("protocol lacks evaluator configuration")
     prior_cwd = Path.cwd()
     output.mkdir(parents=True, exist_ok=True)
     os.chdir(runtime_workspace)
@@ -754,7 +1279,11 @@ def _run_upstream_rollouts(
             pretrained_checkpoint=str(checkpoint),
             task_suite_name=protocol["task_suite"],
             num_trials_per_task=len(protocol["initial_state_indices"]),
-            center_crop=True,
+            seed=int(evaluation_config["seed"]),
+            env_img_res=int(evaluation_config["env_image_resolution"]),
+            center_crop=bool(evaluation_config["center_crop"]),
+            num_images_in_input=int(evaluation_config["num_images_in_input"]),
+            num_open_loop_steps=int(evaluation_config["num_open_loop_steps"]),
             use_wandb=False,
             local_log_dir=str(output / "logs"),
         )
@@ -1037,9 +1566,9 @@ def _rollout_provenance(
             "repository": OFT_SOURCE_REPOSITORY,
             "revision": args.openvla_oft_revision,
         },
-        "libero_plus": {
-            "repository": LIBERO_PLUS_SOURCE_REPOSITORY,
-            "revision": args.libero_plus_revision,
+        "benchmark_source": {
+            **_comparison_source(args.benchmark, args.libero_revision),
+            "benchmark": args.benchmark,
         },
         "dlimp": _dlimp_derivative_provenance(Path(args.dlimp_runtime_root)),
         "checkpoint": payload["checkpoint"],
@@ -1099,6 +1628,18 @@ def _paired_comparison(
         raise SylvestComparisonError(
             "baseline and candidate used different comparison population scopes"
         )
+    if baseline.get("benchmark") != candidate.get("benchmark"):
+        raise SylvestComparisonError("baseline and candidate used different benchmarks")
+    if baseline.get("source") != candidate.get("source") or baseline.get(
+        "runtime_sources"
+    ) != candidate.get("runtime_sources"):
+        raise SylvestComparisonError(
+            "baseline and candidate used different benchmark or evaluator sources"
+        )
+    if baseline.get("evaluation_config") != candidate.get("evaluation_config"):
+        raise SylvestComparisonError(
+            "baseline and candidate used different evaluator configurations"
+        )
     baseline_rows = {str(row["case_id"]): row for row in baseline["episodes"]}
     candidate_rows = {str(row["case_id"]): row for row in candidate["episodes"]}
     if baseline_rows.keys() != candidate_rows.keys():
@@ -1117,6 +1658,10 @@ def _paired_comparison(
         "kind": "paired_robustness_difference",
         "protocol_sha256": baseline["protocol_sha256"],
         "comparison_scope": comparison_scope,
+        "benchmark": baseline["benchmark"],
+        "source": baseline["source"],
+        "runtime_sources": baseline["runtime_sources"],
+        "evaluation_config": baseline["evaluation_config"],
         "baseline_checkpoint": baseline["checkpoint"],
         "candidate_checkpoint": candidate["checkpoint"],
         "paired_cases": rows,
@@ -1141,14 +1686,36 @@ def _validate_rollouts(payload: Mapping[str, Any]) -> None:
         payload.get("episodes"), list
     ):
         raise SylvestComparisonError("invalid rollout artifact")
-    if not payload.get("protocol_sha256") or not payload["episodes"]:
+    if (
+        not payload.get("protocol_sha256")
+        or not payload["episodes"]
+        or payload.get("benchmark") not in {"original_libero", "libero_plus"}
+        or not isinstance(payload.get("source"), dict)
+        or not isinstance(payload.get("runtime_sources"), dict)
+        or not isinstance(payload.get("evaluation_config"), dict)
+    ):
         raise SylvestComparisonError("rollout artifact lacks paired evidence")
+    if payload.get("benchmark") == "original_libero" and any(
+        not isinstance(row, Mapping)
+        or not isinstance(row.get("initial_state_source_sha256"), str)
+        or not row["initial_state_source_sha256"]
+        for row in payload["episodes"]
+    ):
+        raise SylvestComparisonError(
+            "original LIBERO rollout lacks initial-state byte provenance"
+        )
 
 
 def _paired_row(
     baseline: Mapping[str, Any], candidate: Mapping[str, Any]
 ) -> dict[str, Any]:
-    for key in ("task_name", "category", "difficulty_level", "initial_state_index"):
+    for key in (
+        "task_name",
+        "category",
+        "difficulty_level",
+        "initial_state_index",
+        "initial_state_source_sha256",
+    ):
         if baseline.get(key) != candidate.get(key):
             raise SylvestComparisonError(
                 f"paired case disagrees on {key}: {baseline['case_id']}"
@@ -1159,6 +1726,7 @@ def _paired_row(
         "category": baseline["category"],
         "difficulty_level": baseline["difficulty_level"],
         "initial_state_index": baseline["initial_state_index"],
+        "initial_state_source_sha256": baseline.get("initial_state_source_sha256"),
         "baseline_success": int(baseline["success"]),
         "candidate_success": int(candidate["success"]),
         "delta_success": int(candidate["success"]) - int(baseline["success"]),
@@ -1204,17 +1772,24 @@ def _category_summaries(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str
 
 def _report(args: argparse.Namespace, output: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="sylvest-report-") as temporary:
+        root = Path(temporary)
         comparison = _read_json(
-            _materialize(args.comparison_uri, Path(temporary) / "comparison.json")
+            _materialize(args.comparison_uri, root / "comparison.json")
         )
+        protocol = _read_json(_materialize(args.protocol_uri, root / "protocol.json"))
+        notices = _read_json(_materialize(args.notices_uri, root / "notices.json"))
+    _validate_protocol(protocol)
     _validate_comparison(comparison)
+    _validate_notices(notices, protocol, comparison)
     report = _report_payload(args.run_id, comparison)
     _write_json(output / "report.json", report)
+    _write_json(output / "notices.json", notices)
     rrd = output / "comparison.rrd"
     _write_rrd(rrd, args.run_id, comparison)
     checksums = {
         "report.json": _sha256_file(output / "report.json"),
         "comparison.rrd": _sha256_file(rrd),
+        "notices.json": _sha256_file(output / "notices.json"),
     }
     _write_json(
         output / "checksums.json", {"schema": WORKFLOW_SCHEMA, "files": checksums}
@@ -1228,6 +1803,21 @@ def _validate_comparison(comparison: Mapping[str, Any]) -> None:
         raise SylvestComparisonError("invalid paired comparison artifact")
 
 
+def _validate_notices(
+    notices: Any, protocol: Mapping[str, Any], comparison: Mapping[str, Any]
+) -> None:
+    if (
+        not isinstance(notices, dict)
+        or notices.get("schema") != WORKFLOW_SCHEMA
+        or notices.get("kind") != "third_party_notices"
+        or notices.get("protocol_sha256") != protocol.get("protocol_sha256")
+        or notices.get("protocol_sha256") != comparison.get("protocol_sha256")
+        or not isinstance(notices.get("components"), list)
+        or len(notices["components"]) < 5
+    ):
+        raise SylvestComparisonError("invalid prepared third-party notices artifact")
+
+
 def _report_payload(run_id: str, comparison: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "schema": WORKFLOW_SCHEMA,
@@ -1235,6 +1825,10 @@ def _report_payload(run_id: str, comparison: Mapping[str, Any]) -> dict[str, Any
         "run_id": run_id,
         "protocol_sha256": comparison["protocol_sha256"],
         "comparison_scope": comparison.get("comparison_scope", "unspecified"),
+        "benchmark": comparison["benchmark"],
+        "source": comparison["source"],
+        "runtime_sources": comparison["runtime_sources"],
+        "evaluation_config": comparison["evaluation_config"],
         "baseline_checkpoint": comparison["baseline_checkpoint"],
         "candidate_checkpoint": comparison["candidate_checkpoint"],
         "overall": comparison["overall"],
@@ -1300,8 +1894,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="stage", required=True)
     prepare = commands.add_parser("prepare")
-    prepare.add_argument("--libero-plus-root", required=True)
-    prepare.add_argument("--libero-plus-revision", required=True)
+    prepare.add_argument(
+        "--benchmark", choices=("original_libero", "libero_plus"), required=True
+    )
+    prepare.add_argument(
+        "--libero-root", "--libero-plus-root", dest="libero_root", required=True
+    )
+    prepare.add_argument(
+        "--libero-revision",
+        "--libero-plus-revision",
+        dest="libero_revision",
+        required=True,
+    )
     prepare.add_argument("--training-task-ids-uri", default="")
     prepare.add_argument(
         "--comparison-scope",
@@ -1310,6 +1914,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     prepare.add_argument("--task-suite", default="libero_spatial")
     prepare.add_argument("--initial-state-indices", default="0,1,2")
+    prepare.add_argument("--seed", type=int, default=7)
+    prepare.add_argument("--env-image-resolution", type=int, default=256)
+    prepare.add_argument("--center-crop", type=_parse_bool, default=True)
+    prepare.add_argument("--num-images-in-input", type=int, default=2)
+    prepare.add_argument("--num-open-loop-steps", type=int, default=8)
+    prepare.add_argument("--model-cache-root", required=True)
+    prepare.add_argument("--openvla-oft-root", required=True)
+    prepare.add_argument("--openvla-oft-revision", required=True)
+    prepare.add_argument("--dlimp-root", required=True)
+    prepare.add_argument("--dlimp-revision", required=True)
+    prepare.add_argument("--baseline-checkpoint-id", required=True)
+    prepare.add_argument("--baseline-checkpoint-revision", required=True)
+    prepare.add_argument("--candidate-checkpoint-id", required=True)
+    prepare.add_argument("--candidate-checkpoint-revision", required=True)
     rollout = commands.add_parser("rollout")
     rollout.add_argument("--protocol-uri", required=True)
     rollout.add_argument("--checkpoint-id", required=True)
@@ -1320,13 +1938,25 @@ def build_parser() -> argparse.ArgumentParser:
     rollout.add_argument("--dlimp-root", required=True)
     rollout.add_argument("--dlimp-revision", required=True)
     rollout.add_argument("--dlimp-runtime-root", required=True)
-    rollout.add_argument("--libero-plus-root", required=True)
-    rollout.add_argument("--libero-plus-revision", required=True)
+    rollout.add_argument(
+        "--benchmark", choices=("original_libero", "libero_plus"), required=True
+    )
+    rollout.add_argument(
+        "--libero-root", "--libero-plus-root", dest="libero_root", required=True
+    )
+    rollout.add_argument(
+        "--libero-revision",
+        "--libero-plus-revision",
+        dest="libero_revision",
+        required=True,
+    )
     compare = commands.add_parser("compare")
     compare.add_argument("--baseline-uri", required=True)
     compare.add_argument("--candidate-uri", required=True)
     report = commands.add_parser("report")
     report.add_argument("--comparison-uri", required=True)
+    report.add_argument("--protocol-uri", required=True)
+    report.add_argument("--notices-uri", required=True)
     report.add_argument("--run-id", required=True)
     for command in (prepare, rollout, compare, report):
         command.add_argument("--output-path", required=True)

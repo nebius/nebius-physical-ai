@@ -332,6 +332,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "sylvest-oft-mixdata-original-libero-comparison.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "Five connected native stages on pinned MIT original LIBERO: task and "
+            "initial-state-byte preparation, matched official OpenVLA-OFT baseline "
+            "and Sylvest candidate rollouts, paired statistics, and MP4/RRD report. "
+            "The protocol defaults to training_coverage_unknown until an authoritative "
+            "candidate training-task inventory proves held-out disjointness. Apache-2.0 "
+            "dlimp is a noticed private deterministic runtime derivative; weights "
+            "remain operator runtime fetches and public image publication is not authorized."
+        ),
+    ),
+    SubmitLiveCase(
         "molmoact-finetune.yaml",
         "gpu",
         plan_only=True,

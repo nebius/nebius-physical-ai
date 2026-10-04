@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "fba921c1f199cbcea9c7b4613c5a6d50fc98e431a4554d21224cebdc1ad6e0ec",
+  "workflow_sha256": "2970c1fc13bb2d602b0460c969d2dec5bf4b095f8ca1c4656e7f7060ad909436",
   "planning": {
     "validation": {
       "status": "verified",
@@ -14,7 +14,7 @@
       "status": "verified",
       "reason": "Local tests prove five substantive stages are connected, pair upstream initial-state trial indices rather than mislabeling them as random seeds, distinguish an inventory-proven held-out comparison from training-coverage-unknown data, reject unpaired data, preserve immutable checkpoint-cache provenance, create a noticed Apache dlimp deterministic derivative atomically, and require one decoded upstream MP4 per scored case.",
       "evidence": [
-        "npa/tests/workflows/test_sylvest_oft_mixdata.py: 10 passed",
+        "npa/tests/workflows/test_sylvest_oft_mixdata.py: 14 passed",
         "npa/tests/guardrails/test_tool_catalog_argv.py, test_module_toolref_argv.py, test_shown_workflow_catalog.py, and npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py: 260 passed",
         "npa/.venv/bin/rerun rrd verify and rerun rrd print independently decoded the local measured-fixture comparison.rrd and exposed metrics/delta_success",
         "The exact Apache-2.0 kvablack/dlimp parent revision was materialized into a private derivative; the ready marker records the preserved LICENSE, one deterministic option replacement, modification notice, and full content inventory",

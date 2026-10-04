@@ -1,34 +1,42 @@
 # Sylvest OpenVLA-OFT mixed-data checkpoint comparison
 
-This is a deferred, source-pinned evaluation candidate for
+This is a source-pinned paired evaluation for
 [`Sylvest/openvla-7b-oft-finetuned-libero-plus-mixdata`](https://huggingface.co/Sylvest/openvla-7b-oft-finetuned-libero-plus-mixdata).
-It is not an accepted model, image, or benchmark result. It records a
-reproducible test of the published robustness claim against the stated
-OpenVLA-OFT baseline; fine-tuning alone is not treated as improvement.
+It does not treat fine-tuning as improvement. A result is a reproducible test
+against the stated OpenVLA-OFT baseline only when both checkpoints complete the
+same source-pinned simulator cases and produce the declared artifacts.
 
-The executable spec is
-[`sylvest-oft-mixdata-libero-plus-comparison.yaml`](../../workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml).
-Its successful path has five connected, substantive stages:
+The primary executable spec is
+[`sylvest-oft-mixdata-original-libero-comparison.yaml`](../../workflows/testing/sylvest-oft-mixdata-original-libero-comparison.yaml).
+It uses the original MIT-licensed
+[`Lifelong-Robot-Learning/LIBERO@8f1084e3`](https://github.com/Lifelong-Robot-Learning/LIBERO/tree/8f1084e3132a39270c3a13ebe37270a43ece2a01),
+not the separately deferred LIBERO-Plus source. Its successful path has five
+connected, substantive stages:
 
-1. prepare a hash-bound LIBERO-Plus task/initial-state protocol, either
+1. prepare a hash-bound original-LIBERO task/initial-state-byte protocol, either
    excluding an authoritative externally supplied mix-SFT training inventory or
    explicitly marked `training_coverage_unknown`;
 2. run upstream OpenVLA-OFT evaluator baseline simulator rollouts;
 3. run the identical cases with the candidate checkpoint;
 4. calculate per-case paired differences, category summaries, intervals, and
    exact McNemar statistics; and
-5. publish the measured report, checksums, a Rerun `.rrd`, and the upstream
-   MP4 rollout artifacts.
+5. publish the measured report, checksums, a Rerun `.rrd`, upstream MP4 rollout
+   artifacts, and the preparation-stage third-party notice record.
 
-The default `libero_spatial` is one of the four expanded suites for which the
-pinned LIBERO-Plus source publishes classifications. `libero_object`,
-`libero_goal`, and `libero_10` are also valid. `libero_90` has no matching
-published LIBERO-Plus classification and is deliberately not a workflow target.
-One rollout per selected task/initial-state index follows the upstream
-LIBERO-Plus evaluation configuration. The upstream evaluator maps its trial
-index directly to a stored initial state, so `initial_state_indices` must be a
-contiguous zero-based list; it is not presented as independently sampled random
-seeds. This is not a substitute for a full benchmark.
+The default `libero_spatial`, along with `libero_object`, `libero_goal`, and
+`libero_10`, is an upstream original-LIBERO suite. One rollout per selected
+task/initial-state index follows the OpenVLA-OFT evaluator configuration. The
+workflow pins each selected `.pruned_init` file SHA-256 and passes one matching
+configuration (seed, camera resolution, crop, input-frame count, and open-loop
+action count) to both checkpoint rollouts. Upstream trial indices are contiguous
+zero-based indices into stored initial states, not independently sampled seeds.
+This is not a substitute for a full benchmark.
+
+The related
+[`sylvest-oft-mixdata-libero-plus-comparison.yaml`](../../workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml)
+retains the same five-stage contract but is deliberately **plan-only**. Its
+pinned LIBERO-Plus source has no authoritative source license; it is not a
+substitute for, nor evidence of, the original-LIBERO result.
 
 ## Evidence boundary
 
@@ -51,13 +59,19 @@ visualization.
 | OpenVLA-OFT evaluator | [`moojink/openvla-oft@e4287e94541f459edc4feabc4e181f537cd569a8`](https://github.com/moojink/openvla-oft/tree/e4287e94541f459edc4feabc4e181f537cd569a8) | Moo Jin Kim, Chelsea Finn, and Percy Liang; `GenerateConfig`, model initialization, `run_task`, and rollout videos are upstream-native. |
 | OpenVLA foundation | [`openvla/openvla`](https://github.com/openvla/openvla) | Moo Jin Kim and OpenVLA collaborators; architecture/base-model lineage. |
 | OFT data dependency | [`kvablack/dlimp@92e3eca97af3b14d0b6aa15182c0dc240407698d`](https://github.com/kvablack/dlimp/tree/92e3eca97af3b14d0b6aa15182c0dc240407698d) | Kevin Black; licensed Apache-2.0 parent. NPA derives a private runtime copy with only `dlimp/dataset.py`'s `options.deterministic = False` changed to `True`, preserves `LICENSE`, and writes `NPA_MODIFICATIONS.md`. It does not fetch the unlicensed `moojink/dlimp_openvla` fork. |
-| LIBERO-Plus benchmark | [`sylvestf/LIBERO-plus@4976dc30028e805ff8094b55501d532c48fec182`](https://github.com/sylvestf/LIBERO-plus/tree/4976dc30028e805ff8094b55501d532c48fec182) | Senyu Fei and collaborators; task maps, classifications, simulator, assets, and robustness framing. |
+| Original LIBERO benchmark | [`Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01`](https://github.com/Lifelong-Robot-Learning/LIBERO/tree/8f1084e3132a39270c3a13ebe37270a43ece2a01) | Yifeng Zhu and LIBERO authors; MIT-licensed benchmark source, task map, simulator, and stored initial states for the primary paired route. |
+| LIBERO-Plus benchmark (deferred) | [`sylvestf/LIBERO-plus@4976dc30028e805ff8094b55501d532c48fec182`](https://github.com/sylvestf/LIBERO-plus/tree/4976dc30028e805ff8094b55501d532c48fec182) | Senyu Fei and collaborators; robustness framing and separate source. It is neither executed nor redistributed by the primary route. |
 | Candidate checkpoint | [`Sylvest/openvla-7b-oft-finetuned-libero-plus-mixdata@a85655ec941bae6644c9fbdf62db02b9726d7cf5`](https://huggingface.co/Sylvest/openvla-7b-oft-finetuned-libero-plus-mixdata/tree/a85655ec941bae6644c9fbdf62db02b9726d7cf5) | Sylvest; mixed-data OpenVLA-OFT candidate. |
 | Baseline checkpoint | [`moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10@638918f3d1c2e43a39a8a20772bdb8b91835e4b7`](https://huggingface.co/moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10/tree/638918f3d1c2e43a39a8a20772bdb8b91835e4b7) | OpenVLA-OFT authors; paired baseline. |
 
 NPA adds task/initial-state pairing, an inventory-gated held-out rule, an
 explicit unknown-coverage alternative, source and revision checks, complete
 checkpoint-inventory provenance, cache ready markers, and report artifacts.
+The primary runtime fetches source-only OpenVLA-OFT, dlimp, and original LIBERO
+checkouts by immutable revision to lock-protected, atomically marked worker
+caches; it does not assume a source checkout is baked in the image. Preparation
+writes a third-party notice record that the final report stage consumes and
+republishes alongside its own provenance.
 The Apache dlimp derivative is content-inventoried and atomically marked ready;
 the rollout refuses an already-imported unverified dlimp module. The immutable
 checkpoint cache is read-only to the evaluator: its small mutable configuration
@@ -73,6 +87,11 @@ Preserve the upstream citations with reports:
   title={LIBERO-Plus: In-depth Robustness Analysis of Vision-Language-Action Models},
   author={Senyu Fei and Siyin Wang and Junhao Shi and Zihao Dai and Jikun Cai and Pengfang Qian and Li Ji and Xinzhe He and Shiduo Zhang and Zhaoye Fei and Jinlan Fu and Jingjing Gong and Xipeng Qiu},
   journal={arXiv preprint arXiv:2510.13626}, year={2025}
+}
+@article{liu2023libero,
+  title={LIBERO: Benchmarking Knowledge Transfer for Lifelong Robot Learning},
+  author={Liu, Bo and Zhu, Yifeng and Gao, Chongkai and Feng, Yihao and Liu, Qiang and Zhu, Yuke and Stone, Peter},
+  journal={arXiv preprint arXiv:2306.03310}, year={2023}
 }
 @article{kim2025fine,
   title={Fine-Tuning Vision-Language-Action Models: Optimizing Speed and Success},
@@ -90,10 +109,12 @@ Preserve the upstream citations with reports:
 
 | Boundary | Current authoritative finding | Decision |
 | --- | --- | --- |
-| OpenVLA-OFT source | Pinned `LICENSE` is MIT, copyright Moo Jin Kim, Chelsea Finn, and Percy Liang (2025). | Attribution retained; not baked by this deferred candidate. |
+| OpenVLA-OFT source | Pinned `LICENSE` is MIT, copyright Moo Jin Kim, Chelsea Finn, and Percy Liang (2025). | Attribution retained; source-only checkout is fetched at the exact revision into the operator-owned runtime cache. |
 | OpenVLA source | Upstream [`LICENSE`](https://github.com/openvla/openvla/blob/main/LICENSE) is MIT, copyright Moo Jin Kim, Karl Pertsch, and Siddharth Karamcheti (2024). | Lineage recorded; base-model/dependency rights remain separate. |
 | dlimp data dependency | Pinned `kvablack/dlimp@92e3eca…` carries Apache-2.0 (`LICENSE` SHA-256 `c71d239d…d0ab4`). The former OFT fork differs only by omitting that license and setting `options.deterministic = True`. | Runtime-fetch the licensed parent only. Derive a private content-inventoried copy with that exact one-line change plus a modification notice; preserve Apache notice. |
-| LIBERO-Plus source | Pinned source has no `LICENSE`, `NOTICE`, or `COPYING`; GitHub supplies no license metadata. | Do not bake, distribute, or execute it until the authors publish or identify a license. This blocks the live run. |
+| Original LIBERO source | Pinned source `LICENSE` is MIT (SHA-256 `e2885fd3…68ff6`). | Runtime-fetch or use in an operator-private runtime; preserve its copyright/license and source revision in protocol provenance. |
+| Original LIBERO benchmark data and stored initial states | The pinned upstream README separately identifies datasets as CC-BY-4.0. | Keep initial-state data and run outputs operator-private for this qualification; preserve source/data license attribution in protocol provenance and do not infer a public redistribution decision for resulting media. |
+| LIBERO-Plus source | Pinned source has no `LICENSE`, `NOTICE`, or `COPYING`; GitHub supplies no license metadata. | Do not bake, distribute, or execute it until the authors publish or identify a license. This blocks only the separate LIBERO-Plus workflow. |
 | Candidate and baseline weights | The pinned public Hugging Face model cards declare `mit` and were readable without a gated-access prompt. | Operator runtime fetch only; no weights, adapters, or cache in a public image. |
 | LIBERO-Plus assets/training data | The public cards for `Sylvest/LIBERO-plus`, `Sylvest/libero_plus_rlds`, `Sylvest/libero_plus_data_4suite`, and `Sylvest/libero_plus_lerobot` declare `mit`. | Runtime fetch only after source execution is lawful; no data/assets baked or redistributed. |
 | Runtime cache | Revision-keyed cache uses a lock, validates an inventory including OFT adapter/action-head/proprioception-projector files, and atomically records content hashes. | Operator-owned, non-public; publish only checksum-bearing provenance. |
@@ -107,32 +128,30 @@ necessary, use only that upstream mechanism and preserve its exact evidence.
 One task-owned neutral private bootstrap was built, pushed, and pulled for
 control-plane qualification only; NPA Kubernetes preflight then rejected that
 digest because it lacked the required SkyPilot bootstrap-contract attestation.
-No workload was launched and it is not a qualified image. No image was added to
-the public catalog. A neutral private bootstrap may contain the NPA control path
-and licensed dlimp bootstrap, but it cannot be capability-qualified or execute
-the exact benchmark while the LIBERO-Plus source boundary remains unresolved.
-Public publication is not authorized.
+No workload was launched from that digest and it is not qualified. The primary
+MIT-LIBERO route requires an operator-private, attested runtime selected through
+NPA configuration; weights, adapters, caches, and run outputs remain
+runtime-owned. No public image publication is authorized.
 
-## Resuming the deferred validation
+## Executing the primary route
 
-First obtain a published source license or separately licensed proven-equivalent
-benchmark implementation. Obtain the authoritative mix-SFT task inventory before
-claiming held-out results; otherwise retain `training_coverage_unknown`. Then
-build, scan, pull, and record a reviewed private immutable runtime image with
-only lawful runtime contents. NPA configuration selects storage, credentials,
-project, and GPU; none is hardcoded in the spec.
+Use the original-LIBERO spec with an operator-private immutable runtime digest
+that has passed the required image pull/bootstrap checks. NPA configuration
+selects storage, credentials, project, runtime image, and GPU; none is
+hardcoded in the spec. Obtain an authoritative mix-SFT task inventory only when
+making a held-out claim; otherwise retain `training_coverage_unknown`.
 
 ```bash
 npa/.venv/bin/npa workbench health preflight --checks nebius,s3,hf --json
 npa/.venv/bin/npa workbench workflow validate-spec \
-  workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml --json
+  workflows/testing/sylvest-oft-mixdata-original-libero-comparison.yaml --json
 npa/.venv/bin/npa workbench workflow plan-spec \
-  workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml \
+  workflows/testing/sylvest-oft-mixdata-original-libero-comparison.yaml \
   --run-id "<owned-run-id>" --json
 npa/.venv/bin/npa workbench workflow stage-src \
   --bucket "<run-scoped-bucket>" --run-id "<owned-run-id>" --project "<project>"
 npa/.venv/bin/npa workbench workflow submit \
-  workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml --runtime \
+  workflows/testing/sylvest-oft-mixdata-original-libero-comparison.yaml --runtime \
   --run-id "<owned-run-id>" --var bucket="<run-scoped-bucket>" \
   --var runtime_image="<reviewed-image@sha256:...>" \
   --var comparison_scope=held_out \

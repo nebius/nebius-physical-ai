@@ -1,0 +1,60 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "f7eed5e0ab538ec9584833aded1e72694516f9d84a0c5773093aef492ac6277d",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The source-pinned original-LIBERO workflow passed schema validation and rendered five connected stages using synthetic immutable image input. Planning created no provider, registry, or storage action.",
+      "evidence": [
+        "npa/.venv/bin/python -m npa workbench workflow validate-spec workflows/testing/sylvest-oft-mixdata-original-libero-comparison.yaml --json: status valid",
+        "npa/.venv/bin/python -m npa workbench workflow plan-spec workflows/testing/sylvest-oft-mixdata-original-libero-comparison.yaml --run-id sylvest-oft-original-contract-20261004 --check-render --var runtime_image=registry.example.invalid/operator/sylvest-oft@sha256:<synthetic> --json: render_check status valid, tasks 5, provider_actions false, registry_secrets_materialized false"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Focused tests bind the five substantive stages to source-pinned original LIBERO task and initial-state bytes; stage one atomically runtime-fetches and inventories the evaluator, dlimp, and both exact checkpoints, and each GPU stage independently verifies the inputs it loads. The two evaluators use one paired configuration and native OpenVLA-OFT run_task trial mapping; the final report consumes preparation provenance/notices and requires measured paired data with decodable MP4/RRD artifacts.",
+      "evidence": [
+        "npa/tests/workflows/test_sylvest_oft_mixdata.py: 14 passed",
+        "Original LIBERO source preparation produced a private 10-task, 30-case protocol for libero_spatial with source/task-map/initial-state hashes. It predates the subsequent checkpoint-inventory extension and is source-preparation evidence only, not completion of the current stage-one contract.",
+        "npa/.venv/bin/rerun rrd verify and rerun rrd print independently decoded the local measured-fixture comparison.rrd and exposed metrics/delta_success"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The manager-provided operator-private execution wrapper completed its exact-project S3 list, put, get, and delete preflight. The selected run prefix is intentionally not committed.",
+      "evidence": [
+        "private manager execution-route evidence"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Original LIBERO code is pinned to its MIT LICENSE and the upstream README records CC-BY-4.0 benchmark-data attribution. Apache-2.0 kvablack/dlimp is pinned and produces one noticed deterministic private derivative. Both model revisions are configured for operator runtime fetch; no training-task inventory is available, so the workflow remains training_coverage_unknown.",
+      "evidence": [
+        "Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01 LICENSE SHA-256 e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6",
+        "kvablack/dlimp@92e3eca97af3b14d0b6aa15182c0dc240407698d LICENSE SHA-256 c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+        "private exact-revision Hugging Face payload access receipt"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The manager execution wrapper's Nebius, S3, and Hugging Face health preflight passed. It supplies operator-owned secrets through native runtime plumbing and no value is recorded here.",
+      "evidence": [
+        "private health-preflight receipt"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The earlier neutral digest was rejected before pod launch for missing SkyPilot bootstrap-contract attestation. A task-compatible, operator-private immutable runtime with verified bootstrap behavior and target pull remains the next gate; no public image publication is authorized.",
+      "evidence": [
+        "private neutral-image build/push/pull and Kubernetes-preflight receipts"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No real Kubernetes workflow has yet completed the five stages. There is no claimed simulator comparison, full benchmark, convergence, or physical-robot result until the private image gate, native rollouts, MP4 decoding, and independent final-artifact inspection pass.",
+      "evidence": []
+    }
+  }
+}
