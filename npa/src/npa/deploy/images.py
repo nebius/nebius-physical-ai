@@ -319,7 +319,11 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
-NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
+# A ``redistribution: unvalidated`` packaging-contract entry must remain in this
+# selector inventory until its exact private bytes, payload scan, device run, and
+# artifact inspection are accepted.  It is deliberately distinct from a source
+# license restriction and still refuses any public reference.
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"libero-plus-assets"})
 NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
 # Previously accepted releases whose published bytes no longer satisfy the
 # repository's current security contract. Keep this separate from
