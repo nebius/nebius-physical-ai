@@ -255,9 +255,28 @@ npa workbench vlm-eval benchmark \
 
 `--rubrics` accepts names from the dataset, inline text, or `@file` paths.
 `--dataset` defaults to a packaged sample fixture, which is useful for proving
-the sweep runs but tells you nothing about your task. `--use-fixture-scores`
-honors recorded `fixture_score` values for non-stub backends; stub always uses
-them when present.
+the sweep runs but tells you nothing about your task. Its reports declare
+`dataset_evidence_scope: illustrative_only`: four rollouts are synthetic 2x2
+color swatches with color-correlated caller labels; a fifth tiny synthetic
+sequence omits the terminal outcome. The resulting
+metrics are wiring examples, not task-validation or operational error-rate
+evidence. Custom manifests default to `dataset_evidence_scope: unspecified`;
+declare `evidence_scope` and ordered `limitations` in the manifest when their
+scope is known. Limitations must be nonempty strings without surrounding
+whitespace or control characters; invalid metadata is rejected before frame
+selection or provider work. Invalid `evidence_scope` values also reject the
+dataset rather than being ignored. Order and duplicates remain intact in JSON.
+`--use-fixture-scores` honors recorded `fixture_score` values for
+non-stub backends; stub always uses them when present.
+
+Benchmark `expected_label` values are caller-supplied; the manifest does not
+establish independent human authorship or independence. Reports therefore keep
+`independent_human_label_calibration_established` false and qualify accuracy,
+agreement, precision, recall, F1, and TP/TN/FP/FN as measurements of that one
+dataset, not operational error rates or evidence of generalization, physical
+correctness, or safety. Limitations name `fixture` and deterministic `stub`
+score sources when they occur so mixed reports do not imply those cases made a
+model call.
 
 Benchmark `expected_label` values are caller-supplied; the manifest does not
 establish independent human authorship or independence. Reports therefore keep

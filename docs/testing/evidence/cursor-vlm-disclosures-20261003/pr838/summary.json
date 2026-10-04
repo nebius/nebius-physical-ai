@@ -1,0 +1,492 @@
+{
+  "schema": "npa.sanitized-benchmark-scope-evidence/v1",
+  "original_v1_execution_head": "60982ba6d948b1462547599236672571fc3dc3bf",
+  "affected_v2_execution_head": "a01dda9c915a731e13bec6d72a5affcf9d49745d",
+  "affected_v2_execution_tree": "a3eaed01548e53e4b241c8edd97f3b64b84a6b60",
+  "landed_provenance_base": "f1ecd4255131374c417cdbb1f6c3e0d84b2a3514",
+  "protocol": {
+    "model": "MiniMaxAI/MiniMax-M3",
+    "thresholds": [
+      0.8
+    ],
+    "rubrics": [
+      "default"
+    ],
+    "dataset_sha256": "25dee38f69e05f6b1b236b8a2a9c598aa219fdc54a1525eb65a8abeac5f31595",
+    "use_fixture_scores": false,
+    "limitations": "Original physical-task labels are unverified on 2x2 swatches; measured metrics are illustrative only."
+  },
+  "provider_calls": 4,
+  "source_bindings": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "66d62a16865a8bfc69241d494ff04da2ad2778ac72ffb10ae1d745c803b85446"
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+    },
+    {
+      "path": "npa/src/npa/cli/workbench/vlm_eval.py",
+      "sha256": "1411dbcb7975389dbb9a223016a2392995a38618d55f1e33956effc261955f8f"
+    },
+    {
+      "path": "npa/src/npa/sdk/workbench/vlm_eval.py",
+      "sha256": "f9531ae0d10c6dd754590ea175ec56d85047783d0e2467e030a5e63511190801"
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json",
+      "sha256": "25dee38f69e05f6b1b236b8a2a9c598aa219fdc54a1525eb65a8abeac5f31595"
+    }
+  ],
+  "hosted": {
+    "dataset_evidence_scope": "illustrative_only",
+    "dataset_limitations": [
+      "Each rollout frame is a synthetic 2x2 color swatch that does not depict the stated physical task.",
+      "Expected labels are color-correlated across this four-item fixture.",
+      "Its metrics exercise benchmark wiring and are not task-validation or operational error-rate evidence."
+    ],
+    "independent_human_label_calibration_established": false,
+    "limitations": [
+      "Expected labels are caller-supplied; the manifest does not establish their independent-human provenance.",
+      "Accuracy, agreement, precision, recall, F1, and TP/TN/FP/FN describe only this caller-labeled dataset and do not establish generalization, physical correctness, safety, or an operational error rate.",
+      "Selected frames cannot verify unobserved intervals or continuous task stability."
+    ],
+    "metrics": {
+      "total": 4,
+      "correct": 2,
+      "agreement": 0.5,
+      "accuracy": 0.5,
+      "precision": null,
+      "recall": 0,
+      "f1": null,
+      "true_positives": 0,
+      "true_negatives": 2,
+      "false_positives": 0,
+      "false_negatives": 2
+    },
+    "results": [
+      {
+        "item_id": "place-block-clear-pass",
+        "score": 0,
+        "expected_label": true,
+        "predicted_label": false,
+        "score_source": "api",
+        "evidence": {
+          "schema_version": "npa_vlm_eval_evidence_v2",
+          "request": {
+            "requested_at": "2026-10-03T15:43:38.901824+00:00",
+            "endpoint_role": "hosted-api",
+            "prompt_sha256": "432d8de1a64f6cc71f392ad6323e1097bab937f7988ff00719ce83af5b472507",
+            "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+            "request_manifest_sha256": "8e8b5885f55d9e14e47d8aebf8d9b62656cbebf67b1a38a49999b14296681f3d",
+            "request_manifest": {
+              "schema_version": "npa_vlm_eval_evidence_v2",
+              "endpoint_role": "hosted-api",
+              "requested_model": "MiniMaxAI/MiniMax-M3",
+              "generation_parameters": {
+                "temperature": 0,
+                "chat_template_kwargs": {
+                  "thinking_mode": "disabled"
+                }
+              },
+              "prompt_sha256": "432d8de1a64f6cc71f392ad6323e1097bab937f7988ff00719ce83af5b472507",
+              "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+              "frames": [
+                {
+                  "label": "frame-000.ppm",
+                  "media_type": "image/png",
+                  "sha256": "65d29f76abc06be2d1759a5441e97934b127e2fc49fbd3548322cb6d94b53059",
+                  "byte_count": 79,
+                  "width": 2,
+                  "height": 2,
+                  "source_kind": "image-sequence",
+                  "source_index": 0,
+                  "source_count": 1,
+                  "source_timestamp_s": null
+                }
+              ],
+              "sampling": {
+                "strategy": "keyframes",
+                "max_frames": 4,
+                "selected_count": 1,
+                "source_kind": "image-sequence",
+                "source_count": 1,
+                "selected_indices": [
+                  0
+                ],
+                "selected_timestamps_s": [
+                  null
+                ],
+                "coverage_complete": true,
+                "timestamps_complete": null
+              }
+            },
+            "frames": [
+              {
+                "label": "frame-000.ppm",
+                "media_type": "image/png",
+                "sha256": "65d29f76abc06be2d1759a5441e97934b127e2fc49fbd3548322cb6d94b53059",
+                "byte_count": 79,
+                "width": 2,
+                "height": 2,
+                "source_kind": "image-sequence",
+                "source_index": 0,
+                "source_count": 1,
+                "source_timestamp_s": null
+              }
+            ]
+          },
+          "provider": {
+            "returned_model": "MiniMaxAI/MiniMax-M3",
+            "finish_reason": "stop",
+            "status_code": 200,
+            "raw_response_sha256": "5076e0a7b5804c4f58805898e319f5dea4a2a4881371082873cf4b4d1fcfda0a",
+            "parser_version": "npa_vlm_eval_hosted_json_v1",
+            "usage": {
+              "completion_tokens": 61,
+              "prompt_tokens": 298,
+              "total_tokens": 359,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": null,
+                "audio_tokens": null,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": null
+              },
+              "prompt_tokens_details": null,
+              "prompt_cache_hit_tokens": 0,
+              "prompt_cache_miss_tokens": 298
+            }
+          }
+        }
+      },
+      {
+        "item_id": "align-tool-pass",
+        "score": 0,
+        "expected_label": true,
+        "predicted_label": false,
+        "score_source": "api",
+        "evidence": {
+          "schema_version": "npa_vlm_eval_evidence_v2",
+          "request": {
+            "requested_at": "2026-10-03T15:43:39.921606+00:00",
+            "endpoint_role": "hosted-api",
+            "prompt_sha256": "65904f831bfef819ea0b75af24a0c610373786d983514dea6606164807671c78",
+            "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+            "request_manifest_sha256": "8fb053889e9690abcd577baf1b821a7b26d18382b2e7612e4d291199b557ccbd",
+            "request_manifest": {
+              "schema_version": "npa_vlm_eval_evidence_v2",
+              "endpoint_role": "hosted-api",
+              "requested_model": "MiniMaxAI/MiniMax-M3",
+              "generation_parameters": {
+                "temperature": 0,
+                "chat_template_kwargs": {
+                  "thinking_mode": "disabled"
+                }
+              },
+              "prompt_sha256": "65904f831bfef819ea0b75af24a0c610373786d983514dea6606164807671c78",
+              "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+              "frames": [
+                {
+                  "label": "frame-000.ppm",
+                  "media_type": "image/png",
+                  "sha256": "11f47899eedeb6ad2497613fa17fffac11f6f3d8a286b6e2efc913f30df6b8c7",
+                  "byte_count": 79,
+                  "width": 2,
+                  "height": 2,
+                  "source_kind": "image-sequence",
+                  "source_index": 0,
+                  "source_count": 1,
+                  "source_timestamp_s": null
+                }
+              ],
+              "sampling": {
+                "strategy": "keyframes",
+                "max_frames": 4,
+                "selected_count": 1,
+                "source_kind": "image-sequence",
+                "source_count": 1,
+                "selected_indices": [
+                  0
+                ],
+                "selected_timestamps_s": [
+                  null
+                ],
+                "coverage_complete": true,
+                "timestamps_complete": null
+              }
+            },
+            "frames": [
+              {
+                "label": "frame-000.ppm",
+                "media_type": "image/png",
+                "sha256": "11f47899eedeb6ad2497613fa17fffac11f6f3d8a286b6e2efc913f30df6b8c7",
+                "byte_count": 79,
+                "width": 2,
+                "height": 2,
+                "source_kind": "image-sequence",
+                "source_index": 0,
+                "source_count": 1,
+                "source_timestamp_s": null
+              }
+            ]
+          },
+          "provider": {
+            "returned_model": "MiniMaxAI/MiniMax-M3",
+            "finish_reason": "stop",
+            "status_code": 200,
+            "raw_response_sha256": "1618239b42b7a0634d128d4ab989761531710572dc46b31c50e79e3557c4158b",
+            "parser_version": "npa_vlm_eval_hosted_json_v1",
+            "usage": {
+              "completion_tokens": 68,
+              "prompt_tokens": 297,
+              "total_tokens": 365,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": null,
+                "audio_tokens": null,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": null
+              },
+              "prompt_tokens_details": null,
+              "prompt_cache_hit_tokens": 128,
+              "prompt_cache_miss_tokens": 169
+            }
+          }
+        }
+      },
+      {
+        "item_id": "missed-target-fail",
+        "score": 0,
+        "expected_label": false,
+        "predicted_label": false,
+        "score_source": "api",
+        "evidence": {
+          "schema_version": "npa_vlm_eval_evidence_v2",
+          "request": {
+            "requested_at": "2026-10-03T15:43:41.180048+00:00",
+            "endpoint_role": "hosted-api",
+            "prompt_sha256": "432d8de1a64f6cc71f392ad6323e1097bab937f7988ff00719ce83af5b472507",
+            "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+            "request_manifest_sha256": "5c97712a7491e506b0156e4f338229c3463b0ddbf4e06dc1432165cf1505be9d",
+            "request_manifest": {
+              "schema_version": "npa_vlm_eval_evidence_v2",
+              "endpoint_role": "hosted-api",
+              "requested_model": "MiniMaxAI/MiniMax-M3",
+              "generation_parameters": {
+                "temperature": 0,
+                "chat_template_kwargs": {
+                  "thinking_mode": "disabled"
+                }
+              },
+              "prompt_sha256": "432d8de1a64f6cc71f392ad6323e1097bab937f7988ff00719ce83af5b472507",
+              "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+              "frames": [
+                {
+                  "label": "frame-000.ppm",
+                  "media_type": "image/png",
+                  "sha256": "234a1cdd9f5722b759a4df8783caa0e8094bc71605ae8c0c3a8b83ab2294d2e6",
+                  "byte_count": 79,
+                  "width": 2,
+                  "height": 2,
+                  "source_kind": "image-sequence",
+                  "source_index": 0,
+                  "source_count": 1,
+                  "source_timestamp_s": null
+                }
+              ],
+              "sampling": {
+                "strategy": "keyframes",
+                "max_frames": 4,
+                "selected_count": 1,
+                "source_kind": "image-sequence",
+                "source_count": 1,
+                "selected_indices": [
+                  0
+                ],
+                "selected_timestamps_s": [
+                  null
+                ],
+                "coverage_complete": true,
+                "timestamps_complete": null
+              }
+            },
+            "frames": [
+              {
+                "label": "frame-000.ppm",
+                "media_type": "image/png",
+                "sha256": "234a1cdd9f5722b759a4df8783caa0e8094bc71605ae8c0c3a8b83ab2294d2e6",
+                "byte_count": 79,
+                "width": 2,
+                "height": 2,
+                "source_kind": "image-sequence",
+                "source_index": 0,
+                "source_count": 1,
+                "source_timestamp_s": null
+              }
+            ]
+          },
+          "provider": {
+            "returned_model": "MiniMaxAI/MiniMax-M3",
+            "finish_reason": "stop",
+            "status_code": 200,
+            "raw_response_sha256": "194005f4890044d8d5275756ac34a33541067e685e216466a9ced7869cfe474d",
+            "parser_version": "npa_vlm_eval_hosted_json_v1",
+            "usage": {
+              "completion_tokens": 61,
+              "prompt_tokens": 298,
+              "total_tokens": 359,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": null,
+                "audio_tokens": null,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": null
+              },
+              "prompt_tokens_details": null,
+              "prompt_cache_hit_tokens": 128,
+              "prompt_cache_miss_tokens": 170
+            }
+          }
+        }
+      },
+      {
+        "item_id": "unstable-end-state-fail",
+        "score": 0,
+        "expected_label": false,
+        "predicted_label": false,
+        "score_source": "api",
+        "evidence": {
+          "schema_version": "npa_vlm_eval_evidence_v2",
+          "request": {
+            "requested_at": "2026-10-03T15:43:42.148570+00:00",
+            "endpoint_role": "hosted-api",
+            "prompt_sha256": "1f808ff8345a9d0ff04a248c86e68a778773fb4bfe862b42f26a183fc246437c",
+            "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+            "request_manifest_sha256": "3be2af0a2c15665d90ebef06f04fa290958acf8bca8235fbe5cd61076d69156c",
+            "request_manifest": {
+              "schema_version": "npa_vlm_eval_evidence_v2",
+              "endpoint_role": "hosted-api",
+              "requested_model": "MiniMaxAI/MiniMax-M3",
+              "generation_parameters": {
+                "temperature": 0,
+                "chat_template_kwargs": {
+                  "thinking_mode": "disabled"
+                }
+              },
+              "prompt_sha256": "1f808ff8345a9d0ff04a248c86e68a778773fb4bfe862b42f26a183fc246437c",
+              "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+              "frames": [
+                {
+                  "label": "frame-000.ppm",
+                  "media_type": "image/png",
+                  "sha256": "def5cb55c6240b4f9e13d39a9c07b5a3c0985d108b3dfbbe6e976d108e41b83a",
+                  "byte_count": 79,
+                  "width": 2,
+                  "height": 2,
+                  "source_kind": "image-sequence",
+                  "source_index": 0,
+                  "source_count": 1,
+                  "source_timestamp_s": null
+                }
+              ],
+              "sampling": {
+                "strategy": "keyframes",
+                "max_frames": 4,
+                "selected_count": 1,
+                "source_kind": "image-sequence",
+                "source_count": 1,
+                "selected_indices": [
+                  0
+                ],
+                "selected_timestamps_s": [
+                  null
+                ],
+                "coverage_complete": true,
+                "timestamps_complete": null
+              }
+            },
+            "frames": [
+              {
+                "label": "frame-000.ppm",
+                "media_type": "image/png",
+                "sha256": "def5cb55c6240b4f9e13d39a9c07b5a3c0985d108b3dfbbe6e976d108e41b83a",
+                "byte_count": 79,
+                "width": 2,
+                "height": 2,
+                "source_kind": "image-sequence",
+                "source_index": 0,
+                "source_count": 1,
+                "source_timestamp_s": null
+              }
+            ]
+          },
+          "provider": {
+            "returned_model": "MiniMaxAI/MiniMax-M3",
+            "finish_reason": "stop",
+            "status_code": 200,
+            "raw_response_sha256": "729dec3f88ec0f26461e6c08e552709548943ecc465119c385a94e5e391c7ea6",
+            "parser_version": "npa_vlm_eval_hosted_json_v1",
+            "usage": {
+              "completion_tokens": 76,
+              "prompt_tokens": 298,
+              "total_tokens": 374,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": null,
+                "audio_tokens": null,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": null
+              },
+              "prompt_tokens_details": null,
+              "prompt_cache_hit_tokens": 128,
+              "prompt_cache_miss_tokens": 170
+            }
+          }
+        }
+      }
+    ]
+  },
+  "fixture": {
+    "dataset_evidence_scope": "illustrative_only",
+    "dataset_limitations": [
+      "Each rollout frame is a synthetic 2x2 color swatch that does not depict the stated physical task.",
+      "Expected labels are color-correlated across this four-item fixture.",
+      "Its metrics exercise benchmark wiring and are not task-validation or operational error-rate evidence."
+    ],
+    "independent_human_label_calibration_established": false,
+    "limitations": [
+      "Expected labels are caller-supplied; the manifest does not establish their independent-human provenance.",
+      "Accuracy, agreement, precision, recall, F1, and TP/TN/FP/FN describe only this caller-labeled dataset and do not establish generalization, physical correctness, safety, or an operational error rate.",
+      "Selected frames cannot verify unobserved intervals or continuous task stability.",
+      "Cases with score_source 'fixture' use caller-provided dry-validation inputs; those cases are not VLM or policy evidence."
+    ],
+    "metrics": {
+      "total": 4,
+      "correct": 4,
+      "agreement": 1,
+      "accuracy": 1,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1,
+      "true_positives": 2,
+      "true_negatives": 2,
+      "false_positives": 0,
+      "false_negatives": 0
+    },
+    "score_sources": [
+      "fixture",
+      "fixture",
+      "fixture",
+      "fixture"
+    ]
+  },
+  "invalid_scope": {
+    "value": "calibrated",
+    "rejected": true,
+    "provider_calls_before": 4,
+    "provider_calls_after": 4
+  },
+  "limitations": [
+    "Four2x2 swatches do not depict any claimed physical task; color-correlated caller labels are not independent human calibration.",
+    "Real accuracy0.5 and fixture accuracy1.0 are wiring/scope observations, not operational error rates or quality acceptance.",
+    "Original v1 and fresh affected v2 responses retained separately; no labels/model/rubric/threshold tuned and no favorable-answer retries."
+  ]
+}

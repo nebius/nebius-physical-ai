@@ -12,9 +12,9 @@ from PIL import Image
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.workbench import vlm_eval
 from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
-    DEFAULT_SAMPLE_BENCHMARK_PATH,
     JUDGE_COMPARISON_RESULT_FILENAME,
     LEGACY_RESULT_FILENAME,
     PREFERENCE_COMPARISON_RESULT_FILENAME,
@@ -46,6 +46,15 @@ _BENCHMARK_FIXTURE_LIMITATIONS = [
         "Cases with score_source 'fixture' use caller-provided dry-validation "
         "inputs; those cases are not VLM or policy evidence."
     ),
+]
+_SAMPLE_DATASET_LIMITATIONS = [
+    "These synthetic fixtures include four 2x2 color-swatch rollouts and a "
+    "tiny truncated-progress sequence; they do not validate the stated "
+    "physical tasks.",
+    "The first four caller labels are color-correlated; the additional "
+    "omitted-terminal label is also a wiring-only fixture.",
+    "Its metrics exercise benchmark wiring and are not task-validation or "
+    "operational error-rate evidence.",
 ]
 
 
@@ -363,8 +372,6 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
             "workbench",
             "vlm-eval",
             "benchmark",
-            "--dataset",
-            str(DEFAULT_SAMPLE_BENCHMARK_PATH),
             "--output",
             str(output_path),
             "--backend",
@@ -438,12 +445,161 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
         assert len(metrics["false_negative_item_ids"]) == metrics["false_negatives"]
     assert payload["independent_human_label_calibration_established"] is False
     assert payload["limitations"] == _BENCHMARK_FIXTURE_LIMITATIONS
+    assert payload["dataset_evidence_scope"] == "illustrative_only"
+    assert payload["dataset_limitations"] == _SAMPLE_DATASET_LIMITATIONS
     assert payload["written_uri"] == str(output_path)
     persisted = json.loads(output_path.read_text(encoding="utf-8"))
     assert persisted["item_count"] == 5
     assert persisted["best_config"]["results"] == payload["best_config"]["results"]
     assert persisted["independent_human_label_calibration_established"] is False
     assert persisted["limitations"] == _BENCHMARK_FIXTURE_LIMITATIONS
+    assert persisted["dataset_evidence_scope"] == payload["dataset_evidence_scope"]
+    assert persisted["dataset_limitations"] == payload["dataset_limitations"]
+
+
+def test_workbench_vlm_eval_benchmark_text_discloses_sample_scope(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--output",
+            str(tmp_path / "benchmark-report.json"),
+            "--backend",
+            "stub",
+            "--thresholds",
+            "0.8",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "dataset_evidence_scope: illustrative_only" in result.output
+    positions = [
+        result.output.index(f"    - {limitation}")
+        for limitation in _SAMPLE_DATASET_LIMITATIONS
+    ]
+    assert positions == sorted(positions)
+
+
+def test_workbench_vlm_eval_benchmark_text_preserves_duplicate_limitations(
+    tmp_path,
+) -> None:
+    manifest = tmp_path / "benchmark.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "evidence_scope": "illustrative_only",
+                "limitations": ["first", "duplicate", "duplicate"],
+                "items": [
+                    {
+                        "id": "case",
+                        "rollout": "unused",
+                        "expected_label": True,
+                        "fixture_score": 0.9,
+                    },
+                    {
+                        "id": "case-negative",
+                        "rollout": "unused-negative",
+                        "expected_label": False,
+                        "fixture_score": 0.1,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--dataset",
+            str(manifest),
+            "--output",
+            str(tmp_path / "benchmark-report.json"),
+            "--backend",
+            "stub",
+            "--thresholds",
+            "0.8",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.output.count("    - duplicate\n") == 2
+    assert result.output.index("    - first\n") < result.output.index(
+        "    - duplicate\n"
+    )
+
+
+@pytest.mark.parametrize("control", ["\n", "\r", "\x1b", "\x00", "\x7f", "\x9b"])
+@pytest.mark.parametrize("output_format", ["text", "json"])
+def test_benchmark_cli_refuses_forged_disclosure_before_activity(
+    tmp_path, monkeypatch, control, output_format
+) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Reject before frame selection or provider work")
+
+    monkeypatch.setattr(vlm_eval, "select_rollout_frames", forbidden)
+    monkeypatch.setattr(vlm_eval, "_call_openai_compatible", forbidden)
+    manifest = json.loads(vlm_eval.DEFAULT_SAMPLE_BENCHMARK_PATH.read_text())
+    manifest["limitations"] = [
+        f"wiring only{control}  dataset_evidence_scope: calibrated"
+    ]
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(json.dumps(manifest), encoding="utf-8")
+    output = tmp_path / "out/report.json"
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--dataset",
+            str(dataset),
+            "--output",
+            str(output),
+            "--backend",
+            "api",
+            "--use-fixture-scores",
+            "--format",
+            output_format,
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "control characters" in result.output
+    assert "dataset_evidence_scope: calibrated" not in result.output
+    assert not output.parent.exists()
+
+
+def test_benchmark_legacy_text_retains_unspecified_empty_limitations(tmp_path) -> None:
+    manifest = json.loads(vlm_eval.DEFAULT_SAMPLE_BENCHMARK_PATH.read_text())
+    manifest.pop("evidence_scope")
+    manifest.pop("limitations")
+    dataset = tmp_path / "legacy.json"
+    dataset.write_text(json.dumps(manifest), encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--dataset",
+            str(dataset),
+            "--backend",
+            "stub",
+            "--output",
+            str(tmp_path / "legacy-report.json"),
+            "--format",
+            "text",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "dataset_evidence_scope: unspecified\n" in result.output
+    assert "dataset_limitations:\n" in result.output
+    assert "dataset_evidence_scope: illustrative_only" not in result.output
 
 
 def test_workbench_vlm_eval_runs_packaged_agency_preflight(tmp_path) -> None:
@@ -484,7 +640,6 @@ def test_vlm_eval_sdk_benchmark_returns_report() -> None:
     from npa.sdk.workbench import vlm_eval as sdk_vlm_eval
 
     report = sdk_vlm_eval.benchmark(
-        dataset=str(DEFAULT_SAMPLE_BENCHMARK_PATH),
         backend="stub",
         thresholds=[0.5, 0.8, 0.9],
         rubrics=["default"],
@@ -495,6 +650,8 @@ def test_vlm_eval_sdk_benchmark_returns_report() -> None:
     assert report.best_config.metrics.accuracy == 1.0
     assert report.independent_human_label_calibration_established is False
     assert tuple(report.limitations) == tuple(_BENCHMARK_FIXTURE_LIMITATIONS)
+    assert report.dataset_evidence_scope == "illustrative_only"
+    assert list(report.dataset_limitations) == _SAMPLE_DATASET_LIMITATIONS
 
 
 def test_vlm_eval_sdk_exports_direct_paired_judge_surface() -> None:
