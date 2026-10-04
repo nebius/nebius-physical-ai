@@ -9,14 +9,19 @@ hash-pinned Boto3 S3 client closure. It does not contain OpenVLA-OFT source,
 OpenVLA source or base weights, custom transformers, Torch/CUDA, OFT adapters,
 LIBERO data/assets, credentials, cached downloads, or outputs.
 
-After the unresolved direct-dependency terms are resolved, the operator-owned
-writable cache may fetch upstream OFT source at
-`e4287e94541f459edc4feabc4e181f537cd569a8` under its MIT license and LIBERO
-source `8f1084e3132a39270c3a13ebe37270a43ece2a01` under its MIT license, then
-resolve the base and adapter weights separately. Until an authoritative license
-or permission covers the unpinned `moojink/dlimp_openvla` direct dependency, the
-runtime fails before it fetches any of those upstream payloads. The OpenVLA
-model card advertises MIT, while the current OpenVLA upstream README says its
+The operator-owned writable cache fetches upstream OFT source at
+`e4287e94541f459edc4feabc4e181f537cd569a8` under its MIT license, OFT's custom
+Transformers source at `bc339d9ad707454c0c115970db43c260067c61ab` under
+Apache-2.0, Apache-2.0 `kvablack/dlimp` at
+`92e3eca97af3b14d0b6aa15182c0dc240407698d`, and LIBERO source
+`8f1084e3132a39270c3a13ebe37270a43ece2a01` under its MIT license. The pinned
+OFT package's unlicensed moving `moojink/dlimp_openvla` dependency is never
+installed: editable OFT is installed with `--no-deps`, the licensed parent is
+installed with `--no-deps`, and NPA applies its one-line
+`options.deterministic = True` compatibility change in the runtime cache.
+The ready marker binds the Apache notice, source revision, modification hashes,
+and installed deterministic parallel-map probe. The OpenVLA model card
+advertises MIT, while the current OpenVLA upstream README says its
 Llama-2-derived pretrained models are subject to the Llama Community License.
 That source-level qualification is not removed by this container. No image or
 artifact produced here asserts redistribution rights for those runtime inputs.

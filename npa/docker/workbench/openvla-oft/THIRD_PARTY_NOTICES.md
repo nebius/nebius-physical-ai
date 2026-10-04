@@ -14,6 +14,18 @@ When materialized, retain the upstream MIT notice for:
 - Lifelong Robot Learning, `Lifelong-Robot-Learning/LIBERO`, commit
   `8f1084e3132a39270c3a13ebe37270a43ece2a01`.
 
+Retain the Apache-2.0 notices for:
+
+- Moo Jin Kim and Hugging Face contributors, `moojink/transformers-openvla-oft`,
+  commit `bc339d9ad707454c0c115970db43c260067c61ab`. Its upstream license
+  credits the Hugging Face team (2018–) and contributors.
+- Kevin Black, `kvablack/dlimp`, commit
+  `92e3eca97af3b14d0b6aa15182c0dc240407698d`. NPA changes only
+  `dlimp/dataset.py` from `options.deterministic = False` to
+  `options.deterministic = True` in the operator-owned runtime cache; the
+  ready marker records before/after file hashes. The Apache-2.0 notice remains
+  with the modified source.
+
 Credit the OFT paper:
 
 ```bibtex

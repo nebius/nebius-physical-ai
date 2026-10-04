@@ -116,19 +116,47 @@ def test_finetune_arguments_match_the_documented_decay_flag(tmp_path: Path) -> N
     assert arguments[arguments.index("--dataset_name") + 1] == "libero_spatial_no_noops"
 
 
-def test_bootstrap_refuses_the_unlicensed_direct_dependency(tmp_path: Path) -> None:
-    """An unresolved direct runtime dependency fails before cache mutation."""
-    with pytest.raises(pipe.OpenVLAPipelineError, match="before download"):
-        pipe.bootstrap_runtime(str(tmp_path / "runtime"))
-    assert not (tmp_path / "runtime").exists()
+def test_licensed_dlimp_override_is_one_line_and_hash_bound(tmp_path: Path) -> None:
+    """OFT preserves its fork's sole behavior delta without fetching that fork."""
+    dlimp = tmp_path / "dlimp"
+    target = dlimp / pipe.DLIMP_DETERMINISTIC_PATH
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "options.autotune.enabled = True\noptions.deterministic = False\n",
+        encoding="utf-8",
+    )
+    result = pipe._apply_dlimp_deterministic_override(dlimp)
+    assert target.read_text(encoding="utf-8").splitlines()[-1] == "options.deterministic = True"
+    assert result["path"] == "dlimp/dataset.py"
+    assert result["before_sha256"] != result["after_sha256"]
 
 
-def test_neutral_image_is_publication_quarantined() -> None:
-    """The legal block cannot be bypassed through normal image resolution."""
+def test_runtime_install_graph_cannot_follow_the_unlicensed_dlimp_fork(
+    tmp_path: Path,
+) -> None:
+    commands = pipe._runtime_install_commands(
+        tmp_path / "python",
+        tmp_path / "source",
+        tmp_path / "transformers",
+        tmp_path / "dlimp",
+        tmp_path / "libero",
+    )
+    editable = [command for command in commands if "-e" in command]
+    assert all("--no-deps" in command for command in editable[:3])
+    assert all("dlimp_openvla" not in " ".join(command) for command in commands)
+    assert str(tmp_path / "dlimp") in editable[1]
+    assert pipe.DLIMP_REPOSITORY == "https://github.com/kvablack/dlimp.git"
+    assert re.fullmatch(r"[0-9a-f]{40}", pipe.DLIMP_REVISION)
+    assert "tensorflow-metadata==1.14.0" in pipe.OFT_PYPI_DIRECT_DEPENDENCIES
+
+
+def test_neutral_image_is_private_validation_quarantined() -> None:
+    """A lawful bootstrap remains ineligible for public validation or release."""
     assert images.CONTAINER_IMAGE_NAMES["openvla-oft"] == "npa-openvla-oft"
     assert "openvla-oft" in images.NEUTRAL_UNBUILT_CANDIDATE_TOOLS
     assert images.supported_tool_version("openvla-oft").endswith("-unbuilt")
     assert not images.is_publicly_redistributable("openvla-oft")
+    assert "openvla-oft" in images.PUBLICATION_QUARANTINE_TOOLS
 
 
 def test_neutral_image_preserves_nonroot_access_to_its_notices() -> None:
@@ -138,6 +166,16 @@ def test_neutral_image_preserves_nonroot_access_to_its_notices() -> None:
         / "docker/workbench/openvla-oft/Dockerfile"
     ).read_text(encoding="utf-8")
     assert "install -d -m 0755 -o root -g root /usr/share/doc/npa-openvla-oft" in dockerfile
+
+
+def test_private_build_contract_refuses_official_public_pushes() -> None:
+    build_script = (
+        Path(__file__).resolve().parents[1] / "docker/workbench/openvla-oft/build.sh"
+    ).read_text(encoding="utf-8")
+    assert "--registry PRIVATE_HOST/PATH --push" in build_script
+    assert "--push requires --registry" in build_script
+    assert "cannot use the official public registry" in build_script
+    assert "--provenance=mode=max --sbom=true" in build_script
 
 
 def test_immutable_model_cache_requires_matching_ready_identity(tmp_path: Path) -> None:

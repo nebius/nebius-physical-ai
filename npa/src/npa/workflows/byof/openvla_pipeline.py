@@ -41,6 +41,16 @@ from npa.workbench.cosmos.policy_artifacts import (
 SOURCE_REPOSITORY = "https://github.com/moojink/openvla-oft.git"
 SOURCE_REVISION = "e4287e94541f459edc4feabc4e181f537cd569a8"
 SOURCE_LICENSE = "MIT"
+TRANSFORMERS_REPOSITORY = "https://github.com/moojink/transformers-openvla-oft.git"
+TRANSFORMERS_REVISION = "bc339d9ad707454c0c115970db43c260067c61ab"
+TRANSFORMERS_LICENSE = "Apache-2.0"
+DLIMP_REPOSITORY = "https://github.com/kvablack/dlimp.git"
+DLIMP_REVISION = "92e3eca97af3b14d0b6aa15182c0dc240407698d"
+DLIMP_LICENSE = "Apache-2.0"
+DLIMP_LICENSE_SHA256 = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+DLIMP_DETERMINISTIC_PATH = "dlimp/dataset.py"
+DLIMP_DETERMINISTIC_ORIGINAL = "options.deterministic = False"
+DLIMP_DETERMINISTIC_REPLACEMENT = "options.deterministic = True"
 LIBERO_REPOSITORY = "https://github.com/Lifelong-Robot-Learning/LIBERO.git"
 LIBERO_REVISION = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
 LIBERO_LICENSE = "MIT"
@@ -58,12 +68,39 @@ DEFAULT_LORA_RANK = 32
 DEFAULT_SEED = 7
 DEFAULT_TRIALS = 50
 
-# The pinned OFT project declares this direct Git dependency without a revision.
-# Its current upstream repository does not carry a license file.  Do not resolve
-# a moving, unlicensed runtime dependency merely because the top-level OFT source
-# is MIT licensed.  The runtime can resume after the upstream owners publish an
-# authoritative license/permission for a specific revision.
-_UNLICENSED_RUNTIME_DEPENDENCY = "moojink/dlimp_openvla"
+# OFT's ``pyproject.toml`` still names an unpinned unlicensed dlimp fork. The
+# Apache-2.0 parent above is byte-identical except for its LICENSE and this
+# deterministic default. Install all editable sources with ``--no-deps`` so
+# pip never follows that fork, and preserve the needed one-line behavior here.
+OFT_PYPI_DIRECT_DEPENDENCIES: tuple[str, ...] = (
+    "accelerate>=0.25.0",
+    "draccus==0.8.0",
+    "einops",
+    "huggingface_hub",
+    "json-numpy",
+    "jsonlines",
+    "matplotlib",
+    "peft==0.11.1",
+    "protobuf",
+    "rich",
+    "sentencepiece==0.1.99",
+    "timm==0.9.10",
+    "tokenizers==0.19.1",
+    "torch==2.2.0",
+    "torchvision==0.17.0",
+    "torchaudio==2.2.0",
+    "wandb",
+    "tensorflow==2.15.0",
+    "tensorflow_datasets==4.9.3",
+    # TFDS 4.9.3 otherwise resolves a newer metadata/protobuf pair that cannot
+    # import alongside TensorFlow 2.15's protobuf constraint.
+    "tensorflow-metadata==1.14.0",
+    "tensorflow_graphics==2021.12.3",
+    "diffusers==0.30.3",
+    "imageio",
+    "uvicorn",
+    "fastapi",
+)
 
 PREPARE_SCHEMA = "npa.workbench.openvla-oft.prepare.v1"
 TRAIN_SCHEMA = "npa.workbench.openvla-oft.train.v1"
@@ -268,6 +305,17 @@ def _runtime_provenance() -> dict[str, dict[str, str]]:
             "revision": SOURCE_REVISION,
             "license": SOURCE_LICENSE,
         },
+        "transformers_openvla_oft": {
+            "repository": TRANSFORMERS_REPOSITORY,
+            "revision": TRANSFORMERS_REVISION,
+            "license": TRANSFORMERS_LICENSE,
+        },
+        "dlimp": {
+            "repository": DLIMP_REPOSITORY,
+            "revision": DLIMP_REVISION,
+            "license": DLIMP_LICENSE,
+            "modification": "dlimp/dataset.py sets options.deterministic = True",
+        },
         "libero": {
             "repository": LIBERO_REPOSITORY,
             "revision": LIBERO_REVISION,
@@ -289,21 +337,123 @@ def _runtime_identity(runtime: Path) -> dict[str, Any]:
     return payload
 
 
-def bootstrap_runtime(runtime_root: str) -> Path:
-    """Fetch/install OFT after its direct-dependency terms are resolved.
+def _checkout_exact_git_source(
+    repository: str, revision: str, destination: Path, label: str
+) -> None:
+    """Clone and detach a public source tree at its declared immutable revision."""
+    subprocess.run(
+        [
+            "git",
+            "clone",
+            "--filter=blob:none",
+            "--no-checkout",
+            repository,
+            str(destination),
+        ],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(destination), "checkout", "--detach", revision],
+        check=True,
+    )
+    actual = subprocess.check_output(
+        ["git", "-C", str(destination), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if actual != revision:
+        raise OpenVLAPipelineError(
+            f"downloaded {label} source revision does not match contract"
+        )
 
-    The ready marker is written only after the complete source/runtime install.
-    """
-    _reject_unlicensed_runtime_dependency()
+
+def _apply_dlimp_deterministic_override(dlimp: Path) -> dict[str, str]:
+    """Apply the one reviewed OFT-compatible dlimp change and bind its bytes."""
+    target = dlimp / DLIMP_DETERMINISTIC_PATH
+    try:
+        original = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise OpenVLAPipelineError("licensed dlimp source lacks dataset.py") from exc
+    if original.count(DLIMP_DETERMINISTIC_ORIGINAL) != 1:
+        raise OpenVLAPipelineError(
+            "licensed dlimp deterministic source line differs from the reviewed revision"
+        )
+    before = hashlib.sha256(original.encode()).hexdigest()
+    updated = original.replace(
+        DLIMP_DETERMINISTIC_ORIGINAL, DLIMP_DETERMINISTIC_REPLACEMENT, 1
+    )
+    target.write_text(updated, encoding="utf-8")
+    return {
+        "path": DLIMP_DETERMINISTIC_PATH,
+        "before_sha256": before,
+        "after_sha256": hashlib.sha256(updated.encode()).hexdigest(),
+        "replacement": DLIMP_DETERMINISTIC_REPLACEMENT,
+    }
+
+
+def _verify_dlimp_deterministic_runtime(python: Path) -> dict[str, Any]:
+    """Exercise the installed dlimp override with an ordered parallel data map."""
+    script = """
+import json
+import tensorflow as tf
+from dlimp.dataset import _wrap
+
+dataset = _wrap(tf.data.Dataset.range, False)(32)
+dataset = dataset.map(lambda value: value, num_parallel_calls=4)._apply_options()
+values = [int(value) for value in dataset.as_numpy_iterator()]
+deterministic = dataset.options().deterministic
+if deterministic is not True:
+    raise RuntimeError(f"dlimp deterministic option was {deterministic!r}")
+if values != list(range(32)):
+    raise RuntimeError(f"parallel dlimp map changed sample order: {values!r}")
+print(json.dumps({"deterministic": deterministic, "parallel_values": len(values)}))
+"""
+    try:
+        payload = json.loads(
+            subprocess.check_output([str(python), "-c", script], text=True)
+        )
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        raise OpenVLAPipelineError(
+            "licensed dlimp deterministic runtime regression check failed"
+        ) from exc
+    if payload != {"deterministic": True, "parallel_values": 32}:
+        raise OpenVLAPipelineError("dlimp deterministic runtime check returned invalid data")
+    return payload
+
+
+def _runtime_install_commands(
+    python: Path, source: Path, transformers: Path, dlimp: Path, libero: Path
+) -> tuple[tuple[str, ...], ...]:
+    """Return the explicit install graph that excludes OFT's moving dlimp fork."""
+    return (
+        (str(python), "-m", "pip", "install", "--upgrade", "pip"),
+        (str(python), "-m", "pip", "install", "--no-deps", "-e", str(transformers)),
+        (str(python), "-m", "pip", "install", "--no-deps", "-e", str(dlimp)),
+        (str(python), "-m", "pip", "install", "--no-deps", "-e", str(source)),
+        (str(python), "-m", "pip", "install", *OFT_PYPI_DIRECT_DEPENDENCIES),
+        (str(python), "-m", "pip", "install", "-e", str(libero)),
+        (
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "-r",
+            str(source / "experiments/robot/libero/libero_requirements.txt"),
+        ),
+    )
+
+
+def bootstrap_runtime(runtime_root: str) -> Path:
+    """Fetch/install the pinned OFT runtime into an operator-owned cache."""
     root = Path(_require(runtime_root, "runtime_root")).expanduser().resolve()
     with _runtime_cache_lock(root):
         return _bootstrap_runtime_unlocked(root)
 
 
 def _bootstrap_runtime_unlocked(root: Path) -> Path:
-    ready, source, libero, venv, inventory = (
+    ready, source, transformers, dlimp, libero, venv, inventory = (
         root / "ready.json",
         root / "source",
+        root / "transformers-openvla-oft",
+        root / "dlimp",
         root / "libero",
         root / "venv",
         root / "runtime-dependencies.txt",
@@ -312,8 +462,13 @@ def _bootstrap_runtime_unlocked(root: Path) -> Path:
         payload = json.loads(ready.read_text())
         if (
             payload.get("source_revision") == SOURCE_REVISION
+            and payload.get("transformers_revision") == TRANSFORMERS_REVISION
+            and payload.get("dlimp_revision") == DLIMP_REVISION
+            and payload.get("dlimp_license_sha256") == DLIMP_LICENSE_SHA256
             and payload.get("libero_revision") == LIBERO_REVISION
             and (source / UPSTREAM_FINETUNE_SCRIPT).is_file()
+            and (transformers / "src" / "transformers").is_dir()
+            and (dlimp / DLIMP_DETERMINISTIC_PATH).is_file()
             and (libero / "libero").is_dir()
             and (venv / "bin" / "python").is_file()
             and inventory.is_file()
@@ -327,74 +482,26 @@ def _bootstrap_runtime_unlocked(root: Path) -> Path:
         )
     root.mkdir(parents=True, exist_ok=False)
     try:
-        subprocess.run(
-            [
-                "git",
-                "clone",
-                "--filter=blob:none",
-                "--no-checkout",
-                SOURCE_REPOSITORY,
-                str(source),
-            ],
-            check=True,
+        _checkout_exact_git_source(SOURCE_REPOSITORY, SOURCE_REVISION, source, "OFT")
+        _checkout_exact_git_source(
+            TRANSFORMERS_REPOSITORY,
+            TRANSFORMERS_REVISION,
+            transformers,
+            "OFT Transformers",
         )
-        subprocess.run(
-            ["git", "-C", str(source), "checkout", "--detach", SOURCE_REVISION],
-            check=True,
-        )
-        actual = subprocess.check_output(
-            ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
-        ).strip()
-        if actual != SOURCE_REVISION:
-            raise OpenVLAPipelineError(
-                "downloaded OFT source revision does not match contract"
-            )
-        subprocess.run(
-            [
-                "git",
-                "clone",
-                "--filter=blob:none",
-                "--no-checkout",
-                LIBERO_REPOSITORY,
-                str(libero),
-            ],
-            check=True,
-        )
-        subprocess.run(
-            ["git", "-C", str(libero), "checkout", "--detach", LIBERO_REVISION],
-            check=True,
-        )
-        libero_actual = subprocess.check_output(
-            ["git", "-C", str(libero), "rev-parse", "HEAD"], text=True
-        ).strip()
-        if libero_actual != LIBERO_REVISION:
-            raise OpenVLAPipelineError(
-                "downloaded LIBERO source revision does not match contract"
-            )
+        _checkout_exact_git_source(DLIMP_REPOSITORY, DLIMP_REVISION, dlimp, "dlimp")
+        license_path = dlimp / "LICENSE"
+        if not license_path.is_file() or file_digest(license_path) != DLIMP_LICENSE_SHA256:
+            raise OpenVLAPipelineError("licensed dlimp Apache notice does not match contract")
+        dlimp_override = _apply_dlimp_deterministic_override(dlimp)
+        _checkout_exact_git_source(LIBERO_REPOSITORY, LIBERO_REVISION, libero, "LIBERO")
         subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
         python = venv / "bin" / "python"
-        # Upstream owns this dependency graph. Runtime installation prevents source,
-        # custom transformers, Torch/CUDA, and weights from becoming image bytes.
-        subprocess.run(
-            [str(python), "-m", "pip", "install", "--upgrade", "pip"], check=True
-        )
-        subprocess.run(
-            [str(python), "-m", "pip", "install", "-e", str(source)], check=True
-        )
-        subprocess.run(
-            [str(python), "-m", "pip", "install", "-e", str(libero)], check=True
-        )
-        subprocess.run(
-            [
-                str(python),
-                "-m",
-                "pip",
-                "install",
-                "-r",
-                str(source / "experiments/robot/libero/libero_requirements.txt"),
-            ],
-            check=True,
-        )
+        for command in _runtime_install_commands(
+            python, source, transformers, dlimp, libero
+        ):
+            subprocess.run(command, check=True)
+        dlimp_probe = _verify_dlimp_deterministic_runtime(python)
         inventory.write_text(
             subprocess.check_output(
                 [str(python), "-m", "pip", "freeze", "--all"], text=True
@@ -408,6 +515,15 @@ def _bootstrap_runtime_unlocked(root: Path) -> Path:
                 "source_repository": SOURCE_REPOSITORY,
                 "source_revision": SOURCE_REVISION,
                 "source_license": SOURCE_LICENSE,
+                "transformers_repository": TRANSFORMERS_REPOSITORY,
+                "transformers_revision": TRANSFORMERS_REVISION,
+                "transformers_license": TRANSFORMERS_LICENSE,
+                "dlimp_repository": DLIMP_REPOSITORY,
+                "dlimp_revision": DLIMP_REVISION,
+                "dlimp_license": DLIMP_LICENSE,
+                "dlimp_license_sha256": DLIMP_LICENSE_SHA256,
+                "dlimp_override": dlimp_override,
+                "dlimp_deterministic_probe": dlimp_probe,
                 "libero_repository": LIBERO_REPOSITORY,
                 "libero_revision": LIBERO_REVISION,
                 "libero_license": LIBERO_LICENSE,
@@ -420,15 +536,6 @@ def _bootstrap_runtime_unlocked(root: Path) -> Path:
         shutil.rmtree(root, ignore_errors=True)
         raise
     return root
-
-
-def _reject_unlicensed_runtime_dependency() -> None:
-    """Fail before fetching OFT's unresolved direct dependency."""
-    raise OpenVLAPipelineError(
-        "OFT runtime is blocked before download: "
-        f"{_UNLICENSED_RUNTIME_DEPENDENCY} is an unpinned direct dependency "
-        "with no authoritative repository license at the resolved revision"
-    )
 
 
 def _materialize_model_snapshot(

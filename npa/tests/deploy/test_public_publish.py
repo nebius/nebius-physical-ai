@@ -776,6 +776,7 @@ def test_the_restriction_mechanism_still_exists() -> None:
     assert restricted_image_names() == [
         "cosmos3-nano-video",
         "cosmos3-super-benchmark",
+        "openvla-oft",
         "paidf-anomalygen-sky",
         "paidf-attribute-search-sky",
         "paidf-captioning-sky",
@@ -809,6 +810,7 @@ def test_public_refusal_union_preserves_pending_and_permanent_reasons() -> None:
         images.RESTRICTED_PUBLICATION_TOOLS
         | images.RESTRICTED_DERIVED_IMAGES
         | images.PENDING_REDISTRIBUTION_TOOLS
+        | images.NEUTRAL_UNBUILT_CANDIDATE_TOOLS
     )
     assert restricted_image_names() == sorted(expected)
     assert images.omniverse_restricted_image_names() == sorted(expected)
