@@ -35,6 +35,31 @@ MODEL_REPOSITORIES = {
         "c22df98af5a69e7b9f6bfc1086d1a6982e647b26",
     ),
 }
+# `DM05-Lerobot` is the documented predecessor, but its published checkpoint is
+# a 14-state/14-action, 50-step general policy.  It must be identified as such
+# rather than silently validated against the 8-state/7-action LIBERO contract
+# of the enhanced checkpoint.  A rollout rejects that representation mismatch
+# before it can invent an action adapter or call the evaluation comparable.
+CHECKPOINT_CONTRACTS = {
+    "baseline": {
+        "type": "dm05",
+        "use_relative_actions": False,
+        "add_state": True,
+        "chunk_size": 50,
+        "n_action_steps": 50,
+        "state_dimension": 14,
+        "action_dimension": 14,
+    },
+    "candidate": {
+        "type": "dm05",
+        "use_relative_actions": False,
+        "add_state": False,
+        "chunk_size": 10,
+        "n_action_steps": 10,
+        "state_dimension": 8,
+        "action_dimension": 7,
+    },
+}
 # The released checkpoint was prepared with the unmerged/superseded upstream
 # implementation below.  It is intentionally not replaced with a similarly
 # named current policy: the checkpoint's processor files are the original
@@ -162,20 +187,51 @@ def _download_checkpoint(role: str, workspace: Path) -> Path:
         )
     )
     config = json.loads((checkpoint / "config.json").read_text())
+    contract = CHECKPOINT_CONTRACTS[role]
     if (
-        config.get("type") != "dm05"
-        or config.get("use_relative_actions") is not False
-        or config.get("add_state") is not False
-        or config.get("chunk_size") != 10
-        or config.get("n_action_steps") != 10
+        config.get("type") != contract["type"]
+        or config.get("use_relative_actions") is not contract["use_relative_actions"]
+        or config.get("add_state") is not contract["add_state"]
+        or config.get("chunk_size") != contract["chunk_size"]
+        or config.get("n_action_steps") != contract["n_action_steps"]
         or config.get("input_features", {}).get("observation.state", {}).get("shape")
-        != [8]
-        or config.get("output_features", {}).get("action", {}).get("shape") != [7]
+        != [contract["state_dimension"]]
+        or config.get("output_features", {}).get("action", {}).get("shape")
+        != [contract["action_dimension"]]
     ):
         raise ValueError(
-            "Downloaded DM05 checkpoint does not match the published policy contract"
+            f"Downloaded {role} DM05 checkpoint does not match its published policy contract"
         )
     return checkpoint
+
+
+def _require_libero_checkpoint_contract(role: str, checkpoint: Path) -> None:
+    """Reject a published checkpoint whose native representation cannot run LIBERO.
+
+    This is intentionally separate from source identity.  The predecessor is
+    real and provenance-verified, but it is not a valid matched LIBERO baseline
+    without a documented, released representation conversion.  NPA does not
+    manufacture that conversion or relabel an OpenDM checkpoint as LeRobot.
+    """
+
+    config = json.loads((checkpoint / "config.json").read_text())
+    contract = CHECKPOINT_CONTRACTS[role]
+    if (
+        contract["state_dimension"] != 8
+        or contract["action_dimension"] != 7
+        or contract["chunk_size"] != 10
+        or contract["n_action_steps"] != 10
+    ):
+        raise ValueError(
+            f"Published {role} checkpoint is not LIBERO-compatible: it has "
+            f"state/action dimensions {contract['state_dimension']}/"
+            f"{contract['action_dimension']} and chunk/action steps "
+            f"{contract['chunk_size']}/{contract['n_action_steps']}; the sealed "
+            "LIBERO protocol requires 8/7 and 10/10. No action or state adapter "
+            "is defined by the checkpoint release."
+        )
+    if config.get("use_relative_actions") is not False:
+        raise ValueError("LIBERO candidate checkpoint must preserve absolute actions")
 
 
 def _read_dm05_runtime_manifest() -> dict[str, Any]:
@@ -309,6 +365,7 @@ def run_rollout(protocol_root: Path, output: Path, *, role: str, device: str) ->
     protocol_sha256 = file_sha256(protocol_root / "protocol.json")
     with tempfile.TemporaryDirectory(prefix=f"dm05-{role}-") as temporary:
         checkpoint = _download_checkpoint(role, Path(temporary))
+        _require_libero_checkpoint_contract(role, checkpoint)
         runtime = _require_dm05_policy_runtime()
         command = rollout_command(protocol, checkpoint, output, device)
         subprocess.run(command, check=True)

@@ -136,3 +136,15 @@ native `eval_info.json` files, decoded comparison MP4, and decoded RRD from that
 same run before making any live-ready or reproduction claim. The maintained
 PR #4721 implementation must not be substituted for this checkpoint-parity
 path unless its documented processor conversion is also executed and recorded.
+
+### Baseline compatibility finding
+
+The documented `Dexmal/DM05-Lerobot` predecessor is a real DM05 checkpoint but
+its pinned published configuration has 14-dimensional state and action spaces
+with `chunk_size=50`, `n_action_steps=50`, and `add_state=true`. It is not the
+candidate's 8-state/7-action LIBERO representation. The rollout adapter
+records this exact contract and rejects it before evaluation rather than adding
+an uncredited action/state adapter or calling an invalid result a matched
+baseline. A complete comparison needs a released, provenance-pinned 8/7
+LIBERO-compatible predecessor or a separately documented native OpenDM
+baseline; neither is substituted automatically.

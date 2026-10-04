@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -10,18 +12,23 @@ import pytest
 from npa.workflows import dm05_lerobot_libero as workflow
 
 
-def _checkpoint(path: Path) -> Path:
+def _checkpoint(path: Path, role: str = "candidate") -> Path:
+    contract = workflow.CHECKPOINT_CONTRACTS[role]
     path.mkdir()
     (path / "config.json").write_text(
         json.dumps(
             {
                 "type": "dm05",
                 "use_relative_actions": False,
-                "add_state": False,
-                "chunk_size": 10,
-                "n_action_steps": 10,
-                "input_features": {"observation.state": {"shape": [8]}},
-                "output_features": {"action": {"shape": [7]}},
+                "add_state": contract["add_state"],
+                "chunk_size": contract["chunk_size"],
+                "n_action_steps": contract["n_action_steps"],
+                "input_features": {
+                    "observation.state": {"shape": [contract["state_dimension"]]}
+                },
+                "output_features": {
+                    "action": {"shape": [contract["action_dimension"]]}
+                },
             }
         )
     )
@@ -75,10 +82,21 @@ def test_five_stage_contract_preserves_action_controller_boundary_and_real_artif
     pytest.importorskip("rerun")
     native_run = workflow.subprocess.run
     checkpoints = {
-        role: _checkpoint(tmp_path / role) for role in workflow.MODEL_REPOSITORIES
+        # This functional test supplies a synthetic, representation-matched
+        # baseline solely to exercise all connected artifact stages.  The
+        # released generic predecessor is tested below and must be rejected
+        # before a live LIBERO comparison.
+        role: _checkpoint(tmp_path / role, "candidate")
+        for role in workflow.MODEL_REPOSITORIES
     }
     monkeypatch.setattr(
         workflow, "_download_checkpoint", lambda role, _: checkpoints[role]
+    )
+    # The release-contract rejection is covered independently below.  This
+    # harness deliberately uses a representation-matched synthetic baseline
+    # to exercise the five connected stages and their real artifact formats.
+    monkeypatch.setattr(
+        workflow, "_require_libero_checkpoint_contract", lambda role, checkpoint: None
     )
     runtime = {
         "source": workflow.DM05_IMPLEMENTATION,
@@ -246,3 +264,32 @@ def test_dm05_runtime_manifest_is_exact_source_bound(tmp_path, monkeypatch):
     manifest.write_text(json.dumps({"repository": "unreviewed/example"}))
     with pytest.raises(RuntimeError, match="does not match"):
         workflow._read_dm05_runtime_manifest()
+
+
+def test_checkpoint_download_uses_role_specific_published_contract(
+    tmp_path, monkeypatch
+):
+    baseline = _checkpoint(tmp_path / "published-baseline", "baseline")
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        types.SimpleNamespace(snapshot_download=lambda **_: str(baseline)),
+    )
+
+    assert workflow._download_checkpoint("baseline", tmp_path) == baseline
+
+    config_path = baseline / "config.json"
+    config = json.loads(config_path.read_text())
+    config["output_features"]["action"]["shape"] = [7]
+    config_path.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="baseline DM05 checkpoint"):
+        workflow._download_checkpoint("baseline", tmp_path)
+
+
+def test_generic_predecessor_is_rejected_without_an_action_state_adapter(tmp_path):
+    baseline = _checkpoint(tmp_path / "baseline", "baseline")
+    candidate = _checkpoint(tmp_path / "candidate", "candidate")
+
+    with pytest.raises(ValueError, match="not LIBERO-compatible"):
+        workflow._require_libero_checkpoint_contract("baseline", baseline)
+    workflow._require_libero_checkpoint_contract("candidate", candidate)
