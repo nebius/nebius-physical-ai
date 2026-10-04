@@ -270,6 +270,9 @@ RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     {
         "cosmos3-nano-video",
         "cosmos3-super-benchmark",
+        # Source-only candidate: private operator validation only until its
+        # exact image, native GPU workflow, and independent artifacts pass.
+        "lingbot-va",
         "paidf-detection-sky",
         "paidf-captioning-sky",
         "paidf-visual-qa-sky",
