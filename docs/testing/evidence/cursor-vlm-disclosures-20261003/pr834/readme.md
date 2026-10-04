@@ -12,6 +12,12 @@ Actual v2 sampling controls remain keyframes/max_frames4, one source image at in
 
 The current bridge keeps the original result digest and only sanitized frame/request/response hashes. It does not disclose response text, provider identifiers, credential material, endpoints, private paths, or runtime resource identifiers. A clean full suite, independent receipt, published head, anonymous byte verification, and current-head CI remain separate requirements.
 
+## Main44 continuity
+
+[Main44 continuity evidence](current-main-44-bridge.json) binds exact landed main `44b65b71eb6cde8e62876d5768674b2717b48481` to successor `5eeb388a72dc79ebb925953ffd06490b349d8d20`. It retains the original twelve-response identity and re-parses all six scalar and six paired private responses under the successor with zero socket connects. The scalar population remains two scores of1.0 and four of0.0; paired inside remains passed, while outside and blank remain `judges_agree_needs_iteration`.
+
+Main44 adds visual-review, response-byte, preference, CLI, and SDK surfaces. A network-isolated current-source selection of 354 consumer, grade, registration, response-byte, workflow, benchmark, and strict-score controls passed. The frozen scalar/paired request, frame, task, rubric, model, parser, loop, benchmark, and judge protocol ASTs are unchanged from the 76d proof source; this is not a whole-evaluator equality claim. No provider transport, retry, model-quality claim, or new Claude review was made. Later main changes, named fixture repairs, a new owner runner and genuine full, publication byte verification, and final-head CI remain distinct gates.
+
 Distinct immutable strict/model/disclosure integration `696cebd2d1fab59f1f3f347f432ddf8c60c0804d` passed265, skipped one inherited opt-in GPU case, and passed the separate six-call hosted protocol. Invalid score/type/NaN/Infinity/out-of-range and missing/string success reject before publication. The strict numeric regression explicitly uses provider_call_made=false and retains its clamp-failure spy and0.74268→0.7427 gate assertion. Every hosted profile, including unknown/custom IDs, retains exact requested/served equality. This integration-only execution is not the PR publication head.
 
 Commands: `NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_vlm_disclosures_live_e2e.py -q -s`; composed unit union covers strict_scores, model_enforcement, VLM backend/token_factory/loop/CLI, token_factory client policy-AST mutation controls and sampling_evidence.
