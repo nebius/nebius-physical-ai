@@ -1,0 +1,200 @@
+{
+  "schema": "cursor-explore.sanitized-strict-score-integration/v1",
+  "implementation": {
+    "head": "965f0436dafce7e8413deb0b1900a437922da829",
+    "tree": "90627759003d5587d9cc2dbe3983359c3921dccc",
+    "actual_landed_base": "a5a934af1516b78d88b2b2755247ec59bb1559b5",
+    "prior_accepted_implementation": "8e46dcd528b2b3239e9730843aac0ea0fe448382"
+  },
+  "source_scope": {
+    "only_conflict": "CHANGELOG;both feature entries preserved",
+    "strict_parser_equals_prior_accepted_source": true,
+    "grade_consumer_equals_actual_landed_833": true,
+    "request_functions_equal_original_live_source": true,
+    "source_files": [
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "sha256": "3ae455c3769c782c0b94f87f89c5655ae79f0595da969af86439f6330979597e",
+        "equal_original_live_bytes": false
+      },
+      {
+        "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+        "sha256": "0bcb218a48299e475d1ff538fea17f8767bffe8db8e975c7110498d65bccd581",
+        "equal_original_live_bytes": false
+      },
+      {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+        "equal_original_live_bytes": true
+      },
+      {
+        "path": "npa/pyproject.toml",
+        "sha256": "91e044e814305e8643d3e3bc9216f66d6ccbe7337408b074a2f0ccb0b70329b2",
+        "equal_original_live_bytes": true
+      },
+      {
+        "path": "npa/ci/requirements.txt",
+        "sha256": "bb227e55b247618d733633efc93937df9587c8c41316cb9bc2fc63d3ee935a35",
+        "equal_original_live_bytes": true
+      },
+      {
+        "path": "npa/requirements-lock.txt",
+        "sha256": "480d9e046aa0144b5c9dc1683a9c5b77590e58c9dbfd111352b6b102e400e4f2",
+        "equal_original_live_bytes": true
+      }
+    ],
+    "request_asts": [
+      {
+        "name": "_build_prompt",
+        "ast_sha256": "b7ae14f4aa13bb62f804eba59938b7eb3fe7143c7cfbefc1a36294857100b612",
+        "original_live_ast_equal": true
+      },
+      {
+        "name": "_openai_content",
+        "ast_sha256": "2b08dc72fccb037f98143dcc024f7d9ce7d69700c257fae932f483be45288df0",
+        "original_live_ast_equal": true
+      },
+      {
+        "name": "_openai_request",
+        "ast_sha256": "c8d7fc591cdb94fa6fd1cdce33a3431d9be6e293e13c540023df491c8b0f7efb",
+        "original_live_ast_equal": true
+      },
+      {
+        "name": "_build_request_evidence",
+        "ast_sha256": "749144f6f2a9e0eb31d4b6e8ab623d3d77797ab7862fb55bc03bd8b031b84dd5",
+        "original_live_ast_equal": true
+      },
+      {
+        "name": "select_rollout_frames",
+        "ast_sha256": "b91e05f90659334a34ecee26d2ec6bda42a63c839caca08cfed9e850568120c5",
+        "original_live_ast_equal": true
+      },
+      {
+        "name": "_load_rubric",
+        "ast_sha256": "765b5e91319030beffed689b15ec7147680a967a4f1f30ba8f3c03d379d4751c",
+        "original_live_ast_equal": true
+      },
+      {
+        "name": "_common_hosted_request",
+        "ast_sha256": "d69ae0325a14967c2a520ed6335686dd0845815361d918c14dac706f0992ad0f",
+        "original_live_ast_equal": true
+      },
+      {
+        "name": "_comparison_prompt",
+        "ast_sha256": "91d26e4528252308d39435a35db59a35fa8773c0b0c704769dc40575d0e8edf6",
+        "original_live_ast_equal": true
+      }
+    ],
+    "completion_identity_strict_interfaces": [
+      {
+        "name": "_strict_comparison_verdict",
+        "ast_sha256": "b6514165e518283b1754c76f1def26b0d2948da805120bfc84a81fc417664f31"
+      },
+      {
+        "name": "_hosted_structured_response",
+        "ast_sha256": "e978d7018d6579cbd723562ac59a665e658b37b07a1f35ae8398319c99bf15e7"
+      },
+      {
+        "name": "_verdict_with_evidence",
+        "ast_sha256": "77f8db0ac813c07171d6a77348431faf900df31a33d54d3de884ca68f5990fb6"
+      },
+      {
+        "name": "_parse_backend_verdict",
+        "ast_sha256": "99b04e0836db5a51c65e785552c4ab34482f342b2735a503ec1a6983626aa605"
+      },
+      {
+        "name": "parse_structured_response",
+        "ast_sha256": "3d638df5aa200ad8cd8d706ad6e32dea094d582ed0a6b29f83a4eb08e761c4bc"
+      }
+    ]
+  },
+  "current_selected_gates": {
+    "execution_head": "965f0436dafce7e8413deb0b1900a437922da829",
+    "affected_passed": 797,
+    "inherited_gpu_skipped": 2,
+    "warnings": 8,
+    "precheck_passed": 270,
+    "aggregate_confidentiality": "PASS",
+    "aggregate_gitleaks": "PASS",
+    "committed_merge_precheck": "PASS",
+    "new_full_run": false
+  },
+  "retained_full": {
+    "execution_head": "71c51c4276938710fa5b8f6f02429999cbd4b7eb",
+    "passed": 39848,
+    "skipped": 213,
+    "non_strict_xpass": 1,
+    "source_coverage_percent": 77.47,
+    "required_floor_percent": 60,
+    "not_current_head_execution": true
+  },
+  "original_hosted": {
+    "execution_head": "9e51a3ebf6454692f2376e8756c23a07b6efaab3",
+    "real_responses": 4,
+    "frozen_threshold": 0.8,
+    "pair": "red-circle positive versus uniform grayscale negative",
+    "current_request_objects_equal": true,
+    "current_request_evidence_equal_except_new_CPU_time": true,
+    "new_provider_calls": 0,
+    "not_new_inference": true,
+    "rows": [
+      {
+        "case": "api-MiniMax-M3-positive",
+        "request_sha256": "bfe8bd814110f507abe10c66af894fab9cda7cbf1f1654660d708597a9ba3401",
+        "raw_response_sha256": "eba5a826f101f79ce32a80b2867cbfcb31aa23ddc5daea4d028672b67bcaa7d8",
+        "original_report_sha256": "a2deae48e84655c9db92a92ed1395741f1743bbdaddd891c0035fd183ccf0e89",
+        "score": 1,
+        "passed": true,
+        "rationale_unchanged": true,
+        "current_writer_grade": "PASS"
+      },
+      {
+        "case": "api-MiniMax-M3-negative",
+        "request_sha256": "564a839383659cddd307dfcd747f332d402923cc0e0904dc9e4549ee51fa1dc3",
+        "raw_response_sha256": "248fdbeb9c785574136d9dc7194fb6cfeed11db40cecb0d00ea8df151d5793dd",
+        "original_report_sha256": "55b6960f4af18f676ae45a13ca55d2c6f1bddb95066f177986c9a60796b18637",
+        "score": 0,
+        "passed": false,
+        "rationale_unchanged": true,
+        "current_writer_grade": "PASS"
+      },
+      {
+        "case": "self-hosted-gemma-3-27b-it-positive",
+        "request_sha256": "39f2a4ea09a804f215bbc9a65b56e5721f239576e256e16afa96b96d51a41fd4",
+        "raw_response_sha256": "dce93be8690100d6c04d7839dfbc55f488c29b2569f2f85ea5edb1b71d195296",
+        "original_report_sha256": "366dd2f2ffe2bdca4e1ef8c7fa46dbbfb1f2039c6b98bac02e370a14d66adede",
+        "score": 1,
+        "passed": true,
+        "rationale_unchanged": true,
+        "current_writer_grade": "PASS"
+      },
+      {
+        "case": "self-hosted-gemma-3-27b-it-negative",
+        "request_sha256": "4a8e0e80cd23768e50a6dd2d2ed06d231043ff2fbe0166704a11982d065da25c",
+        "raw_response_sha256": "9ef2647a5f92c866d177f36ac66e5ea56cb1eb8dbab0e30c45b7923f41eb56fa",
+        "original_report_sha256": "a1fca07bc62fec045beea1d51d1d363a8e9a1d449b0eff7a30356588d691ae70",
+        "score": 0,
+        "passed": false,
+        "rationale_unchanged": true,
+        "current_writer_grade": "PASS"
+      }
+    ]
+  },
+  "observation_scope": {
+    "original_compact_capture": "head/tree/clean plus three SOURCE hashes;no complete package/import enumeration",
+    "current_later_cpu_context_distributions": 139,
+    "not_backdated": true,
+    "not_claimed_context_before_or_during_original_live": true
+  },
+  "limitations": [
+    "Synthetic visual controls only; no robot terminal validation, calibrated model quality or safety qualification.",
+    "MiniMax negative rationale calls gray white; original wording retained.",
+    "No operator-owned GPU serving proof.",
+    "Incomplete or malformed responses abort the whole run; no fabricated zero-score answers.",
+    "Archived compatible-parser-v1 reports remain promotion-ineligible; tags are never rewritten.",
+    "Manual ignored-failed-producer legacy compatibility remains a disclosed lifecycle limitation.",
+    "All original model/full/command/harness failures remain retained; no third Claude pass or future-head approval.",
+    "Published-head CI, signatures, protection, main reconciliation and queue are separate;sole coordinator controls queue."
+  ]
+}
+
