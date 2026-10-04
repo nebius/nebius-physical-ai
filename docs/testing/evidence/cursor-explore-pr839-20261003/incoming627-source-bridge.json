@@ -1,0 +1,61 @@
+{
+  "schema": "cursor-explore.vision-availability-current-main627-bridge/v1",
+  "pr": 839,
+  "execution_head": "da86a7d68c5417432935e796af0ca7d5d14882b7",
+  "execution_tree": "97c8bee86ead984ec35e757c401f3d98d49ca8fc",
+  "base": "7c09e0df32e68eaefde16c401c289e893bdf50fb",
+  "prior_published_head": "ded54e40b9979401caadd76aa5f03ac4f8336b1e",
+  "prior_landed826_execution": {
+    "head": "ffa7c82b7e8fc462c98f02ad4aa4c7db3ee3bbad",
+    "base": "47f33358e53f816208aa27cdfb861df5c78ba674",
+    "passed": 420,
+    "skipped": 0,
+    "scope": "Affected caption, sentinel SDK, CLI, live-contract and scalar-response controls"
+  },
+  "current_affected_cpu_controls": {"passed": 644, "skipped": 0},
+  "independent_ai_cpu_controls": {"passed": 55, "skipped": 0},
+  "byte_equal_prior_completed47f_feature_bindings": [
+    {"path": "npa/src/npa/clients/token_factory.py", "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"},
+    {"path": "npa/src/npa/workbench/token_factory/__init__.py", "sha256": "3bbf0a6610537c8a9a28e4404bcb7539b84b74989ddf9faa46c7e83fe39b5122"},
+    {"path": "npa/src/npa/cli/workbench/token_factory.py", "sha256": "23503a23c8fed56425af7faf20ed5944cb15de2007b867c1aaec36ef6418142e"},
+    {"path": "npa/src/npa/sdk/workbench/token_factory.py", "sha256": "58fc897fbc3a93eca88618eb14a1ce47a7d8b3cd8e92593e8e59c1f57ad4bbc0"},
+    {"path": "npa/src/npa/_sdk.py", "sha256": "ccd630c1aab7b3fa790c489c1d08ebe7ec658a12c6dede94d24623d188e1a16d"},
+    {"path": "npa/src/npa/live_verification/token_factory_contract.py", "sha256": "fc2f57b5fdcbb70a99a36fe0905e703990a528c4e565ae3000e3a7f51ad52a21"},
+    {"path": "npa/src/npa/workflows/vlm_grade_evidence.py", "sha256": "3ccd5a76addc53841d98fc4b724cd618f9e6c6435482dfdcb80d154301d72faf"},
+    {"path": "npa/pyproject.toml", "sha256": "91e044e814305e8643d3e3bc9216f66d6ccbe7337408b074a2f0ccb0b70329b2"},
+    {"path": "npa/ci/requirements.txt", "sha256": "bb227e55b247618d733633efc93937df9587c8c41316cb9bc2fc63d3ee935a35"}
+  ],
+  "current_evaluator": {"path": "npa/src/npa/workbench/vlm_eval/__init__.py", "sha256": "6c84914c8b237fca4b38ad64c70c6798af525cc7957c3d20e8469f3cf0ed5e67"},
+  "current_protected_live_test": {"path": "npa/tests/e2e/test_token_factory_e2e.py", "sha256": "6d96849836916427fe5e09fe29164aec8b5d282adfd2cfcb72b1aa28d290bb57"},
+  "only_existing_evaluator_AST_changes_since47f": ["_resolve_task_text", "_post_comparison_request"],
+  "new_landed_preference_definitions": 68,
+  "scalar_request_prompt_parser_capture_writer_AST_unchanged_since47f": true,
+  "whole_evaluator_equality_claimed": false,
+  "paired_and_preference_reports": "Audit-only; not canonical scalar promotion artifacts",
+  "landed_caption_core_original826_binding": {
+    "original_execution_head": "d5d146b2e2c7a8d9bc662d09ac44a007075ecb2a",
+    "path": "npa/src/npa/workbench/token_factory/__init__.py",
+    "sha256": "3bbf0a6610537c8a9a28e4404bcb7539b84b74989ddf9faa46c7e83fe39b5122",
+    "scope": "Exact original caption-helper bytes; not an assertion that the original839 entire evaluator or caption tree equals the current tree"
+  },
+  "offline_scalar_replay": {
+    "original_execution_head": "0b265c0cf422dbc24678f57ce7d391aadf21009d",
+    "responses": 2,
+    "fixed_scores": [1.0, 0.0],
+    "fixed_threshold": 0.8,
+    "request_sha256": ["53767b7c3bbca75358e20ea5ff4379fbd4082568490dd83b7196d912ef7874b3", "b363f38cf08e499a8238a28f4901adcd1af67668e222bac5ea194d62f01fa90d"],
+    "raw_response_sha256": ["5812dfafb8f6c04e4616ccfd5181049f21bcc226570d718918c23fd069d1ed0f", "bdfd78cef7490b64733de5dd99405b8489fc817bfc5aed3e8e12c0ea686a6ec4"],
+    "exact_request_objects_and_bytes_equal": true,
+    "raw_response_bytes_equal": true,
+    "canonical_writer_and_grade_exercised": true,
+    "invalid_score_negatives": 7,
+    "new_network_calls": 0
+  },
+  "original_full": {"head": "cc8c408a598e168d961c7386f1fb329dc8295b19", "passed": 39810, "skipped": 213, "non_strict_xpass": 1, "coverage_percent": 77.47, "coverage_floor_percent": 60},
+  "original_hosted_execution_heads": ["50111ebcb9a8604c63ad6cd9d702c3c703044e7d", "0b265c0cf422dbc24678f57ce7d391aadf21009d"],
+  "new_provider_calls": 0,
+  "new_full_execution": false,
+  "additional_Claude_passes": 0,
+  "observation_limits": "Current627 check-env, own editable package path and exact replay-module assertion do not supply a separate complete imported-module before/after hash inventory. Original full pre-suite package and per-node quiet skip/XPASS metadata remain absent, not invented.",
+  "limitations": "Original qualitative model disagreements, blank-image false unavailability and unobserved provider hardware remain. CPU replay and distinct AI reviews do not establish new-head inference, calibrated quality, robot safety or human approval. Published-head CI and queue validation are separate gates."
+}
