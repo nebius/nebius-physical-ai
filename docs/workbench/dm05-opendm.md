@@ -115,13 +115,16 @@ private evidence. Then submit the workflow with the run-scoped bucket and that
 image identity passed as overrides:
 
 ```bash
+: "${DM05_RUN_ID:?set a unique run id}"
+: "${DM05_BUCKET:?set the operator-owned run-scoped bucket}"
+: "${DM05_RUNTIME_IMAGE:?set the private digest-pinned runtime image}"
 npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/dm05-opendm.yaml --json
 npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/dm05-opendm.yaml \
-  --run-id dm05-opendm-<run> --var bucket=<operator-bucket> \
-  --var runtime_image=<private-image@sha256:...> --check-render --json
+  --run-id "$DM05_RUN_ID" --var "bucket=$DM05_BUCKET" \
+  --var "runtime_image=$DM05_RUNTIME_IMAGE" --check-render --json
 npa/.venv/bin/npa workbench workflow submit workflows/testing/dm05-opendm.yaml \
-  --run-id dm05-opendm-<run> --runtime --stage-src \
-  --var bucket=<operator-bucket> --var runtime_image=<private-image@sha256:...>
+  --run-id "$DM05_RUN_ID" --runtime --stage-src \
+  --var "bucket=$DM05_BUCKET" --var "runtime_image=$DM05_RUNTIME_IMAGE"
 ```
 
 Inspect the `report/manifest.json`, `provenance.json`, `dm05-opendm.rrd`, the
