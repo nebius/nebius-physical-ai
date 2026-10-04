@@ -196,6 +196,7 @@ CONTAINER_IMAGE_NAMES = {
     "alpamayo2-super": "npa-alpamayo2-super",
     "flex-pi": "npa-flex-pi",
     "curobo": "npa-curobo",
+    "open3d": "npa-open3d",
     "mjlab": "npa-mjlab",
     "content-agents": "npa-content-agents",
     "ncore": "npa-ncore",
@@ -234,6 +235,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "isaac-lab",
         "isaac-arena",
         "openarm",
+        "open3d",
         "rerun-viewer",
         "sim2real-control",
         "envgen",
@@ -304,7 +306,9 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     {"openpi", "curobo", "ncore", "libero", "sam3"}
 ) | frozenset({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "mjlab", "robocasa"})
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset(
+    {"antioch", "mjlab", "robocasa", "open3d"}
+)
 # A development candidate may use the trusted full-SHA builder before it has
 # earned a supported release tag.  Keep this state separate from the canonical
 # supported-tool inventory and from unbuilt release records.
@@ -511,7 +515,9 @@ SUPPORTED_TOOL_VERSIONS = {
     "ltx2": "2.5-rtfetch-20260817",
     "alpamayo2-super": "0.1.0-cu128-r3",
     "flex-pi": "0.1.0-cu128-r2",
-    "curobo": "0.8.0-cuda13-b300-unbuilt",
+    "curobo": "0.8.0-cuda13-blackwell-unbuilt",
+    # CPU-only, so this image carries no CUDA tag family.
+    "open3d": "0.20.0-cpu-20260918",
     "mjlab": "dev-0202f396fb23f7d066fd452b469578e67151d382",
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.

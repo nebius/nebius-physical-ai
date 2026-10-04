@@ -1,0 +1,63 @@
+{
+  "schema": "npa.vlm-default.catalog-membership-bridge/v1",
+  "original_execution_head": "50111ebcb9a8604c63ad6cd9d702c3c703044e7d",
+  "original_catalog_test": "tests/e2e/test_token_factory_e2e.py::test_live_list_models_authenticates",
+  "original_catalog_test_passed": true,
+  "requested_public_model": "MiniMaxAI/MiniMax-M3",
+  "minimax_in_original_catalog": true,
+  "response": {
+    "sha256": "84f21eeabcd54c3a5df1d71961b1391ab8e98d28066efd0bad1b90e07e903ab5",
+    "bytes": 2345,
+    "http_status": 200
+  },
+  "catalog_test_AST_equal": true,
+  "source_bindings": [
+    {
+      "phase": "original-execution",
+      "path": "npa/tests/e2e/test_token_factory_e2e.py",
+      "sha256": "83a927ea80bb586049edaf72f206e762908e476fe00f0237a4ebb10f50fe3c81"
+    },
+    {
+      "phase": "published-cc8-source",
+      "path": "npa/tests/e2e/test_token_factory_e2e.py",
+      "sha256": "8ba3c5f2083fccde4651a65faad6fd11d40157080643ea227c844aef774cdc53"
+    },
+    {
+      "phase": "reviewed-2cc-and-incoming617-source",
+      "commit": "2cc3cefd6e8cc2f77109157034f11beb99f621ae",
+      "path": "npa/tests/e2e/test_token_factory_e2e.py",
+      "sha256": "23d52c86df343c31a280720150dea6e9842af5e0639eefd52daa245b93bb8d15"
+    },
+    {
+      "phase": "reviewed-2cc-and-incoming617-source",
+      "commit": "2cc3cefd6e8cc2f77109157034f11beb99f621ae",
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "ea52d21998d25b0b6ed655351f4ca333e47841580fe9e12ddbcbb99e0543fcd3"
+    }
+  ],
+  "current_source_live_execution": false,
+  "incoming617_interface_bridge": {
+    "execution_commit": "380f1e7a1c3eccb63e9bdb432978e7012ce1445d",
+    "base_commit": "77e5d1ff0c5416f582d2db3807f25b6c2606177c",
+    "source_files_above_byte_equal_380_and_reviewed_2cc": true,
+    "evaluator_function_class_AST_equal_original_f1": true,
+    "canonical_result_filename": "vlm_eval.json",
+    "legacy_result_filename_read_only": "vlm_eval_stub.json",
+    "affected_tests_passed": 612,
+    "inherited_opt_in_GPU_skips": 1,
+    "offline_original_response_controls": 2,
+    "invalid_score_negative_controls": 7,
+    "original_response_execution_commit": "0b265c0cf422dbc24678f57ce7d391aadf21009d",
+    "original_response_hashes": [
+      "5812dfafb8f6c04e4616ccfd5181049f21bcc226570d718918c23fd069d1ed0f",
+      "bdfd78cef7490b64733de5dd99405b8489fc817bfc5aed3e8e12c0ea686a6ec4"
+    ],
+    "original_request_objects_and_raw_response_bytes_equal": true,
+    "frozen_scores": [1.0, 0.0],
+    "frozen_threshold": 0.8,
+    "independent_AI_interface_review": "Accepted exact private380/main77 source and offline retained-response interface, not final lifecycle, hosted current-source execution, calibrated quality or human approval.",
+    "new_hosted_calls": 0
+  },
+  "new_catalog_or_provider_calls": 0,
+  "scope": "Retained original response membership and unchanged assertion source bridge, not new inference, current account/global availability, image capability, quality, safety or GPU evidence. Raw catalog and original artifacts remain private and unchanged."
+}

@@ -89,7 +89,11 @@ def test_rerun_records_all_input_and_labeled_rows(recorded) -> None:
         "/reviewed/frame": 8,
         "/subtasks/index": 8,
     }
-    assert manifest["recording"]["rrd_verify"] == "1 file verified without error."
+    # A fresh Rerun configuration can print its welcome banner before this line.
+    assert (
+        "1 file verified without error."
+        in manifest["recording"]["rrd_verify"].splitlines()
+    )
 
 
 def test_bundle_inventory_matches_every_saved_byte(recorded) -> None:

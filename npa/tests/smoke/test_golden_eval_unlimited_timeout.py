@@ -21,6 +21,22 @@ from npa.cli.workbench import golden_eval as cli
 from npa.smoke import batch, manifest, serverless_runner
 
 
+def test_blackwell_qualification_rejects_serverless_before_resolving_infra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = manifest.container("base-cuda13-b300")
+    assert spec.golden_eval.serverless_gpu is None
+    assert spec.golden_eval.execution_timeout is None
+    assert "--expect-capability 10.3" in spec.golden_eval.command
+    project = Mock(side_effect=AssertionError("Must reject before resolving infra"))
+    monkeypatch.setattr(serverless_runner, "_project_id", project)
+    with pytest.raises(
+        RuntimeError, match="Unlimited golden evaluations require local"
+    ):
+        serverless_runner.submit_golden_eval(spec.name)
+    project.assert_not_called()
+
+
 def _spec(monkeypatch: pytest.MonkeyPatch, timeout: object) -> manifest.ContainerSpec:
     payload = {
         "format": manifest.MANIFEST_FORMAT,

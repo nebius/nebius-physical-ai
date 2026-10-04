@@ -1,0 +1,57 @@
+{
+  "schema": "npa.cosmos3.wam-profile-timeline.v1",
+  "gpus": 16,
+  "bin_seconds": 0.25,
+  "ranks": [
+    {
+      "rank": 0,
+      "trace_sha256": "e93ef07dc6b11f1dff541d52746f54704fca7037b3f076e76bfc2305b2b37078",
+      "trace_bytes": 35645533,
+      "profile_window_seconds": 14.992311949005128,
+      "steps": [
+        {
+          "name": "ProfilerStep#98",
+          "start_seconds": 0.0,
+          "stop_seconds": 7.516513802993774
+        },
+        {
+          "name": "ProfilerStep#99",
+          "start_seconds": 7.51655423500061,
+          "stop_seconds": 14.992311949005128
+        }
+      ],
+      "timeline": {
+        "file": "rank-0-timeline.csv",
+        "rows": 360,
+        "sha256": "aa0fd37a0ebe57d87c38888cd3a5018833b7e41f2d7065ab471fc4a18572402c"
+      }
+    },
+    {
+      "rank": 8,
+      "trace_sha256": "10d24b0f9523f0bcc3e436fa7f1eb58604835dd5d678ca9efe4470ab684fdd05",
+      "trace_bytes": 35529452,
+      "profile_window_seconds": 14.992354912994385,
+      "steps": [
+        {
+          "name": "ProfilerStep#98",
+          "start_seconds": 0.0,
+          "stop_seconds": 7.516592453994751
+        },
+        {
+          "name": "ProfilerStep#99",
+          "start_seconds": 7.516632886001587,
+          "stop_seconds": 14.992354912994385
+        }
+      ],
+      "timeline": {
+        "file": "rank-8-timeline.csv",
+        "rows": 360,
+        "sha256": "c37107fca67a6554473c89f122b7a202c2958749821a3e18a2aef2aefd6da4fe"
+      }
+    }
+  ],
+  "profile_summary_sha256": "55dc58df670947321d80614cf2bfec9c87ee7b4d88afe474d2ccb9369992c59b",
+  "profile_report_source_sha256": "f82508b56c1a9b30c19b1f9efa61d6add972b7cb967998b23ecd6ae72c1f8ad5",
+  "exporter_sha256": "12afce29cc17531b6519308ed24af1b7eea6b9fc3ddc813eec209ade06ea02ba",
+  "interpretation": "Per-category interval unions in each bin; categories overlap and must not be stacked. All-kernel activity excludes memcpy, CPU work and unobserved activity. Categories prefer linked CPU operators; NCCL and unlinked kernels use names. Profiles are excluded from throughput comparisons."
+}
