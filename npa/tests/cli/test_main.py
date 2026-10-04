@@ -1493,6 +1493,8 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
     Token Factory, and NGC.
     """
 
+    from unittest.mock import Mock
+
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
     import npa.clients.nebius as nebius_module
@@ -1502,6 +1504,10 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
     _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    catalog = Mock(return_value=[])
+    process = Mock(side_effect=AssertionError("unexpected process escape"))
+    monkeypatch.setattr(nebius_module, "list_projects_in_tenant", catalog)
+    monkeypatch.setattr("subprocess.Popen", process)
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
 
     def fake_bootstrap(
@@ -1538,7 +1544,10 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
         )
         + "\n"
     )
-    return runner.invoke(app, ["configure", "--interactive"], input=answers)
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+    catalog.assert_called_once_with("tenant-1")
+    process.assert_not_called()
+    return result
 
 
 def _note_line(output: str) -> str:
