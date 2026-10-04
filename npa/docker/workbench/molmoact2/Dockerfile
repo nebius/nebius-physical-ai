@@ -8,6 +8,7 @@ ARG MOLMOACT2_REVISION=6070080a20321b4f498ab30f28e1d09ac465edb7
 LABEL org.opencontainers.image.source="https://github.com/allenai/molmoact2" \
       org.opencontainers.image.revision="${MOLMOACT2_REVISION}" \
       org.opencontainers.image.licenses="Apache-2.0" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
       npa.solution="molmoact2-official-libero-byof" \
       npa.redistribution="unvalidated-private-byof"
 
