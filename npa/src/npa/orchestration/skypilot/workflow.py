@@ -902,7 +902,10 @@ def ensure_local_api_daemon_health(
     # It only needs the exact configured executable to identify an already-live
     # daemon; an absent daemon is left for the regular pinned-version path.
     sky_executable = str(runtime_config.sky_bin)
-    env = sky_environment(runtime_config.isolated_config_dir)
+    env = sky_environment(
+        runtime_config.isolated_config_dir,
+        recover_isolated_api=False,
+    )
     if runtime_config.isolated_config_dir is not None:
         # Environment preparation validates any owned listener. Startup waits
         # until the exact workload/project configuration has passed preflight.
@@ -1085,7 +1088,7 @@ def _preflight_prepared_submission(
     )
 
     executable_profile_sha256 = libero_executable_profile_sha256(docs)
-    env = sky_environment(runtime.isolated_config_dir)
+    env = sky_environment(runtime.isolated_config_dir, recover_isolated_api=False)
     for key, value in (extra_env or {}).items():
         if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
             env[key] = value

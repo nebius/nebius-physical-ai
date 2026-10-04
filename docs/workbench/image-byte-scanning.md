@@ -87,6 +87,39 @@ pattern detection. Whole-record regexes can also require substantial memory or
 CPU. An interrupted or exhausted scan is incomplete, with no truncation fallback.
 Functional GPU workloads and artifact inspection remain separate release gates.
 
+### SeedVR2 local direct-manifest archives
+
+The SeedVR2 local `--load --provenance=false` build has one Docker-schema-2 or
+OCI image manifest inside an OCI-layout Docker-save archive. It has no provenance
+attestation. Verify this distinct format with
+`npa/scripts/image_byte_scan/seedvr2_verification.py`, providing required
+`--analysis-root`, `--trusted-root`, `--archive`, `--expected-image-id` and a new
+`--output-dir`. The expected identity must be the independently inspected
+**manifest** digest, not a config or index digest. Its
+`npa.seedvr2.direct-manifest-verification.v1` receipt can then be supplied to
+`prepare.py authorize` using the existing policy and native-dependency options.
+
+This explicit mode binds the sole manifest, Linux/amd64 config, ordered layer
+descriptors and decoded diff IDs, Docker compatibility view, closed blob
+population and all ancestor regular-file counts. It rejects extra graph members,
+multiple image selections, unsupported media types and contradictory identities.
+It does not weaken the existing attested-index verifier or synthesize an
+attestation. Product payload scanning remains a separate SeedVR2 gate.
+
+As with the existing Docker-save contract, encoded layer transport is read and
+hash-bound in full; the native detector receives every complete decoded file,
+gzip/header metadata, names and padding. Native secret matching is **not** run
+against the compressed transport blob itself. Unknown blobs are rejected by graph
+closure, and incomplete, malformed or trailing gzip data fails. The schema, not
+the presence or absence of a report field, selects this behavior. This branch's
+existing native complete-record behavior is unchanged; the adapter adds no
+record-size, runtime or resource-admission policy.
+
+Keep the original image, build-source SHA and archive unchanged when updating
+only this external verifier. Record the separate verifier execution SHA. A
+structural receipt is not GPU capability, restored-video quality, complete-secret
+absence, OCI provenance or public-image release approval.
+
 RoboTwin adds a separate solution scanner,
 `npa/scripts/scan_image_robotwin_payload.py`. For the public-bootstrap design it
 must reject RoboTwin/CuRobo source, CUDA/cuDNN/NVIDIA/PyTorch/SAPIEN/MPLib/Warp

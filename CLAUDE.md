@@ -89,6 +89,9 @@ making architecture, review, or domain judgments.
 - `skills/tools/cosmos3-ray-serve/SKILL.md`: deploy and operate persistent
  Cosmos3-Nano generation through NVIDIA Cosmos Framework's native dynamically
  batched Ray Serve path, with guarded runtime weight fetch and S3 provenance.
+- `skills/tools/seedvr2/SKILL.md`: package, run, validate, or review official
+ SeedVR2-3B restoration of robot observation video, its S3 workflow, and
+ objective/visual evidence without treating generated detail as sensor truth.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with
  torchrun rendezvous, deliberately not a workflow surface.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator

@@ -71,6 +71,17 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/curobo-benchmark.yaml
+  - name: seedvr2
+    category: tools
+    when_to_use: "Package, run, validate or review official SeedVR2-3B restoration of robot observation video, its S3 workflow, or objective and visual evidence."
+    path: skills/tools/seedvr2/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "seedvr2", "restore", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/seedvr2-video-restoration.yaml
   - name: open3d
     category: tools
     when_to_use: "Register overlapping point-cloud scans with real RANSAC/FPFH and ICP, optimize a multiway pose graph, reconstruct a Poisson surface, or review Open3D registration artifacts and their validators."

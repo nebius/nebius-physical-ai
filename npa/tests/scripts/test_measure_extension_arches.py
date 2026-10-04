@@ -101,6 +101,119 @@ def test_wheel_and_directory_measurement_and_exact_sass_requirement(
     assert measure.main([str(binary), "--require", "103"]) == 1
 
 
+def test_distribution_measurement_uses_installed_file_inventory(
+    measure, tmp_path, capsys, monkeypatch
+) -> None:
+    binary_name = Path("flash_attn_2_cuda.cpython-312-x86_64-linux-gnu.so")
+    binary = tmp_path / binary_name
+    binary.write_bytes(_container(_entry(arch=90)))
+
+    class Distribution:
+        files = [Path("flash_attn/__init__.py"), binary_name]
+
+        @staticmethod
+        def locate_file(relative: Path) -> Path:
+            return tmp_path / relative
+
+    monkeypatch.setattr(
+        measure.importlib.metadata,
+        "distribution",
+        lambda name: Distribution() if name == "flash-attn" else None,
+    )
+    assert (
+        measure.main(
+            [
+                "--distribution",
+                "flash-attn",
+                "--min-size-mb",
+                "0",
+                "--exact",
+                "sm_90",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert report[f"flash-attn:{binary_name}"]["sass"] == ["sm_90"]
+
+
+def test_distribution_measurement_rejects_missing_recorded_binary(
+    measure, tmp_path, capsys, monkeypatch
+) -> None:
+    class Distribution:
+        files = [Path("missing_cuda.so")]
+
+        @staticmethod
+        def locate_file(relative: Path) -> Path:
+            return tmp_path / relative
+
+    monkeypatch.setattr(
+        measure.importlib.metadata,
+        "distribution",
+        lambda _name: Distribution(),
+    )
+    assert measure.main(["--distribution", "apex", "--exact", "sm_90"]) == 2
+    assert "records a missing native binary" in capsys.readouterr().err
+
+
+def test_distribution_measurement_requires_installed_file_inventory(
+    measure, capsys, monkeypatch
+) -> None:
+    class Distribution:
+        files = None
+
+    monkeypatch.setattr(
+        measure.importlib.metadata,
+        "distribution",
+        lambda _name: Distribution(),
+    )
+    assert measure.main(["--distribution", "apex", "--exact", "sm_90"]) == 2
+    assert "has no installed-file inventory" in capsys.readouterr().err
+
+
+def test_distribution_measurement_rejects_unknown_distribution(
+    measure, capsys, monkeypatch
+) -> None:
+    def missing(_name: str):
+        raise measure.importlib.metadata.PackageNotFoundError("unknown")
+
+    monkeypatch.setattr(measure.importlib.metadata, "distribution", missing)
+    assert measure.main(["--distribution", "unknown", "--exact", "sm_90"]) == 2
+    assert "unknown" in capsys.readouterr().err
+
+
+def test_exact_rejects_extra_sass_and_ptx(measure, tmp_path, capsys) -> None:
+    binary = tmp_path / "extension.so"
+    binary.write_bytes(
+        _container(
+            _entry(arch=90)
+            + _entry(arch=100)
+            + _entry(kind=1, arch=90)
+            + _entry(kind=1, arch=120)
+        )
+    )
+
+    assert measure.main([str(binary), "--exact", "90", "--json"]) == 1
+    report = json.loads(capsys.readouterr().out)[str(binary)]
+    assert report["unexpected_sass"] == ["sm_100"]
+    assert report["unexpected_ptx"] == ["compute_120"]
+
+
+def test_exact_accepts_only_requested_sass_and_matching_ptx(measure, tmp_path) -> None:
+    binary = tmp_path / "extension.so"
+    binary.write_bytes(_container(_entry(arch=90) + _entry(kind=1, arch=90)))
+
+    assert measure.main([str(binary), "--exact", "sm_90"]) == 0
+
+
+def test_skip_no_fatbin_still_requires_one_measurable_binary(measure, tmp_path) -> None:
+    (tmp_path / "cpu_only.so").write_bytes(b"ELF without CUDA")
+
+    assert measure.main([str(tmp_path), "--skip-no-fatbin", "--exact", "sm_90"]) == 2
+
+
 def test_empty_and_missing_targets_fail(measure, tmp_path) -> None:
+    assert measure.main([]) == 2
     assert measure.main([str(tmp_path)]) == 2
     assert measure.main([str(tmp_path / "missing.so")]) == 2
