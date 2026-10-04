@@ -48,4 +48,10 @@ model` avoid the default FP32 EMA copies. All trunk/head weights still train.
 Require an already Bound disk PVC, mount it at `/npa-work`, and direct TMPDIR
 and HF_HOME there. Preserve system `/tmp` permissions for SkyPilot apt setup.
 The observed one-H100 FP32 attempt exhausted 79.18 GiB during EMA construction;
-no optimizer update completed. The BF16 candidate remains GPU-unqualified.
+no optimizer update completed. A BF16 attempt completed four updates and export
+but failed reload because native training leaves sampler settings unset.
+Recipes must carry validated `inference` fields into the exported policy;
+validate the native inference config before GPU submission. The Euler/four-step
+ALOHA settings are diagnostic, not benchmarked. End-to-end acceptance remains
+unverified until the repaired image completes fresh-process reload and durable
+artifact verification.

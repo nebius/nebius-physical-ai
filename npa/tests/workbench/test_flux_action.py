@@ -441,3 +441,35 @@ def test_recipe_rejects_unsupported_precision_or_unavailable_export(
     data["export_profile"] = profile
     with pytest.raises(ValueError, match=message):
         Recipe.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    "inference",
+    [
+        {"sampler": "invalid"},
+        {"num_inference_steps": 0},
+        {"sampler_shift": 0},
+        {"guidance_scale": float("nan")},
+    ],
+)
+def test_unusable_inference_settings_are_rejected(inference):
+    data = recipe_data()
+    data["inference"] = inference
+    with pytest.raises(ValueError):
+        Recipe.model_validate(data)
+
+
+def test_export_owns_operator_inference_settings(tmp_path):
+    data = recipe_data()
+    data["inference"] = {
+        "sampler": "cosmos_unipc",
+        "num_inference_steps": 8,
+        "sampler_shift": 5,
+        "guidance_scale": 4,
+        "guidance_scale_action": 1,
+        "inference_seed": 17,
+    }
+    recipe = Recipe.model_validate(data)
+    policy = training_config(recipe, tmp_path, tmp_path / "output", 1)["policy"]
+    for key, value in data["inference"].items():
+        assert policy[key] == value

@@ -140,6 +140,21 @@ class TrainingSettings(BaseModel):
         return self
 
 
+class InferenceSettings(BaseModel):
+    """Explicit sampling settings carried by the exported policy.
+
+    These diagnostic defaults do not claim a robot-specific quality benchmark.
+    """
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    sampler: Literal["euler", "cosmos_unipc"] = "euler"
+    num_inference_steps: int = Field(default=4, ge=1)
+    sampler_shift: float = Field(default=1.0, gt=0)
+    guidance_scale: float = 1.0
+    guidance_scale_action: float = 1.0
+    inference_seed: int = 0
+
+
 class Recipe(BaseModel):
     """A robot contract and an explicit optimizer schedule.
 
@@ -151,6 +166,7 @@ class Recipe(BaseModel):
     model_config = ConfigDict(extra="forbid")
     robot: RobotContract
     training: TrainingSettings
+    inference: InferenceSettings = Field(default_factory=InferenceSettings)
     val_episodes: int = Field(default=1, ge=0)
     export_profile: Literal["model", "ema_0p10", "ema_0p05"] = "ema_0p10"
 

@@ -122,6 +122,7 @@ def test_native_index_and_window_for_non_so101_robot(tmp_path, width):
     config = TrainConfig(**training_config(recipe, root, output, 1))
     policy = PolicyConfig(**config.policy)
     policy.validate_training()
+    policy.validate_inference()
     manifest = load_manifest(output / "index/manifest.json")
     statistics = json.loads((output / "index/statistics.json").read_text())
     assert len(statistics["action"]["q01"]) == width

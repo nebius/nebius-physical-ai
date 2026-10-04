@@ -144,5 +144,13 @@
     "ema_sigma_rels": []
   },
   "export_profile": "model",
-  "val_episodes": 5
+  "val_episodes": 5,
+  "inference": {
+    "sampler": "euler",
+    "num_inference_steps": 4,
+    "sampler_shift": 1.0,
+    "guidance_scale": 1.0,
+    "guidance_scale_action": 1.0,
+    "inference_seed": 0
+  }
 }

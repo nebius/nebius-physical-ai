@@ -116,6 +116,7 @@ def training_config(
 def _policy_config(recipe: Recipe, output: Path) -> dict:
     robot = recipe.robot
     return {
+        **recipe.inference.model_dump(),
         "trunk_weights": f"{BASE_REPOSITORY}:flux-3-action-base.safetensors@{BASE_REVISION}",
         "video_vae_id": f"{BASE_REPOSITORY}:video_vae.safetensors@{BASE_REVISION}",
         "text_encoder_id": f"{BASE_REPOSITORY}:text_encoder@{BASE_REVISION}",

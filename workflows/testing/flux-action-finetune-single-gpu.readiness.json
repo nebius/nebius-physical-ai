@@ -4,7 +4,7 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Single-GPU schema, native precision and export-profile contracts pass targeted tests; live end-to-end BF16 qualification remains pending.",
+      "reason": "Single-GPU training and native inference contracts pass targeted checks; repaired end-to-end qualification remains pending.",
       "evidence": [
         "native upstream CPU index/config/window checks passed for 3/7/14-channel contracts",
         "workflow has explicit private image/pull Secret and S3 dataset/recipe inputs",
@@ -58,9 +58,13 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Real end-to-end BF16 full-weight single-GPU train/checkpoint/export/reload has not completed. The earlier FP32 attempt failed during EMA construction.",
+      "reason": "The first BF16 attempt completed four full-weight optimizer updates, a complete checkpoint and export, then failed fresh-process reload with invalid sampler. Exact native job FAILED and artifacts were preserved. The repaired inference-settings candidate is not yet qualified.",
       "evidence": [
-        "One H100 passed real CUDA vector addition and 120-second stability checks; this is hardware evidence only."
+        "One H100 passed real CUDA vector addition and 120-second stability checks; this is hardware evidence only.",
+        "Four observed GPU losses were finite: 1.0902739763259888, 1.3282651901245117, 1.4303573369979858, 1.0236011743545532.",
+        "Trunk and robot-head learning rates were positive in updates 2 through 4.",
+        "25 remote artifact objects preserved including model/optimizer checkpoint shards, export and reload assertion logs.",
+        "Pinned native PolicyConfig.validate_inference now runs in CPU compatibility tests."
       ]
     }
   }

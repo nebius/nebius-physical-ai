@@ -315,6 +315,19 @@ fresh disk there can prevent apt's unprivileged verification process from
 creating temporary files during SkyPilot setup. Keep failed artifacts until
 their object-storage copies have been checked.
 
+The first BF16 cloud attempt completed all four optimizer updates, a complete
+native checkpoint and the model export. Its fresh evaluator rejected the
+export because native training leaves sampler settings unset. The exact job
+terminated `FAILED`; its checkpoint, export and failure logs were preserved
+in object storage. This partial run does not qualify the workflow.
+
+Recipes now carry explicit `inference` settings into the exported policy.
+The ALOHA qualification recipe uses Euler sampling, four denoising steps,
+shift 1, guidance 1 on video and actions, and seed 0. These are diagnostic
+settings, not a benchmarked ALOHA preset. Override them for policy evaluation.
+Native CPU checks validate both training and inference configurations before
+GPU submission.
+
 An EMA export requires its corresponding value in `training.ema_sigma_rels`.
 Supported values are `0.1` and `0.05`; an empty list requires `export_profile`
 to be `model`. `training.param_dtype` accepts `float32` or `bfloat16`.
