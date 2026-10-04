@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -16,8 +17,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
-from urllib.parse import urlsplit
-import urllib.request
+from urllib.parse import SplitResult, urlsplit
 import venv
 import zipfile
 
@@ -28,20 +28,39 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _download_https(url: SplitResult) -> bytes:
+    """Read one validated HTTPS origin without following redirects."""
+    connection = http.client.HTTPSConnection(url.hostname)
+    try:
+        target = url.path or "/"
+        if url.query:
+            target += "?" + url.query
+        connection.request("GET", target)
+        with connection.getresponse() as response:
+            if response.status != 200:
+                raise ValueError("Build-input HTTPS response is not 200")
+            return response.read()
+    finally:
+        connection.close()
+
+
 def fetch(row: dict[str, str], directory: Path) -> Path:
     """Only pinned public build inputs; reject mismatches before use."""
     url = urlsplit(row["url"])
-    if url.scheme != "https" or url.hostname not in {
-        "files.pythonhosted.org",
-        "codeload.github.com",
-    }:
+    if (
+        url.scheme != "https"
+        or url.hostname not in {"files.pythonhosted.org", "codeload.github.com"}
+        or url.username is not None
+        or url.password is not None
+        or url.port not in (None, 443)
+        or url.fragment
+    ):
         raise ValueError("Unexpected public build-input origin")
     name = row["filename"]
     if Path(name).name != name or name in {"", ".", ".."}:
         raise ValueError("Invalid build-input filename")
     target = directory / name
-    with urllib.request.urlopen(row["url"]) as response:
-        data = response.read()
+    data = _download_https(url)
     if digest(data) != row["sha256"]:
         raise ValueError(f"Build-input digest mismatch: {name}")
     with target.open("xb") as stream:
