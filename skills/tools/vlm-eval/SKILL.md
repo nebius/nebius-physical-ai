@@ -107,8 +107,19 @@ a valid legacy file when the canonical file is absent, but cannot establish
 that a new producer invocation succeeded. Present malformed/ineligible canonical
 reports remain authoritative and fail closed, without favorable legacy fallback.
 
-The `self-hosted` backend preserves its legacy compatibility parser: it can
-extract embedded JSON, accept duplicate keys and coerced types, and clamp scores.
+The `self-hosted` backend preserves legacy JSON framing, including embedded
+objects and duplicate keys, while requiring literal boolean `success`, a finite
+numeric `score` in [0, 1], and a nonempty string `rationale`. Invalid verdict
+fields fail without coercion or clamping. Its parser version is
+`npa_vlm_eval_compatible_json_v2`, with the framing suffix when applicable.
+Retained self-hosted reports tagged `npa_vlm_eval_compatible_json_v1` (including
+its framing suffix) no longer satisfy the current promotion parser contract,
+even if their content has valid literal fields. The gate returns `loop_back`
+with `provider_metadata_mismatch`; this can mean a superseded parser, not
+tampering. Preserve the old artifact and obtain a new evaluated report when
+promotion is needed; never edit its parser tag to simulate new execution.
+Malformed score/type/success verdicts also abort the whole loop/sweep; no score
+is manufactured. Correct the serving output contract before a new evaluation.
 Completion evidence does not certify promotion eligibility. The operator
 provenance lane separately requires HTTP
 200, `finish_reason=stop`, expected served identity and verifiable framing.
@@ -134,10 +145,9 @@ artifact; CLI output is a bounded summary.
 `passed` and `status` come only from `score >= success_threshold`, using the
 serialized score rounded to four decimal places for every backend and override.
 The model's own `success` boolean is retained as `provider_success` when the
-response actually includes it, and `provider_success_matches_score_gate` exposes
-disagreement. If a self-hosted response omits that boolean, both fields stay
-null rather than presenting an inferred value as provider output. Legacy
-non-boolean values such as `"true"` also stay null in those provenance fields.
+response includes it, and `provider_success_matches_score_gate` exposes
+disagreement. Missing and non-boolean success values are rejected on both
+real backends. Stub and override provenance fields remain null.
 Never substitute the provider boolean for the score-derived gate.
 
 ## Scoring controls that actually change the verdict
