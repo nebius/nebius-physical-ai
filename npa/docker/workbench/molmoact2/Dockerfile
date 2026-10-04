@@ -8,7 +8,6 @@ ARG MOLMOACT2_REVISION=6070080a20321b4f498ab30f28e1d09ac465edb7
 LABEL org.opencontainers.image.source="https://github.com/allenai/molmoact2" \
       org.opencontainers.image.revision="${MOLMOACT2_REVISION}" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
       npa.solution="molmoact2-official-libero-byof" \
       npa.redistribution="unvalidated-private-byof"
 
@@ -81,6 +80,11 @@ RUN useradd --create-home --shell /bin/bash --uid 1000 ubuntu \
     && chmod 0440 /etc/sudoers.d/npa-runtime \
     && install -d -o ubuntu -g ubuntu /work /opt/cache \
     && chown -R ubuntu:ubuntu /opt/npa /opt/molmoact2 /usr/share/doc/molmoact2
+
+# This config-only instruction is deliberately last: it binds the immutable
+# private image manifest to the verified worker contract without invalidating
+# the large runtime layers that have already passed exact-byte inspection.
+LABEL org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 USER ubuntu
 WORKDIR /work
