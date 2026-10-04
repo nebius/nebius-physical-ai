@@ -276,14 +276,18 @@ def _load_raw_hfvla_metadata(
         raise ValueError("Raw HuggingFaceVLA input lacks LeRobot v2.1 metadata")
     info = json.loads(info_path.read_text(encoding="utf-8"))
     if info.get("codebase_version") != "v2.1":
-        raise ValueError("LingBot-VA preparation requires the pinned LeRobot v2.1 input")
+        raise ValueError(
+            "LingBot-VA preparation requires the pinned LeRobot v2.1 input"
+        )
     if info.get("fps") != LATENT_FPS:
         raise ValueError("HuggingFaceVLA LIBERO source must retain its 10 Hz cadence")
     features = info.get("features")
     if not isinstance(features, dict) or any(
         field not in features for field in (*RAW_CAMERA_FIELDS, "action")
     ):
-        raise ValueError("Raw HuggingFaceVLA input lacks its two image fields or 7D action")
+        raise ValueError(
+            "Raw HuggingFaceVLA input lacks its two image fields or 7D action"
+        )
     action = features["action"]
     if action.get("shape") != [7]:
         raise ValueError("Raw HuggingFaceVLA LIBERO action must be exactly 7D")
@@ -296,11 +300,15 @@ def _load_raw_hfvla_metadata(
         )
     }
     if set(LIBERO_LONG_TASK_IDS).difference(tasks):
-        raise ValueError("Pinned HuggingFaceVLA metadata lacks the LIBERO-Long task IDs")
+        raise ValueError(
+            "Pinned HuggingFaceVLA metadata lacks the LIBERO-Long task IDs"
+        )
     if {
         task_id: tasks[task_id] for task_id in LIBERO_LONG_TASK_IDS
     } != LIBERO_LONG_TASKS:
-        raise ValueError("Pinned LIBERO-Long task labels do not match the reviewed source")
+        raise ValueError(
+            "Pinned LIBERO-Long task labels do not match the reviewed source"
+        )
     task_id_by_text = {text: task_id for task_id, text in tasks.items()}
     selected: list[dict[str, Any]] = []
     for line in episodes_path.read_text(encoding="utf-8").splitlines():
@@ -309,14 +317,21 @@ def _load_raw_hfvla_metadata(
         record = json.loads(line)
         labels = record.get("tasks")
         if not isinstance(labels, list) or len(labels) != 1:
-            raise ValueError("Every raw LIBERO episode must have one authoritative task label")
+            raise ValueError(
+                "Every raw LIBERO episode must have one authoritative task label"
+            )
         task_id = task_id_by_text.get(labels[0])
         if task_id in LIBERO_LONG_TASK_IDS:
-            if type(record.get("episode_index")) is not int or record.get("length", 0) <= 0:
+            if (
+                type(record.get("episode_index")) is not int
+                or record.get("length", 0) <= 0
+            ):
                 raise ValueError("Raw LIBERO episode has invalid index or length")
             selected.append({**record, "task_index": task_id})
     if len(selected) < 20:
-        raise ValueError("Pinned LIBERO source contains too few actual LIBERO-Long episodes")
+        raise ValueError(
+            "Pinned LIBERO source contains too few actual LIBERO-Long episodes"
+        )
     return info, sorted(selected, key=lambda record: record["episode_index"]), tasks
 
 
@@ -360,7 +375,9 @@ def _split_long_episodes(
     train: list[dict[str, Any]] = []
     heldout: list[dict[str, Any]] = []
     for task_id in LIBERO_LONG_TASK_IDS:
-        task_records = sorted(by_task[task_id], key=lambda record: record["episode_index"])
+        task_records = sorted(
+            by_task[task_id], key=lambda record: record["episode_index"]
+        )
         heldout_count = max(1, round(len(task_records) * heldout_fraction))
         if heldout_count >= len(task_records):
             raise ValueError(f"LIBERO-Long task {task_id} needs at least two episodes")
@@ -417,10 +434,14 @@ def _stage_raw_long_dataset(
         "meta/episodes.jsonl",
         "meta/episodes_stats.jsonl",
     ):
-        _download_file(_uri_join(source_uri, relative_path), destination / relative_path)
+        _download_file(
+            _uri_join(source_uri, relative_path), destination / relative_path
+        )
     for record in records:
         relative_path = _raw_episode_relative_path(record, chunk_size)
-        _download_file(_uri_join(source_uri, relative_path), destination / relative_path)
+        _download_file(
+            _uri_join(source_uri, relative_path), destination / relative_path
+        )
 
 
 def _raw_action_quantiles(
@@ -432,10 +453,14 @@ def _raw_action_quantiles(
 
     actions: list[Any] = []
     for record in records:
-        table = pq.read_table(root / _raw_episode_relative_path(record, chunk_size), columns=["action"])
+        table = pq.read_table(
+            root / _raw_episode_relative_path(record, chunk_size), columns=["action"]
+        )
         values = np.asarray(table.column("action").to_pylist(), dtype=np.float32)
         if values.ndim != 2 or values.shape[1] != 7 or not np.isfinite(values).all():
-            raise ValueError("Raw LIBERO parquet has non-finite or non-7D action values")
+            raise ValueError(
+                "Raw LIBERO parquet has non-finite or non-7D action values"
+            )
         actions.append(values)
     merged = np.concatenate(actions, axis=0)
     q01, q99 = np.quantile(merged, [0.01, 0.99], axis=0)
@@ -521,7 +546,9 @@ def _write_processed_metadata(
         for record in records
     ]
     (destination / "meta" / "episodes.jsonl").write_text(
-        "".join(json.dumps(record, sort_keys=True) + "\n" for record in prepared_records),
+        "".join(
+            json.dumps(record, sort_keys=True) + "\n" for record in prepared_records
+        ),
         encoding="utf-8",
     )
     source_stats = raw_root / "meta" / "episodes_stats.jsonl"
@@ -535,7 +562,9 @@ def _write_processed_metadata(
             json.dumps(
                 {
                     **json.loads(line),
-                    "episode_index": derived_by_source[json.loads(line)["episode_index"]],
+                    "episode_index": derived_by_source[
+                        json.loads(line)["episode_index"]
+                    ],
                 },
                 sort_keys=True,
             )
@@ -565,9 +594,15 @@ def _read_raw_episode_images(
         for item in table.column(raw_key).to_pylist():
             encoded = item.get("bytes") if isinstance(item, dict) else None
             if not isinstance(encoded, bytes):
-                raise ValueError(f"Raw LIBERO {raw_key} frame has no embedded image bytes")
+                raise ValueError(
+                    f"Raw LIBERO {raw_key} frame has no embedded image bytes"
+                )
             with Image.open(BytesIO(encoded)) as image:
-                decoded.append(np.asarray(image.convert("RGB").resize((LATENT_WIDTH, LATENT_HEIGHT))))
+                decoded.append(
+                    np.asarray(
+                        image.convert("RGB").resize((LATENT_WIDTH, LATENT_HEIGHT))
+                    )
+                )
         if len(decoded) != record["length"]:
             raise ValueError(f"Raw LIBERO {raw_key} length does not match metadata")
         images[camera] = decoded
@@ -607,7 +642,9 @@ def _provenance() -> dict[str, Any]:
     }
 
 
-def _encode_text_embedding(tokenizer: Any, text_encoder: Any, text: str, device: Any) -> Any:
+def _encode_text_embedding(
+    tokenizer: Any, text_encoder: Any, text: str, device: Any
+) -> Any:
     """Use the native Wan tokenizer/text encoder convention for one action label."""
     import torch
     from diffusers.pipelines.wan.pipeline_wan import prompt_clean
@@ -628,7 +665,10 @@ def _encode_text_embedding(tokenizer: Any, text_encoder: Any, text: str, device:
     ).last_hidden_state
     trimmed = hidden[0, : sequence_length[0]].to(dtype=torch.bfloat16)
     return torch.cat(
-        [trimmed, trimmed.new_zeros(max_sequence_length - trimmed.shape[0], trimmed.shape[1])]
+        [
+            trimmed,
+            trimmed.new_zeros(max_sequence_length - trimmed.shape[0], trimmed.shape[1]),
+        ]
     ).cpu()
 
 
@@ -669,8 +709,12 @@ def _encode_video_latent(
     encoded = streaming_vae.encode_chunk(video)
     streaming_vae.clear_cache()
     mean, _ = torch.chunk(encoded, 2, dim=1)
-    latent_mean = torch.as_tensor(vae.config.latents_mean, device=device).view(1, -1, 1, 1, 1)
-    latent_std = torch.as_tensor(vae.config.latents_std, device=device).view(1, -1, 1, 1, 1)
+    latent_mean = torch.as_tensor(vae.config.latents_mean, device=device).view(
+        1, -1, 1, 1, 1
+    )
+    latent_std = torch.as_tensor(vae.config.latents_std, device=device).view(
+        1, -1, 1, 1, 1
+    )
     normalized = (mean.float() - latent_mean) * latent_std.reciprocal()
     latent_num_frames, latent_height, latent_width = normalized.shape[-3:]
     flattened = normalized[0].permute(1, 2, 3, 0).reshape(-1, normalized.shape[1])
@@ -691,7 +735,12 @@ def _materialize_native_latents(
     if not torch.cuda.is_available():
         raise RuntimeError("Fresh Wan2.2 latent preparation requires a CUDA GPU")
     _enable_upstream()
-    from wan_va.modules.utils import WanVAEStreamingWrapper, load_text_encoder, load_tokenizer, load_vae
+    from wan_va.modules.utils import (
+        WanVAEStreamingWrapper,
+        load_text_encoder,
+        load_tokenizer,
+        load_vae,
+    )
 
     device = torch.device("cuda")
     vae = load_vae(str(model_dir / "vae"), torch.bfloat16, device).eval()
@@ -722,8 +771,8 @@ def _materialize_native_latents(
                     / f"episode_{episode_index:06d}.mp4"
                 )
                 _write_video(video_path, frames)
-                latent, latent_num_frames, latent_height, latent_width = _encode_video_latent(
-                    streaming_vae, vae, frames, device
+                latent, latent_num_frames, latent_height, latent_width = (
+                    _encode_video_latent(streaming_vae, vae, frames, device)
                 )
                 latent_path = (
                     dataset
@@ -777,8 +826,14 @@ def prepare(
         work = Path(temporary)
         source_receipt = _load_raw_source_manifest(source_uri, work / "source-receipt")
         metadata = work / "metadata"
-        for relative_path in ("meta/info.json", "meta/tasks.jsonl", "meta/episodes.jsonl"):
-            _download_file(_uri_join(source_uri, relative_path), metadata / relative_path)
+        for relative_path in (
+            "meta/info.json",
+            "meta/tasks.jsonl",
+            "meta/episodes.jsonl",
+        ):
+            _download_file(
+                _uri_join(source_uri, relative_path), metadata / relative_path
+            )
         info, raw_records, tasks = _load_raw_hfvla_metadata(metadata)
         records = _derive_records(raw_records)
         chunk_size = info.get("chunks_size")
@@ -818,8 +873,12 @@ def prepare(
                 }
                 for record in records
             ],
-            "train_episode_indices": [record["episode_index"] for record in train_records],
-            "heldout_episode_indices": [record["episode_index"] for record in heldout_records],
+            "train_episode_indices": [
+                record["episode_index"] for record in train_records
+            ],
+            "heldout_episode_indices": [
+                record["episode_index"] for record in heldout_records
+            ],
             "attention": {
                 "training": TRAINING_ATTENTION,
                 "inference": INFERENCE_ATTENTION,
@@ -849,7 +908,11 @@ def _snapshot_base_checkpoint(destination: Path) -> Path:
     """Fetch the public pinned base checkpoint only in the private job runtime."""
     from huggingface_hub import snapshot_download
 
-    return Path(snapshot_download(BASE_MODEL_ID, revision=BASE_MODEL_REF, local_dir=str(destination)))
+    return Path(
+        snapshot_download(
+            BASE_MODEL_ID, revision=BASE_MODEL_REF, local_dir=str(destination)
+        )
+    )
 
 
 def _snapshot_checkpoint(destination: Path) -> Path:
@@ -948,7 +1011,9 @@ def _assert_upstream_config(
     }
     _assert_action_contract(applied)
     if applied != action_contract:
-        raise ValueError("Native LingBot configuration did not retain prepared action statistics")
+        raise ValueError(
+            "Native LingBot configuration did not retain prepared action statistics"
+        )
     if attention == TRAINING_ATTENTION and config.num_steps != UPSTREAM_TRAIN_STEPS:
         raise ValueError(
             "The LingBot-VA LIBERO recipe must retain upstream 5000 training steps"
@@ -1273,7 +1338,9 @@ def visualize(
     """
     run_id = os.environ.get("NPA_WORKFLOW_RUN_ID", "").strip()
     if not run_id:
-        raise RuntimeError("Visualization requires the workflow-scoped NPA_WORKFLOW_RUN_ID")
+        raise RuntimeError(
+            "Visualization requires the workflow-scoped NPA_WORKFLOW_RUN_ID"
+        )
     with tempfile.TemporaryDirectory(prefix="npa-lingbot-va-viz-") as temporary:
         work = Path(temporary)
         rollout_manifest = _read_json(rollout_uri, work / "rollout.json")

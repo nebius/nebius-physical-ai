@@ -145,8 +145,7 @@ def test_prepare_selects_cc_by_raw_long_data_and_reindexes_sparse_episodes(
         persisted["heldout_episode_indices"]
     )
     assert sorted(
-        entry["prepared_episode_index"]
-        for entry in persisted["source_episode_mapping"]
+        entry["prepared_episode_index"] for entry in persisted["source_episode_mapping"]
     ) == list(range(20))
     assert [
         entry["source_episode_index"] for entry in persisted["source_episode_mapping"]
@@ -157,7 +156,9 @@ def test_prepare_selects_cc_by_raw_long_data_and_reindexes_sparse_episodes(
     assert (prepared_dataset / "videos/chunk-000" / L.CAMERAS[0]).is_dir()
 
 
-def test_workflow_is_five_connected_native_stages_with_exact_artifact_handoffs() -> None:
+def test_workflow_is_five_connected_native_stages_with_exact_artifact_handoffs() -> (
+    None
+):
     spec = load_spec(WORKFLOW)
     validate_spec(spec)
     plan = build_plan(spec, run_id="lingbot-va-contract")
@@ -182,7 +183,10 @@ def test_workflow_is_five_connected_native_stages_with_exact_artifact_handoffs()
         "{{config.prepared_uri}}",
     ]
     assert "--prepared-dataset-uri" in prepare["run"]["argv"]
-    assert prepare["outputs"][0]["schema"] == "npa.lingbot_va.lerobot_wan_latent_dataset.v1"
+    assert (
+        prepare["outputs"][0]["schema"]
+        == "npa.lingbot_va.lerobot_wan_latent_dataset.v1"
+    )
     for state in payload["states"].values():
         argv = state["run"]["argv"]
         assert argv[:5] == [
@@ -212,7 +216,9 @@ def test_workflow_is_five_connected_native_stages_with_exact_artifact_handoffs()
     )
 
 
-def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_acceptance() -> None:
+def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_acceptance() -> (
+    None
+):
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     requirements = DOCKERFILE.parent.joinpath("runtime-requirements.txt").read_text(
         encoding="utf-8"
