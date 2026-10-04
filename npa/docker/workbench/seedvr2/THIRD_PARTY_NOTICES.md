@@ -75,8 +75,19 @@ repository's hash-pinned `common/secure_pip` builder. It is not an upstream pip
 release. The upstream MIT grant, complete vendored notices, actual vendor list
 and BOM, and `pip/NPA_VENDOR_REPAIR.json` are retained in the wheel and installed
 service environment. The pkg_resources donor's exact setuptools grant is also
-retained as `pip/_vendor/pkg_resources/LICENSE.setuptools`. The fixed
-setuptools 80.9.0 seed wheel retains its original complete distribution notices.
+retained as `pip/_vendor/pkg_resources/LICENSE.setuptools`; that limited donor
+remains setuptools 80.9.0. The separate full setuptools 84.0.0 bootstrap seed
+wheel retains its original complete distribution notices.
 The final image's exact derivative wheel hash and source/build inputs are in
 `/usr/share/doc/npa-seedvr2/secure-pip-build.json`. No model payload or scientific
 dependency is replaced by this bootstrap repair.
+
+## PyArrow and bundled whereami notices
+
+The service environment pins `pyarrow==25.0.1`. Its complete Apache-2.0 and
+bundled third-party grants remain in
+`pyarrow-25.0.1.dist-info/licenses/LICENSE.txt`. The
+[exact Apache Arrow source license](https://github.com/apache/arrow/blob/beccec0d0c451b7aa3e4530416ac431b3c035c69/LICENSE.txt)
+identifies the vendored `whereami` component as dual licensed under MIT and
+WTFPLv2 and includes the full MIT grant. Preserve both notices. This provenance
+does not suppress raw license findings or establish supported-image acceptance.
