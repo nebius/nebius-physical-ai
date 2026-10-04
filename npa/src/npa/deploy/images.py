@@ -190,6 +190,8 @@ CONTAINER_IMAGE_NAMES = {
     "wan2-2": "npa-wan2-2",
     "diffusers": "npa-diffusers",
     "lingbot-world": "npa-lingbot-world",
+    # This is an operator-private candidate name, not a public image release.
+    "lingbot-world-switchworld-private": "switchworld-lingbot-private",
     "sam2": "npa-sam2",
     "sam3": "npa-sam3",
     "ltx2": "npa-ltx2",
@@ -317,9 +319,12 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
-# The SwitchWorld private runtime has no public image or release tag.  Keep its
-# packaging-contract entry in this separate neutral state so public selection
-# and publication fail before any non-canonical image name could be resolved.
+# The SwitchWorld private runtime has no accepted public image or release tag.
+# Its neutral state blocks public releases and publication, while preserving a
+# source-addressed ``dev-<full-sha>`` *candidate reference* for the generic
+# operator-validation path.  Resolving that string never asserts that bytes
+# exist in a public registry; callers still need an explicit private immutable
+# image before workload submission.
 NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset(
     {"lingbot-world-switchworld-private"}
 )
@@ -2424,6 +2429,24 @@ def container_image_for_tool(
     public_unbuilt_planning_ref = (
         public_registry and tag is None and tool in UNBUILT_CANDIDATE_TOOL_VERSIONS
     )
+    neutral_candidate_reference = (
+        tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+        and re.fullmatch(r"dev-[0-9a-f]{40}", tag or "") is not None
+    )
+    if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS and public_registry:
+        if tag is None:
+            raise ValueError(
+                f"{tool!r} has no accepted public release and remains quarantined; "
+                "supply an immutable operator-private image for execution or an "
+                "explicit dev-<full-source-sha> candidate reference for validation."
+            )
+        if not neutral_candidate_reference:
+            raise ValueError(
+                f"{tool!r} public release metadata is quarantined, so public tag "
+                f"{tag!r} cannot be consumed. Only an explicit "
+                "dev-<full-source-sha> candidate reference is permitted for "
+                "validation; execution requires an immutable operator-private image."
+            )
     if (
         tool == "robomimic"
         and tool in PUBLICATION_QUARANTINE_TOOLS
@@ -2454,7 +2477,11 @@ def container_image_for_tool(
             "image after its source/delivery gates pass; see "
             "docs/workbench/byof-habitat-sim.md."
         )
-    if not is_publicly_redistributable(tool) and public_registry:
+    if (
+        not is_publicly_redistributable(tool)
+        and public_registry
+        and not neutral_candidate_reference
+    ):
         raise ValueError(
             f"{tool!r} is not publicly redistributable and is never distributed from a "
             f"public registry, so {resolved_registry!r} cannot serve it. Build it into "
