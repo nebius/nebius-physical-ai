@@ -177,6 +177,11 @@ USER ubuntu
 USER root
 RUN install -d -m 0755 /usr/share/doc/npa
 COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/notices/NOTICE-FASTWAM /usr/share/doc/npa/NOTICE-FASTWAM
+# ``pyproject.toml`` declares this custom Hatch build hook.  Keep it with the
+# otherwise-minimal NPA source projection so SkyPilot can install that project
+# before applying a staged source overlay.  This late copy deliberately avoids
+# invalidating the preceding CUDA/LeRobot dependency layers.
+COPY --chown=ubuntu:ubuntu src/npa/workflow_build.py /opt/npa/src/npa/workflow_build.py
 USER ubuntu
 
 LABEL org.opencontainers.image.source="https://github.com/huggingface/lerobot" \

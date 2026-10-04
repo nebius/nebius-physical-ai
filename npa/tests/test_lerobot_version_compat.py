@@ -107,6 +107,10 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
         in dockerfile
     )
     assert "python -m npa.smoke.test_lerobot_env" in dockerfile
+    # The image ships a minimal installable NPA project.  Its pyproject custom
+    # Hatch hook must be present before the worker's editable install can apply
+    # the staged FastWAM source overlay.
+    assert "src/npa/workflow_build.py /opt/npa/src/npa/workflow_build.py" in dockerfile
     assert "DiffusionPolicy(config)" in smoke
     assert "FastWAMConfig()" in smoke
     assert "NOTICE-FASTWAM" in dockerfile
