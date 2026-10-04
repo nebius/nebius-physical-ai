@@ -1,0 +1,37 @@
+{
+  "schema": "npa.sanitized-vlm-disclosure-current-source-bridge/v1",
+  "candidate": {
+    "head": "d1cd2241c648ba63dbeb942b58c1fae11fdcc103",
+    "tree": "bd0692f12dc9cc1c20d574211dea7acfb849287c",
+    "main_parent": "4603e7e1d8ffede505161448fe92368e7c6bda45",
+    "main44_proof_head": "01b2b68bec1f97bc939c9e9ebc29613791442c63"
+  },
+  "completed_protocol": {
+    "execution_head": "961a6199f03fc8efa4141c862b564a273b19768b",
+    "private_result_sha256": "b1d017ad6b4b5f1e98d30d8808ff20343e905460ebbbec2eadcf4f722012569f",
+    "sanitized_observation_sha256": "786872d5b5b3a1c8404e7aa3fc530e0d6e610f3b75dbae977fd3dafeb23c24d8",
+    "provider_transports": 12,
+    "manual_retries": 0,
+    "provider_calls_in_current_bridge": 0
+  },
+  "current_source": {
+    "vlm_eval_sha256": "fc1544cc6d2546db8f79bde5bb68daf30840cd67599e99e9b1b21615be8c5853",
+    "vlm_eval_cli_sha256": "a4a6e88f14c8d4b6d9992553ba78aa9839e4b010c6891f19e454b4222754d64f",
+    "vlm_eval_sdk_sha256": "35e7c0bd637299894bb7641e29d771fe51f2a9dcc25677c4a0b6c2c494254d3f",
+    "unchanged_scalar_paired_protocol_ast_symbols": 17,
+    "caption_client_cli_sdk_equal_main44": 4,
+    "main460_affected_controls": {"tests": 561, "failures": 0, "errors": 0, "skipped": 1},
+    "affected_controls_junit_sha256": "701aca4bffe16966bfc97520f4527c0d9542fd37d90206622ae3aabd482243b4",
+    "retained_response_replay_sha256": "46cc32077f94a82d4a2f913e6575c1eff48fcc251ab8d93482afdadd76a0da1b",
+    "network_connects_in_replay": 0
+  },
+  "retained_outcomes": {
+    "scalar_scores": {"1.0": 2, "0.0": 4},
+    "paired": {"inside": "judges_agree_passed", "outside": "judges_agree_needs_iteration", "blank": "judges_agree_needs_iteration"}
+  },
+  "limitations": [
+    "Main460 changes agency and benchmark input, two-class, ranking, and metrics-constructor behavior. This bridge does not claim whole-evaluator equality or a new provider execution.",
+    "The original fixed scalar and paired request/frame/model/parser protocol symbols remain unchanged and the retained private responses re-parse under current source. This is source continuity only, not calibration, quality, physics, safety, or final-head proof.",
+    "The pending E005 adjacent fixtures, final runner/full, publication, anonymous byte verification, and current-head CI remain separate requirements."
+  ]
+}

@@ -117,6 +117,40 @@ BENCHMARK_DATASET_ALIASES = {
 }
 SUPPORTED_BACKENDS = ("self-hosted", "api", "stub")
 SUPPORTED_FRAME_SELECTIONS = ("final", "keyframes", "sequence")
+_DIRECT_RESULT_LIMITATIONS = (
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    "A score from one model, rubric, threshold, and frame sample does not "
+    "establish physical correctness or safety.",
+)
+_DIRECT_NO_CALL_LIMITATION = (
+    "This score is a stub or caller-supplied dry-validation input; no VLM call "
+    "occurred, so it is not model or policy evidence."
+)
+_LOOP_REPORT_LIMITATIONS = (
+    "task_success is a mean-score gate, not a per-rollout success rate.",
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    "The visual gate does not establish physical correctness or safety.",
+)
+_LOOP_STUB_LIMITATION = (
+    "Stub scores are wiring inputs; no VLM call occurred, so they are not model "
+    "or policy evidence."
+)
+_BENCHMARK_REPORT_LIMITATIONS = (
+    "Expected labels are caller-supplied; the manifest does not establish their "
+    "independent-human provenance.",
+    "Accuracy, agreement, precision, recall, F1, and TP/TN/FP/FN describe only "
+    "this caller-labeled dataset and do not establish generalization, physical "
+    "correctness, safety, or an operational error rate.",
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+)
+_BENCHMARK_FIXTURE_LIMITATION = (
+    "Cases with score_source 'fixture' use caller-provided dry-validation inputs; "
+    "those cases are not VLM or policy evidence."
+)
+_BENCHMARK_STUB_LIMITATION = (
+    "Cases with score_source 'stub' use deterministic wiring scores; no VLM call "
+    "occurred for those cases, so they are not model or policy evidence."
+)
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".ppm", ".webp"}
 VIDEO_SUFFIXES = {".avi", ".mov", ".mp4", ".mpeg", ".mpg", ".webm"}
 
@@ -265,6 +299,9 @@ class VlmEvalResult:
     provider_success: bool | None = None
     provider_success_matches_score_gate: bool | None = None
     served_model_match_enforced: bool = False
+    independent_human_label_calibration_established: bool = False
+    limitations: tuple[str, ...] = _DIRECT_RESULT_LIMITATIONS
+    provider_call_made: bool = False
 
 
 @dataclass(frozen=True)
@@ -626,6 +663,8 @@ class VlmBenchmarkReport:
     best_config: VlmBenchmarkConfigResult
     ranked_configs: list[VlmBenchmarkConfigResult]
     schema_version: str = LEGACY_BENCHMARK_REPORT_SCHEMA_VERSION
+    independent_human_label_calibration_established: bool = False
+    limitations: tuple[str, ...] = _BENCHMARK_REPORT_LIMITATIONS
 
 
 __all__ = [
@@ -791,8 +830,25 @@ def benchmark_vlm_eval(
         sweep=sweep,
         best_config=ranked[0],
         ranked_configs=ranked,
+        limitations=_benchmark_report_limitations(ranked),
         schema_version=BENCHMARK_REPORT_SCHEMA_VERSION,
     )
+
+
+def _benchmark_report_limitations(
+    ranked: Sequence[VlmBenchmarkConfigResult],
+) -> tuple[str, ...]:
+    """Return report caveats for the score sources that actually occurred."""
+
+    score_sources = {
+        case.score_source for config_result in ranked for case in config_result.results
+    }
+    limitations = list(_BENCHMARK_REPORT_LIMITATIONS)
+    if "fixture" in score_sources:
+        limitations.append(_BENCHMARK_FIXTURE_LIMITATION)
+    if "stub" in score_sources:
+        limitations.append(_BENCHMARK_STUB_LIMITATION)
+    return tuple(limitations)
 
 
 def load_benchmark_dataset(
@@ -1082,6 +1138,7 @@ def evaluate_vlm(
         frame_count=frame_count,
         rubric=effective_rubric,
         structured=structured,
+        provider_call_made=score is None,
     )
 
 
@@ -1503,6 +1560,7 @@ def _comparison_success_outcome(
         frame_selection=context.frame_selection,
         frame_count=len(context.frames),
         structured=structured,
+        provider_call_made=True,
     )
     result = replace(
         result,
@@ -1689,6 +1747,7 @@ def evaluate_stub(
         frame_count=0,
         rationale="Deterministic compatibility score.",
         rubric=rubric,
+        limitations=_direct_result_limitations(provider_call_made=False),
     )
 
 
@@ -2013,6 +2072,7 @@ def evaluate_rollout_set(
         frame_selection=_normalize_frame_selection(frame_selection),
         success_threshold=success_threshold,
         output_dir=output_path,
+        backend=_normalize_backend(backend),
     )
     report["latency_s"] = round(time.monotonic() - started_at, 3)
     report["report_uri"] = write_result(
@@ -2030,6 +2090,7 @@ def aggregate_loop_report(
     frame_selection: str,
     success_threshold: float,
     output_dir: str,
+    backend: str = "",
 ) -> dict[str, Any]:
     """Aggregate per-rollout results exactly as the retired template's `jq -s` did."""
 
@@ -2048,8 +2109,19 @@ def aggregate_loop_report(
         "mean_score": mean_score,
         # The coarse gate is the MEAN score, not the pass rate — same as the template.
         "task_success": mean_score >= success_threshold,
+        "independent_human_label_calibration_established": False,
+        "limitations": _loop_report_limitations(backend),
         "rollouts": [asdict(rollout) for rollout in rollouts],
     }
+
+
+def _loop_report_limitations(backend: str) -> list[str]:
+    """Return a fresh limitations list for one aggregate report."""
+
+    limitations = list(_LOOP_REPORT_LIMITATIONS)
+    if backend == "stub":
+        limitations.append(_LOOP_STUB_LIMITATION)
+    return limitations
 
 
 def _rollout_id_for(rollout_uri: str) -> str:
@@ -2187,6 +2259,7 @@ def _result_from_structured(
     frame_count: int,
     rubric: str,
     structured: VlmStructuredResponse,
+    provider_call_made: bool,
 ) -> VlmEvalResult:
     score = round(structured.score, 4)
     passed = score >= success_threshold
@@ -2217,7 +2290,17 @@ def _result_from_structured(
         provider_success=provider_success,
         provider_success_matches_score_gate=provider_success_matches_score_gate,
         evidence=structured.evidence,
+        limitations=_direct_result_limitations(provider_call_made=provider_call_made),
+        provider_call_made=provider_call_made,
     )
+
+
+def _direct_result_limitations(*, provider_call_made: bool) -> tuple[str, ...]:
+    """Return immutable limitations for a direct result's evidence source."""
+
+    if provider_call_made:
+        return _DIRECT_RESULT_LIMITATIONS
+    return (*_DIRECT_RESULT_LIMITATIONS, _DIRECT_NO_CALL_LIMITATION)
 
 
 def _run_benchmark_case(
