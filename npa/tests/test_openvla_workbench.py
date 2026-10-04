@@ -192,6 +192,7 @@ def test_neutral_image_preserves_nonroot_access_to_its_notices() -> None:
         in dockerfile
     )
     assert "USER 1000:1000" in dockerfile
+    assert 'CMD ["sleep", "infinity"]' in dockerfile
 
 
 def test_workflow_resources_declare_the_skypilot_task_container() -> None:

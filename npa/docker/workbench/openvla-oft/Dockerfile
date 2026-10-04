@@ -73,4 +73,7 @@ WORKDIR /workspace
 # prove the SkyPilot task container is not root before starting it.
 USER 1000:1000
 ENTRYPOINT ["python3", "/opt/npa/openvla-oft/entrypoint.py"]
-CMD ["python3", "--version"]
+# SkyPilot must exec into the named ray-node container before it dispatches the
+# real stage command.  A version probe exits immediately and strands that
+# bootstrap; entrypoint.py forwards this persistent neutral command unchanged.
+CMD ["sleep", "infinity"]
