@@ -88,7 +88,9 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -120,11 +122,18 @@ def _dataset_contract(root: Path) -> tuple[int, dict[str, Any]]:
     info = _read_json(root / "meta" / "info.json")
     total = info.get("total_episodes")
     if not isinstance(total, int) or total < 2:
-        raise MolmoAct2PipelineError("LIBERO dataset must contain at least two episodes")
+        raise MolmoAct2PipelineError(
+            "LIBERO dataset must contain at least two episodes"
+        )
     features = info.get("features")
     if not isinstance(features, dict):
         raise MolmoAct2PipelineError("LIBERO meta/info.json has no feature contract")
-    required = {"action", "observation.state", "observation.images.image", "observation.images.wrist_image"}
+    required = {
+        "action",
+        "observation.state",
+        "observation.images.image",
+        "observation.images.wrist_image",
+    }
     missing = sorted(required.difference(features))
     if missing:
         raise MolmoAct2PipelineError(
@@ -133,12 +142,18 @@ def _dataset_contract(root: Path) -> tuple[int, dict[str, Any]]:
     return total, info
 
 
-def _deterministic_split(total: int, revision: str, heldout_fraction: float) -> tuple[list[int], list[int]]:
+def _deterministic_split(
+    total: int, revision: str, heldout_fraction: float
+) -> tuple[list[int], list[int]]:
     if not 0.0 < heldout_fraction < 1.0:
-        raise MolmoAct2PipelineError("heldout_fraction must be strictly between 0 and 1")
+        raise MolmoAct2PipelineError(
+            "heldout_fraction must be strictly between 0 and 1"
+        )
     ordered = sorted(
         range(total),
-        key=lambda episode: hashlib.sha256(f"{LIBERO_DATASET}@{revision}:{episode}".encode()).hexdigest(),
+        key=lambda episode: hashlib.sha256(
+            f"{LIBERO_DATASET}@{revision}:{episode}".encode()
+        ).hexdigest(),
     )
     count = max(1, min(total - 1, round(total * heldout_fraction)))
     return sorted(ordered[count:]), sorted(ordered[:count])
@@ -158,7 +173,9 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         local_dir=str(source),
     )
     total, info = _dataset_contract(source)
-    train, heldout = _deterministic_split(total, args.dataset_revision, args.heldout_fraction)
+    train, heldout = _deterministic_split(
+        total, args.dataset_revision, args.heldout_fraction
+    )
     split = {
         "schema": "npa.molmoact2.libero-episode-split.v1",
         "dataset": {"repo_id": LIBERO_DATASET, "revision": args.dataset_revision},
@@ -166,7 +183,10 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         "contracts": {
             "state_key": "observation.state",
             "action_key": "action",
-            "camera_keys": ["observation.images.image", "observation.images.wrist_image"],
+            "camera_keys": [
+                "observation.images.image",
+                "observation.images.wrist_image",
+            ],
             "normalize_gripper": False,
             "control_mode": "delta end-effector pose",
             "action_horizon": 10,
@@ -195,7 +215,10 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         "schema": "npa.molmoact2.libero-prepare.v1",
         "prepared_dataset_uri": args.prepared_dataset_uri.rstrip("/") + "/",
         "split": split,
-        "source_info": {"fps": info.get("fps"), "codebase_version": info.get("codebase_version")},
+        "source_info": {
+            "fps": info.get("fps"),
+            "codebase_version": info.get("codebase_version"),
+        },
     }
     report = work / "prepare.json"
     _write_json(report, manifest)
@@ -203,7 +226,9 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     return manifest
 
 
-def _download_prepared(prepared_uri: str, work: Path) -> tuple[Path, Path, dict[str, Any]]:
+def _download_prepared(
+    prepared_uri: str, work: Path
+) -> tuple[Path, Path, dict[str, Any]]:
     root = work / "prepared"
     _download(prepared_uri, root)
     train_root = root / "train"
@@ -212,7 +237,9 @@ def _download_prepared(prepared_uri: str, work: Path) -> tuple[Path, Path, dict[
     _dataset_contract(heldout_root)
     split = _read_json(root / "npa_episode_split.json")
     if split.get("dataset", {}).get("revision") != LIBERO_DATASET_REVISION:
-        raise MolmoAct2PipelineError("prepared dataset revision is not the pinned official LIBERO revision")
+        raise MolmoAct2PipelineError(
+            "prepared dataset revision is not the pinned official LIBERO revision"
+        )
     return train_root, heldout_root, split
 
 
@@ -224,14 +251,18 @@ def _latest_inference_checkpoint(root: Path) -> Path:
     if not candidates:
         candidates = sorted(root.glob("step*-unsharded"), key=lambda path: path.name)
     if not candidates:
-        raise MolmoAct2PipelineError("upstream trainer did not emit an inference checkpoint")
+        raise MolmoAct2PipelineError(
+            "upstream trainer did not emit an inference checkpoint"
+        )
     return candidates[-1]
 
 
 def finetune(args: argparse.Namespace) -> dict[str, Any]:
     """Invoke the pinned upstream trainer, retaining its actual checkpoint bytes."""
     work = Path(args.work_root).resolve() / "finetune"
-    data_root, _heldout_root, split = _download_prepared(args.prepared_dataset_uri, work)
+    data_root, _heldout_root, split = _download_prepared(
+        args.prepared_dataset_uri, work
+    )
     upstream = _upstream_root()
     output = work / "checkpoint"
     local_lerobot_root = work / "lerobot-data-root" / "allenai"
@@ -247,21 +278,32 @@ def finetune(args: argparse.Namespace) -> dict[str, Any]:
         }
     )
     command = [
-        "torchrun", "--standalone", "--nproc-per-node=1",
-        "launch_scripts/train_lerobot.py", BASE_CHECKPOINT, "libero",
+        "torchrun",
+        "--standalone",
+        "--nproc-per-node=1",
+        "launch_scripts/train_lerobot.py",
+        BASE_CHECKPOINT,
+        "libero",
         f"--save_folder={output}",
         # This is the upstream LoRA recipe: it causes the trainer's native
         # merged-checkpoint path to produce a complete inference artifact for
         # the downstream closed-loop evaluator.
-        "--packing=false", "--dynamic_seq_len=true", "--ft_vlm=true",
-        "--ft_action_expert=true", "--ft_embedding=lm_head",
-        "--lora_enable=true", "--lora_rank=64",
+        "--packing=false",
+        "--dynamic_seq_len=true",
+        "--ft_vlm=true",
+        "--ft_action_expert=true",
+        "--ft_embedding=lm_head",
+        "--lora_enable=true",
+        "--lora_rank=64",
     ]
     _run(command, cwd=upstream, env=environment)
     merged = _latest_inference_checkpoint(output)
     checkpoint_manifest = {
         "schema": "npa.molmoact2.libero-checkpoint.v1",
-        "base_checkpoint": {"repo_id": BASE_CHECKPOINT, "revision": BASE_CHECKPOINT_REVISION},
+        "base_checkpoint": {
+            "repo_id": BASE_CHECKPOINT,
+            "revision": BASE_CHECKPOINT_REVISION,
+        },
         "upstream": {
             "repository": UPSTREAM_REPOSITORY,
             "revision": UPSTREAM_REVISION,
@@ -279,13 +321,17 @@ def finetune(args: argparse.Namespace) -> dict[str, Any]:
     return checkpoint_manifest
 
 
-def _download_checkpoint(checkpoint_uri: str, work: Path) -> tuple[Path, dict[str, Any]]:
+def _download_checkpoint(
+    checkpoint_uri: str, work: Path
+) -> tuple[Path, dict[str, Any]]:
     checkpoint = work / "checkpoint"
     _download(checkpoint_uri, checkpoint)
     manifest = _read_json(checkpoint / "npa_checkpoint_manifest.json")
     merged = checkpoint / str(manifest.get("inference_checkpoint_relative_path", ""))
     if not merged.is_dir():
-        raise MolmoAct2PipelineError("checkpoint artifact has no merged MolmoAct2 inference checkpoint")
+        raise MolmoAct2PipelineError(
+            "checkpoint artifact has no merged MolmoAct2 inference checkpoint"
+        )
     return merged, manifest
 
 
@@ -301,21 +347,29 @@ def rollout(args: argparse.Namespace) -> dict[str, Any]:
         "lerobot-eval",
         "--policy.type=molmoact2",
         f"--policy.checkpoint_path={checkpoint}",
-        "--policy.device=cuda", "--policy.seq_len=2100",
-        "--policy.norm_tag=libero", "--policy.inference_action_mode=continuous",
-        "--policy.enable_inference_cuda_graph=true", "--env.type=libero",
-        f"--eval.n_episodes={args.n_episodes}", "--eval.batch_size=1",
+        "--policy.device=cuda",
+        "--policy.seq_len=2100",
+        "--policy.norm_tag=libero",
+        "--policy.inference_action_mode=continuous",
+        "--policy.enable_inference_cuda_graph=true",
+        "--env.type=libero",
+        f"--eval.n_episodes={args.n_episodes}",
+        "--eval.batch_size=1",
         f"--output_dir={output}",
     ]
     _run(command, cwd=upstream, env=environment)
     json_files = sorted(output.rglob("*.json"))
     videos = sorted(output.rglob("*.mp4"))
     if not json_files or not videos:
-        raise MolmoAct2PipelineError("closed-loop evaluator did not produce JSON metrics and MP4 evidence")
+        raise MolmoAct2PipelineError(
+            "closed-loop evaluator did not produce JSON metrics and MP4 evidence"
+        )
     report = {
         "schema": "npa.molmoact2.libero-rollout.v1",
         "checkpoint_uri": args.checkpoint_uri,
-        "checkpoint_manifest_sha256": _sha256(work / "checkpoint" / "npa_checkpoint_manifest.json"),
+        "checkpoint_manifest_sha256": _sha256(
+            work / "checkpoint" / "npa_checkpoint_manifest.json"
+        ),
         "evaluation_command": command,
         "json_reports": [str(path.relative_to(output)) for path in json_files],
         "mp4_reports": [str(path.relative_to(output)) for path in videos],
@@ -328,28 +382,40 @@ def rollout(args: argparse.Namespace) -> dict[str, Any]:
 def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     """Compute held-out action error through the upstream MolmoAct2 inference path."""
     work = Path(args.work_root).resolve() / "evaluate"
-    _train_root, heldout_root, split = _download_prepared(args.prepared_dataset_uri, work)
+    _train_root, heldout_root, split = _download_prepared(
+        args.prepared_dataset_uri, work
+    )
     checkpoint, checkpoint_manifest = _download_checkpoint(args.checkpoint_uri, work)
     rollout_root = work / "rollout"
     _download(args.rollout_uri, rollout_root)
     rollout = _read_json(rollout_root / "npa_rollout_manifest.json")
     heldout = split.get("heldout_episode_indices")
     if not isinstance(heldout, list) or not heldout:
-        raise MolmoAct2PipelineError("prepared split has no held-out episode for action evaluation")
+        raise MolmoAct2PipelineError(
+            "prepared split has no held-out episode for action evaluation"
+        )
     upstream = _upstream_root()
     output = work / "heldout-action"
     command = [
-        "python", "scripts/run_open_loop_inference_lerobot.py",
-        "--dataset", LIBERO_DATASET,
+        "python",
+        "scripts/run_open_loop_inference_lerobot.py",
+        "--dataset",
+        LIBERO_DATASET,
         f"--dataset_root={heldout_root}",
-        "--episode_idx=0", f"--checkpoint={checkpoint}",
-        f"--output_dir={output}", "--device=cuda", "--norm_tag=libero",
-        "--inference_action_mode=continuous", "--num_steps=10",
+        "--episode_idx=0",
+        f"--checkpoint={checkpoint}",
+        f"--output_dir={output}",
+        "--device=cuda",
+        "--norm_tag=libero",
+        "--inference_action_mode=continuous",
+        "--num_steps=10",
     ]
     _run(command, cwd=upstream, env=dict(os.environ))
     action = _read_json(output / "summary.json")
     if action.get("average_mse_raw") is None:
-        raise MolmoAct2PipelineError("upstream held-out evaluator emitted no raw action MSE")
+        raise MolmoAct2PipelineError(
+            "upstream held-out evaluator emitted no raw action MSE"
+        )
     result = {
         "schema": "npa.molmoact2.libero-evaluation.v1",
         "checkpoint_uri": args.checkpoint_uri,
@@ -383,20 +449,36 @@ def visualize(args: argparse.Namespace) -> dict[str, Any]:
     evaluation = _read_json(evaluation_root / "evaluation.json")
     videos = sorted(rollout_root.rglob("*.mp4"))
     if not videos:
-        raise MolmoAct2PipelineError("rollout artifact has no evaluator-produced MP4 to preserve")
+        raise MolmoAct2PipelineError(
+            "rollout artifact has no evaluator-produced MP4 to preserve"
+        )
     try:
         import rerun as rr
     except ImportError as exc:
-        raise MolmoAct2PipelineError("rerun is required to emit the factual recording") from exc
+        raise MolmoAct2PipelineError(
+            "rerun is required to emit the factual recording"
+        ) from exc
     artifact = work / "artifacts"
     artifact.mkdir(parents=True, exist_ok=True)
     rrd = artifact / "libero-evaluation.rrd"
-    rr.init("npa-molmoact2-libero", recording_id="npa-molmoact2-libero", default_enabled=True)
+    rr.init(
+        "npa-molmoact2-libero",
+        recording_id="npa-molmoact2-libero",
+        default_enabled=True,
+    )
     rr.save(str(rrd))
-    rr.log("provenance/upstream_revision", rr.TextDocument(UPSTREAM_REVISION, media_type="text/plain"))
-    rr.log("metrics/heldout_action", rr.Scalars({
-        "mse_raw": float(evaluation["action_metrics"]["average_mse_raw"]),
-    }))
+    rr.log(
+        "provenance/upstream_revision",
+        rr.TextDocument(UPSTREAM_REVISION, media_type="text/plain"),
+    )
+    rr.log(
+        "metrics/heldout_action",
+        rr.Scalars(
+            {
+                "mse_raw": float(evaluation["action_metrics"]["average_mse_raw"]),
+            }
+        ),
+    )
     rr.log("artifacts/rollout_video", rr.AssetVideo(path=str(videos[0])))
     rr.disconnect()
     video = artifact / videos[0].name
@@ -406,7 +488,10 @@ def visualize(args: argparse.Namespace) -> dict[str, Any]:
         "rrd": rrd.name,
         "mp4": video.name,
         "evaluation_sha256": _sha256(evaluation_root / "evaluation.json"),
-        "provenance": {"upstream_repository": UPSTREAM_REPOSITORY, "upstream_revision": UPSTREAM_REVISION},
+        "provenance": {
+            "upstream_repository": UPSTREAM_REPOSITORY,
+            "upstream_revision": UPSTREAM_REVISION,
+        },
     }
     _write_json(artifact / "visualization.json", result)
     _upload(artifact, args.artifact_uri)
@@ -443,7 +528,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    handlers = {"prepare": prepare, "finetune": finetune, "rollout": rollout, "evaluate": evaluate, "visualize": visualize}
+    handlers = {
+        "prepare": prepare,
+        "finetune": finetune,
+        "rollout": rollout,
+        "evaluate": evaluate,
+        "visualize": visualize,
+    }
     result = handlers[args.command](args)
     print(json.dumps(result, sort_keys=True))
     return 0
