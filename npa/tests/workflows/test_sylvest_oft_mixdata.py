@@ -227,7 +227,9 @@ def test_compare_and_report_emit_measured_artifacts(tmp_path: Path) -> None:
 def test_unlicensed_libero_plus_source_is_refused(tmp_path: Path) -> None:
     """Do not turn an upstream source-license gap into an NPA consent flag."""
 
-    with pytest.raises(workflow.SylvestComparisonError, match="no license file") as error:
+    with pytest.raises(
+        workflow.SylvestComparisonError, match="no license file"
+    ) as error:
         workflow._require_libero_plus_license(tmp_path)
     assert "asset-only compatibility" in str(error.value)
     assert "does not license this source" in str(error.value)
