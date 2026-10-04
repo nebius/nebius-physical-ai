@@ -478,9 +478,10 @@ def test_source_binding_requires_exact_clean_commit(private_root, monkeypatch):
 
 def test_workflow_exposes_only_digest_and_runs_reviewed_sources():
     workflow = ROOT.parent / ".github/workflows/private-image-qualification.yml"
-    value = yaml.load(workflow.read_text(), Loader=yaml.BaseLoader)
-    assert set(value["on"]) == {"workflow_dispatch"}
-    assert set(value["on"]["workflow_dispatch"]["inputs"]) == {"manifest_sha256"}
+    value = yaml.safe_load(workflow.read_text())
+    triggers = value.get("on", value.get(True))
+    assert set(triggers) == {"workflow_dispatch"}
+    assert set(triggers["workflow_dispatch"]["inputs"]) == {"manifest_sha256"}
     assert value["permissions"] == {"contents": "read"}
     job = value["jobs"]["qualify"]
     assert "github.event.repository.default_branch" in job["if"]
