@@ -1,0 +1,282 @@
+{
+  "schema": "npa.vlm_agency.landed_strict_parser_bridge/v1",
+  "pr": 829,
+  "source_execution_head": "4051c3c360512898a10471829d6bb002e8107c29",
+  "source_execution_tree": "6900bcb81e87d8b461d5d4ac934c3b7d40fa4973",
+  "integration_main": "09548f6939e0216d15b76819c6cc9d7537bf8e40",
+  "original_hosted_execution_head": "67ee0e9c6a2a33daa83797ffeea82bb9aa2a437b",
+  "original_frozen_proof": "https://github.com/nebius/nebius-physical-ai/blob/d8d80ad19cca84b50f9a30bc2f1ee9a1517dd86c/docs/testing/evidence/cursor-agency-calibration-main634-20261004/readme.md",
+  "incoming_scope": {
+    "paths": 12,
+    "changed_evaluator_definitions": [
+      "_parse_api_structured_response",
+      "_result_from_structured",
+      "parse_structured_response"
+    ],
+    "new_definitions_equal_landed": [
+      "_load_hosted_verdict",
+      "_validate_verdict_fields"
+    ],
+    "removed_definitions": [
+      "_coerce_bool"
+    ],
+    "changed_and_new_definitions_equal_landed": true,
+    "all_other_evaluator_definitions_equal_accepted33a5": true,
+    "grade_provider_client_caption_storage_bytes_changed": false,
+    "prompt_rubric_task_frame_selection_request_capture_writer_metrics_changed": false,
+    "self_hosted_parser_version": "npa_vlm_eval_compatible_json_v2",
+    "literal_contract": "Both real backends require literal boolean success, finite numeric score in[0,1] and nonempty string rationale; valid score rounds without coercion/clamp.",
+    "archival_contract": "Compatible-v1 reports remain original archived artifacts/ineligible for current promotion; never rewrite their parser tags.",
+    "identity_and_agency_contracts": "Exact accepted33a5 optional identity/default disclosure and every task/structural preflight/both-class/ID/constructor/ranking rule unchanged."
+  },
+  "original_vs_current_source_hashes": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "current_sha256": "a8d37d953600667479537c6c921bffafd05ae258affcbcfd24a52d21c4a58bbc",
+      "original67_sha256": "180b731ef276d665825a06154f37bb88bc38497e25d5d27e0b822b0b1089de20",
+      "equal_original67": false
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/agency.py",
+      "current_sha256": "bdfb8f5f89cc15840a20758dc927c29ab6c9252c3dc141736604d5818e30dae5",
+      "original67_sha256": "bdfb8f5f89cc15840a20758dc927c29ab6c9252c3dc141736604d5818e30dae5",
+      "equal_original67": true
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "current_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "original67_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "equal_original67": true
+    },
+    {
+      "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+      "current_sha256": "0bcb218a48299e475d1ff538fea17f8767bffe8db8e975c7110498d65bccd581",
+      "original67_sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e",
+      "equal_original67": false
+    },
+    {
+      "path": "npa/tests/e2e/test_vlm_agency_calibration_live.py",
+      "current_sha256": "e3e7c4b76b3fb00916b4b145cd0772a8d63e270d37f0395d4a7d4c7a577daaf1",
+      "original67_sha256": "e3e7c4b76b3fb00916b4b145cd0772a8d63e270d37f0395d4a7d4c7a577daaf1",
+      "equal_original67": true
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/fixtures/isaac_agency_calibration_v1/benchmark.json",
+      "current_sha256": "5a6c421be6ef28ca74d4eda4a836a9f940d5ee67ce0731f452775f157791ab68",
+      "original67_sha256": "5a6c421be6ef28ca74d4eda4a836a9f940d5ee67ce0731f452775f157791ab68",
+      "equal_original67": true
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/fixtures/isaac_agency_calibration_v1/frame-manifest.json",
+      "current_sha256": "35f735b7543f44fc26e58830e8c882d74901b6d67513f989e89e6e42ab2e96f0",
+      "original67_sha256": "35f735b7543f44fc26e58830e8c882d74901b6d67513f989e89e6e42ab2e96f0",
+      "equal_original67": true
+    }
+  ],
+  "unchanged_function_AST_bindings": [
+    {
+      "name": "_build_prompt",
+      "sha256": "0b84ed7e1d5d825e86114091153d1eb7c17171d1284dd68d47f1003fec9eb95e"
+    },
+    {
+      "name": "_openai_content",
+      "sha256": "e05871365e60ec078e14e6e25211c12ef304ad722ba52779311b1fe397f1ee36"
+    },
+    {
+      "name": "_common_hosted_request",
+      "sha256": "f91211488efd4b58ea98929d09d787dbe9886d70e317079bece3018271b9cfd5"
+    },
+    {
+      "name": "_comparison_prompt",
+      "sha256": "57db877ec1e81ec0fd69bed5e3753ab72ec5ece61ba6c8874906e8c3cb1ef37b"
+    },
+    {
+      "name": "_resolve_task_text",
+      "sha256": "987601ec536bf87559c52f9b09fa3cf3231f1a0963ed0c0f29d26c98cf1b8110"
+    },
+    {
+      "name": "_post_with_readiness_retry",
+      "sha256": "874a0f33ca0055fdf6652ea6bebe6a9d76ec1ae56cdf876629bfde45f6f5bf3d"
+    },
+    {
+      "name": "_backend_response_from_http",
+      "sha256": "6601f542facefff27d1c25cb382b1dfa418e1d76e1530dd2c53110c570cdf6cb"
+    },
+    {
+      "name": "_captured_http_response",
+      "sha256": "c40a4589872a4045b1982d4b620431457ded2de7471199c990abf17a7d2cc33c"
+    },
+    {
+      "name": "write_result",
+      "sha256": "0f33ff8e95ffcbe43f4cf3389641fd323cab18873410b83baa6e0f0b8b4a1d51"
+    },
+    {
+      "name": "VlmBenchmarkMetrics",
+      "sha256": "d8ac6fa7b9194ccf5cc1dcaf45f01c0786d720b40e37be92e405624d754085ee"
+    },
+    {
+      "name": "_evaluate_selected_frames",
+      "sha256": "b911cc9c837f441a899fb734530d479c73e4a77e2a50b6cfff3d07ecc9e7ed4c"
+    },
+    {
+      "name": "_benchmark_metrics",
+      "sha256": "c68aa1cdb253ba8e11b0cd2d4e97042829b3869756b7070b7e11670c78625d79"
+    },
+    {
+      "name": "_benchmark_rank_key",
+      "sha256": "562e67d8e9b5e0e9f7ca45b42ccc754f006310f49c2f4d3d27609fe40f8d4acd"
+    },
+    {
+      "name": "_effective_model",
+      "sha256": "5e7766932b8ebbb8e24fe23b7e457426b30c7fd9f4184d4382ca3a0f28a17d5a"
+    },
+    {
+      "name": "benchmark_vlm_eval",
+      "sha256": "ebc5986a57e7f3a59fe0c8b8175b7c42b085d38672ffe2d7fdc2dc2284a2ac0f"
+    },
+    {
+      "name": "_run_benchmark_case",
+      "sha256": "cd777eb827802f1517dbfe1678970957f3f273e8a2a06caa017b2902baeca7aa"
+    },
+    {
+      "name": "evaluate_vlm",
+      "sha256": "101dce608b7fac5013b3742730fb177a4a1248fada210cfa8242ddbee85f30b8"
+    },
+    {
+      "name": "evaluate_rollout_set",
+      "sha256": "8844b8f0b4196619eee69d69858f92e05741c9b8abede008553c32e136060d66"
+    }
+  ],
+  "fresh_local_supplement": {
+    "execution_head": "4051c3c360512898a10471829d6bb002e8107c29",
+    "affected": {
+      "passed": 988,
+      "skipped": [
+        {
+          "classname": "tests.workbench.test_vlm_eval_backend",
+          "name": "test_live_gpu_self_hosted_vlm_eval_returns_structured_score",
+          "time": "0.001"
+        }
+      ],
+      "seconds": 39.628
+    },
+    "documentation": {
+      "passed": 1180,
+      "skipped": [],
+      "seconds": 14.291
+    },
+    "precheck_passed": 270,
+    "docs_drift": "PASS",
+    "merge_precheck": "PASS against095 at execution",
+    "aggregate_scans": "PASS unchanged confidentiality/gitleaks rules",
+    "before_after": {
+      "before": "2026-10-04T02:19:55.293734+00:00",
+      "after": "2026-10-04T02:25:17.743227+00:00",
+      "stable": true,
+      "source_hashes": 82,
+      "packages": 165,
+      "module_paths_bound": true,
+      "launcher_hashes_before_after_equal": true
+    },
+    "original_response_CPU_replays": 6,
+    "full_metric_populations_equal": 3,
+    "identity_controls_passed": 36,
+    "controls": [
+      "six literalTrue API claims accepted",
+      "six absent valid legacy claims accepted",
+      "24false/nonliteral claims refused by wholegrade"
+    ],
+    "new_calls": 0,
+    "new_whole_fulls": 0
+  },
+  "fixture_adaptation": {
+    "path": "npa/tests/workbench/test_vlm_model_enforcement.py",
+    "function": "test_benchmark_deduplicates_resolved_models_in_caller_order",
+    "sha256": "3a9bc0adf95fe455eb23d5a6b77f1ca2a5bbb912638bbf2190e92520b12e9a45",
+    "all_original_assertions_preserved": true,
+    "all_other_test_ASTs_equal": true,
+    "mock_provider_response_AST_equal": true,
+    "both_unique_label_classes_required": true,
+    "mock_negative_score": 0.9,
+    "mock_negative_predicted_positive": true,
+    "limits": "One incoming model-order test now has both required label classes; originalthree configuration/order assertions and mock answer are unchanged. Additional four-call/labels/falsepositive assertions are hermetic controls, not new provider quality evidence.",
+    "formatter_successor_entire_test_AST_equal": true,
+    "original_execution_head": "33a563b964ffa6f2d2da9f10d97dc3d85310efcc"
+  },
+  "retained_attempts": [
+    {
+      "execution_head": "dcfa245b4c4155990863feb3ef760a357031da37",
+      "affected_failed": 2,
+      "affected_passed": 1066,
+      "inherited_GPU_skips": 1,
+      "warnings": 8,
+      "seconds": 47.31,
+      "overall": "FAILED affected gate; later selected gates not executed",
+      "cause": "Two inherited single-class dedupe fixtures refuse before mocked transport under unchanged positive-and-negative requirement."
+    },
+    {
+      "execution_head": "0c24fdb044e49e8b5450e01b54fd82c724cd9fad",
+      "overall": "Format prerequisite failed BEFORE affected tests",
+      "cause": "Missing formatter comma in new negative fixture; successor adds only comma with exact entire test AST equality."
+    },
+    {
+      "execution_head": "fa9fa7a85acd1a2c84e12e2d7ee11efd29744dcb",
+      "overall": "Signed docs-only33a5 proof then refused changed main095 BEFORE push/body/ready",
+      "documentation_passed": 1180,
+      "documentation_seconds": 16.66,
+      "limits": "Original publication execution retained; current4051 includes these unchanged historical bridge files."
+    }
+  ],
+  "original_raw_response_hashes": [
+    {
+      "request_sha256": "0b426aa0ec5e43a9ec75d938b810aa9ed732cba75c6cecdd16bd3a4471d8219c",
+      "response_sha256": "33961ea926af0e0615c2cfb7cbe61c0a67d70811698c8cdb33f7787ce14daa25"
+    },
+    {
+      "request_sha256": "c1e5019299d6917087c7f4fa383ae0a715c4ab5a421a609b1a753b06bfd82e1d",
+      "response_sha256": "622efbea247767b8b7cf96ada00cf8eba0a25a2e3f20e661122ca40ade3092ad"
+    },
+    {
+      "request_sha256": "dcf2b1d33b2ad57d99fccbdb2ff098feca8c14312493df79295654de253846f4",
+      "response_sha256": "c8c5cf7ce3529429056fd6a2f369159fc7575a14ce93e15585b656e41e3e65ec"
+    },
+    {
+      "request_sha256": "f7983831d7bb2207d751dd320ccaf74f1bc602e799e8805b0d0754dd9f40d0f0",
+      "response_sha256": "c2a271c3beed343d9a04f6cbe2df3d2f3b631982dd592310c6ab9fb6aa2b0661"
+    },
+    {
+      "request_sha256": "0eeeb5189fac6924d8146686b0743bc73cabf777b4c3b6698a2d0847d51dff1b",
+      "response_sha256": "e4cf391f08496baef41c9b3bc4fde43e3d7c737ebd9628b962e012c0ebd36eb3"
+    },
+    {
+      "request_sha256": "b0d6bb3d3b5cffd002b89f3763af69060bedb25d490f2c323cb02fb7d7dfa6b6",
+      "response_sha256": "8679a78efe16b9caed00764c133a99d2ea1c5048b3bf497c6d08b254f027286d"
+    }
+  ],
+  "same_source_live_bridge_limit": "Evaluator/grade whole bytes differ67. Five other actual hosted files remain byte-identical. Current literal parser/no-clamp adds no payload change: all six original67 serialized requests/raw reversible response bytes/decoded results/frames/canonical writer/grade decisions/three metric populations replay unchanged CPU,zero calls. New identity fields remain explicit additive disclosures,not whole-report byte equality or4051 inference.",
+  "selected_full_bridge": {
+    "execution_head": "31b64fd6150eb5e4925993c80b0ec69330455ddf",
+    "passed": 39905,
+    "skipped": 193,
+    "xpassed": 1,
+    "coverage_percent": 77.56,
+    "unchanged_floor": 60,
+    "limits": "Original execution, not33a5/publication full. All193skip identities retained; XPASS attribution reconstructed, not emitted per-node. Accepted affected/cheap supplements retain exact original heads."
+  },
+  "AI_review_scope": "Actual first-party Claude Code Opus5 primarya8 and one focused0cb follow-up; material repairs/context independently resolved. Later constructor/rubric/source scopes compose by exact ASTs and incoming landed833 source. No third review, human approval, Claude pixel inspection or future-head approval.",
+  "quality_limits": [
+    "Gemma positive false negative and inaccurate MiniMax/Gemma rationales retained.",
+    "Kimi negative0.4 violates zero-on-ambiguous-terminal rubric despite fixed binary agreement. No scores/labels/thresholds/model answers changed.",
+    "Tiny stylized controls are not calibratedquality, causalgrasp, renderedIsaac, continuousstability, robot, whole-episode or safety proof.",
+    "All earlier failed fulls/launchers/native attempts/writer fixtures and originalbc KimiFP/c5FN retain original identities."
+  ],
+  "publication_limit": "Separate signed documentation-only evidence branch preserves whole npa/skills/.github source4051. PR implementation head remains4051 with its own current-head CI. Anonymous exact bytes/body attachment/lifecycle/currentmain/protected queue are separate; sole coordinator controls queue.",
+  "selected_parent_supplement": {
+    "execution_head": "33a563b964ffa6f2d2da9f10d97dc3d85310efcc",
+    "affected_passed": 1068,
+    "GPU_skipped": 1,
+    "documentation_passed": 1179,
+    "precheck_passed": 270,
+    "independent_scope": "Exact397artifact bridge and67 independent checks accepted; not future4051 execution or inference."
+  }
+}
