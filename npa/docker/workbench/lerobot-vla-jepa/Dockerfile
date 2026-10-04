@@ -33,7 +33,12 @@ PY
 # Bake this candidate's reviewed workflow adapter into the same vendor venv so
 # the worker never depends on an ambient or mutable source overlay at GPU time.
 COPY --chown=ubuntu:ubuntu src/npa /opt/vla-jepa-npa/src/npa
+# The inherited service image previously retained this populated pip cache.
+# Delete it after the final install so runtime-only package payloads cannot be
+# mistaken for an intentionally baked model/data cache.
 RUN /opt/lerobot/venv/bin/pip install --no-cache-dir "rerun-sdk==0.38.1" \
+    && rm -rf /home/ubuntu/.cache/pip \
+    && test ! -e /home/ubuntu/.cache/pip \
     && PYTHONPATH=/opt/vla-jepa-npa/src /opt/lerobot/venv/bin/python - <<'PY'
 import rerun
 from npa.workflows import lerobot_vla_jepa

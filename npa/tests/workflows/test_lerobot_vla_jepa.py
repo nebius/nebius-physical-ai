@@ -18,6 +18,7 @@ from npa.workflows import lerobot_vla_jepa as vla
 
 WORKFLOW = Path("workflows/testing/lerobot-vla-jepa.yaml")
 READINESS = WORKFLOW.with_suffix(".readiness.json")
+DOCKERFILE = Path("npa/docker/workbench/lerobot-vla-jepa/Dockerfile")
 
 
 def test_workflow_has_five_connected_native_stages() -> None:
@@ -65,6 +66,15 @@ def test_live_matrix_registers_the_private_candidate_without_a_generic_fallback(
     }
     assert "unroutable image sentinel" in case.plan_only_justification
     assert "private" in case.plan_only_justification
+
+
+def test_candidate_image_removes_the_inherited_pip_cache() -> None:
+    """The exact-byte scan must not inherit a populated package cache."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    cleanup = "rm -rf /home/ubuntu/.cache/pip"
+    assert cleanup in dockerfile
+    assert "test ! -e /home/ubuntu/.cache/pip" in dockerfile
+    assert dockerfile.index(cleanup) > dockerfile.index('"rerun-sdk==0.38.1"')
 
 
 def test_task_disjoint_split_and_numeric_training_statistics() -> None:
@@ -207,7 +217,7 @@ def test_readiness_is_hash_bound_and_does_not_claim_live_acceptance() -> None:
     )
     expected = (
         WORKFLOW,
-        Path("npa/docker/workbench/lerobot-vla-jepa/Dockerfile"),
+        DOCKERFILE,
         Path("npa/src/npa/workflows/lerobot_vla_jepa.py"),
         Path("npa/tests/workflows/test_lerobot_vla_jepa.py"),
     )
