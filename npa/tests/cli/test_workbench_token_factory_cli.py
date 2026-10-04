@@ -108,12 +108,84 @@ def test_token_factory_caption_writes_local_json(monkeypatch, tmp_path: Path) ->
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["image_count"] == 1
+    assert payload["failed_count"] == 0
+    assert payload["captions"][0]["status"] == "completed"
     written = output / "captions.json"
     assert written.exists()
     assert (
         json.loads(written.read_text(encoding="utf-8"))["captions"][0]["caption"]
         == "a caption"
     )
+
+
+def test_token_factory_caption_writes_failure_before_exit(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _install_fake_client(monkeypatch, "NO IMAGE RECEIVED.")
+    images = tmp_path / "images"
+    images.mkdir()
+    Image.new("RGB", (16, 16), (1, 2, 3)).save(images / "frame.png")
+    output = tmp_path / "out"
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "token-factory",
+            "caption",
+            "--input-path",
+            str(images),
+            "--output-path",
+            str(output),
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    written = output / "captions.json"
+    assert payload["status"] == "failed"
+    assert payload["failed_count"] == 1
+    assert payload["captions"][0]["status"] == "image_unavailable"
+    assert payload["written_uri"] == str(written)
+    written_payload = json.loads(written.read_text(encoding="utf-8"))
+    assert written_payload["status"] == "failed"
+    assert written_payload["failed_count"] == 1
+    assert written_payload["captions"][0]["status"] == "image_unavailable"
+
+
+def test_token_factory_caption_dry_run_emits_failure_without_write(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _install_fake_client(monkeypatch, "NO IMAGE RECEIVED.")
+    image = tmp_path / "frame.png"
+    Image.new("RGB", (16, 16), (1, 2, 3)).save(image)
+    output = tmp_path / "out"
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "token-factory",
+            "caption",
+            "--input-path",
+            str(image),
+            "--output-path",
+            str(output),
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["status"] == "failed"
+    assert payload["failed_count"] == 1
+    assert payload["dry_run"] is True
+    assert "written_uri" not in payload
+    assert not (output / "captions.json").exists()
 
 
 def test_token_factory_reason_writes_scene_json(monkeypatch, tmp_path: Path) -> None:

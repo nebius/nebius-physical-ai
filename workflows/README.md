@@ -258,6 +258,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | Spec | Notes |
 | --- | --- |
+| [`byof-apriltag.yaml`](testing/byof-apriltag.yaml) | Plan-only catalog definition; run pinned CPU fiducial detection and controls through the direct BYOF runner |
 | [`byof-droid-policy-learning.yaml`](testing/byof-droid-policy-learning.yaml) | OSS registry: DROID policy learning pinned image + RLDS config smoke |
 | [`byof-evo.yaml`](testing/byof-evo.yaml) | Plan-only catalog definition; run pinned evo APE/RPE controls and matched KITTI plots through the direct BYOF runner |
 | [`habitat-sim-smoke.yaml`](testing/habitat-sim-smoke.yaml) | Quarantined dedicated Habitat image: exact runtime-fetched Skokloster RGB/depth traversal, Bullet, and NVIDIA EGL on one STRICT-bound RTX PRO 6000 (never B200); image and live proof remain pending |

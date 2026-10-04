@@ -1,0 +1,2 @@
+# Runtime CSV receipts retain their exact bytes, including csv.writer CRLF records.
+*.csv -text whitespace=cr-at-eol

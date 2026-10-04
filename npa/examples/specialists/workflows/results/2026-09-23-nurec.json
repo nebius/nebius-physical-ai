@@ -1,0 +1,520 @@
+{
+  "schema": "npa.specialists.nurec_experiment_summary.v1",
+  "frozen_workbench_commit": "0231005c76226e35125ceae96859d56346c88a5e",
+  "frozen_workbench_commit_url": "https://github.com/nebius/nebius-physical-ai/commit/0231005c76226e35125ceae96859d56346c88a5e",
+  "later_recovery_changes_exercised_by_original_trials": false,
+  "viewer_build_note": "Pinned older public build; operator verification used reviewed producer evidence while retaining recording/frame/hash checks.",
+  "scope": "Execution reliability and orchestration overhead for parameterizing supplied workflows; not autonomous workflow design or source-code bug repair.",
+  "arms": {
+    "astra-only": {
+      "runner_final": true,
+      "required_completions": 4,
+      "agent_verified_completions": 0,
+      "artifact_verified_completions": 0,
+      "artifact_only_verified_completions": 0,
+      "usage_complete": true,
+      "complete_recorded_usage_price_equivalent_usd": {
+        "minimum": 14.301066,
+        "maximum": 28.346707
+      },
+      "usage_totals": {
+        "usage_records": 1,
+        "recorded_api_calls": null,
+        "accepted_specialist_responses": null,
+        "rejected_specialist_responses": null,
+        "priced_records": 1,
+        "unpriced_records": 0,
+        "tokens": {
+          "input_tokens": 12059444,
+          "output_tokens": 10217,
+          "cached_input_tokens": 11867136,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 717
+        },
+        "known_tokens": {
+          "input_tokens": 12059444,
+          "output_tokens": 10217,
+          "cached_input_tokens": 11867136,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 717
+        },
+        "missing_counter_records": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "recorded_price_equivalent_usd": {
+          "minimum": 14.301066,
+          "maximum": 28.346707
+        }
+      },
+      "models": {
+        "gpt-6-astra": {
+          "usage_records": 1,
+          "recorded_api_calls": null,
+          "accepted_specialist_responses": 0,
+          "rejected_specialist_responses": 0,
+          "priced_records": 1,
+          "unpriced_records": 0,
+          "tokens": {
+            "input_tokens": 12059444,
+            "output_tokens": 10217,
+            "cached_input_tokens": 11867136,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 717
+          },
+          "known_tokens": {
+            "input_tokens": 12059444,
+            "output_tokens": 10217,
+            "cached_input_tokens": 11867136,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 717
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "recorded_price_equivalent_usd": {
+            "minimum": 14.301066,
+            "maximum": 28.346707
+          }
+        }
+      },
+      "timing_seconds": {
+        "coordinator_seconds": 3135.3655722909607,
+        "runner_lifecycle_seconds": 3135.3670584580395,
+        "full_verified_completion_wall_seconds": null,
+        "full_artifact_verification_wall_seconds": null
+      },
+      "tool_scope_valid": true,
+      "protocol_integrity_valid": true,
+      "tasks": {
+        "struktur28": {
+          "artifact_verified": false,
+          "agent_verified": false,
+          "verification_origin": "agent",
+          "native_metrics": null
+        },
+        "huerstholz": {
+          "artifact_verified": false,
+          "agent_verified": false,
+          "verification_origin": "agent",
+          "native_metrics": null
+        },
+        "toro": {
+          "artifact_verified": false,
+          "agent_verified": false,
+          "verification_origin": "agent",
+          "native_metrics": null
+        },
+        "valiant": {
+          "artifact_verified": false,
+          "agent_verified": false,
+          "verification_origin": "agent",
+          "native_metrics": null
+        }
+      }
+    },
+    "astra-tofa": {
+      "runner_final": true,
+      "required_completions": 4,
+      "agent_verified_completions": 0,
+      "artifact_verified_completions": 4,
+      "artifact_only_verified_completions": 4,
+      "usage_complete": false,
+      "complete_recorded_usage_price_equivalent_usd": null,
+      "usage_totals": {
+        "usage_records": 285,
+        "recorded_api_calls": null,
+        "accepted_specialist_responses": null,
+        "rejected_specialist_responses": null,
+        "priced_records": 285,
+        "unpriced_records": 0,
+        "tokens": {
+          "input_tokens": 16032854,
+          "output_tokens": 34602,
+          "cached_input_tokens": 15347136,
+          "cache_write_input_tokens": null,
+          "reasoning_output_tokens": null
+        },
+        "known_tokens": {
+          "input_tokens": 16032854,
+          "output_tokens": 34602,
+          "cached_input_tokens": 15347136,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 1646
+        },
+        "missing_counter_records": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 284,
+          "reasoning_output_tokens": 284
+        },
+        "recorded_price_equivalent_usd": {
+          "minimum": 20.4925626,
+          "maximum": 35.0988236
+        }
+      },
+      "models": {
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "usage_records": 146,
+          "recorded_api_calls": 146,
+          "accepted_specialist_responses": 145,
+          "rejected_specialist_responses": 1,
+          "priced_records": 146,
+          "unpriced_records": 0,
+          "tokens": {
+            "input_tokens": 2603193,
+            "output_tokens": 17279,
+            "cached_input_tokens": 2222848,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 2603193,
+            "output_tokens": 17279,
+            "cached_input_tokens": 2222848,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 146,
+            "reasoning_output_tokens": 146
+          },
+          "recorded_price_equivalent_usd": {
+            "minimum": 3.5046396,
+            "maximum": 3.5046396
+          }
+        },
+        "gpt-6-astra": {
+          "usage_records": 1,
+          "recorded_api_calls": null,
+          "accepted_specialist_responses": 0,
+          "rejected_specialist_responses": 0,
+          "priced_records": 1,
+          "unpriced_records": 0,
+          "tokens": {
+            "input_tokens": 11998938,
+            "output_tokens": 14681,
+            "cached_input_tokens": 11750016,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 1646
+          },
+          "known_tokens": {
+            "input_tokens": 11998938,
+            "output_tokens": 14681,
+            "cached_input_tokens": 11750016,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 1646
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "recorded_price_equivalent_usd": {
+            "minimum": 14.973286,
+            "maximum": 29.579547
+          }
+        },
+        "zai-org/GLM-5.3": {
+          "usage_records": 138,
+          "recorded_api_calls": 138,
+          "accepted_specialist_responses": 137,
+          "rejected_specialist_responses": 1,
+          "priced_records": 138,
+          "unpriced_records": 0,
+          "tokens": {
+            "input_tokens": 1430723,
+            "output_tokens": 2642,
+            "cached_input_tokens": 1374272,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 1430723,
+            "output_tokens": 2642,
+            "cached_input_tokens": 1374272,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 138,
+            "reasoning_output_tokens": 138
+          },
+          "recorded_price_equivalent_usd": {
+            "minimum": 2.0146369999999996,
+            "maximum": 2.0146369999999996
+          }
+        }
+      },
+      "timing_seconds": {
+        "coordinator_seconds": 4364.8913871250115,
+        "runner_lifecycle_seconds": 4364.981158167007,
+        "full_verified_completion_wall_seconds": null,
+        "full_artifact_verification_wall_seconds": 6709.974678039551
+      },
+      "tool_scope_valid": true,
+      "protocol_integrity_valid": true,
+      "tasks": {
+        "struktur28": {
+          "artifact_verified": true,
+          "agent_verified": false,
+          "verification_origin": "operator_post_run",
+          "native_metrics": {
+            "test/psnr": 24.755611419677734,
+            "test/ssim": 0.7334074378013611,
+            "test/lpips": 0.4723879396915436
+          }
+        },
+        "huerstholz": {
+          "artifact_verified": true,
+          "agent_verified": false,
+          "verification_origin": "operator_post_run",
+          "native_metrics": {
+            "test/psnr": 19.87990951538086,
+            "test/ssim": 0.47216275334358215,
+            "test/lpips": 0.5894266963005066
+          }
+        },
+        "toro": {
+          "artifact_verified": true,
+          "agent_verified": false,
+          "verification_origin": "operator_post_run",
+          "native_metrics": {
+            "test/psnr": 23.972190856933594,
+            "test/ssim": 0.6678580641746521,
+            "test/lpips": 0.5502725839614868
+          }
+        },
+        "valiant": {
+          "artifact_verified": true,
+          "agent_verified": false,
+          "verification_origin": "operator_post_run",
+          "native_metrics": {
+            "test/psnr": 24.99185562133789,
+            "test/ssim": 0.7013599872589111,
+            "test/lpips": 0.43797463178634644
+          }
+        }
+      }
+    }
+  },
+  "clean_frozen_pair": false,
+  "causal_latency_claim_allowed": false,
+  "winner": null,
+  "parity": null,
+  "cost_basis": "Recorded token price equivalents, not invoices; missing usage remains unknown; no Token Factory cache discount assumed.",
+  "unmetered_costs": [
+    "Operator and development-agent inference outside controlled trial runners, including coding and debugging.",
+    "Human effort, whole-host billing, CPU/controller use, storage, network and other setup costs."
+  ],
+  "allocation_basis": "Requested GPU intervals on shared existing hosts, not kernel time or incremental invoice billing.",
+  "quality_basis": "PSNR/SSIM/LPIPS are native reconstruction test metrics, not ground-truth quality scores for offset novel-view videos. Novel outputs are verified by provenance, exact offsets, decoding and Rerun image-byte binding.",
+  "comparison_limits": [
+    "Fixed order, unequal grading feedback, amended placement and cache warmth.",
+    "One baseline workflow remained blocked by operator setup; actual workload concurrency was unequal.",
+    "Three baseline native drivers later failed a SkyPilot API credential-fingerprint guard after a shared token-cache change; the cache writer is unknown.",
+    "Operator artifact verification does not complete original agent tasks."
+  ],
+  "capture_equality_for_accepted_artifact_pairs": {
+    "struktur28": null,
+    "huerstholz": null,
+    "toro": null,
+    "valiant": null
+  },
+  "paired_quality_delta_hybrid_minus_baseline": {
+    "struktur28": null,
+    "huerstholz": null,
+    "toro": null,
+    "valiant": null
+  },
+  "gpu_allocation": {
+    "astra-only": {
+      "all_tasks_attributed_and_intervals_closed": false,
+      "expected_task_count": 4,
+      "attributed_task_count": 3,
+      "unattributed_task_count": 1,
+      "reported_totals": {
+        "allocation_gpu_hours_lower": 2.30969451,
+        "allocation_gpu_hours_upper": 2.309711704166667,
+        "container_gpu_requested_hours_lower": 2.3008056211111114,
+        "container_gpu_requested_hours_upper": 2.300822815277778
+      },
+      "incremental_cost_usd": null
+    },
+    "astra-tofa": {
+      "all_tasks_attributed_and_intervals_closed": true,
+      "expected_task_count": 4,
+      "attributed_task_count": 4,
+      "unattributed_task_count": 0,
+      "reported_totals": {
+        "allocation_gpu_hours_lower": 3.014297338611111,
+        "allocation_gpu_hours_upper": 3.0143222772222225,
+        "container_gpu_requested_hours_lower": 3.0037417830555557,
+        "container_gpu_requested_hours_upper": 3.003766721666667
+      },
+      "incremental_cost_usd": null
+    }
+  },
+  "operator_ledger_final": true,
+  "human_intervention_counts": {
+    "astra-only": 5,
+    "astra-tofa": 2
+  },
+  "post_run_human_intervention_counts": {
+    "astra-only": 2,
+    "astra-tofa": 2
+  },
+  "intervention_counts_relative_to_original_runner": {
+    "astra-only": {
+      "before_start": {
+        "human": 5,
+        "nonhuman": 1
+      },
+      "during_original_runner": {
+        "human": 1,
+        "nonhuman": 0
+      },
+      "after_end": {
+        "human": 1,
+        "nonhuman": 2
+      },
+      "after_end_cleanup_events": {
+        "human": 1,
+        "nonhuman": 1
+      }
+    },
+    "astra-tofa": {
+      "before_start": {
+        "human": 0,
+        "nonhuman": 0
+      },
+      "during_original_runner": {
+        "human": 1,
+        "nonhuman": 3
+      },
+      "after_end": {
+        "human": 3,
+        "nonhuman": 2
+      },
+      "after_end_cleanup_events": {
+        "human": 0,
+        "nonhuman": 2
+      }
+    }
+  },
+  "intervention_count_note": "Runner-relative counts use actual start/end times; ledger phase counts are separate. After-end cleanup events are a subset of after-end events and never count as original model assistance.",
+  "failed_pilots_separate": [
+    {
+      "pilot": 1,
+      "usage_complete": true,
+      "recorded_price_equivalent_usd": {
+        "minimum": 1.07877,
+        "maximum": 2.122365
+      },
+      "complete_recorded_usage_price_equivalent_usd": {
+        "minimum": 1.07877,
+        "maximum": 2.122365
+      }
+    },
+    {
+      "pilot": 2,
+      "usage_complete": true,
+      "recorded_price_equivalent_usd": {
+        "minimum": 1.45209,
+        "maximum": 2.863105
+      },
+      "complete_recorded_usage_price_equivalent_usd": {
+        "minimum": 1.45209,
+        "maximum": 2.863105
+      }
+    },
+    {
+      "pilot": 3,
+      "usage_complete": false,
+      "recorded_price_equivalent_usd": {
+        "minimum": 13.72163756,
+        "maximum": 24.09496656
+      },
+      "complete_recorded_usage_price_equivalent_usd": null
+    }
+  ],
+  "setup_separate": true,
+  "setup_gpu_allocation": {
+    "scheduled_gpu_seconds_lower": 1304.426632,
+    "scheduled_gpu_seconds_upper": 1309.440331,
+    "container_gpu_seconds_lower": 353.0,
+    "container_gpu_seconds_upper": 353.0
+  },
+  "setup_incremental_cost_usd": null,
+  "incomplete_baseline_diagnostics": {
+    "accepted_artifact_credit": false,
+    "paired_quality_eligible": false,
+    "rows": [
+      {
+        "scene": "huerstholz",
+        "incomplete_pipeline": true,
+        "full_artifact_pass": false,
+        "original_source_byte_equality_with_hybrid": true,
+        "original_source_member_count": 4,
+        "native_reconstruction_test_metrics": {
+          "test/psnr": 19.894729614257812,
+          "test/ssim": 0.4715041220188141,
+          "test/lpips": 0.5908291935920715
+        }
+      },
+      {
+        "scene": "toro",
+        "incomplete_pipeline": true,
+        "full_artifact_pass": false,
+        "original_source_byte_equality_with_hybrid": true,
+        "original_source_member_count": 4,
+        "native_reconstruction_test_metrics": {
+          "test/psnr": 23.982383728027344,
+          "test/ssim": 0.6676721572875977,
+          "test/lpips": 0.5492432713508606
+        }
+      },
+      {
+        "scene": "valiant",
+        "incomplete_pipeline": true,
+        "full_artifact_pass": false,
+        "original_source_byte_equality_with_hybrid": true,
+        "original_source_member_count": 4,
+        "native_reconstruction_test_metrics": {
+          "test/psnr": 24.914447784423828,
+          "test/ssim": 0.7003734111785889,
+          "test/lpips": 0.43914592266082764
+        }
+      }
+    ]
+  },
+  "post_run_cleanup": {
+    "completed": true,
+    "scored_outcomes_changed": false,
+    "all_original_sealed_files_unchanged": true,
+    "counts": {
+      "owned_launched_controllers_removed": 3,
+      "owned_cleanup_api_generations_stopped": 3,
+      "owned_invalidated_api_generations_stopped": 3,
+      "unrelated_controllers_preserved_on_touched_contexts": 13,
+      "metadata_observers_stopped": 3
+    },
+    "never_launched_task_cancellation_claimed_successful": false
+  }
+}

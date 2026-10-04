@@ -1,0 +1,164 @@
+{
+  "schema": "npa.cosmos3.collective-transport-proof.v1",
+  "process_logs": [
+    {
+      "rank": 0,
+      "sha256": "9566f41cad1317a36a2ad745642f9ffc0d0c7a216d985e114fff8f928f32749a",
+      "bytes": 105469,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 1,
+      "sha256": "acfb60fd2a6779a4c43ef3df965fa6c27460f87e6894510b7a9036a5ef1913c8",
+      "bytes": 103273,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 2,
+      "sha256": "9fedbe33a336e99b31d89a730eda67fa09e93563f23ebe95036e33f884382d73",
+      "bytes": 103642,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 3,
+      "sha256": "3406e4233e6d34759cc0c7cc11ff5aac1bac29e84c22cef05b6c5ea487c77f8e",
+      "bytes": 103651,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 4,
+      "sha256": "e480d75cc50bf73060f7a0041d6a4814b0fcb6402cbf56dc90bde7f15aae328b",
+      "bytes": 103453,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 5,
+      "sha256": "aebe507f8d3d36b0f4362a2e40e022aa02c96bb62748005b3090c053c94c0485",
+      "bytes": 103449,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 6,
+      "sha256": "629000736f94c56935fee5b83a29679c3c53d873183b9d344a69947aebfe46d5",
+      "bytes": 103452,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 7,
+      "sha256": "6c5050ed649fb793f2c5ebe8c042a7299f568f141f8aadda76a14595ddbbb29d",
+      "bytes": 103350,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 8,
+      "sha256": "5e2bc87e8b161a2a51de5d827c5c54a6052b3af98f9af4b4d015b5c5eb482ca7",
+      "bytes": 103448,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 9,
+      "sha256": "f5855456534e7485f194dc5149be74ed812b65adc408b5a11c5854d5e869dfdb",
+      "bytes": 102948,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 10,
+      "sha256": "b6827510ba777e3ef096c3a96f1153a712ebe61ab1034eb32576a3379535fb9f",
+      "bytes": 103459,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 11,
+      "sha256": "a77b53acacc14c9cd4efb5240193f08672479d6f0928cead4f5ee91e494fa1cd",
+      "bytes": 103507,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 12,
+      "sha256": "09a7c4f94698b1c8b865adebcfc8aab9a5f345e18ee876405f791e4c22f1be17",
+      "bytes": 103312,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 13,
+      "sha256": "044df22430df13eaf78a35a13edc2c990058adb0b50902c38935427cd5a5da75",
+      "bytes": 103310,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 14,
+      "sha256": "228b5146ab439ba9fa1703d8f8d7f4f8cf0892e1691503607a9f7f989df18fcf",
+      "bytes": 103307,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 15,
+      "sha256": "1f4b84634a8f0c798855149bb1eccde40ec1cf3e9070666200ecb089c2253bcb",
+      "bytes": 103165,
+      "infiniband_selected": true,
+      "socket_selected": false,
+      "gdrdma_markers": 68,
+      "nccl_warning_lines": 0
+    }
+  ],
+  "ranks_reporting_network_ib": 16,
+  "ranks_reporting_network_socket": 0,
+  "gdrdma_mentions": 1088,
+  "slurm": {
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "allocation_seconds": 25,
+    "gpus": 16,
+    "nodes": 2
+  },
+  "private_sources_sha256": {
+    "accounting": "415b2029f60f8c3ba3842c73da8b417e2b6ad4feeca05cc6d17ba2f1df4ccfbb",
+    "submitted_launcher": "8ede82262dc9fee6f5ef383e24070642fef68b1065102203023d8021c7b7cf12"
+  },
+  "scope": "Separate custom PyTorch collective diagnostic; not training scaling or network link speed."
+}

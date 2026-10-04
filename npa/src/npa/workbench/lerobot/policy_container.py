@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from npa.literal_values import require_boolean
 from npa.workbench.training_config import (
     TrainingConfig,
     TrainingConfigError,
@@ -86,10 +87,10 @@ class PolicyContainerError(Exception):
 
 
 def _boolean_field(payload: dict[str, Any], field_name: str, *, default: bool) -> bool:
-    value = payload.get(field_name, default)
-    if type(value) is not bool:
-        raise PolicyContainerError(f"{field_name} must be a boolean")
-    return value
+    try:
+        return require_boolean(payload.get(field_name, default), field=field_name)
+    except ValueError as exc:
+        raise PolicyContainerError(f"{field_name} must be a boolean") from exc
 
 
 @dataclass(frozen=True)
@@ -701,7 +702,7 @@ def parse_feedback_batch(
             raise PolicyContainerError("feedback rationale must not be empty")
         parsed.append(
             FeedbackItem(
-                success=bool(item["success"]),
+                success=_boolean_field(item, "success", default=False),
                 score=score,
                 rationale=rationale,
                 source=str(item.get("source") or "vlm"),
@@ -1162,6 +1163,7 @@ def create_app() -> Any:
             payload.get("schema", "")
         ).startswith("npa.sim2real.rl_signal.")
         try:
+            feedback = None if is_signal else parse_feedback_batch(payload)
             control = (
                 _boolean_field(payload, "control", default=False)
                 if is_signal
@@ -1180,7 +1182,6 @@ def create_app() -> Any:
                     control=control,
                 )
                 return signal_update.to_dict()
-            feedback = parse_feedback_batch(payload)
             feedback_update = run_feedback_training_step(
                 feedback,
                 output_dir=output_dir,

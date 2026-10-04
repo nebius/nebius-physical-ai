@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
 
 import pytest
 import typer
+from typer import Exit
 from typer.testing import CliRunner
 import yaml
 
@@ -222,7 +224,29 @@ RTXPRO-6000-BLACKWELL-SERVER-EDITION  1                         2 of 2 free
 
 def _stub_catalog(monkeypatch: pytest.MonkeyPatch, output: str) -> None:
     def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
-        return subprocess.CompletedProcess(cmd, 0, stdout=output, stderr="")
+        response = output
+        if "get" in cmd and "nodes" in cmd:
+            response = json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {
+                                "name": "unit-node",
+                                "labels": {"nvidia.com/gpu.product": "RTXPRO6000"},
+                            },
+                            "spec": {},
+                            "status": {
+                                "conditions": [{"type": "Ready", "status": "True"}],
+                                "capacity": {"nvidia.com/gpu": "8"},
+                                "allocatable": {"nvidia.com/gpu": "8", "pods": "110"},
+                            },
+                        }
+                    ]
+                }
+            )
+        elif "get" in cmd and "pods" in cmd:
+            response = json.dumps({"items": []})
+        return subprocess.CompletedProcess(cmd, 0, stdout=response, stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -579,6 +603,95 @@ def owned_gpu_discovery(tmp_path, monkeypatch, sky_bin):
     monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
     monkeypatch.setattr(local_api, "stop_isolated_api", lambda _scope: None)
     return selected
+
+
+@pytest.fixture
+def isolated_submit_discovery(owned_gpu_discovery, monkeypatch, tmp_path):
+    from npa.orchestration.skypilot import cluster_validation, local_api
+
+    starts, stops, clients = [], [], []
+    monkeypatch.setattr(
+        local_api, "ensure_isolated_api", lambda **kwargs: starts.append(kwargs)
+    )
+    monkeypatch.setattr(local_api, "stop_isolated_api", stops.append)
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(tmp_path / "ambient"))
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    catalog_run = subprocess.run
+
+    def run(command, **kwargs):
+        if command[1] == "show-gpus":
+            assert cluster_validation.current_validation_session() is not None
+            clients.append(kwargs)
+        return catalog_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    return starts, stops, clients
+
+
+def _configure_discovery_failure(failure, spec_path, starts, monkeypatch):
+    from npa.orchestration.skypilot import local_api
+
+    if failure == "shape":
+        spec = yaml.safe_load(spec_path.read_text())
+        spec["resources"]["gpu"]["accelerators"] = "RTXPRO6000:2"
+        spec_path.write_text(yaml.safe_dump(spec))
+    if failure == "api":
+
+        def reject(**kwargs):
+            starts.append(kwargs)
+            raise local_api.IsolatedApiError("fixture API unavailable")
+
+        monkeypatch.setattr(local_api, "ensure_isolated_api", reject)
+
+
+def _assert_owned_discovery(recording, explicit, kubeconfig, failure):
+    starts, stops, clients = recording
+    assert len(starts) == len(stops) == 1
+    scope = starts[0]["isolated_dir"]
+    assert scope.is_relative_to(explicit) and stops == [scope]
+    assert not (explicit.parent / "ambient").exists()
+    assert json.loads((scope / "session.json").read_text())["phase"] == "complete"
+    assert len(clients) == (0 if failure == "api" else 1)
+    for call in clients:
+        assert Path(call["env"]["KUBECONFIG"]) == kubeconfig
+        assert Path(call["cwd"]) == scope
+        assert call["env"]["SKYPILOT_API_SERVER_ENDPOINT"] != "http://127.0.0.1:46580"
+
+
+@pytest.mark.parametrize("failure", [None, "shape", "api"])
+@pytest.mark.parametrize("ambient", [False, True])
+def test_submit_discovery_owns_explicit_scope_and_cleans_up(
+    isolated_submit_discovery,
+    owned_gpu_discovery,
+    monkeypatch,
+    tmp_path,
+    spec_path,
+    sky_bin,
+    failure,
+    ambient,
+):
+    _configure_discovery_failure(
+        failure, spec_path, isolated_submit_discovery[0], monkeypatch
+    )
+    if not ambient:
+        monkeypatch.delenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR")
+    explicit = tmp_path / "explicit"
+    before = dict(os.environ)
+    arguments = dict(
+        infra="k8s/npa-cluster",
+        sky_bin=sky_bin,
+        enabled=True,
+        isolated_config_dir=explicit,
+    )
+    if failure:
+        with pytest.raises(Exit):
+            workflow_cli._resolve_submit_accelerators(spec_path, **arguments)
+    else:
+        assert workflow_cli._resolve_submit_accelerators(spec_path, **arguments)
+    assert dict(os.environ) == before
+    _assert_owned_discovery(
+        isolated_submit_discovery, explicit, owned_gpu_discovery, failure
+    )
 
 
 def test_workflow_gpus_prints_the_export_line(

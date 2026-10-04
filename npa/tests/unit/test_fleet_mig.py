@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import subprocess
 from pathlib import Path
@@ -381,6 +382,42 @@ def test_live_snapshot_rejects_cordoned_notready_and_stale_rollouts() -> None:
         "desired/current/updated/ready/available" in error for error in report.errors
     )
     assert any("generation has not been observed" in error for error in report.errors)
+
+
+@pytest.mark.parametrize("value", ["false", 0, None, {}])
+def test_live_snapshot_rejects_malformed_unschedulable(value: object) -> None:
+    nodes, policy, daemonsets, deployment = _live_payloads()
+    nodes["items"][0]["spec"]["unschedulable"] = value
+
+    report = inspect_mig_state(nodes, policy, daemonsets, deployment, expected_nodes=1)
+
+    assert not report.ready
+    assert not report.nodes[0].schedulable
+    assert any(
+        "node gpu-node-0: Kubernetes spec.unschedulable must be a literal boolean"
+        in error
+        for error in report.errors
+    )
+
+
+@pytest.mark.parametrize("spec", [None, [], "bad", {"unschedulable": "false"}])
+def test_snapshot_preserves_healthy_node_when_other_spec_is_malformed(
+    spec: object,
+) -> None:
+    nodes, policy, daemonsets, deployment = _live_payloads()
+    malformed = copy.deepcopy(nodes["items"][0])
+    malformed["metadata"]["name"] = "gpu-node-1"
+    malformed["spec"] = spec
+    nodes["items"].append(malformed)
+
+    report = inspect_mig_state(nodes, policy, daemonsets, deployment, expected_nodes=2)
+
+    assert not report.ready
+    assert len(report.nodes) == 2
+    assert report.nodes[0].schedulable
+    assert not report.nodes[1].schedulable
+    assert any("node gpu-node-1: Kubernetes spec" in error for error in report.errors)
+    assert not any("node gpu-node-0:" in error for error in report.errors)
 
 
 def test_live_snapshot_rejects_stale_mig_readiness_taint() -> None:
@@ -784,6 +821,56 @@ def test_driver_replacement_timeout_is_actionable(monkeypatch) -> None:  # noqa:
     ]
 
 
+def test_driver_replacement_rejects_false_like_container_readiness(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    clock = [10.0]
+    commands: list[list[str]] = []
+
+    def run(command, **_kwargs):  # noqa: ANN001, ANN202
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    monkeypatch.setattr("npa.fleet.mig.subprocess.run", run)
+    monkeypatch.setattr(
+        "npa.fleet.mig._kubectl_json",
+        lambda *_a, **_k: {
+            "items": [
+                {
+                    "metadata": {"uid": "replacement"},
+                    "spec": {"nodeName": "gpu-node-0"},
+                    "status": {
+                        "phase": "Running",
+                        "containerStatuses": [{"ready": "false"}],
+                    },
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(
+        MigVerificationError,
+        match="timed out waiting for the replacement NVIDIA driver pod",
+    ):
+        _replace_driver_pod(
+            kubectl_bin="kubectl",
+            kubeconfig=tmp_path / "kubeconfig",
+            pod_name="driver-old",
+            pod_uid="old",
+            node="gpu-node-0",
+            deadline=20.0,
+            sleep_fn=sleep,
+            monotonic_fn=lambda: clock[0],
+        )
+
+    assert len(commands) == 1
+    assert commands[0][3:5] == ["delete", "pod"]
+
+
 @pytest.mark.parametrize(
     ("already_cordoned", "expected_commands"),
     [(False, ["cordon", "uncordon"]), (True, [])],
@@ -834,6 +921,184 @@ def test_driver_reconciliation_restores_only_its_own_cordon(
             monotonic_fn=lambda: 0.0,
         )
     assert commands == expected_commands
+
+
+def test_driver_reconciliation_rejects_malformed_node_state_before_mutation(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # noqa: ANN001
+    driver_pods = {
+        "items": [
+            {
+                "metadata": {
+                    "namespace": "gpu-operator",
+                    "name": "driver-old",
+                    "uid": "old",
+                    "labels": {"app": "nvidia-driver-daemonset"},
+                },
+                "spec": {"nodeName": "gpu-node-0"},
+                "status": {"phase": "Running"},
+            }
+        ]
+    }
+
+    def kubectl_json(_bin, _config, args, **_kwargs):  # noqa: ANN001, ANN202
+        if args[:2] == ["get", "node"]:
+            return {"spec": {"unschedulable": "false"}}
+        return driver_pods
+
+    commands: list[list[str]] = []
+    monkeypatch.setattr("npa.fleet.mig._kubectl_json", kubectl_json)
+    monkeypatch.setattr(
+        "npa.fleet.mig.subprocess.run",
+        lambda command, **_kwargs: commands.append(command),
+    )
+
+    with pytest.raises(
+        MigVerificationError,
+        match=r"node gpu-node-0: Kubernetes spec.unschedulable must be a literal boolean",
+    ):
+        _reconcile_ondelete_driver(
+            "kubectl",
+            tmp_path / "kubeconfig",
+            deadline=30.0,
+            sleep_fn=lambda _seconds: None,
+            monotonic_fn=lambda: 0.0,
+        )
+
+    assert commands == []
+
+
+@pytest.mark.parametrize(
+    "bad_spec",
+    [
+        None,
+        [],
+        "bad",
+        {"unschedulable": "false"},
+        {"unschedulable": 0},
+        {"unschedulable": None},
+    ],
+)
+def test_driver_reconciliation_validates_later_node_before_any_mutation(
+    monkeypatch,
+    tmp_path: Path,
+    bad_spec: object,
+) -> None:  # noqa: ANN001
+    driver_pods = {
+        "items": [
+            {
+                "metadata": {
+                    "namespace": "gpu-operator",
+                    "name": f"driver-{index}",
+                    "uid": f"old-{index}",
+                    "labels": {"app": "nvidia-driver-daemonset"},
+                },
+                "spec": {"nodeName": f"gpu-node-{index}"},
+                "status": {"phase": "Running"},
+            }
+            for index in range(2)
+        ]
+    }
+    reads = []
+    mutations = []
+
+    def kubectl_json(_bin, _config, args, **_kwargs):  # noqa: ANN001, ANN202
+        if args[:2] == ["get", "node"]:
+            reads.append(args[2])
+            return {"spec": {} if args[2] == "gpu-node-0" else bad_spec}
+        return driver_pods
+
+    def run(command, **_kwargs):  # noqa: ANN001, ANN202
+        mutations.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("npa.fleet.mig._kubectl_json", kubectl_json)
+    monkeypatch.setattr("npa.fleet.mig.subprocess.run", run)
+    monkeypatch.setattr(
+        "npa.fleet.mig._replace_driver_pod", lambda **kwargs: mutations.append(kwargs)
+    )
+    with pytest.raises(MigVerificationError, match="node gpu-node-1: Kubernetes spec"):
+        _reconcile_ondelete_driver(
+            "kubectl",
+            tmp_path / "kubeconfig",
+            deadline=30.0,
+            sleep_fn=lambda _seconds: None,
+            monotonic_fn=lambda: 0.0,
+        )
+    assert reads == ["gpu-node-0", "gpu-node-1"]
+    assert mutations == []
+
+
+@pytest.mark.parametrize("initial_cordon", [False, True])
+@pytest.mark.parametrize("current_cordon", [False, True])
+def test_driver_reconciliation_prevalidates_then_preserves_each_cordon(
+    monkeypatch,
+    tmp_path: Path,
+    initial_cordon: bool,
+    current_cordon: bool,
+) -> None:  # noqa: ANN001
+    pods = {
+        "items": [
+            {
+                "metadata": {
+                    "namespace": "gpu-operator",
+                    "name": f"driver-{index}",
+                    "uid": f"old-{index}",
+                    "labels": {"app": "nvidia-driver-daemonset"},
+                },
+                "spec": {"nodeName": f"gpu-node-{index}"},
+                "status": {"phase": "Running"},
+            }
+            for index in range(2)
+        ]
+    }
+    events = []
+    reads = {"gpu-node-0": 0, "gpu-node-1": 0}
+
+    def kubectl_json(_bin, _config, args, **_kwargs):  # noqa: ANN001, ANN202
+        if args[:2] == ["get", "node"]:
+            node = args[2]
+            events.append(("read", node))
+            reads[node] += 1
+            if node == "gpu-node-0":
+                return {"spec": {}}
+            cordoned = initial_cordon if reads[node] == 1 else current_cordon
+            return {"spec": {"unschedulable": cordoned}}
+        return pods
+
+    def run(command, **_kwargs):  # noqa: ANN001, ANN202
+        events.append((command[3], command[4]))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("npa.fleet.mig._kubectl_json", kubectl_json)
+    monkeypatch.setattr("npa.fleet.mig.subprocess.run", run)
+    monkeypatch.setattr(
+        "npa.fleet.mig._replace_driver_pod",
+        lambda **kwargs: events.append(("replace", kwargs["node"])),
+    )
+    _reconcile_ondelete_driver(
+        "kubectl",
+        tmp_path / "kubeconfig",
+        deadline=30.0,
+        sleep_fn=lambda _seconds: None,
+        monotonic_fn=lambda: 0.0,
+    )
+    expected = [
+        ("read", "gpu-node-0"),
+        ("read", "gpu-node-1"),
+        ("read", "gpu-node-0"),
+        ("cordon", "gpu-node-0"),
+        ("replace", "gpu-node-0"),
+        ("uncordon", "gpu-node-0"),
+        ("read", "gpu-node-1"),
+    ]
+    if not current_cordon:
+        expected.append(("cordon", "gpu-node-1"))
+    expected.append(("replace", "gpu-node-1"))
+    if not current_cordon:
+        expected.append(("uncordon", "gpu-node-1"))
+    assert events == expected
 
 
 def test_driver_reconciliation_uncordons_after_ambiguous_cordon_timeout(
