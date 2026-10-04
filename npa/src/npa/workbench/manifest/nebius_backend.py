@@ -19,6 +19,7 @@ import json
 import subprocess
 import time
 import uuid
+from pathlib import Path
 
 from .runtime import BackendResult
 
@@ -116,14 +117,17 @@ class NebiusBackend:
         self.s3_endpoint_url = s3_endpoint_url
 
     def _kc(
-        self, *args: str, input_text: str | None = None
+        self,
+        *args: str,
+        input_text: str | None = None,
+        timeout: int = 120,
     ) -> subprocess.CompletedProcess:
         cmd = [self.kubectl]
         if self.kube_context:
             cmd += ["--context", self.kube_context]
         cmd += ["-n", self.namespace, *args]
         return subprocess.run(
-            cmd, input=input_text, capture_output=True, text=True, timeout=120
+            cmd, input=input_text, capture_output=True, text=True, timeout=timeout
         )
 
     def _s3_env(self) -> dict[str, str]:
@@ -197,11 +201,24 @@ class NebiusBackend:
     def _create_configmap(
         self, cm_name: str, payload: dict[str, str]
     ) -> dict[str, str]:
-        """Create the ConfigMap; return {container_path: configmap key}."""
+        """Create the ConfigMap; return {container_path: configmap key}.
+
+        Keys preserve the payload file's basename (sanitized) so that
+        multi-file payloads can import each other via
+        ``sys.path.insert(0, os.path.dirname(__file__))``.
+        """
+        import re
+
         payload_map = {}
         data = {"runner.py": RUNNER_PY}
-        for i, (cpath, content) in enumerate(payload.items()):
-            key = f"payload{i}.py"
+        used_keys = set()
+        for cpath, content in payload.items():
+            base = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(cpath).name) or "payload"
+            key, i = base, 0
+            while key in used_keys:
+                i += 1
+                key = f"{base}.{i}"
+            used_keys.add(key)
             payload_map[cpath] = key
             data[key] = content
         cm = {
@@ -316,16 +333,23 @@ class NebiusBackend:
             raise RuntimeError(f"job create failed: {r.stderr[:500]}")
 
     def _wait_done(self, job_name: str) -> None:
+        # Watch for either terminal condition: a failed job never gains
+        # condition=complete, so waiting only for complete would burn the
+        # whole timeout on every failure.
+        # The kubectl client timeout must cover the whole wait, not just the
+        # default 120s used for control-plane calls.
         r = self._kc(
             "wait",
             f"job/{job_name}",
             "--for=condition=complete",
+            "--for=condition=failed",
             f"--timeout={self.timeout_s}s",
+            timeout=self.timeout_s + 120,
         )
         if r.returncode != 0:
             raise TimeoutError(
-                f"job {job_name} did not complete in {self.timeout_s}s: "
-                f"{r.stderr[:300]}"
+                f"job {job_name} reached no terminal condition in "
+                f"{self.timeout_s}s: {r.stderr[:300]}"
             )
 
     @staticmethod

@@ -14,6 +14,8 @@ descriptor file, never touching this module.
 from __future__ import annotations
 
 import json
+import os
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -159,11 +161,21 @@ class Runtime:
                     raise ValueError(f"payload escapes catalog root: {hpath!r}")
                 payload[cpath] = p.read_text()
             store = descriptor.artifact_store
-            s3_prefix = (
-                f"s3://{store.bucket}/{store.prefix.rstrip('/')}/{run_id}/"
-                if store
-                else ""
+            # The operator's bucket overrides the descriptor's example
+            # bucket: committed descriptors must not name live buckets
+            # (repo confidentiality rule); the live value travels via env.
+            bucket = os.environ.get("MANIFEST_S3_BUCKET") or (
+                store.bucket if store else ""
             )
+            s3_prefix = (
+                f"s3://{bucket}/{store.prefix.rstrip('/')}/{run_id}/" if store else ""
+            )
+            s3_inputs = []
+            for i in descriptor.inputs:
+                uri = i.s3_uri
+                if "MANIFEST_S3_BUCKET" in os.environ:
+                    uri = re.sub(r"^s3://[^/]+/", f"s3://{bucket}/", uri)
+                s3_inputs.append((uri, i.container_path))
             bres = be.run(
                 image_pinned=descriptor.image.pinned(),
                 argv=argv,
@@ -171,7 +183,7 @@ class Runtime:
                 outputs=outputs,
                 payload=payload,
                 memory_gb=descriptor.resources.memory_gb,
-                s3_inputs=[(i.s3_uri, i.container_path) for i in descriptor.inputs],
+                s3_inputs=s3_inputs,
                 s3_output_names=binary_names,
                 s3_prefix=s3_prefix,
                 s3_env=None,

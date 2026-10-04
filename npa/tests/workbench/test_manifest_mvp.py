@@ -110,6 +110,7 @@ def test_package_imports_and_lists_both_tools(tmp_path: Path) -> None:
         "gpu-info@0.1.0",
         "large-artifact@0.1.0",
         "openvla-predict@0.1.0",
+        "pendulum-rtx@0.1.0",
         "pendulum-viz@0.1.0",
     ]
 
@@ -223,6 +224,7 @@ def test_api_surface_translates_to_invoke(tmp_path: Path) -> None:
         "gpu-info@0.1.0",
         "large-artifact@0.1.0",
         "openvla-predict@0.1.0",
+        "pendulum-rtx@0.1.0",
         "pendulum-viz@0.1.0",
     ]
 
@@ -643,9 +645,7 @@ def test_s3_inputs_and_prefix_reach_backend(tmp_path: Path) -> None:
         )
     ]
     assert call["s3_output_names"] == ["matrix"]
-    assert call["s3_prefix"].startswith(
-        "s3://my-bucket/manifest-mvp/large-artifact/"
-    )
+    assert call["s3_prefix"].startswith("s3://my-bucket/manifest-mvp/large-artifact/")
     # Stub echoes a base64 blob for the binary artifact; it stays a string.
     assert res.artifacts["matrix"] == "stub-base64-blob"
     # And the summary check ran against the JSON artifact.
@@ -688,7 +688,8 @@ class _FakeKc(NebiusBackend):
         self.created: list[dict] = []
         self.kc_calls: list[tuple] = []
 
-    def _kc(self, *args, input_text=None):
+    def _kc(self, *args, input_text=None, timeout=120):
+        self.last_timeout = timeout
         full = [self.kubectl]
         if self.kube_context:
             full += ["--context", self.kube_context]
@@ -776,7 +777,7 @@ def test_configmap_returns_per_run_payload_map() -> None:
     m1 = be._create_configmap("cm-1", {"/work/a.py": "AAA"})
     m2 = be._create_configmap("cm-2", {"/work/b.py": "BBB"})
     assert m1 != m2  # no shared instance state between runs
-    assert m1 == {"/work/a.py": "payload0.py"}
+    assert m1 == {"/work/a.py": "a.py"}
 
 
 # ---------------------------------------------------------------------------
@@ -875,3 +876,45 @@ def test_openvla_predict_descriptor_validates(tmp_path: Path) -> None:
     assert desc.resources.memory_gb == 32
     assert desc.artifact_store is not None
     assert desc.commands["run"].outputs["action"].format == "binary"
+
+
+def test_pendulum_rtx_descriptor_validates(tmp_path: Path) -> None:
+    rt, _ = make_runtime(tmp_path)
+    desc = rt.catalog.get("pendulum-rtx", "0.1.0")
+    assert desc.environment.pip == ("newton",)
+    # Multi-file payload: shared sim module + workload.
+    cpaths = [c for c, _ in desc.payload_files]
+    assert cpaths == ["/work/pendulum_sim.py", "/work/pendulum_rtx.py"]
+    assert desc.commands["run"].outputs["video"].format == "binary"
+
+
+def test_wait_done_uses_full_job_timeout() -> None:
+    # Regression: kubectl wait must not be killed by the 120s default
+    # client timeout when the job itself may run for timeout_s.
+    be = _FakeKc(timeout_s=3600)
+    be._wait_done("job-1")
+    assert be.last_timeout == 3720
+    args, _ = be.kc_calls[-1]
+    assert "--timeout=3600s" in args
+
+
+def test_configmap_keys_preserve_basenames_and_dedupe() -> None:
+    be = _FakeKc()
+    m = be._create_configmap("cm-1", {"/work/a.py": "AAA", "/other/a.py": "BBB"})
+    assert m == {"/work/a.py": "a.py", "/other/a.py": "a.py.1"}
+
+
+def test_manifest_s3_bucket_env_override(tmp_path: Path, monkeypatch) -> None:
+    # Committed descriptors name a placeholder bucket; the operator's live
+    # bucket arrives via env and applies to the store prefix and input URIs.
+    monkeypatch.setenv("MANIFEST_S3_BUCKET", "live-bucket")
+    rt, stub = make_runtime(tmp_path)
+    rt.invoke("large-artifact", "0.1.0", "run", {"size": 1024}, backend="stub")
+    call = stub.calls[0]
+    assert call["s3_prefix"].startswith("s3://live-bucket/manifest-mvp/")
+    assert call["s3_inputs"] == [
+        (
+            "s3://live-bucket/manifest-mvp/inputs/large_artifact_config.json",
+            "/work/config.json",
+        )
+    ]

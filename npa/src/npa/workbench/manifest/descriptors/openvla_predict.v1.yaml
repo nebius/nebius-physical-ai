@@ -19,7 +19,7 @@ environment:
     - pillow
 artifact_store:
   type: s3
-  bucket: my-bucket
+  bucket: my-bucket  # operator overrides via MANIFEST_S3_BUCKET
   prefix: manifest-mvp/openvla-predict/
   endpoint_url: https://storage.eu-north1.nebius.cloud
 payload_files:

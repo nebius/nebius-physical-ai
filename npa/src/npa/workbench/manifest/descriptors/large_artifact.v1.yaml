@@ -12,7 +12,7 @@ image:
   digest: sha256:417bd75df6365104c283ea4c1651fb3530d9eb5a4c2fafa51943cff2a94e6385
 artifact_store:
   type: s3
-  bucket: my-bucket
+  bucket: my-bucket  # operator overrides via MANIFEST_S3_BUCKET
   prefix: manifest-mvp/large-artifact/
   endpoint_url: https://storage.eu-north1.nebius.cloud
 inputs:

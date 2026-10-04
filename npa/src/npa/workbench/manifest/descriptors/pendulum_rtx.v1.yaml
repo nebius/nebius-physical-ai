@@ -1,12 +1,11 @@
 apiVersion: manifest/v0.1
-name: pendulum-viz
+name: pendulum-rtx
 version: 0.1.0
 description: >
-  Newton XPBD double-pendulum simulated on GPU and rendered to MP4. A real
-  pre-existing workload (the 2026-09-27 demo sim) onboarded by descriptor
-  only: the image stays the pinned pytorch base, the workload's own
-  dependencies arrive via environment.pip, and the MP4 travels via the
-  artifact store. Zero per-tool code.
+  Ray-traced Newton double-pendulum: the real XPBD sim on cuda:0, rendered
+  with Blender Cycles on the GPU (metallic links, studio lighting). Blender
+  4.2 LTS is fetched in-pod; the MP4 travels via the artifact store.
+  Descriptor-only onboarding, zero per-tool code.
 image:
   repository: pytorch/pytorch
   tag: 2.8.0-cuda12.8-cudnn9-runtime
@@ -14,33 +13,37 @@ image:
 environment:
   pip:
     - newton
-    - matplotlib
-    - imageio-ffmpeg
 artifact_store:
   type: s3
   bucket: my-bucket  # operator overrides via MANIFEST_S3_BUCKET
-  prefix: manifest-mvp/pendulum-viz/
+  prefix: manifest-mvp/pendulum-rtx/
   endpoint_url: https://storage.eu-north1.nebius.cloud
 payload_files:
-  - container_path: /work/pendulum_viz.py
-    host_path: workloads/pendulum_viz.py
+  - container_path: /work/pendulum_sim.py
+    host_path: workloads/pendulum_sim.py
+  - container_path: /work/pendulum_rtx.py
+    host_path: workloads/pendulum_rtx.py
 commands:
   run:
-    argv: ["python", "/work/pendulum_viz.py", "--steps", "{{steps}}", "--out-mp4", "{{mp4_path}}", "--out-json", "{{json_path}}"]
+    argv: ["python", "/work/pendulum_rtx.py", "--steps", "{{steps}}", "--stride", "{{stride}}", "--out-mp4", "{{mp4_path}}", "--out-json", "{{json_path}}"]
     params:
       steps:
         type: integer
         default: 600
         min: 60
+      stride:
+        type: integer
+        default: 6
+        min: 1
       mp4_path:
         type: string
-        default: /work/pendulum.mp4
+        default: /work/pendulum_rtx.mp4
       json_path:
         type: string
         default: /work/summary.json
     outputs:
       video:
-        path: /work/pendulum.mp4
+        path: /work/pendulum_rtx.mp4
         format: binary
         required: true
       summary:
@@ -56,8 +59,8 @@ success:
       json_path: device_ok
       equals: true
     - artifact: summary
-      json_path: steps
-      equals: 600
+      json_path: renderer
+      equals: cycles-cuda
     - artifact: summary
       json_path: mp4_bytes
       greater_than: 100000

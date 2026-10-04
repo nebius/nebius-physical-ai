@@ -19,9 +19,12 @@ from PIL import Image
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-id", default="openvla/openvla-7b")
-    ap.add_argument("--prompt", default=(
-        "In: What action should the robot take to pick up the red block?\nOut:"
-    ))
+    ap.add_argument(
+        "--prompt",
+        default=(
+            "In: What action should the robot take to pick up the red block?\nOut:"
+        ),
+    )
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--out-action", required=True)
     ap.add_argument("--out-obs", required=True)
@@ -35,9 +38,7 @@ def main() -> None:
     gpu_name = torch.cuda.get_device_name(0)
 
     t0 = time.time()
-    processor = AutoProcessor.from_pretrained(
-        args.model_id, trust_remote_code=True
-    )
+    processor = AutoProcessor.from_pretrained(args.model_id, trust_remote_code=True)
     vla = AutoModelForVision2Seq.from_pretrained(
         args.model_id, trust_remote_code=True, torch_dtype=torch.bfloat16
     ).to(device)
@@ -48,9 +49,9 @@ def main() -> None:
     unnorm_key = "bridge_orig" if "bridge_orig" in keys else keys[0]
 
     rng = np.random.default_rng(args.seed)
-    img = Image.fromarray(
-        rng.integers(0, 255, (256, 256, 3), dtype=np.uint8)
-    ).convert("RGB")
+    img = Image.fromarray(rng.integers(0, 255, (256, 256, 3), dtype=np.uint8)).convert(
+        "RGB"
+    )
     img.save(args.out_obs)
     inputs = processor(args.prompt, img).to(device, dtype=torch.bfloat16)
 
