@@ -188,15 +188,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "dm05-lerobot-libero-comparison.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        plan_only=True,
-        plan_only_justification=(
-            "The public checkpoint declares custom LeRobot policy type dm05, but the "
-            "pinned NPA LeRobot registry does not provide that implementation and the "
-            "checkpoint contains no custom policy source. Live execution waits for a "
-            "reviewed immutable runtime that demonstrably supplies the exact policy."
-        ),
         image_tool="lerobot",
-        notes="Five-stage matched 200-episode DM05 checkpoint comparison; no live metric or release claim.",
+        notes=(
+            "Five-stage matched 200-episode DM05 comparison. Run only with the "
+            "operator-private digest built from Dockerfile.dm05-validation through "
+            "NPA_E2E_IMAGE_OVERRIDE_LEROBOT; no live metric or release claim exists yet."
+        ),
     ),
     SubmitLiveCase(
         "byof-mochi-1.yaml",

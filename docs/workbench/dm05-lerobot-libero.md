@@ -30,8 +30,9 @@ provenance. It never turns the model-card table into a local result.
 | --- | --- |
 | Enhanced checkpoint | `Dexmal/DM05-Lerobot-LIBERO@c22df98af5a69e7b9f6bfc1086d1a6982e647b26` |
 | Documented predecessor | `Dexmal/DM05-Lerobot@716afe317bfd01fa4d7ad7cfb84e3b19b7bd934d` |
-| LeRobot evaluator source | `huggingface/lerobot@30da8e687a6dfc617fcd94afc367ac7071c376ce` (v0.6.0) |
-| Simulator source | `Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01` |
+| Exact DM05 policy source | `hbzfeng/lerobot@6eede4f7d2efe6b4f6a58ddb7b13ed55e2346b9c` (the source in closed/superseded upstream LeRobot PR [#4051](https://github.com/huggingface/lerobot/pull/4051)) |
+| Maintained source, not checkpoint-parity source | `huggingface/lerobot@fea7153a06d449d5acf3783fa2daf8df8b49e79e` (PR #4721; requires the documented processor conversion) |
+| Simulator code / data source | `Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01` |
 | Cameras | `agentview_image → front`, `robot0_eye_in_hand_image → wrist` |
 | Observation / model contract | 256×256, state dimension 8, action dimension 7, `chunk_size=10`, `n_action_steps=10`, `add_state=false` |
 | Action/controller distinction | model processor actions are **absolute** (`use_relative_actions=false`); LIBERO environment control is **relative** |
@@ -44,42 +45,94 @@ or physical-robot evidence. A workflow report only sets
 `published_197_of_200_reproduced=true` when its candidate's actual native
 rollout totals exactly 197 out of 200.
 
-## Attribution and distribution boundary
+## Attribution, terms, and packaged notices
 
-- Dexmal Team's model-card citation is retained: *DM0.5: An Open-World
-  Foundation Model for General-Purpose Embodied Intelligence* (July 2026),
-  https://www.dexmal.com/blog/dm0.5/index_en.html. The enhanced model derives
-  from `Dexmal/DM05-Lerobot`, itself a fine-tune of `Dexmal/DM05`.
-- `dexmal/opendm@7d52f1591437332cb0157be3303c1c46da811344` is Apache-2.0;
-  its documented LIBERO configuration is credited as the upstream DM05
-  training/evaluation context. This checkpoint workflow does not claim OpenDM
-  training, serving, or benchmark results.
-- `huggingface/lerobot@30da8e687a6dfc617fcd94afc367ac7071c376ce` is Apache-2.0.
-  `LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01` is MIT. Preserve their
-  notices and citations when retaining derived artifacts.
-- The checkpoint card labels both DM05 LeRobot checkpoints `gemma`. The current
-  [Gemma Terms of Use](https://ai.google.dev/gemma/terms) govern use and set
-  conditions for redistribution or a hosted service. The workflow ships no
-  checkpoint, cache, or model-derived image layer; it fetches exact revisions
-  only at runtime. No public redistribution, hosted service, or right to
-  redistribute the checkpoint is claimed.
+The exact checkpoint-compatible policy is the Apache-2.0 implementation from
+[`hbzfeng/lerobot`](https://github.com/hbzfeng/lerobot/tree/6eede4f7d2efe6b4f6a58ddb7b13ed55e2346b9c),
+provided with LeRobot PR #4051. That PR was closed/superseded rather than
+merged; the repository source at the pinned revision declares Copyright 2024
+The Hugging Face team. Individual DM05 modules additionally credit Dexmal and
+Hugging Face contributors. The revision has an Apache-2.0 `LICENSE` and no
+separate `NOTICE` file. The private validation Dockerfile retains that source
+and its license at `/opt/lerobot/dm05-source`, carries
+`DM05-ATTRIBUTION.md`, and labels the source/revision/license. NPA does not
+patch the upstream policy: its changes are the external five-stage adapter,
+runtime-manifest check, and provenance/reporting logic only.
+
+`Lifelong-Robot-Learning/LIBERO` at the pinned revision declares MIT (Copyright
+2023 Lifelong Robot Learning) for code and CC BY 4.0 for its dataset. Neither
+LIBERO source nor data is copied into this derivative image. The enhanced
+checkpoint card identifies Dexmal Team as author, names
+`Dexmal/DM05-Lerobot` as its base model, and labels the weights `gemma`. The
+model card's [Gemma Terms of Use](https://ai.google.dev/gemma/terms) are a
+separate weights/service/redistribution boundary. The image contains no model
+weights, processor cache, dataset, output, or acceptance record; exact
+checkpoint revisions are fetched at operator runtime using the configured
+credential path. The private validation image is not an official NPA public
+image release, and this does not claim a right to redistribute checkpoints,
+model-derived artifacts, or a hosted service.
+
+`dexmal/opendm@7d52f1591437332cb0157be3303c1c46da811344` is Apache-2.0 and is
+credited only as the DM05 training/evaluation context. This independently owned
+checkpoint workflow neither claims OpenDM training/serving nor treats its
+capabilities as interchangeable.
 
 No NPA EULA checkbox, `ACCEPT_*` variable, telemetry/privacy consent, or
-duplicate per-image attestation was added. The public exact-revision payload
-range probes succeeded during onboarding; that proves technical access at that
-time, not an independent legal conclusion or permission to redistribute.
+duplicate per-image attestation was added. Exact-revision payload access is an
+operational fetch result, not legal assent or a redistribution grant.
+
+### Upstream citations
+
+The checkpoint model card supplies:
+
+```bibtex
+@misc{dm05,
+    title  = {{DM0.5}: An Open-World Foundation Model for General-Purpose Embodied Intelligence},
+    author = {{Dexmal Team}},
+    month  = {July},
+    year   = {2026},
+    url    = {https://www.dexmal.com/blog/dm0.5/index_en.html}
+}
+```
+
+The pinned LeRobot source asks users to cite its repository:
+
+```bibtex
+@misc{cadene2024lerobot,
+    author = {Cadene, Remi and Alibert, Simon and Soare, Alexander and Gallouedec, Quentin and Zouitine, Adil and Palma, Steven and Kooijmans, Pepijn and Aractingi, Michel and Shukor, Mustafa and Aubakirova, Dana and Russi, Martino and Capuano, Francesco and Pascal, Caroline and Choghari, Jade and Meftah, Khalil and Ellerbach, Maxime and Moss, Jess and Wolf, Thomas},
+    title = {LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch},
+    howpublished = {\url{https://github.com/huggingface/lerobot}},
+    year = {2024}
+}
+```
+
+The LIBERO repository supplies:
+
+```bibtex
+@article{liu2023libero,
+  title={LIBERO: Benchmarking Knowledge Transfer for Lifelong Robot Learning},
+  author={Liu, Bo and Zhu, Yifeng and Gao, Chongkai and Feng, Yihao and Liu, Qiang and Zhu, Yuke and Stone, Peter},
+  journal={arXiv preprint arXiv:2306.03310},
+  year={2023}
+}
+```
 
 ## Validation state and resumption
 
 The workflow validates, plans, and has a local five-stage execution harness
 with mocked checkpoint fetch plus native-shaped `eval_info.json`, real encoded
-MP4s, and a decoded RRD. This proves the artifact contract, not checkpoint
-inference.
+MP4s, and a decoded RRD. It also requires an exact source manifest and confirms
+that the installed registry resolves `dm05` to
+`lerobot.policies.dm05.DM05Policy` before it invokes `lerobot-eval`. A successful
+native evaluator is the stage's checkpoint-load proof; its `rollout.json`
+records the exact implementation provenance only after that evaluator exits.
+These local checks prove the connected artifact contract and source selection,
+not checkpoint inference or benchmark performance.
 
-Live evaluation remains unverified. The public checkpoint declares custom
-LeRobot policy type `dm05`, while the pinned NPA LeRobot v0.6.0 policy registry
-does not provide that type and the checkpoint repository contains no custom
-policy source. The first live run must use a reviewed immutable image that
-demonstrably provides the exact DM05 implementation, then separately inspect
-the final `metrics.json`, native `eval_info.json`, decoded comparison MP4, and
-decoded RRD before making a live-ready or reproduction claim.
+Live evaluation remains unverified until an operator-private digest built from
+`npa/docker/workbench/lerobot/Dockerfile.dm05-validation` passes target pull
+preflight and the five stages finish. Inspect the final `metrics.json`, both
+native `eval_info.json` files, decoded comparison MP4, and decoded RRD from that
+same run before making any live-ready or reproduction claim. The maintained
+PR #4721 implementation must not be substituted for this checkpoint-parity
+path unless its documented processor conversion is also executed and recorded.

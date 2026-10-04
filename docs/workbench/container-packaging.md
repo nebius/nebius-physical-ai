@@ -234,6 +234,15 @@ SSH host keys, forwards orchestrator arguments, and records the same
 `skypilot-0.12.2-v1` OCI attestation. Ad-hoc means the solution is not a catalog
 image; it does not exempt its runtime bytes from the worker bootstrap contract.
 
+`lerobot/Dockerfile.dm05-validation` is likewise an unregistered,
+operator-private qualification derivative. It installs the Apache-2.0 exact
+DM05 source required by the released checkpoint and deliberately stays outside
+the public release inventory: no checkpoint, processor cache, LIBERO data, or
+model-derived output is in its layers, and no public publication is authorized.
+Its source manifest, attribution notice, target pull preflight, and native
+workflow evidence are separate required gates; a local build is not a catalog
+entry or an accepted capability.
+
 Habitat-Sim uses a neutral runtime-fetch bootstrap image with exact corresponding
 Ubuntu package sources. Its public development digest and successful one-RTX
 standard-workflow validation are recorded in the

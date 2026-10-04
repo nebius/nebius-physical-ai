@@ -1,0 +1,8 @@
+{
+  "schema": "npa.dm05_lerobot.runtime.v1",
+  "repository": "https://github.com/hbzfeng/lerobot",
+  "revision": "6eede4f7d2efe6b4f6a58ddb7b13ed55e2346b9c",
+  "license": "Apache-2.0",
+  "upstream_pull_request": "https://github.com/huggingface/lerobot/pull/4051",
+  "checkpoint_processor_format": "dm05-pr-4051-original"
+}

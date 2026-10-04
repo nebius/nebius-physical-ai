@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -34,7 +35,22 @@ MODEL_REPOSITORIES = {
         "c22df98af5a69e7b9f6bfc1086d1a6982e647b26",
     ),
 }
-LEROBOT_RELEASE = "30da8e687a6dfc617fcd94afc367ac7071c376ce"  # v0.6.0
+# The released checkpoint was prepared with the unmerged/superseded upstream
+# implementation below.  It is intentionally not replaced with a similarly
+# named current policy: the checkpoint's processor files are the original
+# format.  The derivative image writes this exact manifest at build time and
+# every GPU rollout rejects a different runtime before it fetches weights.
+DM05_IMPLEMENTATION = {
+    "schema": "npa.dm05_lerobot.runtime.v1",
+    "repository": "https://github.com/hbzfeng/lerobot",
+    "revision": "6eede4f7d2efe6b4f6a58ddb7b13ed55e2346b9c",
+    "license": "Apache-2.0",
+    "upstream_pull_request": "https://github.com/huggingface/lerobot/pull/4051",
+    "checkpoint_processor_format": "dm05-pr-4051-original",
+}
+DM05_RUNTIME_MANIFEST_ENV = "NPA_DM05_RUNTIME_MANIFEST"
+DM05_RUNTIME_MANIFEST = Path("/opt/lerobot/dm05-runtime.json")
+LEROBOT_RELEASE = DM05_IMPLEMENTATION["revision"]
 SUITES = ("libero_spatial", "libero_object", "libero_goal", "libero_10")
 CAMERA_MAPPING = {
     "agentview_image": "front",
@@ -105,6 +121,7 @@ def _protocol(seed: int, episodes_per_task: int) -> dict[str, Any]:
             for role, (repo, revision) in MODEL_REPOSITORIES.items()
         },
         "lerobot_release": LEROBOT_RELEASE,
+        "dm05_implementation": DM05_IMPLEMENTATION,
         "published_candidate_result": {
             "successes_by_suite": {
                 "libero_spatial": 49,
@@ -159,6 +176,61 @@ def _download_checkpoint(role: str, workspace: Path) -> Path:
             "Downloaded DM05 checkpoint does not match the published policy contract"
         )
     return checkpoint
+
+
+def _read_dm05_runtime_manifest() -> dict[str, Any]:
+    """Require the exact source provenance emitted by the private image recipe."""
+    manifest_path = Path(
+        os.environ.get(DM05_RUNTIME_MANIFEST_ENV, str(DM05_RUNTIME_MANIFEST))
+    )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            "DM05 evaluation requires the reviewed exact-policy runtime manifest "
+            f"at {manifest_path}"
+        ) from error
+    if not isinstance(manifest, dict) or manifest != DM05_IMPLEMENTATION:
+        raise RuntimeError(
+            "DM05 runtime provenance does not match the released-checkpoint "
+            "implementation"
+        )
+    return manifest
+
+
+def _require_dm05_policy_runtime() -> dict[str, Any]:
+    """Verify registration and native class resolution before upstream evaluation.
+
+    ``lerobot-eval`` performs the actual checkpoint deserialization in the same
+    stage.  This preflight prevents a registry that merely accepts a string
+    called ``dm05`` from silently selecting an unrelated implementation.
+    """
+    manifest = _read_dm05_runtime_manifest()
+    try:
+        from lerobot.configs import PreTrainedConfig
+        from lerobot.policies.dm05.configuration_dm05 import DM05Config
+        from lerobot.policies.dm05.modeling_dm05 import DM05Policy
+        from lerobot.policies.factory import get_policy_class
+    except ImportError as error:
+        raise RuntimeError(
+            "DM05 evaluation image does not contain the reviewed native policy "
+            "implementation"
+        ) from error
+    try:
+        registered = PreTrainedConfig.get_choice_class("dm05")
+        policy_class = get_policy_class("dm05")
+    except Exception as error:
+        raise RuntimeError("DM05 policy type is not registered in this LeRobot runtime") from error
+    if registered is not DM05Config or policy_class is not DM05Policy:
+        raise RuntimeError(
+            "DM05 policy registration resolves to a class other than the reviewed "
+            "hbzfeng/lerobot implementation"
+        )
+    return {
+        "source": manifest,
+        "config_class": f"{DM05Config.__module__}.{DM05Config.__name__}",
+        "policy_class": f"{DM05Policy.__module__}.{DM05Policy.__name__}",
+    }
 
 
 def rollout_command(
@@ -235,6 +307,7 @@ def run_rollout(protocol_root: Path, output: Path, *, role: str, device: str) ->
     protocol_sha256 = file_sha256(protocol_root / "protocol.json")
     with tempfile.TemporaryDirectory(prefix=f"dm05-{role}-") as temporary:
         checkpoint = _download_checkpoint(role, Path(temporary))
+        runtime = _require_dm05_policy_runtime()
         command = rollout_command(protocol, checkpoint, output, device)
         subprocess.run(command, check=True)
     info_path = output / "native" / "eval_info.json"
@@ -265,6 +338,8 @@ def run_rollout(protocol_root: Path, output: Path, *, role: str, device: str) ->
             "videos": video_paths,
             "model_action_representation": "absolute",
             "environment_controller": "relative",
+            "dm05_runtime": runtime,
+            "native_checkpoint_load_verified": True,
         },
     )
 

@@ -80,6 +80,12 @@ def test_five_stage_contract_preserves_action_controller_boundary_and_real_artif
     monkeypatch.setattr(
         workflow, "_download_checkpoint", lambda role, _: checkpoints[role]
     )
+    runtime = {
+        "source": workflow.DM05_IMPLEMENTATION,
+        "config_class": "lerobot.policies.dm05.configuration_dm05.DM05Config",
+        "policy_class": "lerobot.policies.dm05.modeling_dm05.DM05Policy",
+    }
+    monkeypatch.setattr(workflow, "_require_dm05_policy_runtime", lambda: runtime)
 
     def native(command, *args, **kwargs):
         if command[0] != "lerobot-eval":
@@ -170,6 +176,7 @@ def test_five_stage_contract_preserves_action_controller_boundary_and_real_artif
     result = json.loads((metrics / "metrics.json").read_text())
     assert protocol["action"]["model_representation"] == "absolute"
     assert protocol["action"]["environment_controller"] == "relative"
+    assert protocol["dm05_implementation"] == workflow.DM05_IMPLEMENTATION
     assert result["candidate_successes"] == 197
     assert result["published_197_of_200_reproduced"] is True
     assert result["full_2000_episode_result"] is False
@@ -179,6 +186,10 @@ def test_five_stage_contract_preserves_action_controller_boundary_and_real_artif
         "metrics/libero_spatial/delta"
         in (report / "comparison.inspection.txt").read_text()
     )
+    for root in (baseline, candidate):
+        rollout = json.loads((root / "rollout.json").read_text())
+        assert rollout["dm05_runtime"] == runtime
+        assert rollout["native_checkpoint_load_verified"] is True
 
 
 def test_metrics_rejects_rollouts_that_do_not_consume_the_same_protocol(tmp_path):
@@ -209,3 +220,15 @@ def test_rollout_command_is_the_published_native_protocol_with_exact_controller_
     assert "--eval.n_episodes=5" in command
     assert "--seed=7" in command
     assert not any("use_relative_actions=true" in item for item in command)
+
+
+def test_dm05_runtime_manifest_is_exact_source_bound(tmp_path, monkeypatch):
+    manifest = tmp_path / "dm05-runtime.json"
+    monkeypatch.setenv(workflow.DM05_RUNTIME_MANIFEST_ENV, str(manifest))
+    manifest.write_text(json.dumps(workflow.DM05_IMPLEMENTATION))
+
+    assert workflow._read_dm05_runtime_manifest() == workflow.DM05_IMPLEMENTATION
+
+    manifest.write_text(json.dumps({"repository": "unreviewed/example"}))
+    with pytest.raises(RuntimeError, match="does not match"):
+        workflow._read_dm05_runtime_manifest()
