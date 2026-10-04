@@ -40,6 +40,21 @@ binds the snapshot and exact package hashes; it is not replacement-image
 security, bootstrap or runtime acceptance. Do not lower these floors or
 substitute scanner exceptions for rebuilt, validated image bytes.
 
+The GPU-role security closure separately pins PyJWT 2.14.0 for Transfer and
+Isaac. EnvGen uses the October Ubuntu snapshot and the explicit
+`LINUX_LIBC_DEV_VERSION=5.15.0-194.204` argument to the existing installer;
+other installer callers retain their own release-specific defaults. The exact
+installed header version is checked before proceeding. These dependency pins
+do not qualify an image without its fresh complete artifact gates.
+
+EnvGen also removes one hash-bound, inert `grass()` sample-download example
+from inherited scikit-image source. The example contains a token-bearing URL
+flagged by the image scan; no assertion is made that it is a private credential.
+The sanitizer refuses changed source or package `RECORD`, preserves executable
+ASTs and primary API documentation, and updates the exact modified source hash
+in `RECORD`. It runs before filesystem flattening, not as a scanner suppression.
+Original failing image bytes and scan populations remain separate evidence.
+
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
 effective user; root or verified passwordless sudo; `openssh-server`, `rsync`,
 and compatible service/init behavior; writable `/tmp` and home; and an

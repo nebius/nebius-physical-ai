@@ -394,7 +394,11 @@ def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) ->
     """The two Genesis-derived canonical stages failed identically without sudo."""
 
     dockerfile = (DOCKER_ROOT / tool / "Dockerfile").read_text(encoding="utf-8")
-    assert "ARG UBUNTU_SNAPSHOT=20260820T000000Z" in dockerfile
+    snapshot = "20261002T000000Z" if tool == "sim2real-envgen" else "20260820T000000Z"
+    assert f"ARG UBUNTU_SNAPSHOT={snapshot}" in dockerfile
+    if tool == "sim2real-envgen":
+        assert "ARG LINUX_LIBC_DEV_VERSION=5.15.0-194.204" in dockerfile
+        assert '"${UBUNTU_SNAPSHOT}" "${LINUX_LIBC_DEV_VERSION}"' in dockerfile
     assert "install_workflow_runtime_prereqs.sh" in dockerfile
     assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in dockerfile
 
