@@ -21,6 +21,9 @@ The defaults match the documented 30,000-update, batch-32 fine-tuning shape,
 but a single-GPU run is an operational workload, not a reproduction of the
 paper's eight-GPU result or a convergence claim. LIBERO is a simulator dataset;
 no physical robot result, deployment readiness, or benchmark score is implied.
+The declared GPU resource is one RTX PRO 6000 Blackwell (`RTXPRO6000:1`) with
+16 CPUs and 96 GiB of memory. A native run must record the actual device and
+compute capability; it is not B200 evidence or a hardware-equivalence claim.
 
 ## Pinned upstream work and terms
 

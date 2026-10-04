@@ -43,7 +43,10 @@ resources:
     image: "{{config.vla_jepa_image}}"
   gpu:
     cloud: kubernetes
-    accelerators: B200:1
+    # The verified private target supplies RTX PRO 6000 Blackwell GPUs.  The
+    # exact candidate's CUDA closure is separately required to prove sm_120 at
+    # runtime; this request must not mislabel that qualification as B200.
+    accelerators: RTXPRO6000:1
     cpus: 16
     memory: 96Gi
     image: "{{config.vla_jepa_image}}"

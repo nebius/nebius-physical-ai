@@ -33,6 +33,9 @@ def test_workflow_has_five_connected_native_stages() -> None:
     assert [spec.states[name].next for name in expected[:-1]] == expected[1:]
     assert spec.states["report"].terminal
     assert spec.resources["gpu"]["image"] == "{{config.vla_jepa_image}}"
+    assert spec.resources["gpu"]["accelerators"] == "RTXPRO6000:1"
+    assert spec.resources["gpu"]["cpus"] == 16
+    assert spec.resources["gpu"]["memory"] == "96Gi"
     assert "registry.invalid" in spec.config["vla_jepa_image"]
     assert spec.config["train_steps"] == "30000"
     assert spec.config["heldout_task_ids"] == "[0, 1]"
