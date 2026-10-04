@@ -182,6 +182,28 @@ images:
       cache. Customer credentials prove upstream access, not acceptance. The image remains
       unbuilt, quarantined, and unvalidated until complete-byte, anonymous-pull,
       and exact-digest B200 evidence is accepted.
+  libero-plus-assets:
+    dockerfile: libero-plus-assets/Dockerfile.private
+    tier: job
+    final_user: ubuntu
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    redistribution: unvalidated
+    passwordless_root_exemption: >-
+      SkyPilot worker bootstrap only. The non-root ubuntu user may generate
+      ephemeral SSH host keys and start the preinstalled SSH service; password
+      and root SSH login are disabled, and the image entrypoint does not start
+      sshd itself.
+    notes: >-
+      Operator-private, unvalidated derivative for the separately MIT-labelled
+      Sylvest LIBERO-plus asset archive and original MIT LIBERO TableArena.
+      The full Sylvest LIBERO-plus source, BDDL/task definitions, benchmark
+      randomizer, policy checkpoints, demonstrations, populated asset caches,
+      credentials, and outputs are absent. The selected asset is fetched at
+      runtime by immutable revision and archive digest. This is a five-stage
+      camera compatibility workflow, not a LIBERO-plus benchmark, policy, or
+      robot result. No public image publication is authorized; every rebuilt
+      private digest requires byte scanning, bootstrap verification, and real
+      GPU artifact evidence.
   antioch:
     dockerfile: antioch/Dockerfile
     tier: service

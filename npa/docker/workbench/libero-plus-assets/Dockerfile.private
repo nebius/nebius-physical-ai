@@ -19,6 +19,7 @@ LABEL org.opencontainers.image.title="NPA LIBERO-Plus licensed-assets camera com
       org.opencontainers.image.licenses="Apache-2.0 AND MIT" \
       org.nebius.npa.redistribution="unvalidated-operator-private" \
       org.nebius.npa.validation-status="licensed-assets-camera-compatibility" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
       org.nebius.npa.libero-plus-source="absent" \
       org.nebius.npa.libero-plus-assets="runtime-fetch-only"
 
@@ -29,12 +30,28 @@ COPY src/npa/workflows/libero_plus_assets.py /opt/npa/src/npa/workflows/libero_p
 
 # Camera PNG and RRD output do not invoke bundled FFmpeg. The derived image
 # prunes inherited wheel executables so it has no scanner-quarantined payload.
+# It also supplies SkyPilot's worker prerequisites. Host keys created by the
+# package installation are removed in this layer; the entrypoint creates fresh
+# per-pod keys immediately before it forwards the task command.
 RUN set -eux; \
     test -n "${NPA_SOURCE_SHA}"; \
     test "${#NPA_SOURCE_SHA}" -eq 40; \
     case "${NPA_SOURCE_SHA}" in *[!0-9a-f]*) exit 64 ;; esac; \
     case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
     test "${SOURCE_DATE_EPOCH}" -gt 0; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      openssh-server rsync sudo; \
+    rm -rf /var/lib/apt/lists/*; \
+    install -d -m 0755 /run/sshd; \
+    rm -f /etc/ssh/ssh_host_*; \
+    printf '%s\n' \
+      'PasswordAuthentication no' \
+      'PermitRootLogin no' \
+      > /etc/ssh/sshd_config.d/99-npa-libero-plus-assets.conf; \
+    printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' \
+      > /etc/sudoers.d/99-npa-libero-plus-assets; \
+    chmod 0440 /etc/sudoers.d/99-npa-libero-plus-assets; \
     /opt/openwam-libero/bin/python -m pip install --no-cache-dir \
       boto3==1.42.91 rerun-sdk==0.38.1; \
     /opt/openwam-libero/bin/python -m py_compile /opt/npa/src/npa/workflows/libero_plus_assets.py; \

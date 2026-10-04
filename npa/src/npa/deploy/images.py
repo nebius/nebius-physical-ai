@@ -202,6 +202,7 @@ CONTAINER_IMAGE_NAMES = {
     "ncore": "npa-ncore",
     "robotwin": "npa-robotwin",
     "libero": "npa-libero",
+    "libero-plus-assets": "npa-libero-plus-assets",
 }
 
 # Public-image publication must enforce the digest-bound SkyPilot bootstrap
@@ -228,6 +229,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "ncore",
         "robotwin",
         "libero",
+        "libero-plus-assets",
         "fiftyone",
         "groot",
         "habitat-sim",
@@ -304,7 +306,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Independent OSS catalog additions stay quarantined as soon as their image
 # names are registered. An absent tool is not added to the publication inventory.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore", "libero", "sam3"}
+    {"openpi", "curobo", "ncore", "libero", "libero-plus-assets", "sam3"}
 ) | frozenset({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset(
     {"antioch", "mjlab", "robocasa", "open3d"}
@@ -517,6 +519,9 @@ SUPPORTED_TOOL_VERSIONS = {
     "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",
     "robotwin": "2.0-curobo-v0.7.8-rtfetch-unbuilt",
     "libero": "public-neutral-bootstrap-unbuilt",
+    # Private-only candidate. Publication quarantine rejects this placeholder
+    # from public consumers; operators must select an inspected private digest.
+    "libero-plus-assets": "licensed-assets-camera-private-unbuilt",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",

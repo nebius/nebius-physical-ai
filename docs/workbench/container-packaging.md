@@ -102,6 +102,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-groot` | `groot/Dockerfile` | job shell; `EXPOSE 8080` |
 | `npa-fiftyone` | `fiftyone/Dockerfile` | command-passthrough job entrypoint; `EXPOSE 5151` |
 | `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686`; non-root SkyPilot workflow host |
+| LIBERO-Plus licensed-assets camera compatibility (unvalidated, private) | `libero-plus-assets/Dockerfile.private` | original-MIT-LIBERO scene assembly and EGL camera evidence only; never a full LIBERO-Plus benchmark or public image |
 | `npa-mjlab` (unpublished) | `mjlab/Dockerfile` | authenticated uvicorn `:8080`; native train/eval/export CLI |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |

@@ -15,6 +15,14 @@ The upstream GitHub tree has no `LICENSE`, `NOTICE`, or `COPYING` file at this r
 
 The runtime enforces that conclusion fail-closed: while the reviewed pinned-source record remains unresolved, it raises before cloning source or downloading assets. This uses no operator acceptance variable or local legal attestation. A future upstream license declaration or authorization must be reviewed and recorded in code before an execution image can run this workflow.
 
+The separate licensed-assets image is deliberately `unvalidated` and private: it
+adds the tested SkyPilot worker bootstrap (non-root user, ephemeral SSH host
+keys, `rsync`, and argument forwarding) to the original-MIT-LIBERO runtime, but
+does not make the private derivative publicly distributable. Each immutable
+private digest still needs complete byte scanning, exact-digest pull/bootstrap
+verification, and a real RTX PRO 6000 artifact run before this limited camera
+capability can be considered qualified.
+
 `workflows/testing/libero-plus-robustness.yaml` has five substantive connected stages: task preparation, baseline rollout, candidate rollout on exactly the same protocol and seed, numerical per-dimension deltas, and task-level reporting. The seven native categories are Objects Layout, Camera Viewpoints, Robot Initial States, Language Instructions, Light Conditions, Background Textures, and Sensor Noise. Each rollout executes the upstream `OffScreenRenderEnv` against the classified upstream perturbation task rather than generating a proxy task.
 
 The checked-in `smoke` configuration selects one real task per perturbation category. Its `smoke-zero` adapter is deliberately a simulator/IO operational smoke and writes `smoke_only: true`; it is neither an official baseline nor a performance result. A `benchmark` run selects all 10,030 upstream classification records and rejects `smoke-zero`. It needs two actual non-smoke `module:function` policy adapters in an immutable operator image, one for baseline and one for candidate. Such a full run remains distinct from training convergence and physical-robot success.

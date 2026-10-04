@@ -110,11 +110,12 @@ docker buildx build \
 test -s "$oci_archive"
 "$repo_root/npa/.venv/bin/python" "$repo_root/npa/scripts/scan_image_omniverse_payload.py" \
   --tarball "$oci_archive" --json "$scan"
-docker_archive="$oci_archive.docker.tar"
+# The scanner has consumed the flattened base. Releasing only this exact
+# task-owned intermediate before the daemon import avoids a second full archive
+# write on a VDI with deliberately shared Docker storage.
+cleanup_flat_base
 skopeo copy --override-os linux --override-arch amd64 \
-  "oci-archive:$oci_archive" "docker-archive:$docker_archive:$image" >/dev/null
-docker load --input "$docker_archive" >/dev/null
-rm -- "$docker_archive"
+  "oci-archive:$oci_archive" "docker-daemon:$image" >/dev/null
 docker image inspect "$image" >/dev/null
 docker run --rm --entrypoint /bin/bash "$image" -c '\
   set -euo pipefail; \
@@ -122,7 +123,15 @@ docker run --rm --entrypoint /bin/bash "$image" -c '\
   test ! -e /workspace/.cache/npa-model/libero-plus-assets; \
   test ! -e /opt/npa/libero-plus-assets.zip; \
   test -s /usr/share/doc/npa-libero-plus-assets/THIRD_PARTY_NOTICES.md; \
-  test -s /usr/share/doc/npa-libero-plus-assets/native-executor-provenance.json'
+  test -s /usr/share/doc/npa-libero-plus-assets/native-executor-provenance.json; \
+  test -z "$(find /etc/ssh -maxdepth 1 -type f -name "ssh_host_*_key" -print -quit)"'
+docker run --rm "$image" /bin/sh -c '\
+  set -euo pipefail; \
+  test "$(id -u)" -eq 1000; \
+  test -w /tmp; test -w "$HOME"; \
+  command -v sudo; sudo -n true; command -v sshd; command -v rsync; command -v service; \
+  test -n "$(find /etc/ssh -maxdepth 1 -type f -name "ssh_host_*_key" -print -quit)"; \
+  test "$(/bin/sh -c "printf %s forwarded" sentinel)" = forwarded'
 
 NPA_ASSETS_IMAGE="$image" \
 NPA_ASSETS_BASE_IMAGE="$base_image" \

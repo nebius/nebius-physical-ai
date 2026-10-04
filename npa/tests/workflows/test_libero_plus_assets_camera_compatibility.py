@@ -22,6 +22,7 @@ SPEC = ROOT / "workflows/testing/libero-plus-licensed-assets-camera-compatibilit
 DOCKERFILE = ROOT / "npa/docker/workbench/libero-plus-assets/Dockerfile.private"
 BUILD = ROOT / "npa/docker/workbench/libero-plus-assets/build-private.sh"
 NOTICE = ROOT / "npa/docker/workbench/libero-plus-assets/THIRD_PARTY_NOTICES.md"
+ENTRYPOINT = ROOT / "npa/docker/workbench/libero-plus-assets/entrypoint.sh"
 
 
 def test_workflow_has_five_connected_native_asset_stages() -> None:
@@ -207,10 +208,23 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
     dockerfile = DOCKERFILE.read_text()
     build = BUILD.read_text()
     notice = NOTICE.read_text()
+    entrypoint = ENTRYPOINT.read_text()
     assert "ARG BASE_IMAGE" in dockerfile
     assert "FROM ${BASE_IMAGE}" in dockerfile
     assert 'org.nebius.npa.libero-plus-source="absent"' in dockerfile
     assert 'org.nebius.npa.libero-plus-assets="runtime-fetch-only"' in dockerfile
+    assert (
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in dockerfile
+    )
+    for package in ("openssh-server", "rsync", "sudo"):
+        assert package in dockerfile
+    assert "rm -f /etc/ssh/ssh_host_*" in dockerfile
+    assert "PasswordAuthentication no" in dockerfile
+    assert "PermitRootLogin no" in dockerfile
+    assert "ubuntu ALL=(ALL) NOPASSWD:ALL" in dockerfile
+    assert "ssh-keygen -A" in entrypoint
+    assert "sudo -n ssh-keygen -A" in entrypoint
+    assert 'exec "$@"' in entrypoint
     assert "boto3==1.42.91 rerun-sdk==0.38.1" in dockerfile
     assert "import libero, mujoco" in dockerfile
     assert "scanner-quarantined" in dockerfile
@@ -227,6 +241,11 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
     assert "docker export" in build
     assert "docker import" in build
     assert "refusing to reuse an existing flattened private base" in build
+    assert "docker-daemon:$image" in build
+    assert build.index("scan_image_omniverse_payload.py") < build.index(
+        "cleanup_flat_base\n"
+    )
+    assert "ssh_host_*_key" in build
     assert "built-local-not-pushed" in build
     assert "It is **not**" in notice
     assert "LIBERO-Plus benchmark image" in notice
