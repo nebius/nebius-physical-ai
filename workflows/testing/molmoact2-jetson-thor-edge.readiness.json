@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "de1d4102f0ef5b1d17f136fe9052414366f26a7a8a66e6c5057bd69580a4f91c",
+  "workflow_sha256": "2594a5b90ead2b08b84c60199ee8a04787ea052fde336dcf5fdc27d2af67a6f3",
   "planning": {
     "validation": {
       "status": "verified",
@@ -9,7 +9,8 @@
         "2026-10-03: npa workbench workflow validate-spec workflows/testing/molmoact2-jetson-thor-edge.yaml --json (status=valid)",
         "2026-10-03: npa workbench workflow plan-spec workflows/testing/molmoact2-jetson-thor-edge.yaml --run-id molmoact2-thor-readiness --check-render --json (status=valid, tasks=5)",
         "2026-10-03: npa workbench workflow run-spec workflows/testing/molmoact2-jetson-thor-edge.yaml --run-id molmoact2-thor-readiness --plan-only --scheduler-plan --json (status=planned, tasks=5)",
-        "2026-10-04: npa workbench workflow validate-spec and plan-spec --check-render (status=valid, tasks=5; no provider action or registry secret materialized)"
+        "2026-10-04: npa workbench workflow validate-spec and plan-spec --check-render (status=valid, tasks=5; no provider action or registry secret materialized)",
+        "2026-10-04: baked-image contract validate-spec plus plan-spec --check-render with an inert digest/source-SHA fixture (status=valid, tasks=5; no provider action or registry secret materialized)"
       ]
     },
     "task_fidelity": {
@@ -18,7 +19,8 @@
       "evidence": [
         "2026-10-03: npa/.venv/bin/python -m pytest npa/tests/workflows/test_molmoact2_jetson_thor.py -q --tb=short (7 passed)",
         "2026-10-03: npa/.venv/bin/python -m pytest npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py npa/tests/smoke/test_all_workflow_yamls.py -q --tb=short (328 passed)",
-        "2026-10-04: selected workflow, catalog argv, submit-matrix, and packaging audit (761 passed, 0 failed, 0 errors, 0 skipped)"
+        "2026-10-04: selected workflow, catalog argv, submit-matrix, and packaging audit (761 passed, 0 failed, 0 errors, 0 skipped)",
+        "2026-10-04: private image recipe, publication quarantine, workflow, and golden-eval manifest tests (539 passed; no target runtime assertion)"
       ]
     }
   },
@@ -48,9 +50,10 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The workflow deliberately uses a submitted source overlay and does not name an immutable image. No generic x86 image was built or pushed because it cannot qualify the target TensorRT plans.",
+      "reason": "A private CPU-only cloud-evidence image recipe is defined, but no exact image has yet been built, scanned, pushed, or remotely pulled. The submitted digest and source SHA must be supplied together; the image cannot qualify the target TensorRT plans.",
       "evidence": [
-        "workflows/testing/molmoact2-jetson-thor-edge.yaml config.source_overlay=true"
+        "workflows/testing/molmoact2-jetson-thor-edge.yaml config.require_baked_npa=1 and private runtime_image placeholder",
+        "npa/docker/workbench/molmoact2-jetson-thor/Dockerfile contains only the cloud evidence adapter and neutral Python dependencies."
       ]
     },
     "target_runtime": {

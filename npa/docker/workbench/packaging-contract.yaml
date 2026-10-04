@@ -163,6 +163,17 @@ redistribution:
 
 # Relative to npa/docker/workbench/
 images:
+  molmoact2-jetson-thor:
+    dockerfile: molmoact2-jetson-thor/Dockerfile
+    tier: job
+    redistribution: unvalidated
+    notes: >-
+      Private CPU evidence worker only. It contains the NPA adapter and pinned
+      neutral Python dependencies, but no vla-edge source, model checkpoint,
+      TensorRT engine or plugin, JetPack/TensorRT runtime, observation data, or
+      target execution bytes. It must remain publication-quarantined until the
+      exact private image has completed byte, SBOM, secret, vulnerability, and
+      pull review; none of those cloud checks qualify a Jetson Thor engine.
   libero:
     dockerfile: libero/Dockerfile
     tier: job

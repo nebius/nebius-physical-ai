@@ -11,7 +11,13 @@ metadata:
     or latency validation.
 config:
   bucket: example-bucket
-  source_overlay: true
+  # The checked-in placeholder is intentionally inert. Before submit, replace
+  # it with an operator-private immutable digest and pass the source commit
+  # that was baked into that digest. This CPU image verifies cloud artifacts;
+  # it never substitutes for the native Thor runtime.
+  runtime_image: "registry.example.invalid/operator/molmoact2-jetson-thor@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  source_sha: ""
+  require_baked_npa: "1"
   prefix: "molmoact2-jetson-thor/{{run.id}}"
   observations_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/observations.npz"
   prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepare/observations.npz"
@@ -28,6 +34,7 @@ resources:
     cloud: kubernetes
     cpus: 4
     memory: 16Gi
+    image: "{{config.runtime_image}}"
 initial: prepare-observations
 states:
   prepare-observations:

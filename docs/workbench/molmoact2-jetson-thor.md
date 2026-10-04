@@ -38,7 +38,7 @@ checkpoint are separate upstream artifacts and retain their respective notices.
 
 | Material | Decision |
 | --- | --- |
-| NPA source overlay | Redistributable repository code only; it contains no bundle, checkpoint, plan, calibration capture, or populated cache. |
+| NPA cloud evidence image | Private, unvalidated CPU-only derivative built from this adapter. It contains no bundle, checkpoint, plan, calibration capture, populated cache, JetPack, TensorRT, or `vla-edge`; it is not a target image and has no public tag or catalog release. Its exact digest and matching source SHA are supplied only at submit time. |
 | `vla-edge` source | Apache-2.0, with its bundled notices preserved by the upstream installation. |
 | TensorRT plans, compact host, plugins, and model bytes | Operator-owned runtime fetch from the pinned model revision on the Thor; never copied into an NPA image, layer, public bucket, or this repository. The source model card states Apache-2.0 for the bundle, but actual bytes must still be fetched and checksum-verified for the target run. |
 | JetPack, TensorRT, and Jetson PyTorch runtime | Operator-installed NVIDIA product runtime on the target device; not packaged or redistributed by NPA. NVIDIA's [JetPack/TensorRT SDK terms](https://docs.nvidia.com/jetson/jetpack/eula/) govern that installation and the TensorRT SDK is licensed for applications on NVIDIA-GPU systems. The target installer is the only applicable acceptance mechanism; this onboarding adds no NPA EULA, environment acceptance flag, telemetry, or duplicate attestation. |
@@ -132,12 +132,13 @@ npa/.venv/bin/python -m npa.workflows.molmoact2_jetson_thor target-action-trace 
   --run-id "<run-id>"
 ```
 
-Then run the workflow using the same configured bucket/prefix/run ID. It repeats
-canonical preparation, verifies the target artifacts, evaluates the actual
-trace, and publishes the RRD. Before a live submit, run the normal health,
-schema, plan/render, and image preflight commands against the selected NPA
-cluster. The submit matrix registers this workflow as plan-only and
-rotation-skipped until a Thor dispatcher and real target evidence exist; that
+Then run the workflow using the same configured bucket/prefix/run ID and an
+operator-private immutable cloud-evidence-image digest plus the exact source
+commit baked into that digest. It repeats canonical preparation, verifies the
+target artifacts, evaluates the actual trace, and publishes the RRD. Before a
+live submit, run the normal health, schema, plan/render, and image preflight
+commands against the selected NPA cluster. The submit matrix registers this
+workflow as plan-only and rotation-skipped until a Thor dispatcher and real target evidence exist; that
 is a hardware limitation, not a claim that a plan or x86 worker validated the
 engine.
 
@@ -146,10 +147,10 @@ engine.
 The adjacent
 [`readiness record`](../../workflows/testing/molmoact2-jetson-thor-edge.readiness.json)
 binds the final YAML hash and separates validated local planning from blocked
-target runtime, input, model-byte, and execution prerequisites. No NPA image
-was built or pushed: a generic x86 image would neither contain nor qualify the
-operator-fetched Thor plans. There is therefore no public container-catalog row
-or immutable-image/live-run claim for this derivative.
+target runtime, input, model-byte, and execution prerequisites. The private
+cloud evidence image has a separate byte/pull qualification gate; it cannot
+contain or qualify the operator-fetched Thor plans. There is no public
+container-catalog row or target-image/live-run claim for this derivative.
 
 To resume, provide one exact Thor device with the stated software, stage the
 operator-owned inputs and pinned bytes, execute the native target commands,
