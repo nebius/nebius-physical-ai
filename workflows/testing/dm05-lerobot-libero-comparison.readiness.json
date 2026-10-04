@@ -1,0 +1,59 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "43a97124680b6f9ca02b0703747fd6c1a1723077174bf76aa0eb2c42775ead11",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The declarative workflow passes schema validation and render planning with five connected substantive stages.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/dm05-lerobot-libero-comparison.yaml",
+        "npa workbench workflow plan-spec workflows/testing/dm05-lerobot-libero-comparison.yaml --check-render"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Contract tests bind protocol preparation, native LeRobot rollout, numerical metrics, and MP4/RRD reporting without substituting a published score.",
+      "evidence": [
+        "npa/tests/workflows/test_dm05_lerobot_libero.py",
+        "docs/workbench/dm05-lerobot-libero.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The operator-private execution route passed scoped storage capability checks; concrete storage identity is not recorded in this repository.",
+      "evidence": [
+        "Private operator execution-route evidence"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The candidate checkpoint is runtime-fetched and native evaluation is in progress; no five-stage comparison artifact is accepted.",
+      "evidence": [
+        "Private candidate runtime evidence"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Operator-owned scoped identity, storage, and public checkpoint-access preflight passed without adding acceptance variables.",
+      "evidence": [
+        "Private operator preflight evidence"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "An operator-private exact-source DM05 image passed registration, pull, bootstrap, and telemetry-boundary checks; it is not a public image release.",
+      "evidence": [
+        "Private operator image qualification evidence"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The released generic predecessor is a 14-state/14-action, 50-step policy and cannot be silently adapted to the candidate's 8-state/7-action LIBERO contract. Candidate qualification is in progress; no matched five-stage result, benchmark reproduction, or physical-robot claim exists.",
+      "evidence": [
+        "docs/workbench/dm05-lerobot-libero.md"
+      ]
+    }
+  }
+}

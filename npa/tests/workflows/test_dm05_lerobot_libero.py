@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 import types
 from pathlib import Path
 
 import pytest
 
+from npa.orchestration.npa_workflow.readiness import load_readiness_record
 from npa.workflows import dm05_lerobot_libero as workflow
+
+
+WORKFLOW = (
+    Path(__file__).resolve().parents[3]
+    / "workflows/testing/dm05-lerobot-libero-comparison.yaml"
+)
 
 
 def _checkpoint(path: Path, role: str = "candidate") -> Path:
@@ -322,3 +330,13 @@ def test_libero_config_uses_installed_assets_without_interactive_setup(
     assert config["benchmark_root"] == str(benchmark_root)
     assert config["assets"] == str(benchmark_root / "assets")
     assert Path(config["datasets"]).is_dir()
+
+
+def test_readiness_record_is_bound_to_the_comparison_workflow_bytes():
+    readiness = load_readiness_record(WORKFLOW.with_suffix(".readiness.json"))
+
+    assert (
+        readiness["workflow_sha256"]
+        == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
+    )
+    assert readiness["prerequisites"]["target_runtime"]["status"] == "unverified"

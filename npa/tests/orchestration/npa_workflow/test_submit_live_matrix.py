@@ -361,6 +361,22 @@ def test_plan_only_cases_have_machine_checked_justifications() -> None:
             )
 
 
+def test_dm05_shared_matrix_refuses_stock_lerobot_submission() -> None:
+    """The exact DM05 runtime is private, so the shared case never submits stock LeRobot."""
+
+    case = next(
+        item
+        for item in SUBMIT_LIVE_MATRIX
+        if item.spec == "dm05-lerobot-libero-comparison.yaml"
+    )
+
+    assert case.plan_only
+    assert "operator-private exact DM05 runtime" in case.plan_only_justification
+    assert not case.image_tool
+    assert not case.image_overrides
+    assert "before provider submission" in case.notes
+
+
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
     plan_only = {
         "adversarial-scenario-hardening.yaml",

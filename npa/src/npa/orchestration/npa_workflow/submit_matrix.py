@@ -188,11 +188,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "dm05-lerobot-libero-comparison.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        image_tool="lerobot",
+        plan_only=True,
+        plan_only_justification=(
+            "The comparison requires an operator-private exact DM05 runtime "
+            "digest; a shared matrix run must not fall back to stock LeRobot."
+        ),
         notes=(
-            "Five-stage matched 200-episode DM05 comparison. Run only with the "
-            "operator-private digest built from Dockerfile.dm05-validation through "
-            "NPA_E2E_IMAGE_OVERRIDE_LEROBOT; no live metric or release claim exists yet."
+            "Five-stage matched 200-episode DM05 comparison. The shared matrix "
+            "performs planning only and returns before provider submission. Execute "
+            "only through the dedicated operator-private exact-runtime route; no "
+            "live metric or release claim exists yet."
         ),
     ),
     SubmitLiveCase(
