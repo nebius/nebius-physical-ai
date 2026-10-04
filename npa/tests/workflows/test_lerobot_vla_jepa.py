@@ -68,11 +68,10 @@ def test_live_matrix_registers_the_private_candidate_without_a_generic_fallback(
     assert set(case.secret_envs) == {
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
-        "HF_TOKEN",
     }
     assert "unroutable image sentinel" in case.plan_only_justification
     assert "private" in case.plan_only_justification
-    assert "LIBERO dataset endpoint" in case.plan_only_justification
+    assert "anonymous runtime fetches" in case.plan_only_justification
     assert "no acceptance mechanism" in case.plan_only_justification
 
 
