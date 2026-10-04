@@ -1,0 +1,19 @@
+{
+  "schema": "npa.libero-plus.licensed-assets.native-executor.v1",
+  "executor": {
+    "repository": "https://github.com/Lifelong-Robot-Learning/LIBERO.git",
+    "revision": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "license_sha256": "e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6",
+    "native_component": "libero.libero.envs.arenas.table_arena.TableArena"
+  },
+  "scope": "original MIT LIBERO scene assembly and camera rendering only",
+  "excluded": [
+    "sylvestf/LIBERO-plus source",
+    "LIBERO-Plus BDDL/task definitions",
+    "LIBERO-Plus benchmark randomizer",
+    "policy checkpoints",
+    "demonstrations"
+  ]
+}

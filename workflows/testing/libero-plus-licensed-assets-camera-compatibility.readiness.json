@@ -1,0 +1,59 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "4bd8a12ba73ad66f4930c8137ceee03ee240608d710939ed17b212fe366aa24c",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The five-state spec validates and renders from current main with every downstream stage consuming the preceding run-scoped artifact.",
+      "evidence": [
+        "private forward test receipt: libero-plus-assets-validate-current-main.json",
+        "private forward test receipt: libero-plus-assets-plan-current-main.json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The graph performs asset hash selection, original-LIBERO native assembly, same-state EGL rendering, decoded pose/RGB measurement, and gallery/RRD reporting; it declares the narrow non-benchmark scope in every final artifact.",
+      "evidence": [
+        "npa/tests/workflows/test_libero_plus_assets_camera_compatibility.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The scoped operator route has provider-verified S3 list/put/get/delete evidence; every workflow output is a run-scoped S3 URI.",
+      "evidence": [
+        "private forward execution-route verification"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The author-published asset archive is anonymously addressable and hash-pinned, but its full runtime download and allowlisted extraction have not yet completed in the new private image.",
+      "evidence": [
+        "docs/workbench/libero-plus.md"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The selected MIT asset archive is anonymous; no Hugging Face token or new acceptance mechanism is used. Private S3 and registry credentials are supplied only by the existing scoped execution wrapper.",
+      "evidence": [
+        "private forward execution-route verification"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The private original-MIT-LIBERO derivative recipe and byte-scan contract are present, but a new immutable derivative digest has not yet been built and independently pulled.",
+      "evidence": [
+        "npa/docker/workbench/libero-plus-assets/Dockerfile.private",
+        "npa/docker/workbench/libero-plus-assets/build-private.sh"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Prior CPU and EGL evidence establishes the original executor can render the selected scene, but this new image and five-stage workflow still need a real RTX PRO 6000 device run and independent final-artifact inspection.",
+      "evidence": [
+        "private forward licensed-assets proof"
+      ]
+    }
+  }
+}

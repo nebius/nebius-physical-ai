@@ -1476,6 +1476,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "libero-plus-licensed-assets-camera-compatibility.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "The shipped spec deliberately carries an invalid image placeholder; "
+            "the original-MIT-LIBERO private derivative must be built, scanned, "
+            "and selected through the operator-private qualification route."
+        ),
+        notes=(
+            "Five real stages hash one separately MIT-labelled scene asset, assemble "
+            "it through original LIBERO TableArena, render matched EGL cameras, "
+            "decode measured pose/RGB differences, and emit gallery/RRD evidence. "
+            "It never claims the unlicensed full LIBERO-Plus benchmark."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-maniskill.yaml",
         "multi",
         plan_only=True,

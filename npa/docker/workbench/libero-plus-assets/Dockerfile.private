@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1.7
+#
+# Private derivative for the separately licensed MIT asset-camera capability.
+# BASE_IMAGE is supplied by the operator build and must be the privately
+# inspected OpenWAM image containing original MIT LIBERO, never the unlicensed
+# LIBERO-Plus fork or its asset archive.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG NPA_SOURCE_SHA
+ARG SOURCE_DATE_EPOCH
+
+USER root
+
+LABEL org.opencontainers.image.title="NPA LIBERO-Plus licensed-assets camera compatibility" \
+      org.opencontainers.image.description="Private original-MIT-LIBERO scene and EGL camera compatibility image; not the LIBERO-Plus benchmark" \
+      org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT" \
+      org.nebius.npa.redistribution="unvalidated-operator-private" \
+      org.nebius.npa.validation-status="licensed-assets-camera-compatibility" \
+      org.nebius.npa.libero-plus-source="absent" \
+      org.nebius.npa.libero-plus-assets="runtime-fetch-only"
+
+COPY docker/workbench/libero-plus-assets/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-libero-plus-assets/THIRD_PARTY_NOTICES.md
+COPY docker/workbench/libero-plus-assets/native-executor-provenance.json /usr/share/doc/npa-libero-plus-assets/native-executor-provenance.json
+COPY docker/workbench/libero-plus-assets/entrypoint.sh /usr/local/bin/npa-libero-plus-assets-entrypoint
+COPY src/npa/workflows/libero_plus_assets.py /opt/npa/src/npa/workflows/libero_plus_assets.py
+
+RUN set -eux; \
+    test -n "${NPA_SOURCE_SHA}"; \
+    test "${#NPA_SOURCE_SHA}" -eq 40; \
+    case "${NPA_SOURCE_SHA}" in *[!0-9a-f]*) exit 64 ;; esac; \
+    case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
+    test "${SOURCE_DATE_EPOCH}" -gt 0; \
+    /opt/openwam-libero/bin/python -m pip install --no-cache-dir \
+      boto3==1.42.91 rerun-sdk==0.38.1; \
+    /opt/openwam-libero/bin/python -m py_compile /opt/npa/src/npa/workflows/libero_plus_assets.py; \
+    test -s /opt/openwam-libero-source/LICENSE; \
+    test "$(sha256sum /opt/openwam-libero-source/LICENSE | awk '{print $1}')" = \
+      e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6; \
+    install -d -m 0755 /usr/share/doc/npa-libero-plus-assets; \
+    chmod 0444 /usr/share/doc/npa-libero-plus-assets/THIRD_PARTY_NOTICES.md \
+      /usr/share/doc/npa-libero-plus-assets/native-executor-provenance.json; \
+    chmod 0555 /usr/local/bin/npa-libero-plus-assets-entrypoint; \
+    install -d -m 0750 -o ubuntu -g ubuntu /workspace/.cache/npa-model; \
+    test ! -e /workspace/.cache/npa-model/libero-plus-assets; \
+    ! find /opt/npa -type f \( -iname '*.zip' -o -iname '*.mp4' -o -iname '*.hdf5' -o -iname '*.pth' -o -iname '*.ckpt' \) -print -quit | grep -q .
+
+ENV NPA_MODEL_CACHE_DIR=/workspace/.cache/npa-model \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+USER ubuntu
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/npa-libero-plus-assets-entrypoint"]
+CMD ["/opt/openwam-libero/bin/python", "/opt/npa/src/npa/workflows/libero_plus_assets.py", "--help"]

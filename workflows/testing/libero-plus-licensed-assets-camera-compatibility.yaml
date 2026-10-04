@@ -1,0 +1,80 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: libero-plus-licensed-assets-camera-compatibility
+  description: >-
+    Hash an author-published MIT LIBERO-Plus scene asset, assemble it through the
+    original MIT LIBERO TableArena, render matched EGL cameras, decode measured
+    pose/image differences, and emit a factual gallery, RRD, and report.
+config:
+  bucket: example-bucket
+  prefix: "libero-plus-licensed-assets-camera-compatibility/{{run.id}}"
+  runtime_image: "registry.example.invalid/operator/libero-plus-assets@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  asset_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/acquire/asset-manifest.json"
+  scene_uri: "s3://{{config.bucket}}/{{config.prefix}}/acquire/libero_tabletop_base_style.xml"
+  assembly_uri: "s3://{{config.bucket}}/{{config.prefix}}/assembly/scene-assembly.json"
+  gallery_uri: "s3://{{config.bucket}}/{{config.prefix}}/render/camera-gallery.json"
+  agentview_uri: "s3://{{config.bucket}}/{{config.prefix}}/render/agentview.png"
+  agentview_60_uri: "s3://{{config.bucket}}/{{config.prefix}}/render/agentview_60.png"
+  metrics_uri: "s3://{{config.bucket}}/{{config.prefix}}/validate/camera-metrics.json"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/camera-compatibility-report.json"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/camera-compatibility.rrd"
+resources:
+  gpu:
+    cloud: kubernetes
+    image: "{{config.runtime_image}}"
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 16
+    memory: 96Gi
+    disk_size: 150
+initial: acquire-mit-assets
+states:
+  acquire-mit-assets:
+    description: Download and hash the exact author-published MIT asset archive, then emit only the allowlisted scene asset.
+    run:
+      argv: [/opt/openwam-libero/bin/python, /opt/npa/src/npa/workflows/libero_plus_assets.py, acquire, --output-uri, "{{config.asset_manifest_uri}}", --scene-uri, "{{config.scene_uri}}"]
+    resources: gpu
+    outputs:
+      - {uri: "{{config.asset_manifest_uri}}", schema: npa.libero-plus.licensed-assets.manifest.v1}
+      - {uri: "{{config.scene_uri}}", schema: application/xml}
+    next: assemble-native-scene
+  assemble-native-scene:
+    description: Use original MIT LIBERO TableArena to compile and forward the allowlisted scene under isolated LIBERO configuration.
+    run:
+      argv: [/opt/openwam-libero/bin/python, /opt/npa/src/npa/workflows/libero_plus_assets.py, assemble, --asset-manifest-uri, "{{state.acquire-mit-assets.uri}}", --output-uri, "{{config.assembly_uri}}"]
+    resources: gpu
+    inputs: [{uri: "{{state.acquire-mit-assets.uri}}", schema: npa.libero-plus.licensed-assets.manifest.v1}]
+    outputs: [{uri: "{{config.assembly_uri}}", schema: npa.libero-plus.licensed-assets.scene-assembly.v1}]
+    next: render-matched-cameras
+  render-matched-cameras:
+    description: Render real 256x256 agentview and agentview_60 EGL frames from the exact same native scene state.
+    run:
+      argv: [/opt/openwam-libero/bin/python, /opt/npa/src/npa/workflows/libero_plus_assets.py, render, --assembly-uri, "{{state.assemble-native-scene.uri}}", --output-uri, "{{config.gallery_uri}}", --camera-a-uri, "{{config.agentview_uri}}", --camera-b-uri, "{{config.agentview_60_uri}}"]
+    resources: gpu
+    inputs: [{uri: "{{state.assemble-native-scene.uri}}", schema: npa.libero-plus.licensed-assets.scene-assembly.v1}]
+    outputs:
+      - {uri: "{{config.gallery_uri}}", schema: npa.libero-plus.licensed-assets.camera-gallery.v1}
+      - {uri: "{{config.agentview_uri}}", schema: image/png}
+      - {uri: "{{config.agentview_60_uri}}", schema: image/png}
+    next: validate-camera-metrics
+  validate-camera-metrics:
+    description: Decode both native PNGs and calculate factual camera-pose and RGB-difference metrics.
+    run:
+      argv: [/opt/openwam-libero/bin/python, /opt/npa/src/npa/workflows/libero_plus_assets.py, validate, --gallery-uri, "{{state.render-matched-cameras.uri}}", --output-uri, "{{config.metrics_uri}}"]
+    resources: gpu
+    inputs: [{uri: "{{state.render-matched-cameras.uri}}", schema: npa.libero-plus.licensed-assets.camera-gallery.v1}]
+    outputs: [{uri: "{{config.metrics_uri}}", schema: npa.libero-plus.licensed-assets.camera-metrics.v1}]
+    next: emit-gallery-report
+  emit-gallery-report:
+    description: Emit the factual image gallery report and decodable RRD, explicitly bounded to MIT asset camera compatibility.
+    run:
+      argv: [/opt/openwam-libero/bin/python, /opt/npa/src/npa/workflows/libero_plus_assets.py, report, --assembly-uri, "{{state.assemble-native-scene.uri}}", --gallery-uri, "{{state.render-matched-cameras.uri}}", --metrics-uri, "{{state.validate-camera-metrics.uri}}", --output-uri, "{{config.report_uri}}", --rrd-uri, "{{config.rrd_uri}}"]
+    resources: gpu
+    inputs:
+      - {uri: "{{state.assemble-native-scene.uri}}", schema: npa.libero-plus.licensed-assets.scene-assembly.v1}
+      - {uri: "{{state.render-matched-cameras.uri}}", schema: npa.libero-plus.licensed-assets.camera-gallery.v1}
+      - {uri: "{{state.validate-camera-metrics.uri}}", schema: npa.libero-plus.licensed-assets.camera-metrics.v1}
+    outputs:
+      - {uri: "{{config.report_uri}}", schema: npa.libero-plus.licensed-assets.camera-report.v1}
+      - {uri: "{{config.rrd_uri}}", schema: application/vnd.rerun.rrd}
+    terminal: true

@@ -23,6 +23,49 @@ All result artifacts are run-scoped S3 objects. The implementation records nativ
 
 The checked-in workflow uses an intentionally invalid example registry digest for offline validation. A future operator run must replace it with a private, immutable, independently inspected bootstrap image; no unverified image is published by this onboarding. Local contract tests validate the five-stage graph and independently decode a generated RRD, but they are not upstream simulator, benchmark, convergence, image, or physical-robot evidence.
 
+## Licensed-assets camera compatibility profile
+
+The separately MIT-labelled `Sylvest/LIBERO-plus` asset archive supports one
+strictly smaller capability without resolving the source boundary above:
+[`workflows/testing/libero-plus-licensed-assets-camera-compatibility.yaml`](../../workflows/testing/libero-plus-licensed-assets-camera-compatibility.yaml).
+It uses the author-published asset revision
+`dd2bd61b7d9a6fef1abc52d606e983b41886a149`, downloads and verifies the full
+`assets.zip` SHA-256
+`96764a4bfbdaea98d4411598caeab235458318fe0f549611b93d1a323027b3cf`, and
+emits only allowlisted `assets/scenes/libero_tabletop_base_style.xml` (SHA-256
+`5e69f8568bedf4a71641fcb62285182d0f6dbe498ea18adad86a13706558033f`). The
+6.4 GB archive remains in an immutable revision-scoped operator cache; it is
+never baked into the image or copied to result storage.
+
+The five connected stages are (1) acquire/hash/attribute that asset, (2) compile
+and `mj_forward` it through original
+[`Lifelong-Robot-Learning/LIBERO`](https://github.com/Lifelong-Robot-Learning/LIBERO)
+revision `8f1084e3132a39270c3a13ebe37270a43ece2a01` under MIT, (3) render
+`agentview` and `agentview_60` from the same native scene state with EGL, (4)
+independently decode both PNGs and calculate camera-pose plus RGB-difference
+metrics, and (5) emit a gallery manifest, report, and decodable RRD. The native
+executor is explicitly attributed; its `LICENSE` SHA-256 is
+`e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6`.
+
+Private preliminary evidence with that exact original-MIT executor compiled the
+selected scene and passed `mj_forward` on MuJoCo 3.3.2 (37 cameras, 13 geoms,
+two lights); actual 256×256 EGL views had mean absolute RGB difference
+`52.54959615071615`. That evidence establishes only native scene/camera
+compatibility. It does **not** establish a 10,030-task LIBERO-Plus result, BDDL
+or randomizer parity, policy action, robustness delta, benchmark convergence, or
+physical-robot success. The profile never downloads, copies, imports, or
+executes the unlicensed `sylvestf/LIBERO-plus` source, BDDL/task definitions, or
+benchmark randomizer.
+
+`npa/docker/workbench/libero-plus-assets/Dockerfile.private` is an
+operator-private derivative of the already inspected OpenWAM/original-LIBERO
+runtime. Its build helper requires an operator-private base, verifies the native
+MIT license identity, produces provenance/SBOM plus an OCI scan, refuses public
+registry targets, and leaves the asset archive runtime-fetch-only. It adds no
+EULA, `ACCEPT_*` flag, credential prerequisite, telemetry setting, or public
+publication path. A successful future run is still reported as the narrow
+camera-compatibility capability, never as full LIBERO-Plus acceptance.
+
 ## Source-admission image
 
 `npa/docker/workbench/libero-plus/Dockerfile.admission` is an intentionally
