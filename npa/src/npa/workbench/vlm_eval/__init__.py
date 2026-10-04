@@ -86,7 +86,7 @@ EVIDENCE_SCHEMA_VERSION = "npa_vlm_eval_evidence_v2"
 PREFERENCE_REQUEST_EVIDENCE_SCHEMA_VERSION = "npa_vlm_preference_request_evidence_v1"
 JUDGE_COMPARISON_SCHEMA_VERSION = "npa_vlm_judge_comparison_v1"
 HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_hosted_json_v1"
-SELF_HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_compatible_json_v1"
+SELF_HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_compatible_json_v2"
 MARKDOWN_FENCE_PARSER_SUFFIX = "+markdown-fence-v1"
 UNPARSED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_unparsed_v1"
 DEFAULT_PRIMARY_JUDGE_MODEL = DEFAULT_VISION_MODEL
@@ -244,6 +244,7 @@ class VlmEvalResult:
     rubric: str = DEFAULT_RUBRIC
     provider_success: bool | None = None
     provider_success_matches_score_gate: bool | None = None
+    served_model_match_enforced: bool = False
 
 
 @dataclass(frozen=True)
@@ -405,6 +406,7 @@ class VlmStructuredResponse:
     evidence: VlmEvaluationEvidence | None = None
     parser_version: str = SELF_HOSTED_RESPONSE_PARSER_VERSION
     provider_success: bool | None = None
+    served_model_match_enforced: bool = False
 
 
 @dataclass(frozen=True)
@@ -545,6 +547,9 @@ class VlmBenchmarkCaseResult:
     evidence: VlmEvaluationEvidence | None = None
     provider_success: bool | None = None
     provider_success_matches_score_gate: bool | None = None
+    requested_model: str = ""
+    served_model: str | None = None
+    served_model_match_enforced: bool = False
 
 
 @dataclass(frozen=True)
@@ -640,6 +645,12 @@ def benchmark_vlm_eval(
         dataset_path=benchmark_dataset.path,
     )
     effective_backend = _normalize_backend(backend)
+    model_values = list(
+        dict.fromkeys(
+            _effective_model(backend=effective_backend, model=model)
+            for model in model_values
+        )
+    )
     effective_frame_selection = _normalize_frame_selection(frame_selection)
     if max_frames <= 0:
         raise VlmEvalError("--max-frames must be positive")
@@ -817,21 +828,7 @@ def evaluate_vlm(
             rubric=effective_rubric,
         )
 
-    effective_model = model or DEFAULT_MODEL
-    if backend == "self-hosted" and effective_model == DEFAULT_MODEL:
-        # The job that started the vLLM server records which model it serves, so
-        # the client asks for that one instead of the 7B default (a mismatch is a
-        # 404 from the server). See `_vllm_serve_preamble` in the workflow render.
-        effective_model = (
-            os.environ.get(SELF_HOSTED_MODEL_ENV, "").strip() or effective_model
-        )
-    if backend == "api" and effective_model == DEFAULT_MODEL:
-        # DEFAULT_MODEL is the self-hosted (vLLM) default. The hosted Token
-        # Factory API does not serve it (requests 404); use the vision model
-        # Token Factory actually serves unless the caller overrode --model.
-        from npa.clients.token_factory import DEFAULT_VISION_MODEL
-
-        effective_model = DEFAULT_VISION_MODEL
+    effective_model = _effective_model(backend=backend, model=model)
     if score is not None:
         _validate_score_override(score)
         structured = VlmStructuredResponse(
@@ -881,6 +878,29 @@ def evaluate_vlm(
         rubric=effective_rubric,
         structured=structured,
     )
+
+
+def _effective_model(*, backend: str, model: str) -> str:
+    """Resolve the same effective model for direct and aggregate disclosures."""
+
+    if backend == "stub":
+        return model or "vlm-eval-stub"
+    effective_model = model or DEFAULT_MODEL
+    if backend == "self-hosted" and effective_model == DEFAULT_MODEL:
+        # The job that started the vLLM server records which model it serves, so
+        # the client asks for that one instead of the 7B default (a mismatch is a
+        # 404 from the server). See `_vllm_serve_preamble` in the workflow render.
+        effective_model = (
+            os.environ.get(SELF_HOSTED_MODEL_ENV, "").strip() or effective_model
+        )
+    if backend == "api" and effective_model == DEFAULT_MODEL:
+        # DEFAULT_MODEL is the self-hosted (vLLM) default. The hosted Token
+        # Factory API does not serve it (requests 404); use the vision model
+        # Token Factory actually serves unless the caller overrode --model.
+        from npa.clients.token_factory import DEFAULT_VISION_MODEL
+
+        effective_model = DEFAULT_VISION_MODEL
+    return effective_model
 
 
 def compare_vlm_judges(
@@ -1479,21 +1499,25 @@ def _literal_provider_success(value: Any) -> bool | None:
 
 
 def parse_structured_response(text: str) -> VlmStructuredResponse:
-    """Parse a VLM JSON response and clamp its score into [0, 1]."""
+    """Parse self-hosted framing and validate the literal verdict fields.
+
+    Args:
+        text: Model response containing one verdict object.
+
+    Returns:
+        A verdict with validated values and framing provenance.
+
+    Raises:
+        VlmEvalError: If parsing or literal field validation fails.
+    """
 
     payload, deframed = _load_json_object(text)
-    if "score" not in payload:
-        raise VlmEvalError("VLM response JSON must include score")
-    if "rationale" not in payload:
-        raise VlmEvalError("VLM response JSON must include rationale")
-    score = _clamp_score(payload["score"])
-    success_supplied = "success" in payload
-    success = _coerce_bool(payload["success"]) if success_supplied else score >= 0.5
+    success, score, rationale = _validate_verdict_fields(payload, "Self-hosted")
     provider_success = _literal_provider_success(payload.get("success"))
     return VlmStructuredResponse(
         success=success,
         score=score,
-        rationale=str(payload["rationale"]),
+        rationale=rationale,
         parser_version=_parser_version(SELF_HOSTED_RESPONSE_PARSER_VERSION, deframed),
         provider_success=provider_success,
     )
@@ -1503,6 +1527,21 @@ def _parse_api_structured_response(
     text: Any, *, served_model: str
 ) -> VlmStructuredResponse:
     """Validate the complete hosted judge output without repairing its verdict."""
+
+    payload, deframed = _load_hosted_verdict(text)
+    success, score, rationale = _validate_verdict_fields(payload, "Hosted")
+    return VlmStructuredResponse(
+        success=success,
+        score=score,
+        rationale=rationale,
+        served_model=served_model,
+        parser_version=_parser_version(HOSTED_RESPONSE_PARSER_VERSION, deframed),
+        provider_success=success,
+    )
+
+
+def _load_hosted_verdict(text: Any) -> tuple[dict[str, Any], bool]:
+    """Require complete hosted JSON with unique keys and finite constants."""
 
     def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
@@ -1530,9 +1569,17 @@ def _parse_api_structured_response(
         ) from exc
     if not isinstance(payload, dict):
         raise VlmEvalError("Hosted VLM response JSON must be an object")
+    return payload, deframed
+
+
+def _validate_verdict_fields(
+    payload: dict[str, Any], response_label: str
+) -> tuple[bool, float, str]:
+    """Validate verdict fields without coercing or clamping model output."""
+
     provider_success = _literal_provider_success(payload.get("success"))
     if provider_success is None:
-        raise VlmEvalError("Hosted VLM response success must be a boolean")
+        raise VlmEvalError(f"{response_label} VLM response success must be a boolean")
     score = payload.get("score")
     if (
         isinstance(score, bool)
@@ -1541,19 +1588,14 @@ def _parse_api_structured_response(
         or not math.isfinite(score)
     ):
         raise VlmEvalError(
-            "Hosted VLM response score must be a finite number in [0, 1]"
+            f"{response_label} VLM response score must be a finite number in [0, 1]"
         )
     rationale = payload.get("rationale")
     if not isinstance(rationale, str) or not rationale.strip():
-        raise VlmEvalError("Hosted VLM response rationale must be a nonempty string")
-    return VlmStructuredResponse(
-        success=provider_success,
-        score=float(score),
-        rationale=rationale,
-        served_model=served_model,
-        parser_version=_parser_version(HOSTED_RESPONSE_PARSER_VERSION, deframed),
-        provider_success=provider_success,
-    )
+        raise VlmEvalError(
+            f"{response_label} VLM response rationale must be a nonempty string"
+        )
+    return provider_success, float(score), rationale
 
 
 def result_uri_for(output_path: str) -> str:
@@ -1655,6 +1697,9 @@ class VlmLoopRollout:
     status: str
     frame_count: int
     result_uri: str
+    requested_model: str = ""
+    served_model: str | None = None
+    served_model_match_enforced: bool = False
 
 
 def evaluate_rollout_set(
@@ -1684,6 +1729,8 @@ def evaluate_rollout_set(
     """
 
     started_at = time.monotonic()
+    backend = _normalize_backend(backend)
+    model = _effective_model(backend=backend, model=model)
     rollouts: list[VlmLoopRollout] = []
     for rollout_uri in discover_rollouts(input_path):
         rollout_id = _rollout_id_for(rollout_uri)
@@ -1716,6 +1763,9 @@ def evaluate_rollout_set(
                 status=result.status,
                 frame_count=result.frame_count,
                 result_uri=written,
+                requested_model=result.model,
+                served_model=result.served_model,
+                served_model_match_enforced=result.served_model_match_enforced,
             )
         )
 
@@ -1900,7 +1950,7 @@ def _result_from_structured(
     rubric: str,
     structured: VlmStructuredResponse,
 ) -> VlmEvalResult:
-    score = round(_clamp_score(structured.score), 4)
+    score = round(structured.score, 4)
     passed = score >= success_threshold
     provider_success = (
         structured.provider_success if structured.evidence is not None else None
@@ -1925,6 +1975,7 @@ def _result_from_structured(
         rationale=structured.rationale,
         rubric=rubric,
         served_model=structured.served_model,
+        served_model_match_enforced=structured.served_model_match_enforced,
         provider_success=provider_success,
         provider_success_matches_score_gate=provider_success_matches_score_gate,
         evidence=structured.evidence,
@@ -1980,6 +2031,9 @@ def _run_benchmark_case(
         rationale=result.rationale,
         frame_count=result.frame_count,
         score_source="fixture" if score is not None else result.backend,
+        requested_model=result.model,
+        served_model=result.served_model,
+        served_model_match_enforced=result.served_model_match_enforced,
         provider_success=result.provider_success,
         provider_success_matches_score_gate=result.provider_success_matches_score_gate,
         evidence=result.evidence,
@@ -2547,7 +2601,8 @@ def _hosted_structured_response(
         raise VlmEvalError(
             "Hosted VLM response model does not match the requested model"
         )
-    return _parse_api_structured_response(message, served_model=served_model)
+    result = _parse_api_structured_response(message, served_model=served_model)
+    return replace(result, served_model_match_enforced=profile.require_exact_model)
 
 
 def _openai_headers(*, backend: str, api_key_env: str) -> dict[str, str]:
@@ -3430,14 +3485,6 @@ def _parser_version(base_version: str, deframed: bool) -> str:
     if deframed:
         return base_version + MARKDOWN_FENCE_PARSER_SUFFIX
     return base_version
-
-
-def _coerce_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes"}
-    return bool(value)
 
 
 def _clamp_score(value: Any) -> float:

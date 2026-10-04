@@ -2449,17 +2449,46 @@ def test_grade_gate_rejects_compatibility_only_self_hosted_verdict(
 ) -> None:
     completion = _provider_completion(success=True, metadata=True)
     completion["choices"][0]["message"]["content"] = content
+    report = _retained_report_with_completion(monkeypatch, tmp_path, completion)
+
+    # This is mutated retained content, not permissive current-producer output.
+    assert (
+        json.loads(report["evidence"]["provider"]["raw_response"])["choices"][0][
+            "message"
+        ]["content"]
+        == content
+    )
+    _assert_completion_blocked(tmp_path, report, "provider_verdict_invalid")
+
+
+@pytest.mark.parametrize("fenced", [False, True])
+@pytest.mark.parametrize("superseded", [False, True])
+def test_grade_gate_pins_retained_parser_version_contract(
+    tmp_path: Path, monkeypatch, fenced: bool, superseded: bool
+) -> None:
+    completion = _provider_completion(success=True, metadata=True)
+    if fenced:
+        content = completion["choices"][0]["message"]["content"]
+        completion["choices"][0]["message"]["content"] = f"```json\n{content}\n```"
     report = _provider_vlm_report(
         monkeypatch, tmp_path, backend="self-hosted", completion=completion
     )
-
-    assert report["passed"] is True
-    assert report["evidence"]["provider"]["parser_version"] in {
-        vlm_eval.SELF_HOSTED_RESPONSE_PARSER_VERSION,
-        vlm_eval.SELF_HOSTED_RESPONSE_PARSER_VERSION
-        + vlm_eval.MARKDOWN_FENCE_PARSER_SUFFIX,
-    }
-    _assert_completion_blocked(tmp_path, report, "provider_verdict_invalid")
+    suffix = vlm_eval.MARKDOWN_FENCE_PARSER_SUFFIX if fenced else ""
+    assert (
+        report["evidence"]["provider"]["parser_version"]
+        == vlm_eval.SELF_HOSTED_RESPONSE_PARSER_VERSION + suffix
+    )
+    if superseded:
+        report["evidence"]["provider"]["parser_version"] = (
+            "npa_vlm_eval_compatible_json_v1" + suffix
+        )
+        _assert_completion_blocked(tmp_path, report, "provider_metadata_mismatch")
+    else:
+        (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
+        assert (
+            dfs.grade_gate(str(tmp_path), str(tmp_path / "decision.json"))
+            == "promote_checkpoint"
+        )
 
 
 def _replace_retained_completion(report: dict, completion: dict) -> None:
@@ -2726,6 +2755,45 @@ def test_grade_gate_identifies_vlm_result_at_explicit_custom_path(
     assert decision == "promote_checkpoint"
 
 
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+@pytest.mark.parametrize("claim", [True, False, None, 0, 1, "true", "false"])
+def test_grade_gate_validates_optional_model_enforcement_claim(
+    tmp_path: Path, monkeypatch, backend: str, claim
+) -> None:
+    from npa.workflows.vlm_grade_evidence import vlm_grade_block_details
+
+    report = json.loads(
+        json.dumps(_provider_vlm_report(monkeypatch, tmp_path, backend=backend))
+    )
+    report["served_model_match_enforced"] = claim
+    (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
+    if isinstance(claim, bool) and claim is (backend == "api"):
+        assert vlm_grade_block_details(report) == {}
+        assert (
+            dfs.grade_gate(str(tmp_path), str(tmp_path / "decision.json"))
+            == "promote_checkpoint"
+        )
+    else:
+        _assert_completion_blocked(
+            tmp_path,
+            report,
+            "result_mismatch" if isinstance(claim, bool) else "result_invalid",
+        )
+
+
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+def test_grade_gate_preserves_legacy_absent_enforcement_claim(
+    tmp_path: Path, monkeypatch, backend: str
+) -> None:
+    from npa.workflows.vlm_grade_evidence import vlm_grade_block_details
+
+    report = json.loads(
+        json.dumps(_provider_vlm_report(monkeypatch, tmp_path, backend=backend))
+    )
+    report.pop("served_model_match_enforced")
+    assert vlm_grade_block_details(report) == {}
+
+
 def test_grade_gate_reads_legacy_vlm_result_when_canonical_is_absent(
     tmp_path: Path,
     monkeypatch,
@@ -2745,7 +2813,7 @@ def test_grade_gate_reads_legacy_vlm_result_when_canonical_is_absent(
 
 
 @pytest.mark.parametrize("backend", ["api", "self-hosted"])
-def test_failed_current_producer_preserves_but_does_not_validate_legacy_history(
+def test_failed_current_producer_leaves_legacy_promotable_by_separate_reader(
     tmp_path: Path, monkeypatch, backend: str
 ) -> None:
     from typer.testing import CliRunner
