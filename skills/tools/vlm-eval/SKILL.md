@@ -92,11 +92,25 @@ de-framed; its retained parser version ends in `+markdown-fence-v1`. Do not
 accept surrounding prose, trailing output, duplicate keys, invalid types, or a
 partial fence on that hosted path.
 
+Both real backends require the exact response value
+`choices[0].finish_reason="stop"` before parsing a verdict. Truncated, filtered,
+tool-call, aborted, empty, malformed, or missing completion metadata is rejected.
+Self-hosted adapters that omit this metadata must emit the standard field.
+
+An incomplete response aborts the whole `loop` or benchmark sweep and makes the
+CLI fail nonzero; never substitute a fabricated score-zero valid verdict.
+Previously completed per-rollout artifacts may remain, but no new aggregate
+report is written after the rejection. Retain these as partial evidence and do
+not run promotion after the failed producer. Use new run-scoped output paths;
+old artifacts are not deleted. A standalone historical report reader can accept
+a valid legacy file when the canonical file is absent, but cannot establish
+that a new producer invocation succeeded. Present malformed/ineligible canonical
+reports remain authoritative and fail closed, without favorable legacy fallback.
+
 The `self-hosted` backend preserves its legacy compatibility parser: it can
-extract embedded JSON, accept duplicate keys and coerced types, clamp scores,
-and retain a verdict even when completion metadata is absent or not `stop`.
-Its evidence records those facts; it does not certify strict completion or
-promotion eligibility. The operator provenance lane separately requires HTTP
+extract embedded JSON, accept duplicate keys and coerced types, and clamp scores.
+Completion evidence does not certify promotion eligibility. The operator
+provenance lane separately requires HTTP
 200, `finish_reason=stop`, expected served identity and verifiable framing.
 The promotion gate separately requires a completed, non-refused, strictly typed
 verdict for either backend. Compatibility-only parsing, surrounding prose,

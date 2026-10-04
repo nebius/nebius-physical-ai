@@ -14,6 +14,11 @@ a versioned heading when a release is cut.
   All current hosted profiles enforce equality; self-hosted and synthetic
   evaluations do not claim that check.
 
+### VLM gates reject incomplete self-hosted completions
+
+- Both real VLM-eval backends require exact `finish_reason="stop"` before
+  parsing a verdict. Truncated, filtered, aborted, tool-call, or metadata-missing
+  responses fail closed even when they contain valid-looking JSON.
 ### Paired VLM output contract
 
 - Paired judge requests explicitly require bare JSON, with the same instruction

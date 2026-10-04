@@ -14,7 +14,12 @@ import json
 from pathlib import Path
 
 import pytest
+import httpx
 from PIL import Image
+from typer.testing import CliRunner
+
+from npa.cli.main import app
+from npa.workbench import vlm_eval
 
 from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
@@ -48,6 +53,84 @@ def _write_rollout(root: Path, name: str, frames: int = 2) -> Path:
             rollout / f"frame_{index:03d}.png"
         )
     return rollout
+
+
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+@pytest.mark.parametrize("interface", ["core", "cli"])
+def test_incomplete_second_rollout_aborts_without_an_aggregate_or_fake_score(
+    tmp_path: Path, monkeypatch, backend: str, interface: str
+) -> None:
+    root = tmp_path / "rollouts"
+    for name in ("episode_000", "episode_001"):
+        _write_rollout(root, name, frames=1)
+    output = tmp_path / "scores"
+    calls = []
+
+    def forbidden_network(*_args, **_kwargs):
+        pytest.fail("This is a hermetic completion-control test, not inference")
+
+    def completion(**kwargs):
+        calls.append(kwargs["request"])
+        return {
+            "model": kwargs["request"]["model"],
+            "choices": [
+                {
+                    "finish_reason": "stop" if len(calls) == 1 else "length",
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "success": True,
+                                "score": 0.9,
+                                "rationale": "Synthetic transport control only.",
+                            }
+                        )
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(httpx.Client, "send", forbidden_network)
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **_: "")
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", completion)
+    model = "MiniMaxAI/MiniMax-M3"
+    if interface == "core":
+        with pytest.raises(VlmEvalError, match="finish_reason=stop"):
+            evaluate_rollout_set(
+                input_path=str(root),
+                output_path=str(output),
+                backend=backend,
+                model=model,
+                endpoint_url="https://example.test/v1",
+            )
+    else:
+        invocation = CliRunner().invoke(
+            app,
+            [
+                "workbench",
+                "vlm-eval",
+                "loop",
+                "--input-path",
+                str(root),
+                "--output-path",
+                str(output),
+                "--backend",
+                backend,
+                "--model",
+                model,
+                "--endpoint-url",
+                "https://example.test/v1",
+                "--output",
+                "json",
+            ],
+        )
+        assert invocation.exit_code == 1
+        assert "finish_reason=stop" in invocation.output
+    assert len(calls) == 2
+    first = output / "rollouts" / "episode_000" / RESULT_FILENAME
+    assert json.loads(first.read_text())["score"] == 0.9
+    assert not (output / "rollouts" / "episode_001" / RESULT_FILENAME).exists()
+    assert not (output / LOOP_REPORT_FILENAME).exists()
+    assert list(output.rglob("*.json")) == [first]
 
 
 # ------------------------------------------------------------------------- discovery
