@@ -2536,6 +2536,7 @@ def test_submit_workflow_keeps_configured_secrets_out_of_prepared_yaml(
     sky_bin = _fake_sky(tmp_path)
     access_key = "test-access-key-must-not-be-rendered"
     secret_key = "test-secret-key-must-not-be-rendered"
+    session_token = "test-session-token-must-not-be-rendered"
     captured: dict[str, str] = {}
     calls: list[list[str]] = []
 
@@ -2544,6 +2545,7 @@ def test_submit_workflow_keeps_configured_secrets_out_of_prepared_yaml(
             {
                 "AWS_ACCESS_KEY_ID": access_key,
                 "AWS_SECRET_ACCESS_KEY": secret_key,
+                "AWS_SESSION_TOKEN": session_token,
                 "NPA_S3_BUCKET": "safe-bucket-name",
             }
         )
@@ -2553,6 +2555,7 @@ def test_submit_workflow_keeps_configured_secrets_out_of_prepared_yaml(
             {
                 "AWS_ACCESS_KEY_ID": access_key,
                 "AWS_SECRET_ACCESS_KEY": secret_key,
+                "AWS_SESSION_TOKEN": session_token,
             },
         )
 
@@ -2573,15 +2576,21 @@ def test_submit_workflow_keeps_configured_secrets_out_of_prepared_yaml(
         "run-secret-rendering",
         isolated_config_dir=tmp_path / "sky-state",
         sky_bin=sky_bin,
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+        ),
     )
 
     prepared = captured["prepared"]
     assert access_key not in prepared
     assert secret_key not in prepared
+    assert session_token not in prepared
     environment = yaml.safe_load(prepared)["envs"]
     assert environment["AWS_ACCESS_KEY_ID"] == "${AWS_ACCESS_KEY_ID}"
     assert environment["AWS_SECRET_ACCESS_KEY"] == "${AWS_SECRET_ACCESS_KEY}"
+    assert environment["AWS_SESSION_TOKEN"] == "${AWS_SESSION_TOKEN}"
     assert environment["NPA_S3_BUCKET"] == "safe-bucket-name"
     launch = calls[0]
     assert ["--secret", "AWS_ACCESS_KEY_ID"] == launch[
@@ -2591,6 +2600,8 @@ def test_submit_workflow_keeps_configured_secrets_out_of_prepared_yaml(
     assert ["--secret", "AWS_SECRET_ACCESS_KEY"] == launch[
         second_secret : second_secret + 2
     ]
+    third_secret = launch.index("--secret", second_secret + 1)
+    assert ["--secret", "AWS_SESSION_TOKEN"] == launch[third_secret : third_secret + 2]
 
 
 def test_submit_workflow_refuses_declared_secret_without_native_transport(
