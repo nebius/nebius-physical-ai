@@ -29,7 +29,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     WANDB_MODE=offline \
-    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
+    UV_PYTHON_INSTALL_DIR=/opt/uv/python
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
@@ -50,7 +51,8 @@ RUN apt-get update \
 # 3.10, so provision that exact minor version into an isolated client venv.
 RUN python3 -m venv /opt/uv \
     && /opt/uv/bin/python -m pip install --no-cache-dir uv==0.11.15 \
-    && /opt/uv/bin/uv python install 3.10
+    && UV_CACHE_DIR=/tmp/openwam-uv-cache /opt/uv/bin/uv python install 3.10 \
+    && rm -rf /tmp/openwam-uv-cache
 
 RUN git clone --filter=blob:none --no-checkout "${OPENWAM_SOURCE_URL}" /opt/openwam \
     && git -C /opt/openwam checkout --detach "${OPENWAM_SOURCE_REF}" \
@@ -74,6 +76,8 @@ RUN python3 -m venv /opt/openwam-venv \
       -r /opt/openwam/docker/requirements-cu128.txt \
     && /opt/openwam-venv/bin/python -m pip install --no-cache-dir --no-deps -e /opt/openwam \
     && /opt/openwam-venv/bin/python -m pip install --no-cache-dir boto3==1.42.91 rerun-sdk==0.38.1 \
+    && find /opt/openwam-venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && /opt/openwam-venv/bin/python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
     && /opt/openwam-venv/bin/python -m pip check
 
 RUN git clone --filter=blob:none --no-checkout "${LIBERO_SOURCE_URL}" /opt/openwam-libero-source \
@@ -83,7 +87,7 @@ RUN git clone --filter=blob:none --no-checkout "${LIBERO_SOURCE_URL}" /opt/openw
     && git -C /opt/openwam-libero-source apply /opt/openwam/benchmarks/libero/patches/libero-pytorch-load.patch \
     && git -C /opt/openwam-libero-source lfs uninstall \
     && rm -rf /opt/openwam-libero-source/.git \
-    && /opt/uv/bin/uv venv --seed --python 3.10 /opt/openwam-libero \
+    && UV_CACHE_DIR=/tmp/openwam-uv-cache /opt/uv/bin/uv venv --seed --python 3.10 /opt/openwam-libero \
     && /opt/openwam-libero/bin/python -m pip install --no-cache-dir --upgrade pip==26.2.1 setuptools==84.0.0 wheel==0.48.0 \
     && /opt/openwam-libero/bin/python -m pip install --no-cache-dir \
       --extra-index-url https://download.pytorch.org/whl/cpu \
@@ -97,17 +101,17 @@ RUN git clone --filter=blob:none --no-checkout "${LIBERO_SOURCE_URL}" /opt/openw
     && /opt/openwam-libero/bin/python -m pip install --no-cache-dir --no-deps -e /opt/openwam-libero-source \
     && printf '%s\n' /opt/openwam-libero-source > "$(/opt/openwam-libero/bin/python -c 'import site; print(site.getsitepackages()[0])')/libero_source.pth" \
     && /opt/openwam-libero/bin/python -m pip check \
-    && /opt/openwam-libero/bin/python -c 'import libero, mujoco; assert mujoco.__version__ == "3.3.2"; assert libero is not None'
+    && find /opt/openwam-libero -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && /opt/openwam-libero/bin/python -c 'import imageio_ffmpeg, libero, mujoco; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"; assert mujoco.__version__ == "3.3.2"; assert libero is not None' \
+    && rm -rf /tmp/openwam-uv-cache
 
 COPY pyproject.toml README.md /opt/npa/
 COPY src/npa /opt/npa/src/npa
 # Each upstream environment declares imageio-ffmpeg, whose wheel bundles a
-# second static executable. The Ubuntu ffmpeg package above is sufficient for
-# the runtime and avoids shipping those redundant binaries.
+# second static executable. Each install layer removes it before that layer is
+# committed; the Ubuntu ffmpeg package above is sufficient for the runtime.
 RUN /opt/openwam-venv/bin/python -m pip install --no-cache-dir --no-deps /opt/npa \
-    && find /opt/openwam-venv /opt/openwam-libero -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
-    && /opt/openwam-venv/bin/python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
-    && /opt/openwam-libero/bin/python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
+    && test -z "$(find /opt/openwam-venv /opt/openwam-libero -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
     && /opt/openwam-venv/bin/rerun rrd --help >/dev/null \
     && test -z "$(find /opt/openwam /opt/openwam-venv /opt/openwam-libero /opt/openwam-libero-source -type f \

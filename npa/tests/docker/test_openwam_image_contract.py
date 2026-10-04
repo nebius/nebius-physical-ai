@@ -15,8 +15,10 @@ def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
 
     assert "ffmpeg git git-lfs" in dockerfile
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
-    assert "*/imageio_ffmpeg/binaries/ffmpeg*' -delete" in dockerfile
+    assert dockerfile.count("*/imageio_ffmpeg/binaries/ffmpeg*' -delete") == 2
     assert 'imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' in dockerfile
+    assert "UV_CACHE_DIR=/tmp/openwam-uv-cache" in dockerfile
+    assert "rm -rf /tmp/openwam-uv-cache" in dockerfile
 
 
 def test_openwam_recipe_retains_runtime_fetch_and_private_quarantine() -> None:
