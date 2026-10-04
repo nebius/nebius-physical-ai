@@ -126,7 +126,7 @@ is downloaded by these build commands.
 
 | Runtime | Source repository and immutable revision | Build command |
 | --- | --- | --- |
-| LingBot World v1 | `https://github.com/Robbyant/lingbot-world.git` at `a43bec7f8091c83e9b30b16b912f6fc906236fa6` | `ln -s /workspace/.cache/npa/wan2-2/runtime/current/venv /opt/byof/.venv && test -f /opt/byof/LICENSE.txt && /opt/wan-base/bin/python -m pip install --no-deps scipy==1.15.3 easydict==1.13` |
+| LingBot World v1 | `https://github.com/Robbyant/lingbot-world.git` at `a43bec7f8091c83e9b30b16b912f6fc906236fa6` | Preserve `LICENSE.txt`, link the operator-owned Wan runtime venv, install the pinned CPU-only `protobuf==6.33.6 scipy==1.15.3` pair, and replace the upstream `easydict` import with the inherited Apache-2.0 Wan compatibility mapping. The historical LGPL `easydict` distribution is not installed or shipped. |
 | SAM 2 | `https://github.com/facebookresearch/sam2.git` at `2b90b9f5ceec907a1c18123530e92e794ad901a4` | `ln -s /workspace/.cache/npa/wan2-2/runtime/current/venv /opt/byof/.venv && ln -s LICENSE /opt/byof/LICENSE.txt && /opt/wan-base/bin/python -m pip install --no-deps hydra-core==1.3.2 omegaconf==2.3.0 antlr4-python3-runtime==4.9.3 iopath==0.1.10 portalocker==3.2.0` |
 
 `byof-lingbot-world.yaml` takes an S3 image URI and its complete SHA256. It
@@ -159,6 +159,13 @@ starts inference. The pre-existing `byof-lingbot-world.yaml` four-rank image
 smoke remains a separate historical qualification of that legacy capability. It
 does **not** qualify this controlled-continuation graph, its topology, quality,
 throughput, or scaling.
+
+The generation states enter the hash-locked CUDA runtime with
+`model-runtime exec python3`; the renderer's staged source path remains first on
+`PYTHONPATH`. They intentionally do not call the separate control interpreter
+directly for inference, because that interpreter cannot see the runtime-fetched
+Torch venv. This is interpreter wiring only: the CUDA/PyTorch closure, weights,
+and caches remain runtime-owned and absent from image layers.
 
 The input, both controls, model result, decode facts, and final media artifacts are
 bound by SHA-256 in run-scoped S3 manifests. Preparation also requires a separate

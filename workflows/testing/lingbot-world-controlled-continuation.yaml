@@ -74,8 +74,8 @@ states:
     resources: lingbot
     run:
       shell: >
-        model-runtime ensure && test -n "$NPA_CONTROL_PYTHON" && "$NPA_CONTROL_PYTHON"
-        -m npa.workflows.lingbot_world generate --prepared-manifest-uri
+        test -n "$NPA_CONTROL_PYTHON" && model-runtime exec python3 -m
+        npa.workflows.lingbot_world generate --prepared-manifest-uri
         "{{state.prepare.uri}}" --manifest-uri "{{config.prescribed_manifest_uri}}"
         --prompt "{{config.prompt}}" --seed {{config.seed}} --degree {{config.degree}}
         --controls prescribed --run-id "{{run.id}}"
@@ -93,8 +93,8 @@ states:
     resources: lingbot
     run:
       shell: >
-        model-runtime ensure && test -n "$NPA_CONTROL_PYTHON" && "$NPA_CONTROL_PYTHON"
-        -m npa.workflows.lingbot_world generate --prepared-manifest-uri
+        test -n "$NPA_CONTROL_PYTHON" && model-runtime exec python3 -m
+        npa.workflows.lingbot_world generate --prepared-manifest-uri
         "{{state.prepare.uri}}" --previous-manifest-uri "{{state.generate-prescribed.uri}}"
         --manifest-uri "{{config.alternative_manifest_uri}}" --prompt "{{config.prompt}}"
         --seed {{config.seed}} --degree {{config.degree}} --controls alternative

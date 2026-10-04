@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "3950842cc402e69c5628a4af3106b97f5c5a31095ebce89865f6e75b59dbf643",
+  "workflow_sha256": "67e6109646164c09f687c5e6e9f5a90020eea5a92ba4caea9717cefe46ceb09c",
   "planning": {
     "validation": {
       "status": "verified",
@@ -14,7 +14,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The graph test requires five genuine module stages and exact preparation, prescribed generation, alternative-generation, evaluation, and visualization handoffs. The local artifact test creates both 161-frame MP4s, fully decodes and measures them, and independently verifies the emitted RRD.",
+      "reason": "The graph test requires five genuine module stages and exact preparation, prescribed generation, alternative-generation, evaluation, and visualization handoffs. The generation states use the runtime-fetch CUDA interpreter through model-runtime exec, while retaining the staged source path; the local artifact test creates both 161-frame MP4s, fully decodes and measures them, and independently verifies the emitted RRD.",
       "evidence": [
         "npa/tests/workflows/test_lingbot_world.py: 6 passed",
         "npa/tests/smoke/test_all_workflow_yamls.py -k lingbot-world-controlled-continuation: 2 passed"

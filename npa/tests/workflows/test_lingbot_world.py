@@ -220,6 +220,23 @@ def test_workflow_has_five_real_stages_with_exact_artifact_handoffs() -> None:
     ]
     assert "--degree 8" in prescribed.shell
     assert "--degree 8" in alternative.shell
+    # The source overlay's control interpreter owns the stage/client setup, but
+    # CUDA Torch is deliberately runtime-fetched into Wan's separate venv.  A
+    # direct "$NPA_CONTROL_PYTHON -m ... generate" cannot see that venv and was
+    # the precise cause of the retained native generation failure.  The runtime
+    # launcher preserves the staged source path while resolving Python from its
+    # verified CUDA environment.
+    runtime_generation = (
+        "model-runtime exec python3 -m npa.workflows.lingbot_world generate"
+    )
+    assert runtime_generation in prescribed.shell
+    assert runtime_generation in alternative.shell
+    assert '"$NPA_CONTROL_PYTHON" -m npa.workflows.lingbot_world generate' not in (
+        prescribed.shell
+    )
+    assert '"$NPA_CONTROL_PYTHON" -m npa.workflows.lingbot_world generate' not in (
+        alternative.shell
+    )
     assert {item["schema"] for item in prepare.inputs} == {
         "application/json",
         "image/jpeg",
