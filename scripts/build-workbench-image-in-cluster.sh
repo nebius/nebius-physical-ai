@@ -35,6 +35,11 @@ PULL_SECRET="${NPA_BUILD_PULL_SECRET:-}"
 # Only one Kubernetes label selector is accepted so the rendered YAML remains
 # auditable and cannot be shaped by an arbitrary YAML fragment.
 NODE_SELECTOR="${NPA_BUILD_NODE_SELECTOR:-}"
+# These are requests, not a cluster reservation. They let an operator fit a
+# non-GPU Kaniko build on verified available capacity without changing a shared
+# resource class or the runtime workload's requests.
+CPU_REQUEST="${NPA_BUILD_CPU_REQUEST:-4}"
+MEMORY_REQUEST="${NPA_BUILD_MEMORY_REQUEST:-16Gi}"
 # Pinned by digest: an unpinned build tool undermines the reproducibility this
 # script exists for, and the repo pins its own base images the same way.
 # Refresh with: crane digest gcr.io/kaniko-project/executor:<version>
@@ -76,6 +81,14 @@ if [[ -z "$DOCKERFILE" && -z "$RUN_SNIPPET" ]]; then
 fi
 if [[ -n "$RUN_SNIPPET" && -z "$BASE" ]]; then
   echo "ERROR: --run requires --base <existing image>" >&2
+  exit 2
+fi
+if ! [[ "$CPU_REQUEST" =~ ^([1-9][0-9]*m|[1-9][0-9]*(\.[0-9]+)?)$ ]]; then
+  echo "ERROR: NPA_BUILD_CPU_REQUEST must be a positive Kubernetes CPU quantity" >&2
+  exit 2
+fi
+if ! [[ "$MEMORY_REQUEST" =~ ^[1-9][0-9]*(Ki|Mi|Gi|Ti|K|M|G|T)?$ ]]; then
+  echo "ERROR: NPA_BUILD_MEMORY_REQUEST must be a positive Kubernetes memory quantity" >&2
   exit 2
 fi
 
@@ -153,8 +166,8 @@ ${NODE_SELECTOR_YAML}
 $(printf '%s\n' "${BUILD_ARGS[@]}")
       resources:
         requests:
-          cpu: "4"
-          memory: 16Gi
+          cpu: "${CPU_REQUEST}"
+          memory: "${MEMORY_REQUEST}"
       volumeMounts:
         - name: dockerfile
           # NOT /workspace: that is the WORKDIR of some workbench images (Isaac Lab

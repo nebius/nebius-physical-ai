@@ -77,8 +77,11 @@ CPU-only Kaniko build. When the default placement has disk pressure, an operator
 may set `NPA_BUILD_NODE_SELECTOR=<label>=<value>` for that build only. The script
 accepts exactly one safe Kubernetes label selector and renders it as the build
 pod's `nodeSelector`; it does not alter a cluster default, GPU-workload
-placement, or a shared controller configuration. Keep the selector and any
-concrete node identity in private run evidence rather than source or a PR.
+placement, or a shared controller configuration. `NPA_BUILD_CPU_REQUEST` and
+`NPA_BUILD_MEMORY_REQUEST` optionally replace its default build-pod requests
+when verified available capacity requires it; they do not change runtime
+workload requests. Keep the selector, quantities, and any concrete node identity
+in private run evidence rather than source or a PR.
 
 Submit resolves the selected tag to an immutable digest and validates metadata
 on that digest. Missing/mismatched first-party evidence fails before launch.
