@@ -256,7 +256,9 @@ def test_adjacent_readiness_binds_the_exact_workflow_and_stays_honest() -> None:
     }
     assert record["prerequisites"]["output_storage"]["status"] == "verified"
     assert record["prerequisites"]["credentials"]["status"] == "verified"
-    for prerequisite in ("worker_input", "source_image", "target_runtime"):
+    assert record["prerequisites"]["source_image"]["status"] == "verified"
+    assert record["prerequisites"]["source_image"]["evidence"]
+    for prerequisite in ("worker_input", "target_runtime"):
         assert record["prerequisites"][prerequisite]["status"] == "unverified"
 
 
