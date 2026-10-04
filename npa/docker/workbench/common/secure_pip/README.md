@@ -11,7 +11,10 @@ vendored copy.
 artifact. `build-tools.lock` hash-locks the temporary build environment. The
 msgpack pure-Python wheel is built offline from its pinned source using those
 tools, with explicit `--no-build-isolation`; its generated hash is retained in
-the derivative's provenance. Upstream namespace patches are preserved, with
+the derivative's provenance. Build subprocesses use a fixed 022 umask so ZIP
+member permissions do not depend on the invoking host; the parent process mask
+and private 0700 work/output directories are unchanged.
+Upstream namespace patches are preserved, with
 `pkg_resources.patch` adapting the same internal jaraco/warning behavior to the
 new donor and avoiding imports from an unrelated installed setuptools tree.
 The upstream BOM and vendor list describe actual replacement sources, not
