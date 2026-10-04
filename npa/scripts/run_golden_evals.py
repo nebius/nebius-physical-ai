@@ -55,7 +55,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
             if name in PRIVATE_VALIDATION_CANDIDATE_TOOLS:
                 # There is no ordinary tag for a private-only unbuilt candidate.
                 # The actual workflow must bind its scanned private digest.
-                tag = "private-candidate"
+                tag = "operator-candidate"
             elif name in CONTAINER_IMAGE_NAMES:
                 tag = supported_tool_version(name)
             else:

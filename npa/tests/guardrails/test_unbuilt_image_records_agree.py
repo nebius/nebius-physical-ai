@@ -154,7 +154,7 @@ def test_capability_listing_accepts_neutral_unbuilt_display_sentinel() -> None:
     lingbot_va = next(
         line for line in completed.stdout.splitlines() if line.startswith("lingbot-va ")
     )
-    assert "private-candidate" in lingbot_va
+    assert "operator-candidate" in lingbot_va
 
 
 def test_fixed_tag_candidates_remain_in_the_publication_quarantine() -> None:
