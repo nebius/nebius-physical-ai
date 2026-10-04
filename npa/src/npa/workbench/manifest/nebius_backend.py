@@ -40,6 +40,14 @@ if s3_inputs or s3_outputs:
 
     s3 = boto3.client("s3", endpoint_url=os.environ["AWS_ENDPOINT_URL"])
 
+# Declared workload dependencies (descriptor `environment.pip`).
+for pkg in json.loads(os.environ.get("MANIFEST_PIP", "[]")):
+    print(f"@@PIP:{pkg}@@", flush=True)
+    r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", pkg])
+    if r.returncode != 0:
+        print(f"@@PIPFAIL:{pkg}@@", flush=True)
+        sys.exit(3)
+
 
 def _split_s3_uri(uri):
     assert uri.startswith("s3://"), f"bad s3 uri {uri!r}"
@@ -150,6 +158,7 @@ class NebiusBackend:
         s3_output_names: list[str] | None = None,
         s3_prefix: str = "",
         s3_env: dict[str, str] | None = None,
+        pip_packages: list[str] | None = None,
     ) -> BackendResult:
         t0 = time.time()
         run_id = uuid.uuid4().hex[:8]
@@ -176,6 +185,7 @@ class NebiusBackend:
                 s3_output_names,
                 s3_prefix,
                 env,
+                pip_packages or [],
             )
             self._wait_done(job_name)
             logs = self._kc("logs", f"job/{job_name}").stdout
@@ -219,6 +229,7 @@ class NebiusBackend:
         s3_output_names,
         s3_prefix,
         env,
+        pip_packages,
     ) -> None:
         # Rewrite payload container paths to their ConfigMap mount locations.
         rewritten = []
@@ -247,6 +258,7 @@ class NebiusBackend:
                     "value": json.dumps(s3_output_names),
                 },
                 {"name": "MANIFEST_S3_PREFIX", "value": s3_prefix},
+                {"name": "MANIFEST_PIP", "value": json.dumps(pip_packages)},
             ]
             + [{"name": k, "value": v} for k, v in env.items()],
             "volumeMounts": [
@@ -345,6 +357,11 @@ class NebiusBackend:
                 continue  # artifact stays absent; required-check catches it
             if self._strip_marker(line, "@@S3IN:") is not None:
                 continue
+            if self._strip_marker(line, "@@PIP:") is not None:
+                continue
+            if self._strip_marker(line, "@@PIPFAIL:") is not None:
+                exit_code = 3
+                continue
             body = self._strip_marker(line, "@@S3:")
             if body is not None:
                 oname, _, uri = body.partition(":")
@@ -367,6 +384,8 @@ class NebiusBackend:
             and self._strip_marker(line, "@@ARTIFACT_MISSING:") is None
             and self._strip_marker(line, "@@S3:") is None
             and self._strip_marker(line, "@@S3IN:") is None
+            and self._strip_marker(line, "@@PIP:") is None
+            and self._strip_marker(line, "@@PIPFAIL:") is None
         ]
         return BackendResult(
             exit_code=exit_code,

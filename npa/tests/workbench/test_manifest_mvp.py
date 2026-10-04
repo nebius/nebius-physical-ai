@@ -53,6 +53,7 @@ class StubBackend:
         s3_output_names=None,
         s3_prefix="",
         s3_env=None,
+        pip_packages=None,
     ):
         self.calls.append(
             {
@@ -65,6 +66,7 @@ class StubBackend:
                 "s3_inputs": s3_inputs,
                 "s3_output_names": s3_output_names,
                 "s3_prefix": s3_prefix,
+                "pip_packages": pip_packages,
             }
         )
         artifacts = {}
@@ -107,6 +109,7 @@ def test_package_imports_and_lists_both_tools(tmp_path: Path) -> None:
         "cuda-matmul@0.1.0",
         "gpu-info@0.1.0",
         "large-artifact@0.1.0",
+        "pendulum-viz@0.1.0",
     ]
 
 
@@ -218,6 +221,7 @@ def test_api_surface_translates_to_invoke(tmp_path: Path) -> None:
         "cuda-matmul@0.1.0",
         "gpu-info@0.1.0",
         "large-artifact@0.1.0",
+        "pendulum-viz@0.1.0",
     ]
 
 
@@ -710,6 +714,7 @@ def _job(gpu: int, memory_gb: int = 0) -> dict:
         [],
         "",
         {},
+        [],
     )
     assert len(be.created) == 1
     return be.created[0]
@@ -770,3 +775,91 @@ def test_configmap_returns_per_run_payload_map() -> None:
     m2 = be._create_configmap("cm-2", {"/work/b.py": "BBB"})
     assert m1 != m2  # no shared instance state between runs
     assert m1 == {"/work/a.py": "payload0.py"}
+
+
+# ---------------------------------------------------------------------------
+# Round 3: environment.pip for real workload dependencies.
+# ---------------------------------------------------------------------------
+
+
+def test_environment_pip_parses() -> None:
+    d = _desc_dict()
+    d["environment"] = {"pip": ["newton", "matplotlib"]}
+    desc = parse_descriptor(d)
+    assert desc.environment.pip == ("newton", "matplotlib")
+
+
+def test_environment_pip_must_be_list_of_strings() -> None:
+    d = _desc_dict()
+    d["environment"] = {"pip": "newton"}
+    with pytest.raises(DescriptorError, match="environment.pip"):
+        parse_descriptor(d)
+    d["environment"] = {"pip": [123]}
+    with pytest.raises(DescriptorError, match="environment.pip"):
+        parse_descriptor(d)
+
+
+def test_environment_defaults_empty() -> None:
+    desc = parse_descriptor(_desc_dict())
+    assert desc.environment.pip == ()
+
+
+def test_pip_packages_reach_backend(tmp_path: Path) -> None:
+    rt, stub = make_runtime(tmp_path)
+    d = _desc_dict()
+    d["environment"] = {"pip": ["newton"]}
+    rt.catalog._entries["piptest@0.1.0"] = parse_descriptor(d)
+    rt.invoke("piptest", "0.1.0", "run", {}, backend="stub")
+    assert stub.calls[0]["pip_packages"] == ["newton"]
+
+
+def test_manifest_pip_env_in_job_spec() -> None:
+    be = _FakeKc()
+    be._create_job(
+        "job-1",
+        "cm-1",
+        "img@sha256:abc",
+        ["python", "a.py"],
+        1,
+        0,
+        [("out", "/work/o", "json", "file")],
+        {},
+        [],
+        [],
+        "",
+        {},
+        ["newton", "matplotlib"],
+    )
+    job = be.created[0]
+    env = {
+        e["name"]: e["value"]
+        for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert json.loads(env["MANIFEST_PIP"]) == ["newton", "matplotlib"]
+
+
+def test_parse_pip_markers_stripped() -> None:
+    be = NebiusBackend()
+    logs = "@@PIP:newton@@\ninstalling\n@@EXIT:0@@\n"
+    res = be._parse(logs, 1.0)
+    assert "@@PIP:" not in res.stdout
+    assert res.exit_code == 0
+
+
+def test_parse_pipfail_marks_failure() -> None:
+    be = NebiusBackend()
+    logs = "@@PIP:newton@@\n@@PIPFAIL:newton@@\n"
+    res = be._parse(logs, 1.0)
+    assert res.exit_code == 3
+
+
+def test_pendulum_viz_descriptor_validates(tmp_path: Path) -> None:
+    rt, _ = make_runtime(tmp_path)
+    desc = rt.catalog.get("pendulum-viz", "0.1.0")
+    assert set(desc.environment.pip) == {
+        "newton",
+        "matplotlib",
+        "imageio-ffmpeg",
+    }
+    assert desc.artifact_store is not None
+    assert "pendulum-viz@0.1.0" in rt.catalog.list()

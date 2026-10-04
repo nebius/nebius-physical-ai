@@ -87,6 +87,11 @@ class ArtifactStore:
 
 
 @dataclass(frozen=True)
+class Environment:
+    pip: tuple[str, ...] = ()  # pip packages installed in-pod before argv
+
+
+@dataclass(frozen=True)
 class CommandSpec:
     name: str
     argv: list[str]  # may contain {{param}} placeholders; never a shell string
@@ -180,6 +185,7 @@ class Descriptor:
     payload_files: tuple[tuple[str, str], ...] = ()  # (container_path, host_path)
     inputs: tuple[S3Input, ...] = ()
     artifact_store: ArtifactStore | None = None
+    environment: Environment = Environment()
 
     @property
     def id(self) -> str:
@@ -338,6 +344,10 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
             prefix=s.get("prefix", ""),
             endpoint_url=s.get("endpoint_url", ""),
         )
+    env_raw = raw.get("environment") or {}
+    pip_pkgs = env_raw.get("pip") or []
+    if not isinstance(pip_pkgs, list) or not all(isinstance(p, str) for p in pip_pkgs):
+        raise DescriptorError(f"{source}: environment.pip must be a list of strings")
     return Descriptor(
         api_version=raw["apiVersion"],
         name=raw["name"],
@@ -354,4 +364,5 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
         payload_files=payload,
         inputs=inputs,
         artifact_store=store,
+        environment=Environment(pip=tuple(pip_pkgs)),
     )

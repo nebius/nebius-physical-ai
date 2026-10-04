@@ -41,6 +41,7 @@ class Backend(Protocol):
         s3_output_names: list[str] | None = None,
         s3_prefix: str = "",
         s3_env: dict[str, str] | None = None,
+        pip_packages: list[str] | None = None,
     ) -> "BackendResult": ...
 
 
@@ -174,6 +175,7 @@ class Runtime:
                 s3_output_names=binary_names,
                 s3_prefix=s3_prefix,
                 s3_env=None,
+                pip_packages=list(descriptor.environment.pip),
             )
             exit_code = bres.exit_code
             artifacts, parse_errors = self._collect_artifacts(spec, bres)
