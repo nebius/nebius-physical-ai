@@ -799,6 +799,10 @@ def _emit_benchmark(payload: dict[str, Any], output: OutputFormat) -> None:
     metrics = best["metrics"]
     typer.echo(f"  dataset: {payload['dataset_path']}")
     typer.echo(f"  items: {payload['item_count']}")
+    typer.echo(f"  dataset_evidence_scope: {payload['dataset_evidence_scope']}")
+    typer.echo("  dataset_limitations:")
+    for limitation in payload["dataset_limitations"]:
+        typer.echo(f"    - {limitation}")
     typer.echo(f"  written_uri: {payload['written_uri']}")
     typer.echo("  best_config:")
     typer.echo(f"    backend: {config['backend']}")

@@ -453,7 +453,15 @@ VLM score, loop, and benchmark artifacts disclose that independent human-label
 calibration is not established. Their ordered limitations distinguish sampled
 observations, mean-score loop gates, and fixture/stub inputs from real provider
 evidence. Direct results also emit `provider_call_made`, which is false for
-stub and score-override paths. See the
+stub and score-override paths.
+
+Packaged VLM benchmark samples are four synthetic 2x2 color swatches plus a
+tiny truncated-progress sequence with an omitted terminal outcome. Benchmark
+reports preserve their `illustrative_only` evidence scope and ordered dataset
+limitations; custom manifests without scope metadata remain `unspecified`.
+These sample metrics demonstrate wiring and do not validate physical tasks.
+
+See the
 [VLM runbook](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#outputs).
 
 Token Factory captions accept `--thinking` and `--no-thinking`; omitting both
