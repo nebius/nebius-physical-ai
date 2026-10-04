@@ -41,6 +41,20 @@ the GnuPG and OpenSSL fixes identified by
 [USN-7946-1](https://ubuntu.com/security/notices/USN-7946-1) and
 [CVE-2026-84782](https://ubuntu.com/security/CVE-2026-84782).
 
+Upgrading the merged runtime does not remove vulnerable binaries from earlier
+image layers. The final stage therefore starts from `scratch` and copies only
+the fully prepared filesystem, after package upgrades, header cleanup and
+runtime checks. No old CUDA-base or installer-builder layers are inherited.
+The base's exact CUDA driver constraints, library path and visibility settings
+are restored alongside the unchanged service configuration; their public
+manifest/config identities are recorded in `cuda-base-runtime.json`.
+The complete final package database, license notices and corresponding sources
+remain in that filesystem. This changes the shipped layer population, not the
+historical evidence: older images and their raw findings remain unchanged.
+The new image must prove its single final root, actual configuration, complete
+package/byte population and real workload behavior before acceptance. The
+source contract and metadata tests alone do not establish image safety.
+
 The installer is `pip==26.2.1+npa.1`, an explicitly identified NPA derivative,
 not an upstream pip release. The shared `common/secure_pip` builder uses pinned
 upstream vendoring machinery, preserves notices and records the three repaired

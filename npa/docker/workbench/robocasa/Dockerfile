@@ -32,7 +32,7 @@ RUN python /build/secure_pip/build.py \
       "8e79a062e2df1f4569f4af1b2bc6d74a50c145ae8ff2a61b4cfb0b84979a5489  /build/output/pip-26.2.1+npa.1-py3-none-any.whl" \
       | sha256sum --check --strict -
 
-FROM nvidia/cuda:12.9.1-base-ubuntu22.04@sha256:59436e8ac61921052d8f420be8b8cb8b117f1d7cc643397a289e37aaa0b83ea1
+FROM nvidia/cuda:12.9.1-base-ubuntu22.04@sha256:59436e8ac61921052d8f420be8b8cb8b117f1d7cc643397a289e37aaa0b83ea1 AS runtime-builder
 
 ARG ROBOCASA_VERSION=0.1.1
 ARG NPA_SOURCE_SHA
@@ -379,6 +379,73 @@ USER ubuntu
 # registration through the production spawn/process-group boundary.
 RUN test "$(id -u)" != "0" \
     && python /app/smoke_functional.py
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD python3 -c "import os,urllib.request; p=os.environ.get('ROBOCASA_PORT','8791'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=3)" || exit 1
+
+CMD ["uvicorn", "npa.workbench.robocasa.service:app", "--host", "0.0.0.0", "--port", "8791"]
+
+# Only the prepared filesystem crosses this boundary. A later apt upgrade does
+# not erase vulnerable OpenSSL/GnuPG bytes from inherited CUDA layers. Keep the
+# historical image/evidence immutable and qualify this new single-root image.
+FROM scratch AS runtime
+COPY --from=runtime-builder / /
+
+# Scratch has no inherited runtime configuration. These exact CUDA settings
+# come from the pinned public base; app metadata below preserves the service.
+ENV PATH="/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    NVARCH="x86_64" \
+    NVIDIA_REQUIRE_CUDA="cuda>=12.9 brand=unknown,driver>=535,driver<536 brand=grid,driver>=535,driver<536 brand=tesla,driver>=535,driver<536 brand=nvidia,driver>=535,driver<536 brand=quadro,driver>=535,driver<536 brand=quadrortx,driver>=535,driver<536 brand=nvidiartx,driver>=535,driver<536 brand=vapps,driver>=535,driver<536 brand=vpc,driver>=535,driver<536 brand=vcs,driver>=535,driver<536 brand=vws,driver>=535,driver<536 brand=cloudgaming,driver>=535,driver<536 brand=unknown,driver>=550,driver<551 brand=grid,driver>=550,driver<551 brand=tesla,driver>=550,driver<551 brand=nvidia,driver>=550,driver<551 brand=quadro,driver>=550,driver<551 brand=quadrortx,driver>=550,driver<551 brand=nvidiartx,driver>=550,driver<551 brand=vapps,driver>=550,driver<551 brand=vpc,driver>=550,driver<551 brand=vcs,driver>=550,driver<551 brand=vws,driver>=550,driver<551 brand=cloudgaming,driver>=550,driver<551 brand=unknown,driver>=560,driver<561 brand=grid,driver>=560,driver<561 brand=tesla,driver>=560,driver<561 brand=nvidia,driver>=560,driver<561 brand=quadro,driver>=560,driver<561 brand=quadrortx,driver>=560,driver<561 brand=nvidiartx,driver>=560,driver<561 brand=vapps,driver>=560,driver<561 brand=vpc,driver>=560,driver<561 brand=vcs,driver>=560,driver<561 brand=vws,driver>=560,driver<561 brand=cloudgaming,driver>=560,driver<561 brand=unknown,driver>=565,driver<566 brand=grid,driver>=565,driver<566 brand=tesla,driver>=565,driver<566 brand=nvidia,driver>=565,driver<566 brand=quadro,driver>=565,driver<566 brand=quadrortx,driver>=565,driver<566 brand=nvidiartx,driver>=565,driver<566 brand=vapps,driver>=565,driver<566 brand=vpc,driver>=565,driver<566 brand=vcs,driver>=565,driver<566 brand=vws,driver>=565,driver<566 brand=cloudgaming,driver>=565,driver<566 brand=unknown,driver>=570,driver<571 brand=grid,driver>=570,driver<571 brand=tesla,driver>=570,driver<571 brand=nvidia,driver>=570,driver<571 brand=quadro,driver>=570,driver<571 brand=quadrortx,driver>=570,driver<571 brand=nvidiartx,driver>=570,driver<571 brand=vapps,driver>=570,driver<571 brand=vpc,driver>=570,driver<571 brand=vcs,driver>=570,driver<571 brand=vws,driver>=570,driver<571 brand=cloudgaming,driver>=570,driver<571" \
+    NV_CUDA_CUDART_VERSION="12.9.79-1" \
+    CUDA_VERSION="12.9.1" \
+    LD_LIBRARY_PATH="/usr/local/cuda/lib64" \
+    NVIDIA_VISIBLE_DEVICES="all" \
+    NVIDIA_DRIVER_CAPABILITIES="compute,utility"
+LABEL maintainer="NVIDIA CORPORATION <cudatools@nvidia.com>" \
+      org.opencontainers.image.ref.name="ubuntu" \
+      org.opencontainers.image.version="22.04"
+
+ARG ROBOCASA_VERSION=0.1.1
+ARG NPA_SOURCE_SHA
+ARG LEROBOT_SOURCE_COMMIT=7e241bd630a3719a56157a497ce5d08f244784f1
+
+LABEL npa.tool="robocasa" \
+      npa.version="${ROBOCASA_VERSION}" \
+      npa.robocasa.revision="8f3c96ec8d1bfcd8126cad2bca887da98d30e997" \
+      npa.robocasa.derivative="1.0.0+npa3" \
+      npa.robocasa.patch.sha256="8d43b8540fcaec6414928da68fbf7b33822b25bcbcf4fb2a8d7c03a57946cf88" \
+      npa.robocasa.license.sha256="5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885" \
+      npa.robosuite.revision="85abee228d1c43ab1939bce33028099945d453b4" \
+      npa.lerobot.revision="${LEROBOT_SOURCE_COMMIT}" \
+      npa.lerobot.derivative="0.6.1+npa2" \
+      npa.lerobot.archive.sha256="869026b70a9488f11ae25c92573f68a03e04e45b4ffda7d63586582ac8d506ee" \
+      npa.lerobot.patch.sha256="38d310f1b74b67a4584861c3fca5894b7693399ed6a1a82dc86cd754ef23de41" \
+      npa.runtime_user="ubuntu" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
+      org.opencontainers.image.base.name="nvidia/cuda:12.9.1-base-ubuntu22.04" \
+      org.opencontainers.image.base.digest="sha256:59436e8ac61921052d8f420be8b8cb8b117f1d7cc643397a289e37aaa0b83ea1"
+
+ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1 \
+    ROBOCASA_SOURCE_COMMIT=8f3c96ec8d1bfcd8126cad2bca887da98d30e997 \
+    ROBOSUITE_SOURCE_COMMIT=85abee228d1c43ab1939bce33028099945d453b4 \
+    LEROBOT_SOURCE_COMMIT=${LEROBOT_SOURCE_COMMIT} \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    MUJOCO_GL=egl \
+    PYOPENGL_PLATFORM=egl \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
+    ROBOCASA_PORT=8791 \
+    PYTHONPATH=/app \
+    NUMBA_CACHE_DIR=/tmp/numba_cache \
+    PATH=/opt/robocasa/venv/bin:$PATH
+
+WORKDIR /opt/robocasa
+EXPOSE 8791
+USER ubuntu
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python3 -c "import os,urllib.request; p=os.environ.get('ROBOCASA_PORT','8791'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=3)" || exit 1

@@ -58,6 +58,14 @@ OPENCV_PROVIDERS = {
 }
 
 
+def _runtime_builder_text() -> str:
+    """Select the installation stage without conflating it with the clean final root."""
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    return text.split(f"FROM {PINNED_CUDA_BASE} AS runtime-builder", 1)[1].split(
+        "\nFROM scratch AS runtime", 1
+    )[0]
+
+
 def _locked_names(path: Path) -> set[str]:
     text = path.read_text(encoding="utf-8")
     return {
@@ -396,7 +404,7 @@ def test_robocasa_public_runtime_excludes_restricted_optional_payloads() -> None
 
 
 def test_robocasa_system_install_layer_removes_builder_resolver_state() -> None:
-    text = DOCKERFILE.read_text(encoding="utf-8").rsplit("\nFROM ", 1)[1]
+    text = _runtime_builder_text()
     lines = text.splitlines(keepends=True)
     start = next(
         index
@@ -430,7 +438,7 @@ def test_robocasa_system_install_layer_removes_builder_resolver_state() -> None:
 
 
 def test_robocasa_upgrades_inherited_os_packages_before_installing_runtime() -> None:
-    text = DOCKERFILE.read_text(encoding="utf-8").rsplit("\nFROM ", 1)[1]
+    text = _runtime_builder_text()
     upgrade = text.index("apt-get upgrade -y --no-install-recommends")
     assert text.index("RUN apt-get update") < upgrade
     assert upgrade < text.index("python3.12 -m venv")
@@ -586,7 +594,7 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     build_script = BUILD_SCRIPT.read_text(encoding="utf-8")
 
-    assert _from_refs(dockerfile) == [PINNED_PIP_BUILDER, PINNED_CUDA_BASE]
+    assert _from_refs(dockerfile) == [PINNED_PIP_BUILDER, PINNED_CUDA_BASE, "scratch"]
     assert "ARG BASE_IMAGE" not in dockerfile
     assert "${BASE_IMAGE}" not in dockerfile
     assert "--base-image" not in build_script
@@ -900,8 +908,8 @@ def test_every_robocasa_from_base_has_one_security_inventory_entry() -> None:
     inventory = json.loads(BASE_INVENTORY.read_text(encoding="utf-8"))
     from_refs = _from_refs(dockerfile)
 
-    assert from_refs == [PINNED_PIP_BUILDER, PINNED_CUDA_BASE]
-    for image in from_refs:
+    assert from_refs == [PINNED_PIP_BUILDER, PINNED_CUDA_BASE, "scratch"]
+    for image in from_refs[:-1]:
         entries = [entry for entry in inventory if entry["image"] == image]
         assert len(entries) == 1, image
         assert entries[0] == {
@@ -940,7 +948,8 @@ def test_robocasa_python_locks_are_hash_complete_and_target_specific() -> None:
 
 def test_robocasa_pip_bootstrap_excludes_old_seed_layers() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
-    builder, runtime = text.rsplit("\nFROM ", 1)
+    builder = text.split(f"FROM {PINNED_CUDA_BASE} AS runtime-builder", 1)[0]
+    runtime = _runtime_builder_text()
     assert f"FROM {PINNED_PIP_BUILDER} AS secure-pip-builder" in builder
     assert "python /build/secure_pip/build.py" in builder
     assert "--work-dir /build/work --output-dir /build/output" in builder
@@ -964,7 +973,7 @@ def test_robocasa_pip_bootstrap_excludes_old_seed_layers() -> None:
 
 
 def test_robocasa_bootstraps_only_verified_derivative_offline() -> None:
-    text = DOCKERFILE.read_text(encoding="utf-8").rsplit("\nFROM ", 1)[1]
+    text = _runtime_builder_text()
     expected_hash = "8e79a062e2df1f4569f4af1b2bc6d74a50c145ae8ff2a61b4cfb0b84979a5489"
     lock = (IMAGE_DIR / "pip-bootstrap.lock").read_text(encoding="utf-8")
     assert "pip==26.2.1+npa.1" in lock
@@ -1019,7 +1028,7 @@ def test_robocasa_candidate_version_is_consistent() -> None:
 def test_robocasa_image_includes_local_runtime_dependencies_and_smokes_service() -> (
     None
 ):
-    text = DOCKERFILE.read_text(encoding="utf-8")
+    text = _runtime_builder_text()
 
     assert "COPY src/npa/clients/storage.py /app/npa/clients/storage.py" in text
     assert "COPY src/npa/cli/path_contract.py /app/npa/cli/path_contract.py" in text

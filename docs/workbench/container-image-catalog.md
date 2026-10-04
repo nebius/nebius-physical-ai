@@ -849,6 +849,9 @@ historical evidence.
   toolRefs call the deployed service from the standard task image.
   The candidate recipe upgrades inherited Ubuntu packages before dependency
   installation, requires the fixed GnuPG/OpenSSL versions, and hash-locks pip.
+  Its scratch final stage copies the prepared filesystem while retaining exact
+  CUDA/service settings and notices, so superseded base-layer binaries are not
+  shipped merely because a later layer installed their replacements.
   Those source controls do not qualify the older image bytes or establish that
   the replacement image has no vulnerabilities; exact-image scans and runtime
   validation remain required.
