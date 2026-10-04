@@ -10,6 +10,10 @@ import pyarrow.parquet as pq
 import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
+from npa.orchestration.npa_workflow.skypilot_render import (
+    SkypilotRenderOptions,
+    build_skypilot_task_docs,
+)
 from npa.solutions import lingbot_va as L
 
 
@@ -288,6 +292,43 @@ def test_workflow_is_five_connected_native_stages_with_exact_artifact_handoffs()
         payload["states"]["visualize"]["inputs"][2]["uri"]
         == payload["states"]["evaluate"]["outputs"][0]["uri"]
     )
+
+
+def test_pinned_candidate_receives_staged_npa_source_for_worker_bootstrap(
+    monkeypatch
+) -> None:
+    """A source-only candidate still needs the generic NPA worker bootstrap.
+
+    The image deliberately carries only the LingBot runtime adapter, while the
+    SkyPilot setup shell provides the generic ``npa`` command from the exact
+    operator-staged checkout.  Without this environment handoff, setup stops
+    before the first genuine prepare stage with ``npa CLI not found``.
+    """
+    spec = load_spec(WORKFLOW)
+    source_uri = "s3://fixture-bucket/npa-src/npa/" + "a" * 64
+    candidate_image = (
+        "registry.example.invalid/operator/npa-lingbot-va@sha256:" + "b" * 64
+    )
+    spec.config["candidate_image"] = candidate_image
+    monkeypatch.setenv("NPA_SRC_S3_URI", source_uri)
+    monkeypatch.delenv("NPA_SRC_OVERLAY", raising=False)
+
+    plan = build_plan(spec, run_id="lingbot-va-staged-source")
+    docs = build_skypilot_task_docs(
+        spec,
+        plan.steps,
+        run_id="lingbot-va-staged-source",
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/validated"
+        ),
+    )
+
+    assert len(docs) == 5
+    for doc in docs:
+        assert doc["resources"]["image_id"] == f"docker:{candidate_image}"
+        assert doc["envs"]["NPA_SRC_S3_URI"] == source_uri
+        assert "NPA_SRC_OVERLAY" not in doc["envs"]
+        assert "npa CLI not found" in doc["setup"]
 
 
 def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_acceptance() -> (
