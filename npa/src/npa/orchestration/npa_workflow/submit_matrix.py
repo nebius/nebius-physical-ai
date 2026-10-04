@@ -315,7 +315,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sylvest-oft-mixdata-libero-plus-comparison.yaml",
         "gpu",
-        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         plan_only=True,
         plan_only_justification=(
             "The exact LIBERO-Plus source revision has no authoritative source "
@@ -334,7 +334,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sylvest-oft-mixdata-original-libero-comparison.yaml",
         "gpu",
-        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         notes=(
             "Five connected native stages on pinned MIT original LIBERO: task and "
             "initial-state-byte preparation, matched official OpenVLA-OFT baseline "
