@@ -66,9 +66,22 @@ RAW_CAMERA_FIELDS = (
     "observation.images.image2",
 )
 # The authoritative HuggingFaceVLA conversion maps the original LIBERO-Long
-# multi-step tasks to IDs 0 through 9.  Do not silently substitute the 30
-# shorter tasks from the same repository.
-LIBERO_LONG_TASK_IDS = tuple(range(10))
+# tasks to IDs 0 through 9. Some of the multi-object instructions do not use
+# the literal word "and", so pin their exact reviewed labels rather than apply
+# a brittle natural-language heuristic or silently substitute shorter tasks.
+LIBERO_LONG_TASKS = {
+    0: "put the white mug on the left plate and put the yellow and white mug on the right plate",
+    1: "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+    2: "put the yellow and white mug in the microwave and close it",
+    3: "turn on the stove and put the moka pot on it",
+    4: "put both the alphabet soup and the cream cheese box in the basket",
+    5: "put both the alphabet soup and the tomato sauce in the basket",
+    6: "put both moka pots on the stove",
+    7: "put both the cream cheese box and the butter in the basket",
+    8: "put the black bowl in the bottom drawer of the cabinet and close it",
+    9: "pick up the book and place it in the back compartment of the caddy",
+}
+LIBERO_LONG_TASK_IDS = tuple(LIBERO_LONG_TASKS)
 LATENT_FPS = 10
 LATENT_HEIGHT = 128
 LATENT_WIDTH = 128
@@ -284,8 +297,10 @@ def _load_raw_hfvla_metadata(
     }
     if set(LIBERO_LONG_TASK_IDS).difference(tasks):
         raise ValueError("Pinned HuggingFaceVLA metadata lacks the LIBERO-Long task IDs")
-    if any(" and " not in tasks[task_id] for task_id in LIBERO_LONG_TASK_IDS):
-        raise ValueError("Pinned LIBERO-Long task labels no longer describe multi-step tasks")
+    if {
+        task_id: tasks[task_id] for task_id in LIBERO_LONG_TASK_IDS
+    } != LIBERO_LONG_TASKS:
+        raise ValueError("Pinned LIBERO-Long task labels do not match the reviewed source")
     task_id_by_text = {text: task_id for task_id, text in tasks.items()}
     selected: list[dict[str, Any]] = []
     for line in episodes_path.read_text(encoding="utf-8").splitlines():
