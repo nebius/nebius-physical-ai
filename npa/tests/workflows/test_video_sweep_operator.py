@@ -186,3 +186,92 @@ def test_selected_gpu_reaches_both_workers_without_changing_cpu_stages(configura
         for step in steps
         if step not in workers
     )
+
+
+def test_pinned_images_and_target_match_preflight_and_submit(configuration):
+    path, config = configuration
+    tool = "workflow.video_sweep.generate_cosmos3"
+    image = "registry.example/cosmos3@sha256:" + "a" * 64
+    config["image_overrides"] = {tool: image}
+    path.write_text(json.dumps(config))
+    assert operator._load(path) == config
+    for command in (
+        operator._image_preflight_command(config),
+        operator._submit_command(config),
+        operator._submit_command(config, resume=True),
+    ):
+        assert command[command.index("--image-override") + 1] == f"{tool}={image}"
+        assert command[command.index("--infra") + 1] == config["infra"]
+        assert command[command.index("--project") + 1] == config["project"]
+        assert "accelerators=B200:1" in command
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        [],
+        {"tool": "image:mutable"},
+        {"bad=tool": "image@sha256:" + "a" * 64},
+        {"tool": "image@sha256:short"},
+        {"tool": None},
+    ],
+)
+def test_invalid_image_pins_fail_before_provider_calls(configuration, overrides):
+    path, config = configuration
+    config["image_overrides"] = overrides
+    path.write_text(json.dumps(config))
+    with pytest.raises(ValueError):
+        operator._load(path, offline=True)
+
+
+def test_run_cannot_change_or_remove_image_pins(configuration, monkeypatch):
+    _, config = configuration
+    tool = "workflow.video_sweep.generate_cosmos3"
+    config["image_overrides"] = {tool: "image@sha256:" + "a" * 64}
+    stored = {}
+    monkeypatch.setattr(operator.artifacts, "exists", lambda uri: uri in stored)
+    monkeypatch.setattr(operator.artifacts, "read_json", stored.__getitem__)
+    monkeypatch.setattr(operator.artifacts, "write_json", stored.__setitem__)
+    operator._stage_inputs(config)
+    operator._stage_inputs(config)
+    changed = dict(config, image_overrides={tool: "image@sha256:" + "b" * 64})
+    with pytest.raises(ValueError, match="new run ID"):
+        operator._stage_inputs(changed)
+    with pytest.raises(ValueError, match="new run ID"):
+        operator._stage_inputs(dict(config, image_overrides={}))
+
+
+def test_existing_unpinned_run_cannot_add_image_pins(configuration, monkeypatch):
+    _, config = configuration
+    stored = {}
+    monkeypatch.setattr(operator.artifacts, "exists", lambda uri: uri in stored)
+    monkeypatch.setattr(operator.artifacts, "read_json", stored.__getitem__)
+    monkeypatch.setattr(operator.artifacts, "write_json", stored.__setitem__)
+    operator._stage_inputs(config)
+    before = dict(stored)
+    config["image_overrides"] = {"tool": "image@sha256:" + "a" * 64}
+    with pytest.raises(ValueError, match="new run ID"):
+        operator._stage_inputs(config)
+    assert stored == before
+
+
+def test_partial_staging_can_resume_with_the_same_image_pins(
+    configuration, monkeypatch
+):
+    _, config = configuration
+    config["image_overrides"] = {"tool": "image@sha256:" + "a" * 64}
+    stored = {}
+    monkeypatch.setattr(operator.artifacts, "exists", lambda uri: uri in stored)
+    monkeypatch.setattr(operator.artifacts, "read_json", stored.__getitem__)
+
+    def interrupted_write(uri, value):
+        if uri.endswith("variants.json"):
+            raise ConnectionError("Interrupted input staging")
+        stored[uri] = value
+
+    monkeypatch.setattr(operator.artifacts, "write_json", interrupted_write)
+    with pytest.raises(ConnectionError):
+        operator._stage_inputs(config)
+    monkeypatch.setattr(operator.artifacts, "write_json", stored.__setitem__)
+    operator._stage_inputs(config)
+    assert len(stored) == 3

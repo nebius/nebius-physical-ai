@@ -216,8 +216,10 @@ def _validate_fields(config):
     if not isinstance(config, dict):
         raise ValueError("Configuration must be an object")
     selections = set(config) & {"variants", "sweep"}
-    if len(selections) != 1 or set(config) - selections - {"generator"} != _FIELDS:
+    optional = {"generator", "image_overrides"}
+    if len(selections) != 1 or set(config) - selections - optional != _FIELDS:
         raise ValueError("Configuration fields differ from the generated template")
+    _validate_image_overrides(config.get("image_overrides", {}))
     if config.get("generator", "cosmos-transfer2.5") not in (
         "cosmos-transfer2.5",
         "cosmos3-nano",
@@ -225,6 +227,43 @@ def _validate_fields(config):
         raise ValueError("Unknown generation backend")
     if "sweep" in config and config.get("generator") != "cosmos3-nano":
         raise ValueError("Parameter axes require the native Cosmos3 generator")
+
+
+def _validate_image_overrides(overrides):
+    if not isinstance(overrides, dict):
+        raise ValueError("Image overrides must map exact tool references to digests")
+    for tool, image in overrides.items():
+        if not isinstance(tool, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]+", tool):
+            raise ValueError("An image override requires an exact tool reference")
+        if not isinstance(image, str) or not re.fullmatch(
+            r"[^\s@=]+@sha256:[0-9a-f]{64}", image
+        ):
+            raise ValueError("Image overrides must use immutable sha256 digests")
+
+
+def _image_arguments(config):
+    arguments = []
+    for tool, image in sorted(config.get("image_overrides", {}).items()):
+        arguments.extend(("--image-override", f"{tool}={image}"))
+    return arguments
+
+
+def _image_preflight_command(config):
+    command = _npa(
+        "workbench",
+        "workflow",
+        "preflight-images",
+        _spec(config),
+        "--project",
+        config["project"],
+        "--infra",
+        config["infra"],
+        "--json",
+    )
+    command.extend(_image_arguments(config))
+    for key, value in _variables(config).items():
+        command.extend(("--var", f"{key}={value}"))
+    return command
 
 
 def _preview(args, config):
@@ -341,7 +380,7 @@ def _preflight(config, log):
             "--waves",
             "--json",
         ),
-        _npa("workbench", "workflow", "preflight-images", _spec(config), "--json"),
+        _image_preflight_command(config),
     ):
         _invoke(command, log)
 
@@ -372,6 +411,19 @@ def _variants(config):
 
 def _stage_inputs(config):
     inputs = {"sources": _sources(config), "variants": _variants(config)}
+    execution_uri = _root(config) + "/inputs/execution.json"
+    recorded_images = artifacts.exists(execution_uri)
+    if config.get("image_overrides"):
+        if not recorded_images and artifacts.exists(
+            _root(config) + "/inputs/sources.json"
+        ):
+            raise ValueError("Run image overrides changed; use a new run ID")
+        inputs = {
+            "execution": {"image_overrides": config["image_overrides"]},
+            **inputs,
+        }
+    elif recorded_images:
+        raise ValueError("Run image overrides changed; use a new run ID")
     for name, content in inputs.items():
         uri = _root(config) + f"/inputs/{name}.json"
         if artifacts.exists(uri) and artifacts.digest(
@@ -403,6 +455,7 @@ def _submit_command(config, *, resume=False, state_dir=None):
     )
     if state_dir is not None:
         command.extend(("--isolated-config-dir", str(state_dir)))
+    command.extend(_image_arguments(config))
     for key, value in _variables(config).items():
         command.extend(("--var", f"{key}={value}"))
     for name in (*_REQUIRED_SECRETS, *_OPTIONAL_SECRETS):

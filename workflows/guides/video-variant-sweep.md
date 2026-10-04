@@ -39,6 +39,15 @@ Set `accelerators` to a verified alternative such as `RTXPRO6000:1` when using
 that GPU family. GPU placement and model access are checked before submission;
 selecting a GPU does not establish its inference compatibility.
 
+To select a rebuilt image, add optional `image_overrides` to the private operator
+configuration. Map the exact tool reference, such as
+`workflow.video_sweep.generate_cosmos3`, to its validated
+`registry/package@sha256:<64-character-digest>` reference. Mutable tags are
+rejected. Preflight and submission receive the same image pins, project, target
+context and workflow variables; standard image security and target-pod checks
+still apply. Resume retains the recorded pins. Changing or removing them requires
+a new run ID. Keep private registry references outside the repository.
+
 Current live execution is blocked by Workbench's public Cosmos3 image quarantine.
 The configured release needs a rebuilt and accepted image; the operator stops at
 image preflight before staging or submitting GPU work. Do not reuse the old tag
