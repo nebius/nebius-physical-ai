@@ -95,7 +95,13 @@ def _benchmark_dataset(tmp_path, rollout):
                     "rollout": str(rollout),
                     "expected_label": True,
                     "fixture_score": 0.79996,
-                }
+                },
+                {
+                    "id": "negative-control",
+                    "rollout": str(rollout),
+                    "expected_label": False,
+                    "fixture_score": 0.0,
+                },
             ]
         )
     )
@@ -128,6 +134,13 @@ def test_fixture_benchmark_keeps_gate_without_provider_claims(
     assert case.evidence is None
     assert case.provider_success is None
     assert case.provider_success_matches_score_gate is None
+    control = report.best_config.results[1]
+    assert control.expected_label is False
+    assert control.score == 0.0
+    assert control.passed is False
+    assert control.predicted_label is False
+    assert control.evidence is None
+    assert control.provider_success is None
 
 
 @pytest.mark.parametrize("backend", ["api", "self-hosted"])
@@ -153,3 +166,10 @@ def test_benchmark_preserves_provider_claim_and_uses_score_for_prediction(
     assert case.provider_success_matches_score_gate is (provider_success == passed)
     assert case.evidence is not None
     assert json.loads(case.evidence.provider.raw_response) == response
+    control = report.best_config.results[1]
+    assert control.expected_label is False
+    assert control.passed is passed
+    assert control.predicted_label is passed
+    assert control.provider_success is provider_success
+    assert control.evidence is not None
+    assert json.loads(control.evidence.provider.raw_response) == response
