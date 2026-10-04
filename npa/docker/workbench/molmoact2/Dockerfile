@@ -81,7 +81,8 @@ COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa
 RUN pip install --no-deps /opt/npa-src \
     && command -v npa \
-    && env -u PYTHONPATH npa --help >/dev/null
+    && env -u PYTHONPATH python3 -c \
+      'from npa.workflows.byof import molmoact2_pipeline; assert callable(molmoact2_pipeline.main)'
 
 RUN useradd --create-home --shell /bin/bash --uid 1000 ubuntu \
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \

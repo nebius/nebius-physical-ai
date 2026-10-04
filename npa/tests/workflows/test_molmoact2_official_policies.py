@@ -224,4 +224,5 @@ def test_runtime_image_bakes_the_npa_console_for_skypilot_setup() -> None:
     assert "COPY src/npa /opt/npa-src/src/npa" in dockerfile
     assert "pip install --no-deps /opt/npa-src" in dockerfile
     assert "command -v npa" in dockerfile
-    assert "env -u PYTHONPATH npa --help >/dev/null" in dockerfile
+    assert "env -u PYTHONPATH python3 -c" in dockerfile
+    assert "from npa.workflows.byof import molmoact2_pipeline" in dockerfile
