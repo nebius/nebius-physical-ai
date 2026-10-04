@@ -350,3 +350,60 @@ controller/Transfer/EnvGen/Isaac/viewer delivery. Source/CPU/S3 closure, indepen
 final evidence review, current published-head CI and queue integration are
 distinct gates. The PR remains draft and not merge-ready. Only the campaign
 coordinator may enqueue after every gate; this owner has not merged or queued it.
+
+## Completion-guard integration and delivery preflight
+
+Signed source `6c5979195bef07ce088198f088bed4a55debb9b9` integrates landed main
+`935bc9de16aebd9c08600fdba195781615c15eca`. The common scalar producer now rejects
+incomplete completions before parsing on either backend; paired judgments also
+require exact `finish_reason=stop`. Seven original634 request/profile/parser
+helper ASTs remain identical. The eighth hosted helper changes because its
+completion check moved into the common producer; the earlier eight-helper
+statement remains scoped to its original candidate, not blanket current equality.
+
+Fresh affected controls: 711 pass, one explicit live self-hosted GPU skip.
+Fifty retained-response/consumer/completion controls pass with no skips,
+including malformed content combined with 11 invalid completion forms on both
+scalar backends and paired judgments. Root precheck: 6,712 pass, six skip;
+42,913 tests collected. Twenty-six other critical modules are byte-identical,
+including storage, grade, captions, direct Stage8, publication and regeneration.
+Original hosted responses retain their original source and scientific limits;
+there was no new hosted call, local full, GPU run or third Claude review.
+
+Completed earlier-head `946b8fdb` CI remains its own fresh execution: six full
+shards, 42,016 pass, 889 skip and one existing XPASS; all three required checks
+succeed from app15368. It is not relabeled as execution of this successor.
+The historical064 missing terminal journal is disclosed separately and is not
+a source-readiness gate. Neither image qualification nor queue authorization
+follows from CPU CI.
+
+Actual immutable946 preflight passed five credential checks and recorded six
+pinned-revision payload-access entries as Ready in task-owned state. No credential
+values were retained and no legal assent was performed. The broader unselected
+public dataset warning and degraded cluster result remain explicit. Three
+existing one-free-RT-GPU targets were observed; only two numerically fit the
+16-CPU/128-GiB tasks. This is volatile capacity, not a reservation or GPU proof.
+All production training, shard and quality defaults are preserved; a planned
+GPU concurrency of one serializes the eight shards without truncating them.
+
+The independent read-only image audit found no qualified current-source set in
+the inspected supply. Four exact historical manifest/config reads succeeded,
+but their source is stale; historical Isaac is absent from accepted releases
+and quarantined. This is not a claim that all registries lack images or that
+current registry access was denied. No layers were read and no image was built,
+copied, pushed or promoted. Audit receipt SHA-256:
+`d01d5bfaa9298817d4b6d97f53a31f5d771ab78f2299c7db1ebacab5249645e1`.
+
+The canonical graph requires five delivered roles: controller, Transfer,
+EnvGen, Isaac and viewer. Stage8 is hosted CPU work in the controller image,
+not a separate Reason image. Structural validation passes; both actual static
+branch renders fail closed at the first missing immutable controller image.
+No placeholder digest, source overlay or stub was substituted.
+
+The remaining delivery requirement is five immutable source/build/byte/security/
+bootstrap/capability bundles, compatible same-digest Isaac cache and verified
+task seed/assets. The real14-stage GPU/model/render and restart path has not
+executed. Direct use of qualified operator images requires no registry copying
+or public promotion; private or quarantined bytes must not be publicly released.
+Technical payload access is not full auxiliary-download inventory, product
+acceptance, image qualification or model-quality proof. The PR remains draft.
