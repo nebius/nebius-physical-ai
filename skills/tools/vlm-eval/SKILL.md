@@ -278,6 +278,15 @@ correctness, or safety. Limitations name `fixture` and deterministic `stub`
 score sources when they occur so mixed reports do not imply those cases made a
 model call.
 
+Benchmark `expected_label` values are caller-supplied; the manifest does not
+establish independent human authorship or independence. Reports therefore keep
+`independent_human_label_calibration_established` false and qualify accuracy,
+agreement, precision, recall, F1, and TP/TN/FP/FN as measurements of that one
+dataset, not operational error rates or evidence of generalization, physical
+correctness, or safety. Limitations name `fixture` and deterministic `stub`
+score sources when they occur so mixed reports do not imply those cases made a
+model call.
+
 Every benchmark must contain at least one pass label and one fail label, and
 resolved item IDs must be unique. Both conditions are checked before frame
 selection or evaluator/backend activity. Reports include specificity and
