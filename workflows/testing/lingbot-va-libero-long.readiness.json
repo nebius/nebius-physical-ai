@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "1176f37048678bc285bbc0dfb632d1fdb514fc1d0ba37d74286a25a9cc55c30a",
+  "workflow_sha256": "02e2c18405975e1a7a37aaea6fd9a09f1abf9c1842bb77af31e642d63b7762fc",
   "planning": {
     "validation": {
       "status": "verified",
@@ -8,14 +8,15 @@
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/lingbot-va-libero-long.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/lingbot-va-libero-long.yaml --run-id lingbot-va-private-qualification-20261004 --check-render --json",
-        "npa/tests/workflows/test_lingbot_va_workflow.py: 4 passed"
+        "npa/tests/workflows/test_lingbot_va_workflow.py: 5 passed"
       ]
     },
     "four_stage_contract": {
       "status": "verified",
-      "reason": "The successful path has five substantive stages: actual raw LIBERO-Long episode selection, source-image decoding, fresh native Wan2.2 latent preparation and action-statistics computation; upstream FSDP post-training; upstream LIBERO-90 websocket rollout; numerical evaluation; and RRD/MP4 production. Contract tests reject placeholder behavior and assert every artifact handoff.",
+      "reason": "The successful path has five substantive stages: actual raw LIBERO-Long episode selection, source-image decoding, fresh native Wan2.2 latent preparation and action-statistics computation; upstream FSDP post-training; upstream LIBERO-Long (libero_10) websocket rollout; numerical evaluation; and RRD/MP4 production. Contract tests reject placeholder behavior and assert every artifact handoff.",
       "evidence": [
         "npa/tests/workflows/test_lingbot_va_workflow.py::test_prepare_selects_cc_by_raw_long_data_and_reindexes_sparse_episodes",
+        "npa/tests/workflows/test_lingbot_va_workflow.py::test_training_subset_physically_reindexes_parquet_videos_and_latents",
         "npa/tests/workflows/test_lingbot_va_workflow.py::test_workflow_is_five_connected_native_stages_with_exact_artifact_handoffs",
         "npa/tests/workflows/test_lingbot_va_workflow.py::test_visualization_binds_the_recording_to_the_workflow_run",
         "focused-and-contracts-precommit.xml: 765 passed"
@@ -34,8 +35,8 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "No immutable private candidate digest has yet been built, scanned, pushed, and pulled through the target Kubernetes route for this workflow hash. The checked-in digest is intentionally a refusal placeholder. Public release is not authorized.",
-      "next_gate": "Build the source-only candidate privately, inspect its notices and bytes, run the payload/license scan, push it to the operator-private registry, then run image-pull preflight by immutable digest.",
+      "reason": "The checked-in digest is intentionally a refusal placeholder. A private source-only candidate has been built and byte-scanned, but a target preflight has not yet qualified the immutable image for this workflow hash. Public release is not authorized.",
+      "next_gate": "Build the current source-only candidate privately, inspect its notices and bytes, run the payload/license scan, push it to the operator-private registry, then run image-pull and bootstrap preflight by immutable digest.",
       "evidence": [
         "npa/docker/workbench/lingbot-va/Dockerfile",
         "npa/docker/workbench/lingbot-va/REDISTRIBUTION.md",

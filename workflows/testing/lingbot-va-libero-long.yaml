@@ -8,7 +8,7 @@ metadata:
     embedded cameras and create fresh upstream Wan2.2 latents, then run the
     upstream eight-GPU Flex Attention
     post-train recipe from the official LIBERO-Long derivative, run upstream
-    Torch-attention websocket inference with genuine LIBERO-90 rollouts,
+    Torch-attention websocket inference with genuine LIBERO-Long rollouts,
     aggregate numerical evidence, then emit an RRD plus a real rollout MP4.
     No data, model, CUDA runtime, credentials, or consent are baked or inferred.
 config:
@@ -88,7 +88,7 @@ states:
     description: >-
       Overlay the exact post-train transformer into the official derivative,
       serve it with upstream Torch attention, and call the upstream LIBERO
-      client function directly for LIBERO-90 closed-loop episodes. The stage
+      client function directly for LIBERO-Long closed-loop episodes. The stage
       requires real success JSON, camera MP4s, predicted actions, and latents.
     needs: [posttrain]
     resources: gpu
@@ -103,7 +103,7 @@ states:
     next: evaluate
   evaluate:
     description: >-
-      Compute aggregate LIBERO-90 long-horizon success from upstream result
+      Compute aggregate LIBERO-Long success from upstream result
       JSON and numerical action-prediction validity from model-emitted tensors.
       It expressly does not fabricate an aligned action/video-accuracy claim.
     needs: [rollout]

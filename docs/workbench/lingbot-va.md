@@ -6,7 +6,8 @@ This is a source-only onboarding candidate for [Robbyant's LingBot-VA](https://g
    LIBERO-Long episodes; decode both embedded cameras to 10 Hz MP4 and use the
    native Wan2.2 VAE/text encoder to make fresh latents.
 2. Continue the official LIBERO-Long derivative with upstream `wan_va.train`.
-3. Serve and roll out the upstream websocket policy on native LIBERO-90 tasks.
+3. Serve and roll out the upstream websocket policy on the native ten-task
+   LIBERO-Long (`libero_10`) suite.
 4. Aggregate actual success JSON and emitted action-prediction validity metrics.
 5. Produce a Rerun recording and a copied, decoded real rollout MP4.
 
@@ -54,7 +55,7 @@ The following values are hard-checked against upstream `va_libero_cfg.py` before
 - Quantile normalization with upstream `q01`/`q99`; video SNR shift 5.0 and action SNR shift 0.05.
 - The official recipe's eight-GPU, 5,000-step `libero_train` configuration. The upstream shell's example W&B credentials are not used; W&B is explicitly disabled.
 
-The evaluation stage reports real LIBERO-90 result JSON aggregation and numerical validity of model-emitted normalized action tensors. It explicitly does **not** call those validity values action accuracy or calibrated visual prediction quality: an aligned held-out action/video comparator must be added and independently inspected before such a claim. Smoke, full benchmark, convergence, and physical-robot success remain distinct.
+The evaluation stage reports real LIBERO-Long result JSON aggregation and numerical validity of model-emitted normalized action tensors. It explicitly does **not** call those validity values action accuracy or calibrated visual prediction quality: an aligned held-out action/video comparator must be added and independently inspected before such a claim. Smoke, full benchmark, convergence, and physical-robot success remain distinct.
 
 ## Current acceptance status
 

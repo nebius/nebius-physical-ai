@@ -138,6 +138,7 @@ def test_prepare_selects_cc_by_raw_long_data_and_reindexes_sparse_episodes(
     assert len(persisted["source_staging_manifest_sha256"]) == 64
     assert persisted["selected_libero_long_task_ids"] == list(range(10))
     assert persisted["attention"] == {"training": "flex", "inference": "torch"}
+    assert L.LIBERO_BENCHMARK == "libero_10"
     assert persisted["action_contract"]["used_action_channel_ids"] == list(range(7))
     assert persisted["action_contract"]["q01"][7:] == [0.0] * 23
     assert persisted["action_contract"]["q99"][7:] == [0.0] * 23
@@ -154,6 +155,36 @@ def test_prepare_selects_cc_by_raw_long_data_and_reindexes_sparse_episodes(
     assert copied.column("episode_index").to_pylist() == [1] * 4
     assert copied.column("index").to_pylist() == [4, 5, 6, 7]
     assert (prepared_dataset / "videos/chunk-000" / L.CAMERAS[0]).is_dir()
+
+
+def test_training_subset_physically_reindexes_parquet_videos_and_latents(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = _raw_dataset(tmp_path / "source")
+    prepared_dataset = tmp_path / "prepared-dataset"
+    destination = tmp_path / "prepared.json"
+    monkeypatch.setattr(L, "_snapshot_base_checkpoint", lambda path: path)
+    monkeypatch.setattr(L, "_materialize_native_latents", _fake_native_latents)
+    prepared = L.prepare(
+        f"file://{source}", f"file://{prepared_dataset}", f"file://{destination}"
+    )
+
+    L._materialize_training_subset(
+        prepared_dataset, list(prepared["train_episode_indices"])
+    )
+
+    records = L._episode_records(prepared_dataset)
+    assert [record["episode_index"] for record in records] == list(range(10))
+    assert [record["prepared_episode_index"] for record in records] == list(
+        prepared["train_episode_indices"]
+    )
+    info = json.loads((prepared_dataset / "meta/info.json").read_text())
+    assert info["total_episodes"] == 10
+    assert info["total_frames"] == 40
+    table = pq.read_table(prepared_dataset / "data/chunk-000/episode_000001.parquet")
+    assert table.column("episode_index").to_pylist() == [1] * 4
+    assert table.column("index").to_pylist() == [4, 5, 6, 7]
+    assert not list(prepared_dataset.glob(".*-before-training-subset"))
 
 
 def test_workflow_is_five_connected_native_stages_with_exact_artifact_handoffs() -> (
