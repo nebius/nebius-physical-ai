@@ -106,6 +106,10 @@ def test_workflow_is_a_connected_five_stage_real_component_path() -> None:
         states["train_dm05"]["inputs"][0]["uri"] == "{{config.prepared_manifest_uri}}"
     )
     assert (
+        "--opendm-python '{{config.opendm_python}}'"
+        in states["train_dm05"]["run"]["shell"]
+    )
+    assert (
         states["serve_rollout"]["inputs"][1]["uri"]
         == "{{config.checkpoint_manifest_uri}}"
     )
@@ -139,3 +143,34 @@ def test_workflow_does_not_invent_an_openpi_or_generic_terms_gate() -> None:
     assert "Dexmal/DM05" in contents
     assert "Dexmal/libero" in contents
     assert "dexbotic-benchmark" in contents
+
+
+def test_native_environment_keeps_upstream_launcher_in_its_pinned_venv(
+    tmp_path: Path,
+) -> None:
+    native_python = tmp_path / "opendm-venv" / "bin" / "python"
+    native_python.parent.mkdir(parents=True)
+    native_python.touch()
+    environment = dm05_opendm._native_environment(
+        str(native_python), repo_root=tmp_path / "opendm"
+    )
+    assert environment["PATH"].split(":", 1)[0] == str(native_python.parent)
+    assert environment["PYTHONPATH"].split(":", 1)[0] == str(tmp_path / "opendm")
+    parsed = dm05_opendm.build_parser().parse_args(
+        [
+            "train",
+            "--repo-root",
+            "/opt/byof",
+            "--opendm-python",
+            str(native_python),
+            "--prepared-uri",
+            "s3://bucket/prepared",
+            "--checkpoint-uri",
+            "s3://bucket/checkpoint",
+            "--nproc-per-node",
+            "8",
+            "--train-steps",
+            "100000",
+        ]
+    )
+    assert parsed.opendm_python == str(native_python)

@@ -116,6 +116,7 @@ states:
       shell: >
         python3 -m npa.workflows.dm05_opendm train
         --repo-root '{{config.repo_root}}'
+        --opendm-python '{{config.opendm_python}}'
         --prepared-uri '{{config.prepared_uri}}'
         --checkpoint-uri '{{config.checkpoint_uri}}'
         --nproc-per-node '{{config.train_nproc_per_node}}'

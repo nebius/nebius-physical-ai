@@ -175,8 +175,33 @@ def _native_python(value: str) -> str:
     return value
 
 
+def _native_environment(native_python: str, *, repo_root: Path) -> dict[str, str]:
+    """Make the pinned native interpreter's companion CLIs authoritative.
+
+    OpenDM's documented ``libero_runner.sh`` delegates to ``python``,
+    ``torchrun``, and ``hf`` by name. The private runtime image intentionally
+    keeps those dependencies in an isolated venv, so a shell launcher must
+    prefer that venv instead of selecting the base-image interpreter.
+    """
+    environment = os.environ.copy()
+    if Path(native_python).is_absolute():
+        environment["PATH"] = (
+            str(Path(native_python).parent) + os.pathsep + environment.get("PATH", "")
+        )
+    environment["PYTHONPATH"] = (
+        str(repo_root) + os.pathsep + environment.get("PYTHONPATH", "")
+    )
+    return environment
+
+
 def _hf_download(
-    *, repo_id: str, revision: str, repo_type: str, destination: Path, cwd: Path
+    *,
+    repo_id: str,
+    revision: str,
+    repo_type: str,
+    destination: Path,
+    cwd: Path,
+    native_python: str,
 ) -> None:
     _run(
         [
@@ -191,6 +216,7 @@ def _hf_download(
             str(destination),
         ],
         cwd=cwd,
+        env=_native_environment(native_python, repo_root=cwd),
     )
 
 
@@ -215,7 +241,7 @@ print(config.norm_stats_path(10))
     result = subprocess.run(
         [native_python, "-c", program, str(data_root), str(norm_root)],
         cwd=repo_root,
-        env={**os.environ, "PYTHONPATH": str(repo_root)},
+        env=_native_environment(native_python, repo_root=repo_root),
         check=True,
         text=True,
         stdout=subprocess.PIPE,
@@ -331,19 +357,11 @@ def _start_server(
         "--inference-config.port",
         str(port),
     ]
-    env = {
-        **os.environ,
-        "PYTHONPATH": str(repo_root),
-        "PYTHON": native_python,
-        "CUDA_VISIBLE_DEVICES": cuda_visible_devices,
-    }
     # dm05_launcher intentionally uses the image's ``python``.  Put the native
     # interpreter first rather than altering upstream source or its arguments.
-    native_dir = (
-        str(Path(native_python).parent) if Path(native_python).is_absolute() else ""
-    )
-    if native_dir:
-        env["PATH"] = native_dir + os.pathsep + env.get("PATH", "")
+    env = _native_environment(native_python, repo_root=repo_root)
+    env["PYTHON"] = native_python
+    env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
     print(f"[dm05-opendm] running: {' '.join(command)}", flush=True)
     return subprocess.Popen(command, cwd=repo_root, env=env)
 
@@ -400,6 +418,7 @@ def prepare(args: argparse.Namespace) -> None:
             repo_type="dataset",
             destination=raw,
             cwd=repo_root,
+            native_python=native_python,
         )
         _run(
             [
@@ -414,6 +433,7 @@ def prepare(args: argparse.Namespace) -> None:
                 str(raw),
             ],
             cwd=repo_root,
+            env=_native_environment(native_python, repo_root=repo_root),
         )
         norm_path = _compute_norm_stats(
             repo_root=repo_root,
@@ -448,6 +468,7 @@ def prepare(args: argparse.Namespace) -> None:
 def train(args: argparse.Namespace) -> None:
     repo_root = Path(args.repo_root).resolve()
     assert_pinned_checkout(repo_root, OPENDM_SOURCE_REVISION, "OpenDM")
+    native_python = _native_python(args.opendm_python)
     store = ArtifactStore()
     with tempfile.TemporaryDirectory(prefix="npa-dm05-train-") as temporary:
         work = Path(temporary)
@@ -465,6 +486,7 @@ def train(args: argparse.Namespace) -> None:
             repo_type="model",
             destination=base_model,
             cwd=repo_root,
+            native_python=native_python,
         )
         checkpoint = work / "checkpoint"
         _run(
@@ -489,6 +511,7 @@ def train(args: argparse.Namespace) -> None:
                 str(args.train_steps),
             ],
             cwd=repo_root,
+            env=_native_environment(native_python, repo_root=repo_root),
         )
         if not checkpoint.is_dir() or not any(checkpoint.iterdir()):
             raise DM05WorkflowError(
@@ -857,6 +880,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     train_parser = commands.add_parser("train")
     common(train_parser)
+    train_parser.add_argument("--opendm-python", required=True)
     train_parser.add_argument("--prepared-uri", required=True)
     train_parser.add_argument("--checkpoint-uri", required=True)
     train_parser.add_argument("--nproc-per-node", type=int, required=True)
