@@ -20,7 +20,7 @@ unique and must be tested with its own upstream-named capabilities.
 | --- | --- | --- | --- | --- |
 | Habitat-Sim (**neutral runtime-fetch; development proof only**) | `facebookresearch/habitat-sim` `57ee4941…` | `skokloster_castle_rgb_depth_bullet_traversal` | `habitat-sim-smoke.json` + saved RGB/depth observations | `habitat-sim-smoke.yaml` |
 | LIBERO | `Lifelong-Robot-Learning/LIBERO` `8f1084e3…` | `libero_spatial_bc_rnn_train_reload_heldout` | Canonical `libero-smoke.json` + checkpoint digest/reload evidence (checkpoint remains local and is never uploaded) | `byof-libero.yaml` |
-| Sylvest OpenVLA-OFT mixed-data checkpoint (**deferred; no image**) | `sylvestf/LIBERO-plus` `4976dc30…` + `moojink/openvla-oft` `e4287e94…` | `openvla_oft_libero_plus_paired_robustness` | paired `rollouts.json` files, MP4 manifests, `comparison.json`, report, and RRD (not produced) | `sylvest-oft-mixdata-libero-plus-comparison.yaml` |
+| Sylvest OpenVLA-OFT mixed-data checkpoint (**deferred; no qualified image**) | `sylvestf/LIBERO-plus` `4976dc30…` + `moojink/openvla-oft` `e4287e94…` + Apache-2.0 `kvablack/dlimp` `92e3eca…` | `openvla_oft_libero_plus_paired_robustness` | paired `rollouts.json` files, MP4 manifests, `comparison.json`, report, and RRD (not produced) | `sylvest-oft-mixdata-libero-plus-comparison.yaml` |
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | Gymnasium-Robotics | `Farama-Foundation/Gymnasium-Robotics` `4d1ebecb…` | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | `gymnasium-robotics-smoke.json` | `byof-gymnasium-robotics.yaml` |
@@ -171,18 +171,23 @@ and baseline
 
 | Capability | Status | Upstream basis / artifact contract |
 | --- | --- | --- |
-| `libero_plus_heldout_protocol_preparation` | deferred | Published `task_classification.json` for `libero_spatial`, `libero_object`, `libero_goal`, or `libero_10`; emits hash-bound `protocol.json` only after excluding an authoritative mix-SFT task inventory. |
+| `libero_plus_protocol_preparation` | deferred | Published `task_classification.json` for `libero_spatial`, `libero_object`, `libero_goal`, or `libero_10`; emits a hash-bound held-out `protocol.json` only after excluding an authoritative mix-SFT task inventory, otherwise explicitly emits `training_coverage_unknown` and permits no generalization claim. |
 | `openvla_oft_libero_plus_paired_rollouts` | deferred hard gate | Upstream `experiments.robot.libero.run_libero_eval.run_task` once per exact task/seed for each pinned checkpoint; emits two distinct `rollouts.json` files and upstream MP4 manifests. |
 | `paired_robustness_difference` | deferred | Identical protocol hash/case identity is required before numerical delta, category summaries, normal interval, and exact McNemar p-value are emitted. |
 | `paired_rollout_rrd_report` | local artifact test passed; live deferred | Measured comparison feeds `report.json`, checksums, and decoded `comparison.rrd`; no real rollout metric has been produced. |
 
-The source repository has no `LICENSE`, `NOTICE`, or `COPYING` at this pinned
-revision and its repository license metadata is absent. Therefore no functional
-image is built, no source is runtime-fetched, and no live NPA/SkyPilot/Kubernetes
-workflow is submitted. The model/data cards' MIT declarations do not repair this
-separate source-rights gap. No generic NPA EULA or `ACCEPT_*` flag is added.
-The candidate card also does not enumerate the mix-SFT training tasks, so a
-held-out claim remains unavailable until its authors provide the inventory. See
+The exact benchmark source repository has no `LICENSE`, `NOTICE`, or `COPYING`
+at this pinned revision and its repository license metadata is absent. Apache-2.0
+`kvablack/dlimp@92e3eca…` replaces only OFT's previously unlicensed dlimp fork:
+NPA applies the verified `deterministic=False → True` modification in a private
+noticed runtime derivative. It does not repair the separate benchmark-source
+rights gap. A private neutral bootstrap build/push/pull did not qualify because
+NPA Kubernetes preflight rejected its missing bootstrap-contract attestation;
+no workload launched. Therefore no functional image exists and no live
+NPA/SkyPilot/Kubernetes workflow is submitted. The model/data cards' MIT
+declarations do not repair that gap. No generic NPA EULA or `ACCEPT_*` flag is
+added. The candidate card also does not enumerate the mix-SFT training tasks, so
+a held-out claim remains unavailable until its authors provide the inventory. See
 [`sylvest-oft-mixdata.md`](sylvest-oft-mixdata.md) and the adjacent workflow
 readiness record for the precise resume gate.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -31,6 +32,7 @@ def _rollouts(checkpoint: str, successes: list[int]) -> dict[str, object]:
         "schema": workflow.WORKFLOW_SCHEMA,
         "checkpoint": {"id": checkpoint, "revision": "pinned"},
         "protocol_sha256": "protocol-hash",
+        "comparison_scope": "training_coverage_unknown",
         "episodes": episodes,
     }
 
@@ -99,6 +101,11 @@ def test_compare_and_report_emit_measured_artifacts(tmp_path: Path) -> None:
     assert comparison["overall"]["mean_delta_success"] == 1 / 3
     assert comparison["overall"]["candidate_only_successes"] == 2
     assert comparison["overall"]["baseline_only_successes"] == 1
+    assert comparison["comparison_scope"] == "training_coverage_unknown"
+    assert any(
+        "not a held-out generalization claim" in item
+        for item in comparison["limitations"]
+    )
 
     report_dir = tmp_path / "report"
     assert (
@@ -144,6 +151,53 @@ def test_unlicensed_libero_plus_source_is_refused(tmp_path: Path) -> None:
         workflow._require_libero_plus_license(tmp_path)
 
 
+def test_licensed_dlimp_parent_becomes_noticed_deterministic_derivative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Apply only the reviewed deterministic override to an Apache parent.
+
+    Args:
+        tmp_path: Pytest-managed temporary directory.
+        monkeypatch: Pytest configuration helper.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    source = tmp_path / "dlimp-source"
+    dataset = source / "dlimp" / "dataset.py"
+    dataset.parent.mkdir(parents=True)
+    license_file = source / "LICENSE"
+    license_file.write_text("Apache License\n")
+    dataset.write_text(
+        "def options():\n    options.deterministic = False\n    return options\n"
+    )
+    monkeypatch.setattr(
+        workflow,
+        "DLIMP_LICENSE_SHA256",
+        hashlib.sha256(license_file.read_bytes()).hexdigest(),
+    )
+
+    derivative = workflow._prepare_deterministic_dlimp_runtime(
+        source, tmp_path / "runtime" / "dlimp-deterministic"
+    )
+
+    rendered = (derivative / "dlimp" / "dataset.py").read_text()
+    assert "options.deterministic = True" in rendered
+    assert "options.deterministic = False" not in rendered
+    assert (derivative / "LICENSE").read_text() == "Apache License\n"
+    notice = (derivative / "NPA_MODIFICATIONS.md").read_text()
+    assert "Apache-2.0" in notice
+    assert "dlimp/dataset.py only" in notice
+    assert workflow._dlimp_derivative_is_ready(derivative)
+    assert (
+        workflow._prepare_deterministic_dlimp_runtime(source, derivative) == derivative
+    )
+
+
 def test_initial_state_indices_are_upstream_trial_indices() -> None:
     """Reject index sets that cannot map to upstream run_task trials.
 
@@ -160,6 +214,27 @@ def test_initial_state_indices_are_upstream_trial_indices() -> None:
     assert workflow._parse_initial_state_indices("0,1,2") == [0, 1, 2]
     with pytest.raises(workflow.SylvestComparisonError, match="contiguous zero-based"):
         workflow._parse_initial_state_indices("1,2")
+
+
+def test_protocol_scope_rejects_an_unsupported_or_unproven_held_out_label() -> None:
+    """Keep held-out wording bound to immutable inventory evidence.
+
+    Returns:
+        None.
+    """
+
+    protocol: dict[str, object] = {
+        "schema": workflow.WORKFLOW_SCHEMA,
+        "comparison_scope": "held_out",
+        "training_inventory_sha256": None,
+        "cases": [{"case_id": "task::initial-state=0"}],
+    }
+    protocol["protocol_sha256"] = hashlib.sha256(
+        workflow._canonical_bytes(protocol)
+    ).hexdigest()
+
+    with pytest.raises(workflow.SylvestComparisonError, match="inventory provenance"):
+        workflow._validate_protocol(protocol)
 
 
 def test_checkpoint_cache_records_and_protects_exact_payload(tmp_path: Path) -> None:
@@ -320,6 +395,8 @@ def test_workflow_has_five_connected_substantive_stages() -> None:
     assert states["report"]["terminal"] is True
     assert spec["config"]["task_suite"] == "libero_spatial"
     assert spec["config"]["initial_state_indices"] == "0,1,2"
+    assert spec["config"]["comparison_scope"] == "training_coverage_unknown"
+    assert spec["resources"]["gpu"]["accelerators"] == "{{config.gpu_type}}:1"
     assert all(
         "npa.workflows.sylvest_oft_mixdata" in states[name]["run"]["shell"]
         for name in states
@@ -329,3 +406,8 @@ def test_workflow_has_five_connected_substantive_stages() -> None:
         output["uri"].endswith("comparison.rrd")
         for output in states["report"]["outputs"]
     )
+    for state in ("baseline_rollouts", "candidate_rollouts"):
+        shell = states[state]["run"]["shell"]
+        assert "--dlimp-root" in shell
+        assert "--dlimp-revision" in shell
+        assert "--dlimp-runtime-root" in shell

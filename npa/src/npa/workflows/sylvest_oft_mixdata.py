@@ -1,9 +1,10 @@
 """Run a source-pinned, paired LIBERO-Plus comparison for the Sylvest checkpoint.
 
 The workflow intentionally does not treat a mixed-data checkpoint as an
-improvement.  It selects only task names outside a supplied training inventory,
-runs the upstream OpenVLA-OFT LIBERO evaluator once per matched task/initial-state pair,
-then reports paired success differences and a factual Rerun recording.
+improvement.  It either selects task names outside a supplied training inventory
+or explicitly records that training coverage is unknown, runs the upstream
+OpenVLA-OFT LIBERO evaluator once per matched task/initial-state pair, then
+reports paired success differences and a factual Rerun recording.
 """
 
 from __future__ import annotations
@@ -26,6 +27,15 @@ from npa.clients.storage import StorageClient
 WORKFLOW_SCHEMA = "npa.sylvest-oft-mixdata.v1"
 OFT_SOURCE_REPOSITORY = "https://github.com/moojink/openvla-oft"
 LIBERO_PLUS_SOURCE_REPOSITORY = "https://github.com/sylvestf/LIBERO-plus"
+DLIMP_SOURCE_REPOSITORY = "https://github.com/kvablack/dlimp"
+DLIMP_SOURCE_REVISION = "92e3eca97af3b14d0b6aa15182c0dc240407698d"
+DLIMP_LICENSE_SHA256 = (
+    "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+)
+_DLIMP_READY_FILE = ".npa-dlimp-ready.json"
+_DLIMP_DATASET_FILE = Path("dlimp/dataset.py")
+_DLIMP_DETERMINISTIC_BEFORE = "options.deterministic = False"
+_DLIMP_DETERMINISTIC_AFTER = "options.deterministic = True"
 _CHECKPOINT_READY_FILE = ".npa-checkpoint-ready.json"
 _CHECKPOINT_MUTABLE_FILES = {
     "config.json",
@@ -204,6 +214,155 @@ def _require_libero_plus_license(root: Path) -> Path:
     return license_file
 
 
+def _require_dlimp_license(root: Path) -> Path:
+    """Verify the exact Apache-2.0 dlimp parent license before deriving it."""
+
+    license_file = root / "LICENSE"
+    if not license_file.is_file() or _sha256_file(license_file) != DLIMP_LICENSE_SHA256:
+        raise SylvestComparisonError(
+            "licensed dlimp parent is missing its expected Apache-2.0 LICENSE"
+        )
+    return license_file
+
+
+def _tree_inventory(
+    root: Path, *, exclude: set[str] | None = None
+) -> list[dict[str, Any]]:
+    excluded = exclude or set()
+    files = [
+        path
+        for path in root.rglob("*")
+        if path.is_file() and not path.is_symlink() and path.name not in excluded
+    ]
+    return [
+        {
+            "path": str(path.relative_to(root)),
+            "sha256": _sha256_file(path),
+            "size_bytes": path.stat().st_size,
+        }
+        for path in sorted(files)
+    ]
+
+
+def _dlimp_derivative_metadata(source: Path, derivative: Path) -> dict[str, Any]:
+    source_dataset = source / _DLIMP_DATASET_FILE
+    derivative_dataset = derivative / _DLIMP_DATASET_FILE
+    return {
+        "schema": WORKFLOW_SCHEMA,
+        "kind": "licensed_dlimp_deterministic_derivative",
+        "source": {
+            "repository": DLIMP_SOURCE_REPOSITORY,
+            "revision": DLIMP_SOURCE_REVISION,
+            "license_file": "LICENSE",
+            "license_sha256": _sha256_file(source / "LICENSE"),
+            "dataset_sha256_before": _sha256_file(source_dataset),
+        },
+        "modification": {
+            "path": str(_DLIMP_DATASET_FILE),
+            "replacement": f"{_DLIMP_DETERMINISTIC_BEFORE} -> {_DLIMP_DETERMINISTIC_AFTER}",
+            "dataset_sha256_after": _sha256_file(derivative_dataset),
+            "notice_file": "NPA_MODIFICATIONS.md",
+        },
+        "inventory": _tree_inventory(derivative, exclude={_DLIMP_READY_FILE}),
+    }
+
+
+def _dlimp_derivative_is_ready(derivative: Path) -> bool:
+    ready = derivative / _DLIMP_READY_FILE
+    if not ready.is_file():
+        return False
+    payload = _read_json(ready)
+    if not isinstance(payload, dict):
+        return False
+    source = payload.get("source")
+    modification = payload.get("modification")
+    if not isinstance(source, dict) or not isinstance(modification, dict):
+        return False
+    dataset = derivative / _DLIMP_DATASET_FILE
+    if not dataset.is_file():
+        return False
+    text = dataset.read_text(encoding="utf-8")
+    return (
+        source.get("repository") == DLIMP_SOURCE_REPOSITORY
+        and source.get("revision") == DLIMP_SOURCE_REVISION
+        and source.get("license_sha256") == DLIMP_LICENSE_SHA256
+        and modification.get("replacement")
+        == f"{_DLIMP_DETERMINISTIC_BEFORE} -> {_DLIMP_DETERMINISTIC_AFTER}"
+        and _DLIMP_DETERMINISTIC_AFTER in text
+        and _DLIMP_DETERMINISTIC_BEFORE not in text
+        and payload.get("inventory")
+        == _tree_inventory(derivative, exclude={_DLIMP_READY_FILE})
+    )
+
+
+def _prepare_deterministic_dlimp_runtime(source: Path, destination: Path) -> Path:
+    """Create one Apache-noticed deterministic dlimp derivative atomically.
+
+    The OpenVLA fork changed only this option. NPA applies the same one-line
+    behavior to the Apache-2.0 parent instead of importing the unlicensed fork.
+    """
+
+    _require_dlimp_license(source)
+    dataset = source / _DLIMP_DATASET_FILE
+    source_text = dataset.read_text(encoding="utf-8")
+    if source_text.count(_DLIMP_DETERMINISTIC_BEFORE) != 1:
+        raise SylvestComparisonError(
+            "licensed dlimp parent no longer has the expected deterministic option"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    import fcntl
+
+    lock_path = destination.parent / f".{destination.name}.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if _dlimp_derivative_is_ready(destination):
+            return destination
+        if destination.exists():
+            raise SylvestComparisonError(
+                "dlimp runtime cache exists without a matching atomic ready marker"
+            )
+        staging = Path(
+            tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent)
+        )
+        try:
+            shutil.copytree(
+                source,
+                staging,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns(".git"),
+            )
+            derived_dataset = staging / _DLIMP_DATASET_FILE
+            derived_text = derived_dataset.read_text(encoding="utf-8")
+            derived_dataset.write_text(
+                derived_text.replace(
+                    _DLIMP_DETERMINISTIC_BEFORE, _DLIMP_DETERMINISTIC_AFTER, 1
+                ),
+                encoding="utf-8",
+            )
+            rendered = derived_dataset.read_text(encoding="utf-8")
+            if (
+                _DLIMP_DETERMINISTIC_BEFORE in rendered
+                or _DLIMP_DETERMINISTIC_AFTER not in rendered
+            ):
+                raise SylvestComparisonError(
+                    "failed to apply the deterministic dlimp runtime override"
+                )
+            (staging / "NPA_MODIFICATIONS.md").write_text(
+                "# NPA modification notice\n\n"
+                "Derived from kvablack/dlimp@92e3eca97af3b14d0b6aa15182c0dc240407698d "
+                "under Apache-2.0. NPA changes dlimp/dataset.py only: "
+                "options.deterministic = False to options.deterministic = True.\n",
+                encoding="utf-8",
+            )
+            metadata = _dlimp_derivative_metadata(source, staging)
+            _write_json(staging / _DLIMP_READY_FILE, metadata)
+            os.replace(staging, destination)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+    return destination
+
+
 def _prepare_protocol(args: argparse.Namespace, output: Path) -> None:
     libero_root = _verified_source_root(
         args.libero_plus_root, args.libero_plus_revision, LIBERO_PLUS_SOURCE_REPOSITORY
@@ -222,34 +381,51 @@ def _prepare_protocol(args: argparse.Namespace, output: Path) -> None:
         raise SylvestComparisonError(
             f"classification has no task list for {args.task_suite!r}"
         )
-    with tempfile.TemporaryDirectory(prefix="sylvest-training-inventory-") as temporary:
-        inventory = _materialize(
-            args.training_task_ids_uri, Path(temporary) / "training.json"
+    training_names, inventory_sha256 = _training_inventory(args.training_task_ids_uri)
+    if args.comparison_scope == "held_out":
+        if not training_names:
+            raise SylvestComparisonError(
+                "held_out comparison_scope requires a non-empty authoritative training-task inventory"
+            )
+        selected_cases = [
+            row
+            for row in suite_cases
+            if str(row.get("name") or "") not in training_names
+        ]
+        population_definition = (
+            "task name absent from the supplied immutable mix-SFT training inventory"
         )
-        training_names = _task_names(_read_json(inventory))
-    held_out = [
-        row for row in suite_cases if str(row.get("name") or "") not in training_names
-    ]
-    if not training_names:
-        raise SylvestComparisonError("training-task inventory must not be empty")
-    if not held_out:
+    elif args.comparison_scope == "training_coverage_unknown":
+        if training_names:
+            raise SylvestComparisonError(
+                "training_coverage_unknown comparison_scope must not receive a training-task inventory"
+            )
+        selected_cases = suite_cases
+        population_definition = "all selected suite tasks; candidate training coverage is unknown and may be in-distribution"
+    else:
         raise SylvestComparisonError(
-            "training inventory leaves no held-out LIBERO-Plus tasks"
+            "comparison_scope must be held_out or training_coverage_unknown"
+        )
+    if not selected_cases:
+        raise SylvestComparisonError(
+            "selected comparison population has no LIBERO-Plus tasks"
         )
     protocol_cases = _protocol_cases(
-        held_out, _parse_initial_state_indices(args.initial_state_indices)
+        selected_cases, _parse_initial_state_indices(args.initial_state_indices)
     )
     source_hash = _sha256_file(classification_path)
     protocol = {
         "schema": WORKFLOW_SCHEMA,
-        "kind": "held_out_libero_plus_protocol",
+        "kind": "paired_libero_plus_protocol",
         "task_suite": args.task_suite,
         "initial_state_indices": _parse_initial_state_indices(
             args.initial_state_indices
         ),
         "cases": protocol_cases,
-        "held_out_task_count": len(held_out),
+        "comparison_scope": args.comparison_scope,
+        "selected_task_count": len(selected_cases),
         "training_inventory_count": len(training_names),
+        "training_inventory_sha256": inventory_sha256,
         "source": {
             "repository": LIBERO_PLUS_SOURCE_REPOSITORY,
             "revision": args.libero_plus_revision,
@@ -257,11 +433,19 @@ def _prepare_protocol(args: argparse.Namespace, output: Path) -> None:
             "license_file": license_file.name,
             "license_sha256": _sha256_file(license_file),
         },
-        "held_out_definition": "task name absent from the supplied mix-SFT training inventory",
+        "population_definition": population_definition,
     }
     protocol["protocol_sha256"] = hashlib.sha256(_canonical_bytes(protocol)).hexdigest()
     _write_json(output / "protocol.json", protocol)
     _write_json(output / "provenance.json", _prepare_provenance(args, protocol))
+
+
+def _training_inventory(uri: str) -> tuple[set[str], str | None]:
+    if not uri:
+        return set(), None
+    with tempfile.TemporaryDirectory(prefix="sylvest-training-inventory-") as temporary:
+        inventory = _materialize(uri, Path(temporary) / "training.json")
+        return _task_names(_read_json(inventory)), _sha256_file(inventory)
 
 
 def _protocol_cases(
@@ -297,14 +481,16 @@ def _prepare_provenance(
         "producer": "npa.workflows.sylvest_oft_mixdata.prepare",
         "protocol_sha256": protocol["protocol_sha256"],
         "limitations": [
-            "A task is held out only relative to the supplied training inventory.",
+            "A held-out result is available only with an authoritative supplied training inventory.",
             "The published checkpoint card does not itself provide a training-task split.",
+            "training_coverage_unknown results may include in-distribution tasks.",
             "Initial-state indices are upstream LIBERO trial indices, not independently sampled seeds.",
             "No benchmark improvement is inferred at preparation time.",
         ],
         "sources": {
             "libero_plus_revision": args.libero_plus_revision,
             "training_task_ids_uri": args.training_task_ids_uri,
+            "comparison_scope": protocol["comparison_scope"],
         },
     }
 
@@ -441,9 +627,24 @@ def _link_or_copy(source: Path, target: Path) -> None:
         shutil.copy2(source, target)
 
 
-def _runtime_modules(openvla_root: Path, libero_root: Path) -> Any:
+def _runtime_modules(
+    openvla_root: Path, libero_root: Path, deterministic_dlimp_root: Path
+) -> Any:
     importlib.invalidate_caches()
-    paths = [str(libero_root / "libero"), str(openvla_root)]
+    loaded_dlimp = sys.modules.get("dlimp")
+    if loaded_dlimp is not None:
+        loaded_file = getattr(loaded_dlimp, "__file__", None)
+        if not loaded_file or not Path(loaded_file).resolve().is_relative_to(
+            deterministic_dlimp_root.resolve()
+        ):
+            raise SylvestComparisonError(
+                "a non-deterministic or unverified dlimp module was imported before rollout"
+            )
+    paths = [
+        str(deterministic_dlimp_root),
+        str(libero_root / "libero"),
+        str(openvla_root),
+    ]
     for path in reversed(paths):
         if path not in sys.path:
             sys.path.insert(0, path)
@@ -461,6 +662,12 @@ def _rollout(args: argparse.Namespace, output: Path) -> None:
         args.libero_plus_root, args.libero_plus_revision, LIBERO_PLUS_SOURCE_REPOSITORY
     )
     _require_libero_plus_license(libero_root)
+    dlimp_source = _verified_source_root(
+        args.dlimp_root, args.dlimp_revision, DLIMP_SOURCE_REPOSITORY
+    )
+    deterministic_dlimp_root = _prepare_deterministic_dlimp_runtime(
+        dlimp_source, Path(args.dlimp_runtime_root)
+    )
     openvla_root = _verified_source_root(
         args.openvla_oft_root, args.openvla_oft_revision, OFT_SOURCE_REPOSITORY
     )
@@ -483,6 +690,7 @@ def _rollout(args: argparse.Namespace, output: Path) -> None:
             checkpoint,
             openvla_root,
             libero_root,
+            deterministic_dlimp_root,
             output,
             runtime_workspace,
         )
@@ -498,6 +706,7 @@ def _rollout(args: argparse.Namespace, output: Path) -> None:
         },
         "protocol_sha256": protocol["protocol_sha256"],
         "task_suite": protocol["task_suite"],
+        "comparison_scope": protocol["comparison_scope"],
         "episodes": results,
         "summary": _rollout_summary(results),
     }
@@ -511,7 +720,14 @@ def _validate_protocol(protocol: Any) -> None:
         raise SylvestComparisonError("unsupported protocol schema")
     cases = protocol.get("cases")
     if not isinstance(cases, list) or not cases:
-        raise SylvestComparisonError("protocol has no held-out cases")
+        raise SylvestComparisonError("protocol has no evaluation cases")
+    comparison_scope = protocol.get("comparison_scope")
+    if comparison_scope not in {"held_out", "training_coverage_unknown"}:
+        raise SylvestComparisonError("protocol has no valid comparison scope")
+    if comparison_scope == "held_out" and not protocol.get("training_inventory_sha256"):
+        raise SylvestComparisonError(
+            "held-out protocol lacks immutable training-inventory provenance"
+        )
     expected = dict(protocol)
     actual = str(expected.pop("protocol_sha256", ""))
     if not actual or hashlib.sha256(_canonical_bytes(expected)).hexdigest() != actual:
@@ -525,10 +741,11 @@ def _run_upstream_rollouts(
     checkpoint: Path,
     openvla_root: Path,
     libero_root: Path,
+    deterministic_dlimp_root: Path,
     output: Path,
     runtime_workspace: Path,
 ) -> list[dict[str, Any]]:
-    evaluator = _runtime_modules(openvla_root, libero_root)
+    evaluator = _runtime_modules(openvla_root, libero_root, deterministic_dlimp_root)
     prior_cwd = Path.cwd()
     output.mkdir(parents=True, exist_ok=True)
     os.chdir(runtime_workspace)
@@ -588,7 +805,7 @@ def _run_cases(
     for task_name, task_cases in _cases_by_task(cases).items():
         if task_name not in task_ids:
             raise SylvestComparisonError(
-                f"held-out task is absent from runtime suite: {task_name}"
+                f"selected task is absent from runtime suite: {task_name}"
             )
         task_results, total_episodes, total_successes = _run_task_cases(
             evaluator,
@@ -824,6 +1041,7 @@ def _rollout_provenance(
             "repository": LIBERO_PLUS_SOURCE_REPOSITORY,
             "revision": args.libero_plus_revision,
         },
+        "dlimp": _dlimp_derivative_provenance(Path(args.dlimp_runtime_root)),
         "checkpoint": payload["checkpoint"],
         "protocol_sha256": payload["protocol_sha256"],
         "limitations": [
@@ -831,6 +1049,19 @@ def _rollout_provenance(
             "Every scored episode has one decoded upstream save_rollout_video MP4.",
         ],
     }
+
+
+def _dlimp_derivative_provenance(derivative: Path) -> Mapping[str, Any]:
+    if not _dlimp_derivative_is_ready(derivative):
+        raise SylvestComparisonError(
+            "dlimp deterministic runtime provenance is invalid"
+        )
+    payload = _read_json(derivative / _DLIMP_READY_FILE)
+    if not isinstance(payload, dict):
+        raise SylvestComparisonError(
+            "dlimp deterministic runtime provenance is invalid"
+        )
+    return payload
 
 
 def _compare(args: argparse.Namespace, output: Path) -> None:
@@ -861,7 +1092,12 @@ def _paired_comparison(
     _validate_rollouts(candidate)
     if baseline["protocol_sha256"] != candidate["protocol_sha256"]:
         raise SylvestComparisonError(
-            "baseline and candidate used different held-out protocols"
+            "baseline and candidate used different comparison protocols"
+        )
+    comparison_scope = baseline.get("comparison_scope", "unspecified")
+    if comparison_scope != candidate.get("comparison_scope", "unspecified"):
+        raise SylvestComparisonError(
+            "baseline and candidate used different comparison population scopes"
         )
     baseline_rows = {str(row["case_id"]): row for row in baseline["episodes"]}
     candidate_rows = {str(row["case_id"]): row for row in candidate["episodes"]}
@@ -880,6 +1116,7 @@ def _paired_comparison(
         "schema": WORKFLOW_SCHEMA,
         "kind": "paired_robustness_difference",
         "protocol_sha256": baseline["protocol_sha256"],
+        "comparison_scope": comparison_scope,
         "baseline_checkpoint": baseline["checkpoint"],
         "candidate_checkpoint": candidate["checkpoint"],
         "paired_cases": rows,
@@ -888,6 +1125,13 @@ def _paired_comparison(
         "limitations": [
             "Improvement is supported only when the paired interval and discordant-pair test are reported.",
             "This result does not establish convergence, a full benchmark claim, or physical-robot success.",
+            *(
+                [
+                    "Training coverage is unknown; this comparison may include in-distribution tasks and is not a held-out generalization claim."
+                ]
+                if comparison_scope == "training_coverage_unknown"
+                else []
+            ),
         ],
     }
 
@@ -990,6 +1234,7 @@ def _report_payload(run_id: str, comparison: Mapping[str, Any]) -> dict[str, Any
         "kind": "verified_sylvest_oft_mixdata_comparison_report",
         "run_id": run_id,
         "protocol_sha256": comparison["protocol_sha256"],
+        "comparison_scope": comparison.get("comparison_scope", "unspecified"),
         "baseline_checkpoint": comparison["baseline_checkpoint"],
         "candidate_checkpoint": comparison["candidate_checkpoint"],
         "overall": comparison["overall"],
@@ -1057,7 +1302,12 @@ def build_parser() -> argparse.ArgumentParser:
     prepare = commands.add_parser("prepare")
     prepare.add_argument("--libero-plus-root", required=True)
     prepare.add_argument("--libero-plus-revision", required=True)
-    prepare.add_argument("--training-task-ids-uri", required=True)
+    prepare.add_argument("--training-task-ids-uri", default="")
+    prepare.add_argument(
+        "--comparison-scope",
+        default="training_coverage_unknown",
+        choices=("held_out", "training_coverage_unknown"),
+    )
     prepare.add_argument("--task-suite", default="libero_spatial")
     prepare.add_argument("--initial-state-indices", default="0,1,2")
     rollout = commands.add_parser("rollout")
@@ -1067,6 +1317,9 @@ def build_parser() -> argparse.ArgumentParser:
     rollout.add_argument("--model-cache-root", required=True)
     rollout.add_argument("--openvla-oft-root", required=True)
     rollout.add_argument("--openvla-oft-revision", required=True)
+    rollout.add_argument("--dlimp-root", required=True)
+    rollout.add_argument("--dlimp-revision", required=True)
+    rollout.add_argument("--dlimp-runtime-root", required=True)
     rollout.add_argument("--libero-plus-root", required=True)
     rollout.add_argument("--libero-plus-revision", required=True)
     compare = commands.add_parser("compare")
