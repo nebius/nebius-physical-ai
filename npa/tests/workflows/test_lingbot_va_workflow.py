@@ -108,13 +108,13 @@ def _fake_native_latents(
         for camera in L.CAMERAS:
             video = dataset / f"videos/chunk-000/{camera}/episode_{index:06d}.mp4"
             video.parent.mkdir(parents=True, exist_ok=True)
-            video.write_bytes(b"test-only derived video")
+            video.write_bytes(f"test-only derived video:{camera}:{index}".encode())
             latent = (
                 dataset
                 / f"latents/chunk-000/{camera}/episode_{index:06d}_0_{length}.pth"
             )
             latent.parent.mkdir(parents=True, exist_ok=True)
-            latent.write_bytes(b"test-only native latent seam")
+            latent.write_bytes(f"test-only native latent:{camera}:{index}".encode())
 
 
 def test_prepare_selects_cc_by_raw_long_data_and_reindexes_sparse_episodes(
@@ -178,12 +178,55 @@ def test_training_subset_physically_reindexes_parquet_videos_and_latents(
     assert [record["prepared_episode_index"] for record in records] == list(
         prepared["train_episode_indices"]
     )
+    assert not {record["prepared_episode_index"] for record in records} & set(
+        prepared["heldout_episode_indices"]
+    )
     info = json.loads((prepared_dataset / "meta/info.json").read_text())
     assert info["total_episodes"] == 10
     assert info["total_frames"] == 40
-    table = pq.read_table(prepared_dataset / "data/chunk-000/episode_000001.parquet")
-    assert table.column("episode_index").to_pylist() == [1] * 4
-    assert table.column("index").to_pylist() == [4, 5, 6, 7]
+    for native_index, record in enumerate(records):
+        prepared_index = record["prepared_episode_index"]
+        assert record["episode_index"] == native_index
+        assert record["action_config"] == [
+            {
+                "start_frame": 0,
+                "end_frame": 4,
+                "action_text": record["tasks"][0],
+            }
+        ]
+        table = pq.read_table(
+            prepared_dataset / f"data/chunk-000/episode_{native_index:06d}.parquet"
+        )
+        # These are the exact rows the pinned LeRobot cumulative frame index
+        # resolves for an interleaved train/held-out source: a selected record
+        # after each omitted episode and the final selected record must retain
+        # its source action values while gaining contiguous native offsets.
+        assert table.column("episode_index").to_pylist() == [native_index] * 4
+        assert table.column("index").to_pylist() == list(
+            range(native_index * 4, native_index * 4 + 4)
+        )
+        assert table.column("action").to_pylist() == [
+            [
+                float(frame + channel + record["source_episode_index"])
+                for channel in range(7)
+            ]
+            for frame in range(4)
+        ]
+        for camera in L.CAMERAS:
+            video = (
+                prepared_dataset
+                / f"videos/chunk-000/{camera}/episode_{native_index:06d}.mp4"
+            )
+            latent = (
+                prepared_dataset
+                / f"latents/chunk-000/{camera}/episode_{native_index:06d}_0_4.pth"
+            )
+            assert video.read_bytes() == (
+                f"test-only derived video:{camera}:{prepared_index}".encode()
+            )
+            assert latent.read_bytes() == (
+                f"test-only native latent:{camera}:{prepared_index}".encode()
+            )
     assert not list(prepared_dataset.glob(".*-before-training-subset"))
 
 
