@@ -1,0 +1,56 @@
+{
+  "schema": "npa.sanitized-vlm-disclosures-main4603-e005-source-supplement/v1",
+  "pr": 838,
+  "source": {
+    "base_bridge": "main4603-source-bridge.json",
+    "base_bridge_commit": "48f739e5d97278860e80ee4493575d76e7a59f43",
+    "consumer_commit": "0ce368354a92dd16720bc5cd3a7ef65fab70942a",
+    "consumer_tree": "9892477aef64b1700fd573652db6624455a28c8b",
+    "component_commit": "E005AC750274B3ACFE8E2A4A286CFD313BC213A2",
+    "component_tree": "7279eb051e7c6e99e8b203a2a9c0c957095f00af",
+    "scope": "Exact test-only source supplement. It is not a final runner selection, complete local test, current-head CI, full validation, provider execution, or merge-readiness result."
+  },
+  "accepted_component": {
+    "file": "npa/tests/cli/test_agent.py",
+    "file_sha256": "31e08309b76f1324a7f57462eea2d1f3ee10fa24058bb8c82865f46d51c198f6",
+    "functions": {
+      "test_deploy_fails_fast_on_missing_ssh_key": {
+        "ast_sha256_hex_segments_in_order": ["5c1f574ce2649453", "8c603bce6c413252", "d580f37edc8129e7", "1ae6d99f43513818"],
+        "ast_sha256_reassembly": "Concatenate the hexadecimal segments without separators."
+      },
+      "test_deploy_warns_on_missing_token_factory_key": {
+        "ast_sha256_hex_segments_in_order": ["e5772a3103d3ee28", "7d2094de53be7d94", "886a6234d269a39d", "8a4beab6ce70da27"],
+        "ast_sha256_reassembly": "Concatenate the hexadecimal segments without separators."
+      }
+    },
+    "preservation": "The reviewed component retains each original assertion and all original statements in order. It excludes missing-Terraform behavior, global helpers, and production code."
+  },
+  "coherent_fixture_bytes": {
+    "sole625_ladder_test_agent_before_e005": "18b3234c134e7e0cbe9c564b5261d99c776b5264639f5ee2aabb80524e13366d",
+    "sole595_cleanup": "58a44714d420f5a8cda687af6880270e1bc33c9f84e506bdf3786a89483c0141",
+    "sole646_fresh_user": "f49e769d1c0ec9f3cbe4df042a033dcae87c195e1c83e5cda6316c6ef50faada",
+    "accepted_catalogue_test_main": "31198f4d79914a118cb2d3b02126914dda8918ddb40b47a673f9300e23d9135d"
+  },
+  "reviewed_component_evidence": {
+    "independent_positive": "2 pass",
+    "removed_stub_negative": "2 expected failures after the original assertions",
+    "local_ssh_keygen": 2,
+    "external_provider_process_network_calls": 0,
+    "limits": "Those controls were executed against the component's reviewed source identity before signing. They are not a full-repository result for this consuming head."
+  },
+  "retained_vlm_output": {
+    "provider_calls": 0,
+    "reference": "The original four current634 hosted responses remain 0/0/0/0 with TN2/FN2 under the byte-frozen protocol recorded by main4603-source-bridge.json. This source supplement made no new call or quality claim."
+  },
+  "validation_state": {
+    "affected_cpu": "Not yet run at this new source head while another owner's full suite occupies the shared host; no local pass is inferred.",
+    "full": "not started",
+    "new_native_cli_or_gpu": 0,
+    "new_claude": 0
+  },
+  "limits": [
+    "A coherent source and final runner/capacity selection still precede any full-equivalence or live-work claim.",
+    "The original source-text scanner failures and their separate dispositions remain preserved; this supplement does not weaken scanner rules or reclassify an original failure as a pass.",
+    "This evidence does not establish model calibration, physical correctness, safety, generalization, or an operational error rate."
+  ]
+}

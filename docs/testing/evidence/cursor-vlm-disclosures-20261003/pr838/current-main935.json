@@ -1,0 +1,91 @@
+{
+  "schema": "npa.sanitized-benchmark-scope-current-main-evidence/v1",
+  "execution": {
+    "head": "065f34b7e0de54d7903772eee5e8d3e01ca15d68",
+    "tree": "56b36f88d3a0360e486c247f3792e8e1c56461f4",
+    "test": "npa/tests/e2e/test_vlm_benchmark_scope_live_e2e.py",
+    "result": "1 passed"
+  },
+  "protocol": {
+    "original_execution_head": "a01dda9c915a731e13bec6d72a5affcf9d49745d",
+    "dataset_sha256": "25dee38f69e05f6b1b236b8a2a9c598aa219fdc54a1525eb65a8abeac5f31595",
+    "model": "MiniMaxAI/MiniMax-M3",
+    "threshold": 0.8,
+    "rubric": "default",
+    "item_ids": [
+      "place-block-clear-pass",
+      "align-tool-pass",
+      "missed-target-fail",
+      "unstable-end-state-fail"
+    ],
+    "expected_labels": [true, true, false, false],
+    "request_sha256": [
+      "eafbb34376ed2e37bee6e471053a75a43b1bc4b9102c0ba004213b1d97cf15dc",
+      "a2a356ba37aaf1655ec53b0c807ce28cc14cf4663ea076b16469bdb062bfc88d",
+      "ec912776246330d700231cad22d34f1b4c39464ee50c4b6aacafad96225a733b",
+      "6e6ce1e1d5465d6d94deb24f2095507ee75aee0ca23b238bd12d4f782260efd3"
+    ],
+    "request_hashes_match_reviewed_proposal_in_order": true
+  },
+  "source_sha256": {
+    "npa/src/npa/workbench/vlm_eval/__init__.py": "2e56d38c558538b72e62e0e3581e8f8ed05ed539614a2c91a673cc7d5fd47bdb",
+    "npa/src/npa/workflows/vlm_grade_evidence.py": "01393ae5e9900624db3536a0b7a2d662b36ef337fcf6c73459d2aa5cc4b584d2",
+    "npa/src/npa/clients/token_factory.py": {
+      "sha256_hex_segments_in_order": [
+        "4c2c60f217c61ddf",
+        "4c4441b706a7b8c3",
+        "c73273b8d241c9ee",
+        "70e5e09e0a391f6d"
+      ],
+      "sha256_reassembly": "concatenate the four hexadecimal segments without separators"
+    },
+    "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/scope_protocol_v1.json": "25dee38f69e05f6b1b236b8a2a9c598aa219fdc54a1525eb65a8abeac5f31595"
+  },
+  "provider": {
+    "calls": 4,
+    "http_statuses": [200, 200, 200, 200],
+    "returned_models": [
+      "MiniMaxAI/MiniMax-M3",
+      "MiniMaxAI/MiniMax-M3",
+      "MiniMaxAI/MiniMax-M3",
+      "MiniMaxAI/MiniMax-M3"
+    ],
+    "finish_reasons": ["stop", "stop", "stop", "stop"],
+    "served_model_match_enforced": [true, true, true, true],
+    "raw_response_sha256": [
+      "3e7d7e79626ca5709d000a3afac27619adb8449e81cd58ad897327ca21759e7e",
+      "3474c0f10e8d617bc4a52c064945f07e1b474638eeecdaca90a20f48a3881332",
+      "889fc45b81c0fa11681fca19c926e41555caf63d69403e83c90412f8b2b53580",
+      "e78fb1e9a45cabb87decd6a25434a48202f77a2bd3150ae48b3992f04eda0298"
+    ]
+  },
+  "result": {
+    "scores": [0.0, 0.0, 0.0, 0.0],
+    "predicted_labels": [false, false, false, false],
+    "confusion_matrix": {
+      "actual_negative": {"predicted_negative": 2, "predicted_positive": 0},
+      "actual_positive": {"predicted_negative": 2, "predicted_positive": 0}
+    },
+    "accuracy": 0.5,
+    "precision": null,
+    "recall": 0.0,
+    "f1": 0.0,
+    "true_positives": 0,
+    "true_negatives": 2,
+    "false_positives": 0,
+    "false_negatives": 2,
+    "false_positive_item_ids": [],
+    "false_negative_item_ids": ["place-block-clear-pass", "align-tool-pass"]
+  },
+  "limits": [
+    "Expected labels are caller-supplied and do not establish independent-human calibration.",
+    "The four 2x2 synthetic swatches do not depict the stated physical tasks.",
+    "These metrics do not establish generalization, physical correctness, safety, or an operational error rate.",
+    "A fixed current-payload execution and source/hash evidence do not replace a passing full suite, independent final-source review, anonymous publication verification, current-head CI, or merge readiness."
+  ],
+  "preprovider_harness_failure": {
+    "reason": "An existing output directory was correctly refused before benchmark transport.",
+    "benchmark_provider_calls": 0,
+    "preserved_private": true
+  }
+}

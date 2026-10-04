@@ -1,0 +1,60 @@
+# Scan-only: secrets and image bytes never become public Actions artifacts.
+name: Private image qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_sha256:
+        description: SHA-256 of the immutable task export manifest
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    if: github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted interface
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: interface
+          persist-credentials: false
+
+      - name: Check out reviewed immutable scanner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Generic OCI verification is reviewed here and is not yet on main.
+          ref: 551b5da4d9c62297236c103a30040c78e3b50dd6
+          path: scanner
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Prepare isolated Python interpreter
+        run: python3 -m venv interface/npa/.venv
+
+      - name: Qualify exact bytes and retain private receipts
+        env:
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          QUALIFICATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
+          INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
+          DEV_VM_SSH_HOST: ${{ secrets.DEV_VM_SSH_HOST }}
+          DEV_VM_SSH_USER: ${{ secrets.DEV_VM_SSH_USER }}
+          DEV_VM_SSH_PORT: ${{ secrets.DEV_VM_SSH_PORT }}
+          DEV_VM_SSH_PRIVATE_KEY: ${{ secrets.DEV_VM_SSH_PRIVATE_KEY }}
+          DEV_VM_SSH_KNOWN_HOSTS: ${{ secrets.DEV_VM_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          interface/npa/.venv/bin/python interface/npa/scripts/private_image_qualification.py run \
+            --manifest-sha256 "$MANIFEST_SHA256" \
+            --run-id "$QUALIFICATION_RUN_ID" \
+            --scanner-root "$GITHUB_WORKSPACE/scanner" \
+            --work-parent "$RUNNER_TEMP"

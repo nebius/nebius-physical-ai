@@ -7,6 +7,42 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Distinct known-count frame sampling
+
+- Keep `sequence` as uniform full-span sampling and make `keyframes` allocate
+  half its budget to the final 10% or a wider unique terminal window. This is
+  deterministic temporal stratification, not pixel-aware event detection.
+  Short sources return every frame; unknown-count video fallback is unchanged.
+- Preserve the original six-call hosted negative result: neither strategy
+  improved the declared labels, and one rationale hallucinated absent objects.
+  This result remains a failed model-improvement gate, separately from the
+  sampler's deterministic source/provenance contract.
+
+### VLM benchmarks distinguish outcome from agency
+
+- A packaged `isaac-agency` calibration pairs one true elevated-object claim
+  with one false grasp-and-lift claim on the same six exact stylized frames.
+  Its optional structural preflight validates frame hashes, complete
+  claim-specific color masks, signed motion, and actor separation before any
+  evaluator activity, then reuses the exact selected frames and metadata-derived
+  task for real-backend scoring without changing stub or fixture-score behavior.
+- **Breaking dataset contract:** all benchmark manifests, including calls to
+  `load_benchmark_dataset`, now require both expected-label classes and unique
+  resolved item IDs before frame selection. Single-class manifests are rejected;
+  add independently justified positive and negative cases rather than inventing
+  labels to satisfy the validator. Direct dataset loading still rejects an empty
+  path; only benchmark/CLI default selection uses the packaged illustrative sample.
+  Reports add specificity and balanced accuracy,
+  and rank configurations by balanced accuracy before existing tie-breakers.
+
+### Audit-only rich visual review
+
+- Add `vlm-eval review-visual` and its SDK surface. Private records separate
+  visible task evidence, fidelity, reviewability, subjective impressiveness,
+  and unverified usefulness. Counterbalanced comparisons retain disagreement;
+  exact requests and responses survive parser failures. These records never
+  change the completion score or gate. Historical hosted failures are retained.
+
 ### Self-hosted VLM scores reject invalid literal verdicts
 
 - Self-hosted verdicts require boolean success, finite numeric scores in [0, 1],
@@ -141,6 +177,16 @@ a versioned heading when a release is cut.
   directory creation. External clients must send a JSON boolean. Update-result
   decoding enforces the same contract instead of coercing truthy values.
 
+### Token Factory captions expose thinking control
+
+- `token-factory caption` accepts `--thinking/--no-thinking` and the SDK accepts
+  `thinking=True|False`. Omitting the option preserves existing model defaults;
+  explicit overrides use verified Lightning/MiniMax template fields and a
+  generic `thinking` field for other selected models. Known `reasoning_effort`
+  profiles, including Kimi-K3, reject a boolean thinking override before inference;
+  their omitted-option defaults remain unchanged. Reasoning-only responses
+  still fail closed and now point default callers to `--no-thinking`.
+
 ### Token Factory captions expose unavailable images
 
 - Caption requests now ask the hosted vision model for the exact
@@ -151,9 +197,9 @@ a versioned heading when a release is cut.
 - Closed whole-answer matching now tolerates an omitted final period and nested
   matching pairs of Markdown emphasis, ASCII quotes, or smart quotes. It still
   rejects longer answers, mismatched or code wrappers, punctuation outside the
-  wrappers, other punctuation, and paraphrases. Hosted evidence observed only
-  the exact punctuated sentinel; the added formatting cases are deterministic
-  local controls.
+  wrappers, other punctuation, and paraphrases. The composed hosted panel also
+  observed MiniMax's periodless sentinel for a valid blank PNG; wrapped, nested
+  and emphasis variants remain deterministic local controls.
 
 ### Studio videos accept S3 output paths
 

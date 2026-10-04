@@ -10,6 +10,24 @@ that number into a gate. It is the judging half of the loop whose generating hal
 is Cosmos/Genesis/Isaac rollouts and whose reasoning half is
 `skills/tools/token-factory/SKILL.md`.
 
+## Separate rich visual audit
+
+Use `npa workbench vlm-eval review-visual` for a private qualitative record,
+with required `--input-path`, `--output-path`, `--model`, and neutral `--task`.
+Its SDK is `npa.sdk.workbench.vlm_eval.review_visual`. Optional `--baseline-path`
+sends both independently sampled sources in both neutral A/B orders. Keep
+task evidence, content fidelity, reviewability, subjective impressiveness,
+and usefulness hypotheses separate; dimension-signature disagreement requires
+escalation. Matching signatures do not establish semantic agreement of prose;
+inspect both retained outcomes, including contradictory text.
+This record never affects the normalized score or gate.
+
+Use a fresh private output identity and preserve consumed journals after
+failure; the mechanism will not replay an output after transport starts.
+Inspect actual provider image capacity before paired inference. References and
+matched-view metadata remain unverified and private. See
+`docs/workbench/vlm-visual-review.md` for options, artifacts, and limitations.
+
 ## Pick the right command
 
 ```bash
@@ -150,6 +168,24 @@ disagreement. Missing and non-boolean success values are rejected on both
 real backends. Stub and override provenance fields remain null.
 Never substitute the provider boolean for the score-derived gate.
 
+## Read calibration and limitation evidence correctly
+
+Every full result also emits
+`independent_human_label_calibration_established: false` and ordered
+`limitations`. The name is deliberate: `false` says the artifact does not
+establish independent-human-label calibration; it does not claim a caller could
+never have supplied human labels. Results produced by `stub` or `--score`
+identify those values as wiring or dry-validation inputs for which no VLM call
+occurred.
+
+Promotion rejects an explicit `provider_call_made` value unless it is literal
+`true`, even when retained evidence is internally consistent. Historical reports
+without this newer field remain subject to the full inference-evidence checks;
+the field and hashes do not authenticate a provider or establish model quality.
+
+Loop and benchmark reports carry report-level limitations. They are additive
+JSON keys, so strict consumers that reject unknown keys need a schema update.
+
 ## Scoring controls that actually change the verdict
 
 ```bash
@@ -164,8 +200,13 @@ npa workbench vlm-eval run \
 ```
 
 - `--frame-selection` is `final`, `keyframes` (default), or `sequence`. `final`
-  cannot distinguish "reached the goal" from "was already there"; `sequence`
-  costs the most tokens. `keyframes` is the default for a reason.
+  cannot distinguish "reached the goal" from "was already there". For a known
+  frame count, `sequence` samples uniformly across the span; `keyframes`
+  allocates half the budget to a terminal window covering at least the final
+  10%, widening for unique frames, with the rest spread over earlier evidence.
+  Short sources return every frame. This is temporal stratification, not event
+  detection. Unknown-count video keeps the shared bounded one-frame-per-second
+  fallback with null source indices/counts/timestamps and incomplete coverage.
 - `--max-frames` (default 4) bounds both cost and how much of the episode the
   judge can actually see. A four-frame view of a long episode judges a summary.
 - `--rubric` / `--rubric-path` carry the scoring instructions. The default rubric
@@ -188,7 +229,8 @@ npa workbench vlm-eval run \
   a correct numeric label alone is not grounded acceptance.
 - `--success-threshold` (default 0.8) is the gate. In `loop` it applies to the
   **mean** score across rollouts, which is a coarser claim than per-rollout
-  success — do not report it as a per-rollout success rate.
+  success — do not report it as a per-rollout success rate. The loop report
+  repeats that caveat in machine-readable `limitations`.
 - `--score <float>` overrides the score and skips the VLM call entirely. It exists
   for tests and dry validation. Never use it to produce a result you then report.
 
@@ -213,9 +255,65 @@ npa workbench vlm-eval benchmark \
 
 `--rubrics` accepts names from the dataset, inline text, or `@file` paths.
 `--dataset` defaults to a packaged sample fixture, which is useful for proving
-the sweep runs but tells you nothing about your task. `--use-fixture-scores`
-honors recorded `fixture_score` values for non-stub backends; stub always uses
-them when present.
+the sweep runs but tells you nothing about your task. Its reports declare
+`dataset_evidence_scope: illustrative_only`: four rollouts are synthetic 2x2
+color swatches with color-correlated caller labels; a fifth tiny synthetic
+sequence omits the terminal outcome. The resulting
+metrics are wiring examples, not task-validation or operational error-rate
+evidence. Custom manifests default to `dataset_evidence_scope: unspecified`;
+declare `evidence_scope` and ordered `limitations` in the manifest when their
+scope is known. Limitations must be nonempty strings without surrounding
+whitespace or control characters; invalid metadata is rejected before frame
+selection or provider work. Invalid `evidence_scope` values also reject the
+dataset rather than being ignored. Order and duplicates remain intact in JSON.
+`--use-fixture-scores` honors recorded `fixture_score` values for
+non-stub backends; stub always uses them when present.
+
+Benchmark `expected_label` values are caller-supplied; the manifest does not
+establish independent human authorship or independence. Reports therefore keep
+`independent_human_label_calibration_established` false and qualify accuracy,
+agreement, precision, recall, F1, and TP/TN/FP/FN as measurements of that one
+dataset, not operational error rates or evidence of generalization, physical
+correctness, or safety. Limitations name `fixture` and deterministic `stub`
+score sources when they occur so mixed reports do not imply those cases made a
+model call.
+
+Benchmark `expected_label` values are caller-supplied; the manifest does not
+establish independent human authorship or independence. Reports therefore keep
+`independent_human_label_calibration_established` false and qualify accuracy,
+agreement, precision, recall, F1, and TP/TN/FP/FN as measurements of that one
+dataset, not operational error rates or evidence of generalization, physical
+correctness, or safety. Limitations name `fixture` and deterministic `stub`
+score sources when they occur so mixed reports do not imply those cases made a
+model call.
+
+Every benchmark must contain at least one pass label and one fail label, and
+resolved item IDs must be unique. Both conditions are checked before frame
+selection or evaluator/backend activity. Reports include specificity and
+balanced accuracy in addition to the existing confusion counts and metrics;
+configuration ranking uses balanced accuracy first so an all-positive judge
+does not win on an imbalanced set.
+
+The packaged `isaac-agency` alias is a CPU-only calibration control:
+
+```bash
+npa workbench vlm-eval benchmark \
+  --dataset isaac-agency \
+  --output /tmp/isaac-agency-benchmark.json \
+  --backend stub \
+  --frame-selection sequence \
+  --max-frames 6 \
+  --thresholds 0.5
+```
+
+It pairs the same six exact stylized frames with a true state claim (the red
+cube becomes elevated) and a false agency claim (the robot grasps and lifts the
+cube). Before scoring, its opt-in structural check verifies frame order and
+hashes, complete color masks, signed vertical motion, and the absence of actor
+proximity. The exact preselected frames and any task resolved from rollout
+metadata are then reused for real-backend scoring. A structural pass or stub
+score is not model evidence: this fixture does not establish contact, causality,
+photoreal performance, physical correctness, policy success, or robot safety.
 
 The packaged sample's `progress-without-terminal-fail` case exercises an
 omitted-outcome negative, but its tiny synthetic frames and prerecorded score
@@ -230,8 +328,9 @@ Each `npa_vlm_eval_benchmark_report_v2` configuration includes the full 2x2
 confusion matrix, false-positive and false-negative rates, and ordered
 `false_positive_item_ids` / `false_negative_item_ids`. Resolve those IDs in the
 same configuration's complete `results` list before choosing a threshold; an
-aggregate accuracy can hide the exact false pass that matters. Rates are null
-when the labeled dataset has no examples of the required class. Item IDs must
+aggregate accuracy can hide the exact false pass that matters. Historical or
+manually constructed metrics can have null rates when a required class is absent;
+new sweeps reject such single-class datasets before evaluation. Item IDs must
 be unique. Historical reports without `schema_version` are v1; their counts can
 be recomputed from retained per-item labels and predictions, but absent v2
 fields must not be presented as if the producer emitted them.
@@ -269,6 +368,16 @@ Self-hosted VLM steps need a GPU image; set it with `--image` on
 - **Benchmark the rubric before trusting it.** Rubric wording moves scores more
   than most people expect, which is precisely what `benchmark` is for. The task
   text and rubric form one prompt; changing either invalidates prior calibration.
+- **Do not calibrate only on positive examples.** Such a set cannot measure
+  false-positive behavior and is rejected before evaluation.
+- **Outcome is not agency.** A moved object does not prove that the visible
+  actor grasped or caused its motion. Use paired state and agency controls.
+- **Do not send simulator gizmos as task evidence.** Disable coordinate axes
+  and debug overlays, or crop them before a VLM audit; judges can inventory
+  those markers as physical task objects.
+- **Keep sealed numeric gates external.** Qualitative text such as "a visible
+  gap" cannot replace synchronized simulator height or another predeclared
+  numeric reference.
 - **A green gate does not mean a good policy.** It means the judge, at this
   rubric and threshold, on these frames, said yes.
 

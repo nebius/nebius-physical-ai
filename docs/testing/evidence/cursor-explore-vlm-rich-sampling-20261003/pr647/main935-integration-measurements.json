@@ -1,0 +1,83 @@
+{
+  "schema": "npa_cursor_explore_pr647_main935_source_gate_v1",
+  "pr": 647,
+  "integration_commit": "97a59e88c4f370b82d589fb7aeb60fb4b359bcde",
+  "integration_tree": "0b4385690ba9888d7cfd042cb4f6dbc518fd8019",
+  "main_parent": "935bc9de16aebd9c08600fdba195781615c15eca",
+  "prior_candidate": "ca4748e1ee9226570a4a44c1d87798a7a5177976",
+  "source_bindings": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "590de98f4661602e3989e6a64df87d50040e79870f740d74828ac67eebf61b7b",
+      "scope": "Current main's fail-closed completion handling is included."
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/visual_review.py",
+      "sha256": "171061e1cf4f8b5e08481a609628e34fef22743b371b177a4da02555ed2f1722",
+      "unchanged_from_ca474": true
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/visual_review_schema.py",
+      "sha256": "adbd42173aa5b5bea303f3d57e94004a975623c13301628ba0a4047babd476c2",
+      "unchanged_from_ca474": true
+    },
+    {
+      "path": "npa/src/npa/cli/workbench/vlm_eval.py",
+      "sha256": "d7e6e9d08267dccf64015f91baf7fd55b3217141441a963b495a41566f2978a6",
+      "unchanged_from_ca474": true
+    },
+    {
+      "path": "npa/src/npa/sdk/workbench/vlm_eval.py",
+      "sha256": "35e7c0bd637299894bb7641e29d771fe51f2a9dcc25677c4a0b6c2c494254d3f",
+      "unchanged_from_ca474": true
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "unchanged_from_ca474": true
+    },
+    {
+      "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+      "sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e",
+      "unchanged_from_ca474": true
+    }
+  ],
+  "local_gates": {
+    "affected": {
+      "passed": 1049,
+      "skipped": 1,
+      "failed": 0,
+      "warnings": 8,
+      "provider_calls": 0
+    },
+    "precheck": {
+      "passed": 270,
+      "failed": 0
+    },
+    "merge_precheck": {
+      "passed": true,
+      "fingerprint": "11e2e3e7e9b573d650d1aff55bf0df610799452c2e15d87ffb420648a5a7f03d"
+    },
+    "aggregate_scans": {
+      "built_in_confidentiality": "passed",
+      "gitleaks": "passed"
+    }
+  },
+  "retained_execution": {
+    "full_execution": "8565a9f9edb3d917b9cc5750c3b59881bc779f8d",
+    "full_passed": 39995,
+    "full_skipped": 213,
+    "full_xpassed": 1,
+    "full_failed": 0,
+    "coverage_percent": 77.55,
+    "hosted_execution": "a860bdcedf1aa87c2550320bec6624b0c81d2e24",
+    "hosted_response_count": 3,
+    "current_provider_calls": 0
+  },
+  "limits": [
+    "This is a source and CPU gate, not current-head CI or queue evidence.",
+    "The retained hosted responses are not new inference and do not establish calibrated model quality or physical safety.",
+    "Historical paired and qualification failures remain failures.",
+    "Independent review, publication, current-head CI, merge state, and lifecycle remain open."
+  ]
+}
