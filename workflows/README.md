@@ -240,7 +240,11 @@ The LeRobot policy-container training entrypoint chooses its evaluation-cadence
 flag from the installed package version. An explicit `NPA_LEROBOT_VERSION` must
 match that runtime; it cannot relabel an image. The pinned RoboCasa ACT derivative
 `0.6.1+npa2` additionally requires exact metadata, native parser and trainer source
-hashes, and rejects non-ACT policy overrides. This narrow runtime contract does
+hashes, and rejects non-ACT policy overrides. This derivative accepts explicit
+ACT hyperparameters, not reward-model configuration, configuration/pretrained
+path indirection, or plugin discovery. Config-file-based resume is consequently
+not qualified on this derivative; ordinary `0.5.1`/`0.6.0` behavior is unchanged.
+This narrow runtime contract does
 not add a globally supported LeRobot release, change workflow image routing, or
 qualify an image for release. Use only an independently accepted immutable image;
 CPU training controls do not establish GPU rollout quality.

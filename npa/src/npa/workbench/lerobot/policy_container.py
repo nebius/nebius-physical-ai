@@ -484,7 +484,24 @@ def _verify_robocasa_training_runtime(distribution: Any, policy_type: str) -> No
 
 
 def _validate_robocasa_training_policy(command: list[str]) -> None:
+    """Keep the pinned derivative on explicit ACT configuration only.
+
+    Native reward-model configuration takes precedence over an ACT policy, and
+    config/pretrained paths or plugin discovery can replace the selected type.
+    Those routes have not been qualified for this narrow runtime contract.
+    Ordinary ACT hyperparameters remain available as explicit CLI overrides.
+    """
     for index, argument in enumerate(command):
+        option = argument.split("=", 1)[0]
+        if (
+            option in {"--config_path", "--policy", "--policy.path", "--reward_model"}
+            or option.startswith("--reward_model.")
+            or (option.startswith("--") and "discover_packages_path" in option)
+        ):
+            raise PolicyContainerError(
+                "The RoboCasa ACT-only runtime rejects configuration indirection: "
+                f"{option}"
+            )
         if argument == "--policy.type":
             value = command[index + 1] if index + 1 < len(command) else ""
         elif argument.startswith("--policy.type="):
