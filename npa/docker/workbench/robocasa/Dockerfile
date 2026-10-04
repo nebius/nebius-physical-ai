@@ -1,12 +1,12 @@
 # npa-robocasa: RoboCasa kitchen-task simulation as a first-class workbench tool.
 #
-# Built independently on a policy-pinned CUDA 12.4 base, not the purpose-built
+# Built independently on a policy-pinned CUDA 12.9 base, not the purpose-built
 # SONIC MuJoCo application image. This updated base and dependency closure need
 # their own exact-image qualification; historical BYOF results do not qualify
 # replacement bytes. RoboCasa is MIT and robosuite is Apache-2.0.
 #
 # What IS baked, and is fine to redistribute:
-#   * CUDA 12.4 Ubuntu 22.04 base
+#   * CUDA 12.9 Ubuntu 22.04 base, without cuDNN or development toolkits
 #   * RoboCasa source at the pinned commit (MIT, with its bundled Apache-2.0
 #     notice for partial DeepMind MuJoCo)
 #   * robosuite at the pinned commit (Apache-2.0)
@@ -18,7 +18,7 @@
 #     the documented download_kitchen_assets script under the operator's own
 #     network access. No model weights are baked.
 #   * Any credentials, tokens, or EULA acceptance.
-FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42
+FROM nvidia/cuda:12.9.1-base-ubuntu22.04@sha256:59436e8ac61921052d8f420be8b8cb8b117f1d7cc643397a289e37aaa0b83ea1
 
 ARG ROBOCASA_VERSION=0.1.1
 ARG NPA_SOURCE_SHA
@@ -38,8 +38,8 @@ LABEL npa.tool="robocasa" \
       npa.runtime_user="ubuntu" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
-      org.opencontainers.image.base.name="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04" \
-      org.opencontainers.image.base.digest="sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42"
+      org.opencontainers.image.base.name="nvidia/cuda:12.9.1-base-ubuntu22.04" \
+      org.opencontainers.image.base.digest="sha256:59436e8ac61921052d8f420be8b8cb8b117f1d7cc643397a289e37aaa0b83ea1"
 
 ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1 \
@@ -60,10 +60,22 @@ ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
 
 USER root
 
-# System deps for EGL rendering and the Python build toolchain.
+# Upgrade inherited packages as well as direct dependencies. The pinned base
+# predates the GnuPG and OpenSSL security fixes; installing EGL alone leaves
+# those installed packages vulnerable. Lower bounds fail closed on stale mirrors.
 COPY --chmod=0644 docker/workbench/robocasa/deadsnakes-ppa.gpg.b64 \
     /tmp/deadsnakes-ppa.gpg.b64
 RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+    && for package in dirmngr gnupg gnupg-l10n gnupg-utils gnupg2 gpg \
+        gpg-agent gpg-wks-client gpg-wks-server gpgconf gpgsm gpgv; do \
+        dpkg --compare-versions "$(dpkg-query --show --showformat='${Version}' "$package")" \
+          ge 2.2.27-3ubuntu2.5 || exit 1; \
+    done \
+    && for package in openssl libssl3; do \
+        dpkg --compare-versions "$(dpkg-query --show --showformat='${Version}' "$package")" \
+          ge 3.0.2-0ubuntu1.30 || exit 1; \
+    done \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3 python3-dev python3-pip python3-venv build-essential git \
         ca-certificates curl \
@@ -110,6 +122,8 @@ COPY --chmod=0644 \
     docker/workbench/robocasa/robocasa-npa-act.patch.b64 \
     docker/workbench/robocasa/robocasa-npa-act.NOTICE \
     docker/workbench/robocasa/THIRD-PARTY-COPYLEFT-NOTICE \
+    docker/workbench/robocasa/filter_cudnn_runtime.py \
+    docker/workbench/robocasa/cudnn-runtime-boundary.json \
     docker/workbench/robocasa/verify_lerobot_act_derivative.py \
     docker/workbench/robocasa/verify_robocasa_act_adapter.py \
     docker/workbench/robocasa/verify_fixture_controls.py \
@@ -129,6 +143,9 @@ RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
         --extra-index-url https://download.pytorch.org/whl/cu129 \
         --require-hashes --no-build-isolation \
         -r /opt/robocasa/locks/requirements.lock \
+    && install -d -m 0755 /usr/share/doc/robocasa-npa-act \
+    && python /opt/robocasa/derivative/filter_cudnn_runtime.py \
+        > /usr/share/doc/robocasa-npa-act/cudnn-runtime-boundary.json \
     && mkdir -p /usr/share/source/robocasa-npa-act \
     && curl --fail --silent --show-error --location \
         https://files.pythonhosted.org/packages/d1/aa/4d60a7065de30f07d7ead935eed364cf94fb0ad5607ddf1461f2bdf7ba17/qpsolvers-4.13.0.tar.gz \
@@ -227,6 +244,16 @@ RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
     && python -c "import itertools, tempfile; from pathlib import Path; import imageio.v2 as imageio; import numpy as np; tmp = tempfile.TemporaryDirectory(); video = Path(tmp.name) / 'probe.mp4'; imageio.mimsave(video, [np.zeros((64, 64, 3), dtype=np.uint8), np.full((64, 64, 3), 255, dtype=np.uint8)], fps=2); reader = imageio.get_reader(video); frames = list(itertools.islice(reader, 3)); reader.close(); assert len(frames) == 2 and frames[0].shape == (64, 64, 3); tmp.cleanup()" \
     && rm -rf /root/.cache/pip /tmp/pip-*
 
+# The exact NVSHMEM wheel omits its current product supplement and third-party
+# notices. Retain the complete official notice without replacing the wheel's.
+RUN curl --fail --silent --show-error --location \
+      https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/LICENSE.txt \
+      --output /usr/share/doc/robocasa-npa-act/NVSHMEM-LICENSE.txt \
+    && echo \
+      "43a87c0ff94ce3196011ff75e17fbee96933c9e1d511557659ece8a326f95e8f  /usr/share/doc/robocasa-npa-act/NVSHMEM-LICENSE.txt" \
+      | sha256sum --check --strict - \
+    && chmod 0444 /usr/share/doc/robocasa-npa-act/NVSHMEM-LICENSE.txt
+
 # Install exact RoboCasa source with its packaging-only derivative and full closure.
 RUN git init /opt/robocasa/source \
     && git -C /opt/robocasa/source remote add origin \
@@ -267,8 +294,8 @@ RUN git init /opt/robocasa/source \
       /usr/share/doc/robocasa-npa-act/NOTICE \
     && rm -rf /opt/robocasa/source/.git /root/.cache/pip /tmp/pip-*
 
-# The pinned CUDA devel base retains stale userspace kernel headers. They are
-# needed only by the build toolchain above; remove them and their reverse build
+# The userspace kernel headers are needed only by the build toolchain above;
+# remove them and their reverse build
 # dependencies before any final-runtime acceptance check.
 RUN apt-get purge -y --auto-remove linux-libc-dev \
     && rm -rf /var/lib/apt/lists/* \

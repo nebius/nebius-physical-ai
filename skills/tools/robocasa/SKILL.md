@@ -78,7 +78,8 @@ image layers consume node imagefs separately, so confirm enough imagefs
 headroom for both the immutable image and the pod's writable data before
 launching a run.
 
-The `0.1.1` image uses a CUDA 12.4 base with the pinned PyTorch 2.13.0+cu129
+The `0.1.1` candidate recipe uses a CUDA 12.9 runtime base without inherited
+cuDNN or development toolkits, with the pinned PyTorch 2.13.0+cu129
 runtime; this is the first available CUDA 12 wheel set that clears the declared
 Torch dependency vulnerabilities. The image rebuilds exact upstream RoboCasa
 and LeRobot sources as locally versioned `1.0.0+npa3` and `0.6.1+npa2`

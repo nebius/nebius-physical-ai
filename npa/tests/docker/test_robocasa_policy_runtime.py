@@ -13,6 +13,8 @@ import sys
 import tarfile
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[3]
 IMAGE_DIR = ROOT / "npa" / "docker" / "workbench" / "robocasa"
@@ -39,9 +41,9 @@ BASE_INVENTORY = IMAGE_DIR.parent / "base-image-security.json"
 PUBLICATION_WORKFLOW = ROOT / ".github" / "workflows" / "publish-public-images.yml"
 ROBOCASA_COMMIT = "8f3c96ec8d1bfcd8126cad2bca887da98d30e997"
 ROBOSUITE_COMMIT = "85abee228d1c43ab1939bce33028099945d453b4"
-PINNED_CUDA_BASE_NAME = "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04"
+PINNED_CUDA_BASE_NAME = "nvidia/cuda:12.9.1-base-ubuntu22.04"
 PINNED_CUDA_BASE_DIGEST = (
-    "sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42"
+    "sha256:59436e8ac61921052d8f420be8b8cb8b117f1d7cc643397a289e37aaa0b83ea1"
 )
 PINNED_CUDA_BASE = f"{PINNED_CUDA_BASE_NAME}@{PINNED_CUDA_BASE_DIGEST}"
 OPENCV_PROVIDERS = {
@@ -421,6 +423,51 @@ def test_robocasa_system_install_layer_removes_builder_resolver_state() -> None:
     assert "/var/lib/apt/lists/*" in cleanup_tokens
     assert install < venv < cleanup < absent_path < absent_symlink
     assert absent_symlink == len(commands) - 1
+
+
+def test_robocasa_upgrades_inherited_os_packages_before_installing_runtime() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    upgrade = text.index("apt-get upgrade -y --no-install-recommends")
+    assert text.index("RUN apt-get update") < upgrade
+    assert upgrade < text.index("python3.12 -m venv")
+    assert "ge 2.2.27-3ubuntu2.5 || exit 1" in text
+    assert "ge 3.0.2-0ubuntu1.30 || exit 1" in text
+    assert "for package in openssl libssl3" in text
+    assert "gpg-agent gpg-wks-client gpg-wks-server gpgconf gpgsm gpgv" in text
+    assert "dpkg-query --show --showformat='${Version}'" in text
+
+
+@pytest.mark.parametrize(
+    ("gnupg_version", "openssl_version", "expected_exit"),
+    [
+        ("2.2.27-3ubuntu2.5", "3.0.2-0ubuntu1.30", 0),
+        ("2.2.27-3ubuntu2.6", "3.0.2-0ubuntu1.31", 0),
+        ("2.2.27-3ubuntu2.1", "3.0.2-0ubuntu1.30", 1),
+        ("2.2.27-3ubuntu2.5", "3.0.2-0ubuntu1.15", 1),
+        ("", "3.0.2-0ubuntu1.30", 1),
+        ("2.2.27-3ubuntu2.5", "", 1),
+    ],
+)
+def test_robocasa_os_security_floors_reject_old_or_missing_packages(
+    tmp_path, gnupg_version, openssl_version, expected_exit
+) -> None:
+    query = tmp_path / "dpkg-query"
+    query.write_text(
+        '#!/bin/sh\ncase "$3" in\n'
+        f"openssl|libssl3) printf '%s' '{openssl_version}';;\n"
+        f"*) printf '%s' '{gnupg_version}';;\nesac\n"
+    )
+    query.chmod(0o755)
+    text = DOCKERFILE.read_text(encoding="utf-8").replace("\\\n", " ")
+    checks = "for package in dirmngr" + text.split("&& for package in dirmngr", 1)[1]
+    checks = checks.split("&& DEBIAN_FRONTEND=noninteractive apt-get install", 1)[0]
+    result = subprocess.run(
+        ["sh", "-c", checks],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == expected_exit, result.stderr
 
 
 def test_robocasa_python_repository_uses_pinned_scoped_signing_key() -> None:
@@ -854,10 +901,10 @@ def test_every_robocasa_from_base_has_one_security_inventory_entry() -> None:
         entries = [entry for entry in inventory if entry["image"] == image]
         assert len(entries) == 1, image
         assert entries[0] == {
-            "name": "nvidia-cuda-12-4-1-cudnn-devel-ubuntu22-04",
+            "name": "nvidia-cuda-12-9-1-base-ubuntu22-04",
             "image": PINNED_CUDA_BASE,
             "purge_linux_libc_dev": True,
-            "upgrade_os": False,
+            "upgrade_os": True,
         }
 
 
@@ -867,6 +914,7 @@ def test_robocasa_python_locks_are_hash_complete_and_target_specific() -> None:
         assert "npa/docker/workbench/robocasa/generate-locks.sh" in text
         blocks = _requirement_blocks(lock)
         assert blocks and all("--hash=sha256:" in block for block in blocks)
+        assert "pip==26.2.1" in text
 
     runtime_names = _locked_names(RUNTIME_LOCK)
     assert runtime_names & OPENCV_PROVIDERS == {"opencv-python"}

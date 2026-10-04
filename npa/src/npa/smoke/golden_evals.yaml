@@ -1082,7 +1082,7 @@ containers:
         with video artifacts.
     safety:
       runs_as: ubuntu
-      base_image: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+      base_image: nvidia/cuda:12.9.1-base-ubuntu22.04
       network: FastAPI service on :8791 (/health, /system-info, /run, /status); kitchen assets download at run time
       external_fetch: [pypi, github, huggingface, s3]
       notes: >-

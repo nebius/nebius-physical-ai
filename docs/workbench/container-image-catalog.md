@@ -847,6 +847,14 @@ historical evidence.
   digest and GPU evidence are recorded.
   It is a non-root service image with no passwordless-sudo grant; workflow
   toolRefs call the deployed service from the standard task image.
+  The candidate recipe upgrades inherited Ubuntu packages before dependency
+  installation, requires the fixed GnuPG/OpenSSL versions, and hash-locks pip.
+  Those source controls do not qualify the older image bytes or establish that
+  the replacement image has no vulnerabilities; exact-image scans and runtime
+  validation remain required.
+  Its [candidate runtime boundary](../../npa/docker/workbench/robocasa/REDISTRIBUTION.md)
+  uses a minimal CUDA12.9 base and same-layer, exact-hash cuDNN runtime packaging;
+  older cuDNN development layers are not inherited or reclassified.
 
 The historical SONIC L40S and inherited MuJoCo variants remain restricted and
 quarantined in `sonic_image_manifest.json`. The old SONIC `0.1.2` alias was
