@@ -1195,6 +1195,20 @@
       ],
       "smoke": "A future exact-digest gate must run the official beat_block_hammer bimanual task through SAPIEN/Vulkan on exactly one STRICT RTX PRO 6000 and validate real HDF5 plus rendered video/frame artifacts.",
       "notes": "Phase A is a zero-vendor-payload, incomplete-lock bootstrap candidate. No image, digest, wheel architecture set, built-byte scan, public availability, or hardware result exists. It remains publication-quarantined, and its renderer workload is not routed to B200/B300. Replace unknown/pending-build only with the future build and exact-image evidence; this inventory entry is not permission to build, fetch, run, or publish."
+    },
+    {
+      "name": "npa-embodiedgen",
+      "dockerfile": "embodiedgen/Dockerfile",
+      "build_script": "embodiedgen/build.sh",
+      "redistribution": "restricted",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "runtime": "CUDA 12.8 development base; EmbodiedGen, TRELLIS, Torch, and model weights are exact runtime fetches",
+      "source_compiled_extensions": [
+        "TRELLIS CUDA extensions (runtime-built)"
+      ],
+      "smoke": "On one exact-digest operator-private RTX PRO 6000 image, run upstream img3d-cli with the TRELLIS backend on a real input, export mesh and URDF, invoke the upstream URDF-to-MJCF conversion, load that generated URDF in PyBullet, verify collision geometry and gravity/contact settling, and decode the rendered MP4 with provenance.",
+      "notes": "No image artifact, exact built-byte scan, resolved Torch architecture set, generated mesh/URDF, or GPU result exists. The CUDA 12.8 base is a build input, not a B200, B300, or RTX PRO 6000 compatibility result. The functional smoke is deliberately routed to RTX PRO 6000 because the upstream TRELLIS path and artifact rendering require the declared RTX target; no datacenter Blackwell capability is claimed. The candidate stays operator-private and release-quarantined until the exact image, byte scans, and real capability evidence exist."
     }
   ],
   "validation_evidence": {
