@@ -47,7 +47,7 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "The replacement neutral private bootstrap was built with SBOM/provenance, pushed only to the operator-private registry, independently pulled by immutable digest, manifest/config inspected, and nonroot-smoked with SkyPilot's rsync/passwordless-sudo bootstrap, readable notices, and the native preparation parser. It remains publication-quarantined.",
+      "reason": "The committed neutral private bootstrap was built with SBOM/provenance, pushed only to the operator-private registry, independently pulled by immutable digest, manifest/config inspected, and streamed through the full layer scanner with no restricted runtime or build-history hit. Its numeric nonroot user passed SkyPilot's rsync/passwordless-sudo bootstrap, readable notices, the native preparation parser, and a persistent-default-command probe. It remains publication-quarantined.",
       "evidence": [
         "npa/docker/workbench/openvla-oft/build.sh",
         "docs/workbench/openvla-oft.md"
@@ -55,7 +55,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "An owned native prepare submission first exposed the absent ray-node container and was cancelled after evidence collection. A replacement image then passed private immutable pull and nonroot bootstrap qualification, and a second submission passed target image preflight and GPU readiness but was rejected before controller launch because no-new-privileges blocked SkyPilot's required sudo bootstrap. The corrected pod contract is now validated and a fresh native run is required. No simulator metric, benchmark, convergence, or physical-robot claim is made.",
+      "reason": "Earlier owned native submissions exposed and repaired the absent ray-node task container, the no-new-privileges/passwordless-sudo conflict, numeric nonroot admission, and an immediately exiting default command. The active controlled prepare attempt then passed target image preflight, GPU readiness, controller launch, named-container admission, and numeric nonroot admission, but is retrying a target Kubernetes exec transport failure before OFT setup. The newer private digest is ready for target preflight once that route is repaired or the active controller is terminal. No simulator metric, benchmark, convergence, or physical-robot claim is made.",
       "evidence": [
         "docs/workbench/openvla-oft.md"
       ]
