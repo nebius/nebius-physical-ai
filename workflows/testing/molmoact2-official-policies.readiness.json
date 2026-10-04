@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "bdca9b94d52ef89b0f96bb0021405634b5743998b6fd3de4c0b7e7c4aae3ec7b",
+  "workflow_sha256": "cc05500e8e5e86ebf862b2ceca7d1567d5dde89b7f89f178f084575360f296eb",
   "planning": {
     "validation": {
       "status": "verified",
@@ -26,7 +26,7 @@
     },
     "worker_input": {
       "status": "verified",
-      "reason": "Exact public immutable payload probes succeeded for the foundation config, official LIBERO policy normalization statistics, and official LIBERO dataset metadata. The workflow still rechecks the full real dataset feature contract before any train stage.",
+      "reason": "Exact immutable metadata probes succeeded for the foundation model, official LIBERO policy normalization statistics, and official LIBERO dataset. A ranged read of the pinned foundation-weight payload also succeeded under the operator's existing Hugging Face credential. The workflow still rechecks the full real dataset feature contract before any train stage.",
       "evidence": [
         "Private sanitized exact-revision Hugging Face payload probe, 2026-10-03",
         "docs/workbench/molmoact2-official-policies.md"
@@ -34,25 +34,25 @@
     },
     "credentials": {
       "status": "verified",
-      "reason": "Nebius, object-storage, and Hugging Face health preflights passed for this operator session. The accepted LIBERO path is anonymous at runtime and has no added EULA/acceptance mechanism.",
+      "reason": "Nebius, object-storage, and Hugging Face health preflights passed for this operator session. The existing Hugging Face credential is forwarded through native secret plumbing for the exact foundation payload; no new EULA or acceptance mechanism is added.",
       "evidence": [
         "Private sanitized npa workbench health preflight evidence, 2026-10-03"
       ]
     },
     "source_image": {
-      "status": "locally_verified",
-      "reason": "A local source-pinned BYOF image completed its Docker build-time and run-time pip checks; non-runtime upstream LeRobot tests and tensor fixtures are removed after installation, and the fixture-free image includes notices plus the NPA adapter and upstream LeRobot MolmoAct2/LIBERO CLI surfaces. It has not yet been pushed, pulled by a remote worker, or used by a real workflow.",
+      "status": "unverified",
+      "reason": "A corrected source-pinned private BYOF image is rebuilding after the exact-byte scan caught test-fixture, LPIPS-weight, and bundled static-FFmpeg bytes retained in older layers. The replacement removes those bytes in their creating layers, but remote immutable-digest qualification is not complete yet.",
       "evidence": [
         "npa/docker/workbench/molmoact2/Dockerfile",
         "npa/docker/workbench/molmoact2/REDISTRIBUTION.md",
-        "Private fixture-free local Docker evidence, 2026-10-03"
+        "Private image build and exact-byte scan evidence, 2026-10-04"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "No real NPA/SkyPilot/Kubernetes execution or independent S3 artifact inspection has completed. The configured private registry rejected the local image upload with an authorization 403 before an immutable remote image could be preflighted or submitted. Do not infer LIBERO success, convergence, or physical-robot readiness from planning or local image validation.",
+      "reason": "No real NPA/SkyPilot/Kubernetes execution or independent S3 artifact inspection has completed. A manager-provided private registry route has been write-probed, but this solution's corrected image has not yet qualified at an immutable remote digest or passed worker image preflight. Do not infer LIBERO success, convergence, or physical-robot readiness from planning or local image validation.",
       "evidence": [
-        "Private configured-registry push evidence, 2026-10-03"
+        "Private registry-route write probe and image-qualification evidence, 2026-10-04"
       ]
     }
   }
