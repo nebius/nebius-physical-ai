@@ -26,6 +26,13 @@ a versioned heading when a release is cut.
   exact requests and responses survive parser failures. These records never
   change the completion score or gate. Historical hosted failures are retained.
 
+### VLM evaluation discloses served-model identity enforcement
+
+- Single results, loop rows, and benchmark cases report requested and returned
+  model identities and whether the shared hosted profile enforced exact equality.
+  All current hosted profiles enforce equality; self-hosted and synthetic
+  evaluations do not claim that check.
+
 ### VLM gates reject incomplete self-hosted completions
 
 - Both real VLM-eval backends require exact `finish_reason="stop"` before
