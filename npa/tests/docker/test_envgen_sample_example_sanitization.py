@@ -14,6 +14,7 @@ SCRIPT = (
     Path(__file__).resolve().parents[2]
     / "docker/workbench/common/sanitize_envgen_grass_example.py"
 )
+DOCKERFILE = SCRIPT.parent.parent / "sim2real-envgen/Dockerfile"
 spec = importlib.util.spec_from_file_location("envgen_sample_sanitization", SCRIPT)
 sanitizer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sanitizer)
@@ -105,3 +106,34 @@ def test_unreviewed_semantics_are_not_silently_sanitized(case):
         raw = SOURCE.replace(b'    """The following', b'    payload = """The following')
     with pytest.raises(RuntimeError):
         sanitizer._without_sample_example(raw)
+
+
+def _require_pre_layer_sanitization(text):
+    intermediate, final = text.split("FROM scratch AS runtime", 1)
+    assert "FROM ${BASE_IMAGE} AS sanitized" in intermediate
+    assert "python /usr/local/lib/npa/sanitize-envgen-grass-example.py" in intermediate
+    assert "COPY --from=sanitized / /" in final
+    assert "FROM " not in final
+    assert "COPY --from=sanitized / /" not in intermediate
+    assert "sanitize-envgen-grass-example.py" not in final
+    assert "COPY --from=" not in final.replace("COPY --from=sanitized / /", "")
+
+
+def test_example_is_removed_before_building_the_scratch_delivery_layer():
+    _require_pre_layer_sanitization(DOCKERFILE.read_text())
+
+
+@pytest.mark.parametrize(
+    "case", ("parent-retained", "later-deletion", "extra-ancestor-copy")
+)
+def test_recipe_must_not_claim_a_later_deletion_clears_ancestor_bytes(case):
+    text = DOCKERFILE.read_text()
+    command = "python /usr/local/lib/npa/sanitize-envgen-grass-example.py"
+    if case == "parent-retained":
+        text = text.replace("FROM scratch AS runtime", "FROM sanitized AS runtime")
+    elif case == "later-deletion":
+        text = text.replace(command, "true") + "\nRUN " + command + "\n"
+    else:
+        text += "\nCOPY --from=sanitized /tmp /inherited-cache\n"
+    with pytest.raises((AssertionError, ValueError)):
+        _require_pre_layer_sanitization(text)
