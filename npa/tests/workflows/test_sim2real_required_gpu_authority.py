@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import pytest
-
-from npa.workflows.sim2real import component_authority
-from tests.workflows.test_sim2real_stage14_thirteenth_review_controls import (
+from test_sim2real_stage14_thirteenth_review_controls import (
     ROOT,
     SOURCE_SHA,
     _component,
@@ -13,6 +11,8 @@ from tests.workflows.test_sim2real_stage14_thirteenth_review_controls import (
     _gold,
     _rehash,
 )
+
+from npa.workflows.sim2real import component_authority
 
 
 @pytest.mark.parametrize("stage", [3, 7, 9, 10])
