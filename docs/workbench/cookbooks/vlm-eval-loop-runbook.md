@@ -6,6 +6,24 @@ For a separate qualitative audit, use [rich visual review](../vlm-visual-review.
 Its private evidence, counterbalanced comparisons, and usefulness hypotheses
 never supply a completion score or pipeline gate.
 
+For known-count inputs, `sequence` remains uniform across the full span and
+`keyframes` allocates half its budget to a terminal window covering at least
+the final 10%, widening when needed for unique frames. Earlier samples span
+the remaining evidence; short inputs return all frames. This is deterministic
+temporal sampling, not content-aware event detection. Both preserve first and
+final frames when at least two are selected. Unknown-count video compatibility
+is unchanged and never invents source indices or timestamps. The original
+[hosted sampling failure](../evidence/vlm-frame-selection-semantics.md) remains
+separate from deterministic sampler correctness.
+
+The default deliberately favors terminal evidence when the budget is small:
+three of 100 frames select `[0, 90, 99]`, and four of 1,000 select
+`[0, 450, 900, 999]`. Only the first frame supplies early evidence in the
+three-frame case; unsampled middle events can be missed. This is not complete
+episode coverage or a demonstrated improvement in model judgment. Use the
+retained selected indices and frame hashes to audit what was actually shown;
+the original SO-100 failure and gray-control rationale errors remain failures.
+
 This runbook runs the sim-to-real VLM-eval loop on the self-hosted serving path:
 serve a VLM with vLLM, score rollout directories with `vlm-eval`, and write a
 task-success report.
@@ -309,7 +327,21 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 - `rollouts/<rollout-id>/vlm_eval.json`: one structured result per rollout.
 - `task_success_report.json`: aggregate report with `total_rollouts`,
   `passed_rollouts`, `success_rate`, `mean_score`, `task_success`, and the
-  per-rollout `{success, score, rationale}` records.
+  per-rollout `rollout_id`, `success`, `score`, `rationale`, `status`,
+  `frame_count`, and `result_uri` records. Each row additionally discloses
+  `requested_model`, `served_model`, and `served_model_match_enforced`. Follow
+  each `result_uri` to its `rollouts/<rollout-id>/vlm_eval.json` for complete
+  provider evidence; that evidence is not inline in aggregate rows. The
+  aggregate `model` names the caller-selected configuration, not a verified
+  provider-served identity. The report also emits
+  `independent_human_label_calibration_established: false` and ordered
+  `limitations` so JSON-only consumers can see that the gate uses the mean
+  score, samples rather than continuous behavior, and does not establish
+  physical correctness or safety. Stub reports state that no VLM call occurred.
+
+Each direct result also emits `provider_call_made`: real backend execution sets
+it to true; stub and caller-supplied score overrides set it to false. Every path
+retains `independent_human_label_calibration_established: false`.
 
 `vlm_eval.json` is backend-neutral; inspect the payload's `backend` and
 `evidence.provider` fields to distinguish real inference from a fixture.
@@ -387,7 +419,8 @@ aws s3 cp "s3://${NPA_S3_BUCKET}/sim-to-real/${RUN_ID}/scores/task_success_repor
 ```
 
 Use `task_success` as the coarse gate, then inspect low-score rollouts and their
-rationales before iterating on policy, simulation, or rubric.
+rationales before iterating on policy, simulation, or rubric. It is a
+mean-score gate, not the per-rollout `success_rate`.
 
 ## Plug In Real Labeled Rollouts
 
@@ -490,6 +523,19 @@ causality, photoreal generalization, policy success, physical correctness, or
 robot safety.
 The frozen measurements, hardware table, and reproduction commands are in the
 [Isaac agency calibration evidence record](../evidence/vlm-isaac-agency-calibration.md).
+
+Benchmark reports also set
+`independent_human_label_calibration_established: false`: the manifest accepts
+caller labels but does not establish their human authorship or independence.
+Accuracy, agreement, precision, recall, F1, and confusion counts describe that
+one labeled dataset; they are not operational error rates or evidence of
+generalization, physical correctness, or safety. Report limitations identify
+cases whose `score_source` is `fixture` or `stub` as dry-validation or wiring
+inputs rather than VLM evidence.
+
+These disclosure keys are additive. Consumers that reject unknown JSON keys
+must update their schema; consumers that ignore unknown keys retain the previous
+fields and values.
 
 Benchmark report schema `npa_vlm_eval_benchmark_report_v2` makes calibration
 errors explicit for every model/rubric/threshold configuration. Inspect its 2x2

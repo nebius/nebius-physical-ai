@@ -1,0 +1,92 @@
+{
+  "schema": "npa.sanitized-caption-thinking-current-integration/v1",
+  "pr": 832,
+  "execution_head": "716f289d51213c0dcdd50fea1be09c1a7ab4a065",
+  "execution_tree": "6754662080cfea5b6e90f071c41a151dcf3efd72",
+  "integrated_main": "4603e7e1d8ffede505161448fe92368e7c6bda45",
+  "original_hosted_execution": "26e6f8abec78d4c7bf0bd988c61b0a21d65d5122",
+  "original_public_proof_commit": "32febf7bae6b45f4ed58a50d5dad7d0338ebfbc9",
+  "prior_source_proof_commit": "3aefa9089ddee634f3761f0e5b5065e2c6b0a290",
+  "caption_source_bindings": [
+    {"path": "npa/src/npa/clients/token_factory.py", "sha256": "5622cf44b6ed00c76b8cce6323aa92532e97e5630e89251d2b97b19511f00c44"},
+    {"path": "npa/src/npa/workbench/token_factory/__init__.py", "sha256": "271157275009cf01d2c9152e22826d5e4bdfc0054edc0bd30fc4a67b2b770d49"},
+    {"path": "npa/src/npa/cli/workbench/token_factory.py", "sha256": "7ba8623f6308cf6cae1ce523a6657b74807f923a29d4ddb460fef4024d0993a0"},
+    {"path": "npa/src/npa/sdk/workbench/token_factory.py", "sha256": "58fc897fbc3a93eca88618eb14a1ce47a7d8b3cd8e92593e8e59c1f57ad4bbc0"}
+  ],
+  "source_bridge": {
+    "caption_files_equal_accepted_prior_source": true,
+    "new_evaluator_agency_vlm_cli_sdk_grade_storage_equal_landed_main": true,
+    "evaluator_equal_prior_source": false,
+    "changed_existing_evaluator_definitions_from_prior": 11,
+    "new_evaluator_definitions_from_prior": 8,
+    "new_provider_calls": 0
+  },
+  "affected_gates": {
+    "test_files": 33,
+    "passed": 3176,
+    "skipped": 1,
+    "warnings": 8,
+    "seconds": 49.46,
+    "skip": "Explicit self-hosted GPU opt-in absent; not GPU proof",
+    "precheck_passed": 270,
+    "docs_drift": "PASS before affected filesystem tests",
+    "source_before_after_clean_equal": true,
+    "packages_before_after_equal": true,
+    "full_repository_suite": false
+  },
+  "environment": {
+    "python": "3.12.14",
+    "packages": 146,
+    "installed_matching_ci_pins_verified": 145,
+    "ci_pin_mismatches": 0,
+    "torch": "2.14.0+cpu",
+    "cuda_runtime": null,
+    "different_editable_installation_location": true,
+    "name_version_inventory_equal_prior_pinned_integration": true
+  },
+  "accepted_fixture_components": [
+    "4bbaba55c1e0c3af3b678c1be49baa3f0bda0298",
+    "15aebd6a25c425c9f62ade0eade9465b748a830d",
+    "aae8960032349f07b18b1ead481a2c1d9efbbe9a",
+    "af1627394ba72d90cd0d8b363d4dcf123bad7e22",
+    "8303ccb26407db1c8a973a6a516fab7c5934d6f1",
+    "77e0ea0beea48ffe124a5a3324919f0c959b8dbd",
+    "fa60e80396c874244cc80899fc2a380d74adf279",
+    "c342c01574f1ce9fc2dea1c4ae91b7a1fb249d2c",
+    "19e8cb4d95703e92f72a6dae9b21f346ca3a1d15",
+    "E005AC750274B3ACFE8E2A4A286CFD313BC213A2"
+  ],
+  "retained_full_outcomes": [
+    {
+      "head": "1a67411c0262340fcf807d624f63db9bc8be9cd8",
+      "state": "FAILED",
+      "failed": 1,
+      "passed": 40089,
+      "skipped": 213,
+      "unexpected_passes": 1,
+      "coverage_percent": 77.48,
+      "reason": "Inherited temporary-root fixture oracle; not retroactively passed"
+    },
+    {
+      "head": "226af81dd7c3c192c5a42efeac6a7fd10bd3e842",
+      "state": "STARTED_THEN_ABORTED",
+      "exit_code": 2,
+      "final_junit_present": false,
+      "terminal_population": "UNKNOWN",
+      "native_blocked_state_residues_untouched": true
+    }
+  ],
+  "current_head_full_ci": "Not yet established by this supplement",
+  "model_quality_calibrated": false,
+  "human_approval": false,
+  "new_Claude_reviews": 0,
+  "limits": [
+    "All original inference/request/image/response identities remain original execution scope",
+    "Provider request fields do not establish provider honor",
+    "Historical live receipt lacks contemporaneous after-state source fields; later observations are not backdated",
+    "No new provider/GPU/label/threshold/favorable retry selected for this source supplement",
+    "Accepted fixture components are narrow named scopes, not whole-module or native-runtime guarantees",
+    "Required current-head CI, independent full-capability mapping and final integration/lifecycle remain separate",
+    "No calibrated quality, robot-physics, causal-reasoning, image-release or safety acceptance"
+  ]
+}

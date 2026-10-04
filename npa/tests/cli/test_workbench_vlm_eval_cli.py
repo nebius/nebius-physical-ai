@@ -26,6 +26,27 @@ from npa.workbench.vlm_eval import (
 
 
 runner = CliRunner()
+_DIRECT_NO_CALL_LIMITATIONS = [
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    "A score from one model, rubric, threshold, and frame sample does not "
+    "establish physical correctness or safety.",
+    (
+        "This score is a stub or caller-supplied dry-validation input; no VLM "
+        "call occurred, so it is not model or policy evidence."
+    ),
+]
+_BENCHMARK_FIXTURE_LIMITATIONS = [
+    "Expected labels are caller-supplied; the manifest does not establish their "
+    "independent-human provenance.",
+    "Accuracy, agreement, precision, recall, F1, and TP/TN/FP/FN describe only "
+    "this caller-labeled dataset and do not establish generalization, physical "
+    "correctness, safety, or an operational error rate.",
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    (
+        "Cases with score_source 'fixture' use caller-provided dry-validation "
+        "inputs; those cases are not VLM or policy evidence."
+    ),
+]
 
 
 def test_workbench_vlm_eval_command_help() -> None:
@@ -63,10 +84,18 @@ def test_workbench_vlm_eval_run_writes_local_json(tmp_path) -> None:
     payload = json.loads(result.output)
     assert payload["backend"] == "stub"
     assert payload["passed"] is True
+    assert payload["served_model"] is None
+    assert payload["independent_human_label_calibration_established"] is False
+    assert payload["limitations"] == _DIRECT_NO_CALL_LIMITATIONS
     written = output_dir / RESULT_FILENAME
     assert written.exists()
-    assert json.loads(written.read_text(encoding="utf-8"))["score"] == 0.9
     assert not (output_dir / LEGACY_RESULT_FILENAME).exists()
+    persisted = json.loads(written.read_text(encoding="utf-8"))
+    assert persisted["score"] == 0.9
+    assert persisted["model"] == DEFAULT_MODEL
+    assert persisted["served_model"] is None
+    assert persisted["independent_human_label_calibration_established"] is False
+    assert persisted["limitations"] == _DIRECT_NO_CALL_LIMITATIONS
 
 
 def test_workbench_vlm_eval_dry_run_does_not_write(tmp_path) -> None:
@@ -184,6 +213,7 @@ def test_workbench_vlm_eval_run_maps_backend_flags(mocker, tmp_path) -> None:
     payload = json.loads(result.output)
     assert payload["backend"] == "api"
     assert payload["frame_selection"] == "sequence"
+    assert payload["independent_human_label_calibration_established"] is False
     kwargs = mock_eval.call_args.kwargs
     assert kwargs["backend"] == "api"
     assert kwargs["model"] == "open-vlm"
@@ -406,6 +436,14 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
         )
         assert len(metrics["false_positive_item_ids"]) == metrics["false_positives"]
         assert len(metrics["false_negative_item_ids"]) == metrics["false_negatives"]
+    assert payload["independent_human_label_calibration_established"] is False
+    assert payload["limitations"] == _BENCHMARK_FIXTURE_LIMITATIONS
+    assert payload["written_uri"] == str(output_path)
+    persisted = json.loads(output_path.read_text(encoding="utf-8"))
+    assert persisted["item_count"] == 5
+    assert persisted["best_config"]["results"] == payload["best_config"]["results"]
+    assert persisted["independent_human_label_calibration_established"] is False
+    assert persisted["limitations"] == _BENCHMARK_FIXTURE_LIMITATIONS
 
 
 def test_workbench_vlm_eval_runs_packaged_agency_preflight(tmp_path) -> None:
@@ -455,6 +493,8 @@ def test_vlm_eval_sdk_benchmark_returns_report() -> None:
 
     assert report.best_config.config.success_threshold == 0.8
     assert report.best_config.metrics.accuracy == 1.0
+    assert report.independent_human_label_calibration_established is False
+    assert tuple(report.limitations) == tuple(_BENCHMARK_FIXTURE_LIMITATIONS)
 
 
 def test_vlm_eval_sdk_exports_direct_paired_judge_surface() -> None:
