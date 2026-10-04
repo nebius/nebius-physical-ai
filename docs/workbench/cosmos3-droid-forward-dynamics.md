@@ -35,10 +35,13 @@ translation, 3–8 are the relative rotation matrix's first two columns in rot6d
 and channel 9 is `1.0 - source.action.gripper_position`; remaining channels are
 zero. No action normalization is applied. The workflow uses
 `droid_lerobot` (domain id 8), the same checkpoint domain named in the card.
-For the upstream native CLI, the stage writes the corresponding bare `[16,10]`
-JSON action array; Cosmos Framework verifies that raw width and performs the
-documented zero-padding to 64 channels itself. The `[16,64]` action artifact
-remains in the handoff and is hash-bound in provenance.
+For the upstream native per-sample JSON, the stage writes the corresponding bare
+`[16,10]` JSON action array and references it from `action_path`; Cosmos
+Framework verifies that raw width and performs the documented zero-padding to 64
+channels itself. The generic native inference entrypoint also receives the
+17-frame composite video, 15-fps, DROID domain, and 16-action length through
+that same sample JSON. The `[16,64]` action artifact remains in the handoff and
+is hash-bound in provenance.
 
 The selection manifest carries `poses_abs` with 17 absolute end-effector poses
 derived from `observation.state.cartesian_position`: XYZ Euler orientation is
@@ -71,7 +74,7 @@ convergence, long-horizon rollouts, or physical-robot success.
 
 | Boundary | Identity and terms | Packaging decision |
 | --- | --- | --- |
-| Framework source | [NVIDIA Cosmos Framework](https://github.com/NVIDIA/cosmos-framework) [`5e67049cd94acb667786f1e6dd0dab821cb90c97`](https://github.com/NVIDIA/cosmos-framework/commit/5e67049cd94acb667786f1e6dd0dab821cb90c97), OpenMDW-1.1; preserve [`LICENSE`](https://github.com/NVIDIA/cosmos-framework/blob/main/LICENSE) and [`NOTICE`](https://github.com/NVIDIA/cosmos-framework/blob/main/NOTICE) | The private validation image records this source marker, verifies the native forward-dynamics flags and `droid_lerobot` mapping at build time, and carries no weights. No public image publication is authorized. |
+| Framework source | [NVIDIA Cosmos Framework](https://github.com/NVIDIA/cosmos-framework) [`5e67049cd94acb667786f1e6dd0dab821cb90c97`](https://github.com/NVIDIA/cosmos-framework/commit/5e67049cd94acb667786f1e6dd0dab821cb90c97), OpenMDW-1.1; preserve [`LICENSE`](https://github.com/NVIDIA/cosmos-framework/blob/main/LICENSE) and [`NOTICE`](https://github.com/NVIDIA/cosmos-framework/blob/main/NOTICE) | The private validation image records this source marker, verifies the native forward-dynamics JSON schema and `droid_lerobot` mapping at build time, and carries no weights. No public image publication is authorized. |
 | Derivative checkpoint | `jere-mybao/cosmos3-nano-droid-forward-dynamics@1dfff3cc3b86548b208341bb123d1c4f71043114`, publisher `jere-mybao`, [OpenMDW-1.1](https://huggingface.co/jere-mybao/cosmos3-nano-droid-forward-dynamics/blob/main/LICENSE) | Runtime fetch only. The checkpoint is never copied to NPA image layers or a public NPA registry. |
 | Base model | [`nvidia/Cosmos3-Nano`](https://huggingface.co/nvidia/Cosmos3-Nano), NVIDIA, OpenMDW-1.1 | Inherited derivative lineage; no separate base checkpoint is baked. |
 | Data | [`nvidia/Cosmos3-DROID@5c11a20accb11497270a5247a7f1e66ad04c956c`](https://huggingface.co/datasets/nvidia/Cosmos3-DROID), NVIDIA's LeRobot conversion, OpenMDW-1.1; it credits [DROID](https://arxiv.org/abs/2403.12945), whose authors are Khazatsky, Pertsch, Nair, Balakrishna, Dasari, Karamcheti, et al. The derivative card further records the raw DROID source as CC-BY 4.0. | Operator-supplied, run-scoped inputs only; never baked, mirrored, or republished by NPA. |
@@ -91,11 +94,10 @@ The model card records framework commit
 current public Git remote no longer serves that commit. The qualification path
 uses the available immutable OpenMDW-1.1 source pin above, writes it into the
 image as `.npa_source_revision`, and fails inference if it is not present. The
-image's build verifier also checks the upstream `--action-path`,
-`--domain-name`, and `--action-chunk-size` interface plus DROID raw width/domain
-mapping. Artifacts retain both the card export commit and actual runtime source
-revision, so this is not represented as a source-level reproduction of the
-retired commit.
+image's build verifier also checks the upstream action sample JSON fields and
+action loader plus DROID raw width/domain mapping. Artifacts retain both the
+card export commit and actual runtime source revision, so this is not represented
+as a source-level reproduction of the retired commit.
 
 NPA’s modifications are limited to staging and hash-checking the selected input,
 constructing the documented DROID action format, calling the upstream native
@@ -131,7 +133,7 @@ and planning pass. The adjacent
 [hash-bound readiness record](../../workflows/testing/cosmos3-droid-forward-dynamics.readiness.json)
 tracks the separately verified local contract and the blocked live prerequisites.
 It is not yet a live-accepted capability: completion requires a real
-NPA/Kubernetes GPU run on the selected held-out DROID window, the exact runtime
+NPA/Kubernetes RTX PRO 6000 GPU run on the selected held-out DROID window, the exact runtime
 checkpoint fetch, and independent S3 artifact inspection. The unavailable
 historical framework commit prevents a claim of exact source-level card
 reproduction.

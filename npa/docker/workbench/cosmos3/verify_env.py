@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 from importlib import metadata
@@ -124,30 +123,28 @@ def check_pinned_framework_source() -> str:
 
 
 def check_action_inference_contract() -> str:
-    """Verify the native DROID forward-dynamics flags and embodiment mapping."""
+    """Verify upstream's native JSON action schema and embodiment mapping."""
 
     from cosmos_framework.data.generator.action.domain_utils import (
         EMBODIMENT_TO_RAW_ACTION_DIM,
         get_domain_id,
     )
+    from cosmos_framework.inference.action import get_action_sample_data
+    from cosmos_framework.inference.args import ActionDataOverrides, ModelMode
 
     if EMBODIMENT_TO_RAW_ACTION_DIM.get("droid_lerobot") != 10:
         raise RuntimeError("droid_lerobot must retain its 10-channel raw action contract")
     if get_domain_id("droid_lerobot") != 8:
         raise RuntimeError("droid_lerobot must retain embodiment domain id 8")
-    result = subprocess.run(
-        [sys.executable, "-m", "cosmos_framework.scripts.inference", "--help"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode:
-        raise RuntimeError(f"native inference help failed: {result.stderr[-500:]}")
-    required = ("--action-path", "--domain-name", "--action-chunk-size")
-    absent = [flag for flag in required if flag not in result.stdout]
+    required = {"action_path", "domain_name", "action_chunk_size", "image_size", "view_point"}
+    absent = sorted(required - set(ActionDataOverrides.model_fields))
     if absent:
-        raise RuntimeError(f"native inference is missing DROID action flags: {absent}")
-    return "droid_lerobot domain=8 raw_action_dim=10 action_flags=present"
+        raise RuntimeError(f"native action sample JSON is missing fields: {absent}")
+    if ModelMode.FORWARD_DYNAMICS.value != "forward_dynamics":
+        raise RuntimeError("native forward-dynamics model mode changed")
+    if not callable(get_action_sample_data):
+        raise RuntimeError("native action sample loader is not callable")
+    return "droid_lerobot domain=8 raw_action_dim=10 action_json_schema=present"
 
 
 def check_model_module() -> str:

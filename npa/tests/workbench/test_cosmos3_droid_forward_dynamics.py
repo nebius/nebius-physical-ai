@@ -19,6 +19,7 @@ from npa.workbench.cosmos.droid_forward_dynamics import (
     SELECTION_SCHEMA,
     VISUALIZATION_SCHEMA,
     DroidForwardDynamicsError,
+    _native_forward_dynamics_input,
     _native_inference_argv,
     _native_raw_actions,
     _require_pinned_runtime_framework,
@@ -178,23 +179,34 @@ def test_prepare_requires_the_source_action_gripper_not_pose_state(tmp_path: Pat
         prepare_droid_forward_dynamics(input_path=str(path), output_path=str(tmp_path / "out"))
 
 
-def test_native_argv_uses_the_card_contract(tmp_path: Path) -> None:
+def test_native_inference_uses_the_upstream_action_json_contract(tmp_path: Path) -> None:
     repo = tmp_path / "framework"
     (repo / ".venv/bin").mkdir(parents=True)
     (repo / ".venv/bin/python").touch()
+    prepared = tmp_path / "prepared"
+    prepared.mkdir()
+    (prepared / "reference_composite.mp4").write_bytes(b"real-reference-video")
+    action_path = tmp_path / "actions.json"
     argv = _native_inference_argv(
         repo=repo,
         checkpoint=tmp_path / "checkpoint",
         input_json=tmp_path / "input.json",
-        action_path=tmp_path / "actions.json",
         output_dir=tmp_path / "out",
         seed=7,
     )
     assert argv[:3] == [str(repo / ".venv/bin/python"), "-m", "cosmos_framework.scripts.inference"]
-    assert argv[argv.index("--domain-name") + 1] == "droid_lerobot"
-    assert argv[argv.index("--action-chunk-size") + 1] == "16"
+    assert "--action-path" not in argv
     assert argv[argv.index("-i") + 1].endswith("input.json")
     assert argv[argv.index("--seed") + 1] == "7"
+    payload = _native_forward_dynamics_input(
+        prepared=prepared, action_path=action_path, control="true", seed=7
+    )
+    assert payload["vision_path"].endswith("reference_composite.mp4")
+    assert payload["action_path"] == str(action_path)
+    assert payload["domain_name"] == "droid_lerobot"
+    assert payload["action_chunk_size"] == 16
+    assert payload["fps"] == 15
+    assert payload["image_size"] == 480
 
 
 def test_native_runtime_requires_the_qualified_framework_marker(tmp_path: Path) -> None:

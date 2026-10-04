@@ -123,6 +123,7 @@ def test_image_build_requires_the_fail_closed_generated_media_wrapper() -> None:
     assert "VideoContentSafetyFilter" in verifier
     assert "check_pinned_framework_source" in verifier
     assert "check_action_inference_contract" in verifier
+    assert "ActionDataOverrides.model_fields" in verifier
 
 
 def test_image_repairs_inherited_unused_or_stale_vulnerable_bytes() -> None:

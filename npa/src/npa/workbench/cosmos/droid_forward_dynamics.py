@@ -50,7 +50,7 @@ CARD_FRAMEWORK_REVISION = "9cbd0841b50a1e667577292be1a4ad79cbc8e3d9"
 NATIVE_FRAMEWORK_REPOSITORY = "https://github.com/NVIDIA/cosmos-framework.git"
 # The original export revision above has been pruned from the public remote.  This
 # is the independently available OpenMDW-1.1 pin used by npa-cosmos3; it retains
-# the native forward-dynamics action CLI and DROID domain mapping.  The workflow
+# the native forward-dynamics input schema and DROID domain mapping.  The workflow
 # records both identities and never describes this as a bit-identical rebuild.
 NATIVE_FRAMEWORK_REVISION = "5e67049cd94acb667786f1e6dd0dab821cb90c97"
 NATIVE_FRAMEWORK_LICENSE = "OpenMDW-1.1"
@@ -491,8 +491,15 @@ def _require_pinned_runtime_framework(repo: Path) -> str:
 
 
 def _native_inference_argv(
-    *, repo: Path, checkpoint: Path, input_json: Path, action_path: Path, output_dir: Path, seed: int
+    *, repo: Path, checkpoint: Path, input_json: Path, output_dir: Path, seed: int
 ) -> list[str]:
+    """Invoke upstream's generic inference entrypoint with a native action sample.
+
+    Cosmos Framework deliberately keeps action fields in the per-sample JSON
+    schema, rather than exposing them as top-level process flags.  This retains
+    the upstream action loader, padding, embodiment lookup, and output layout.
+    """
+
     python = repo / ".venv" / "bin" / "python"
     if not python.is_file():
         raise DroidForwardDynamicsError("the npa-cosmos3 image lacks its framework interpreter")
@@ -503,12 +510,6 @@ def _native_inference_argv(
         "--parallelism-preset=latency",
         "--checkpoint-path",
         str(checkpoint),
-        "--action-path",
-        str(action_path),
-        "--domain-name",
-        DOMAIN_NAME,
-        "--action-chunk-size",
-        str(PREDICTION_FRAME_COUNT),
         "--seed",
         str(seed),
         "-i",
@@ -516,6 +517,29 @@ def _native_inference_argv(
         "-o",
         str(output_dir),
     ]
+
+
+def _native_forward_dynamics_input(
+    *, prepared: Path, action_path: Path, control: str, seed: int
+) -> dict[str, Any]:
+    """Build the exact upstream per-sample JSON for DROID forward dynamics."""
+
+    reference_video = prepared / "reference_composite.mp4"
+    if not reference_video.is_file():
+        raise DroidForwardDynamicsError("prepared handoff lacks the 17-frame reference composite")
+    return {
+        "model_mode": "forward_dynamics",
+        "name": f"droid-{control}",
+        "vision_path": str(reference_video),
+        "action_path": str(action_path),
+        "domain_name": DOMAIN_NAME,
+        "action_chunk_size": PREDICTION_FRAME_COUNT,
+        "image_size": 480,
+        "fps": FPS,
+        "view_point": "ego_view",
+        "prompt": "DROID robot manipulation observation sequence.",
+        "seed": seed,
+    }
 
 
 def _run_native_inference(
@@ -534,11 +558,12 @@ def _run_native_inference(
     input_json = root / "forward_dynamics_input.json"
     input_json.write_bytes(
         _canonical_json(
-            {
-                "model_mode": "forward_dynamics",
-                "name": f"droid-{control}",
-                "vision_path": str(prepared / "initial_composite.png"),
-            }
+            _native_forward_dynamics_input(
+                prepared=prepared,
+                action_path=action_path,
+                control=control,
+                seed=seed,
+            )
         )
         + b"\n"
     )
@@ -548,7 +573,6 @@ def _run_native_inference(
         repo=repo,
         checkpoint=checkpoint,
         input_json=input_json,
-        action_path=action_path,
         output_dir=output_dir,
         seed=seed,
     )

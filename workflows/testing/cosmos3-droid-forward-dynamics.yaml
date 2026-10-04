@@ -33,7 +33,9 @@ resources:
     memory: 32Gi
   inference_gpu:
     cloud: kubernetes
-    accelerators: B200:1
+    # Cosmos3's accepted CUDA 13 inference image supports the RTX PRO 6000
+    # Blackwell route used for this single-GPU forward-dynamics validation.
+    accelerators: RTXPRO6000:1
     cpus: 20
     memory: 192Gi
 
