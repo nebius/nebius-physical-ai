@@ -92,9 +92,12 @@ mock implementation or injected mock dependency. This workflow excludes them.
 The retained PSNR/SSIM/MAE are factual pixel comparisons, not semantic,
 geometry, identity, action, benchmark, or robot-success scores.
 
-The upstream entry point selects `cuda:0`, so the workflow requests one B200.
-That is distinct from the separately qualified four-B200 LingBot camera
-workflow and is not a single-B200 LingBot acceptance claim.
+The upstream entry point selects `cuda:0`, so the workflow requests one
+operator-configured GPU. Its compatibility plan default is one B200, while
+`gpu_type` and `gpu_count` must be set from the selected NPA target at submit
+time. That is distinct from the separately qualified four-B200 LingBot camera
+workflow and is not a one-GPU or alternate-accelerator LingBot acceptance
+claim.
 
 ## Validation state
 

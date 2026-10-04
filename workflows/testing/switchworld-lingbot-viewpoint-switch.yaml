@@ -13,6 +13,11 @@ config:
   prefix: "runs/{{run.id}}/switchworld"
   source_overlay: true
   seed: "20260819"
+  # The operator supplies the exact accelerator advertised by the selected
+  # NPA target at submit time.  Keep this compatibility default for ordinary
+  # plan rendering; do not treat it as a claim that every target is qualified.
+  gpu_type: B200
+  gpu_count: "1"
 
   reference_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/reference.png"
   target_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/target.mp4"
@@ -35,7 +40,7 @@ resources:
     image: tool://lingbot-world
   gpu:
     cloud: kubernetes
-    accelerators: B200:1
+    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
     cpus: 32
     memory: 256Gi
     image: tool://lingbot-world

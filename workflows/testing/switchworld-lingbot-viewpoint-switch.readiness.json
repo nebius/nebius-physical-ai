@@ -1,21 +1,21 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "d1d0135ea80ed6b15723eaa8be6da76aa16d2410daf7edb9d2058088bc6743a2",
+  "workflow_sha256": "a441ea2450f1d7a4d819cca78f8ce1b93b70e3c98d78e9ea30bcfa0883debe5b",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The final YAML passed validate-spec and a five-task production render check after independent workflow verification.",
+      "reason": "The final YAML passed validate-spec and a five-task production render check. GPU type and count resolve through run configuration rather than a fixed target request.",
       "evidence": [
-        "npa workbench workflow validate-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --json (2026-10-03)",
-        "npa workbench workflow plan-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --run-id switchworld-final-lineage-plan-20261003 --check-render --json (2026-10-03; render sha256 aeec23c2a9d7d7495422fa3f08c1919e5d5a620c03a6773ac31ba36861de618b)",
+        "npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --json (2026-10-04)",
+        "npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --run-id switchworld-configurable-gpu-readiness-20261004 --check-render --json (2026-10-04; render sha256 a35cce1ba46e62e8ff89ab631bc551d4da044a573ac892245ecdc23a83128435)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/independent-verification-20261003.json"
       ]
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The resolved plan connects real case preparation, native baseline inference, canonical adapter inference, decoded-frame measurement, and paired MP4/RRD visualization without a mock metric backend; the evaluator output is independently checked against decoded pixels.",
+      "reason": "The resolved five-stage plan connects real case preparation, native baseline inference, canonical adapter inference, decoded-frame measurement, and paired MP4/RRD visualization without a mock metric backend; the evaluator output is independently checked against decoded pixels.",
       "evidence": [
-        "npa/tests/workflows/test_switchworld.py::test_workflow_has_five_connected_real_stages",
+        "npa/tests/workflows/test_switchworld.py::test_workflow_has_five_connected_real_stages (7 passed, 2026-10-04)",
         "npa/tests/workflows/test_switchworld.py::test_real_pixel_cross_check_rejects_disconnected_metrics",
         "docs/workbench/switchworld.md",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/source-comparison.md",
@@ -25,9 +25,10 @@
   },
   "prerequisites": {
     "output_storage": {
-      "status": "unverified",
-      "reason": "Configured storage authentication and listing passed, but no fresh run-scoped output prefix was written because a genuine case and live target are unavailable.",
+      "status": "verified",
+      "reason": "The operator-scoped route's storage capability checks passed read, list, and write. No run output is claimed until the case and workflow have completed.",
       "evidence": [
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/execution-route.json (private operator evidence, 2026-10-04)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/preflight.md"
       ]
     },
@@ -41,28 +42,26 @@
     },
     "credentials": {
       "status": "unverified",
-      "reason": "Configured Hugging Face and Nebius authentication passed, and the inspected model revisions were public/ungated, but the exact runtime fetch was not exercised in the target worker.",
+      "reason": "Operator-scoped health checks passed and the inspected model revisions were public/ungated, but the exact runtime fetch has not yet been exercised in a target worker.",
       "evidence": [
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/preflight.md",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/source-comparison.md"
       ]
     },
     "source_image": {
-      "status": "blocked",
-      "reason": "The configured Kubernetes context is absent from this VDI's kubeconfig, so the required exact-context image-pull probe cannot run.",
+      "status": "verified",
+      "reason": "The approved exact target completed an owned image-pull and digest-bound bootstrap capability probe with verified cleanup. This qualifies the selected image only for pull/startup on that private target, not for native SwitchWorld generation or public publication.",
       "evidence": [
-        "/tmp/npa-onboarding-20261002-switchworld/novel-issues.md",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/preflight.md",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/kubernetes-context-check-20261003-private.json"
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/execution-route.json (private operator evidence, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/image-preflight-20261004-private.json (status ok, digest-bound bootstrap and cleanup verified, 2026-10-04)"
       ]
     },
     "target_runtime": {
-      "status": "blocked",
-      "reason": "GPU placement and the real SkyPilot/Kubernetes workflow cannot be attempted until the configured Kubernetes context is restored or an approved exact replacement target is provided.",
+      "status": "unverified",
+      "reason": "The approved private target has verified provider identity, RBAC, and GPU capacity. The workflow now takes the target accelerator from run configuration, but native generation has not run because a rights-cleared native case remains unstaged.",
       "evidence": [
-        "/tmp/npa-onboarding-20261002-switchworld/novel-issues.md",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/preflight.md",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/kubernetes-context-check-20261003-private.json"
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/execution-route.json (private operator evidence, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/gpu-discovery-20261004-private.json"
       ]
     }
   }

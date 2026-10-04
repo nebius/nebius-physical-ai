@@ -166,6 +166,11 @@ def test_workflow_has_five_connected_real_stages() -> None:
     states = raw["states"]
 
     assert raw["config"]["source_overlay"] is True
+    assert raw["config"]["gpu_type"] == "B200"
+    assert raw["config"]["gpu_count"] == "1"
+    assert raw["resources"]["gpu"]["accelerators"] == (
+        "{{config.gpu_type}}:{{config.gpu_count}}"
+    )
     assert len(states) == 5
     assert spec.initial == "prepare-real-case"
     assert states["prepare-real-case"]["next"] == "generate-lingbot-baseline"
