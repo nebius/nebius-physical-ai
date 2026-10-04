@@ -7,6 +7,8 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -307,15 +309,57 @@ def test_real_pixel_cross_check_rejects_disconnected_metrics(tmp_path: Path) -> 
         switchworld._verify_pixel_measurement(disconnected, independent)
 
 
-def test_cv2_cross_check_and_pyav_evidence_are_separate_real_decodes(
+def test_cv2_cross_check_and_pyav_evidence_are_distinct_decode_paths(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bind upstream values to OpenCV while retaining a distinct PyAV evidence path."""
+    """Exercise the OpenCV reader contract without requiring dev-env OpenCV.
+
+    The workflow image supplies OpenCV for SwitchWorld's upstream evaluator and
+    the runtime integration proof uses that real decoder. The CPU CI environment
+    intentionally does not install the optional package, so this test supplies
+    a minimal, independently owned VideoCapture implementation to test our
+    decode loop and metric computation. The PyAV branch below still decodes the
+    actual MP4 fixtures rather than a synthetic frame manifest.
+    """
+
+    import numpy as np
 
     target = tmp_path / "target.mp4"
     prediction = tmp_path / "prediction.mp4"
     _video(target, "testsrc=size=64x48:rate=4")
     _video(prediction, "testsrc2=size=64x48:rate=4")
+
+    target_frames = [np.full((2, 2, 3), value, dtype=np.uint8) for value in range(4)]
+    prediction_frames = [
+        np.full((2, 2, 3), value + 10, dtype=np.uint8) for value in range(4)
+    ]
+
+    class Capture:
+        """Small OpenCV-compatible reader that is separate from upstream code."""
+
+        def __init__(self, path: str) -> None:
+            self.frames = target_frames if path == str(target) else prediction_frames
+            self.index = 0
+
+        def isOpened(self) -> bool:  # noqa: N802 - OpenCV API spelling
+            return True
+
+        def read(self) -> tuple[bool, object]:
+            if self.index == len(self.frames):
+                return False, None
+            frame = self.frames[self.index]
+            self.index += 1
+            return True, frame
+
+        def release(self) -> None:
+            return None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "cv2",
+        SimpleNamespace(VideoCapture=Capture, resize=lambda frame, _: frame),
+    )
 
     upstream_decoder = switchworld._independent_cv2_pixel_measurement(
         target, prediction
@@ -338,7 +382,8 @@ def test_cv2_cross_check_and_pyav_evidence_are_separate_real_decodes(
         switchworld._independent_pixel_measurement(target, prediction)
     )
     assert pyav_evidence["status"] == "passed"
-    assert pyav_evidence["evaluated_frames"] == upstream_decoder["evaluated_frames"]
+    assert pyav_evidence["evaluated_frames"] == 4
+    assert upstream_decoder["evaluated_frames"] == 4
 
 
 def test_workflow_has_five_connected_real_stages() -> None:
