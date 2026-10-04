@@ -223,6 +223,56 @@ def test_card_split_uses_qualified_framework_torch_when_overlay_lacks_it(
     )
 
 
+def test_checkpoint_fetch_uses_qualified_framework_hub_when_overlay_lacks_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    framework_python = tmp_path / "cosmos-framework" / ".venv" / "bin" / "python"
+    framework_python.parent.mkdir(parents=True)
+    framework_python.write_text("placeholder\n")
+    monkeypatch.setenv("COSMOS3_REPO", str(framework_python.parents[2]))
+
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    for name in (
+        "LICENSE",
+        "README.md",
+        "config.json",
+        "checkpoint.json",
+        "model.safetensors.index.json",
+    ):
+        (checkpoint / name).write_text("metadata\n")
+    (checkpoint / "export_manifest.json").write_text(
+        json.dumps({"framework_commit": droid_fd.CARD_FRAMEWORK_REVISION})
+    )
+    for index in range(7):
+        (checkpoint / f"model-{index}.safetensors").write_bytes(bytes([index]))
+
+    original_import = builtins.__import__
+
+    def no_overlay_hub(name: str, *args: object, **kwargs: object) -> object:
+        if name == "huggingface_hub":
+            raise ImportError("hub intentionally absent from source overlay")
+        return original_import(name, *args, **kwargs)
+
+    def framework_fetch(argv: list[str], **_kwargs: object) -> SimpleNamespace:
+        assert argv[0] == str(framework_python)
+        assert argv[3] == droid_fd.CHECKPOINT_REPOSITORY
+        assert argv[4] == CHECKPOINT_REVISION
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"sha": CHECKPOINT_REVISION, "path": str(checkpoint)}),
+        )
+
+    monkeypatch.setattr(builtins, "__import__", no_overlay_hub)
+    monkeypatch.setattr(droid_fd.subprocess, "run", framework_fetch)
+
+    resolved, provenance = droid_fd._download_checkpoint(CHECKPOINT_REVISION)
+
+    assert resolved == checkpoint
+    assert provenance["model_info_sha"] == CHECKPOINT_REVISION
+    assert len(provenance["weight_sha256"]) == 7
+
+
 def test_prepare_requires_the_source_action_gripper_not_pose_state(
     tmp_path: Path,
 ) -> None:

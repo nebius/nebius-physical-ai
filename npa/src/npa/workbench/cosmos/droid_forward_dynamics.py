@@ -609,7 +609,12 @@ def _download_checkpoint(revision: str) -> tuple[Path, dict[str, Any]]:
     return local_dir, {
         "repository": CHECKPOINT_REPOSITORY,
         "revision": revision,
-        "model_info_sha": str(info.sha),
+        # ``info`` exists only on the source-overlay huggingface_hub path.
+        # The qualified framework fallback independently records the same
+        # immutable model-info SHA as ``resolved_sha`` in its JSON receipt.
+        # Referencing the overlay-local variable here made a successfully
+        # fetched fallback checkpoint fail while building provenance.
+        "model_info_sha": resolved_sha,
         "export_framework_commit": CARD_FRAMEWORK_REVISION,
         "metadata_sha256": {
             name: file_digest(local_dir / name) for name in sorted(expected)
