@@ -1,15 +1,17 @@
 # LingBot-VA LIBERO-Long (quarantined candidate)
 
-This is a source-only onboarding candidate for [Robbyant's LingBot-VA](https://github.com/Robbyant/lingbot-va), not an accepted NPA model, benchmark, image, or robot capability. The executable specification is [`workflows/testing/lingbot-va-libero-long.yaml`](../../workflows/testing/lingbot-va-libero-long.yaml). Its successful path has five connected substantive stages:
+This is a source-only onboarding candidate for [Robbyant's LingBot-VA](https://github.com/Robbyant/lingbot-va), not an accepted NPA model, benchmark, image, or robot capability. The executable specification is [`workflows/testing/lingbot-va-libero-long.yaml`](../../workflows/testing/lingbot-va-libero-long.yaml). Its successful path has six connected substantive stages:
 
-1. Select, reindex, and split actual operator-staged CC-BY LeRobot v2.1
+1. Directly stage only the exact CC-BY LeRobot v2.1 LIBERO-Long raw episodes
+   from HuggingFaceVLA into the target-owned, run-scoped object-store prefix.
+2. Select, reindex, and split the actual staged CC-BY LeRobot v2.1
    LIBERO-Long episodes; decode both embedded cameras to 10 Hz MP4 and use the
    native Wan2.2 VAE/text encoder to make fresh latents.
-2. Continue the official LIBERO-Long derivative with upstream `wan_va.train`.
-3. Serve and roll out the upstream websocket policy on the native ten-task
+3. Continue the official LIBERO-Long derivative with upstream `wan_va.train`.
+4. Serve and roll out the upstream websocket policy on the native ten-task
    LIBERO-Long (`libero_10`) suite.
-4. Aggregate actual success JSON and emitted action-prediction validity metrics.
-5. Produce a Rerun recording and a copied, decoded real rollout MP4.
+5. Aggregate actual success JSON and emitted action-prediction validity metrics.
+6. Produce a Rerun recording and a copied, decoded real rollout MP4.
 
 The implementation deliberately invokes upstream training/server/client code; NPA only supplies runtime isolation, S3 handoff, telemetry removal, provenance, validation, and output checks. It does not use a RoboTwin task. RoboTwin remains outside this scope until a separately pinned, real proof exists.
 

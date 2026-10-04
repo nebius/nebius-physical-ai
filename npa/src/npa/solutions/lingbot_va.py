@@ -21,6 +21,7 @@ from io import BytesIO
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
@@ -174,6 +175,98 @@ def _tree_inventory_digest(root: Path) -> str:
 def _uri_join(uri: str, relative_path: str) -> str:
     """Append a repository-relative path to a staged local or S3 directory URI."""
     return f"{uri.rstrip('/')}/{relative_path.lstrip('/')}"
+
+
+def _source_file_descriptor(path: Path) -> dict[str, int | str]:
+    """Record the exact bytes staged from the reviewed public raw source."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return {"sha256": digest.hexdigest(), "size_bytes": path.stat().st_size}
+
+
+def _download_raw_hf_file(relative_path: str, destination: Path) -> Path:
+    """Download one exact raw-dataset file without accepting a moving revision."""
+    from huggingface_hub import hf_hub_download
+
+    cached = Path(
+        hf_hub_download(
+            repo_id=RAW_DATASET_ID,
+            repo_type="dataset",
+            revision=RAW_DATASET_REF,
+            filename=relative_path,
+        )
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(cached, destination)
+    return destination
+
+
+def stage_raw_source(output_uri: str) -> dict[str, Any]:
+    """Stage only actual CC-BY LIBERO-Long raw episodes to this run's store.
+
+    This is the lawful input-provisioning boundary for ``prepare``.  It starts
+    with the immutable HuggingFaceVLA revision, validates its declared CC-BY
+    license and LeRobot v2.1 metadata, selects only the ten actual LIBERO-Long
+    tasks, and writes a per-file source receipt only after all selected files
+    have been transferred.  It does not download or derive the separate
+    Robbyant NC latent dataset.
+    """
+    with tempfile.TemporaryDirectory(prefix="npa-lingbot-va-stage-raw-") as temporary:
+        staged = Path(temporary) / "raw-libero-v2.1"
+        metadata_files = (
+            "README.md",
+            "meta/info.json",
+            "meta/tasks.jsonl",
+            "meta/episodes.jsonl",
+            "meta/episodes_stats.jsonl",
+        )
+        for relative_path in metadata_files:
+            _download_raw_hf_file(relative_path, staged / relative_path)
+        readme = (staged / "README.md").read_text(encoding="utf-8")
+        if not re.search(r"(?im)^license:\s*cc-by-4\.0\s*$", readme):
+            raise ValueError("Pinned HuggingFaceVLA README does not declare CC-BY-4.0")
+        info, selected_records, _ = _load_raw_hfvla_metadata(staged)
+        chunk_size = info.get("chunks_size")
+        if type(chunk_size) is not int or chunk_size < 1:
+            raise ValueError("Raw HuggingFaceVLA metadata has no valid chunk size")
+        for record in selected_records:
+            relative_path = _raw_episode_relative_path(record, chunk_size)
+            _download_raw_hf_file(relative_path, staged / relative_path)
+        files = {
+            path.relative_to(staged).as_posix(): _source_file_descriptor(path)
+            for path in sorted(staged.rglob("*"))
+            if path.is_file()
+        }
+        manifest = {
+            "schema": "npa.lingbot_va.raw_lerobot_v2_1.v1",
+            "complete": True,
+            "dataset_id": RAW_DATASET_ID,
+            "dataset_revision": RAW_DATASET_REF,
+            "dataset_license": RAW_DATASET_LICENSE,
+            "dataset_format": RAW_DATASET_FORMAT,
+            "selected_task_ids": list(LIBERO_LONG_TASK_IDS),
+            "selected_source_episode_indices": [
+                record["episode_index"] for record in selected_records
+            ],
+            "selected_episode_count": len(selected_records),
+            "files": files,
+            "provenance": _provenance(),
+        }
+        _write_json(staged / RAW_SOURCE_MANIFEST, manifest)
+        source_uri = _upload_tree(staged, output_uri)
+        return {
+            "schema": manifest["schema"],
+            "stage": "exact_cc_by_hfvla_libero_long_raw_source_staging",
+            "source_dataset_uri": source_uri,
+            "source_dataset_id": RAW_DATASET_ID,
+            "source_dataset_revision": RAW_DATASET_REF,
+            "source_dataset_license": RAW_DATASET_LICENSE,
+            "selected_episode_count": len(selected_records),
+            "source_inventory_sha256": _tree_inventory_digest(staged),
+            "provenance": _provenance(),
+        }
 
 
 def _action_contract_from_quantiles(
@@ -1578,6 +1671,8 @@ def visualize(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="NPA LingBot-VA LIBERO-Long stages")
     subcommands = parser.add_subparsers(dest="command", required=True)
+    command = subcommands.add_parser("stage-raw")
+    command.add_argument("--output-uri", required=True)
     command = subcommands.add_parser("prepare")
     command.add_argument("--source-uri", required=True)
     command.add_argument("--prepared-dataset-uri", required=True)
@@ -1621,7 +1716,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parser().parse_args(argv)
-    if args.command == "prepare":
+    if args.command == "stage-raw":
+        result = stage_raw_source(args.output_uri)
+    elif args.command == "prepare":
         result = prepare(
             args.source_uri,
             args.prepared_dataset_uri,

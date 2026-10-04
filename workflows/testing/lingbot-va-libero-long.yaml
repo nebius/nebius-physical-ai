@@ -3,10 +3,10 @@ kind: Workflow
 metadata:
   name: lingbot-va-libero-long
   description: >-
-    Quarantined LingBot-VA LIBERO-Long path: select actual multi-step episodes
-    from a pinned operator-staged CC-BY raw LeRobot v2.1 dataset, decode its
-    embedded cameras and create fresh upstream Wan2.2 latents, then run the
-    upstream eight-GPU Flex Attention
+    Quarantined LingBot-VA LIBERO-Long path: stage actual multi-step episodes
+    from the exact CC-BY HuggingFaceVLA LeRobot v2.1 source into this run's
+    object-store prefix, decode embedded cameras and create fresh upstream
+    Wan2.2 latents, then run the upstream eight-GPU Flex Attention
     post-train recipe from the official LIBERO-Long derivative, run upstream
     Torch-attention websocket inference with genuine LIBERO-Long rollouts,
     aggregate numerical evidence, then emit an RRD plus a real rollout MP4.
@@ -17,9 +17,9 @@ config:
   # Must be replaced with a pushed, immutable, source-only candidate after its
   # exact byte/security checks. It is intentionally not a released tool route.
   candidate_image: "ghcr.io/nebius/nebius-physical-ai/npa-lingbot-va@sha256:REPLACE_WITH_VERIFIED_CANDIDATE_DIGEST"
-  # Operator-staged only: exact HuggingFaceVLA/libero@affa19... raw LeRobot v2.1
-  # source (CC-BY-4.0). This is not the Robbyant CC-BY-NC-SA latent dataset.
-  source_dataset_uri: "s3://{{config.bucket}}/operator-staged/lingbot-va/hfvla-libero-v2.1/"
+  # Written by stage_raw from exact HuggingFaceVLA/libero@affa19... raw LeRobot
+  # v2.1 source (CC-BY-4.0), never from the Robbyant CC-BY-NC-SA latent data.
+  source_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/source/raw-libero-v2.1/"
   prepared_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepare/dataset/"
   prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepare/prepared.json"
   checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/checkpoints/"
@@ -51,8 +51,20 @@ resources:
     accelerators: RTXPRO6000:1
     cpus: 32
     memory: 256Gi
-initial: prepare
+initial: stage_raw
 states:
+  stage_raw:
+    description: >-
+      Download the exact CC-BY-4.0 HuggingFaceVLA/libero revision directly to
+      this run's target-owned object store, validate the v2.1 metadata and
+      actual LIBERO-Long labels, select only those raw episodes, and emit a
+      per-file source/terms manifest. It never fetches Robbyant latent data.
+    resources: cpu
+    run:
+      argv: [lingbot-va-runtime, exec, python, -m, npa.solutions.lingbot_va, stage-raw, --output-uri, "{{config.source_dataset_uri}}"]
+    outputs:
+      - {uri: "{{config.source_dataset_uri}}", schema: npa.lingbot_va.raw_lerobot_v2_1.v1}
+    next: prepare
   prepare:
     description: >-
       Select actual LIBERO-Long episodes from raw LeRobot v2.1 parquet data,
@@ -60,6 +72,7 @@ states:
       upstream Wan2.2 VAE/text latents, add task-label action segmentation, and
       recompute train-split 7D-to-30D action statistics before publishing the
       derived dataset and trajectory-disjoint split manifest.
+    needs: [stage_raw]
     resources: gpu
     run:
       argv: [lingbot-va-runtime, exec, python, -m, npa.solutions.lingbot_va, prepare, --source-uri, "{{config.source_dataset_uri}}", --prepared-dataset-uri, "{{config.prepared_dataset_uri}}", --output-uri, "{{config.prepared_uri}}"]

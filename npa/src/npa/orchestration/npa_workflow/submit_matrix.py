@@ -219,13 +219,14 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         plan_only=True,
         plan_only_justification=(
             "requires an independently scanned immutable candidate image and an "
-            "operator-staged copy of the exact CC-BY-4.0 raw LeRobot source "
-            "before the five genuine GPU stages may be submitted"
+            "operator-private runtime fetch of the exact CC-BY-4.0 raw LeRobot "
+            "source before native stages may be submitted"
         ),
         notes=(
-            "Five-stage upstream LingBot-VA raw-data preparation, post-train, "
-            "closed-loop rollout, evaluation, and RRD/MP4 path; no live claim is "
-            "made until the exact private image and native artifacts are inspected."
+            "Six-stage upstream LingBot-VA raw-source staging, preparation, "
+            "post-train, closed-loop rollout, evaluation, and RRD/MP4 path; no "
+            "live claim is made until the exact private image and native artifacts "
+            "are inspected."
         ),
     ),
     SubmitLiveCase(
