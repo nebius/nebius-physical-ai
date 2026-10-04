@@ -309,9 +309,12 @@ def _require_libero_plus_license(root: Path) -> Path:
     license_file = next((path for path in candidates if path.is_file()), None)
     if license_file is None:
         raise SylvestComparisonError(
-            "LIBERO-Plus source has no license file. Do not execute it until the "
-            "upstream authors publish or identify an applicable license; this is "
-            "not an NPA EULA requirement."
+            "LIBERO-Plus source has no license file. Do not execute that source "
+            "as a benchmark until the upstream authors publish or identify an "
+            "applicable license. A separately scoped author-published asset-only "
+            "compatibility check through original MIT LIBERO does not license this "
+            "source or establish benchmark equivalence; this is not an NPA EULA "
+            "requirement."
         )
     return license_file
 

@@ -38,6 +38,26 @@ retains the same five-stage contract but is deliberately **plan-only**. Its
 pinned LIBERO-Plus source has no authoritative source license; it is not a
 substitute for, nor evidence of, the original-LIBERO result.
 
+### Author-published asset compatibility is a separate, narrow capability
+
+The author-published [`Sylvest/LIBERO-plus` asset
+card](https://huggingface.co/datasets/Sylvest/LIBERO-plus) declares `mit`.
+That permits a distinct operator-private **asset-only** profile: hash an exact
+selected archive and card, assemble a selected scene through original
+MIT-licensed LIBERO's `TableArena`, and retain native MuJoCo/EGL render
+evidence. It does **not** grant a license to
+[`sylvestf/LIBERO-plus`](https://github.com/sylvestf/LIBERO-plus), whose source
+remains deferred.
+
+The scoped native compatibility check used original LIBERO at the pinned
+revision, compiled the selected scene with MuJoCo 3.3.2, passed `mj_forward`,
+and emitted two distinct decoded 256×256 EGL camera views. Its selected asset
+archive/card hashes, scene hash, images, and renderer receipt are retained in
+operator-private run evidence. The inspected asset profile has no BDDL task
+definition or benchmark randomizer. It is therefore not a LIBERO-Plus rollout,
+policy evaluation, 10,030-task benchmark, success metric, or generalization
+claim; those remain blocked on separately licensed benchmark-source execution.
+
 ## Evidence boundary
 
 The checkpoint card's leaderboard is upstream authorship, not an NPA result. A
@@ -115,8 +135,9 @@ Preserve the upstream citations with reports:
 | Original LIBERO source | Pinned source `LICENSE` is MIT (SHA-256 `e2885fd3…68ff6`). | Runtime-fetch or use in an operator-private runtime; preserve its copyright/license and source revision in protocol provenance. |
 | Original LIBERO benchmark data and stored initial states | The pinned upstream README separately identifies datasets as CC-BY-4.0. | Keep initial-state data and run outputs operator-private for this qualification; preserve source/data license attribution in protocol provenance and do not infer a public redistribution decision for resulting media. |
 | LIBERO-Plus source | Pinned source has no `LICENSE`, `NOTICE`, or `COPYING`; GitHub supplies no license metadata. | Do not bake, distribute, or execute it until the authors publish or identify a license. This blocks only the separate LIBERO-Plus workflow. |
+| Author-published LIBERO-Plus task assets (narrow asset-only profile) | The [`Sylvest/LIBERO-plus` dataset card](https://huggingface.co/datasets/Sylvest/LIBERO-plus) declares `mit`; its exact selected archive and card revision are hash-bound in private run provenance. The archive does not license the separate GitHub benchmark source. | Runtime-fetch an exact selected asset only into an operator-private original-MIT-LIBERO scene-compatibility run. Do not bake or redistribute it, and do not call the resulting MuJoCo/EGL render a benchmark, rollout, policy result, or source grant. |
 | Candidate and baseline weights | The pinned public Hugging Face model cards declare `mit` and were readable without a gated-access prompt. | Operator runtime fetch only; no weights, adapters, or cache in a public image. |
-| LIBERO-Plus assets/training data | The public cards for `Sylvest/LIBERO-plus`, `Sylvest/libero_plus_rlds`, `Sylvest/libero_plus_data_4suite`, and `Sylvest/libero_plus_lerobot` declare `mit`. | Runtime fetch only after source execution is lawful; no data/assets baked or redistributed. |
+| Other LIBERO-Plus assets/training data | The public cards for `Sylvest/libero_plus_rlds`, `Sylvest/libero_plus_data_4suite`, and `Sylvest/libero_plus_lerobot` declare `mit`. Their task/benchmark relationship and output scope are separate questions. | Do not bake or redistribute. This onboarding has not accepted them for benchmark-source execution, training, or policy evaluation. |
 | Runtime cache | Revision-keyed cache uses a lock, validates an inventory including OFT adapter/action-head/proprioception-projector files, and atomically records content hashes. | Operator-owned, non-public; publish only checksum-bearing provenance. |
 | Run outputs | MP4s, paired data, RRD, and report are from a future run. | Keep run-scoped and label simulator-only; access does not imply output redistribution rights. |
 

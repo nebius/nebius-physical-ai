@@ -164,15 +164,22 @@ robots remain deferred. See [`byof-libero.md`](byof-libero.md).
 ### Sylvest OpenVLA-OFT mixed-data checkpoint
 
 This separate checkpoint-evaluation candidate does not inherit LIBERO's
-admission, source rights, image, or evidence. It pins
-`sylvestf/LIBERO-plus@4976dc30028e805ff8094b55501d532c48fec182`,
+admission, image, or evidence. Its primary route pins original MIT
+`Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01`,
 `moojink/openvla-oft@e4287e94541f459edc4feabc4e181f537cd569a8`, candidate
 `Sylvest/openvla-7b-oft-finetuned-libero-plus-mixdata@a85655ec941bae6644c9fbdf62db02b9726d7cf5`,
 and baseline
 `moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10@638918f3d1c2e43a39a8a20772bdb8b91835e4b7`.
+The separate `sylvestf/LIBERO-plus@4976dc30028e805ff8094b55501d532c48fec182`
+source has no authoritative license and remains deferred. The author-published
+`Sylvest/LIBERO-plus` asset card's MIT metadata supports only a hash-bound,
+operator-private original-LIBERO scene-compatibility render; it grants neither
+the source nor benchmark equivalence.
 
 | Capability | Status | Upstream basis / artifact contract |
 | --- | --- | --- |
+| `openvla_oft_original_libero_paired_comparison` | operator-private qualification in progress | Five connected stages: hash-bound original MIT LIBERO task/initial-state/checkpoint preparation; baseline and candidate upstream OFT rollouts over identical cases; paired numerical metrics; and decoded MP4/RRD/report. Missing candidate training inventory is always `training_coverage_unknown`, never a held-out claim. |
+| `libero_plus_author_asset_scene_compatibility` | native operator-private asset proof; not a benchmark | Exact author-published MIT asset archive/card selected through original MIT LIBERO `TableArena`; MuJoCo compile/`mj_forward` and two EGL camera renders. No BDDL task suite or source randomizer was accepted, so this is not a rollout, policy metric, full benchmark, or source-rights decision. |
 | `libero_plus_protocol_preparation` | deferred | Published `task_classification.json` for `libero_spatial`, `libero_object`, `libero_goal`, or `libero_10`; emits a hash-bound held-out `protocol.json` only after excluding an authoritative mix-SFT task inventory, otherwise explicitly emits `training_coverage_unknown` and permits no generalization claim. |
 | `openvla_oft_libero_plus_paired_rollouts` | deferred hard gate | Upstream `experiments.robot.libero.run_libero_eval.run_task` once per exact task/seed for each pinned checkpoint; emits two distinct `rollouts.json` files and upstream MP4 manifests. |
 | `paired_robustness_difference` | deferred | Identical protocol hash/case identity is required before numerical delta, category summaries, normal interval, and exact McNemar p-value are emitted. |
