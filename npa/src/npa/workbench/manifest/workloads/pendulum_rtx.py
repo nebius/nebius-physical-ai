@@ -22,6 +22,8 @@ BLENDER_DIR = "/work/blender-4.2.3-linux-x64"
 BLENDER_BIN = os.path.join(BLENDER_DIR, "blender")
 
 SCENE_SCRIPT = r"""
+import math
+
 import bpy
 import numpy as np
 
