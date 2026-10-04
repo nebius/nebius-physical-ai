@@ -61,12 +61,16 @@ transitively, then pins both licensed replacement sources. The resulting image
 is operator-private; no public registry upload or public image claim is made.
 
 For retained MP4 evidence, the private Ubuntu base supplies its distribution
-`ffmpeg` executable. The exact installed package/copyright record is retained
-with private image evidence. The recipe deletes the `imageio-ffmpeg`
-wheel-bundled static executable and the image scan rejects that path, so the
-private image uses `/usr/bin/ffmpeg` without treating the wheel copy as an
-accepted payload. This is a private runtime dependency only; it does not alter
-the no-publication disposition or introduce a new acceptance mechanism.
+`ffmpeg` executable. The inspected image contains
+`ffmpeg=7:4.4.2-0ubuntu0.22.04.1`; its installed Debian-format copyright record
+states that most FFmpeg files are LGPL-2.1-or-later, that default Debian package
+builds use GPL components and yield GPL-2.0-or-later binaries, and that those
+packages do not combine non-free libraries. That package notice is retained in
+private image evidence. The recipe deletes the `imageio-ffmpeg` wheel-bundled
+static executable and the image scan rejects that path, so the private image
+uses `/usr/bin/ffmpeg` without treating the wheel copy as an accepted payload.
+This is a private runtime dependency only; it does not alter the no-publication
+disposition or introduce a new acceptance mechanism.
 
 ## Reconstruction and behavioral boundary
 
