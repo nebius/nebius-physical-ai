@@ -1,0 +1,71 @@
+apiVersion: manifest/v0.1
+name: large-artifact
+version: 0.1.0
+description: >
+  Tiled CUDA matmul producing a ~1 GiB binary artifact via S3, with an
+  S3-staged input config. Third tool onboarded by descriptor only — proves
+  the mechanism generalizes to large artifacts and S3 I/O with zero
+  per-tool code.
+image:
+  repository: pytorch/pytorch
+  tag: 2.8.0-cuda12.8-cudnn9-runtime
+  digest: sha256:417bd75df6365104c283ea4c1651fb3530d9eb5a4c2fafa51943cff2a94e6385
+artifact_store:
+  type: s3
+  bucket: my-bucket
+  prefix: manifest-mvp/large-artifact/
+  endpoint_url: https://storage.eu-north1.nebius.cloud
+inputs:
+  - name: config
+    s3_uri: s3://my-bucket/manifest-mvp/inputs/large_artifact_config.json
+    container_path: /work/config.json
+payload_files:
+  - container_path: /work/large_matmul.py
+    host_path: workloads/large_matmul.py
+commands:
+  run:
+    argv: ["python", "/work/large_matmul.py", "--size", "{{size}}", "--seed", "{{seed}}", "--tiles", "{{tiles}}", "--config", "{{config_path}}", "--out-npy", "{{npy_path}}", "--out-json", "{{json_path}}"]
+    params:
+      size:
+        type: integer
+        default: 16384
+        min: 1024
+      seed:
+        type: integer
+        default: 0
+      tiles:
+        type: integer
+        default: 4
+        min: 1
+      config_path:
+        type: string
+        default: /work/config.json
+      npy_path:
+        type: string
+        default: /work/result.npy
+      json_path:
+        type: string
+        default: /work/summary.json
+    outputs:
+      matrix:
+        path: /work/result.npy
+        format: binary
+        required: true
+      summary:
+        path: /work/summary.json
+        format: json
+        required: true
+resources:
+  gpu: 1
+  memory_gb: 16
+success:
+  checks:
+    - artifact: summary
+      json_path: device_ok
+      equals: true
+    - artifact: summary
+      json_path: npy_bytes
+      greater_than: 1000000000
+    - artifact: summary
+      json_path: elapsed_s
+      greater_than: 0

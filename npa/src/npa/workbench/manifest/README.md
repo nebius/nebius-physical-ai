@@ -34,12 +34,26 @@ Backend (local docker | nebius mk8s pod)  <- reuses existing machinery
   dispatch to a backend, collect artifacts, evaluate success checks,
   persist a verification record **separately from the author's descriptor**.
 - `backends.py` — local `docker run` translator.
-- `nebius_backend.py` — ephemeral mk8s pod translator (ConfigMap payload,
-  base64 artifact markers in logs, always torn down).
+- `nebius_backend.py` — ephemeral mk8s **Job** translator (ConfigMap payload,
+  inline base64 markers for small artifacts, S3 upload for binary ones,
+  always torn down; standard `npa` labels + TTL).
 - `cli.py`, `sdk.py`, `yaml_spec.py`, `api.py` — the four waiters.
-- `descriptors/` — `cuda-matmul` (deterministic CUDA matmul) and
-  `gpu-info` (nvidia-smi probe), the latter onboarded with zero code changes.
-- `workloads/matmul.py` — the GPU workload (seed-controlled, checksum artifact).
+- `descriptors/` — `cuda-matmul` (deterministic CUDA matmul),
+  `gpu-info` (nvidia-smi probe), and `large-artifact` (tiled matmul, S3 input
+  staging, ~1 GiB binary artifact via S3) — each onboarded with zero code
+  changes.
+- `workloads/matmul.py`, `workloads/large_matmul.py` — the GPU workloads.
+
+## Artifact transport
+
+Small artifacts (`json`/`text`) travel inline as base64 log markers. Large
+or opaque artifacts (`format: binary`) travel through the descriptor's
+`artifact_store` (S3): the in-pod runner uploads them and reports `s3://`
+URIs; the verification record carries the URIs, and success checks still run
+against the inline JSON summary. A descriptor declaring binary outputs
+without an `artifact_store` fails fast with a clear error instead of a
+silent log blowup. `inputs` (`s3_uri` -> container path) are staged in-pod
+by the runner, so large inputs never transit the 1 MiB ConfigMap limit.
 
 ## Design rules
 
@@ -54,11 +68,14 @@ Backend (local docker | nebius mk8s pod)  <- reuses existing machinery
 
 ## Evidence
 
-Validated on a real NVIDIA RTX PRO 6000 (Nebius mk8s, ephemeral pods):
+Validated on a real NVIDIA RTX PRO 6000 (Nebius mk8s, ephemeral Jobs):
 `cuda-matmul` 16384x16384 FP32 through all four surfaces from one descriptor —
 cli/sdk/yaml at seed 0 produced bit-identical checksums (determinism),
-api at seed 1 produced a different checksum (seed sensitivity).
-See `npa/tests/workbench/test_manifest_mvp.py` (stub-backend unit tests).
+api at seed 1 produced a different checksum (seed sensitivity). `large-artifact`
+proved the transport generalizes: a ~1 GiB FP32 result matrix uploaded to S3
+with the URI recorded, plus S3-staged input config and a tiled computation
+driven by a non-trivial flag set. See
+`npa/tests/workbench/test_manifest_mvp.py` (stub-backend unit tests).
 
 ## Status
 

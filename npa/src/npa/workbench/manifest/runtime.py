@@ -27,14 +27,20 @@ from .schema import CommandSpec
 
 class Backend(Protocol):
     name: str
+    s3_upload: bool  # True if binary outputs go through artifact_store (S3)
 
     def run(
         self,
         image_pinned: str,
         argv: list[str],
         gpu: int,
-        outputs: list[tuple[str, str]],  # (output name, container path)
-        payload: dict[str, str] | None = None,  # container path -> file content
+        outputs: list[tuple[str, str, str, str]],  # (name, path, format, source)
+        payload: dict[str, str] | None = None,
+        memory_gb: int = 0,
+        s3_inputs: list[tuple[str, str]] | None = None,  # (s3_uri, container_path)
+        s3_output_names: list[str] | None = None,
+        s3_prefix: str = "",
+        s3_env: dict[str, str] | None = None,
     ) -> "BackendResult": ...
 
 
@@ -109,6 +115,7 @@ class Runtime:
     ) -> InvocationResult:
         """The one execution path. Every surface calls this."""
         t0 = time.time()
+        run_id = uuid.uuid4().hex[:8]
         descriptor = self.catalog.get(tool, version)
         if command not in descriptor.commands:
             raise KeyError(f"{descriptor.id}: unknown command {command!r}")
@@ -130,20 +137,43 @@ class Runtime:
         check_results: list[dict[str, Any]] = []
         all_ok = False
         try:
-            outputs = [(o.name, o.path) for o in spec.outputs.values()]
+            outputs = [
+                (o.name, o.path, o.format, o.source) for o in spec.outputs.values()
+            ]
+            binary_names = [
+                o.name for o in spec.outputs.values() if o.format == "binary"
+            ]
+            if binary_names and be.s3_upload and descriptor.artifact_store is None:
+                raise ValueError(
+                    f"binary outputs {binary_names} require artifact_store "
+                    f"on backend {be.name!r}"
+                )
             payload: dict[str, str] = {}
             for cpath, hpath in descriptor.payload_files:
-                p = Path(hpath)
-                if not p.is_absolute():
-                    # Relative to the descriptor's catalog dir parent.
-                    p = self.catalog.descriptor_dir.parent / hpath
+                p = self.catalog.descriptor_dir.parent / hpath
+                # Confined at parse time to relative paths without '..';
+                # re-check the resolved location stays under the catalog root.
+                root = self.catalog.descriptor_dir.parent.resolve()
+                if root not in p.resolve().parents and p.resolve() != root:
+                    raise ValueError(f"payload escapes catalog root: {hpath!r}")
                 payload[cpath] = p.read_text()
+            store = descriptor.artifact_store
+            s3_prefix = (
+                f"s3://{store.bucket}/{store.prefix.rstrip('/')}/{run_id}/"
+                if store
+                else ""
+            )
             bres = be.run(
                 image_pinned=descriptor.image.pinned(),
                 argv=argv,
                 gpu=descriptor.resources.gpu,
                 outputs=outputs,
                 payload=payload,
+                memory_gb=descriptor.resources.memory_gb,
+                s3_inputs=[(i.s3_uri, i.container_path) for i in descriptor.inputs],
+                s3_output_names=binary_names,
+                s3_prefix=s3_prefix,
+                s3_env=None,
             )
             exit_code = bres.exit_code
             artifacts, parse_errors = self._collect_artifacts(spec, bres)
@@ -189,11 +219,9 @@ class Runtime:
             error=error,
         )
         # Verification evidence, stored separately from the author's descriptor.
-        # Millisecond timestamp + uuid: two runs in the same second never collide.
-        rec_path = (
-            self.records_dir
-            / f"{descriptor.name}-{int(t0 * 1000)}-{uuid.uuid4().hex[:8]}-{surface}.json"
-        )
+        # run_id correlates the record with the S3 prefix; two runs never
+        # collide.
+        rec_path = self.records_dir / f"{descriptor.name}-{run_id}-{surface}.json"
         rec_path.write_text(json.dumps(result.verification_record(), indent=2))
         return result
 
@@ -202,7 +230,8 @@ class Runtime:
         spec: CommandSpec, bres: BackendResult
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Collect declared outputs; malformed JSON becomes a failed check,
-        not an exception."""
+        not an exception. Binary outputs arrive as S3 URIs (or base64 on
+        backends without S3) and are kept as strings."""
         artifacts: dict[str, Any] = {}
         errors: list[dict[str, Any]] = []
         for oname, ospec in spec.outputs.items():
@@ -212,7 +241,9 @@ class Runtime:
                 raw = bres.artifacts_raw.get(oname)
             if raw is None:
                 continue
-            if ospec.format == "json":
+            if ospec.format == "binary":
+                artifacts[oname] = raw
+            elif ospec.format == "json":
                 try:
                     artifacts[oname] = json.loads(raw)
                 except json.JSONDecodeError as e:

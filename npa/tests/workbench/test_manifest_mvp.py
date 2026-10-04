@@ -8,6 +8,7 @@ input validation, artifact checks, and per-surface provenance.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from npa.workbench.manifest import (
     Catalog,
     DescriptorError,
     LocalDockerBackend,
+    NebiusBackend,
     Runtime,
     load_descriptor,
     parse_descriptor,
@@ -25,6 +27,7 @@ from npa.workbench.manifest import (
 from npa.workbench.manifest import sdk as sdk_surface
 from npa.workbench.manifest import yaml_spec
 from npa.workbench.manifest.runtime import BackendResult
+from npa.workbench.manifest.schema import CommandSpec, OutputSpec
 
 PACKAGE_DIR = Path(manifest.__file__).resolve().parent
 
@@ -33,32 +36,52 @@ class StubBackend:
     """Pretends to run the container; echoes a fabricated artifact."""
 
     name = "stub"
+    s3_upload = False
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def run(self, image_pinned, argv, gpu, outputs, payload=None):
+    def run(
+        self,
+        image_pinned,
+        argv,
+        gpu,
+        outputs,
+        payload=None,
+        memory_gb=0,
+        s3_inputs=None,
+        s3_output_names=None,
+        s3_prefix="",
+        s3_env=None,
+    ):
         self.calls.append(
             {
                 "image": image_pinned,
                 "argv": argv,
                 "gpu": gpu,
+                "memory_gb": memory_gb,
                 "outputs": outputs,
                 "payload": payload or {},
+                "s3_inputs": s3_inputs,
+                "s3_output_names": s3_output_names,
+                "s3_prefix": s3_prefix,
             }
         )
         artifacts = {}
-        for oname, _cpath in outputs:
-            artifacts[oname] = json.dumps(
-                {
-                    "device_ok": True,
-                    "device": "STUB-GPU",
-                    "elapsed_s": 3.21,
-                    "checksum": 1.5,
-                    "size": 8192,
-                    "seed": 0,
-                }
-            )
+        for oname, _cpath, fmt, _source in outputs:
+            if fmt == "binary":
+                artifacts[oname] = "stub-base64-blob"
+            else:
+                artifacts[oname] = json.dumps(
+                    {
+                        "device_ok": True,
+                        "device": "STUB-GPU",
+                        "elapsed_s": 3.21,
+                        "checksum": 1.5,
+                        "size": 8192,
+                        "seed": 0,
+                    }
+                )
         return BackendResult(
             exit_code=0,
             logs="stub",
@@ -80,7 +103,11 @@ def make_runtime(tmp_path: Path) -> tuple[Runtime, StubBackend]:
 
 def test_package_imports_and_lists_both_tools(tmp_path: Path) -> None:
     rt, _ = make_runtime(tmp_path)
-    assert rt.catalog.list() == ["cuda-matmul@0.1.0", "gpu-info@0.1.0"]
+    assert rt.catalog.list() == [
+        "cuda-matmul@0.1.0",
+        "gpu-info@0.1.0",
+        "large-artifact@0.1.0",
+    ]
 
 
 def test_argv_rendered_as_list_with_digest_pinned_image(tmp_path: Path) -> None:
@@ -190,6 +217,7 @@ def test_api_surface_translates_to_invoke(tmp_path: Path) -> None:
     assert client.get("/tools").json()["tools"] == [
         "cuda-matmul@0.1.0",
         "gpu-info@0.1.0",
+        "large-artifact@0.1.0",
     ]
 
 
@@ -272,7 +300,7 @@ def test_local_backend_renders_exact_container_argv(
         image_pinned=image,
         argv=["python", "/work/matmul.py", "--out", "/work/result.json"],
         gpu=0,
-        outputs=[("result", "/work/result.json")],
+        outputs=[("result", "/work/result.json", "json", "file")],
         payload={"/work/matmul.py": "print('hi')"},
     )
     # Payload path rewritten to the backend's mount; output path rewritten
@@ -304,7 +332,7 @@ def test_local_backend_stdout_output_does_not_corrupt_argv(
         image_pinned=image,
         argv=argv,
         gpu=1,
-        outputs=[("report", "")],
+        outputs=[("report", "", "text", "stdout")],
         payload={},
     )
     assert captured["argv"] == argv
@@ -313,7 +341,7 @@ def test_local_backend_stdout_output_does_not_corrupt_argv(
 def _parse(logs: str, outputs=None):
     from npa.workbench.manifest.nebius_backend import NebiusBackend
 
-    return NebiusBackend()._parse(logs, outputs or [], 0.1)
+    return NebiusBackend()._parse(logs, 0.1)
 
 
 def _b64(obj) -> str:
@@ -365,7 +393,7 @@ def test_parse_base64_round_trip() -> None:
 class _Exit1Backend(StubBackend):
     name = "exit1"
 
-    def run(self, image_pinned, argv, gpu, outputs, payload=None):
+    def run(self, *a, **k):
         return BackendResult(
             exit_code=1, logs="boom", artifacts_raw={}, elapsed_s=0.01, stdout="boom"
         )
@@ -374,14 +402,14 @@ class _Exit1Backend(StubBackend):
 class _RaisingBackend:
     name = "raising"
 
-    def run(self, image_pinned, argv, gpu, outputs, payload=None):
+    def run(self, *a, **k):
         raise RuntimeError("pod exploded")
 
 
 class _BadJsonBackend(StubBackend):
     name = "badjson"
 
-    def run(self, image_pinned, argv, gpu, outputs, payload=None):
+    def run(self, *a, **k):
         return BackendResult(
             exit_code=0,
             logs="x",
@@ -417,7 +445,7 @@ def test_invoke_writes_record_on_missing_artifact(tmp_path: Path) -> None:
     class _NoArtifact(StubBackend):
         name = "noartifact"
 
-        def run(self, image_pinned, argv, gpu, outputs, payload=None):
+        def run(self, *a, **k):
             return BackendResult(
                 exit_code=0, logs="x", artifacts_raw={}, elapsed_s=0.01, stdout="x"
             )
@@ -500,3 +528,245 @@ def test_descriptor_rejects_file_output_without_path() -> None:
     raw["commands"]["run"]["outputs"] = {"result": {"format": "json"}}
     with pytest.raises(DescriptorError):
         parse_descriptor(raw)
+
+
+# ---------------------------------------------------------------------------
+# Round 2: S3 transport, schema hardening, Job spec.
+# ---------------------------------------------------------------------------
+
+
+class _S3Stub(StubBackend):
+    name = "nebius-like"
+    s3_upload = True
+
+
+def _desc_dict(**over):
+    base = {
+        "apiVersion": "manifest/v0.1",
+        "name": "t",
+        "version": "0.1.0",
+        "image": {
+            "repository": "r",
+            "digest": "sha256:" + "ab" * 32,
+        },
+        "commands": {
+            "run": {
+                "argv": ["python", "x.py"],
+                "params": {},
+                "outputs": {
+                    "o": {"path": "/work/o", "format": "json", "required": True}
+                },
+            }
+        },
+    }
+    base.update(over)
+    return base
+
+
+def test_unknown_param_type_rejected() -> None:
+    d = _desc_dict()
+    d["commands"]["run"]["params"] = {"p": {"type": "uuid"}}
+    with pytest.raises(DescriptorError):
+        parse_descriptor(d)
+
+
+def test_check_naming_undeclared_artifact_rejected() -> None:
+    d = _desc_dict()
+    d["success"] = {"checks": [{"artifact": "ghost", "json_path": "a", "equals": True}]}
+    with pytest.raises(DescriptorError, match="undeclared artifact"):
+        parse_descriptor(d)
+
+
+def test_payload_traversal_rejected() -> None:
+    d = _desc_dict()
+    d["payload_files"] = [{"container_path": "/work/x.py", "host_path": "../evil/x.py"}]
+    with pytest.raises(DescriptorError, match="host_path"):
+        parse_descriptor(d)
+    d["payload_files"] = [{"container_path": "/work/x.py", "host_path": "/abs/x.py"}]
+    with pytest.raises(DescriptorError, match="host_path"):
+        parse_descriptor(d)
+
+
+def test_invalid_s3_uri_rejected() -> None:
+    d = _desc_dict()
+    d["inputs"] = [
+        {
+            "name": "c",
+            "s3_uri": "https://example.com/x",
+            "container_path": "/work/c",
+        }
+    ]
+    with pytest.raises(DescriptorError, match="s3://"):
+        parse_descriptor(d)
+
+
+def test_binary_format_parses() -> None:
+    d = _desc_dict()
+    d["commands"]["run"]["outputs"] = {
+        "blob": {"path": "/work/b", "format": "binary", "required": True}
+    }
+    desc = parse_descriptor(d)
+    assert desc.commands["run"].outputs["blob"].format == "binary"
+
+
+def test_binary_outputs_require_store_on_s3_backend(tmp_path: Path) -> None:
+    rt, _ = make_runtime(tmp_path)
+    rt.backends["s3stub"] = _S3Stub()
+    d = _desc_dict()
+    d["commands"]["run"]["outputs"] = {
+        "blob": {"path": "/work/b", "format": "binary", "required": True}
+    }
+    rt.catalog._entries["binonly@0.1.0"] = parse_descriptor(d)
+    # invoke never raises: a misconfigured descriptor becomes a failed
+    # result with a clear error and a record.
+    res = rt.invoke("binonly", "0.1.0", "run", {}, backend="s3stub")
+    assert res.success is False
+    assert "artifact_store" in res.error
+
+
+def test_s3_inputs_and_prefix_reach_backend(tmp_path: Path) -> None:
+    rt, _ = make_runtime(tmp_path)
+    stub = StubBackend()
+    rt.backends["stub"] = stub
+    res = rt.invoke("large-artifact", "0.1.0", "run", {"size": 1024}, backend="stub")
+    call = stub.calls[0]
+    assert call["s3_inputs"] == [
+        (
+            "s3://my-bucket/manifest-mvp/inputs/large_artifact_config.json",
+            "/work/config.json",
+        )
+    ]
+    assert call["s3_output_names"] == ["matrix"]
+    assert call["s3_prefix"].startswith(
+        "s3://my-bucket/manifest-mvp/large-artifact/"
+    )
+    # Stub echoes a base64 blob for the binary artifact; it stays a string.
+    assert res.artifacts["matrix"] == "stub-base64-blob"
+    # And the summary check ran against the JSON artifact.
+    assert any(c["check"] == "summary.device_ok" and c["ok"] for c in res.checks)
+
+
+def test_binary_artifact_stays_string_not_parsed() -> None:
+    bres = BackendResult(
+        exit_code=0,
+        logs="",
+        artifacts_raw={"m": "s3://b/k/x.npy"},
+        elapsed_s=0.1,
+        stdout="",
+    )
+    spec = CommandSpec(
+        name="run",
+        argv=["x"],
+        params={},
+        outputs={
+            "m": OutputSpec(name="m", path="/w/m", format="binary", required=True)
+        },
+    )
+    artifacts, errors = Runtime._collect_artifacts(spec, bres)
+    assert artifacts["m"] == "s3://b/k/x.npy"
+    assert errors == []
+
+
+def test_large_artifact_descriptor_validates(tmp_path: Path) -> None:
+    rt, _ = make_runtime(tmp_path)
+    desc = rt.catalog.get("large-artifact", "0.1.0")
+    assert desc.artifact_store is not None
+    assert desc.artifact_store.bucket == "my-bucket"
+    assert desc.inputs[0].s3_uri.startswith("s3://")
+    assert desc.resources.memory_gb == 16
+
+
+class _FakeKc(NebiusBackend):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.created: list[dict] = []
+        self.kc_calls: list[tuple] = []
+
+    def _kc(self, *args, input_text=None):
+        full = [self.kubectl]
+        if self.kube_context:
+            full += ["--context", self.kube_context]
+        full += ["-n", self.namespace, *args]
+        self.kc_calls.append((full, input_text))
+        if input_text and '"kind": "Job"' in input_text:
+            self.created.append(json.loads(input_text))
+        return subprocess.CompletedProcess(
+            args=full, returncode=0, stdout="", stderr=""
+        )
+
+
+def _job(gpu: int, memory_gb: int = 0) -> dict:
+    be = _FakeKc()
+    be._create_job(
+        "job-1",
+        "cm-1",
+        "img@sha256:abc",
+        ["python", "a.py"],
+        gpu,
+        memory_gb,
+        [("out", "/work/o", "json", "file")],
+        {},
+        [],
+        [],
+        "",
+        {},
+    )
+    assert len(be.created) == 1
+    return be.created[0]
+
+
+def test_job_spec_labels_and_ttl() -> None:
+    job = _job(gpu=1)
+    assert job["kind"] == "Job"
+    assert job["spec"]["ttlSecondsAfterFinished"] == 86400
+    assert job["spec"]["backoffLimit"] == 0
+    labels = job["metadata"]["labels"]
+    assert labels["app.kubernetes.io/managed-by"] == "npa"
+    assert labels["app.kubernetes.io/part-of"] == "npa-workbench"
+
+
+def test_node_selector_only_when_gpu_requested() -> None:
+    spec_gpu = _job(gpu=1)["spec"]["template"]["spec"]
+    assert spec_gpu["nodeSelector"] == {"nvidia.com/gpu.present": "true"}
+    assert spec_gpu["containers"][0]["resources"]["limits"]["nvidia.com/gpu"] == 1
+    spec_cpu = _job(gpu=0)["spec"]["template"]["spec"]
+    assert "nodeSelector" not in spec_cpu
+    assert "resources" not in spec_cpu["containers"][0]
+
+
+def test_memory_limits_rendered() -> None:
+    spec = _job(gpu=1, memory_gb=16)["spec"]["template"]["spec"]
+    res = spec["containers"][0]["resources"]
+    assert res["limits"]["memory"] == "16Gi"
+    assert res["requests"]["memory"] == "16Gi"
+
+
+def test_kube_context_flag() -> None:
+    be = _FakeKc(kube_context="mk8s-prod")
+    be._create_configmap("cm-x", {})
+    args, _ = be.kc_calls[0]
+    assert "--context" in args and "mk8s-prod" in args
+
+
+def test_parse_s3_markers() -> None:
+    be = NebiusBackend()
+    logs = (
+        "downloading\n"
+        "@@S3IN:/work/config.json@@\n"
+        "@@ARTIFACT:summary:eyJhIjogMX0=@@\n"
+        "@@S3:matrix:s3://bucket/key/result.npy@@\n"
+        "@@EXIT:0@@\n"
+    )
+    res = be._parse(logs, 1.0)
+    assert res.artifacts_raw["matrix"] == "s3://bucket/key/result.npy"
+    assert res.artifacts_raw["summary"] == '{"a": 1}'
+    assert "@@S3:" not in res.stdout
+    assert res.exit_code == 0
+
+
+def test_configmap_returns_per_run_payload_map() -> None:
+    be = _FakeKc()
+    m1 = be._create_configmap("cm-1", {"/work/a.py": "AAA"})
+    m2 = be._create_configmap("cm-2", {"/work/b.py": "BBB"})
+    assert m1 != m2  # no shared instance state between runs
+    assert m1 == {"/work/a.py": "payload0.py"}

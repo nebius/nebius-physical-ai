@@ -7,6 +7,7 @@ from .runtime import Runtime, InvocationResult
 from .catalog import Catalog
 from .schema import load_descriptor, parse_descriptor, DescriptorError
 from .backends import LocalDockerBackend
+from .nebius_backend import NebiusBackend
 
 __all__ = [
     "Runtime",
@@ -16,4 +17,5 @@ __all__ = [
     "parse_descriptor",
     "DescriptorError",
     "LocalDockerBackend",
+    "NebiusBackend",
 ]

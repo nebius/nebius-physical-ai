@@ -66,9 +66,24 @@ class ParamSpec:
 class OutputSpec:
     name: str
     path: str  # absolute path inside the container (ignored when source=stdout)
-    format: str  # json | text
+    format: str  # json | text | binary
     required: bool = True
     source: str = "file"  # file | stdout
+
+
+@dataclass(frozen=True)
+class S3Input:
+    name: str
+    s3_uri: str  # s3://bucket/key
+    container_path: str  # absolute path inside the container
+
+
+@dataclass(frozen=True)
+class ArtifactStore:
+    type: str  # s3
+    bucket: str
+    prefix: str
+    endpoint_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -163,6 +178,8 @@ class Descriptor:
     resources: Resources
     success_checks: tuple[SuccessCheck, ...] = ()
     payload_files: tuple[tuple[str, str], ...] = ()  # (container_path, host_path)
+    inputs: tuple[S3Input, ...] = ()
+    artifact_store: ArtifactStore | None = None
 
     @property
     def id(self) -> str:
@@ -217,17 +234,22 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
         raise DescriptorError(f"{source}: image.digest must be a sha256: pin")
     commands: dict[str, CommandSpec] = {}
     for cname, cdef in raw["commands"].items():
-        params = {
-            pname: ParamSpec(
+        params = {}
+        for pname, pdef in (cdef.get("params") or {}).items():
+            ptype = pdef.get("type", "string")
+            if ptype not in ("integer", "number", "string", "boolean"):
+                raise DescriptorError(
+                    f"{source}: command {cname!r} param {pname!r}: "
+                    f"unknown type {ptype!r}"
+                )
+            params[pname] = ParamSpec(
                 name=pname,
-                type=pdef.get("type", "string"),
+                type=ptype,
                 default=pdef.get("default"),
                 required=bool(pdef.get("required", False)),
                 min_value=pdef.get("min"),
                 max_value=pdef.get("max"),
             )
-            for pname, pdef in (cdef.get("params") or {}).items()
-        }
         outputs = {}
         for oname, odef in (cdef.get("outputs") or {}).items():
             source = odef.get("source", "file")
@@ -242,16 +264,25 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
                     f"{source}: command {cname!r} output {oname!r}: "
                     f"unknown source {source!r}"
                 )
+            fmt = odef.get("format", "json")
+            if fmt not in ("json", "text", "binary"):
+                raise DescriptorError(
+                    f"{source}: command {cname!r} output {oname!r}: "
+                    f"unknown format {fmt!r}"
+                )
             outputs[oname] = OutputSpec(
                 name=oname,
                 path=path,
-                format=odef.get("format", "json"),
+                format=fmt,
                 required=bool(odef.get("required", True)),
                 source=source,
             )
         commands[cname] = CommandSpec(
             name=cname, argv=list(cdef["argv"]), params=params, outputs=outputs
         )
+    # Success checks must name artifacts some command actually declares;
+    # otherwise they can only fail inside the pod.
+    declared_outputs = {oname for cmd in commands.values() for oname in cmd.outputs}
     res = raw.get("resources") or {}
     checks = tuple(
         SuccessCheck(
@@ -262,9 +293,51 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
         )
         for c in (raw.get("success", {}).get("checks") or [])
     )
+    for c in checks:
+        if c.artifact not in declared_outputs:
+            raise DescriptorError(
+                f"{source}: success check names undeclared artifact {c.artifact!r}"
+            )
     payload = tuple(
         (p["container_path"], p["host_path"]) for p in (raw.get("payload_files") or [])
     )
+    for cpath, hpath in payload:
+        if not cpath.startswith("/"):
+            raise DescriptorError(
+                f"{source}: payload container_path must be absolute: {cpath!r}"
+            )
+        if Path(hpath).is_absolute() or ".." in Path(hpath).parts:
+            raise DescriptorError(
+                f"{source}: payload host_path must be relative without '..': {hpath!r}"
+            )
+    inputs = tuple(
+        S3Input(name=i["name"], s3_uri=i["s3_uri"], container_path=i["container_path"])
+        for i in (raw.get("inputs") or [])
+    )
+    for i in inputs:
+        if not i.s3_uri.startswith("s3://"):
+            raise DescriptorError(
+                f"{source}: input {i.name!r}: s3_uri must start with s3://"
+            )
+        if not i.container_path.startswith("/"):
+            raise DescriptorError(
+                f"{source}: input {i.name!r}: container_path must be absolute"
+            )
+    store = None
+    if raw.get("artifact_store"):
+        s = raw["artifact_store"]
+        if s.get("type") != "s3":
+            raise DescriptorError(
+                f"{source}: artifact_store.type must be 's3', got {s.get('type')!r}"
+            )
+        if not s.get("bucket"):
+            raise DescriptorError(f"{source}: artifact_store.bucket is required")
+        store = ArtifactStore(
+            type="s3",
+            bucket=s["bucket"],
+            prefix=s.get("prefix", ""),
+            endpoint_url=s.get("endpoint_url", ""),
+        )
     return Descriptor(
         api_version=raw["apiVersion"],
         name=raw["name"],
@@ -279,4 +352,6 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
         ),
         success_checks=checks,
         payload_files=payload,
+        inputs=inputs,
+        artifact_store=store,
     )
