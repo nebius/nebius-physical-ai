@@ -247,13 +247,16 @@ def test_adjacent_readiness_binds_the_exact_workflow_and_stays_honest() -> None:
     assert record["workflow_sha256"] == hashlib.sha256(SPEC.read_bytes()).hexdigest()
     assert record["planning"]["validation"]["status"] == "verified"
     assert record["planning"]["task_fidelity"]["status"] == "verified"
-    for prerequisite in (
-        "real_input",
+    assert set(record["prerequisites"]) == {
+        "output_storage",
+        "worker_input",
+        "credentials",
         "source_image",
-        "registry_pull",
         "target_runtime",
-        "final_artifacts",
-    ):
+    }
+    assert record["prerequisites"]["output_storage"]["status"] == "verified"
+    assert record["prerequisites"]["credentials"]["status"] == "verified"
+    for prerequisite in ("worker_input", "source_image", "target_runtime"):
         assert record["prerequisites"][prerequisite]["status"] == "unverified"
 
 

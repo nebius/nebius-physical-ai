@@ -27,29 +27,26 @@
         "sanitized private health-preflight receipt"
       ]
     },
-    "real_input": {
+    "worker_input": {
       "status": "unverified",
       "reason": "The runtime dataset conversion and full materialization have not yet completed. Metadata and range probes do not stand in for the converted native training input.",
       "evidence": []
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The selected operator-private route completed its scoped credential and exact immutable model/data payload preflights. No credential value, account, or infrastructure identifier is retained in this repository record.",
+      "evidence": [
+        "sanitized private exact-payload access receipt"
+      ]
     },
     "source_image": {
       "status": "unverified",
       "reason": "No completed private image digest has passed source, dependency, license, complete-byte, and metadata inspection.",
       "evidence": []
     },
-    "registry_pull": {
-      "status": "unverified",
-      "reason": "A private registry pull cannot be qualified until an inspected immutable image digest exists.",
-      "evidence": []
-    },
     "target_runtime": {
       "status": "unverified",
-      "reason": "No native training, HTTP rollout, or closed-loop evaluator workload has reached a terminal result on the selected target.",
-      "evidence": []
-    },
-    "final_artifacts": {
-      "status": "unverified",
-      "reason": "No evaluator metrics, RRD, or MP4 from a submitted run have been independently inspected.",
+      "reason": "No private image digest has passed independent pull and GPU qualification, and no native training, HTTP rollout, closed-loop evaluator, metrics, RRD, or MP4 has reached a terminal independently inspected result.",
       "evidence": []
     }
   }
