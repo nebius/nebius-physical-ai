@@ -26,6 +26,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "each rank records positive attention and all-to-all execution",
         "generated MP4 fully decodes with camera and checkpoint provenance",
     ],
+    "lingbot-world-switchworld-private": [
+        "future operator-private run executes the five native SwitchWorld stages over real control and frame artifacts",
+        "native baseline and adapter outputs are independently decoded before factual transition metrics and paired MP4/RRD review",
+        "unvalidated private candidate remains publication-quarantined until its full native artifact gate succeeds",
+    ],
     "sam3": [
         "exact SAM 3.1 checkpoint access and pinned source/runtime fetch",
         "text-prompted masks propagate across the real source video on CUDA",
