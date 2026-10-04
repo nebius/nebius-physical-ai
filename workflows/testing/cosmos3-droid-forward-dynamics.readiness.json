@@ -4,12 +4,12 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Schema validation and five-stage planning resolve every toolRef and exact run-scoped handoff. The focused workflow, CLI, catalog, media, and Rerun tests pass locally.",
+      "reason": "Schema validation resolves every toolRef and exact run-scoped handoff. The quarantined public default deliberately refuses static rendering; an explicit private candidate image rendered the same five-stage plan without submission. Focused workflow, CLI, catalog, media, and Rerun tests pass locally.",
       "evidence": [
         "npa/tests/workflows/test_cosmos3_droid_forward_dynamics_workflow.py",
         "npa/tests/workbench/test_cosmos3_droid_forward_dynamics.py",
         "npa workbench workflow validate-spec workflows/testing/cosmos3-droid-forward-dynamics.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/cosmos3-droid-forward-dynamics.yaml --run-id cosmos3-droid-fd-readiness --json"
+        "npa workbench workflow submit workflows/testing/cosmos3-droid-forward-dynamics.yaml --plan-only --runtime with an explicit private candidate image"
       ]
     },
     "task_fidelity": {
@@ -43,8 +43,8 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The configured public Cosmos3 image remains repository-quarantined. The first private rebuild failed closed on a native action-interface mismatch; its exact upstream JSON-input repair has local contract evidence and the corrected source-marked rebuild is active. It still requires exact-digest scan, pull, and native capability qualification. This workflow does not bypass quarantine or publish an image.",
+      "status": "verified",
+      "reason": "An operator-private candidate image carrying the immutable retrievable framework pin passed exact-digest pull qualification and executed the real preparation stage plus the framework-interpreter checkpoint fetch path. It remains quarantined from public release. A complete DROID native workflow is still required for capability acceptance.",
       "evidence": [
         "npa/deploy/public_release_manifest.json",
         "npa/docker/workbench/packaging-contract.yaml"

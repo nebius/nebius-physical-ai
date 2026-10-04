@@ -694,8 +694,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         image_tool="cosmos3",
         plan_only=True,
         plan_only_justification=(
-            "The five native stages await a qualified private Cosmos3 image and an "
-            "operator-verified immutable framework source before this DROID case may submit."
+            "A private image and retrievable runtime framework pin are qualified, but "
+            "the DROID checkpoint/action pairing still needs one complete five-stage "
+            "native run with independently inspected outputs before public live coverage."
         ),
         notes=(
             "Native true-action and matched shuffled/zero-action control inference on one "

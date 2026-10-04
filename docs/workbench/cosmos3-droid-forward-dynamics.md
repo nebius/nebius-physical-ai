@@ -127,11 +127,15 @@ for the following DROID citation:
 The local stage contract is tested with generated, decoded three-view MP4s,
 hash-bound handoffs, actual MSE/PSNR calculations, and a Rerun file accepted by
 `rerun rrd verify`. A genuine card-held-out DROID selection has also been
-re-emitted privately from the correct state-pose and source-action columns;
-its remote preparation awaits the rebuilt private image. Workflow validation
-and planning pass. The adjacent
+re-emitted privately from the correct state-pose and source-action columns. On
+an operator-private RTX PRO 6000 route, the image completed remote preparation
+and reached the qualified framework checkpoint-fetch path. That attempt exposed
+a source-overlay provenance bug after the fetch receipt; its regression fix is
+tested locally and awaits a freshly staged native run. Schema validation and an
+explicit-private-image static plan pass, while the quarantined public default
+correctly refuses to render. The adjacent
 [hash-bound readiness record](../../workflows/testing/cosmos3-droid-forward-dynamics.readiness.json)
-tracks the separately verified local contract and the blocked live prerequisites.
+tracks the separately verified local contract and live prerequisites.
 It is not yet a live-accepted capability: completion requires a real
 NPA/Kubernetes RTX PRO 6000 GPU run on the selected held-out DROID window, the exact runtime
 checkpoint fetch, and independent S3 artifact inspection. The unavailable
