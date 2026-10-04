@@ -3,8 +3,9 @@
 This is an `unvalidated`, operator-private validation recipe. It is not an
 approved public replacement for `npa-lingbot-world`, has no public release tag,
 and its OCI label explicitly prohibits publication. Its exact built digest must
-pass byte, secret, SBOM, target-pull, and native-workflow gates before any
-capability claim.
+have byte, secret, SBOM, target-pull, and native-workflow gates independently
+recorded before any capability claim; completing a private gate never grants
+public-release eligibility.
 
 The recipe retains the upstream Apache-2.0 LingBot World source at
 [`a43bec7f8091c83e9b30b16b912f6fc906236fa6`](https://github.com/Robbyant/lingbot-world/tree/a43bec7f8091c83e9b30b16b912f6fc906236fa6)

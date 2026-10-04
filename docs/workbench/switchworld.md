@@ -92,11 +92,13 @@ It has an explicit no-publication disposition and must pass a fresh built-byte
 scan, target pull, real five-stage run, and artifact readback before becoming a
 usable private runtime. This is a remediation, not a public image claim.
 
-The private recipe's first digest has now completed its built-layer/history
-scan and a target-side SkyPilot bootstrap probe with verified cleanup. Those
-receipts verify private delivery and worker bootstrap only. They do not prove a
-model load, native generation, metric, benchmark, or artifact output; those
-remain gated on the separately encoded real case and the five connected stages.
+The private recipe's first digest has completed its built-layer/history scan,
+repository-pinned Trivy secret/fixed-CRITICAL policy scan, SPDX inventory, and a
+target-side SkyPilot bootstrap probe with verified cleanup. Those private
+receipts verify delivery and worker bootstrap only; they do not release the
+image or establish a model load, native generation, metric, benchmark, or
+artifact output. Those claims remain gated on the separately encoded real case
+and the five connected stages.
 
 ## Real stages and measurements
 
@@ -131,8 +133,9 @@ claim.
 ## Validation state
 
 Local YAML/render validation and real H.264 pairing, decoding, RRD writing, and
-RRD verification tests have passed. A real GPU workflow remains unverified
-until an operator provides a genuine rights-cleared native case bundle and the
-selected configuration passes access, storage, pull, GPU-placement, full run,
-and artifact readback checks. It must not be called a benchmark, convergence, or
-physical-robot result before then.
+RRD verification tests have passed. A lawful original MuJoCo-derived case has
+passed strict native condition/control timing checks, but its manager-owned real
+VAE latent and UMT5 context encodings are not terminal. A real GPU workflow
+therefore remains unverified until that bundle, access, storage, pull,
+GPU-placement, full run, and artifact readback checks all complete. It must not
+be called a benchmark, convergence, or physical-robot result before then.

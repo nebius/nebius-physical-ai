@@ -34,10 +34,11 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "Upstream does not release a native case bundle; no rights-cleared reference image, target video, latent, condition, and prompt-context set was staged for this run.",
+      "reason": "A lawful original MuJoCo-derived case now supplies its rights-cleared reference image, held-out target video, native condition tensor, and controls; preparation passes their strict causal timing checks. The manager-owned real VAE latent and UMT5 prompt-context outputs have not reached terminal handoff, so the complete native input bundle remains unverified.",
       "evidence": [
         "docs/workbench/switchworld.md",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/source-comparison.md"
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/source-comparison.md",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/actual-case-control-preflight-20261004-private.json (original case condition/control timing passed, 2026-10-04)"
       ]
     },
     "credentials": {
@@ -50,7 +51,7 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "The rejected digest-equal mirror is not selected. The source-controlled operator-private snapshot rebuild has a resolved immutable digest, clean complete layer/history scan, and a multi-target exact-digest bootstrap probe with verified cleanup. This verifies private image delivery and bootstrap compatibility only; native SwitchWorld generation and final artifact readback remain unverified.",
+      "reason": "The rejected digest-equal mirror is not selected. The source-controlled operator-private snapshot rebuild has a resolved immutable digest, clean complete layer/history scan, repository-pinned Trivy secret/fixed-CRITICAL policy result, SPDX inventory, and a multi-target exact-digest bootstrap probe with verified cleanup. This verifies private image delivery and bootstrap compatibility only; native SwitchWorld generation and final artifact readback remain unverified.",
       "evidence": [
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/execution-route.json (private operator evidence, 2026-10-04)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/image-preflight-20261004-private.json (public-source status ok, digest-bound bootstrap and cleanup verified, 2026-10-04)",
@@ -60,7 +61,8 @@
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-build-20261004.log (operator-private build terminal success, 2026-10-04)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-inspection-20261004-private.json (immutable digest and no-publication OCI disposition, 2026-10-04)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-byte-scan-20261004-private.json (18 archives, no findings, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-preflight-multi-20261004-r2-private.json (exact multi-target bootstrap probe compatible with verified cleanup, 2026-10-04)"
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-preflight-multi-20261004-r2-private.json (exact multi-target bootstrap probe compatible with verified cleanup, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-security-20261004-private.json (repository-pinned Trivy no-secret/no-fixed-CRITICAL policy result and SPDX inventory, private only, 2026-10-04)"
       ]
     },
     "target_runtime": {
