@@ -217,6 +217,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "paidf-visual-qa-sky",
         "paidf-event-video-sky",
         "paidf-image-edit-sky",
+        "molmoact2-jetson-thor",
         "cosmos2-transfer",
         "cosmos3",
         "cosmos3-reason",

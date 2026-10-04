@@ -9,6 +9,7 @@ LABEL org.opencontainers.image.title="NPA MolmoAct2 Jetson-Thor evidence worker"
       org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.licenses="Apache-2.0" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
       npa.solution="molmoact2-jetson-thor-edge" \
       npa.redistribution="unvalidated-private-byof" \
       npa.target-runtime="operator-installed-native-jetson-only"
@@ -23,8 +24,22 @@ ENV PATH=/opt/venv/bin:$PATH \
 
 RUN test "${#NPA_SOURCE_SHA}" -eq 40 \
     && case "${NPA_SOURCE_SHA}" in *[!0-9a-f]*) exit 64 ;; esac \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      openssh-server \
+      rsync \
+      sudo \
+    && rm -f /etc/ssh/ssh_host_* \
+    && install -d --mode=0755 /run/sshd \
+    && printf '%s\n' \
+      'PasswordAuthentication no' \
+      'PermitRootLogin no' \
+      > /etc/ssh/sshd_config.d/99-npa-container.conf \
     && useradd --create-home --shell /bin/bash --uid 1000 ubuntu \
-    && install -d --mode=0755 --owner=ubuntu --group=ubuntu /opt/npa /opt/venv /work
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && install -d --mode=0755 --owner=ubuntu --group=ubuntu /opt/npa /opt/venv /work \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
@@ -32,6 +47,8 @@ COPY --chown=ubuntu:ubuntu docker/workbench/molmoact2-jetson-thor/THIRD_PARTY_NO
     /usr/share/doc/molmoact2-jetson-thor/THIRD_PARTY_NOTICES.md
 COPY --chown=ubuntu:ubuntu docker/workbench/molmoact2-jetson-thor/REDISTRIBUTION.md \
     /usr/share/doc/molmoact2-jetson-thor/REDISTRIBUTION.md
+COPY --chown=ubuntu:ubuntu --chmod=0755 docker/workbench/molmoact2-jetson-thor/entrypoint.sh \
+    /opt/npa/docker/workbench/molmoact2-jetson-thor/entrypoint.sh
 
 USER ubuntu
 WORKDIR /work
@@ -44,4 +61,5 @@ RUN python -m venv /opt/venv \
     && python -m pip check \
     && python -c 'import boto3, numpy, rerun; from npa.workflows import molmoact2_jetson_thor; assert callable(molmoact2_jetson_thor.main)'
 
+ENTRYPOINT ["/opt/npa/docker/workbench/molmoact2-jetson-thor/entrypoint.sh"]
 CMD ["/opt/venv/bin/python", "-m", "npa.workflows.molmoact2_jetson_thor", "--help"]

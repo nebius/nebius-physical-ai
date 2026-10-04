@@ -12,5 +12,7 @@ recorded in `docs/workbench/molmoact2-jetson-thor.md` and travel with the
 operator-fetched artifacts rather than this image.
 
 The image installs `boto3`, `numpy`, and `rerun-sdk` only to move, evaluate,
-and visualize artifact evidence. Their installed distribution metadata is part
-of the image SBOM produced during private qualification.
+and visualize artifact evidence. It also installs Debian's `openssh-server`,
+`rsync`, and `sudo` solely for the documented SkyPilot non-root task bootstrap.
+Their installed distribution metadata is part of the image SBOM produced during
+private qualification.

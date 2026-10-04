@@ -166,6 +166,7 @@ images:
   molmoact2-jetson-thor:
     dockerfile: molmoact2-jetson-thor/Dockerfile
     tier: job
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
     redistribution: unvalidated
     notes: >-
       Private CPU evidence worker only. It contains the NPA adapter and pinned
