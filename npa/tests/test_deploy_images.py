@@ -8,6 +8,7 @@ import pytest
 from npa.deploy import images as deploy_images
 from npa.deploy.images import (
     DEFAULT_CONTAINER_REGISTRY,
+    NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
     SUPPORTED_TOOL_VERSIONS,
     UNBUILT_CANDIDATE_TOOL_VERSIONS,
     development_image_for_tool,
@@ -108,7 +109,12 @@ def test_unbuilt_public_planning_sentinel_is_not_a_consumable_release(
     display_tag = UNBUILT_CANDIDATE_TOOL_VERSIONS[tool]
 
     assert container_image_for_tool(tool).endswith(f":{display_tag}")
-    with pytest.raises(ValueError, match="quarantined"):
+    refusal = (
+        "not publicly redistributable"
+        if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+        else "quarantined"
+    )
+    with pytest.raises(ValueError, match=refusal):
         container_image_for_tool(tool, tag=display_tag)
 
 
@@ -169,13 +175,35 @@ def test_sonic_public_tag_cannot_override_active_manifest_with_stale_release() -
         container_image_for_tool("sonic", tag="0.1.2")
 
 
-@pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS))
-def test_quarantined_tools_retain_explicit_candidate_paths(tool: str) -> None:
+@pytest.mark.parametrize(
+    "tool",
+    sorted(PUBLICATION_QUARANTINE_TOOLS - UNBUILT_CANDIDATE_TOOL_VERSIONS.keys()),
+)
+def test_quarantined_tools_retain_public_or_private_candidate_paths(tool: str) -> None:
     sha = "a" * 40
     assert container_image_for_tool(tool, tag=f"dev-{sha}").endswith(f":dev-{sha}")
     custom_tag = f"dev-{sha}" if tool in {"ncore", "robomimic", "robotwin"} else None
     assert container_image_for_tool(
         tool, registry="registry.example/operator", tag=custom_tag
+    ).startswith("registry.example/operator/")
+
+
+@pytest.mark.parametrize(
+    "tool",
+    sorted(NEUTRAL_UNBUILT_CANDIDATE_TOOLS),
+)
+def test_unbuilt_quarantined_tools_retain_only_private_candidate_paths(
+    tool: str,
+) -> None:
+    sha = "a" * 40
+
+    with pytest.raises(ValueError, match="not publicly redistributable"):
+        container_image_for_tool(tool, tag=f"dev-{sha}")
+
+    assert container_image_for_tool(
+        tool,
+        registry="registry.example/operator",
+        tag=f"dev-{sha}",
     ).startswith("registry.example/operator/")
 
 

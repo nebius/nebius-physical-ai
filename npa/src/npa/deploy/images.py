@@ -2458,7 +2458,11 @@ def container_image_for_tool(
             "image after its source/delivery gates pass; see "
             "docs/workbench/byof-habitat-sim.md."
         )
-    if not is_publicly_redistributable(tool) and public_registry:
+    if (
+        not is_publicly_redistributable(tool)
+        and public_registry
+        and not public_unbuilt_planning_ref
+    ):
         raise ValueError(
             f"{tool!r} is not publicly redistributable and is never distributed from a "
             f"public registry, so {resolved_registry!r} cannot serve it. Build it into "
