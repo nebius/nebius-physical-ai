@@ -26,6 +26,12 @@ a versioned heading when a release is cut.
   exact requests and responses survive parser failures. These records never
   change the completion score or gate. Historical hosted failures are retained.
 
+### VLM gates reject incomplete self-hosted completions
+
+- Both real VLM-eval backends require exact `finish_reason="stop"` before
+  parsing a verdict. Truncated, filtered, aborted, tool-call, or metadata-missing
+  responses fail closed even when they contain valid-looking JSON.
+
 ### Paired VLM output contract
 
 - Paired judge requests explicitly require bare JSON, with the same instruction
@@ -145,6 +151,12 @@ a versioned heading when a release is cut.
   whole-answer match is retained as `image_unavailable`, makes the aggregate
   artifact fail, and exits nonzero after writing it. Later images are still
   attempted once; dry runs emit the failed result without writing.
+- Closed whole-answer matching now tolerates an omitted final period and nested
+  matching pairs of Markdown emphasis, ASCII quotes, or smart quotes. It still
+  rejects longer answers, mismatched or code wrappers, punctuation outside the
+  wrappers, other punctuation, and paraphrases. Hosted evidence observed only
+  the exact punctuated sentinel; the added formatting cases are deterministic
+  local controls.
 
 ### Studio videos accept S3 output paths
 
