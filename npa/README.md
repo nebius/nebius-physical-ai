@@ -457,6 +457,12 @@ These sample metrics demonstrate wiring and do not validate physical tasks.
 See the
 [VLM runbook](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#outputs).
 
+Token Factory captions accept `--thinking` and `--no-thinking`; omitting both
+preserves the selected model's defaults. The SDK's `thinking` argument accepts
+a literal boolean or `None`. See the
+[Token Factory guide](../docs/workbench/token-factory.md) for model-specific
+controls and reasoning-only failures.
+
 For GPU VLM provenance, use the
 [operator verification lane](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#live-provenance-verification).
 It requires `NPA_INTEGRATION_E2E=1`, an owner-only JSON file selected by
