@@ -60,9 +60,11 @@ docker buildx build \
 test -s "$oci_archive"
 "$repo_root/npa/.venv/bin/python" "$repo_root/npa/scripts/scan_image_omniverse_payload.py" \
   --tarball "$oci_archive" --json "$scan"
+docker_archive="$oci_archive.docker.tar"
 skopeo copy --override-os linux --override-arch amd64 \
-  "oci-archive:$oci_archive" "docker-archive:$oci_archive.docker.tar:$image" >/dev/null
-docker load --input "$oci_archive.docker.tar" >/dev/null
+  "oci-archive:$oci_archive" "docker-archive:$docker_archive:$image" >/dev/null
+docker load --input "$docker_archive" >/dev/null
+rm -- "$docker_archive"
 docker image inspect "$image" >/dev/null
 
 NPA_ADMISSION_IMAGE="$image" \
