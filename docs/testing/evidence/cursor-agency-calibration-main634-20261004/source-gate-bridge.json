@@ -1,0 +1,110 @@
+{
+  "schema": "npa.vlm_agency.source_gate_bridge/v1",
+  "candidate_head": "4e906fbc246593f4e29a6eb00ef0493c06f1a15c",
+  "candidate_tree": "0577804c69a5e91d5fd46bebf8d32f184559b778",
+  "base": "3631cc98e9310d8015d1665e7cceed46f90aa9be",
+  "parents": [
+    "67ee0e9c6a2a33daa83797ffeea82bb9aa2a437b",
+    "3631cc98e9310d8015d1665e7cceed46f90aa9be"
+  ],
+  "hosted_execution_head": "67ee0e9c6a2a33daa83797ffeea82bb9aa2a437b",
+  "hosted_source_files_equal": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "180b731ef276d665825a06154f37bb88bc38497e25d5d27e0b822b0b1089de20",
+      "byte_equal_actual67_hosted_source": true
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/agency.py",
+      "sha256": "bdfb8f5f89cc15840a20758dc927c29ab6c9252c3dc141736604d5818e30dae5",
+      "byte_equal_actual67_hosted_source": true
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "byte_equal_actual67_hosted_source": true
+    },
+    {
+      "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+      "sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e",
+      "byte_equal_actual67_hosted_source": true
+    },
+    {
+      "path": "npa/tests/e2e/test_vlm_agency_calibration_live.py",
+      "sha256": "e3e7c4b76b3fb00916b4b145cd0772a8d63e270d37f0395d4a7d4c7a577daaf1",
+      "byte_equal_actual67_hosted_source": true
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/fixtures/isaac_agency_calibration_v1/benchmark.json",
+      "sha256": "5a6c421be6ef28ca74d4eda4a836a9f940d5ee67ce0731f452775f157791ab68",
+      "byte_equal_actual67_hosted_source": true
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/fixtures/isaac_agency_calibration_v1/frame-manifest.json",
+      "sha256": "35f735b7543f44fc26e58830e8c882d74901b6d67513f989e89e6e42ab2e96f0",
+      "byte_equal_actual67_hosted_source": true
+    }
+  ],
+  "new_model_calls_for_ancestry": 0,
+  "new_local_full_for_ancestry": 0,
+  "current_affected_gates": {
+    "execution_head": "4e906fbc246593f4e29a6eb00ef0493c06f1a15c",
+    "passed": 851,
+    "skipped": 0,
+    "seconds": 30.4,
+    "documentation_passed": 1174,
+    "documentation_seconds": 12.92,
+    "precheck_passed": 270,
+    "docs_drift": "PASS",
+    "merge_precheck": "PASS against actual363 at execution",
+    "aggregate_scans": "PASS built-in confidentiality and gitleaks; not the private CI denylist",
+    "source_module_package_environment_launcher_before_after_stable": true,
+    "original67_actual_response_cpu_replays": 6,
+    "full_metric_populations_equal": 3,
+    "replay_network_calls": 0
+  },
+  "selected_local_bridge": {
+    "full_execution_head": "31b64fd6150eb5e4925993c80b0ec69330455ddf",
+    "passed": 39905,
+    "skipped": 193,
+    "xpassed": 1,
+    "warnings": 339,
+    "coverage_percent": 77.56,
+    "unchanged_floor": 60,
+    "limits": "Original31b full, NOT67ee/4e9 execution. All193skip identities retained; XPASS node reconstructed from immutable marker and passing JUnit, not emitted per-node runtime event. Affected a8/0cb/622/624/627/634/constructor/rubric supplements preserve original SHAs."
+  },
+  "separate_completed_cheap_execution": {
+    "head": "3bda08a36932485affecf855d9f87f9e60aef402",
+    "security_passed": 898,
+    "smoke_passed": 118,
+    "guardrails_passed": 5901,
+    "guardrails_skipped": 1,
+    "limit": "Original execution accepted through narrow67 boundary repair; not4e9 execution."
+  },
+  "repair_receipts": {
+    "constructor_head": "ceab6c7d417ad8e6ed4c9f4f053a71644eab1c8d",
+    "constructor_independent_passed": 38,
+    "rubric_head": "67ee0e9c6a2a33daa83797ffeea82bb9aa2a437b",
+    "rubric_independent_passed": 47,
+    "rubric_owner_passed": 782,
+    "rubric_owner_gpu_skipped": 1,
+    "rubric_docs_passed": 1167,
+    "rubric_precheck_passed": 270
+  },
+  "claude": {
+    "kind": "First-party operator Claude Code AI review, not human approval",
+    "actual_model": "claude-opus-5",
+    "primary_head": "a8d48248fa596d603958fb10607f4b2ecb39920f",
+    "focused_followup_head": "0cb01b5e94b90f2cc95437824ca0733ef92dac84",
+    "disposition": "Original changes-required verdict retained. Material repairs/context reservations independently closed; incoming constructor/rubric/source bridges reviewed separately, no future-head approval or third review.",
+    "raw_output_digest_scope": "Worker-reported because raw output bytes were not available on the VDI.",
+    "historical_absence": "Earlier absent/expired native Claude observations remain historical; operator Mac access became available later."
+  },
+  "preserved_failures": [
+    "Original c5 full FAILED12/39893PASS193SKIP1XPASS77.56%; eleven fixtures and a socket collision retained. One score-gate file repaired eleven single-class fixtures without weakening the both-class requirement.",
+    "Canceled pre-start queue and missing-pip launcher setup failure are NOT full executions.",
+    "Original287 affectedFAILED2/2524PASS1GPU; original3bda independent96PASS3FAIL ENAMETOOLONG; first new rubric-test setup6FAIL30PASS remain unchanged.",
+    "Original native smoke interruption/scanner-launch failures and old model/writer/FP/FN failures stay retained separately."
+  ],
+  "final_gate_limit": "Published current-head applicable CI/full coverage, Git/API current-main integration, all reachable signatures, public anonymous byte proof and sole-coordinator lifecycle/normal queue are separate; this document is not a readiness/merge/approval receipt."
+}

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import traceback
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -9,18 +12,50 @@ from PIL import Image
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.workbench import vlm_eval
 from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
-    DEFAULT_SAMPLE_BENCHMARK_PATH,
     JUDGE_COMPARISON_RESULT_FILENAME,
     LEGACY_RESULT_FILENAME,
     PREFERENCE_COMPARISON_RESULT_FILENAME,
     RESULT_FILENAME,
     VlmEvalResult,
+    VlmVisualReviewRequest,
+    VISUAL_REVIEW_RESULT_FILENAME,
 )
 
 
 runner = CliRunner()
+_DIRECT_NO_CALL_LIMITATIONS = [
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    "A score from one model, rubric, threshold, and frame sample does not "
+    "establish physical correctness or safety.",
+    (
+        "This score is a stub or caller-supplied dry-validation input; no VLM "
+        "call occurred, so it is not model or policy evidence."
+    ),
+]
+_BENCHMARK_FIXTURE_LIMITATIONS = [
+    "Expected labels are caller-supplied; the manifest does not establish their "
+    "independent-human provenance.",
+    "Accuracy, agreement, precision, recall, F1, and TP/TN/FP/FN describe only "
+    "this caller-labeled dataset and do not establish generalization, physical "
+    "correctness, safety, or an operational error rate.",
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    (
+        "Cases with score_source 'fixture' use caller-provided dry-validation "
+        "inputs; those cases are not VLM or policy evidence."
+    ),
+]
+_SAMPLE_DATASET_LIMITATIONS = [
+    "These synthetic fixtures include four 2x2 color-swatch rollouts and a "
+    "tiny truncated-progress sequence; they do not validate the stated "
+    "physical tasks.",
+    "The first four caller labels are color-correlated; the additional "
+    "omitted-terminal label is also a wiring-only fixture.",
+    "Its metrics exercise benchmark wiring and are not task-validation or "
+    "operational error-rate evidence.",
+]
 
 
 def test_workbench_vlm_eval_command_help() -> None:
@@ -58,10 +93,18 @@ def test_workbench_vlm_eval_run_writes_local_json(tmp_path) -> None:
     payload = json.loads(result.output)
     assert payload["backend"] == "stub"
     assert payload["passed"] is True
+    assert payload["served_model"] is None
+    assert payload["independent_human_label_calibration_established"] is False
+    assert payload["limitations"] == _DIRECT_NO_CALL_LIMITATIONS
     written = output_dir / RESULT_FILENAME
     assert written.exists()
-    assert json.loads(written.read_text(encoding="utf-8"))["score"] == 0.9
     assert not (output_dir / LEGACY_RESULT_FILENAME).exists()
+    persisted = json.loads(written.read_text(encoding="utf-8"))
+    assert persisted["score"] == 0.9
+    assert persisted["model"] == DEFAULT_MODEL
+    assert persisted["served_model"] is None
+    assert persisted["independent_human_label_calibration_established"] is False
+    assert persisted["limitations"] == _DIRECT_NO_CALL_LIMITATIONS
 
 
 def test_workbench_vlm_eval_dry_run_does_not_write(tmp_path) -> None:
@@ -179,6 +222,7 @@ def test_workbench_vlm_eval_run_maps_backend_flags(mocker, tmp_path) -> None:
     payload = json.loads(result.output)
     assert payload["backend"] == "api"
     assert payload["frame_selection"] == "sequence"
+    assert payload["independent_human_label_calibration_established"] is False
     kwargs = mock_eval.call_args.kwargs
     assert kwargs["backend"] == "api"
     assert kwargs["model"] == "open-vlm"
@@ -328,8 +372,6 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
             "workbench",
             "vlm-eval",
             "benchmark",
-            "--dataset",
-            str(DEFAULT_SAMPLE_BENCHMARK_PATH),
             "--output",
             str(output_path),
             "--backend",
@@ -349,6 +391,8 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
     payload = json.loads(result.output)
     assert payload["best_config"]["config"]["success_threshold"] == 0.8
     assert payload["best_config"]["metrics"]["accuracy"] == 1.0
+    assert payload["best_config"]["metrics"]["specificity"] == 1.0
+    assert payload["best_config"]["metrics"]["balanced_accuracy"] == 1.0
     assert payload["best_config"]["metrics"]["true_positives"] == 2
     assert payload["best_config"]["metrics"]["true_negatives"] == 3
     assert payload["schema_version"] == "npa_vlm_eval_benchmark_report_v2"
@@ -399,13 +443,203 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
         )
         assert len(metrics["false_positive_item_ids"]) == metrics["false_positives"]
         assert len(metrics["false_negative_item_ids"]) == metrics["false_negatives"]
+    assert payload["independent_human_label_calibration_established"] is False
+    assert payload["limitations"] == _BENCHMARK_FIXTURE_LIMITATIONS
+    assert payload["dataset_evidence_scope"] == "illustrative_only"
+    assert payload["dataset_limitations"] == _SAMPLE_DATASET_LIMITATIONS
+    assert payload["written_uri"] == str(output_path)
+    persisted = json.loads(output_path.read_text(encoding="utf-8"))
+    assert persisted["item_count"] == 5
+    assert persisted["best_config"]["results"] == payload["best_config"]["results"]
+    assert persisted["independent_human_label_calibration_established"] is False
+    assert persisted["limitations"] == _BENCHMARK_FIXTURE_LIMITATIONS
+    assert persisted["dataset_evidence_scope"] == payload["dataset_evidence_scope"]
+    assert persisted["dataset_limitations"] == payload["dataset_limitations"]
+
+
+def test_workbench_vlm_eval_benchmark_text_discloses_sample_scope(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--output",
+            str(tmp_path / "benchmark-report.json"),
+            "--backend",
+            "stub",
+            "--thresholds",
+            "0.8",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "dataset_evidence_scope: illustrative_only" in result.output
+    positions = [
+        result.output.index(f"    - {limitation}")
+        for limitation in _SAMPLE_DATASET_LIMITATIONS
+    ]
+    assert positions == sorted(positions)
+
+
+def test_workbench_vlm_eval_benchmark_text_preserves_duplicate_limitations(
+    tmp_path,
+) -> None:
+    manifest = tmp_path / "benchmark.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "evidence_scope": "illustrative_only",
+                "limitations": ["first", "duplicate", "duplicate"],
+                "items": [
+                    {
+                        "id": "case",
+                        "rollout": "unused",
+                        "expected_label": True,
+                        "fixture_score": 0.9,
+                    },
+                    {
+                        "id": "case-negative",
+                        "rollout": "unused-negative",
+                        "expected_label": False,
+                        "fixture_score": 0.1,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--dataset",
+            str(manifest),
+            "--output",
+            str(tmp_path / "benchmark-report.json"),
+            "--backend",
+            "stub",
+            "--thresholds",
+            "0.8",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.output.count("    - duplicate\n") == 2
+    assert result.output.index("    - first\n") < result.output.index(
+        "    - duplicate\n"
+    )
+
+
+@pytest.mark.parametrize("control", ["\n", "\r", "\x1b", "\x00", "\x7f", "\x9b"])
+@pytest.mark.parametrize("output_format", ["text", "json"])
+def test_benchmark_cli_refuses_forged_disclosure_before_activity(
+    tmp_path, monkeypatch, control, output_format
+) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Reject before frame selection or provider work")
+
+    monkeypatch.setattr(vlm_eval, "select_rollout_frames", forbidden)
+    monkeypatch.setattr(vlm_eval, "_call_openai_compatible", forbidden)
+    manifest = json.loads(vlm_eval.DEFAULT_SAMPLE_BENCHMARK_PATH.read_text())
+    manifest["limitations"] = [
+        f"wiring only{control}  dataset_evidence_scope: calibrated"
+    ]
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(json.dumps(manifest), encoding="utf-8")
+    output = tmp_path / "out/report.json"
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--dataset",
+            str(dataset),
+            "--output",
+            str(output),
+            "--backend",
+            "api",
+            "--use-fixture-scores",
+            "--format",
+            output_format,
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "control characters" in result.output
+    assert "dataset_evidence_scope: calibrated" not in result.output
+    assert not output.parent.exists()
+
+
+def test_benchmark_legacy_text_retains_unspecified_empty_limitations(tmp_path) -> None:
+    manifest = json.loads(vlm_eval.DEFAULT_SAMPLE_BENCHMARK_PATH.read_text())
+    manifest.pop("evidence_scope")
+    manifest.pop("limitations")
+    dataset = tmp_path / "legacy.json"
+    dataset.write_text(json.dumps(manifest), encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--dataset",
+            str(dataset),
+            "--backend",
+            "stub",
+            "--output",
+            str(tmp_path / "legacy-report.json"),
+            "--format",
+            "text",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "dataset_evidence_scope: unspecified\n" in result.output
+    assert "dataset_limitations:\n" in result.output
+    assert "dataset_evidence_scope: illustrative_only" not in result.output
+
+
+def test_workbench_vlm_eval_runs_packaged_agency_preflight(tmp_path) -> None:
+    output_path = tmp_path / "isaac-agency.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--dataset",
+            "isaac-agency",
+            "--output",
+            str(output_path),
+            "--backend",
+            "stub",
+            "--models",
+            "fixture-stub",
+            "--thresholds",
+            "0.5",
+            "--frame-selection",
+            "sequence",
+            "--max-frames",
+            "6",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    checks = json.loads(result.output)["sweep"]["structural_checks"]
+    assert checks["cube-elevated-positive"]["verdict"] == "pass"
+    assert checks["robot-grasp-lift-negative"]["verdict"] == "fail"
 
 
 def test_vlm_eval_sdk_benchmark_returns_report() -> None:
     from npa.sdk.workbench import vlm_eval as sdk_vlm_eval
 
     report = sdk_vlm_eval.benchmark(
-        dataset=str(DEFAULT_SAMPLE_BENCHMARK_PATH),
         backend="stub",
         thresholds=[0.5, 0.8, 0.9],
         rubrics=["default"],
@@ -414,6 +648,10 @@ def test_vlm_eval_sdk_benchmark_returns_report() -> None:
 
     assert report.best_config.config.success_threshold == 0.8
     assert report.best_config.metrics.accuracy == 1.0
+    assert report.independent_human_label_calibration_established is False
+    assert tuple(report.limitations) == tuple(_BENCHMARK_FIXTURE_LIMITATIONS)
+    assert report.dataset_evidence_scope == "illustrative_only"
+    assert list(report.dataset_limitations) == _SAMPLE_DATASET_LIMITATIONS
 
 
 def test_vlm_eval_sdk_exports_direct_paired_judge_surface() -> None:
@@ -864,3 +1102,333 @@ def test_vlm_eval_sdk_exports_blinded_preference_surface() -> None:
     assert sdk_vlm_eval.compare_preference is compare_vlm_preference
     assert sdk_vlm_eval.VlmPreferenceComparisonRequest is VlmPreferenceComparisonRequest
     assert "VlmPreferenceComparisonRequest" in core_vlm_eval.__all__
+
+
+def _visual_review_cli_args(tmp_path: Path) -> list[str]:
+    return [
+        "workbench",
+        "vlm-eval",
+        "review-visual",
+        "--input-path",
+        str(tmp_path / "private-current"),
+        "--output-path",
+        str(tmp_path / "private-output"),
+        "--model",
+        "hosted/vision-model",
+        "--task",
+        "Inspect private visible evidence.",
+        "--baseline-path",
+        str(tmp_path / "private-reference"),
+        "--frame-selection",
+        "sequence",
+        "--max-frames",
+        "7",
+        "--rubric",
+        "Private review instructions.",
+        "--rubric-path",
+        str(tmp_path / "private-rubric.txt"),
+        "--objective-evidence-path",
+        str(tmp_path / "private-objective.json"),
+        "--matched-view-map-path",
+        str(tmp_path / "private-views.json"),
+        "--endpoint-url",
+        "https://private-endpoint.invalid/v1",
+        "--api-key-env",
+        "PRIVATE_REVIEW_TOKEN",
+        "--timeout-s",
+        "45",
+        "--output-format",
+        "json",
+    ]
+
+
+def test_workbench_vlm_eval_review_visual_maps_exact_bounded_request(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import npa.cli.workbench.vlm_eval as cli_vlm_eval
+
+    requests = []
+
+    def review(request):
+        requests.append(request)
+        return SimpleNamespace(
+            schema_version="npa_vlm_visual_review_v1",
+            status="completed",
+            escalation_required=False,
+            attempt_count=2,
+            model="hosted/vision-model",
+        )
+
+    monkeypatch.setenv("PRIVATE_REVIEW_TOKEN", "private-api-secret")
+    monkeypatch.setattr(cli_vlm_eval, "run_visual_review", review)
+    result = runner.invoke(app, _visual_review_cli_args(tmp_path))
+
+    assert result.exit_code == 0
+    assert json.loads(result.output) == {
+        "schema_version": "npa_vlm_visual_review_v1",
+        "status": "completed",
+        "escalation_required": False,
+        "attempt_count": 2,
+        "model": "hosted/vision-model",
+    }
+    assert requests == [_expected_visual_review_request(tmp_path)]
+    for private_value in (
+        "private-current",
+        "private-output",
+        "private-reference",
+        "private-rubric",
+        "private-objective",
+        "private-views",
+        "private-endpoint",
+        "private-api-secret",
+        "Inspect private",
+        "Private review",
+    ):
+        assert private_value not in result.output
+
+
+def _expected_visual_review_request(tmp_path: Path) -> VlmVisualReviewRequest:
+    return VlmVisualReviewRequest(
+        input_path=str(tmp_path / "private-current"),
+        output_path=str(tmp_path / "private-output"),
+        model="hosted/vision-model",
+        task="Inspect private visible evidence.",
+        baseline_path=str(tmp_path / "private-reference"),
+        frame_selection="sequence",
+        max_frames=7,
+        endpoint_url="https://private-endpoint.invalid/v1",
+        api_key_env="PRIVATE_REVIEW_TOKEN",
+        rubric="Private review instructions.",
+        rubric_path=str(tmp_path / "private-rubric.txt"),
+        objective_evidence_path=str(tmp_path / "private-objective.json"),
+        matched_view_map_path=str(tmp_path / "private-views.json"),
+        timeout_s=45.0,
+    )
+
+
+def test_review_visual_default_text_under_json_contract(monkeypatch, tmp_path):
+    import npa.cli.workbench.vlm_eval as cli_vlm_eval
+
+    monkeypatch.setattr(
+        cli_vlm_eval,
+        "run_visual_review",
+        lambda _request: SimpleNamespace(
+            schema_version="npa_vlm_visual_review_v1",
+            status="completed",
+            escalation_required=False,
+            attempt_count=2,
+            model="hosted/vision-model",
+        ),
+    )
+    arguments = _visual_review_cli_args(tmp_path)
+    assert arguments[-2:] == ["--output-format", "json"]
+    result = runner.invoke(app, arguments[:-2])
+    assert result.exit_code == 0
+    assert "schema_version: npa_vlm_visual_review_v1" in result.output
+    assert "status: completed" in result.output
+    assert "attempt_count: 2" in result.output
+    assert "private-current" not in result.output
+
+
+def test_workbench_vlm_eval_review_visual_sanitizes_generic_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import npa.cli.workbench.vlm_eval as cli_vlm_eval
+
+    private_detail = str(tmp_path / "private-provider-response")
+
+    def fail(_request):
+        raise RuntimeError(f"provider failed at {private_detail}")
+
+    monkeypatch.setattr(cli_vlm_eval, "run_visual_review", fail)
+    result = runner.invoke(app, _visual_review_cli_args(tmp_path))
+
+    assert result.exit_code == 1
+    assert "Visual review failed; inspect private evidence." in result.output
+    assert private_detail not in result.output
+    assert "provider failed" not in result.output
+    assert "private-api-secret" not in result.output
+
+
+def test_workbench_vlm_eval_review_visual_rejects_alternate_name_pretransport(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    called = False
+
+    def post(**_kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(vlm_eval, "_post_comparison_request", post)
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "review-visual",
+            "--input-path",
+            str(tmp_path / "private-missing-input"),
+            "--output-path",
+            str(tmp_path / "private-other-name.json"),
+            "--model",
+            "hosted/vision-model",
+            "--task",
+            "Inspect visible evidence.",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert called is False
+    assert "private-other-name.json" not in result.output
+    assert "private-missing-input" not in result.output
+
+
+def test_vlm_eval_sdk_review_visual_delegates_matching_request(
+    mocker, tmp_path: Path
+) -> None:
+    from npa.sdk.workbench import vlm_eval as sdk_vlm_eval
+
+    expected = _expected_visual_review_request(tmp_path)
+    finalized_report = object()
+    backend = mocker.patch.object(
+        sdk_vlm_eval, "_review_visual_backend", return_value=finalized_report
+    )
+
+    result = sdk_vlm_eval.review_visual(
+        input_path=expected.input_path,
+        output_path=expected.output_path,
+        model=expected.model,
+        task=expected.task,
+        baseline_path=expected.baseline_path,
+        frame_selection=expected.frame_selection,
+        max_frames=expected.max_frames,
+        endpoint_url=expected.endpoint_url,
+        api_key_env=expected.api_key_env,
+        rubric=expected.rubric,
+        rubric_path=expected.rubric_path,
+        objective_evidence_path=expected.objective_evidence_path,
+        matched_view_map_path=expected.matched_view_map_path,
+        timeout_s=expected.timeout_s,
+    )
+
+    assert result is finalized_report
+    backend.assert_called_once_with(expected)
+
+
+def test_vlm_eval_sdk_review_visual_sanitizes_traceback(mocker, tmp_path: Path) -> None:
+    from npa.sdk.workbench import vlm_eval as sdk_vlm_eval
+
+    sentinel = str(tmp_path / "private-endpoint-provider-sentinel")
+    mocker.patch.object(
+        sdk_vlm_eval,
+        "_review_visual_backend",
+        side_effect=RuntimeError(sentinel),
+    )
+
+    try:
+        sdk_vlm_eval.review_visual(
+            input_path=sentinel,
+            output_path=sentinel,
+            model="private/model",
+            task="Private task.",
+        )
+    except sdk_vlm_eval.VlmVisualReviewError as exc:
+        rendered = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        )
+        assert str(exc) == "Visual review failed; inspect private evidence."
+        assert exc.__cause__ is None
+        assert exc.__suppress_context__ is True
+        assert sentinel not in rendered
+    else:
+        raise AssertionError("SDK failure was not bounded")
+
+
+def _visual_review_single_payload() -> dict:
+    assertion = {"text": "Visible scene evidence.", "frame_ids": ["A0001"]}
+    return {
+        "arm": {
+            "task_evidence": {
+                "visible_status": "complete",
+                "observations": [assertion],
+                "hidden_state_limits": ["Pixels do not establish hidden state."],
+            },
+            "artifact_fidelity": {
+                "status": "no_visible_issue",
+                "issues": [],
+                "uncertainty": "Unseen views remain unknown.",
+            },
+            "reviewability": {
+                "status": "reviewable",
+                "strengths": [assertion],
+                "limitations": [],
+            },
+            "impressiveness": {
+                "status": "moderate",
+                "visible_basis": [assertion],
+                "cosmetic_only": False,
+            },
+            "physical_ai_usefulness": {
+                "status": "unsupported",
+                "visible_basis": [assertion],
+                "downstream_operation": None,
+                "required_properties": [],
+                "hypothesis": None,
+                "measured_consumer_test_needed": None,
+            },
+        }
+    }
+
+
+def _sdk_visual_review_post(*, request, response_sink, **_kwargs):
+    from npa.workbench import vlm_eval
+
+    completion = {
+        "model": request["model"],
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"content": json.dumps(_visual_review_single_payload())},
+            }
+        ],
+    }
+    raw = vlm_eval._canonical_json(completion)
+    response = vlm_eval._VlmBackendResponse(
+        completion, raw, 200, "private-request-id", 0.1
+    )
+    response_sink(response)
+    return response, None
+
+
+def test_vlm_eval_sdk_review_visual_returns_finalized_report(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.sdk.workbench import vlm_eval as sdk_vlm_eval
+    from npa.workbench import vlm_eval
+
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (8, 8), "green").save(frame)
+
+    monkeypatch.setattr(
+        vlm_eval.visual_review,
+        "_resolve_provider_key",
+        lambda *_args, **_kwargs: "secret",
+    )
+    monkeypatch.setattr(vlm_eval, "_post_comparison_request", _sdk_visual_review_post)
+    output = tmp_path / "sdk-finalized"
+    report = sdk_vlm_eval.review_visual(
+        input_path=str(frame),
+        output_path=str(output),
+        model="hosted/vision-model",
+        task="Assess visible placement evidence.",
+    )
+
+    written = output / VISUAL_REVIEW_RESULT_FILENAME
+    assert report.result_uri == str(written)
+    assert written.exists()
+    assert written.stat().st_mode & 0o777 == 0o600
+    assert json.loads(written.read_text())["status"] == "completed"
