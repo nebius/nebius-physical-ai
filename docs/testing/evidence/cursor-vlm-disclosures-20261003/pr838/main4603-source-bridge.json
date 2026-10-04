@@ -1,0 +1,90 @@
+{
+  "schema": "npa.sanitized-vlm-disclosures-main4603-source-bridge/v1",
+  "pr": 838,
+  "integration": {
+    "pre_proof_source_commit": "5b917adfa4eb68daed637fe73a768c44a1100bb5",
+    "pre_proof_source_tree": "c854991e3db3e2d60e813e57ae0afa6f08a9b5a1",
+    "landed_main": "4603e7e1d8ffede505161448fe92368e7c6bda45",
+    "landed_main_tree": "7cf9dce546112ebe49f8391d4b1b5901f047100d",
+    "landed_main_parent": "44b65b71eb6cde8e62876d5768674b2717b48481",
+    "scope": "Static source bridge only; not a provider execution, complete local test, current-head CI, full validation, quality result, or merge-readiness result."
+  },
+  "incoming_main4603_contract": {
+    "changed_existing_evaluator_asts": [
+      "VlmBenchmarkItem",
+      "VlmBenchmarkMetrics",
+      "_benchmark_metrics",
+      "_benchmark_rank_key",
+      "_openai_content",
+      "_parse_benchmark_item",
+      "_resolve_task_text",
+      "_rubric_from_path",
+      "_run_benchmark_case",
+      "benchmark_vlm_eval",
+      "evaluate_vlm",
+      "load_benchmark_dataset"
+    ],
+    "strict_input_contract": "Benchmark inputs fail closed for any single expected-label class, duplicate identifier, invalid structural check, inconclusive structural preflight, or refutation-only actor-causes-motion pass label.",
+    "metrics_contract": "Specificity and balanced accuracy append after the pre-existing positional 11 and landed positional 16 VlmBenchmarkMetrics fields; ranking prefers measured balanced accuracy before accuracy and subsequent existing tie breakers.",
+    "task_contract": "Explicit task text takes precedence over rollout metadata fallback for both ordinary and preselected scoring."
+  },
+  "retained_pr838_interfaces": {
+    "request_evidence_ast_sha256": "749144f6f2a9e0eb31d4b6e8ab623d3d77797ab7862fb55bc03bd8b031b84dd5",
+    "write_result_ast_sha256": "19e7d6de094b33ddea7f92d9a420c2f8a4236d9d21e825cd110b645e51f9c66a",
+    "write_benchmark_report_ast_sha256": "4af86084e9569579f5338d7bcbc4a455dfa4fbd941541d3c434f4c9d1301a5f8",
+    "byte_identical_44_to_4603_sha256": {
+      "npa/src/npa/workbench/token_factory/__init__.py": "e2e55a2e150fcdb1df8192c359e8bc588b7815504578dff27d32f835c33e8d1d",
+      "npa/src/npa/clients/token_factory.py": {
+        "sha256_hex_segments_in_order": ["4c2c60f217c61ddf", "4c4441b706a7b8c3", "c73273b8d241c9ee", "70e5e09e0a391f6d"],
+        "sha256_reassembly": "Concatenate the hexadecimal segments without separators."
+      },
+      "npa/src/npa/cli/workbench/token_factory.py": {
+        "sha256_hex_segments_in_order": ["23503a23c8fed564", "25af7faf20ed5944", "cb15de2007b867c1", "aaec36ef6418142e"],
+        "sha256_reassembly": "Concatenate the hexadecimal segments without separators."
+      },
+      "npa/src/npa/sdk/workbench/token_factory.py": {
+        "sha256_hex_segments_in_order": ["58fc897fbc3a93ec", "a88618eb14a1ce47", "a7d8b3cd8e92593", "e8e59c1f57ad4bbc0"],
+        "sha256_reassembly": "Concatenate the hexadecimal segments without separators."
+      },
+      "npa/src/npa/workflows/vlm_grade_evidence.py": "0bcb218a48299e475d1ff538fea17f8767bffe8db8e975c7110498d65bccd581",
+      "npa/src/npa/clients/storage.py": "b2c38afb7dacd731c09c6ba65a0adfe2feb85f550fcdb1878a41bf6b0a17ad79"
+    },
+    "scope_protocol_sha256": "25dee38f69e05f6b1b236b8a2a9c598aa219fdc54a1525eb65a8abeac5f31595"
+  },
+  "accepted_fixture_inputs_composed": {
+    "sole625_ladder": "fa60e80396c874244cc80899fc2a380d74adf279",
+    "sole595_cleanup": "c342c01574f1ce9fc2dea1c4ae91b7a1fb249d2c",
+    "sole646_fresh_user": "19e8cb4d95703e92f72a6dae9b21f346ca3a1d15",
+    "limits": "These exact test-only inputs are composed by Git. They are not a final runner selection, full pass, or waiver for the pending adjacent PR625 E005 component."
+  },
+  "retained_actual_hosted_output": {
+    "execution_commit": "065f34b7e0de54d7903772eee5e8d3e01ca15d68",
+    "protocol_sha256": "25dee38f69e05f6b1b236b8a2a9c598aa219fdc54a1525eb65a8abeac5f31595",
+    "model": "MiniMaxAI/MiniMax-M3",
+    "provider_calls": 4,
+    "http_statuses": [200, 200, 200, 200],
+    "scores": [0.0, 0.0, 0.0, 0.0],
+    "confusion_matrix": {
+      "true_positives": 0,
+      "true_negatives": 2,
+      "false_positives": 0,
+      "false_negatives": 2
+    },
+    "accuracy": 0.5,
+    "f1": 0.0,
+    "new_provider_calls": 0,
+    "meaning": "The adverse all-zero result and two false negatives are retained at their original source/protocol identity without retry, label, threshold, rubric, prompt, payload, or response changes."
+  },
+  "validation_state": {
+    "affected_cpu": "Not yet run on this source tree because the shared host was occupied by another owner's active full suite; no result is inferred.",
+    "provider_calls": 0,
+    "native_cli_calls": 0,
+    "full_launches": 0,
+    "claude_reviews": 0
+  },
+  "limits": [
+    "Byte-identical request-adjacent paths preserve only the original fixed inference evidence when their source/request/frame/model/protocol bridge is retained; they do not make a new provider call or qualify model quality.",
+    "This bridge does not establish independent-human calibration, physical-task validity, robot physics, safety, generalization, or an operational error rate.",
+    "Raw responses, credentials, endpoints, live resource identifiers, and raw operational artifacts remain private."
+  ]
+}
