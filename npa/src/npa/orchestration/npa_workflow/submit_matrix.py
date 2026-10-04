@@ -282,6 +282,24 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Complete MotionBenchMaker and MPiNets cases, kinematic and 3 kg dynamics modes, verified journal and RRD.",
     ),
     SubmitLiveCase(
+        "open3d-registration.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="open3d",
+        rotation_skip=True,
+        skip_reason=(
+            "npa-open3d is a validation candidate that has not been pushed to the "
+            "shared registry, so a rotation submit has no image to pull. The same "
+            "six stages have been run end to end in the built image against real "
+            "S3; re-include this case in the same change that publishes the tag."
+        ),
+        notes=(
+            "Real Open3D RANSAC/FPFH + ICP registration, multiway pose-graph "
+            "optimization, Poisson reconstruction and a decode-verified RRD. "
+            "CPU-only: Open3D's registration and geometry APIs have no CUDA path."
+        ),
+    ),
+    SubmitLiveCase(
         "newton-train-teacher.yaml",
         "gpu",
         plan_only=True,
@@ -1577,6 +1595,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes=(
             "Real direct, cross-pod ClusterIP serve, LoRA optimizer, checkpoint reload, "
             "and held-out evaluation; dedicated E2E uses top-level workflow submit."
+        ),
+    ),
+    SubmitLiveCase(
+        "byof-apriltag.yaml",
+        "cpu",
+        plan_only=True,
+        plan_only_justification=(
+            "standard workflow submit would nest the BYOF builder and its inner "
+            "SkyPilot launch inside an outer Kubernetes stage"
+        ),
+        notes=(
+            "The direct BYOF runner owns real build/push/pull execution. This "
+            "operator-built candidate passed retained digest-pinned CPU "
+            "qualification; visual acceptance remains explicitly unclaimed."
         ),
     ),
     SubmitLiveCase(

@@ -1,0 +1,37 @@
+{
+  "what_this_checks": "that the allowlist refuses what it says it refuses, and that what it keeps is unchanged from the bytes the run wrote",
+  "generator": "harness/derive_public_run_report.py",
+  "controls": {
+    "unknown_nested_key": {
+      "planted": "surface/result.json mesh.synthetic_unclassified_private_field",
+      "why": "the independent review's counterexample; the old mesh.* pattern kept it",
+      "outcome": "refused: mesh.synthetic_unclassified_private_field is in neither the allowlist nor the omitted categories. Classify it before publishing this run."
+    },
+    "named_leaf_wrong_kind": {
+      "planted": "surface/result.json mesh.sha256 as an arbitrary string",
+      "why": "naming a leaf does not constrain what arrives in it",
+      "outcome": "refused: mesh.sha256 is allowed as sha256 but holds str 'synthetic-not-a-real-value'. Classify what this now is before publishing this run."
+    },
+    "fidelity": {
+      "leaves_emitted": 543,
+      "leaves_that_differ_from_the_original": 0,
+      "examples": []
+    },
+    "committed_report_is_current": {
+      "committed_sha256": "40e7a891e6ac77736b38cd4774e1feee83de1bfd1a04623e9e62f7186501264b",
+      "regenerated_sha256": "40e7a891e6ac77736b38cd4774e1feee83de1bfd1a04623e9e62f7186501264b",
+      "identical": true
+    }
+  },
+  "artifacts_read": [
+    "npa-workflow/status.json",
+    "npa-workflow/manifest.json",
+    "prepared/manifest.json",
+    "pairs/result.json",
+    "validation/validation.json",
+    "graph/result.json",
+    "graph/pose_graph.json",
+    "surface/result.json",
+    "reports/rrd-manifest.json"
+  ]
+}

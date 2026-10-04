@@ -13,7 +13,8 @@ Catalog reachability is fail-closed: every entry is consumed by a shipped spec
 except the explicitly public composition primitives `infra.fleet.deploy`,
 `infra.soperator.deploy`, `workbench.cosmos2.transfer`,
 `workbench.curobo.plan`, `workbench.foxglove.convert`, `workbench.insights.record`,
-`workbench.isaac_lab.byof_repo`, and `workbench.lerobot.eval`. The
+`workbench.isaac_lab.byof_repo`, `workbench.lerobot.eval`,
+`workbench.vlm_eval.compare_preference`, and `workbench.vlm_eval.compare_judges`. The
 reusable-only list is machine-checked against `PUBLIC_REUSABLE_TOOLREFS`;
 accidental dead entries fail the guardrail. The retired monolithic
 `workbench.sim2real.run` surface is intentionally absent.
@@ -25,6 +26,13 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.curobo.plan` | `npa workbench curobo plan` | Franka start/goal/cuboid manifest | real trajectories and metrics | no |
 | `workbench.curobo.validate` | `npa workbench curobo validate` | result prefix | hash and complete coverage validation | no |
 | `workbench.curobo.visualize` | `npa workbench curobo visualize` | validated result prefix | verified RRD joint/FK recording | no |
+| `workbench.open3d.stage_demo` | `npa workbench open3d stage-demo` | nothing (downloads the upstream `open3d.data` indoor scans) | staged `.ply` scans and a digest-bound `manifest.json` | no |
+| `workbench.open3d.prepare` | `npa workbench open3d prepare` | prefix of operator `.pcd`/`.ply` scans | digest-bound `manifest.json` | no |
+| `workbench.open3d.register` | `npa workbench open3d register` | `manifest.json` | per-pair RANSAC/FPFH + ICP results, aligned clouds, journal | no (real `registration_ransac_based_on_feature_matching` + `registration_icp`) |
+| `workbench.open3d.validate` | `npa workbench open3d validate` | registration result prefix | hash and pair-coverage validation, no native library needed | no |
+| `workbench.open3d.multiway` | `npa workbench open3d multiway` | `manifest.json` | optimized `pose_graph.json` and one fused `.ply` | no (real `global_optimization`) |
+| `workbench.open3d.reconstruct` | `npa workbench open3d reconstruct` | multiway prefix with `fused.ply`, `config.open3d_support_distance_factor` | Poisson `mesh.ply` plus `mesh_uncropped.ply`, manifold/watertight/area facts, and support/coverage measurements before and after the unsupported-surface crop | no (real `create_from_point_cloud_poisson`) |
+| `workbench.open3d.visualize` | `npa workbench open3d visualize` | reconstruct prefix with `mesh.ply` and `mesh_uncropped.ply` | decode-verified `point_cloud.rrd` with a fitted-camera blueprint, independent scan/surface toggles, the cropped surface in its own view, and a manifest | no |
 | `workbench.alpamayo2_super.infer` | `npa workbench alpamayo2-super infer` | pinned model/dataset revisions and PhysicalAI-AV sample index | trajectory JSON, calibrated PNG, immutable provenance under `config.output_uri` | no (real upstream VLM + diffusion expert inference on GPU) |
 | `workbench.encord.push` | `npa workbench encord push` | S3 media prefix, Encord integration and folder, optional dataset and identity sidecar | durable `push_receipt.json` with exact identity and reconciled outcomes | no |
 | `workbench.encord.pull` | `npa workbench encord pull` | Encord collection, dataset, or project | materialized S3 media and durable `manifest.json` | no |
@@ -67,8 +75,10 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.content_agents.validate` | `python -m npa.workflows.content_agents validate` | rigid-ready USDA | upstream `render_valid` + `physics_sane` result and fresh OVRTX evidence | yes (real upstream `validation-agent validate`) |
 | `workbench.content_agents.package` | `python -m npa.workflows.content_agents package` | validated physics USDA | self-contained USD/USDZ, provenance, reports, narrow Isaac Stage 2 adapter | no |
 | `workbench.vlm_eval.run` | `npa workbench vlm-eval run` | `config.rollouts_uri` | `config.scores_uri` | no |
+| `workbench.vlm_eval.compare_preference` | `npa workbench vlm-eval compare-preference` | `config.baseline_uri`, `config.candidate_uri` | `<scores_uri>/vlm_preference_comparison.json` | no |
+| `workbench.vlm_eval.compare_judges` | `npa workbench vlm-eval compare-judges` | `config.rollouts_uri` | `<scores_uri>/vlm_judge_disagreement.json` | no |
 | `workbench.vlm_eval.benchmark` | `npa workbench vlm-eval benchmark` | `config.benchmark_dataset` | `config.benchmark_output` | no |
-| `workbench.vlm_eval.judge_against_plan` | `npa workbench vlm-eval run --task-from` | `config.rollouts_uri`, `config.plan_uri` | `<scores_uri>/vlm_eval_stub.json` | no |
+| `workbench.vlm_eval.judge_against_plan` | `npa workbench vlm-eval run --task-from` | `config.rollouts_uri`, `config.plan_uri` | `<scores_uri>/vlm_eval.json` | no |
 | `workbench.vlm_eval.loop` | `npa workbench vlm-eval loop` | `config.rollouts_uri` | `config.scores_uri` | no |
 | `workbench.token_factory.reason` | `npa workbench token-factory reason` | `config.scene_uri` | `config.plan_uri` | no |
 | `workbench.token_factory.caption` | `npa workbench token-factory caption` | `config.images_uri`, optional `config.caption_instruction` (empty keeps the tool default) | `config.captions_uri` | no |
@@ -240,3 +250,6 @@ Hosted model selection: `workbench.token_factory.reason` accepts optional
 `.judge_against_plan` accept optional `config.vlm_model`. An omitted or empty
 value leaves model selection to the CLI default for the chosen backend; an
 explicit value is passed as `--model`, including legacy dedicated model IDs.
+The audit-only `workbench.vlm_eval.compare_judges` primitive passes distinct
+`config.primary_vlm_model` and `config.secondary_vlm_model` values and never
+averages their outcomes.

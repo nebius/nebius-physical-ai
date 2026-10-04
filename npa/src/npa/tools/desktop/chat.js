@@ -198,6 +198,13 @@ async function loadSessions(append = false, preserve = false) {
   if (!keepPages) state.sessionCursor = result.nextCursor;
   state.sessions = append ? mergeById(state.sessions, result.data)
     : keepPages ? mergeById(result.data, state.sessions) : result.data;
+  const invalidIds = new Set((result.errors || []).map(error => error.id));
+  state.sessions = state.sessions.filter(thread => !invalidIds.has(thread.id));
+  if (invalidIds.size) notice("Some chats could not be loaded because their archival metadata is invalid.");
+  if (invalidIds.has(state.id)) {
+    state.openFailed = true;
+    updateControls();
+  }
   state.sessionPages = append || keepPages;
   state.sessionQuery = collection;
   if (activityGeneration === state.activityGeneration) {

@@ -1,0 +1,79 @@
+{
+  "schema": "npa.workbench.vlm-default-vision-capability-evidence.v1",
+  "scope": {
+    "classification": "illustrative_synthetic_image_capability_smoke",
+    "reviewed_default_model": "MiniMaxAI/MiniMax-M3",
+    "claim": "The observed hosted deployment accepted the exact image and returned its two half-colours correctly.",
+    "provider_hardware": "unknown",
+    "real_robot_or_simulation_workload": false,
+    "model_quality_benchmark": false
+  },
+  "input": {
+    "path": "probe.png",
+    "sha256": "83f20a60df6384d38b71f39824dcb661c3239eb861ac3bd328e6bc80ecb81365",
+    "bytes": 112,
+    "format": "PNG",
+    "mode": "RGB",
+    "width": 64,
+    "height": 32,
+    "left_half_rgb": [
+      255,
+      0,
+      0
+    ],
+    "right_half_rgb": [
+      0,
+      0,
+      255
+    ]
+  },
+  "prompt": {
+    "text": "Look at the image. It is split into two vertical halves. Name the colour of the LEFT half and the colour of the RIGHT half. Answer in the form: left=<colour>, right=<colour>.",
+    "sha256": "27448ede838fb3653567d0fd3c5f0432068c1ada5631812b65fee79b0defda51",
+    "names_target_colours": false
+  },
+  "observations": {
+    "reviewed_default": {
+      "model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "returned_model_matches_requested": true,
+      "finish_reason": "stop",
+      "visible_answer": "left=red, right=blue",
+      "visible_answer_sha256": "b1374b281b7eba3804a6d6afbddc4ec98ae8157a362cb9e1cf126fb983b92202",
+      "answer_matches_image": true
+    },
+    "positive_control": {
+      "model": "google/gemma-3-27b-it",
+      "http_status": 200,
+      "returned_model_matches_requested": true,
+      "finish_reason": "stop",
+      "visible_answer": "left=red, right=blue",
+      "visible_answer_sha256": "b1374b281b7eba3804a6d6afbddc4ec98ae8157a362cb9e1cf126fb983b92202",
+      "answer_matches_image": true
+    },
+    "negative_controls": [
+      {
+        "model": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+        "http_status": 400,
+        "outcome": "image_input_rejected"
+      },
+      {
+        "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "http_status": 400,
+        "outcome": "image_input_rejected"
+      }
+    ]
+  },
+  "provenance": {
+    "association": "collector-retained, not server-attested",
+    "provider_calls_reused": 4,
+    "new_provider_calls_for_this_regression": 0,
+    "catalog_membership_recomputed_from_completion_evidence": false
+  },
+  "limitations": [
+    "This one synthetic image does not qualify broad vision quality, safety, policy success, geometry, or temporal reasoning.",
+    "Provider hardware was not observed.",
+    "Availability is account- and time-specific.",
+    "Catalog membership is enforced by the protected live suite and is not claimed from the retained completion evidence."
+  ]
+}

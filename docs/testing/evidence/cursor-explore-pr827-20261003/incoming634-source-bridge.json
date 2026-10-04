@@ -1,0 +1,35 @@
+{
+  "schema": "cursor-explore.caption-normalization-incoming634-bridge/v1",
+  "pr": 827,
+  "execution_head": "dc098692683a8f95b3c4a9dccf36d2bea3f83e0e",
+  "execution_tree": "0efd381efc7dee12ae7e03ed8f493fd7eac4181a",
+  "base": "88fd1b1356c942745244e49d2316800634c530ae",
+  "prior_published_head": "598d07614dd2793c085dbaf51ef98c874d0f47a7",
+  "affected_tests": {"passed": 1482, "skipped": 1, "warnings": 8, "seconds": 117.72},
+  "quiet_skip_node_identity": "Not captured; not invented",
+  "caption_source_bindings_byte_equal_prior": [
+    {"path": "npa/src/npa/clients/token_factory.py", "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"},
+    {"path": "npa/src/npa/workbench/token_factory/__init__.py", "sha256": "e2e55a2e150fcdb1df8192c359e8bc588b7815504578dff27d32f835c33e8d1d"},
+    {"path": "npa/src/npa/cli/workbench/token_factory.py", "sha256": "23503a23c8fed56425af7faf20ed5944cb15de2007b867c1aaec36ef6418142e"},
+    {"path": "npa/src/npa/sdk/workbench/token_factory.py", "sha256": "58fc897fbc3a93eca88618eb14a1ce47a7d8b3cd8e92593e8e59c1f57ad4bbc0"},
+    {"path": "npa/src/npa/_sdk.py", "sha256": "ccd630c1aab7b3fa790c489c1d08ebe7ec658a12c6dede94d24623d188e1a16d"},
+    {"path": "npa/tests/workbench/test_token_factory_tool.py", "sha256": "d249c10583597f16787ec2e59176920086f4b5bdd89e009d2cc854cebe746a49"},
+    {"path": "npa/src/npa/live_verification/token_factory_contract.py", "sha256": "290feb9dc7c4deed8018d3d08f75bcd2c1a966fc070e128181f44056b3732f90"}
+  ],
+  "landed_runtime_bindings": [
+    {"path": "npa/src/npa/workbench/vlm_eval/__init__.py", "sha256": "51c206a02f89a1c9ad3367f8e1e712d14165acfcdc5875a68ed5b4b516c886bd"},
+    {"path": "npa/src/npa/workflows/vlm_grade_evidence.py", "sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e"}
+  ],
+  "incoming_existing_evaluator_AST_changes": ["_comparison_prompt", "_common_hosted_request", "_build_prompt", "_openai_content"],
+  "added_frame_anchor_and_changed_default_rubric": true,
+  "evaluator_requests_are_changed": true,
+  "caption_protocol_invokes_evaluator": false,
+  "current_pytest_population": {"accepted": 183, "negative": 18, "whole_path": 201},
+  "historical_202_standalone_population": "Distinct and unverified; original bytes unchanged",
+  "original_full_execution_head": "f1b1f7e698b2fecdb27e5b4d2dd3ba5ac16cc537",
+  "original_hosted_execution_head": "d533859918d2fc03c898ca1a39aee94fc0943958",
+  "source_and_own_package_before_after_equal": true,
+  "new_provider_calls": 0,
+  "new_full_execution": false,
+  "limits": "Affected CPU integration and unchanged caption source bridge, not current-head hosted inference or calibrated vision quality. Sentinel durability does not cover provider or storage aborts. Original full, live, skipped and XPASS evidence retains its execution identity."
+}
