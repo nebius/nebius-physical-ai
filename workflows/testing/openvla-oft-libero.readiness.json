@@ -50,6 +50,7 @@
       "reason": "The committed neutral private bootstrap was built with SBOM/provenance, pushed only to the operator-private registry, independently pulled by immutable digest, manifest/config inspected, and streamed through the full layer scanner with no restricted runtime or build-history hit. Its numeric nonroot user passed SkyPilot's rsync/passwordless-sudo bootstrap, readable notices, the native preparation parser, and a persistent-default-command probe. It remains publication-quarantined.",
       "evidence": [
         "npa/docker/workbench/openvla-oft/build.sh",
+        "npa/scripts/scan_image_omniverse_payload.py --docker-image <operator-private-immutable-digest>",
         "docs/workbench/openvla-oft.md"
       ]
     },
