@@ -59,7 +59,9 @@ if not cuda_devs:
     raise RuntimeError("no CUDA device available for Cycles")
 for dev in cuda_devs:
     dev.use = True
-scene.cycles.device = "CUDA"
+# Blender 4.x: scene.cycles.device is CPU|GPU; the CUDA backend comes from
+# the preferences compute device type above.
+scene.cycles.device = "GPU"
 print("Cycles CUDA devices:", [dev.name for dev in cuda_devs], flush=True)
 
 bpy.ops.object.select_all(action="SELECT")
