@@ -236,6 +236,12 @@ def _task_rows(
             env_name = _require_string(row, "env_name")
             if env_name.startswith("libero_x/"):
                 row["libero_x_bddl_path"] = _libero_x_bddl_path(row, task_id=task_id)
+                if expected == OBSERVED_TASKS_SCHEMA:
+                    row["libero_x_bddl_sha256"] = _require_sha256(
+                        row.get("libero_x_bddl_sha256"),
+                        field=f"evaluation task {task_id} libero_x_bddl_sha256",
+                    )
+                    row["language"] = _require_string(row, "language")
             elif not env_name.startswith("libero_sim/"):
                 raise GrootVisualizationError(
                     f"evaluation task {task_id} is not a native LIBERO or LIBERO-X env"
@@ -311,6 +317,108 @@ def _protocol_claims(mode: str) -> dict[str, Any]:
     raise GrootVisualizationError(f"unsupported evaluation protocol mode: {mode}")
 
 
+def _rollout_protocol(
+    *,
+    episodes_per_task: int,
+    n_envs: int,
+    max_episode_steps: int,
+    n_action_steps: int,
+    seed: int,
+) -> dict[str, Any]:
+    """Bind the native rollout inputs shared by both policy arms.
+
+    The upstream evaluator resets a vector of environments with ``seed + i``.
+    Evaluating exactly one vector-sized episode wave at a time prevents an
+    automatic post-terminal reset from introducing a policy-dependent initial
+    state before the requested episode count has been reached.
+    """
+
+    values = {
+        "episodes_per_task": episodes_per_task,
+        "n_envs": n_envs,
+        "max_episode_steps": max_episode_steps,
+        "n_action_steps": n_action_steps,
+        "seed": seed,
+    }
+    if any(
+        isinstance(value, bool) or not isinstance(value, int)
+        for value in values.values()
+    ):
+        raise GrootVisualizationError("native rollout settings must be integers")
+    if any(values[name] < 1 for name in values if name != "seed"):
+        raise GrootVisualizationError("native rollout settings must be positive")
+    if episodes_per_task % n_envs:
+        raise GrootVisualizationError(
+            "episodes_per_task must divide evenly into deterministic n_envs waves"
+        )
+    return {
+        **values,
+        "initial_state_protocol": (
+            "Isaac-GR00T reset seed batches: seed + task_index * "
+            "episodes_per_task + wave * n_envs + environment_index"
+        ),
+        "native_entrypoint": "gr00t.eval.rollout_policy.run_gr00t_sim_policy",
+        "video_protocol": {
+            "codec": "h264",
+            "fps": 20,
+            "overlay_text": True,
+            "steps_per_render": 2,
+            "record_video_keys": "upstream LIBERO default",
+        },
+    }
+
+
+def _validate_policy_rollout_protocol(
+    protocol: Mapping[str, Any],
+    *,
+    episodes_per_task: int,
+    n_envs: int,
+    max_episode_steps: int,
+    n_action_steps: int,
+    seed: int,
+) -> dict[str, Any]:
+    """Reject a policy invocation whose settings differ from preparation."""
+
+    expected = _rollout_protocol(
+        episodes_per_task=episodes_per_task,
+        n_envs=n_envs,
+        max_episode_steps=max_episode_steps,
+        n_action_steps=n_action_steps,
+        seed=seed,
+    )
+    actual = protocol.get("rollout_protocol")
+    if actual != expected:
+        raise GrootVisualizationError(
+            "policy rollout settings differ from the prepared paired protocol"
+        )
+    return expected
+
+
+def _prepared_rollout_protocol(protocol: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the serialized native rollout inputs in a prepared protocol."""
+
+    stored = protocol.get("rollout_protocol")
+    if not isinstance(stored, Mapping):
+        raise GrootVisualizationError("closed-loop protocol lacks rollout settings")
+    try:
+        expected = _rollout_protocol(
+            episodes_per_task=stored["episodes_per_task"],
+            n_envs=stored["n_envs"],
+            max_episode_steps=stored["max_episode_steps"],
+            n_action_steps=stored["n_action_steps"],
+            seed=stored["seed"],
+        )
+    except KeyError as exc:
+        raise GrootVisualizationError(
+            "closed-loop protocol lacks a required rollout setting"
+        ) from exc
+    if dict(stored) != expected:
+        raise GrootVisualizationError(
+            "closed-loop protocol rollout settings are invalid"
+        )
+    return expected
+
+
 def _object_inventory(client: Any, uri: str) -> dict[str, Any]:
     ref = _split_s3(uri, require_key=False)
     prefix = ref.key.rstrip("/") + "/" if ref.key else ""
@@ -379,6 +487,11 @@ def prepare_evaluation(
     output_uri: str,
     run_id: str,
     *,
+    episodes_per_task: int = 10,
+    n_envs: int = 5,
+    max_episode_steps: int = 720,
+    n_action_steps: int = 8,
+    seed: int = 20261002,
     s3_client: Any | None = None,
 ) -> dict[str, Any]:
     """Validate task disjointness and bind exact evaluation bytes to this run."""
@@ -419,6 +532,13 @@ def prepare_evaluation(
         },
         "evaluation_tasks": eval_rows,
         "dataset": dataset,
+        "rollout_protocol": _rollout_protocol(
+            episodes_per_task=episodes_per_task,
+            n_envs=n_envs,
+            max_episode_steps=max_episode_steps,
+            n_action_steps=n_action_steps,
+            seed=seed,
+        ),
         "claims": _protocol_claims(STRICT_HELD_OUT_MODE),
         "upstream": _protocol_upstream(),
     }
@@ -434,6 +554,11 @@ def prepare_observed_paired_evaluation(
     output_uri: str,
     run_id: str,
     *,
+    episodes_per_task: int = 10,
+    n_envs: int = 5,
+    max_episode_steps: int = 720,
+    n_action_steps: int = 8,
+    seed: int = 20261002,
     s3_client: Any | None = None,
 ) -> dict[str, Any]:
     """Bind paired observed tasks without inventing derivative training coverage."""
@@ -459,6 +584,13 @@ def prepare_observed_paired_evaluation(
         },
         "evaluation_tasks": tasks,
         "dataset": dataset,
+        "rollout_protocol": _rollout_protocol(
+            episodes_per_task=episodes_per_task,
+            n_envs=n_envs,
+            max_episode_steps=max_episode_steps,
+            n_action_steps=n_action_steps,
+            seed=seed,
+        ),
         "claims": _protocol_claims(OBSERVED_PAIRED_MODE),
         "upstream": _protocol_upstream(),
     }
@@ -502,6 +634,7 @@ def _load_protocol(client: Any, uri: str, run_id: str) -> dict[str, Any]:
         raise GrootVisualizationError(
             "observed paired protocol must not assert task disjointness"
         )
+    _prepared_rollout_protocol(protocol)
     return protocol
 
 
@@ -899,6 +1032,8 @@ def _run_native_evaluator(
             "task_id": task["task_id"],
             "native_env_name": _native_libero_x_env_name(task["task_id"]),
             "libero_x_bddl_path": task["libero_x_bddl_path"],
+            "libero_x_bddl_sha256": task.get("libero_x_bddl_sha256", ""),
+            "language": task.get("language", ""),
         }
         for task in tasks
         if str(task.get("env_name") or "").startswith("libero_x/")
@@ -1017,6 +1152,14 @@ def run_policy(
         raise GrootVisualizationError("rollout settings must be positive")
     client = _s3_client(s3_client)
     protocol = _load_protocol(client, protocol_uri, run_id)
+    rollout_protocol = _validate_policy_rollout_protocol(
+        protocol,
+        episodes_per_task=episodes_per_task,
+        n_envs=n_envs,
+        max_episode_steps=max_episode_steps,
+        n_action_steps=n_action_steps,
+        seed=seed,
+    )
     bootstrap_ref = os.environ.get("GROOT_REPO_REF", "").strip()
     with tempfile.TemporaryDirectory(prefix="npa-groot-libero-x-") as temporary:
         root = Path(temporary)
@@ -1094,6 +1237,13 @@ def run_policy(
         "policy": policy_name,
         "protocol_uri": protocol_uri,
         "protocol_sha256": protocol["protocol_sha256"],
+        "rollout_protocol": rollout_protocol,
+        "execution_input_sha256": _json_hash(
+            {
+                "protocol_sha256": protocol["protocol_sha256"],
+                "rollout_protocol": rollout_protocol,
+            }
+        ),
         "evaluation_mode": protocol["evaluation_mode"],
         "claims": protocol["claims"],
         "model": model_identity,
@@ -1129,6 +1279,11 @@ def _load_rollout(client: Any, uri: str, run_id: str, policy: str) -> dict[str, 
         raise GrootVisualizationError(
             "rollout does not contain verified closed-loop evidence"
         )
+    if not isinstance(report.get("rollout_protocol"), Mapping):
+        raise GrootVisualizationError("rollout does not preserve native input settings")
+    _require_sha256(
+        report.get("execution_input_sha256"), field="rollout execution_input_sha256"
+    )
     return report
 
 
@@ -1151,6 +1306,17 @@ def compare_closed_loop(
         protocol["protocol_sha256"]
     }:
         raise GrootVisualizationError("policies did not use the same prepared protocol")
+    rollout_protocol = _prepared_rollout_protocol(protocol)
+    expected_input_hash = _json_hash(
+        {
+            "protocol_sha256": protocol["protocol_sha256"],
+            "rollout_protocol": rollout_protocol,
+        }
+    )
+    if {baseline["execution_input_sha256"], derivative["execution_input_sha256"]} != {
+        expected_input_hash
+    }:
+        raise GrootVisualizationError("policies did not use identical rollout inputs")
     rows = {}
     for report in (baseline, derivative):
         if (
@@ -1159,6 +1325,10 @@ def compare_closed_loop(
         ):
             raise GrootVisualizationError(
                 "rollout claim classification differs from prepared protocol"
+            )
+        if report.get("rollout_protocol") != rollout_protocol:
+            raise GrootVisualizationError(
+                "rollout settings differ from prepared protocol"
             )
         names = [task["task_id"] for task in report["closed_loop"]["tasks"]]
         if names != [task["task_id"] for task in protocol["evaluation_tasks"]]:
@@ -1389,11 +1559,21 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--evaluation-dataset-manifest-uri", required=True)
     prepare.add_argument("--output-uri", required=True)
     prepare.add_argument("--run-id", required=True)
+    prepare.add_argument("--episodes-per-task", type=int, required=True)
+    prepare.add_argument("--n-envs", type=int, required=True)
+    prepare.add_argument("--max-episode-steps", type=int, required=True)
+    prepare.add_argument("--n-action-steps", type=int, required=True)
+    prepare.add_argument("--seed", type=int, required=True)
     observed = commands.add_parser("prepare-observed-paired-evaluation")
     observed.add_argument("--observed-task-manifest-uri", required=True)
     observed.add_argument("--evaluation-dataset-manifest-uri", required=True)
     observed.add_argument("--output-uri", required=True)
     observed.add_argument("--run-id", required=True)
+    observed.add_argument("--episodes-per-task", type=int, required=True)
+    observed.add_argument("--n-envs", type=int, required=True)
+    observed.add_argument("--max-episode-steps", type=int, required=True)
+    observed.add_argument("--n-action-steps", type=int, required=True)
+    observed.add_argument("--seed", type=int, required=True)
     policy = commands.add_parser("run-policy")
     policy.add_argument("--protocol-uri", required=True)
     policy.add_argument("--output-uri", required=True)

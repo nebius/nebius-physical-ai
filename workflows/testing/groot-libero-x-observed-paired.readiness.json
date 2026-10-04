@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "0af450a3dfa1fca148b399dcf770e1a9f14acb263d7f3acd9ead15f5a7b2a975",
+  "workflow_sha256": "789bd16fdbac1dea5fed4b0256ca8a9eb976aeaa395a5cf0b08ea3e1e7e568e9",
   "planning": {
     "validation": {
       "status": "verified",
@@ -19,18 +19,39 @@
     }
   },
   "prerequisites": {
-    "source_image": {
-      "status": "unverified",
-      "reason": "Private candidate image build, digest resolution, security scans, and exact-target pull proof remain in progress.",
+    "output_storage": {
+      "status": "verified",
+      "reason": "The scoped private execution route verified list, put, get, and delete access to its project-owned output storage. Run-scoped prefixes are resolved only by that route at submission time.",
       "evidence": [
-        "Private operator evidence under the assigned onboarding task directory"
+        "Sanitized private execution-route storage preflight record"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The private-only candidate image has an immutable digest, completed payload and security scans, and an exact-target authenticated pull/bootstrap proof. Its private/quarantined disposition remains unchanged.",
+      "evidence": [
+        "Sanitized private image qualification and exact-target pull records"
       ]
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "The observed-paired path requires an operator-owned observed-task manifest and matching GR00T-format materialization inventory. The derivative's exact training cohort remains unknown, which is recorded as a claim boundary rather than inferred from seed 42.",
+      "reason": "The observed-paired path requires a selected pinned MIT LIBERO-X BDDL profile and matching GR00T-format materialization derived from native observations. The derivative's exact training cohort remains unknown, which is recorded as a claim boundary rather than inferred from seed 42.",
       "evidence": [
         "docs/workbench/groot-libero-x.md#observed-paired-mode-when-coverage-is-unknown"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The scoped private execution route passed exact GR00T and LIBERO-X payload-access checks under existing operator credentials. This records runtime access only and does not alter redistribution rights.",
+      "evidence": [
+        "Sanitized private health and payload-access preflight records"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "The scoped private multi-target route verified its existing cluster identity, compatible GPU route, and exact private-image pull/bootstrap contract. No benchmark or closed-loop result is implied before a workflow run completes.",
+      "evidence": [
+        "Sanitized private cluster-identity and image-preflight records"
       ]
     }
   }

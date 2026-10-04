@@ -103,6 +103,8 @@ def _task(task_id: str) -> dict[str, Any]:
             "libero/libero_x/bddl/LEVEL1/"
             "EXTENSION_KITCHEN_SCENE1_LEVEL1__T001_place_the_green_bowl_on_the_plate.bddl"
         ),
+        "libero_x_bddl_sha256": "a" * 64,
+        "language": "place the green bowl on the plate",
         "trajectory_ids": [0],
     }
 
@@ -161,6 +163,13 @@ def _rollout(
         "run_id": run_id,
         "policy": policy,
         "protocol_sha256": protocol["protocol_sha256"],
+        "rollout_protocol": protocol["rollout_protocol"],
+        "execution_input_sha256": workflow._json_hash(
+            {
+                "protocol_sha256": protocol["protocol_sha256"],
+                "rollout_protocol": protocol["rollout_protocol"],
+            }
+        ),
         "evaluation_mode": protocol["evaluation_mode"],
         "claims": protocol["claims"],
         "closed_loop_verified": True,
@@ -230,6 +239,26 @@ def test_observed_paired_protocol_refuses_held_out_or_generalization_labels() ->
     assert protocol["claims"]["task_disjointness"] == "unverified"
     assert protocol["claims"]["labels"] == {"held_out": False, "generalization": False}
     assert "training_task_manifest" not in protocol
+    assert protocol["rollout_protocol"]["seed"] == 20261002
+    assert protocol["rollout_protocol"]["initial_state_protocol"].startswith(
+        "Isaac-GR00T reset seed batches"
+    )
+
+
+def test_observed_paired_tasks_require_direct_bddl_provenance() -> None:
+    observed = {
+        "schema": workflow.OBSERVED_TASKS_SCHEMA,
+        "tasks": [
+            {key: value for key, value in _task("seen-0").items() if key != "language"}
+        ],
+    }
+
+    with pytest.raises(
+        workflow.GrootVisualizationError, match="missing required field"
+    ):
+        workflow._task_rows(
+            observed, training=False, schema=workflow.OBSERVED_TASKS_SCHEMA
+        )
 
 
 def test_observed_paired_comparison_rejects_mislabeled_rollout_claims() -> None:
@@ -371,6 +400,43 @@ def test_native_libero_x_task_contract_is_hash_bound_and_source_scoped(
     assert str(source / "libero") == native.sys.path[0]
 
 
+def test_native_rollout_uses_fixed_seeded_episode_waves(tmp_path: Path) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_rollout(**kwargs: Any) -> tuple[str, list[bool], dict[str, Any]]:
+        calls.append(kwargs)
+        return (
+            kwargs["env_name"],
+            [True] * kwargs["n_episodes"],
+            {
+                "episode_lengths": [4] * kwargs["n_episodes"],
+                "episode_rewards": [1.0] * kwargs["n_episodes"],
+            },
+        )
+
+    result = native._run_seeded_episode_waves(
+        native_env_name="libero_sim/npa_groot_libero_x_0123456789abcdef0123456789abcdef",
+        rollout_runner=fake_rollout,
+        policy_host="127.0.0.1",
+        policy_port=1,
+        video_dir=tmp_path / "videos",
+        task_index=2,
+        episodes_per_task=10,
+        n_envs=5,
+        max_episode_steps=720,
+        n_action_steps=8,
+        seed=17,
+    )
+
+    assert [call["seed"] for call in calls] == [37, 42]
+    assert [call["n_episodes"] for call in calls] == [5, 5]
+    assert result["initial_reset_seed_batches"] == [
+        [37, 38, 39, 40, 41],
+        [42, 43, 44, 45, 46],
+    ]
+    assert result["completed_episodes"] == 10
+
+
 def test_native_evaluator_writes_worker_registration_manifest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -417,6 +483,8 @@ def test_native_evaluator_writes_worker_registration_manifest(
             "task_id": "heldout-0",
             "native_env_name": workflow._native_libero_x_env_name("heldout-0"),
             "libero_x_bddl_path": _task("heldout-0")["libero_x_bddl_path"],
+            "libero_x_bddl_sha256": _task("heldout-0")["libero_x_bddl_sha256"],
+            "language": _task("heldout-0")["language"],
         }
     ]
     assert captured["config"]["libero_x_source"] == str(source)
@@ -641,11 +709,11 @@ def test_policy_stage_requires_native_results_and_uploads_actual_mp4s(
         model_repo=workflow.BASELINE_REPO,
         model_revision=workflow.BASELINE_REVISION,
         model_subdir="libero_10",
-        episodes_per_task=1,
-        n_envs=1,
-        max_episode_steps=12,
-        n_action_steps=4,
-        seed=7,
+        episodes_per_task=10,
+        n_envs=5,
+        max_episode_steps=720,
+        n_action_steps=8,
+        seed=20261002,
         s3_client=client,
     )
 

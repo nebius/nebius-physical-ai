@@ -103,6 +103,7 @@ def test_observed_paired_workflow_has_five_stages_without_held_out_input_claim()
     )
     assert "training_task_manifest_uri" not in spec.config
     assert "observed_task_manifest_uri" in spec.config
+    assert spec.config["evaluation_accelerator"] == "RTXPRO6000:1"
     assert "held-out" in str(spec.metadata["description"]).lower()
     assert "unknown" in spec.states[plan.steps[3].state].description.lower()
 

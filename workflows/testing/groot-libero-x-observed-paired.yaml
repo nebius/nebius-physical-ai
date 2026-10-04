@@ -20,7 +20,7 @@ config:
   derivative_model_repo: rohansiva/gr00t-libero-x
   derivative_model_revision: b9dfbdcce8da61950db4f34199fff30b286b8f13
   derivative_model_subdir: ""
-  evaluation_accelerator: H100:1
+  evaluation_accelerator: RTXPRO6000:1
   episodes_per_task: "10"
   n_envs: "5"
   max_episode_steps: "720"

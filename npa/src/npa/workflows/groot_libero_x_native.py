@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 
 TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -38,7 +38,7 @@ def _native_libero_x_env_name(task_id: str) -> str:
     return f"libero_sim/npa_groot_libero_x_{digest}"
 
 
-def _validate_libero_x_task(task: dict[str, Any]) -> str:
+def _validate_libero_x_task(task: dict[str, Any], source: Path | None = None) -> str:
     """Validate the native-side copy of the task-to-BDDL contract."""
 
     task_id = str(task.get("task_id") or "").strip()
@@ -54,6 +54,26 @@ def _validate_libero_x_task(task: dict[str, Any]) -> str:
         or any(part in {"", ".", ".."} for part in path.parts)
     ):
         raise RuntimeError("native LIBERO-X task has an unsafe task ID or BDDL path")
+    expected_hash = str(task.get("libero_x_bddl_sha256") or "").lower()
+    expected_language = str(task.get("language") or "").strip()
+    if bool(expected_hash) != bool(expected_language):
+        raise RuntimeError("native LIBERO-X task has incomplete BDDL provenance")
+    if source is not None:
+        bddl_root = (source / "libero/libero_x/bddl").resolve()
+        bddl_path = (source / path).resolve()
+        if bddl_root not in bddl_path.parents or not bddl_path.is_file():
+            raise RuntimeError("native LIBERO-X BDDL path escapes evaluator source")
+        if expected_hash:
+            actual_hash = hashlib.sha256(bddl_path.read_bytes()).hexdigest()
+            if actual_hash != expected_hash:
+                raise RuntimeError("native LIBERO-X BDDL hash differs from preparation")
+            from libero.libero.utils.parse_bddl import parse_bddl_file
+
+            parsed = parse_bddl_file(str(bddl_path))
+            if str(parsed.get("language") or "").strip() != expected_language:
+                raise RuntimeError(
+                    "native LIBERO-X BDDL language differs from preparation"
+                )
     return _native_libero_x_env_name(task_id)
 
 
@@ -143,6 +163,66 @@ def _parse_rollout(result: Any) -> dict[str, Any]:
     }
 
 
+def _run_seeded_episode_waves(
+    *,
+    native_env_name: str,
+    rollout_runner: Callable[..., Any],
+    policy_host: str,
+    policy_port: int,
+    video_dir: Path,
+    task_index: int,
+    episodes_per_task: int,
+    n_envs: int,
+    max_episode_steps: int,
+    n_action_steps: int,
+    seed: int,
+) -> dict[str, Any]:
+    """Run fixed reset-seed waves so policy arms see identical initial states."""
+
+    if episodes_per_task % n_envs:
+        raise RuntimeError("episodes_per_task must divide evenly into n_envs waves")
+    successes: list[bool] = []
+    lengths: list[int] = []
+    rewards: list[float] = []
+    reset_seed_batches: list[list[int]] = []
+    for offset in range(0, episodes_per_task, n_envs):
+        wave_seed = seed + task_index * episodes_per_task + offset
+        parsed = _parse_rollout(
+            rollout_runner(
+                env_name=native_env_name,
+                n_episodes=n_envs,
+                max_episode_steps=max_episode_steps,
+                model_path="",
+                policy_client_host=policy_host,
+                policy_client_port=policy_port,
+                n_envs=n_envs,
+                n_action_steps=n_action_steps,
+                video_dir=str(video_dir / f"wave-{offset // n_envs:03d}"),
+                seed=wave_seed,
+            )
+        )
+        if parsed["native_env_name"] != native_env_name:
+            raise RuntimeError(
+                "native rollout did not preserve the registered environment"
+            )
+        if parsed["completed_episodes"] != n_envs:
+            raise RuntimeError(
+                "native rollout did not complete its seeded episode wave"
+            )
+        successes.extend(parsed["successes"])
+        lengths.extend(parsed["episode_lengths"])
+        rewards.extend(parsed["episode_rewards"])
+        reset_seed_batches.append(list(range(wave_seed, wave_seed + n_envs)))
+    return {
+        "successes": successes,
+        "episode_lengths": lengths,
+        "episode_rewards": rewards,
+        "completed_episodes": len(successes),
+        "success_rate": sum(successes) / len(successes),
+        "initial_reset_seed_batches": reset_seed_batches,
+    }
+
+
 def _run(config: dict[str, Any]) -> dict[str, Any]:
     libero_x_source = _configure_libero_x_source(config)
     # These imports must resolve from the checked-out Isaac-GR00T revision,
@@ -212,7 +292,7 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
                         raise RuntimeError(
                             "LIBERO-X task requires the pinned evaluator source"
                         )
-                    native_env_name = _validate_libero_x_task(task)
+                    native_env_name = _validate_libero_x_task(task, libero_x_source)
                 elif env_name.startswith("libero_sim/"):
                     native_env_name = env_name
                 else:
@@ -267,34 +347,26 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
                         steps / int(config["n_action_steps"])
                     )
                 video_dir = Path(config["video_dir"]) / f"{index:03d}-{task_id}"
-                native = run_gr00t_sim_policy(
-                    env_name=native_env_name,
-                    n_episodes=int(config["episodes_per_task"]),
-                    max_episode_steps=int(config["max_episode_steps"]),
-                    model_path="",
-                    policy_client_host=host,
-                    policy_client_port=port,
+                rollout = _run_seeded_episode_waves(
+                    native_env_name=native_env_name,
+                    rollout_runner=run_gr00t_sim_policy,
+                    policy_host=host,
+                    policy_port=port,
+                    video_dir=video_dir,
+                    task_index=index,
+                    episodes_per_task=int(config["episodes_per_task"]),
                     n_envs=int(config["n_envs"]),
+                    max_episode_steps=int(config["max_episode_steps"]),
                     n_action_steps=int(config["n_action_steps"]),
-                    video_dir=str(video_dir),
-                    seed=int(config["seed"]) + index,
+                    seed=int(config["seed"]),
                 )
-                rollout = _parse_rollout(native)
-                if rollout["native_env_name"] != native_env_name:
-                    raise RuntimeError(
-                        "native GR00T rollout did not preserve the registered environment"
-                    )
                 task_rows.append(
                     {
                         "task_id": task_id,
                         "env_name": env_name,
                         "native_env_name": native_env_name,
                         "trajectory_ids": trajectory_ids,
-                        **{
-                            key: value
-                            for key, value in rollout.items()
-                            if key != "native_env_name"
-                        },
+                        **rollout,
                         "video_dir": str(video_dir),
                     }
                 )

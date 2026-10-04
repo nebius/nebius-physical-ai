@@ -92,9 +92,12 @@ identifier or credential is embedded in a stage command.
 [`groot-libero-x-observed-paired.yaml`](../../workflows/testing/groot-libero-x-observed-paired.yaml)
 is a separate five-stage native comparison for the case where the derivative's
 exact training inventory remains unpublished. It accepts an
-`npa.groot_libero_x.observed_tasks.v1` manifest with the same safe BDDL and
-trajectory requirements as the strict evaluation manifest, binds the task/data
-hash and run seed once, and passes that exact protocol to both policy arms.
+`npa.groot_libero_x.observed_tasks.v1` manifest with a directly selected pinned
+MIT LIBERO-X BDDL path, BDDL SHA-256, parsed language, and reference
+trajectory IDs. It binds the task/data hash, action horizon, video protocol,
+and deterministic reset-seed batches once, then passes that exact protocol to
+both policy arms. It does not infer a historical LIBERO-X dataset
+`task_index`-to-BDDL mapping from a seed or a matching language string.
 
 Its protocol, rollout reports, comparison, RRD provenance, and evidence index
 carry `training_coverage: unknown`, `task_disjointness: unverified`, and
@@ -109,11 +112,13 @@ Static workflow validation, planning, tool-argument coverage, native-handoff
 contract tests, artifact comparison, and real RRD inspection are verified in
 the adjacent readiness record.  They are not a live benchmark result.
 
-Live execution remains unverified until the operator supplies the three
-hash-bound inputs (including the authoritative 60-task training inventory),
-passes the existing storage/Nebius/Hugging Face preflight, confirms the
-unchanged immutable bootstrap image is pullable, and runs the five-stage
-workflow on Kubernetes.  Acceptance then requires independent readback of the
-final comparison, native MP4s, and RRD—not just a successful job status.
-Preserve the produced provenance and licenses with any shared result; do not
-reuse the reported derivative-card open-loop values as closed-loop evidence.
+The strict workflow remains unverified until it receives three hash-bound
+inputs, including the authoritative 60-task training inventory. The observed
+workflow instead requires a selected direct BDDL profile plus an honest
+native-observation materialization for action-reference trajectories. Both
+paths require the existing storage/Nebius/Hugging Face preflight, a pullable
+private immutable bootstrap image, and a Kubernetes run. Acceptance then
+requires independent readback of the final comparison, native MP4s, and RRD—not
+just a successful job status. Preserve the produced provenance and licenses
+with any shared result; do not reuse the reported derivative-card open-loop
+values as closed-loop evidence.
