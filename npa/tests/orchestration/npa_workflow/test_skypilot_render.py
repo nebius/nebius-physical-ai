@@ -2729,6 +2729,7 @@ def test_default_npa_setup_installs_the_image_local_runtime_source_first() -> No
     setup = default_npa_setup()
     modern_guard = "[ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]"
     assert modern_guard in setup
+    assert "[ -f /opt/npa/src/npa/workflow_build.py ]" in setup
     assert "npa_pip_install -e /opt/npa" in setup
     # The image-local source must win before legacy / external paths, otherwise
     # a runtime-fetch task can acquire a GPU and then fail solely because no
