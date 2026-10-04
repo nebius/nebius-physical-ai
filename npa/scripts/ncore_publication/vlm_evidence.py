@@ -1471,6 +1471,8 @@ def verify_complete_evidence(
     if (
         final_result.get("format") != FINAL_FORMAT
         or final_result.get("status") != "pass"
+        or final_outcome["success"] is not True
+        or final_outcome["score"] < THRESHOLD
         or final_result.get("freeze_sha256") != freeze_sha256
         or final_result.get("freeze_acceptance_sha256") != freeze_acceptance_sha256
         or final_result.get("calibration_sha256") != calibration_sha256

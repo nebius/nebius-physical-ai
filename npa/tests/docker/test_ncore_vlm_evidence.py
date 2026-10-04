@@ -697,6 +697,43 @@ def test_completed_schedule_replays_five_attempts_without_new_calls(
     assert len(calls) == len(storage.objects) == 5
 
 
+@pytest.mark.parametrize("score", [0.2, 0.799999])
+def test_completed_schedule_rejects_semantically_relabeled_failed_final(
+    monkeypatch, tmp_path, score
+):
+    args, calls, storage = _calibrated_schedule(
+        monkeypatch, tmp_path, final_score=score
+    )
+    final = vlm_evidence.final(args)
+    assert final["verdict"] == "failed"
+    path = args.evidence_root / "final.json"
+    result = json.loads(path.read_text())
+    transport = args.evidence_root / "transport/final-one-shot/outcome.json"
+    original_transport_sha256 = vlm_evidence._sha_file(transport)
+    result["status"] = "pass"
+    path.write_text(json.dumps(result))
+
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="final VLM result differs"):
+        _verify_schedule(args, vlm_evidence._sha_file(path))
+    assert vlm_evidence._sha_file(transport) == original_transport_sha256
+    assert len(calls) == len(storage.objects) == 5
+
+
+def test_completed_schedule_accepts_exact_threshold_without_new_calls(
+    monkeypatch, tmp_path
+):
+    args, calls, storage = _calibrated_schedule(
+        monkeypatch, tmp_path, final_score=vlm_evidence.THRESHOLD
+    )
+    final = vlm_evidence.final(args)
+
+    verified = _verify_schedule(args, final["sha256"])
+
+    assert verified["final"]["score"] == vlm_evidence.THRESHOLD
+    assert verified["final"]["status"] == "pass"
+    assert len(calls) == len(storage.objects) == 5
+
+
 def test_calibration_only_schedule_is_not_complete(monkeypatch, tmp_path):
     args, calls, storage = _calibrated_schedule(monkeypatch, tmp_path)
     with pytest.raises(vlm_evidence.VlmEvidenceError, match="schedule differs"):
