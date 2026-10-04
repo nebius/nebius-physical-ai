@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from npa.deploy import images
+
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -54,9 +56,18 @@ def test_openwam_datacenter_manifest_does_not_claim_a_device_result() -> None:
     entry = next(item for item in manifest["images"] if item["name"] == "npa-openwam")
 
     assert entry["dockerfile"] == "openwam/Dockerfile"
-    assert entry["verdict"] == "ready"
+    assert entry["verdict"] == "unknown"
     assert entry["validation"] == "pending-gpu"
     assert entry["redistribution"] == "unvalidated"
     assert (
         "RTX evidence must never be treated as B200/B300 equivalence" in entry["notes"]
     )
+
+
+def test_openwam_is_private_neutral_until_a_public_release_is_accepted() -> None:
+    """A private candidate does not authorize a public or generic image route."""
+
+    assert "openwam" in images.NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+    assert images.supported_tool_version("openwam") == "operator-private-unbuilt"
+    assert not images.is_publicly_redistributable("openwam")
+    assert "openwam" not in images.CONTAINER_IMAGE_NAMES

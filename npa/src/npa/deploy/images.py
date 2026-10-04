@@ -318,8 +318,16 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
-NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
-NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
+# OpenWAM has a private, byte-qualified candidate but no accepted public image
+# or accelerator result.  Its documented upstream source/model/data terms do
+# not establish a permanent restricted-payload classification for the image,
+# so retain a neutral, fail-closed publication disposition rather than
+# inventing one.  The sentinel is intentionally not an image a workflow may
+# consume: the workflow requires an explicitly supplied private digest.
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"openwam"})
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {
+    "openwam": "operator-private-unbuilt",
+}
 # Previously accepted releases whose published bytes no longer satisfy the
 # repository's current security contract. Keep this separate from
 # UNVALIDATED_PUBLICATION_TOOLS: these images were built and capability-tested,

@@ -119,7 +119,7 @@
     {
       "name": "npa-openwam",
       "dockerfile": "openwam/Dockerfile",
-      "verdict": "ready",
+      "verdict": "unknown",
       "validation": "pending-gpu",
       "redistribution": "unvalidated",
       "torch": "2.7.1+cu128 pinned by OpenWAM's upstream CUDA requirements",
