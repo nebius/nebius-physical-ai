@@ -121,6 +121,66 @@ def _matrix3(value: Any, name: str) -> np.ndarray:
     return matrix
 
 
+def _card_heldout_episode_indices(total: int) -> tuple[list[int], str]:
+    """Reproduce the card split without assuming the overlay venv has Torch.
+
+    CPU stages intentionally use the slim NPA source-overlay interpreter. The
+    qualified Cosmos framework environment in the same image carries the exact
+    Torch dependency needed for the card's ``randperm`` split. Falling back to
+    that interpreter preserves the documented split check instead of silently
+    accepting an unverified selection.
+    """
+
+    count = int(round(total * 0.03))
+    try:
+        import torch
+    except ImportError:
+        repo = Path(os.environ.get("COSMOS3_REPO") or "/opt/cosmos3/cosmos-framework")
+        framework_python = repo / ".venv" / "bin" / "python"
+        if not framework_python.is_file():
+            raise DroidForwardDynamicsError(
+                "card_episode_3pct verification requires PyTorch in the source overlay "
+                "or qualified Cosmos framework interpreter"
+            )
+        code = (
+            "import json, sys, torch; "
+            "total=int(sys.argv[1]); "
+            "print(json.dumps(torch.randperm(total, "
+            "generator=torch.Generator().manual_seed(42)).tolist()[:round(total*0.03)]))"
+        )
+        result = subprocess.run(
+            [str(framework_python), "-c", code, str(total)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+        if result.returncode:
+            raise DroidForwardDynamicsError(
+                "qualified Cosmos framework interpreter could not reproduce the card split"
+            )
+        try:
+            held_out = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise DroidForwardDynamicsError(
+                "qualified Cosmos framework interpreter returned an invalid card split"
+            ) from exc
+        if (
+            not isinstance(held_out, list)
+            or len(held_out) != count
+            or any(not isinstance(value, int) for value in held_out)
+        ):
+            raise DroidForwardDynamicsError(
+                "qualified Cosmos framework interpreter returned an invalid card split"
+            )
+        return held_out, "cosmos-framework/.venv torch.randperm(seed=42)"
+    generator = torch.Generator().manual_seed(42)
+    return (
+        torch.randperm(total, generator=generator).tolist()[:count],
+        "source-overlay torch.randperm(seed=42)",
+    )
+
+
 def _card_holdout_metadata(selection: dict[str, Any]) -> dict[str, Any]:
     """Validate the documented split or a stronger scene/building separation."""
 
@@ -163,16 +223,7 @@ def _card_holdout_metadata(selection: dict[str, Any]) -> dict[str, Any]:
         raise DroidForwardDynamicsError(
             "card_episode_3pct needs an in-range episode_index"
         )
-    try:
-        import torch
-    except ImportError as exc:
-        raise DroidForwardDynamicsError(
-            "card_episode_3pct verification requires PyTorch to reproduce the card's split"
-        ) from exc
-    generator = torch.Generator().manual_seed(42)
-    held_out = torch.randperm(expected_total, generator=generator).tolist()[
-        : int(round(expected_total * 0.03))
-    ]
+    held_out, split_runtime = _card_heldout_episode_indices(expected_total)
     if episode_index not in set(held_out):
         raise DroidForwardDynamicsError(
             "episode_index is not in the documented seed=42 3% held-out split"
@@ -186,7 +237,7 @@ def _card_holdout_metadata(selection: dict[str, Any]) -> dict[str, Any]:
         "subset_episode_count": expected_total,
         "episode_index": episode_index,
         "heldout_episode_count": len(held_out),
-        "membership_reproduced_with": "torch.randperm(seed=42)[:round(total*0.03)]",
+        "membership_reproduced_with": split_runtime + "[:round(total*0.03)]",
         "note": (
             "The card's 3% split is held out by episode only; it can retain scene "
             "correlation and is not a scene-separated generalization result."

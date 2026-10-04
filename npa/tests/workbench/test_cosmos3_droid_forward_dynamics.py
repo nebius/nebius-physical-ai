@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from PIL import Image
 
+from npa.workbench.cosmos import droid_forward_dynamics as droid_fd
 from npa.workbench.cosmos.droid_forward_dynamics import (
     CHECKPOINT_REVISION,
     CONTROLS_SCHEMA,
@@ -178,6 +181,46 @@ def test_prepare_rejects_an_unrecognized_heldout_split(tmp_path: Path) -> None:
         prepare_droid_forward_dynamics(
             input_path=str(path), output_path=str(tmp_path / "out")
         )
+
+
+def test_card_split_uses_qualified_framework_torch_when_overlay_lacks_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    selection = json.loads(_selection(tmp_path).read_text())
+    selection["heldout_split"] = {
+        "method": "card_episode_3pct",
+        "seed": 42,
+        "val_ratio": 0.03,
+        "subset": "failure",
+        "subset_episode_count": 14268,
+        "episode_index": 10,
+    }
+    framework_python = tmp_path / "cosmos-framework" / ".venv" / "bin" / "python"
+    framework_python.parent.mkdir(parents=True)
+    framework_python.write_text("placeholder\n")
+    monkeypatch.setenv("COSMOS3_REPO", str(framework_python.parents[2]))
+
+    original_import = builtins.__import__
+
+    def no_overlay_torch(name: str, *args: object, **kwargs: object) -> object:
+        if name == "torch":
+            raise ImportError("torch intentionally absent from source overlay")
+        return original_import(name, *args, **kwargs)
+
+    def framework_randperm(argv: list[str], **_kwargs: object) -> SimpleNamespace:
+        assert argv[0] == str(framework_python)
+        assert argv[-1] == "14268"
+        return SimpleNamespace(returncode=0, stdout=json.dumps(list(range(428))))
+
+    monkeypatch.setattr(builtins, "__import__", no_overlay_torch)
+    monkeypatch.setattr(droid_fd.subprocess, "run", framework_randperm)
+
+    heldout = droid_fd._card_holdout_metadata(selection)
+
+    assert heldout["scope"] == "episode_heldout"
+    assert heldout["membership_reproduced_with"].startswith(
+        "cosmos-framework/.venv torch.randperm"
+    )
 
 
 def test_prepare_requires_the_source_action_gripper_not_pose_state(
