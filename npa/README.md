@@ -453,6 +453,23 @@ configuration or skipped inference and leaves endpoint provisioning and cleanup
 to the operator. Hosted Kimi-K3 visual inference runs in the separate
 `token_factory_live_recheck.py` lane with `NEBIUS_TOKEN_FACTORY_KEY`.
 
+The `vlm-eval benchmark --dataset isaac-agency` alias packages six stylized
+frames with a positive elevated-object claim and a negative grasp-and-lift
+claim. Its structural preflight checks the exact bytes before model inference;
+it is an illustrative calibration, not Isaac rendering or policy qualification.
+Use sequence selection with six frames. The
+[agency calibration record](../docs/workbench/evidence/vlm-isaac-agency-calibration.md)
+describes the fixed labels, measurements and limits.
+
+The hosted live test `npa/tests/e2e/test_vlm_agency_calibration_live.py` executes
+both claims once per model and retains the measured confusion counts. It uses
+the configured Token Factory key and defaults to the hosted vision model.
+`NPA_VLM_AGENCY_LIVE_MODELS` accepts comma-separated model IDs;
+`NPA_VLM_AGENCY_EVIDENCE_DIR` selects a new private evidence directory for the
+raw provider reports, defaulting to the test's temporary directory. A passing
+test proves complete, traceable execution; label disagreement remains visible
+in the report and does not establish calibrated model quality.
+
 After committing, run `git fetch origin main` and `make merge-precheck` before
 pushing. This checks committed HEAD's merge with current main for conflicts and
 inconsistent dependency fingerprints without modifying your index. It does not
