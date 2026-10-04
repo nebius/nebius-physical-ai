@@ -43,17 +43,9 @@
     },
     "source_image": {
       "status": "blocked",
-      "reason": "No source-capable image can be qualified while the upstream source rights are unresolved. A separate source-free admission image was privately built, scanned, pushed, and independently pulled solely to prove refusal before upstream fetch; it cannot be represented as a benchmark runtime. The workflow retains a deliberately invalid example digest for offline planning only.",
+      "reason": "No source-capable image can be qualified while the upstream source rights are unresolved. A separate source-free admission image was privately built, scanned, pushed, and independently pulled solely to prove the fail-closed admission boundary before upstream fetch; it cannot be represented as a benchmark runtime. The workflow retains a deliberately invalid example digest for offline planning only.",
       "evidence": [
         "docs/workbench/libero-plus.md",
-        "private onboarding evidence: source-admission-image-20261004"
-      ]
-    },
-    "source_admission_image": {
-      "status": "verified",
-      "reason": "A private, immutable source-free admission image was built with provenance/SBOM, scanned, pushed only to an operator-private registry, and independently pulled and inspected. Its OCI metadata records unvalidated private qualification and absence of upstream payload; it proves only the fail-closed admission boundary.",
-      "evidence": [
-        "npa/docker/workbench/libero-plus/Dockerfile.admission",
         "private onboarding evidence: source-admission-image-20261004"
       ]
     },
