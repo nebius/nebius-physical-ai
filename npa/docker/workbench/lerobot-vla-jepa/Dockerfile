@@ -1,15 +1,11 @@
 # VLA-JEPA is deliberately a distinct candidate from the generic LeRobot image.
 # Its exact upstream policy is available only in LeRobot v0.6.1, not the accepted
 # generic 0.5.1/0.6.0 surface.
-FROM ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
-
 ARG LEROBOT_SOURCE_REVISION=7e241bd630a3719a56157a497ce5d08f244784f1
 
-LABEL npa.tool="lerobot-vla-jepa" \
-      npa.lerobot.version="0.6.1" \
-      npa.lerobot.source-revision="${LEROBOT_SOURCE_REVISION}" \
-      org.opencontainers.image.source="https://github.com/huggingface/lerobot" \
-      org.opencontainers.image.licenses="Apache-2.0"
+FROM ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643 AS vla_jepa_build
+
+ARG LEROBOT_SOURCE_REVISION
 
 USER ubuntu
 WORKDIR /opt/lerobot
@@ -47,9 +43,26 @@ assert rerun.__version__ == "0.38.1"
 assert lerobot_vla_jepa.LEROBOT_VERSION == "0.6.1"
 PY
 
-ARG NPA_ADAPTER_REVISION=local-uncommitted
-LABEL npa.adapter.source-revision="${NPA_ADAPTER_REVISION}"
+# Copying the merged build filesystem into a scratch final stage means cache
+# bytes inherited in a parent image are not retained in the published image's
+# layer history. A later rm alone would only create a whiteout and leave those
+# bytes recoverable from the parent layer.
+FROM scratch AS vla_jepa_runtime
 
+ARG LEROBOT_SOURCE_REVISION
+ARG NPA_ADAPTER_REVISION=local-uncommitted
+
+COPY --from=vla_jepa_build / /
+
+LABEL npa.tool="lerobot-vla-jepa" \
+      npa.lerobot.version="0.6.1" \
+      npa.lerobot.source-revision="${LEROBOT_SOURCE_REVISION}" \
+      npa.adapter.source-revision="${NPA_ADAPTER_REVISION}" \
+      org.opencontainers.image.source="https://github.com/huggingface/lerobot" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+USER ubuntu
+WORKDIR /opt/lerobot
 ENV WANDB_MODE=disabled \
     WANDB_DISABLED=true \
     HF_HUB_DISABLE_TELEMETRY=1 \

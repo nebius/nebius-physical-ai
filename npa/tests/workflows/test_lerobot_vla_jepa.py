@@ -69,12 +69,16 @@ def test_live_matrix_registers_the_private_candidate_without_a_generic_fallback(
 
 
 def test_candidate_image_removes_the_inherited_pip_cache() -> None:
-    """The exact-byte scan must not inherit a populated package cache."""
+    """The exact-byte scan must not retain a parent cache in layer history."""
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     cleanup = "rm -rf /home/ubuntu/.cache/pip"
     assert cleanup in dockerfile
     assert "test ! -e /home/ubuntu/.cache/pip" in dockerfile
     assert dockerfile.index(cleanup) > dockerfile.index('"rerun-sdk==0.38.1"')
+    assert "FROM scratch AS vla_jepa_runtime" in dockerfile
+    final_copy = "COPY --from=vla_jepa_build / /"
+    assert final_copy in dockerfile
+    assert dockerfile.index(cleanup) < dockerfile.index(final_copy)
 
 
 def test_task_disjoint_split_and_numeric_training_statistics() -> None:
