@@ -222,6 +222,20 @@ def test_rollout_command_is_the_published_native_protocol_with_exact_controller_
     assert not any("use_relative_actions=true" in item for item in command)
 
 
+def test_private_dm05_image_retains_bootstrap_attestation_and_telemetry_boundary():
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/lerobot/Dockerfile.dm05-validation"
+    )
+    instructions = dockerfile.read_text(encoding="utf-8")
+
+    assert (
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"'
+        in instructions
+    )
+    assert "/opt/lerobot/venv/bin/python -m pip uninstall -y wandb" in instructions
+
+
 def test_dm05_runtime_manifest_is_exact_source_bound(tmp_path, monkeypatch):
     manifest = tmp_path / "dm05-runtime.json"
     monkeypatch.setenv(workflow.DM05_RUNTIME_MANIFEST_ENV, str(manifest))

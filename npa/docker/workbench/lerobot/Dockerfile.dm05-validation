@@ -5,6 +5,7 @@ FROM ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a
 LABEL org.opencontainers.image.source="https://github.com/hbzfeng/lerobot" \
       org.opencontainers.image.revision="6eede4f7d2efe6b4f6a58ddb7b13ed55e2346b9c" \
       org.opencontainers.image.licenses="Apache-2.0" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
       org.nebius.npa.validation-disposition="operator-private-no-publication"
 
 USER ubuntu
