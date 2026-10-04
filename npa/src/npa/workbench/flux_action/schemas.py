@@ -122,6 +122,8 @@ class TrainingSettings(BaseModel):
     optimizer_lr: float = Field(default=5e-5, gt=0)
     optimizer_lr_heads_multiplier: float = Field(default=5.0, gt=0)
     caption_dropout: float = Field(default=0.0, ge=0, le=1)
+    param_dtype: Literal["float32", "bfloat16"] = "float32"
+    ema_sigma_rels: tuple[Literal[0.1, 0.05], ...] = (0.1, 0.05)
 
     @model_validator(mode="after")
     def check_schedule(self) -> TrainingSettings:
@@ -131,6 +133,8 @@ class TrainingSettings(BaseModel):
         Returns: This schedule.
         Raises: ValueError if the trunk remains frozen throughout.
         """
+        if len(set(self.ema_sigma_rels)) != len(self.ema_sigma_rels):
+            raise ValueError("ema_sigma_rels must not contain duplicates")
         if self.steps <= self.frozen_steps + 1:
             raise ValueError("steps must exceed frozen_steps + 1 to train the trunk")
         return self
@@ -149,6 +153,15 @@ class Recipe(BaseModel):
     training: TrainingSettings
     val_episodes: int = Field(default=1, ge=0)
     export_profile: Literal["model", "ema_0p10", "ema_0p05"] = "ema_0p10"
+
+    @model_validator(mode="after")
+    def check_export_profile(self) -> Recipe:
+        """Require the requested EMA to be present in the training schedule."""
+
+        sigma = {"ema_0p10": 0.1, "ema_0p05": 0.05}.get(self.export_profile)
+        if sigma is not None and sigma not in self.training.ema_sigma_rels:
+            raise ValueError("export_profile requires its EMA in ema_sigma_rels")
+        return self
 
 
 class FinetuneRequest(BaseModel):

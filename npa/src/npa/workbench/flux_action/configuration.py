@@ -105,7 +105,6 @@ def training_config(
         "cooldown_start": None,
         "reseed_on_resume": False,
         "log_every": 1,
-        "param_dtype": "float32",
         "compute_dtype": "bfloat16",
         "reduce_dtype": "float32",
         "activation_checkpointing": True,

@@ -1,0 +1,148 @@
+{
+  "robot": {
+    "embodiment": "aloha",
+    "actions": [
+      {
+        "name": "left_waist",
+        "unit": "rad"
+      },
+      {
+        "name": "left_shoulder",
+        "unit": "rad"
+      },
+      {
+        "name": "left_elbow",
+        "unit": "rad"
+      },
+      {
+        "name": "left_forearm_roll",
+        "unit": "rad"
+      },
+      {
+        "name": "left_wrist_angle",
+        "unit": "rad"
+      },
+      {
+        "name": "left_wrist_rotate",
+        "unit": "rad"
+      },
+      {
+        "name": "left_gripper",
+        "unit": "open_fraction"
+      },
+      {
+        "name": "right_waist",
+        "unit": "rad"
+      },
+      {
+        "name": "right_shoulder",
+        "unit": "rad"
+      },
+      {
+        "name": "right_elbow",
+        "unit": "rad"
+      },
+      {
+        "name": "right_forearm_roll",
+        "unit": "rad"
+      },
+      {
+        "name": "right_wrist_angle",
+        "unit": "rad"
+      },
+      {
+        "name": "right_wrist_rotate",
+        "unit": "rad"
+      },
+      {
+        "name": "right_gripper",
+        "unit": "open_fraction"
+      }
+    ],
+    "states": [
+      {
+        "name": "left_waist",
+        "unit": "rad"
+      },
+      {
+        "name": "left_shoulder",
+        "unit": "rad"
+      },
+      {
+        "name": "left_elbow",
+        "unit": "rad"
+      },
+      {
+        "name": "left_forearm_roll",
+        "unit": "rad"
+      },
+      {
+        "name": "left_wrist_angle",
+        "unit": "rad"
+      },
+      {
+        "name": "left_wrist_rotate",
+        "unit": "rad"
+      },
+      {
+        "name": "left_gripper",
+        "unit": "open_fraction"
+      },
+      {
+        "name": "right_waist",
+        "unit": "rad"
+      },
+      {
+        "name": "right_shoulder",
+        "unit": "rad"
+      },
+      {
+        "name": "right_elbow",
+        "unit": "rad"
+      },
+      {
+        "name": "right_forearm_roll",
+        "unit": "rad"
+      },
+      {
+        "name": "right_wrist_angle",
+        "unit": "rad"
+      },
+      {
+        "name": "right_wrist_rotate",
+        "unit": "rad"
+      },
+      {
+        "name": "right_gripper",
+        "unit": "open_fraction"
+      }
+    ],
+    "cameras": {
+      "top": "observation.images.top"
+    },
+    "camera_layout": "single",
+    "fps": 50,
+    "canvas_hw": [
+      512,
+      512
+    ],
+    "action_parameterization": "absolute",
+    "gripper_flip_dims": [],
+    "n_action_steps": 8
+  },
+  "training": {
+    "steps": 4,
+    "checkpoint_every": 4,
+    "frozen_steps": 0,
+    "trunk_warmup_steps": 1,
+    "heads_warmup_steps": 1,
+    "windows_per_rank": 1,
+    "grad_accumulation": 1,
+    "num_workers": 1,
+    "visits_per_epoch": 1,
+    "param_dtype": "bfloat16",
+    "ema_sigma_rels": []
+  },
+  "export_profile": "model",
+  "val_episodes": 5
+}

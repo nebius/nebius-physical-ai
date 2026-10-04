@@ -4,13 +4,13 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Local schema, CLI, catalog, recipe and workflow checks pass. Cloud plans passed, but GPU allocation is blocked before training; full-weight GPU acceptance remains unverified.",
+      "reason": "Local schema, CLI, catalog, recipe and workflow checks pass. A single-H100 FP32 training attempt reached the native trainer but failed during EMA allocation before any update; full-weight GPU acceptance remains unverified.",
       "evidence": [
         "native upstream CPU index/config/window checks passed for 3/7/14-channel contracts",
         "workflow has explicit private image/pull Secret and S3 dataset/recipe inputs",
         "1334 scoped repository tests passed on Python 3.12",
         "validate-spec and plan-spec --check-render passed with one rendered GPU task",
-        "isolated cloud workflow plans passed for eight-H200, eight-H100 and four-L40S allocations; no training submission was attempted"
+        "Eight-H200, eight-H100 and four-L40S plans passed; their allocations failed before training. A later single-H100 attempt entered the real native trainer."
       ]
     },
     "task_fidelity": {
@@ -64,12 +64,14 @@
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "Cloud allocation failed before training: eight-H200 and four-L40S node requests returned NotEnoughResources; eight-H100 returned QuotaFailure. Obtain available eight-GPU capacity and sufficient H100 quota, then run the four-update acceptance recipe. Neither this workflow nor the alternate four-process plan is GPU-qualified.",
+      "reason": "Eight-GPU reference capacity remains unqualified. One H100 passed real CUDA and stability gates, but the FP32 recipe exhausted 79.18 GiB while allocating native EMA copies before the first update. The separate native BF16/direct-model-export single-GPU candidate requires a new exact image and complete acceptance run.",
       "evidence": [
         "typed provider failures preserved privately and exact owned node-group states reconciled",
-        "no full-weight training job submitted; GPU train/checkpoint/export/reload and terminal success remain unverified",
+        "Single-H100 native training reported 6909046016 trainable parameters; preserved CUDA OOM traceback identifies PowerEMA construction; zero optimizer updates completed.",
         "Serverless exact-image dry-run also rejected the generated image label length; native VM placement lookup lacked ProjectService.List permission",
-        "closed-loop policy quality and the 3000-update recipe remain unmeasured"
+        "closed-loop policy quality and the 3000-update recipe remain unmeasured",
+        "Dataset indexing and pinned weight loading completed in the real GPU attempt.",
+        "A CLI configuration notice caused false controller-failure reports; strict queue parsing regression tests now preserve STARTING/RUNNING and fail closed on malformed responses. Exact native job state is required for reconciliation."
       ]
     }
   }

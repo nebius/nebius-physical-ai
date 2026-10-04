@@ -2707,6 +2707,16 @@ def workflow_status(
             error=result.stderr.strip() or result.stdout.strip(),
         )
 
+    if verified_structured_queue_rows(result) is None:
+        return WorkflowResult(
+            status="UNKNOWN",
+            job_id=job_id,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error="SkyPilot queue response is malformed or has conflicting diagnostics",
+        )
+
     status = _status_from_queue_payload(result.stdout, job_id)
     if not status:
         # A successful queue response is authoritative: if the recorded id is

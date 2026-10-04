@@ -396,3 +396,48 @@ def test_remote_export_hash_detects_upload_corruption():
             "s3://test-bucket/run",
             {"model.safetensors": hashlib.sha256(b"original bytes").hexdigest()},
         )
+
+
+def test_single_gpu_recipe_preserves_full_training_and_native_precision(tmp_path):
+    path = (
+        Path(__file__).parents[2]
+        / "workflows/workbench/configs/flux-action-aloha-single-gpu-smoke.json"
+    )
+    recipe = Recipe.model_validate_json(path.read_text())
+    config = training_config(recipe, tmp_path, tmp_path / "out", 1)
+
+    assert config["param_dtype"] == "bfloat16"
+    assert config["compute_dtype"] == "bfloat16"
+    assert config["ema_sigma_rels"] == ()
+    assert config["frozen_steps"] == 0
+    assert config["steps"] == 4
+    assert config["policy"]["optimizer_lr"] > 0
+    assert config["policy"]["optimizer_lr_heads_multiplier"] > 0
+    assert recipe.export_profile == "model"
+
+
+def test_default_training_keeps_fp32_and_both_emas(tmp_path):
+    recipe = Recipe.model_validate(recipe_data())
+    config = training_config(recipe, tmp_path, tmp_path / "out", 8)
+    assert config["param_dtype"] == "float32"
+    assert config["ema_sigma_rels"] == (0.1, 0.05)
+
+
+@pytest.mark.parametrize(
+    "training, profile, message",
+    (
+        ({"param_dtype": "float16"}, "model", "param_dtype"),
+        ({"ema_sigma_rels": []}, "ema_0p10", "requires its EMA"),
+        ({"ema_sigma_rels": [0.1]}, "ema_0p05", "requires its EMA"),
+        ({"ema_sigma_rels": [0.1, 0.1]}, "model", "duplicates"),
+        ({"ema_sigma_rels": [0.3]}, "model", "ema_sigma_rels"),
+    ),
+)
+def test_recipe_rejects_unsupported_precision_or_unavailable_export(
+    training, profile, message
+):
+    data = recipe_data()
+    data["training"].update(training)
+    data["export_profile"] = profile
+    with pytest.raises(ValueError, match=message):
+        Recipe.model_validate(data)

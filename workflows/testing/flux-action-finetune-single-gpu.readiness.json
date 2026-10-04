@@ -1,0 +1,67 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "4ae624bc2460abb62041d9b1839a282b0477caa25898cbf826e950ba05309e1d",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Single-GPU schema, native precision and export-profile contracts pass targeted tests; live end-to-end BF16 qualification remains pending.",
+      "evidence": [
+        "native upstream CPU index/config/window checks passed for 3/7/14-channel contracts",
+        "workflow has explicit private image/pull Secret and S3 dataset/recipe inputs",
+        "1334 scoped repository tests passed on Python 3.12",
+        "validate-spec and plan-spec --check-render passed with one rendered GPU task",
+        "Eight-H200, eight-H100 and four-L40S plans passed; their allocations failed before training. A later single-H100 attempt entered the real native trainer."
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The tool invokes the pinned standalone full-weight trainer, requires positive trunk/head learning rates, exports a native BF16 policy and reloads it in a fresh evaluator process.",
+      "evidence": [
+        "SOURCE_REVISION e2dd1d8dbc5977b54315d61f7548c63c043d6d4f",
+        "full mode counts optimizer updates; no PEFT/LoRA configuration",
+        "Native BF16 parameters, no EMA copies, direct model export, one worker and four full-trunk/head optimizer updates requested."
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Live storage authentication, input upload/readback and fresh output-prefix checks passed. Completion still requires independent remote checkpoint/export/reload evidence.",
+      "evidence": [
+        "corrupted remote export rejection tested",
+        "task-owned fresh output prefix checked before workflow planning"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The pinned ALOHA dataset is staged and independently checked. The new BF16/direct-export recipe must be uploaded and checked before submission.",
+      "evidence": [
+        "lerobot/aloha_sim_transfer_cube_human revision 6a43d500f101255823a9d2b9dc244eeb01a2cd31",
+        "50 episodes, 20000 frames; nine input objects uploaded",
+        "dataset metadata and smoke recipe independently SHA-256 checked after S3 readback",
+        "full-weight tool dry-run planned four optimizer updates"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Live object-storage, Nebius and exact pinned base-model access passed. Private runtime credentials are external to Git and the image; registry pull on the target worker remains part of runtime acceptance.",
+      "evidence": [
+        "S3/HF/Nebius health preflight passed",
+        "authenticated access to the pinned BFL trunk, video VAE and text encoder verified",
+        "private registry login, push and immutable digest resolution passed"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The changed native precision/EMA integration requires an exact committed-source private image build and security checks before GPU qualification.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Real end-to-end BF16 full-weight single-GPU train/checkpoint/export/reload has not completed. The earlier FP32 attempt failed during EMA construction.",
+      "evidence": [
+        "One H100 passed real CUDA vector addition and 120-second stability checks; this is hardware evidence only."
+      ]
+    }
+  }
+}

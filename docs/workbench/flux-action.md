@@ -286,13 +286,40 @@ Trivy reported zero secret findings and zero critical vulnerabilities, with a
 GPU train/export/reload remains unverified; the completed SO-101 LoRA run does
 not qualify this separate runtime.
 
-### Cloud acceptance attempt
+### Cloud acceptance attempts
 
 The candidate image and pinned ALOHA smoke inputs passed their build, scan,
-access and planning checks. Cloud allocation then failed before training:
-eight H200s and four L40S GPUs returned `NotEnoughResources`; eight H100s
-returned `QuotaFailure`. No full-weight training job was submitted. Obtain
-available eight-GPU capacity and sufficient quota, then run the four-update
-recipe and verify the checkpoint, export, fresh-process reload and terminal
-status. The eight-GPU reference workflow and alternate four-process plan
-remain unqualified; the 3,000-update recipe and policy quality are unmeasured.
+access and planning checks. Eight H200s and four L40S GPUs returned
+`NotEnoughResources`; eight H100s returned `QuotaFailure`.
+
+A later single-H100 attempt passed CUDA vector addition and a 120-second
+stability check, indexed the real dataset, fetched the pinned weights, and
+entered the full-weight trainer. It exhausted the GPU's 79.18 GiB while creating
+FP32 EMA copies, before the first optimizer update. Its failure logs were
+preserved in object storage. Trainable parameters numbered 6,909,046,016.
+This is a failed training attempt, not end-to-end acceptance.
+
+### Single-GPU qualification recipe
+
+Use [the single-GPU workflow](../../workflows/testing/flux-action-finetune-single-gpu.yaml)
+with [its four-update ALOHA recipe](../../npa/workflows/workbench/configs/flux-action-aloha-single-gpu-smoke.json).
+The recipe uses native BF16 parameters, disables EMA copies, and exports the
+trained `model` profile. The full trunk and robot heads train with positive
+learning rates. This precision recipe requires its own GPU qualification;
+the default FP32 parameters and two EMA profiles remain the reference settings.
+
+Supply the immutable private image, dataset URI, recipe URI, and an already
+Bound disk PVC through `checkpoint_claim`. The PVC holds temporary training
+files and the HF cache at `/npa-work`. Preserve the system `/tmp`: mounting a
+fresh disk there can prevent apt's unprivileged verification process from
+creating temporary files during SkyPilot setup. Keep failed artifacts until
+their object-storage copies have been checked.
+
+An EMA export requires its corresponding value in `training.ema_sigma_rels`.
+Supported values are `0.1` and `0.05`; an empty list requires `export_profile`
+to be `model`. `training.param_dtype` accepts `float32` or `bfloat16`.
+
+The single-GPU candidate, eight-GPU reference workflow, and alternate
+four-process plan remain unqualified until complete checkpoint, export,
+fresh-process reload, remote checksums and native terminal success are verified.
+The 3,000-update recipe and closed-loop policy quality are unmeasured.

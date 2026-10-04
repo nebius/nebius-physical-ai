@@ -20,7 +20,8 @@ Read `docs/workbench/flux-action.md` for the full input and output contract.
    third-party-eula-preflight. Verify access to the exact pinned base/encoders.
    Use operator credentials; do not collect a second NPA terms attestation.
 4. Build the candidate privately using the repository secure-image-build flow.
-   The image is unbuilt/unqualified and publication-quarantined. Do not treat
+   An earlier candidate was privately built; GPU acceptance and public publication
+   remain quarantined. Rebuild changed source before testing it. Do not treat
    its Dockerfile or CPU adapter tests as evidence of GPU training success.
 5. Set the workflow's image override to the built image and match the GPU
    resource count to `flux_processes`. This is one node, not multi-node training.
@@ -40,3 +41,11 @@ encoders; they are not self-contained bundles.
 Native standalone steps are optimizer updates. Use the ALOHA full/smoke recipes
 explicitly and preserve `val_episodes` (default 1; public example 5). Supply an
 immutable `flux_image` and `image_pull_secret`; no public accepted image exists.
+
+For one-GPU qualification, use the explicit ALOHA single-GPU smoke recipe and
+workflow. Native BF16 parameters with `ema_sigma_rels: []` and `export_profile:
+model` avoid the default FP32 EMA copies. All trunk/head weights still train.
+Require an already Bound disk PVC, mount it at `/npa-work`, and direct TMPDIR
+and HF_HOME there. Preserve system `/tmp` permissions for SkyPilot apt setup.
+The observed one-H100 FP32 attempt exhausted 79.18 GiB during EMA construction;
+no optimizer update completed. The BF16 candidate remains GPU-unqualified.

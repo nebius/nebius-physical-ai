@@ -1,0 +1,60 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: flux-action-finetune-single-gpu
+  description: Four-update full-weight qualification with BF16 parameters and direct
+    model export. Requires the single-GPU smoke recipe and an operator-created disk
+    PVC; GPU acceptance remains unverified.
+config:
+  bucket: example-bucket
+  flux_input_uri: s3://{{config.bucket}}/datasets/robot-training
+  flux_recipe_uri: s3://{{config.bucket}}/recipes/flux-action-single-gpu-smoke.json
+  flux_output_uri: s3://{{config.bucket}}/runs/{{run.id}}/flux-action
+  flux_processes: '1'
+  flux_image: registry.example.invalid/npa-flux-action:replace-with-reviewed-digest
+  image_pull_secret: registry-pull-secret
+  checkpoint_claim: flux-action-checkpoints
+resources:
+  train:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 8
+    memory: 150Gi
+    disk_size: 90
+    image: '{{config.flux_image}}'
+    kubernetes:
+      pod_config:
+        spec:
+          imagePullSecrets:
+          - name: '{{config.image_pull_secret}}'
+          securityContext:
+            fsGroup: 1000
+            fsGroupChangePolicy: OnRootMismatch
+          volumes:
+          - name: checkpoints
+            persistentVolumeClaim:
+              claimName: '{{config.checkpoint_claim}}'
+          containers:
+          - name: ray-node
+            volumeMounts:
+            - name: checkpoints
+              mountPath: /npa-work
+            env:
+            - name: TMPDIR
+              value: /npa-work
+            - name: HF_HOME
+              value: /npa-work/hf-cache
+initial: finetune
+states:
+  finetune:
+    toolRef: workbench.flux_action.finetune
+    resources: train
+    inputs:
+    - uri: '{{config.flux_input_uri}}'
+    - uri: '{{config.flux_recipe_uri}}'
+    outputs:
+    - uri: '{{config.flux_output_uri}}/result.json'
+      schema: npa.flux-action.finetune.v1
+    - uri: '{{config.flux_output_uri}}/export/manifest.json'
+      schema: application/json
+    terminal: true

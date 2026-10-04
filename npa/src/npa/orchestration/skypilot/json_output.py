@@ -10,6 +10,26 @@ from typing import Any
 from npa.clients.json_output import parse_single_json_document
 
 
+# SkyPilot 0.12.2 emits this client-only configuration notice before queue JSON.
+# Its embedded key list is diagnostic text, not a second queue payload.
+_CLIENT_CLOUD_WARNING = (
+    'The following keys (["allowed_clouds"]) have different values in the client '
+    "SkyPilot config with the server and will be ignored. Remove these keys to "
+    "disable this warning. If you want to specify it, please modify it on server "
+    "side or contact your administrator."
+)
+
+
+def _without_client_cloud_warning(value: str) -> str:
+    """Remove only the exact pinned CLI notice, preserving all other diagnostics."""
+
+    return "\n".join(
+        line
+        for line in str(value or "").splitlines()
+        if line.strip() != _CLIENT_CLOUD_WARNING
+    )
+
+
 _EMPTY_QUEUE_MESSAGES = {
     "no in-progress managed jobs.",
     "no in-progress managed jobs found.",
@@ -21,7 +41,7 @@ _EMPTY_QUEUE_MESSAGES = {
 def queue_rows_from_output(output: str) -> list[dict[str, Any]] | None:
     """Parse a verified SkyPilot queue list from one unambiguous JSON payload."""
 
-    payload = parse_single_json_document(output)
+    payload = parse_single_json_document(_without_client_cloud_warning(output))
     if isinstance(payload, list):
         rows = payload
     elif isinstance(payload, dict) and isinstance(payload.get("jobs"), list):
@@ -80,7 +100,7 @@ def _semantic_queue_lines(value: str, *, structured: bool) -> list[str] | None:
 
     ansi = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
     normalized: list[str] = []
-    for raw in str(value or "").splitlines():
+    for raw in _without_client_cloud_warning(value).splitlines():
         line = " ".join(ansi.sub("", raw).strip().lower().split())
         if not line:
             continue
@@ -128,7 +148,7 @@ def _semantic_queue_lines(value: str, *, structured: bool) -> list[str] | None:
 def _without_single_json_document(value: str) -> str | None:
     """Remove the one JSON document while retaining surrounding diagnostics."""
 
-    text = str(value or "")
+    text = _without_client_cloud_warning(value)
     decoder = json.JSONDecoder()
     matches: list[tuple[int, int]] = []
     for index, character in enumerate(text):
