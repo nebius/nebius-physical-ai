@@ -7,6 +7,9 @@ from pathlib import Path
 import yaml
 
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.orchestration.npa_workflow.interpreter import build_plan
+from npa.orchestration.npa_workflow.skypilot_render import secret_env_hints_for_plan
+from npa.orchestration.npa_workflow.spec import load_spec
 
 
 def test_droid_forward_dynamics_has_five_connected_substantive_stages() -> None:
@@ -57,6 +60,18 @@ def test_droid_forward_dynamics_has_five_connected_substantive_stages() -> None:
     assert "prediction.json" in str(states["evaluate"]["inputs"])
     assert "controls.json" in str(states["evaluate"]["inputs"])
     assert "evaluation.json" in str(states["visualize"]["inputs"])
+
+
+def test_droid_forward_dynamics_has_no_generic_cosmos_hf_token_hint() -> None:
+    """Keep the public DROID checkpoint closure distinct from guarded Cosmos3."""
+
+    path = (
+        Path(__file__).parents[3]
+        / "workflows/testing/cosmos3-droid-forward-dynamics.yaml"
+    )
+    plan = build_plan(load_spec(path), run_id="droid-public-closure")
+
+    assert secret_env_hints_for_plan(plan.steps) == ()
 
 
 def test_droid_forward_dynamics_keeps_the_immutable_checkpoint_and_rerun_output() -> (
