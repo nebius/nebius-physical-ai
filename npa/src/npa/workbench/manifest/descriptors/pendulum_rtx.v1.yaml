@@ -18,6 +18,10 @@ environment:
     - libxi6
     - libxrender1
     - libxfixes3
+    - libxkbcommon0
+    - libxxf86vm1
+    - libxext6
+    - libxdamage1
     - libsm6
     - libgl1
 inputs:
