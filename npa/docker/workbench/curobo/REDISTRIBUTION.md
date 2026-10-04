@@ -10,8 +10,9 @@ runtime exception to the compiler, shell tools, or their dependencies.
 
 ## Distro closure, including ancestor versions
 
-The immutable census below describes its recorded reference image, not automatic
-acceptance of a security successor. The current recipe additionally installs
+The immutable census below describes the measured security-refresh reference
+image `sha256:5d34001b80585269a0825acfba62ae4718da7576d38d0f0e8b59c70814df9a6d`,
+not automatic acceptance of a successor. The current recipe installs
 the two OpenSSL `3.0.13-0ubuntu3.16` security binaries from the separately signed
 `20261004T000000Z` snapshot, inside the original apt RUN before a layer is
 exported. `security-apt.lock.json` binds both binary files, the signed release and
@@ -19,8 +20,11 @@ indexes, and all three corresponding-source archives; all five artifacts were
 downloaded and hash-checked. Other distro packages keep the original snapshot.
 `install_security_apt.py` verifies downloaded bytes, package control identities
 and the installed versions without resolving an unrelated package upgrade.
-Refresh the full package-database/notice closure against the actual rebuilt
-image before accepting that successor; these pins do not substitute for it.
+The reference's four actual package databases and all 164 resolved notice files
+are bound below. Its inherited OpenSSL `3.0.13-0ubuntu3.6` bytes remain recorded;
+replacing active packages does not remove those ancestor bytes or establish their
+security acceptance. Recheck the exact rebuilt-image closure before accepting a
+successor; these pins do not substitute for the image and vulnerability gates.
 
 `distro-source-closure.json`, also delivered under `/usr/share/doc/npa-curobo/`,
 binds all 250 distinct binary package/version pairs from four actual layer

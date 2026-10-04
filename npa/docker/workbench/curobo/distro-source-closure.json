@@ -2,7 +2,7 @@
   "schema_version": "npa.curobo.distro-source-closure.v1",
   "scope": "All installed dpkg/source identities in every package-database layer of the pinned recipe, including superseded ancestor versions. Final copyright paths are resolved and byte-bound; earlier retained versions are explicit, not silently exempted.",
   "release_status": "Not a release approval. Source archive URLs/hashes were anonymously downloaded and matched signed Ubuntu indexes. Before conveying an image, provide the applicable equivalent source access and all license notices; vendor and Python closures are separate.",
-  "reference_image_digest": "sha256:76ed76cd73c1e3074baeab73b73a48bf55c6aff4f0e1c1abaf6f1ce66b470943",
+  "reference_image_digest": "sha256:5d34001b80585269a0825acfba62ae4718da7576d38d0f0e8b59c70814df9a6d",
   "packages": [
     {
       "package": "adduser",
@@ -1092,9 +1092,9 @@
     },
     {
       "package": "libssl3t64",
-      "version": "3.0.13-0ubuntu3.15",
+      "version": "3.0.13-0ubuntu3.16",
       "source": "openssl",
-      "source_version": "3.0.13-0ubuntu3.15"
+      "source_version": "3.0.13-0ubuntu3.16"
     },
     {
       "package": "libssl3t64",
@@ -1302,9 +1302,9 @@
     },
     {
       "package": "openssl",
-      "version": "3.0.13-0ubuntu3.15",
+      "version": "3.0.13-0ubuntu3.16",
       "source": "openssl",
-      "source_version": "3.0.13-0ubuntu3.15"
+      "source_version": "3.0.13-0ubuntu3.16"
     },
     {
       "package": "openssl",
@@ -1522,12 +1522,12 @@
       "package_count": 117
     },
     {
-      "sha256": "0a775523c830cd4271d9f96ef5138d7673285048ee3558747b68d424d53d37cf",
+      "sha256": "0ce00bd079c818b83dbfb708ffdea15d8faa1e68cea0fb5b12e06f5349ed3fed",
       "size": 183034,
       "package_count": 194
     }
   ],
-  "final_dpkg_database_sha256": "0a775523c830cd4271d9f96ef5138d7673285048ee3558747b68d424d53d37cf",
+  "final_dpkg_database_sha256": "0ce00bd079c818b83dbfb708ffdea15d8faa1e68cea0fb5b12e06f5349ed3fed",
   "notice_files": [
     {
       "path": "usr/share/doc/adduser/copyright",
@@ -5755,25 +5755,25 @@
     },
     {
       "package": "openssl",
-      "version": "3.0.13-0ubuntu3.15",
+      "version": "3.0.13-0ubuntu3.16",
       "artifacts": [
         {
-          "url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/o/openssl/openssl_3.0.13.orig.tar.gz",
-          "bytes": 15294843,
+          "url": "https://snapshot.ubuntu.com/ubuntu/20261004T000000Z/pool/main/o/openssl/openssl_3.0.13.orig.tar.gz",
           "sha256": "88525753f79d3bec27d2fa7c66aa0b92b3aa9498dafd93d7cfa4b3780cdae313",
+          "bytes": 15294843,
           "filename": "openssl_3.0.13.orig.tar.gz"
         },
         {
-          "url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/o/openssl/openssl_3.0.13-0ubuntu3.15.debian.tar.xz",
-          "bytes": 209648,
-          "sha256": "a48bc18f3afd7030cd73712f180af343c4642e2d0ac65ac06fe1ec0ca7506077",
-          "filename": "openssl_3.0.13-0ubuntu3.15.debian.tar.xz"
+          "url": "https://snapshot.ubuntu.com/ubuntu/20261004T000000Z/pool/main/o/openssl/openssl_3.0.13-0ubuntu3.16.debian.tar.xz",
+          "sha256": "77893129922c917792dd187c2853fb36ce1c98597c442b42d8190252959b7f6c",
+          "bytes": 223332,
+          "filename": "openssl_3.0.13-0ubuntu3.16.debian.tar.xz"
         },
         {
-          "url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/o/openssl/openssl_3.0.13-0ubuntu3.15.dsc",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20261004T000000Z/pool/main/o/openssl/openssl_3.0.13-0ubuntu3.16.dsc",
+          "sha256": "7d1e552a6f519836c352407e521bafdda7552ec6d1ba242968c35fc0e17f47b6",
           "bytes": 2516,
-          "sha256": "ae1c9a23219f0617b866d765f750ebd3bac74d93b7a235e6e53289781a056f0a",
-          "filename": "openssl_3.0.13-0ubuntu3.15.dsc"
+          "filename": "openssl_3.0.13-0ubuntu3.16.dsc"
         }
       ]
     },
@@ -6934,4 +6934,3 @@
     }
   ]
 }
-

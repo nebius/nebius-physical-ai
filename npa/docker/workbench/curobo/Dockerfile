@@ -131,7 +131,8 @@ RUN pip install --no-deps --no-build-isolation --no-cache-dir /opt/npa-src \
 COPY --chmod=0444 docker/workbench/curobo/REDISTRIBUTION.md /usr/share/doc/npa-curobo/REDISTRIBUTION.md
 COPY --chmod=0444 docker/workbench/curobo/distro-source-closure.json /usr/share/doc/npa-curobo/distro-source-closure.json
 COPY --chmod=0755 docker/workbench/curobo/entrypoint.sh /usr/local/bin/curobo-entrypoint
-RUN install -d -m 0755 -o ubuntu -g ubuntu /workspace /workspace/.cache
+RUN install -d -m 0755 -o ubuntu -g ubuntu /workspace /workspace/.cache \
+    && chmod 0755 /usr/share/doc/npa-curobo
 WORKDIR /workspace
 USER ubuntu
 EXPOSE 8080

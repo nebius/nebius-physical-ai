@@ -2,8 +2,8 @@
   "distro_source_closure": {
     "manifest": {
       "path": "usr/share/doc/npa-curobo/distro-source-closure.json",
-      "size": 254275,
-      "sha256": "af44a57f3d7441d36eb47202e00b17bc441e5c354d0e0a4bb822866af294403b"
+      "size": 254274,
+      "sha256": "f081e15c524b9ac1136a0d445aaf10dfdbd581ad8d1d48f6215d3d40b309ec46"
     },
     "package_databases": [
       {
@@ -22,12 +22,12 @@
         "package_count": 117
       },
       {
-        "sha256": "0a775523c830cd4271d9f96ef5138d7673285048ee3558747b68d424d53d37cf",
+        "sha256": "0ce00bd079c818b83dbfb708ffdea15d8faa1e68cea0fb5b12e06f5349ed3fed",
         "size": 183034,
         "package_count": 194
       }
     ],
-    "final_dpkg_database_sha256": "0a775523c830cd4271d9f96ef5138d7673285048ee3558747b68d424d53d37cf",
+    "final_dpkg_database_sha256": "0ce00bd079c818b83dbfb708ffdea15d8faa1e68cea0fb5b12e06f5349ed3fed",
     "copyright_files": [
       {
         "path": "usr/share/doc/adduser/copyright",
