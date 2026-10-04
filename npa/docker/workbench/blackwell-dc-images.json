@@ -252,6 +252,15 @@
       ]
     },
     {
+      "name": "npa-lerobot-vla-jepa",
+      "dockerfile": "lerobot-vla-jepa/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "unvalidated",
+      "smoke": "The exact five-stage VLA-JEPA workflow: task-disjoint LIBERO preparation, upstream LeRobot v0.6.1 fine-tuning, held-out native rollout with decoded MP4, numerical evaluation with checkpoint lineage, and factual RRD/report verification.",
+      "notes": "Separate LeRobot v0.6.1 VLA-JEPA candidate. No current-source exact private image has completed the required complete-byte scan or GPU run. The proposed validation workflow explicitly targets one RTX PRO 6000 (sm_120); it makes no B200 or B300 compatibility, runtime, or public-release claim. A private image must be built and byte-qualified before its wheel architecture can be measured."
+    },
+    {
       "name": "npa-lerobot-policy",
       "dockerfile": "lerobot-policy/Dockerfile",
       "verdict": "ready",

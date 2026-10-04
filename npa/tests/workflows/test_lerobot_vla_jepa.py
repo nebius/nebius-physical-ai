@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows" / "testing" / "lerobot-vla-jepa.yaml"
 READINESS = WORKFLOW.with_suffix(".readiness.json")
 DOCKERFILE = ROOT / "npa" / "docker" / "workbench" / "lerobot-vla-jepa" / "Dockerfile"
+BLACKWELL_MANIFEST = ROOT / "npa" / "docker" / "workbench" / "blackwell-dc-images.json"
 
 
 def test_workflow_has_five_connected_native_stages() -> None:
@@ -275,6 +276,7 @@ def test_readiness_is_hash_bound_and_does_not_claim_live_acceptance() -> None:
         "npa/docker/workbench/lerobot-vla-jepa/entrypoint.sh": (
             DOCKERFILE.parent / "entrypoint.sh"
         ),
+        "npa/docker/workbench/blackwell-dc-images.json": BLACKWELL_MANIFEST,
         "npa/src/npa/deploy/images.py": ROOT / "npa/src/npa/deploy/images.py",
         "npa/src/npa/smoke/golden_evals.yaml": (
             ROOT / "npa/src/npa/smoke/golden_evals.yaml"

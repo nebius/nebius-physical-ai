@@ -181,6 +181,21 @@ def test_lerobot_b300_uses_the_supported_python_and_cuda_stack() -> None:
     ), "build-time Linux headers must survive until evdev has compiled"
 
 
+def test_vla_jepa_is_unbuilt_and_rtx_only_until_its_own_image_is_qualified(
+    entries: list[dict],
+) -> None:
+    """A generic LeRobot result cannot promote the distinct VLA-JEPA candidate."""
+    entry = next(item for item in entries if item["name"] == "npa-lerobot-vla-jepa")
+
+    assert entry["dockerfile"] == "lerobot-vla-jepa/Dockerfile"
+    assert entry["verdict"] == "unknown"
+    assert entry["validation"] == "pending-build"
+    assert entry["redistribution"] == "unvalidated"
+    assert "RTX PRO 6000" in entry["notes"]
+    assert "no B200 or B300 compatibility" in entry["notes"]
+    assert not any(key.startswith("published_") for key in entry)
+
+
 def test_gpu_agnostic_entries_need_no_arch_validation(entries: list[dict]) -> None:
     for entry in [item for item in entries if item["verdict"] == "not-applicable"]:
         assert entry["validation"] == "not-required", (
@@ -490,9 +505,11 @@ def test_names_match_the_real_container_image_names(entries: list[dict]) -> None
     manifest impossible to cross-reference against a registry.
     """
 
-    from npa.deploy.images import CONTAINER_IMAGE_NAMES
+    from npa.deploy.images import CONTAINER_IMAGE_NAMES, NEUTRAL_UNBUILT_IMAGE_NAMES
 
-    known = set(CONTAINER_IMAGE_NAMES.values())
+    known = set(CONTAINER_IMAGE_NAMES.values()) | set(
+        NEUTRAL_UNBUILT_IMAGE_NAMES.values()
+    )
     # Base and helper images are not deployable tools, so they are not in the map.
     not_deployable_tools = {
         "npa-base",
