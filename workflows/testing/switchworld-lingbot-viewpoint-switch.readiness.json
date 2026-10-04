@@ -51,24 +51,12 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The rejected digest-equal mirror is not selected. The superseded r8 private digest passed built-byte, repository-pinned secret/fixed-critical, and SPDX checks; its target receipt establishes exact-target image pull only, not bootstrap or cleanup. A real r8 worker did start and prepare decoded case frames, but the current attention-fallback source change requires a newly built exact image, fresh checks, and a new native run. Its disposition remains operator-private validation only.",
+      "status": "verified",
+      "reason": "The selected operator-private image has a retained immutable inspection, complete byte/security/configuration/SPDX evidence, and an r11 exact-target ephemeral bootstrap capability probe with verified cleanup. The current NPA source is staged separately as an immutable source overlay, so this verifies selected image delivery and startup only; it does not verify adapter generation, metrics, final artifacts, benchmark performance, or public redistribution.",
       "evidence": [
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/execution-route.json (private operator evidence, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/image-preflight-20261004-private.json (exact-target pull preflight only; superseded digest, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/neutral-private-image-mirror-20261004-private.json (source/destination digest parity, private only, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/neutral-private-image-preflight-20261004-private.json (exact-target pull preflight only; no startup claim, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/neutral-private-image-byte-scan-20261004-private.json (rejected findings; remediation applied, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-build-20261004.log (operator-private build terminal success, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-inspection-20261004-private.json (immutable digest and no-publication OCI disposition, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-byte-scan-20261004-private.json (18 archives, no findings, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-preflight-multi-20261004-r2-private.json (exact multi-target pull preflight only; superseded digest, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-security-20261004-private.json (superseded private image: r7 omitted the actual PyAV runtime decoder, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-r8-inspection-20261004-private.json (replacement immutable digest and no-publication OCI disposition, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-r8-byte-scan-20261004-private.json (replacement payload scan, no findings, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-r8-security-20261004-private.json (replacement repository-pinned Trivy no-secret/no-fixed-CRITICAL policy result and SPDX inventory, private only, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-r8-preflight-20261004-private.json (replacement exact multi-target pull preflight only; current source change requires a fresh digest, 2026-10-04)",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/native-baseline-log-r8-20261004-0702-private.json (r8 worker started and prepared real frames, then failed at optional FlashAttention assertion; superseded by current source, 2026-10-04)"
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-image-r10-inspection-20261004-private.json (selected immutable private image and no-publication disposition, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/private-r10-gpu-bootstrap-terminal-r3-20261004-private.json (target GPU SDPA startup and cleanup, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/native-workflow-r11-admission-20261004.log (exact-target ephemeral bootstrap capability probe and cleanup, followed by immutable source staging, 2026-10-04)"
       ]
     },
     "target_runtime": {
