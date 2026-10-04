@@ -9,6 +9,10 @@ ARG LINUX_LIBC_DEV_VERSION=5.15.0-198.208
 
 WORKDIR /opt/npa
 USER root
+# COPY merges directories: remove the parent's obsolete NPA source/catalog before
+# installing this exact closure. The final scratch stage excludes removed ancestors.
+RUN test -d /opt/npa && test ! -L /opt/npa \
+    && rm -rf /opt/npa/src /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
