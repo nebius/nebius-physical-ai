@@ -13,9 +13,7 @@ def success_rate(successes: Sequence[bool]) -> float:
     return sum(1 for s in successes if s) / len(successes)
 
 
-def wilson_interval(
-    successes: int, n: int, *, z: float = 1.96
-) -> tuple[float, float]:
+def wilson_interval(successes: int, n: int, *, z: float = 1.96) -> tuple[float, float]:
     """Wilson score interval for a binomial proportion (default 95%).
 
     Better behaved than the normal approximation at small n and at the

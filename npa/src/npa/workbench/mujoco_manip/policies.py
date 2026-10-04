@@ -55,9 +55,7 @@ class _WaypointPolicy:
         self._waypoints = _waypoints(task)
         self._index = 0
         spec = TASK_SPECS[task]
-        self._yaw_rate = (
-            float(spec["yaw_rate"]) if task == SCREW_DRIVING else 0.0
-        )
+        self._yaw_rate = float(spec["yaw_rate"]) if task == SCREW_DRIVING else 0.0
 
     def __call__(self, obs: np.ndarray) -> np.ndarray:
         tip = _tip(np.asarray(obs))
@@ -97,9 +95,7 @@ class _RandomPolicy:
         return self._rng.uniform(-1.0, 1.0, size=4)
 
 
-def get_policy(
-    task: str, name: str, *, seed: int | None = None
-) -> Policy:
+def get_policy(task: str, name: str, *, seed: int | None = None) -> Policy:
     """Return the scripted policy *name* for *task*.
 
     ``seed`` seeds the stochastic policies (``noisy``, ``random``); the

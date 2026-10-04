@@ -56,9 +56,7 @@ def test_cli_registers_run():
 def test_scenes_parse(task):
     model = mujoco.MjModel.from_xml_string(build_scene(task))
     assert model.nq >= 4
-    assert (
-        mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "tip") >= 0
-    )
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "tip") >= 0
 
 
 def test_unknown_scene_raises():
@@ -110,8 +108,7 @@ def test_random_baseline_fails_peg_insertion():
 
 def test_noisy_is_no_worse_than_random_on_screw():
     noisy_wins = sum(
-        _rollout("screw_driving", "noisy", seed)["success"]
-        for seed in (0, 1, 2)
+        _rollout("screw_driving", "noisy", seed)["success"] for seed in (0, 1, 2)
     )
     assert noisy_wins >= 1
 

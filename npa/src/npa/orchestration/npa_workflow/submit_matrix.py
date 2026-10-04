@@ -265,9 +265,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "is not installed on the submit image; the spec exercises "
             "config validation and the toolRef argv only."
         ),
-        notes=(
-            "Anchors the mujoco/run three-tier contract (CLI <-> SDK <-> spec)."
-        ),
+        notes=("Anchors the mujoco/run three-tier contract (CLI <-> SDK <-> spec)."),
     ),
     SubmitLiveCase(
         "openvla-train.yaml",

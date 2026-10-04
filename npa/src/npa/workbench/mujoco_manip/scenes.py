@@ -36,10 +36,11 @@ def _f(spec: dict[str, object], key: str) -> float:
 
 def _xyz(spec: dict[str, object], key: str) -> tuple[float, float, float]:
     value = spec[key]
-    assert (
-        isinstance(value, tuple) and len(value) == 3
-    ), f"TASK_SPECS[{key}] must be an (x, y, z) tuple"
+    assert isinstance(value, tuple) and len(value) == 3, (
+        f"TASK_SPECS[{key}] must be an (x, y, z) tuple"
+    )
     return (float(value[0]), float(value[1]), float(value[2]))
+
 
 #: Per-task geometry shared by the scene builders, envs, and scripted policies.
 TASK_SPECS: dict[str, dict[str, object]] = {

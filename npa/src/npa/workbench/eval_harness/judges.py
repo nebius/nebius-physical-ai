@@ -112,9 +112,7 @@ class VLMJudge:
             ),
         )
 
-    def _score_frames(
-        self, *, task: str, frames: Sequence[np.ndarray]
-    ) -> float:
+    def _score_frames(self, *, task: str, frames: Sequence[np.ndarray]) -> float:
         from PIL import Image
 
         from npa.workbench import vlm_eval
@@ -122,9 +120,7 @@ class VLMJudge:
         with tempfile.TemporaryDirectory(prefix="eval-harness-vlm-") as tmp:
             tmpdir = Path(tmp)
             for i, frame in enumerate(frames):
-                Image.fromarray(np.asarray(frame)).save(
-                    tmpdir / f"frame_{i:04d}.png"
-                )
+                Image.fromarray(np.asarray(frame)).save(tmpdir / f"frame_{i:04d}.png")
             api_key = os.environ.get(self.api_key_env, "").strip()
             result = vlm_eval.evaluate_vlm(
                 input_path=str(tmpdir),
@@ -154,8 +150,7 @@ def make_judge(
     if name == VLMJudge.name:
         return VLMJudge(**config)
     raise EvalHarnessError(
-        f"unknown judge {name!r}; known judges: "
-        f"{[HeuristicJudge.name, VLMJudge.name]}"
+        f"unknown judge {name!r}; known judges: {[HeuristicJudge.name, VLMJudge.name]}"
     )
 
 

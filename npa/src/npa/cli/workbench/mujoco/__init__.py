@@ -31,9 +31,7 @@ def run_cmd(
         "--policy",
         help="Scripted policy: 'scripted:<expert|noisy|random>'.",
     ),
-    episodes: int = typer.Option(
-        10, "--episodes", help="Number of rollout episodes."
-    ),
+    episodes: int = typer.Option(10, "--episodes", help="Number of rollout episodes."),
     seed: int = typer.Option(
         0, "--seed", help="Base random seed (episode i uses seed+i)."
     ),

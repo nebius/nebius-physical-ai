@@ -76,9 +76,7 @@ def run(
     for index in range(episodes):
         episode_seed = seed + index
         env = mujoco_manip.make_env(short_task, max_steps=max_steps)
-        policy_fn = mujoco_manip.get_policy(
-            short_task, policy_name, seed=episode_seed
-        )
+        policy_fn = mujoco_manip.get_policy(short_task, policy_name, seed=episode_seed)
         obs = env.reset(seed=episode_seed)
         trajectory: list[list[float]] = []
         total_reward = 0.0
@@ -125,9 +123,7 @@ def run(
             "episodes": n,
             "successes": successes,
             "success_rate": (successes / n) if n else 0.0,
-            "mean_steps": (
-                sum(e["steps"] for e in episode_reports) / n if n else 0.0
-            ),
+            "mean_steps": (sum(e["steps"] for e in episode_reports) / n if n else 0.0),
         },
         "episodes": episode_reports,
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

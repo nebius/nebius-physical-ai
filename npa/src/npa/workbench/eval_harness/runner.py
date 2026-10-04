@@ -106,9 +106,7 @@ def run_policy(
                 max_steps=max_steps,
             )
         )
-    report.summary = metrics.summarize(
-        [r.as_dict() for r in report.records]
-    )
+    report.summary = metrics.summarize([r.as_dict() for r in report.records])
     return report
 
 
@@ -149,9 +147,7 @@ def _run_episode(
         if done:
             env_success = bool(info.get("success", env_success))
             break
-    judged = judge_impl.judge(
-        task=task, env_success=env_success, frames=frames
-    )
+    judged = judge_impl.judge(task=task, env_success=env_success, frames=frames)
     return EpisodeRecord(
         index=index,
         seed=seed,

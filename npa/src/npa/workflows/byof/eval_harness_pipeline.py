@@ -71,9 +71,7 @@ def run(
     if not output_uri:
         raise EvalHarnessPipelineError("output_uri is required")
     if judge not in JUDGES:
-        raise EvalHarnessPipelineError(
-            f"judge must be one of {JUDGES}, got {judge!r}"
-        )
+        raise EvalHarnessPipelineError(f"judge must be one of {JUDGES}, got {judge!r}")
     report = run_policy(
         task=task,
         policy=policy,
@@ -125,9 +123,7 @@ def compare(
     if not output_uri:
         raise EvalHarnessPipelineError("output_uri is required")
     if judge not in JUDGES:
-        raise EvalHarnessPipelineError(
-            f"judge must be one of {JUDGES}, got {judge!r}"
-        )
+        raise EvalHarnessPipelineError(f"judge must be one of {JUDGES}, got {judge!r}")
     report = compare_policies(
         task=task,
         policy_a=policy_a,

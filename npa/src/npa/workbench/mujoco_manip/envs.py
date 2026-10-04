@@ -63,9 +63,7 @@ class MujocoManipEnv:
         self.data = mujoco.MjData(self.model)
         self._renderer: Any = None
 
-        self._tip_site = mujoco.mj_name2id(
-            self.model, mujoco.mjtObj.mjOBJ_SITE, "tip"
-        )
+        self._tip_site = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "tip")
         if self._tip_site < 0:
             raise MujocoManipError(f"task {task!r} scene has no 'tip' site")
 
@@ -136,15 +134,11 @@ class MujocoManipEnv:
         }
         return obs, reward, done, info
 
-    def render_rgb(
-        self, width: int = 256, height: int = 256
-    ) -> np.ndarray | None:
+    def render_rgb(self, width: int = 256, height: int = 256) -> np.ndarray | None:
         """Render an RGB frame; None when headless rendering is unavailable."""
         try:
             if self._renderer is None:
-                self._renderer = self._mujoco.Renderer(
-                    self.model, width, height
-                )
+                self._renderer = self._mujoco.Renderer(self.model, width, height)
             self._renderer.update_scene(self.data)
             frame: np.ndarray = self._renderer.render()
             return frame

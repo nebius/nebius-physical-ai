@@ -35,38 +35,26 @@ def _write_text(path: Path, text: str) -> None:
     path.write_text(text + "\n", encoding="utf-8")
 
 
-def write_run_report(
-    output_uri: str, report: Mapping[str, Any]
-) -> dict[str, str]:
+def write_run_report(output_uri: str, report: Mapping[str, Any]) -> dict[str, str]:
     """Write ``report.json`` + ``report.md`` under *output_uri*."""
     directory = _output_dir(output_uri)
     payload = dict(report)
-    payload["written_utc"] = time.strftime(
-        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-    )
+    payload["written_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     json_path = directory / "report.json"
     md_path = directory / "report.md"
-    _write_text(
-        json_path, json.dumps(payload, indent=2, sort_keys=True)
-    )
+    _write_text(json_path, json.dumps(payload, indent=2, sort_keys=True))
     _write_text(md_path, render_run_markdown(payload))
     return {"report_json": str(json_path), "report_markdown": str(md_path)}
 
 
-def write_compare_report(
-    output_uri: str, report: Mapping[str, Any]
-) -> dict[str, str]:
+def write_compare_report(output_uri: str, report: Mapping[str, Any]) -> dict[str, str]:
     """Write ``compare.json`` + ``compare.md`` under *output_uri*."""
     directory = _output_dir(output_uri)
     payload = dict(report)
-    payload["written_utc"] = time.strftime(
-        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-    )
+    payload["written_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     json_path = directory / "compare.json"
     md_path = directory / "compare.md"
-    _write_text(
-        json_path, json.dumps(payload, indent=2, sort_keys=True)
-    )
+    _write_text(json_path, json.dumps(payload, indent=2, sort_keys=True))
     _write_text(md_path, render_compare_markdown(payload))
     return {"compare_json": str(json_path), "compare_markdown": str(md_path)}
 
@@ -116,8 +104,7 @@ def render_compare_markdown(report: Mapping[str, Any]) -> str:
         "",
         "## Result",
         "",
-        f"- success-rate difference (A − B): "
-        f"{_fmt(report.get('success_rate_diff'))}",
+        f"- success-rate difference (A − B): {_fmt(report.get('success_rate_diff'))}",
         f"- paired bootstrap 95% CI: [{_fmt(ci.get('lo'))}, {_fmt(ci.get('hi'))}]",
     ]
     return "\n".join(lines)

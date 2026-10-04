@@ -33,8 +33,7 @@ def get_task(name: str) -> EnvFactory:
         return _TASK_REGISTRY[name]
     except KeyError:
         raise EvalHarnessError(
-            f"unknown eval_harness task {name!r}; known tasks: "
-            f"{sorted(_TASK_REGISTRY)}"
+            f"unknown eval_harness task {name!r}; known tasks: {sorted(_TASK_REGISTRY)}"
         ) from None
 
 
