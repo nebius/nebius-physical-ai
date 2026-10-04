@@ -317,7 +317,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "openvla-oft-libero.yaml",
         "gpu",
-        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        # The exact model and official OFT suite checkpoint payloads are public
+        # at their immutable revisions.  Do not require a token that the native
+        # runtime neither consumes nor needs for those downloads.
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         plan_only=True,
         plan_only_justification=(
             "The native OFT stages are executable, but this checked-in template "
