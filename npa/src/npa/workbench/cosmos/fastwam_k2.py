@@ -78,7 +78,11 @@ class EvaluationRequest(BaseModel):
     @classmethod
     def unique_tasks(cls, tasks: list[str]) -> list[str]:
         """Require a nonempty, duplicate-free concrete task list."""
-        if not tasks or len(tasks) != len(set(tasks)) or any(not task.strip() for task in tasks):
+        if (
+            not tasks
+            or len(tasks) != len(set(tasks))
+            or any(not task.strip() for task in tasks)
+        ):
             raise ValueError("tasks must be nonempty, unique task names")
         return tasks
 
@@ -116,9 +120,13 @@ def _checkout(url: str, revision: str, target: Path, log: Path) -> Path:
         ["git", "checkout", "--detach", "FETCH_HEAD"],
     ):
         _run(argv, cwd=target, env=env, log=log)
-    actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=target, text=True).strip()
+    actual = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=target, text=True
+    ).strip()
     if actual != revision:
-        raise FastWamK2Error("upstream checkout revision did not match the pinned identity")
+        raise FastWamK2Error(
+            "upstream checkout revision did not match the pinned identity"
+        )
     return target
 
 
@@ -126,9 +134,15 @@ def _task_source_paths(robolab: Path, tasks: Iterable[str]) -> dict[str, Path]:
     """Resolve each selected task to the source file defining its registered class."""
     paths: dict[str, Path] = {}
     for task in tasks:
-        matches = [path for path in robolab.rglob("*.py") if f"class {task}" in path.read_text(errors="ignore")]
+        matches = [
+            path
+            for path in robolab.rglob("*.py")
+            if f"class {task}" in path.read_text(errors="ignore")
+        ]
         if len(matches) != 1:
-            raise FastWamK2Error(f"expected one RoboLab task definition for {task}, found {len(matches)}")
+            raise FastWamK2Error(
+                f"expected one RoboLab task definition for {task}, found {len(matches)}"
+            )
         paths[task] = matches[0]
     return paths
 
@@ -167,7 +181,10 @@ def _model_lineage() -> dict[str, Any]:
             "subdirectory": DERIVATIVE_SUBDIRECTORY,
         },
         "full_wam_baseline": {"repository": BASE_REPOSITORY, "revision": BASE_REVISION},
-        "framework": {"repository": FRAMEWORK_REPOSITORY, "revision": FRAMEWORK_REVISION},
+        "framework": {
+            "repository": FRAMEWORK_REPOSITORY,
+            "revision": FRAMEWORK_REVISION,
+        },
     }
 
 
@@ -175,7 +192,12 @@ def prepare_evaluation_inputs(*, input_path: str, output_path: str) -> dict[str,
     """Prepare hash-bound matched RoboLab task definitions for both policy arms."""
     request = _read_request(input_path)
     with policy_workspace(output_path, "fastwam-k2-prepare") as root:
-        robolab = _checkout(ROBOLAB_REPOSITORY, ROBOLAB_REVISION, root / "robolab", root / "bootstrap.log")
+        robolab = _checkout(
+            ROBOLAB_REPOSITORY,
+            ROBOLAB_REVISION,
+            root / "robolab",
+            root / "bootstrap.log",
+        )
         payload = _prepared_payload(request, robolab)
         artifacts = root / "artifacts"
         artifacts.mkdir()
@@ -191,7 +213,10 @@ def _read_prepared(input_path: str, root: Path) -> tuple[dict[str, Any], Path]:
         raise FastWamK2Error("prepared inputs artifact is missing")
     payload = json.loads(prepared.read_text())
     if payload.get("prepared_sha256") != _sha256_text(
-        json.dumps({key: value for key, value in payload.items() if key != "prepared_sha256"}, sort_keys=True)
+        json.dumps(
+            {key: value for key, value in payload.items() if key != "prepared_sha256"},
+            sort_keys=True,
+        )
     ):
         raise FastWamK2Error("prepared input manifest digest mismatch")
     return payload, root
@@ -203,7 +228,9 @@ def _ensure_prepared_task_sources(prepared: dict[str, Any], robolab: Path) -> No
     for task, record in expected.items():
         path = robolab / str(record.get("path", ""))
         if not path.is_file() or file_digest(path) != record.get("sha256"):
-            raise FastWamK2Error(f"RoboLab task source changed after preparation: {task}")
+            raise FastWamK2Error(
+                f"RoboLab task source changed after preparation: {task}"
+            )
 
 
 def _replace_once(text: str, old: str, new: str, name: str) -> str:
@@ -224,7 +251,9 @@ def apply_k2_runtime_overlay(framework: Path, artifact_root: Path) -> dict[str, 
     model = framework / "cosmos_framework/model/generator/omni_mot_model.py"
     artifact_root.mkdir(parents=True, exist_ok=True)
     if not server.is_file() or not model.is_file():
-        raise FastWamK2Error("pinned framework lacks the expected RoboLab implementation")
+        raise FastWamK2Error(
+            "pinned framework lacks the expected RoboLab implementation"
+        )
     before = {"server": file_digest(server), "model": file_digest(model)}
     server_text = server.read_text()
     model_text = model.read_text()
@@ -236,13 +265,13 @@ def apply_k2_runtime_overlay(framework: Path, artifact_root: Path) -> dict[str, 
     )
     server_text = _replace_once(
         server_text,
-        '        self.model = pipe.model\n        self.model.eval()\n',
+        "        self.model = pipe.model\n        self.model.eval()\n",
         '        self.model = pipe.model\n        self.model.eval()\n        if args.keep_generated_vision_frames < 0:\n            raise ValueError("--keep-generated-vision-frames must be non-negative")\n        self.model.inference_keep_generated_vision_frames = int(args.keep_generated_vision_frames)\n',
         "server model configuration",
     )
     model_text = _replace_once(
         model_text,
-        '            full_shape = list(prefix_latent.shape)\n            full_shape[temporal_dim] = num_latent_frames\n',
+        "            full_shape = list(prefix_latent.shape)\n            full_shape[temporal_dim] = num_latent_frames\n",
         '            full_shape = list(prefix_latent.shape)\n            keep_generated = int(getattr(self, "inference_keep_generated_vision_frames", 0))\n            if keep_generated < 0:\n                raise ValueError("inference_keep_generated_vision_frames must be non-negative")\n            kept_latent_frames = min(num_latent_frames, needed_latent_frames + keep_generated)\n            full_shape[temporal_dim] = kept_latent_frames\n',
         "latent-tail length",
     )
@@ -258,7 +287,8 @@ def apply_k2_runtime_overlay(framework: Path, artifact_root: Path) -> dict[str, 
         "conditioning_latent_frames": CONDITIONING_LATENT_FRAMES,
         "denoised_generated_latent_frames": KEEP_GENERATED_VISION_FRAMES,
         "expected_vision_tokens": TOKENS_PER_VISION_LATENT_FRAME * 3,
-        "expected_mse_target_tokens": TOKENS_PER_VISION_LATENT_FRAME * KEEP_GENERATED_VISION_FRAMES,
+        "expected_mse_target_tokens": TOKENS_PER_VISION_LATENT_FRAME
+        * KEEP_GENERATED_VISION_FRAMES,
         "source_sha256_before": before,
         "source_sha256_after": after,
         "upstream_flag_absent": True,
@@ -279,19 +309,34 @@ def _validate_overlay_sources(server_text: str, model_text: str) -> None:
     if any(fragment not in (server_text + model_text) for fragment in required):
         raise FastWamK2Error("FastWAM-K2 overlay semantic validation failed")
     if "condition_indexes" not in model_text or "condition_mask" not in model_text:
-        raise FastWamK2Error("overlay source does not retain native conditioning semantics")
+        raise FastWamK2Error(
+            "overlay source does not retain native conditioning semantics"
+        )
 
 
 def _sync_framework(framework: Path, env: dict[str, str], log: Path) -> Path:
     """Create the exact framework policy-server environment on the GPU worker."""
     _run(
-        ["uv", "sync", "--frozen", "--extra", "policy-server", "--group", "cu130-train"],
+        [
+            "uv",
+            "sync",
+            "--frozen",
+            "--extra",
+            "policy-server",
+            "--group",
+            "cu130-train",
+        ],
         cwd=framework,
         env=env,
         log=log,
     )
     python = framework / ".venv/bin/python"
-    _run([str(python), "-c", "import torch; assert torch.cuda.is_available()"], cwd=framework, env=env, log=log)
+    _run(
+        [str(python), "-c", "import torch; assert torch.cuda.is_available()"],
+        cwd=framework,
+        env=env,
+        log=log,
+    )
     return python
 
 
@@ -304,7 +349,9 @@ def _select_cuda_topology(device_count: int) -> dict[str, Any]:
     retained in the measured latency provenance rather than hidden.
     """
     if device_count < 1:
-        raise FastWamK2Error("FastWAM-K2 closed-loop evaluation requires at least one CUDA device")
+        raise FastWamK2Error(
+            "FastWAM-K2 closed-loop evaluation requires at least one CUDA device"
+        )
     client_device = "1" if device_count >= 2 else "0"
     return {
         "visible_cuda_device_count": device_count,
@@ -314,7 +361,9 @@ def _select_cuda_topology(device_count: int) -> dict[str, Any]:
     }
 
 
-def _detect_cuda_topology(framework_python: Path, framework: Path, env: dict[str, str], log: Path) -> dict[str, Any]:
+def _detect_cuda_topology(
+    framework_python: Path, framework: Path, env: dict[str, str], log: Path
+) -> dict[str, Any]:
     """Record the exact CUDA topology seen by the pinned framework runtime."""
     probe = subprocess.run(
         [str(framework_python), "-c", "import torch; print(torch.cuda.device_count())"],
@@ -335,7 +384,9 @@ def _detect_cuda_topology(framework_python: Path, framework: Path, env: dict[str
     try:
         device_count = int(probe.stdout.strip())
     except ValueError as exc:
-        raise FastWamK2Error("pinned framework CUDA topology probe returned a non-integer device count") from exc
+        raise FastWamK2Error(
+            "pinned framework CUDA topology probe returned a non-integer device count"
+        ) from exc
     return _select_cuda_topology(device_count)
 
 
@@ -351,7 +402,9 @@ def _isaac_runtime_env(env: dict[str, str]) -> dict[str, str]:
     """Derive the upstream wheel variable from NPA's single Isaac EULA policy."""
     raw = env.get("ACCEPT_EULA", "Y").strip().upper()
     if raw in {"", "N", "NO", "0", "FALSE"}:
-        raise FastWamK2Error("Isaac runtime was explicitly opted out through ACCEPT_EULA")
+        raise FastWamK2Error(
+            "Isaac runtime was explicitly opted out through ACCEPT_EULA"
+        )
     if raw not in {"Y", "YES", "1", "TRUE"}:
         raise FastWamK2Error("ACCEPT_EULA has an invalid value for the Isaac runtime")
     runtime_env = dict(env, ACCEPT_EULA="Y")
@@ -359,7 +412,9 @@ def _isaac_runtime_env(env: dict[str, str]) -> dict[str, str]:
     return runtime_env
 
 
-def _snapshot_checkpoint(repository: str, revision: str, destination: Path, python: Path, log: Path) -> Path:
+def _snapshot_checkpoint(
+    repository: str, revision: str, destination: Path, python: Path, log: Path
+) -> Path:
     """Fetch one exact Hugging Face checkpoint into run-private scratch."""
     destination.mkdir(parents=True, exist_ok=False)
     code = (
@@ -367,7 +422,12 @@ def _snapshot_checkpoint(repository: str, revision: str, destination: Path, pyth
         "snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], local_dir=sys.argv[3], "
         "local_dir_use_symlinks=False); print('checkpoint materialized')"
     )
-    _run([str(python), "-c", code, repository, revision, str(destination)], cwd=destination, env=dict(os.environ), log=log)
+    _run(
+        [str(python), "-c", code, repository, revision, str(destination)],
+        cwd=destination,
+        env=dict(os.environ),
+        log=log,
+    )
     if not any(destination.rglob("*.safetensors")):
         raise FastWamK2Error("checkpoint fetch produced no safetensors payload")
     return destination
@@ -388,7 +448,9 @@ def server_argv(framework_python: Path, checkpoint: Path, variant: str) -> list[
         "--no-guardrails",
     ]
     if variant == "fastwam-k2":
-        argv.extend(["--keep-generated-vision-frames", str(KEEP_GENERATED_VISION_FRAMES)])
+        argv.extend(
+            ["--keep-generated-vision-frames", str(KEEP_GENERATED_VISION_FRAMES)]
+        )
     elif variant != "full-wam":
         raise FastWamK2Error(f"unsupported policy variant: {variant}")
     return argv
@@ -441,7 +503,9 @@ def _run_robolab(
         "--output-folder-name",
         output_name,
     ]
-    client_env = dict(_isaac_runtime_env(env), CUDA_VISIBLE_DEVICES=cuda_visible_devices)
+    client_env = dict(
+        _isaac_runtime_env(env), CUDA_VISIBLE_DEVICES=cuda_visible_devices
+    )
     _run(argv, cwd=robolab, env=client_env, log=log)
     output = robolab / "output" / output_name
     if not output.is_dir():
@@ -454,7 +518,11 @@ def _episode_rows(output: Path, tasks: Iterable[str]) -> list[dict[str, Any]]:
     result_path = output / "episode_results.jsonl"
     if not result_path.is_file():
         raise FastWamK2Error("RoboLab did not write episode_results.jsonl")
-    rows = [json.loads(line) for line in result_path.read_text().splitlines() if line.strip()]
+    rows = [
+        json.loads(line)
+        for line in result_path.read_text().splitlines()
+        if line.strip()
+    ]
     if not rows:
         raise FastWamK2Error("RoboLab produced no completed episode rows")
     present = {str(row.get("task_name") or row.get("env_name")) for row in rows}
@@ -468,12 +536,18 @@ def _numeric(values: Iterable[Any]) -> list[float]:
     """Return finite numeric values while excluding booleans and malformed rows."""
     output: list[float] = []
     for value in values:
-        if type(value) in (int, float) and math.isfinite(float(value)) and float(value) >= 0.0:
+        if (
+            type(value) in (int, float)
+            and math.isfinite(float(value))
+            and float(value) >= 0.0
+        ):
             output.append(float(value))
     return output
 
 
-def summarize_episode_metrics(rows: list[dict[str, Any]], tasks: Iterable[str]) -> dict[str, Any]:
+def summarize_episode_metrics(
+    rows: list[dict[str, Any]], tasks: Iterable[str]
+) -> dict[str, Any]:
     """Derive task success and actual policy latency from native episode rows."""
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -483,28 +557,39 @@ def summarize_episode_metrics(rows: list[dict[str, Any]], tasks: Iterable[str]) 
     for task in tasks:
         task_rows = grouped[task]
         if not task_rows:
-            raise FastWamK2Error(f"RoboLab result rows lack requested task-success evidence: {task}")
+            raise FastWamK2Error(
+                f"RoboLab result rows lack requested task-success evidence: {task}"
+            )
         latency = _numeric(
             row.get("timing", {}).get("policy_inference_avg_ms")
             for row in task_rows
             if isinstance(row.get("timing"), dict)
         )
         if len(latency) != len(task_rows):
-            raise FastWamK2Error(f"RoboLab result rows lack native policy latency evidence: {task}")
+            raise FastWamK2Error(
+                f"RoboLab result rows lack native policy latency evidence: {task}"
+            )
         all_latency.extend(latency)
         summary["tasks"][task] = {
             "episodes": len(task_rows),
             "successes": sum(bool(row["success"]) for row in task_rows),
-            "success_rate": sum(bool(row["success"]) for row in task_rows) / len(task_rows),
+            "success_rate": sum(bool(row["success"]) for row in task_rows)
+            / len(task_rows),
             "policy_inference_avg_ms": statistics.mean(latency) if latency else None,
-            "policy_inference_median_ms": statistics.median(latency) if latency else None,
+            "policy_inference_median_ms": statistics.median(latency)
+            if latency
+            else None,
         }
     summary["overall"] = {
         "episodes": len(rows),
         "successes": sum(bool(row["success"]) for row in rows),
         "success_rate": sum(bool(row["success"]) for row in rows) / len(rows),
-        "policy_inference_avg_ms": statistics.mean(all_latency) if all_latency else None,
-        "policy_inference_median_ms": statistics.median(all_latency) if all_latency else None,
+        "policy_inference_avg_ms": statistics.mean(all_latency)
+        if all_latency
+        else None,
+        "policy_inference_median_ms": statistics.median(all_latency)
+        if all_latency
+        else None,
     }
     return summary
 
@@ -532,38 +617,71 @@ def _variant_checkpoint(variant: str) -> tuple[str, str, str]:
     raise FastWamK2Error(f"unsupported policy variant: {variant}")
 
 
-def run_variant(*, input_path: str, output_path: str, variant: str, baseline_path: str = "") -> dict[str, Any]:
+def run_variant(
+    *, input_path: str, output_path: str, variant: str, baseline_path: str = ""
+) -> dict[str, Any]:
     """Run one real policy server and matching RoboLab closed-loop protocol."""
     with policy_workspace(output_path, f"fastwam-k2-{variant}") as root:
         prepared, _ = _read_prepared(input_path, root / "prepared")
         request = EvaluationRequest.model_validate(prepared["request"])
         if baseline_path:
             _assert_baseline_matches(prepared, baseline_path, root / "baseline")
-        framework = _checkout(FRAMEWORK_REPOSITORY, FRAMEWORK_REVISION, root / "framework", root / "bootstrap.log")
-        robolab = _checkout(ROBOLAB_REPOSITORY, ROBOLAB_REVISION, root / "robolab", root / "bootstrap.log")
+        framework = _checkout(
+            FRAMEWORK_REPOSITORY,
+            FRAMEWORK_REVISION,
+            root / "framework",
+            root / "bootstrap.log",
+        )
+        robolab = _checkout(
+            ROBOLAB_REPOSITORY,
+            ROBOLAB_REVISION,
+            root / "robolab",
+            root / "bootstrap.log",
+        )
         _ensure_prepared_task_sources(prepared, robolab)
         artifacts = root / "artifacts"
         artifacts.mkdir()
-        overlay = apply_k2_runtime_overlay(framework, artifacts) if variant == "fastwam-k2" else None
+        overlay = (
+            apply_k2_runtime_overlay(framework, artifacts)
+            if variant == "fastwam-k2"
+            else None
+        )
         framework_env = dict(os.environ, COSMOS_TRAINING="1", PYTHONPATH=str(framework))
-        framework_python = _sync_framework(framework, framework_env, root / "framework-sync.log")
+        framework_python = _sync_framework(
+            framework, framework_env, root / "framework-sync.log"
+        )
         cuda_topology = _detect_cuda_topology(
             framework_python, framework, framework_env, root / "framework-sync.log"
         )
-        robolab_python = _sync_robolab(robolab, dict(os.environ), root / "robolab-sync.log")
+        robolab_python = _sync_robolab(
+            robolab, dict(os.environ), root / "robolab-sync.log"
+        )
         repo, revision, subdirectory = _variant_checkpoint(variant)
-        checkpoint_root = _snapshot_checkpoint(repo, revision, root / "checkpoint", framework_python, root / "checkpoint.log")
+        checkpoint_root = _snapshot_checkpoint(
+            repo,
+            revision,
+            root / "checkpoint",
+            framework_python,
+            root / "checkpoint.log",
+        )
         checkpoint = checkpoint_root / subdirectory if subdirectory else checkpoint_root
         if not checkpoint.is_dir():
-            raise FastWamK2Error("checkpoint does not contain the expected immutable subdirectory")
+            raise FastWamK2Error(
+                "checkpoint does not contain the expected immutable subdirectory"
+            )
         command = server_argv(framework_python, checkpoint, variant)
         write_local_json(
             artifacts / "serving-command.json",
             {"argv": command, "variant": variant, "cuda_topology": cuda_topology},
         )
-        server_env = dict(framework_env, CUDA_VISIBLE_DEVICES=cuda_topology["policy_server_cuda_visible_devices"])
+        server_env = dict(
+            framework_env,
+            CUDA_VISIBLE_DEVICES=cuda_topology["policy_server_cuda_visible_devices"],
+        )
         with (root / "policy-server.log").open("wb") as stream:
-            process = subprocess.Popen(command, cwd=framework, env=server_env, stdout=stream, stderr=stream)
+            process = subprocess.Popen(
+                command, cwd=framework, env=server_env, stdout=stream, stderr=stream
+            )
             try:
                 _wait_for_server(process, artifacts / "server-ready.txt")
                 output = _run_robolab(
@@ -584,21 +702,35 @@ def run_variant(*, input_path: str, output_path: str, variant: str, baseline_pat
                     process.wait()
         rows = _episode_rows(output, request.tasks)
         _copy_run_artifacts(output, artifacts / "closed-loop")
-        report = _variant_report(variant, prepared, request, rows, overlay, cuda_topology)
+        report = _variant_report(
+            variant, prepared, request, rows, overlay, cuda_topology
+        )
         write_local_json(artifacts / "variant-result.json", report)
-        for name in ("policy-server.log", "robolab.log", "framework-sync.log", "robolab-sync.log", "checkpoint.log"):
+        for name in (
+            "policy-server.log",
+            "robolab.log",
+            "framework-sync.log",
+            "robolab-sync.log",
+            "checkpoint.log",
+        ):
             source = root / name
             if source.is_file():
                 shutil.copyfile(source, artifacts / name)
         return publish_bundle(artifacts, output_path, report, f"{variant}.json")
 
 
-def _assert_baseline_matches(prepared: dict[str, Any], baseline_path: str, root: Path) -> None:
+def _assert_baseline_matches(
+    prepared: dict[str, Any], baseline_path: str, root: Path
+) -> None:
     """Require the K=2 arm to consume a baseline from the same prepared inputs."""
     baseline = materialize_bundle(baseline_path, root, VARIANT_SCHEMA)
     result = json.loads((root / "variant-result.json").read_text())
-    if baseline.get("prepared_sha256") != prepared.get("prepared_sha256") or result.get("prepared_sha256") != prepared.get("prepared_sha256"):
-        raise FastWamK2Error("K=2 evaluation must consume the matching full-WAM prepared inputs")
+    if baseline.get("prepared_sha256") != prepared.get("prepared_sha256") or result.get(
+        "prepared_sha256"
+    ) != prepared.get("prepared_sha256"):
+        raise FastWamK2Error(
+            "K=2 evaluation must consume the matching full-WAM prepared inputs"
+        )
 
 
 def _variant_report(
@@ -627,7 +759,10 @@ def _variant_report(
     if overlay is not None:
         report["serving_contract"] = overlay
     else:
-        report["serving_contract"] = {"mode": "full-wam", "keep_generated_vision_frames": None}
+        report["serving_contract"] = {
+            "mode": "full-wam",
+            "keep_generated_vision_frames": None,
+        }
     return report
 
 
@@ -643,13 +778,17 @@ def _read_variant(input_path: str, root: Path) -> dict[str, Any]:
     return result | {"_manifest": report}
 
 
-def compare_variants(*, full_wam_path: str, k2_path: str, output_path: str) -> dict[str, Any]:
+def compare_variants(
+    *, full_wam_path: str, k2_path: str, output_path: str
+) -> dict[str, Any]:
     """Compare only matched task-success evidence and actual measured latency."""
     with policy_workspace(output_path, "fastwam-k2-compare") as root:
         baseline = _read_variant(full_wam_path, root / "full-wam")
         k2 = _read_variant(k2_path, root / "fastwam-k2")
         if baseline.get("variant") != "full-wam" or k2.get("variant") != "fastwam-k2":
-            raise FastWamK2Error("comparison requires one full-WAM and one FastWAM-K2 result")
+            raise FastWamK2Error(
+                "comparison requires one full-WAM and one FastWAM-K2 result"
+            )
         if baseline.get("prepared_sha256") != k2.get("prepared_sha256"):
             raise FastWamK2Error("comparison arms do not use matching prepared inputs")
         report = _comparison_report(baseline, k2)
@@ -669,7 +808,8 @@ def _comparison_report(baseline: dict[str, Any], k2: dict[str, Any]) -> dict[str
         task: {
             "full_wam_success_rate": baseline_tasks[task]["success_rate"],
             "fastwam_k2_success_rate": k2_tasks[task]["success_rate"],
-            "success_rate_delta": k2_tasks[task]["success_rate"] - baseline_tasks[task]["success_rate"],
+            "success_rate_delta": k2_tasks[task]["success_rate"]
+            - baseline_tasks[task]["success_rate"],
             "full_wam_latency_ms": baseline_tasks[task]["policy_inference_avg_ms"],
             "fastwam_k2_latency_ms": k2_tasks[task]["policy_inference_avg_ms"],
         }
@@ -697,43 +837,77 @@ def _rerun_module() -> Any:
     try:
         import rerun as rr
     except ImportError:
-        subprocess.run(["uv", "pip", "install", "--python", sys.executable, "rerun-sdk==0.38.1"], check=True)
+        subprocess.run(
+            ["uv", "pip", "install", "--python", sys.executable, "rerun-sdk==0.38.1"],
+            check=True,
+        )
         import rerun as rr
     return rr
 
 
 def _rrd_recording_id(comparison: dict[str, Any]) -> str:
     """Bind a workflow RRD to its renderer-provided run identity when available."""
-    return os.environ.get("NPA_WORKFLOW_RUN_ID", "").strip() or comparison["prepared_sha256"]
+    return (
+        os.environ.get("NPA_WORKFLOW_RUN_ID", "").strip()
+        or comparison["prepared_sha256"]
+    )
 
 
-def _log_rrd(rr: Any, destination: Path, comparison: dict[str, Any], videos: list[Path]) -> str:
+def _log_rrd(
+    rr: Any, destination: Path, comparison: dict[str, Any], videos: list[Path]
+) -> str:
     """Write a factual Rerun recording from actual comparison metrics and MP4 files."""
     recording_id = _rrd_recording_id(comparison)
     recording = rr.RecordingStream("npa_cosmos3_fastwam_k2", recording_id=recording_id)
     rr.save(str(destination), recording=recording)
     summary = json.dumps(comparison, indent=2, sort_keys=True)
-    rr.log("reports/comparison", rr.TextDocument(summary, media_type="application/json"), static=True, recording=recording)
+    rr.log(
+        "reports/comparison",
+        rr.TextDocument(summary, media_type="application/json"),
+        static=True,
+        recording=recording,
+    )
     for index, video in enumerate(videos):
         if hasattr(rr, "AssetVideo"):
-            rr.log(f"rollouts/{index}", rr.AssetVideo(path=str(video)), static=True, recording=recording)
+            rr.log(
+                f"rollouts/{index}",
+                rr.AssetVideo(path=str(video)),
+                static=True,
+                recording=recording,
+            )
     for task, metrics in comparison["paired_task_metrics"].items():
-        rr.log(f"metrics/{task}/full_wam_success_rate", rr.Scalars(metrics["full_wam_success_rate"]), recording=recording)
-        rr.log(f"metrics/{task}/fastwam_k2_success_rate", rr.Scalars(metrics["fastwam_k2_success_rate"]), recording=recording)
+        rr.log(
+            f"metrics/{task}/full_wam_success_rate",
+            rr.Scalars(metrics["full_wam_success_rate"]),
+            recording=recording,
+        )
+        rr.log(
+            f"metrics/{task}/fastwam_k2_success_rate",
+            rr.Scalars(metrics["fastwam_k2_success_rate"]),
+            recording=recording,
+        )
     flush = getattr(recording, "flush", None)
     if callable(flush):
         flush()
     return recording_id
 
 
-def emit_visualization(*, full_wam_path: str, k2_path: str, comparison_path: str, output_path: str) -> dict[str, Any]:
+def emit_visualization(
+    *, full_wam_path: str, k2_path: str, comparison_path: str, output_path: str
+) -> dict[str, Any]:
     """Emit a factual RRD with copied rollout MP4s and measured paired metrics."""
     with policy_workspace(output_path, "fastwam-k2-visualize") as root:
         _read_variant(full_wam_path, root / "full-wam")
         _read_variant(k2_path, root / "fastwam-k2")
-        comparison = materialize_bundle(comparison_path, root / "comparison", COMPARISON_SCHEMA)
-        comparison_body = json.loads((root / "comparison" / "comparison-result.json").read_text())
-        videos = sorted((root / "full-wam").rglob("*.mp4")) + sorted((root / "fastwam-k2").rglob("*.mp4"))
+        comparison = materialize_bundle(
+            comparison_path, root / "comparison", COMPARISON_SCHEMA
+        )
+        comparison_body = json.loads(
+            (root / "comparison" / "comparison-result.json").read_text()
+        )
+        videos = sorted((root / "full-wam").rglob("*.mp4")) + sorted(
+            (root / "fastwam-k2").rglob("*.mp4")
+        )
         if not videos:
             raise FastWamK2Error("visualization requires actual rollout MP4 artifacts")
         artifact_root = root / "visualization"
