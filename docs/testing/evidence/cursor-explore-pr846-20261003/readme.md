@@ -407,3 +407,57 @@ executed. Direct use of qualified operator images requires no registry copying
 or public promotion; private or quarantined bytes must not be publicly released.
 Technical payload access is not full auxiliary-download inventory, product
 acceptance, image qualification or model-quality proof. The PR remains draft.
+
+## Combined review closure and model-identity integration
+
+The independent combined review accepts the exact946 source, CPU/full-CI,
+retained storage transport and hosted-request populations, with their existing
+limits:174 immutable source bindings and111 artifacts. Original four4e733 S3
+controls and four4cba sealed hosted requests remain those original executions;
+23 submitted image occurrences are eight unique images. Rationale errors,
+scientific uncertainty, failures and both first-party Opus changes-required
+receipts remain retained. This is AI review, not human approval, future-head
+approval, image qualification or model-quality acceptance. Receipt SHA-256:
+`1d03098eccabb74f8d1c8f908046397c27337b9adc2958b717e43d47da046b77`.
+
+Publishedf4 CI run[37168098903](https://github.com/nebius/nebius-physical-ai/actions/runs/37168098903)
+completed successfully:42,066 passed,889 skipped and one XPASS across six full
+shards; coverage displays78%. Twenty checks succeed and four are distinctly
+skipped, with no pending/failing/canceled checks in the retained observation.
+Required gitleaks, scan and security-regression are actual app15368 successes.
+Execution merge7a2078ddbbd8f1842f349e7a2933ef5d44f031ad has parents935/f4
+and exactly the publishedf4 tree. Validated artifact ZIP SHA-256:
+`20db4e5976012d5caa05183a17b5b6808ab753ea2898078bda5792be929c35e5`.
+Completed CI receipt SHA-256:
+`e8d3497237a0a80b4375145ea3bfac076dadca844e933c907b94cb01a33a1e9d`.
+Two failed collector name assumptions remain diagnostic failures, not failed
+CI or rewritten artifacts. No CI/full rerun was needed to bind the logs.
+
+Actualmain833 `a5a934af1516b78d88b2b2755247ec59bb1559b5` is composed in
+separate signed source `82aa856129556c85ff81f680df00e234c2c8e71d`, tree
+`ea0976171a7002f58c4c07c2b7c56975be5928ba`. Only two critical runtime modules
+change fromf4: effective model/enforcement disclosures through scalar, loop and
+benchmark results, and optional grade-claim validation. Twenty-five other
+critical modules, including publication/cache/regeneration/storage/directStage8,
+retain byte equality. Seven original request/profile/parser helpers remain
+unchanged; the eighth hosted helper changed completion/disclosure behavior.
+No blanket evaluator equality or new hosted execution is claimed.
+
+Exact82aa affected tests:820 pass and one explicit live self-hosted GPU skip.
+Root precheck:6,714 pass,six skip;42,948 tests collected. The original replay
+attempt passes56 controls and fails four newly added direct-dataclass checks:
+the serialized-report validator correctly rejects tuple-bearing in-memory
+frames. Separate corrected production JSON-writer/readback/grade controls pass
+all four and retain that tuple rejection as a negative assertion. The original
+50-control response/completion panel and six hostile enforcement claims pass
+in the56; no single60-pass execution is invented. Original requests/responses,
+thresholds and frame hashes are unchanged; no hosted retry, local whole-full,
+GPU repeat or third Claude was selected. Bridge receipt SHA-256:
+`76b829d5895860290d6197dd18df400c1263b328abe79b408ec1ba6152833f8c`.
+
+The proof appendix alone differs from this source execution. New published-head
+CI remains a separate final gate; neither priorf4 CI nor independent946 review
+is relabeled. Historical064 terminal-journal absence remains disclosure only.
+Five qualified immutable images, compatible cache/seed and the genuine14-stage
+GPU/model/render and Stage8/Stage14 restart acceptance remain absent. No private
+image publication, draft removal, owner merge or enqueue has occurred.
