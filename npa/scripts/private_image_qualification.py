@@ -441,6 +441,10 @@ def _fetch(ssh, selector, role, destination, *, size=None, digest=None):
             try:
                 if role == "manifest":
                     payload = process.stdout.read(MANIFEST_BYTES + 1)
+                    # Preserve the bounded-read failure path: do not wait on a
+                    # sender that can still be blocked writing an oversized
+                    # manifest into this pipe.
+                    _require(len(payload) <= MANIFEST_BYTES, "manifest_size")
                     # A transport failure can produce empty or partial stdout.
                     # Check its exit status before describing those bytes as a
                     # malformed manifest, so the operator gets the actionable

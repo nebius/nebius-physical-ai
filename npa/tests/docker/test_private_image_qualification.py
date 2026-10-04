@@ -270,6 +270,21 @@ def test_nonzero_sender_exit_precedes_manifest_parsing(private_root, monkeypatch
         Q._fetch([], "a" * 64, "manifest", private_root / "bad")
 
 
+def test_oversized_manifest_is_rejected_before_sender_wait(private_root, monkeypatch):
+    """Keep the bounded pipe-read path rather than waiting on untrusted output."""
+    monkeypatch.setattr(
+        Q,
+        "_remote_command",
+        lambda *_args: [
+            sys.executable,
+            "-c",
+            f"import sys; sys.stdout.buffer.write(b'x' * {Q.MANIFEST_BYTES + 1})",
+        ],
+    )
+    with pytest.raises(Q._QualificationError, match="manifest_size"):
+        Q._fetch([], "a" * 64, "manifest", private_root / "bad")
+
+
 def test_remote_shell_command_roundtrips_quoted_source_and_arguments(monkeypatch):
     special = "$(touch bad);'\nprivate"
     command = Q._remote_command(["ssh", "synthetic-host"], "fetch", special, "manifest")
