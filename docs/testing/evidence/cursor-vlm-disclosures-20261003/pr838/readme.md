@@ -70,3 +70,14 @@ was not rerun, retuned, or promoted as model-quality evidence. This is not a
 test, provider, full, current-head CI, or readiness result; held fixture/runner,
 independent-output-review, publication, and coordinator lifecycle requirements
 remain separate.
+
+## Main4603 E005 fixture supplement
+
+[Main4603 E005 supplement](main4603-e005-source-supplement.json) records the
+later Git-only composition of two precisely scoped deploy-region fixtures. It
+binds their reviewed file and function identities alongside the already accepted
+ladder, cleanup, fresh-user, and catalogue fixture bytes. It retains both the
+original source-text scan limits and the all-zero/two-FN hosted result without
+new inference. This supplement is source provenance only; final runner selection,
+capacity/no-duplicate checks, full-equivalence evidence, independent output
+review, current-head CI, and coordinator lifecycle work remain separate.
