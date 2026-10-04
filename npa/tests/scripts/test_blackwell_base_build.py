@@ -1,0 +1,242 @@
+"""Exercise canonical and legacy base-build names without a Docker daemon."""
+
+from __future__ import annotations
+
+import ast
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+BASES = Path(__file__).resolve().parents[2] / "docker/workbench/base"
+CANONICAL = BASES / "cuda13-blackwell"
+LEGACY = BASES / "cuda13-b300"
+SUFFIX = "dev-" + "a" * 40
+
+
+@pytest.fixture
+def docker_calls(tmp_path, monkeypatch):
+    executable = tmp_path / "docker"
+    log = tmp_path / "docker.jsonl"
+    executable.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "with open(os.environ['TEST_DOCKER_LOG'], 'a') as stream:\n"
+        "    stream.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "if os.environ.get('TEST_DOCKER_FAIL') in sys.argv[1:]:\n"
+        "    sys.exit(17)\n"
+    )
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("TEST_DOCKER_LOG", str(log))
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    monkeypatch.delenv("TEST_DOCKER_FAIL", raising=False)
+    return log
+
+
+def _run(directory, *args):
+    return subprocess.run(
+        ["bash", str(directory / "build.sh"), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _calls(log):
+    return [json.loads(line) for line in log.read_text().splitlines()]
+
+
+def _tags(args):
+    return [args[i + 1] for i, arg in enumerate(args) if arg == "-t"]
+
+
+@pytest.mark.parametrize("directory", [CANONICAL, LEGACY])
+def test_both_paths_build_one_image_with_both_names(directory, docker_calls):
+    result = _run(directory, "--tag", SUFFIX)
+    assert result.returncode == 0, result.stderr
+    calls = _calls(docker_calls)
+    assert len(calls) == 1
+    assert calls[0][0] == "build"
+    assert calls[0][-1] == str(CANONICAL)
+    assert _tags(calls[0]) == [
+        f"npa-base:cuda13-blackwell-{SUFFIX}",
+        f"npa-base:cuda13-b300-{SUFFIX}",
+    ]
+    assert f"Built: npa-base:cuda13-blackwell-{SUFFIX}" in result.stdout
+
+
+def test_legacy_directory_is_a_regular_wrapper():
+    assert not LEGACY.is_symlink()
+    assert (LEGACY / "build.sh").is_file()
+    assert not (LEGACY / "Dockerfile").exists()
+
+
+@pytest.mark.parametrize("context", [None, "test-builder"])
+def test_registry_push_uses_same_build_and_context(docker_calls, monkeypatch, context):
+    if context:
+        monkeypatch.setenv("DOCKER_CONTEXT", context)
+    result = _run(
+        CANONICAL, "--registry", "registry.example/team/", "--tag", SUFFIX, "--push"
+    )
+    assert result.returncode == 0, result.stderr
+    calls = _calls(docker_calls)
+    prefix = ["--context", context] if context else []
+    assert len(calls) == 3
+    assert calls[0][: len(prefix) + 1] == [*prefix, "build"]
+    registry_tags = [
+        f"registry.example/team/npa-base:cuda13-blackwell-{SUFFIX}",
+        f"registry.example/team/npa-base:cuda13-b300-{SUFFIX}",
+    ]
+    assert _tags(calls[0])[2:] == registry_tags
+    assert calls[1:] == [[*prefix, "push", tag] for tag in registry_tags]
+
+
+def test_registry_tagging_without_push(docker_calls):
+    result = _run(CANONICAL, "--registry", "registry.example/team", "--tag", SUFFIX)
+    assert result.returncode == 0, result.stderr
+    calls = _calls(docker_calls)
+    assert len(calls) == 1
+    assert len(_tags(calls[0])) == 4
+
+
+@pytest.mark.parametrize(("failure", "call_count"), [("build", 1), ("push", 2)])
+def test_docker_failure_stops_before_further_pushes(
+    docker_calls, monkeypatch, failure, call_count
+):
+    monkeypatch.setenv("TEST_DOCKER_FAIL", failure)
+    result = _run(
+        CANONICAL, "--registry", "registry.example/team", "--tag", SUFFIX, "--push"
+    )
+    assert result.returncode == 17
+    assert len(_calls(docker_calls)) == call_count
+
+
+@pytest.mark.parametrize(
+    "args",
+    [("--push",), ("--registry",), ("--tag",), ("--arch-list",), ("--unknown",)],
+)
+def test_invalid_arguments_fail_before_docker(docker_calls, args):
+    result = _run(CANONICAL, *args)
+    assert result.returncode == 2
+    assert "ERROR:" in result.stderr
+    assert not docker_calls.exists()
+
+
+def test_architecture_arguments_survive_legacy_path(docker_calls):
+    result = _run(
+        LEGACY, "--tag", SUFFIX, "--arch-list", "10.0 12.0", "--require-archs", ""
+    )
+    assert result.returncode == 0, result.stderr
+    args = _calls(docker_calls)[0]
+    assert "TORCH_CUDA_ARCH_LIST=10.0 12.0" in args
+    assert "REQUIRE_TORCH_ARCHS=" in args
+
+
+def test_help_explains_both_names_without_docker(docker_calls):
+    result = _run(LEGACY, "--help")
+    assert result.returncode == 0
+    assert "cuda13-blackwell" in result.stdout
+    assert "cuda13-b300" in result.stdout
+    assert not docker_calls.exists()
+
+
+@pytest.mark.parametrize("directory", [CANONICAL, LEGACY])
+def test_fa2_has_separate_local_and_registry_tags(directory, docker_calls):
+    result = _run(
+        directory,
+        "--tag",
+        SUFFIX,
+        "--attention-backend",
+        "fa2",
+        "--registry",
+        "registry.example/team",
+        "--push",
+    )
+    assert result.returncode == 0, result.stderr
+    calls = _calls(docker_calls)
+    assert _tags(calls[0]) == [
+        f"npa-base:cuda13-blackwell-fa2-{SUFFIX}",
+        f"registry.example/team/npa-base:cuda13-blackwell-fa2-{SUFFIX}",
+    ]
+    assert "ATTENTION_BACKEND=fa2" in calls[0]
+    assert "FA2_CUDA_ARCHS=120" in calls[0]
+    assert calls[1:] == [
+        ["push", f"registry.example/team/npa-base:cuda13-blackwell-fa2-{SUFFIX}"]
+    ]
+    assert "b300" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "args", [("--attention-backend",), ("--attention-backend", "sdpa")]
+)
+def test_unknown_backend_cannot_build_or_overwrite_fa4(docker_calls, args):
+    result = _run(CANONICAL, *args)
+    assert result.returncode == 2
+    assert not docker_calls.exists()
+
+
+def test_compiler_memory_control_reaches_the_fa2_build(docker_calls, monkeypatch):
+    monkeypatch.setenv("FA2_NVCC_THREADS", "1")
+    result = _run(CANONICAL, "--attention-backend", "fa2", "--tag", SUFFIX)
+    assert result.returncode == 0, result.stderr
+    assert "FA2_NVCC_THREADS=1" in _calls(docker_calls)[0]
+
+
+def _python_literals(path):
+    return {
+        target.id: node.value.value
+        for node in ast.parse(path.read_text()).body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+
+def test_fa4_runtime_and_benchmark_pins_match_the_recipe():
+    """Catch incompatible helper guards before an image reaches a GPU."""
+    dockerfile = (CANONICAL / "Dockerfile").read_text()
+    commit = re.search(r"^ARG FLASH_ATTN_COMMIT=(\w+)$", dockerfile, re.M)[1]
+    helper = _python_literals(CANONICAL / "scripts/flash_attn_rtx.py")
+    benchmark = _python_literals(
+        BASES.parents[2] / "scripts/attention_benchmark_backend.py"
+    )
+    assert re.fullmatch(r"[0-9a-f]{40}", commit)
+    assert helper["_COMMIT"] == benchmark["FA_COMMIT"] == commit
+    assert helper["_VERSION"] == benchmark["FA4_VERSION"]
+    version, separator, source = helper["_VERSION"].partition("+g")
+    assert version.startswith("4.") and separator
+    assert len(source) >= 7 and commit.startswith(source)
+
+
+@pytest.mark.parametrize(
+    "pin", ["FLASH_ATTN_COMMIT", "CUTLASS_DSL_VERSION", "QUACK_KERNELS_VERSION"]
+)
+def test_build_defaults_match_the_docker_dependency_pins(
+    docker_calls, monkeypatch, pin
+):
+    monkeypatch.delenv(pin, raising=False)
+    result = _run(CANONICAL, "--tag", SUFFIX)
+    assert result.returncode == 0, result.stderr
+    dockerfile = (CANONICAL / "Dockerfile").read_text()
+    default = re.search(rf"^ARG {pin}=([^\s]+)$", dockerfile, re.M)[1]
+    assert f"{pin}={default}" in _calls(docker_calls)[0]
+
+
+def test_catalog_fa2_variant_builds_its_declared_family(docker_calls, monkeypatch):
+    monkeypatch.delenv("FA2_CUDA_ARCHS", raising=False)
+    manifest = json.loads((BASES.parent / "blackwell-dc-images.json").read_text())
+    base = next(entry for entry in manifest["images"] if entry["name"] == "npa-base")
+    variant = base["build_variants"]["fa2"]
+    result = _run(CANONICAL, *variant["build_arguments"], "--tag", SUFFIX)
+    assert result.returncode == 0, result.stderr
+    assert _tags(_calls(docker_calls)[0]) == [
+        f"npa-base:{variant['tag_family']}-{SUFFIX}"
+    ]
+    archs = ";".join(arch.removeprefix("sm_") for arch in variant["default_cuda_archs"])
+    assert f"FA2_CUDA_ARCHS={archs}" in _calls(docker_calls)[0]

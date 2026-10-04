@@ -54,6 +54,26 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
+The [FA4 RTX PRO 6000 recipe update](flash-attention.md) changes the CUDA 13
+foundation source. `npa-base` is outside the public tool release plan;
+the locally built candidate does not replace any release listed here. On
+2026-09-28, anonymous verification confirmed all 38 current accepted release
+digests still matched. Historical aliases were not re-audited in that check.
+
+To adopt that stack in your own application, start with the
+[RTX PRO 6000 FA4 guide](guides/rtx6000-fa4.md). New base builds use the shared
+`cuda13-blackwell` family and receive a `cuda13-b300` compatibility alias for the
+same image. This naming change introduces no new published catalog row and
+does not change the accepted release tags or digests below.
+
+The opt-in [`cuda13-blackwell-fa2` comparison variant](guides/fa2-fa4-comparison.md)
+builds standalone FA2 for RTX SM120 from the same foundation recipe. It remains
+outside the public release inventory. The [RTX comparison](fa2-fa4-validation.md)
+records the exact local FA2 and FA4 image identities, numerical checks and 108
+complete SDXL generations. The opt-in FA4 inference profile improves selected
+attention calls; complete-model performance is effectively tied with FA2.
+These candidates do not change the accepted images listed below.
+
 The current source inventory has **60 packaging entries** (51 redistribution-eligible
 and nine restricted) and **51 mapped tools**: 26 public-release members, two
 restricted tools, and 23 quarantined tools. These counts come from
@@ -257,6 +277,34 @@ accepted public release row or verified anonymous pull claim for this image.
 Select development bytes only with an explicit immutable image digest.
 The existing NRE GPU consumer remains separately licensed. The new full
 COLMAP-to-reconstruction workflow is **not yet live validated**.
+
+## Pending Open3D registration image
+
+`npa-open3d` is a development validation candidate for the
+[point-cloud registration workflow](../../workflows/testing/open3d-registration.yaml).
+It packages the MIT Open3D 0.20.0 PyPI wheel and the exact NPA source revision on
+the digest-pinned `python:3.11-slim-trixie` base, with no baked dataset, weights,
+or credentials; the upstream `open3d.data` scans download at runtime. Packaging
+marks it redistribution-eligible but quarantined from public publication until its
+exact-image byte scans are accepted, so there is **no accepted public release row
+and no verified anonymous pull claim** for this image. Select development bytes
+only with an explicit immutable image digest.
+
+The current recording contract binds the exact registration report, manifest,
+pose graph, fused cloud, and both mesh artifacts before publishing an RRD.
+Reconstruction reports without `registration_result_sha256` must be regenerated;
+historical six-stage S3 evidence predates this binding and does not qualify
+replacement image bytes. The fresh native functional gate passed in the private
+candidate built from `07968922ab665c53114a1c6b3bfad9fd03edbb03`, checking a known
+pose, real reconstruction, observation-distance filtering, and decoded RRD
+output. Exact-image managed-workflow and complete-byte evidence must be reviewed
+separately before acceptance; this catalog does not admit a public release.
+
+These Open3D `pipelines.registration` and legacy geometry operations run on CPU,
+so the stages request no accelerator and carry no GPU architecture claim. Demo
+inputs are the synthetic augmented ICL-NUIM scene distributed as
+`DemoICPPointClouds` under CC BY 3.0, not real sensor captures. Distance to an
+observed sample does not establish surface correctness or collision safety.
 
 ## 2026-09-04 coherent Sim2Real publication
 
@@ -828,9 +876,11 @@ run record, and the
 [container packaging contract](container-packaging.md) for security and
 redistribution requirements.
 
-The cuRobo V2 candidate is separately publication-quarantined: its permissively
-licensed source, robot assets and benchmark data have a checked-in recipe, but
-no public release is claimed until exact-image and real-GPU gates are accepted.
+The cuRobo V2 candidate, `0.8.0-cuda13-blackwell-unbuilt`, is separately
+publication-quarantined: its permissively licensed source, robot assets and
+benchmark data have a checked-in recipe, but no public release is claimed until
+exact-image and real-GPU gates are accepted. Renaming this unpublished placeholder
+does not change an accepted image digest or establish GPU compatibility.
 
 ## Rerun SDK migration in build sources
 

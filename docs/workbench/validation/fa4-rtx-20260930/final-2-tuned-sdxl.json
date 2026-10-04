@@ -1,0 +1,577 @@
+{
+  "schema_version": 1,
+  "backend": "fa4",
+  "tile": null,
+  "tuning": "rtx6000-inference",
+  "environment": {
+    "image_id": "sha256:6a94f7d90751f1679687d0f10d7eed122ab2a9998e5892c6b5ff63b1ab10dace",
+    "driver": "580.173.02",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "capability": [
+      12,
+      0
+    ],
+    "cuda": "13.0",
+    "flash_attention_commit": "eed1971f5132630dc296fe37601e834d4b57a248",
+    "benchmark_sources_sha256": {
+      "attention_benchmark_backend.py": "b18fe00cc31d930e3c65d3170412904fb6b789ef53b501ee04a1000d29c9ac2c",
+      "attention_kernel_benchmark.py": "4bfc3438b5fb4b1ff6721d5ddc83af05bb8011e82e8f5c14bd69ced4a9950dc1",
+      "attention_sdxl_benchmark.py": "d8b536b77b7a60b3ce688555461360eb94755f7cc74660ce097d75bce44d1189",
+      "fa4_sdxl_attention.py": "77de0e7c35e5a20f191dfa04feaa5df34b480dfcd77204be00815d8ab3c741d5",
+      "fa4_sdxl_validation.py": "a3053ff2021d23287d665e3b5f0c8f29871ef2e595318f6d17c936096c739f2c",
+      "fa4_sdxl_model.json": "9b79fe42d2b5693798a19aae6a79febe7e8c5783310d0ee8968c70e31c5ecb38"
+    },
+    "attention_sources_sha256": {
+      "rtx_inference": "10dc701a6a303561287779ea503e5e67b88874d14aa9621f74c9be8209cd70de"
+    },
+    "packages": {
+      "absl-py": "2.5.0",
+      "accelerate": "1.15.0",
+      "aiohappyeyeballs": "2.7.1",
+      "aiohttp": "3.14.3",
+      "aiosignal": "1.4.0",
+      "annotated-doc": "0.0.5",
+      "annotated-types": "0.8.0",
+      "anyio": "4.15.1",
+      "apache-tvm-ffi": "0.1.14.post1",
+      "attrs": "26.1.0",
+      "av": "18.1.0",
+      "boto3": "1.43.104",
+      "botocore": "1.43.104",
+      "certifi": "2026.7.22",
+      "charset-normalizer": "3.5.1",
+      "click": "8.5.0",
+      "contourpy": "1.3.3",
+      "cuda-bindings": "13.4.3",
+      "cuda-core": "1.2.1",
+      "cuda-pathfinder": "1.6.0",
+      "cuda-python": "13.4.1",
+      "cuda-toolkit": "13.0.3.0",
+      "cycler": "0.12.1",
+      "datasets": "5.0.1",
+      "diffusers": "0.35.2",
+      "dill": "0.4.1",
+      "einops": "0.8.2",
+      "filelock": "3.32.3",
+      "flash-attn-4": "4.0.0b33.dev10+geed1971",
+      "fonttools": "4.66.1",
+      "frozenlist": "1.8.0",
+      "fsspec": "2026.6.0",
+      "googleapis-common-protos": "1.75.4",
+      "grpcio": "1.84.0",
+      "h11": "0.16.0",
+      "hf-xet": "1.6.0",
+      "httpcore": "1.0.9",
+      "httpx": "0.28.1",
+      "huggingface-hub": "0.36.2",
+      "idna": "3.20",
+      "imageio": "2.38.0",
+      "importlib-metadata": "9.0.1",
+      "invisible-watermark": "0.2.0",
+      "jinja2": "3.1.6",
+      "jmespath": "1.1.0",
+      "kiwisolver": "1.5.1",
+      "lazy-loader": "0.6",
+      "markdown": "3.11",
+      "markdown-it-py": "4.2.0",
+      "markupsafe": "3.0.3",
+      "matplotlib": "3.10.8",
+      "mdurl": "0.1.2",
+      "mpmath": "1.3.0",
+      "multidict": "6.9.1",
+      "multiprocess": "0.70.19",
+      "networkx": "3.6.1",
+      "numpy": "2.4.6",
+      "nvidia-cublas": "13.1.1.3",
+      "nvidia-cuda-cupti": "13.0.85",
+      "nvidia-cuda-nvdisasm": "13.4.92",
+      "nvidia-cuda-nvrtc": "13.0.88",
+      "nvidia-cuda-runtime": "13.0.96",
+      "nvidia-cudnn-cu13": "9.20.0.48",
+      "nvidia-cufft": "12.0.0.61",
+      "nvidia-cufile": "1.15.1.6",
+      "nvidia-curand": "10.4.0.35",
+      "nvidia-cusolver": "12.0.4.66",
+      "nvidia-cusparse": "12.6.3.3",
+      "nvidia-cusparselt-cu13": "0.8.1",
+      "nvidia-cutlass-dsl": "4.6.2",
+      "nvidia-cutlass-dsl-libs-base": "4.6.2",
+      "nvidia-cutlass-dsl-libs-core": "4.6.2",
+      "nvidia-cutlass-dsl-libs-cu12": "4.6.2",
+      "nvidia-cutlass-dsl-libs-cu13": "4.6.2",
+      "nvidia-nccl-cu13": "2.29.7",
+      "nvidia-nvjitlink": "13.3.33",
+      "nvidia-nvshmem-cu13": "3.4.5",
+      "nvidia-nvtx": "13.0.85",
+      "opencv-python": "5.0.0.93",
+      "opencv-python-headless": "5.0.0.93",
+      "opentelemetry-api": "1.45.0",
+      "opentelemetry-exporter-http-transport": "0.66b0",
+      "opentelemetry-exporter-otlp-common": "0.66b0",
+      "opentelemetry-exporter-otlp-proto-common": "1.45.0",
+      "opentelemetry-exporter-otlp-proto-http": "1.45.0",
+      "opentelemetry-proto": "1.45.0",
+      "opentelemetry-sdk": "1.45.0",
+      "opentelemetry-semantic-conventions": "0.66b0",
+      "packaging": "26.3",
+      "pandas": "3.0.6",
+      "pillow": "12.3.0",
+      "pip": "24.0",
+      "platformdirs": "4.12.1",
+      "propcache": "0.5.4",
+      "protobuf": "6.33.6",
+      "psutil": "7.2.2",
+      "pyarrow": "25.0.1",
+      "pydantic": "2.13.5",
+      "pydantic-core": "2.46.5",
+      "pygments": "2.21.0",
+      "pyparsing": "3.3.3",
+      "python-dateutil": "2.9.0.post0",
+      "pywavelets": "1.9.0",
+      "pyyaml": "6.0.3",
+      "quack-kernels": "0.6.4",
+      "regex": "2026.9.29",
+      "requests": "2.34.2",
+      "rich": "15.0.0",
+      "s3transfer": "0.19.2",
+      "safetensors": "0.8.0",
+      "scikit-image": "0.25.2",
+      "scipy": "1.17.1",
+      "setuptools": "79.0.1",
+      "shellingham": "1.5.4",
+      "six": "1.17.0",
+      "sympy": "1.14.0",
+      "tensorboard": "2.21.0",
+      "tensorboard-data-server": "0.7.2",
+      "tifffile": "2026.3.3",
+      "tokenizers": "0.22.2",
+      "torch": "2.13.0+cu130",
+      "torch-c-dlpack-ext": "0.1.5",
+      "torchaudio": "2.11.0+cu130",
+      "torchvision": "0.28.0+cu130",
+      "tqdm": "4.70.1",
+      "transformers": "4.57.1",
+      "triton": "3.7.1",
+      "typer": "0.27.2",
+      "typing-extensions": "4.16.0",
+      "typing-inspection": "0.4.4",
+      "urllib3": "2.8.0",
+      "wandb": "0.30.0",
+      "werkzeug": "3.1.9",
+      "wheel": "0.48.0",
+      "xxhash": "4.0.1",
+      "yarl": "1.25.1",
+      "zipp": "4.1.0"
+    }
+  },
+  "model": "stabilityai/stable-diffusion-xl-base-1.0",
+  "model_revision": "462165984030d82259a11f4367a4eed129e94a7b",
+  "steps": 30,
+  "repeats": 5,
+  "instrumented_timing": false,
+  "cases": [
+    {
+      "name": "robot-workcell",
+      "prompt": "A professional photograph of an orange industrial robot arm in a clean robotics laboratory, holding a small metal component above a workbench, soft daylight, precise mechanical details, no people, no text",
+      "width": 1024,
+      "height": 1024,
+      "seed": 42,
+      "warmup": {
+        "seconds": 5.703375029000199,
+        "peak_allocated_bytes": 11296783360,
+        "pixel_sha256": "25e965aae6e4ea69adec80e5f2f3baf1cdbfa81426910e920b8bffb0e2680c5d"
+      },
+      "coverage": [
+        {
+          "qkv": [
+            [
+              2,
+              1024,
+              20,
+              64
+            ],
+            [
+              2,
+              77,
+              20,
+              64
+            ],
+            [
+              2,
+              77,
+              20,
+              64
+            ]
+          ],
+          "calls": 1800
+        },
+        {
+          "qkv": [
+            [
+              2,
+              1024,
+              20,
+              64
+            ],
+            [
+              2,
+              1024,
+              20,
+              64
+            ],
+            [
+              2,
+              1024,
+              20,
+              64
+            ]
+          ],
+          "calls": 1800
+        },
+        {
+          "qkv": [
+            [
+              2,
+              4096,
+              10,
+              64
+            ],
+            [
+              2,
+              77,
+              10,
+              64
+            ],
+            [
+              2,
+              77,
+              10,
+              64
+            ]
+          ],
+          "calls": 300
+        },
+        {
+          "qkv": [
+            [
+              2,
+              4096,
+              10,
+              64
+            ],
+            [
+              2,
+              4096,
+              10,
+              64
+            ],
+            [
+              2,
+              4096,
+              10,
+              64
+            ]
+          ],
+          "calls": 300
+        }
+      ],
+      "samples": [
+        {
+          "seconds": 2.0165292990000125,
+          "peak_allocated_bytes": 11266374656,
+          "pixel_sha256": "25e965aae6e4ea69adec80e5f2f3baf1cdbfa81426910e920b8bffb0e2680c5d"
+        },
+        {
+          "seconds": 2.0023960530002114,
+          "peak_allocated_bytes": 11266374656,
+          "pixel_sha256": "25e965aae6e4ea69adec80e5f2f3baf1cdbfa81426910e920b8bffb0e2680c5d"
+        },
+        {
+          "seconds": 2.0090023329998985,
+          "peak_allocated_bytes": 11265326080,
+          "pixel_sha256": "25e965aae6e4ea69adec80e5f2f3baf1cdbfa81426910e920b8bffb0e2680c5d"
+        },
+        {
+          "seconds": 2.0011298169997644,
+          "peak_allocated_bytes": 11264277504,
+          "pixel_sha256": "25e965aae6e4ea69adec80e5f2f3baf1cdbfa81426910e920b8bffb0e2680c5d"
+        },
+        {
+          "seconds": 2.0049790180000855,
+          "peak_allocated_bytes": 11263228928,
+          "pixel_sha256": "25e965aae6e4ea69adec80e5f2f3baf1cdbfa81426910e920b8bffb0e2680c5d"
+        }
+      ],
+      "median_seconds": 2.0049790180000855
+    },
+    {
+      "name": "warehouse",
+      "prompt": "A wide architectural photograph of an orderly automated warehouse, small mobile robots between tall shelves of boxes, polished concrete floor, warm overhead lighting, realistic industrial environment, no people, no text",
+      "width": 1536,
+      "height": 1024,
+      "seed": 123,
+      "warmup": {
+        "seconds": 5.8466289590001,
+        "peak_allocated_bytes": 13326367744,
+        "pixel_sha256": "d48375081a6004ef3bbeed6afcda8a54759af3919a5604733867681318a3bfd5"
+      },
+      "coverage": [
+        {
+          "qkv": [
+            [
+              2,
+              1536,
+              20,
+              64
+            ],
+            [
+              2,
+              77,
+              20,
+              64
+            ],
+            [
+              2,
+              77,
+              20,
+              64
+            ]
+          ],
+          "calls": 1800
+        },
+        {
+          "qkv": [
+            [
+              2,
+              1536,
+              20,
+              64
+            ],
+            [
+              2,
+              1536,
+              20,
+              64
+            ],
+            [
+              2,
+              1536,
+              20,
+              64
+            ]
+          ],
+          "calls": 1800
+        },
+        {
+          "qkv": [
+            [
+              2,
+              6144,
+              10,
+              64
+            ],
+            [
+              2,
+              77,
+              10,
+              64
+            ],
+            [
+              2,
+              77,
+              10,
+              64
+            ]
+          ],
+          "calls": 300
+        },
+        {
+          "qkv": [
+            [
+              2,
+              6144,
+              10,
+              64
+            ],
+            [
+              2,
+              6144,
+              10,
+              64
+            ],
+            [
+              2,
+              6144,
+              10,
+              64
+            ]
+          ],
+          "calls": 300
+        }
+      ],
+      "samples": [
+        {
+          "seconds": 3.1250270830000773,
+          "peak_allocated_bytes": 13278133248,
+          "pixel_sha256": "d48375081a6004ef3bbeed6afcda8a54759af3919a5604733867681318a3bfd5"
+        },
+        {
+          "seconds": 3.1279783110003336,
+          "peak_allocated_bytes": 13278133248,
+          "pixel_sha256": "d48375081a6004ef3bbeed6afcda8a54759af3919a5604733867681318a3bfd5"
+        },
+        {
+          "seconds": 3.123776271999759,
+          "peak_allocated_bytes": 13277084672,
+          "pixel_sha256": "d48375081a6004ef3bbeed6afcda8a54759af3919a5604733867681318a3bfd5"
+        },
+        {
+          "seconds": 3.120755172000372,
+          "peak_allocated_bytes": 13278133248,
+          "pixel_sha256": "d48375081a6004ef3bbeed6afcda8a54759af3919a5604733867681318a3bfd5"
+        },
+        {
+          "seconds": 3.1194028109998726,
+          "peak_allocated_bytes": 13277084672,
+          "pixel_sha256": "d48375081a6004ef3bbeed6afcda8a54759af3919a5604733867681318a3bfd5"
+        }
+      ],
+      "median_seconds": 3.123776271999759
+    },
+    {
+      "name": "sensor-rig",
+      "prompt": "A detailed studio product photograph of a compact autonomous rover with cameras and a lidar sensor, four rugged wheels, blue metal body, neutral grey backdrop, soft rim lighting, no text",
+      "width": 1024,
+      "height": 1536,
+      "seed": 2026,
+      "warmup": {
+        "seconds": 3.1724255670001185,
+        "peak_allocated_bytes": 13325319168,
+        "pixel_sha256": "cef4335758eaaadcabe643e4226689215bf0a9daceb686a93fd96909248d8649"
+      },
+      "coverage": [
+        {
+          "qkv": [
+            [
+              2,
+              1536,
+              20,
+              64
+            ],
+            [
+              2,
+              77,
+              20,
+              64
+            ],
+            [
+              2,
+              77,
+              20,
+              64
+            ]
+          ],
+          "calls": 1800
+        },
+        {
+          "qkv": [
+            [
+              2,
+              1536,
+              20,
+              64
+            ],
+            [
+              2,
+              1536,
+              20,
+              64
+            ],
+            [
+              2,
+              1536,
+              20,
+              64
+            ]
+          ],
+          "calls": 1800
+        },
+        {
+          "qkv": [
+            [
+              2,
+              6144,
+              10,
+              64
+            ],
+            [
+              2,
+              77,
+              10,
+              64
+            ],
+            [
+              2,
+              77,
+              10,
+              64
+            ]
+          ],
+          "calls": 300
+        },
+        {
+          "qkv": [
+            [
+              2,
+              6144,
+              10,
+              64
+            ],
+            [
+              2,
+              6144,
+              10,
+              64
+            ],
+            [
+              2,
+              6144,
+              10,
+              64
+            ]
+          ],
+          "calls": 300
+        }
+      ],
+      "samples": [
+        {
+          "seconds": 3.1713241679999555,
+          "peak_allocated_bytes": 13278395392,
+          "pixel_sha256": "cef4335758eaaadcabe643e4226689215bf0a9daceb686a93fd96909248d8649"
+        },
+        {
+          "seconds": 3.1706819900000482,
+          "peak_allocated_bytes": 13278133248,
+          "pixel_sha256": "cef4335758eaaadcabe643e4226689215bf0a9daceb686a93fd96909248d8649"
+        },
+        {
+          "seconds": 3.170259299999998,
+          "peak_allocated_bytes": 13278133248,
+          "pixel_sha256": "cef4335758eaaadcabe643e4226689215bf0a9daceb686a93fd96909248d8649"
+        },
+        {
+          "seconds": 3.148138680000102,
+          "peak_allocated_bytes": 13277084672,
+          "pixel_sha256": "cef4335758eaaadcabe643e4226689215bf0a9daceb686a93fd96909248d8649"
+        },
+        {
+          "seconds": 3.169637886000146,
+          "peak_allocated_bytes": 13278133248,
+          "pixel_sha256": "cef4335758eaaadcabe643e4226689215bf0a9daceb686a93fd96909248d8649"
+        }
+      ],
+      "median_seconds": 3.170259299999998
+    }
+  ],
+  "status": "passed"
+}

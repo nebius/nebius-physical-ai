@@ -75,6 +75,27 @@ Model-list membership and upstream model capability are insufficient proof:
 model, but this hosted deployment rejected an image request with HTTP 400,
 "This model does not support image input". It was not selected as a replacement.
 
+## Current default image-capability evidence
+
+The [default vision-model capability proof pack](evidence/vlm-default-vision-model-capability-regression-v1/README.md)
+retains the exact 64x32 synthetic red/blue PNG and a minimized
+machine-readable summary. In the one-shot observation,
+`MiniMaxAI/MiniMax-M3` returned `left=red, right=blue` with
+`finish_reason="stop"`. A second image-capable model returned the same answer,
+while two text-only controls rejected image input.
+
+This is a narrow image-capability smoke, not model qualification. Provider
+hardware was not exposed, and the input-to-response association is retained by
+the collector rather than attested by the server. The protected live suite
+therefore requires both current catalog membership and successful real-image
+artifacts from the caption, reason, visual-judge, and attribute paths. A
+successful `/models` response alone cannot satisfy that gate.
+
+The separate `run_contract` recheck pins MiniMax catalog membership and exercises
+text inference and structured-output controls; it does not send images. Image
+capability is asserted only by the protected image-bearing live suite above.
+Neither a passing catalog/text recheck nor a skipped image test is image proof.
+
 Sim2Real's stable `cosmos3` lane, artifact names, and configuration keys remain
 for compatibility. They now carry the actual selected model and family;
 MiniMax responses are never represented as NVIDIA Cosmos responses. Stage 9

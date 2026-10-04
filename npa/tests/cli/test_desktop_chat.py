@@ -48,7 +48,7 @@ def chat(tmp_path):
     server.config["socket"] = str(tmp_path / "codex.sock")
     server.rpc.call.side_effect = lambda method, params: (
         {"thread": {"id": "existing-thread", "status": {"type": "idle"}}}
-        if method == "thread/read"
+        if method in {"thread/read", "thread/resume"}
         else {"accepted": True}
     )
     server.rpc.pending.return_value = []
@@ -671,11 +671,12 @@ def test_archival_routes_only_the_requested_thread(chat, action):
 
 
 @pytest.mark.parametrize("action", ["send", "settings", "rename", "resume"])
-def test_archived_chats_remain_read_only_until_restored(chat, action):
+def test_path_archived_chats_remain_read_only_until_restored(chat, action):
     client, rpc = chat
     rpc.call.side_effect = lambda method, params: {
         "thread": {
             "id": "existing-thread",
+            "archived": False,
             "path": "/workspace/.codex/archived_sessions/saved.jsonl",
             "status": {"type": "notLoaded"},
         }
@@ -688,3 +689,215 @@ def test_archived_chats_remain_read_only_until_restored(chat, action):
     assert rpc.call.call_count == 1
     if action == "resume":
         assert response.json()["thread"]["archived"] is True
+
+
+@pytest.mark.parametrize("action", ["send", "settings", "rename"])
+def test_explicitly_archived_chats_remain_read_only(chat, action):
+    client, rpc = chat
+    rpc.call.side_effect = lambda method, params: {
+        "thread": {
+            "id": "existing-thread",
+            "archived": True,
+            "status": {"type": "notLoaded"},
+        }
+    }
+    response = client.post(
+        "/chat/api/" + action,
+        json={"id": "existing-thread", "name": "Name", "text": "Hello"},
+    )
+    assert response.status_code == 400
+    assert rpc.call.call_count == 1
+
+
+@pytest.mark.parametrize("action", ["send", "settings", "rename"])
+@pytest.mark.parametrize(
+    "archived",
+    [False, "missing"],
+)
+def test_valid_archival_metadata_keeps_chat_writable(chat, action, archived):
+    client, rpc = chat
+    thread = {
+        "id": "existing-thread",
+        "archived": archived,
+        "status": {"type": "idle"},
+        "model": "example-model",
+    }
+    if archived == "missing":
+        thread.pop("archived")
+
+    def upstream(method, params):
+        if method == "model/list":
+            return {"data": [_MODEL]}
+        if method in {"thread/read", "thread/resume"}:
+            return {"thread": thread}
+        return {}
+
+    rpc.call.side_effect = upstream
+    payload = {
+        "send": {"id": "existing-thread", "text": "Hello"},
+        "settings": {
+            "id": "existing-thread",
+            "model": "example-model",
+            "effort": "low",
+        },
+        "rename": {"id": "existing-thread", "name": "Name"},
+    }[action]
+    response = client.post("/chat/api/" + action, json=payload)
+    expected_method = {
+        "send": "turn/start",
+        "settings": "thread/settings/update",
+        "rename": "thread/name/set",
+    }[action]
+    assert response.status_code == 200
+    assert expected_method in {call.args[0] for call in rpc.call.call_args_list}
+
+
+_MALFORMED_ARCHIVED = [None, "", "false", "true", 0, 1, -1, 0.5, [], {}]
+
+
+@pytest.mark.parametrize("archived", _MALFORMED_ARCHIVED)
+@pytest.mark.parametrize(
+    "action",
+    ["send", "steer", "settings", "rename", "resume", "archive", "unarchive", "read"],
+)
+def test_malformed_archival_evidence_blocks_reads_and_writes(chat, action, archived):
+    client, rpc = chat
+    rpc.call.side_effect = None
+    rpc.call.return_value = {
+        "thread": {
+            "id": "existing-thread",
+            "archived": archived,
+            "path": "/workspace/.codex/sessions/saved.jsonl",
+        }
+    }
+    body = {"id": "existing-thread", "text": "Hello", "name": "Name"}
+    if action == "steer":
+        body["turnId"] = "active-turn"
+        action = "send"
+    response = (
+        client.get("/chat/api/thread?id=existing-thread")
+        if action == "read"
+        else client.post("/chat/api/" + action, json=body)
+    )
+    assert response.status_code == 400
+    assert response.json() == {"error": "thread.archived must be a literal boolean"}
+    assert [call.args[0] for call in rpc.call.call_args_list] == ["thread/read"]
+
+
+@pytest.mark.parametrize("archived", _MALFORMED_ARCHIVED)
+def test_list_quarantines_only_malformed_archival_evidence(chat, archived):
+    client, rpc = chat
+    rpc.call.side_effect = None
+    rpc.call.return_value = {
+        "data": [
+            {"id": "healthy"},
+            {"id": "bad", "archived": archived},
+            {
+                "id": "saved",
+                "archived": False,
+                "path": "/archived_sessions/saved.jsonl",
+            },
+        ],
+        "nextCursor": "next",
+    }
+    page = client.get("/chat/api/threads").json()
+    assert [(row["id"], row["archived"]) for row in page["data"]] == [
+        ("healthy", False),
+        ("saved", True),
+    ]
+    assert page["nextCursor"] == "next"
+    assert page["errors"] == [
+        {"id": "bad", "error": "thread.archived must be a literal boolean"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "action", ["send", "settings", "rename", "resume", "archive", "unarchive"]
+)
+def test_created_thread_metadata_is_validated_before_writes(chat, action):
+    client, rpc = chat
+    rpc.call.side_effect = None
+    rpc.call.return_value = {"thread": {"id": "created", "archived": "true"}}
+    assert client.post("/chat/api/new", json={}).status_code == 200
+    rpc.call.reset_mock()
+    response = client.post(
+        "/chat/api/" + action, json={"id": "created", "text": "Hello", "name": "Name"}
+    )
+    assert response.status_code == 400
+    assert "literal boolean" in response.json()["error"]
+    rpc.call.assert_not_called()
+
+
+def test_resume_response_is_validated_before_settings_write(chat):
+    client, rpc = chat
+    rpc.call.side_effect = lambda method, params: {
+        "thread": {
+            "id": "existing-thread",
+            **({"archived": 1} if method == "thread/resume" else {}),
+        }
+    }
+    response = client.post(
+        "/chat/api/settings", json={"id": "existing-thread", "model": "example-model"}
+    )
+    assert response.status_code == 400
+    assert "literal boolean" in response.json()["error"]
+    assert [call.args[0] for call in rpc.call.call_args_list] == [
+        "thread/read",
+        "thread/resume",
+    ]
+
+
+@pytest.mark.parametrize("archived", [True, False, *_MALFORMED_ARCHIVED])
+def test_standalone_archival_validation_matches_shared_boolean_contract(archived):
+    from npa.literal_values import require_boolean
+
+    try:
+        expected = require_boolean(archived, field="thread.archived")
+    except ValueError as error:
+        with pytest.raises(ValueError, match=str(error)):
+            ChatHandler._archived(
+                {"archived": archived, "path": "/archived_sessions/saved.jsonl"}
+            )
+    else:
+        assert ChatHandler._archived({"archived": archived}) is expected
+
+
+def test_missing_archival_flag_uses_path_backstop():
+    assert ChatHandler._archived({}) is False
+    assert ChatHandler._archived({"path": "/archived_sessions/saved.jsonl"}) is True
+
+
+def test_deployed_chat_server_validates_without_npa_package(tmp_path):
+    import subprocess
+    import sys
+    import shutil
+    import websockets
+    from pathlib import Path
+    from npa.tools.desktop import chat_server
+
+    assets = Path(chat_server.__file__).parent
+    for source in assets.glob("chat_*.py"):
+        (tmp_path / source.name).write_bytes(source.read_bytes())
+    shutil.copytree(Path(websockets.__file__).parent, tmp_path / "websockets")
+    script = (
+        "import sys; sys.path[:0] = sys.argv[1:]; "
+        "import importlib.util; assert importlib.util.find_spec('npa') is None; "
+        "from chat_server import ChatHandler; "
+        "ChatHandler._archived({'archived': 1})"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            script,
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "ValueError: thread.archived must be a literal boolean" in result.stderr
+    assert "ModuleNotFoundError" not in result.stderr

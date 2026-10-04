@@ -129,21 +129,13 @@ def _load_rgb(path: Path):
 
 
 def _subsample(items: list, cap: int) -> list:
-    """Evenly subsample ``items`` down to at most ``cap`` (keeps first + last)."""
+    """Evenly subsample items, retaining both endpoints when cap permits."""
     n = len(items)
     if cap <= 0 or n <= cap:
         return items
-    step = n / float(cap)
-    picked = [items[min(n - 1, int(i * step))] for i in range(cap)]
-    # De-dupe while preserving order (integer stepping can repeat near the end).
-    seen: set[int] = set()
-    out = []
-    for it in picked:
-        key = id(it)
-        if key not in seen:
-            seen.add(key)
-            out.append(it)
-    return out
+    if cap == 1:
+        return items[:1]
+    return [items[i * (n - 1) // (cap - 1)] for i in range(cap)]
 
 
 def _latest_iteration_dir(root: Path) -> Path:
@@ -1227,13 +1219,23 @@ def _input_entity(frame: Path, root: Path) -> str:
 
 
 def _grouped_images(root: Path) -> dict[str, list[Path]]:
-    """Keep each relative modality/camera directory in a separate entity."""
-    groups: dict[str, list[Path]] = {}
+    """Group images by their full relative parent and original frame identity."""
+    indexed: dict[str, dict[int, Path]] = {}
     for frame in _image_files(root):
         parent = frame.parent
         name = "frames" if parent == root else parent.relative_to(root).as_posix()
-        groups.setdefault(name, []).append(frame)
-    return groups
+        frames = indexed.setdefault(name, {})
+        index = _frame_index(frame.stem)
+        if index in frames:
+            raise DataFactoryVizError(
+                f"duplicate frame index {index} in image group {name!r}: "
+                f"{frames[index].name!r} and {frame.name!r}"
+            )
+        frames[index] = frame
+    return {
+        name: [frames[index] for index in sorted(frames)]
+        for name, frames in indexed.items()
+    }
 
 
 def _log_nurec_entities(rr: Any, rec: Any, local: Path) -> int:
@@ -1607,15 +1609,20 @@ def _load_stage_docs(
     except Exception:  # noqa: BLE001
         _cosmos_evaluator_result_filename = "cosmos_evaluator.json"
     try:
-        from npa.workbench.vlm_eval import RESULT_FILENAME as _vlm_result_filename
+        from npa.workbench.vlm_eval import (
+            LEGACY_RESULT_FILENAME as _legacy_vlm_result_filename,
+            RESULT_FILENAME as _vlm_result_filename,
+        )
     except Exception:  # noqa: BLE001
-        _vlm_result_filename = "vlm_eval_stub.json"
+        _vlm_result_filename = "vlm_eval.json"
+        _legacy_vlm_result_filename = "vlm_eval_stub.json"
     for name in (
         _cosmos_evaluator_result_filename,
         _vlm_result_filename,
-        "vlm_eval.json",
+        _legacy_vlm_result_filename,
     ):
-        ev = review.read(grade_dir / name, "evaluator")
+        report_path = grade_dir / name
+        ev = review.read(report_path, "evaluator")
         if isinstance(ev, dict):
             grade_docs.append(
                 _json_block("Evaluator — integrity and appearance checks", ev)
@@ -1623,6 +1630,9 @@ def _load_stage_docs(
             stage_log.append(
                 f"grade: score={ev.get('score')}, status={ev.get('status', 'n/a')}"
             )
+            break
+        # Do not display stale legacy data when a canonical report is malformed.
+        if report_path.is_file():
             break
     dec = review.read(grade_dir / "decision.json", "quality")
     if isinstance(dec, dict):

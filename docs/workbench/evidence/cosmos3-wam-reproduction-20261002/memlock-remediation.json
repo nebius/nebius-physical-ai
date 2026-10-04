@@ -1,0 +1,73 @@
+{
+  "schema": "npa.cosmos3.wam-memlock-reproduction.v1",
+  "failure": {
+    "phase": "separate 16-rank collective diagnostic before training",
+    "slurm_state": "FAILED",
+    "exit_code": "1:0",
+    "allocation_seconds": 25,
+    "gpus": 16,
+    "nodes": 2,
+    "errors": [
+      "ibv_create_qp: Cannot allocate memory",
+      "ibv_create_cq: Cannot allocate memory",
+      "ibv_reg_mr_iova2: Cannot allocate memory"
+    ]
+  },
+  "before": {
+    "submitter_memlock_bytes": [
+      8388608,
+      8388608
+    ],
+    "tasks": [
+      {
+        "node_rank": 0,
+        "memlock": [
+          8388608,
+          -1
+        ]
+      },
+      {
+        "node_rank": 1,
+        "memlock": [
+          8388608,
+          -1
+        ]
+      }
+    ],
+    "phase": "before"
+  },
+  "after": {
+    "submitter_memlock_bytes": [
+      8388608,
+      8388608
+    ],
+    "tasks": [
+      {
+        "node_rank": 0,
+        "memlock": [
+          -1,
+          -1
+        ]
+      },
+      {
+        "node_rank": 1,
+        "memlock": [
+          -1,
+          -1
+        ]
+      }
+    ],
+    "phase": "after"
+  },
+  "rlimit_infinity_representation": -1,
+  "remediation": "PropagateResourceLimitsExcept=MEMLOCK on both native Slurm workers; scontrol reconfigure with an empty queue. The slurmd daemons already had unlimited soft/hard limits.",
+  "resubmission": "Identical diagnostic, unchanged submitter limit, and unchanged model/data/runtime pins; all 16 ranks passed after the configuration change.",
+  "private_sources_sha256": {
+    "failed_stderr": "48bf2cff5cc9c37b25118008f598fb177297ef1c58e08d52bb6fda0225d91eb6",
+    "failed_stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "failed_accounting": "2225f080cc6af05a1efeab1214a6a8684ef11e247575a493be47b91757ac6f04",
+    "before_probe": "394dda885d7d27561eb01b2e6ce003db6f496918fdd8b40bc83de0d6573aa573",
+    "after_probe": "394dda885d7d27561eb01b2e6ce003db6f496918fdd8b40bc83de0d6573aa573"
+  },
+  "scope": "Before/after live Slurm task-limit probes plus an unchanged 16-GPU collective retry; the failed attempt remains recorded and is excluded from successful timing measurements."
+}
