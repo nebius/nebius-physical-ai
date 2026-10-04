@@ -35,8 +35,8 @@ from npa.workflows.lerobot_dataset import (
     summarize_lerobot_dataset,
 )
 
-LEROBOT_VERSION = "0.6.0"
-LEROBOT_RELEASE_COMMIT = "30da8e687a6dfc617fcd94afc367ac7071c376ce"
+LEROBOT_VERSION = "0.6.1"
+LEROBOT_RELEASE_COMMIT = "7e241bd630a3719a56157a497ce5d08f244784f1"
 FASTWAM_BASE_REPOSITORY = "lerobot/fastwam_base"
 WAN_REPOSITORY = "Wan-AI/Wan2.2-TI2V-5B"
 WAN_DIFFUSERS_REPOSITORY = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
@@ -88,7 +88,9 @@ def build_parser() -> argparse.ArgumentParser:
     rollout.add_argument("--device", default="cuda")
     rollout.add_argument("--compile-action-infer", action="store_true")
 
-    evaluate = commands.add_parser("evaluate", help="Measure native success and action latency.")
+    evaluate = commands.add_parser(
+        "evaluate", help="Measure native success and action latency."
+    )
     evaluate.add_argument("--prepared-path", required=True)
     evaluate.add_argument("--training-path", required=True)
     evaluate.add_argument("--rollouts-path", required=True)
@@ -98,7 +100,9 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--measured-actions", type=int, required=True)
     evaluate.add_argument("--device", default="cuda")
 
-    report = commands.add_parser("report", help="Emit actual RRD and rollout MP4 evidence.")
+    report = commands.add_parser(
+        "report", help="Emit actual RRD and rollout MP4 evidence."
+    )
     report.add_argument("--input-path", required=True)
     report.add_argument("--rollouts-path", required=True)
     report.add_argument("--output-path", required=True)
@@ -156,7 +160,8 @@ def _prepare(args: argparse.Namespace, work: Path, output: Path) -> None:
     )
     if not summary.loaded_with_lerobot_dataset:
         raise FastWAMPolicyError(
-            "LeRobot could not load the submitted dataset: " + summary.lerobot_dataset_error
+            "LeRobot could not load the submitted dataset: "
+            + summary.lerobot_dataset_error
         )
     native_contract = _validate_native_fastwam_dataset_contract(source, summary)
     output.mkdir(parents=True, exist_ok=True)
@@ -198,10 +203,12 @@ def _validate_native_fastwam_dataset_contract(
         from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
     except ImportError as exc:  # pragma: no cover - executed in the LeRobot image
         raise FastWAMPolicyError(
-            "FastWAM preparation requires the LeRobot 0.6.0 fastwam runtime"
+            "FastWAM preparation requires the LeRobot 0.6.1 fastwam runtime"
         ) from exc
     if importlib.metadata.version("lerobot") != LEROBOT_VERSION:
-        raise FastWAMPolicyError(f"expected LeRobot {LEROBOT_VERSION} for FastWAM preparation")
+        raise FastWAMPolicyError(
+            f"expected LeRobot {LEROBOT_VERSION} for FastWAM preparation"
+        )
     dataset = LeRobotDataset(
         repo_id=summary.repo_id,
         root=source,
@@ -235,7 +242,9 @@ def _train(args: argparse.Namespace, work: Path, output: Path) -> None:
     _require_positive(args.batch_size, "batch size")
     prepared = _materialize_directory(args.input_path, work / "prepared")
     recipe = _read_recipe(prepared)
-    dataset = _materialize_dataset(recipe["dataset"]["source_uri"], work / "dataset", args, recipe)
+    dataset = _materialize_dataset(
+        recipe["dataset"]["source_uri"], work / "dataset", args, recipe
+    )
     _assert_dataset_receipt(dataset, recipe)
     models = _fetch_runtime_models(args)
     training = output / "training"
@@ -312,7 +321,10 @@ def _rollout(args: argparse.Namespace, work: Path, output: Path) -> None:
     )
     # The held-out split is not consumed by the simulator. Keep it in the receipt
     # so the numerical latency stage can prove it read the same sealed data.
-    _write_json(output / "heldout-contract.json", {"heldout_episode_indices": recipe["heldout_episode_indices"]})
+    _write_json(
+        output / "heldout-contract.json",
+        {"heldout_episode_indices": recipe["heldout_episode_indices"]},
+    )
 
 
 def _evaluate(args: argparse.Namespace, work: Path, output: Path) -> None:
@@ -328,7 +340,9 @@ def _evaluate(args: argparse.Namespace, work: Path, output: Path) -> None:
     _assert_checkpoint(checkpoint)
     rollout = _read_json(rolled / "rollout.json")
     models = _fetch_runtime_models(args)
-    dataset = _materialize_dataset(recipe["dataset"]["source_uri"], work / "heldout", args, recipe)
+    dataset = _materialize_dataset(
+        recipe["dataset"]["source_uri"], work / "heldout", args, recipe
+    )
     _assert_dataset_receipt(dataset, recipe)
     latency = _measure_direct_action_latency(
         dataset=dataset,
@@ -374,7 +388,9 @@ def _report(args: argparse.Namespace, work: Path, output: Path) -> None:
     _ = _read_json(rolled / "rollout.json")
     videos = _video_receipt(rolled / "native-eval")
     if not videos:
-        raise FastWAMPolicyError("report requires at least one decodable native rollout MP4")
+        raise FastWAMPolicyError(
+            "report requires at least one decodable native rollout MP4"
+        )
     output.mkdir(parents=True, exist_ok=True)
     rrd = output / "fastwam.rrd"
     _write_rrd(rrd, args.run_id, evaluation, videos)
@@ -469,11 +485,15 @@ def _measure_direct_action_latency(
         from lerobot.policies.factory import make_pre_post_processors
         from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
     except ImportError as exc:  # pragma: no cover - image contract exercises this
-        raise FastWAMPolicyError("FastWAM evaluation needs the LeRobot 0.6 runtime") from exc
+        raise FastWAMPolicyError(
+            "FastWAM evaluation needs the LeRobot 0.6 runtime"
+        ) from exc
     if importlib.metadata.version("lerobot") != LEROBOT_VERSION:
         raise FastWAMPolicyError(f"expected LeRobot {LEROBOT_VERSION}")
     if not torch.cuda.is_available():
-        raise FastWAMPolicyError("direct-action latency requires a working CUDA runtime")
+        raise FastWAMPolicyError(
+            "direct-action latency requires a working CUDA runtime"
+        )
     heldout = list(recipe["heldout_episode_indices"])
     ds = LeRobotDataset(
         repo_id=recipe["dataset"]["repo_id"],
@@ -503,7 +523,9 @@ def _measure_direct_action_latency(
         dataset_stats=ds.meta.stats,
         dataset_meta=ds.meta,
     )
-    preprocessor, _ = make_pre_post_processors(config, pretrained_path=checkpoint, dataset_meta=ds.meta)
+    preprocessor, _ = make_pre_post_processors(
+        config, pretrained_path=checkpoint, dataset_meta=ds.meta
+    )
     item = _add_batch_dimension(ds[0])
     batch = preprocessor(item)
     policy.reset()
@@ -522,7 +544,9 @@ def _measure_direct_action_latency(
             torch.cuda.synchronize()
             elapsed = float(start.elapsed_time(end))
             if not torch.isfinite(action).all() or elapsed <= 0:
-                raise FastWAMPolicyError("FastWAM direct-action measurement returned invalid output")
+                raise FastWAMPolicyError(
+                    "FastWAM direct-action measurement returned invalid output"
+                )
             samples_ms.append(elapsed)
     ordered = sorted(samples_ms)
     return {
@@ -564,7 +588,9 @@ def _fetch_runtime_models(args: argparse.Namespace) -> dict[str, Path]:
     try:
         from huggingface_hub import snapshot_download
     except ImportError as exc:  # pragma: no cover - toolRef dependency checks it
-        raise FastWAMPolicyError("huggingface_hub is required for FastWAM runtime fetch") from exc
+        raise FastWAMPolicyError(
+            "huggingface_hub is required for FastWAM runtime fetch"
+        ) from exc
     cache_dir = os.environ.get("HF_HUB_CACHE") or None
     requested = {
         "fastwam_base": (FASTWAM_BASE_REPOSITORY, args.fastwam_base_revision),
@@ -575,7 +601,9 @@ def _fetch_runtime_models(args: argparse.Namespace) -> dict[str, Path]:
     resolved: dict[str, Path] = {}
     for key, (repo_id, revision) in requested.items():
         if len(str(revision)) < 7:
-            raise FastWAMPolicyError(f"{key} revision must be an immutable revision, not {revision!r}")
+            raise FastWAMPolicyError(
+                f"{key} revision must be an immutable revision, not {revision!r}"
+            )
         resolved[key] = Path(
             snapshot_download(repo_id=repo_id, revision=revision, cache_dir=cache_dir)
         )
@@ -583,7 +611,10 @@ def _fetch_runtime_models(args: argparse.Namespace) -> dict[str, Path]:
 
 
 def _materialize_dataset(
-    source: str, destination: Path, args: argparse.Namespace, recipe: dict[str, Any] | None = None
+    source: str,
+    destination: Path,
+    args: argparse.Namespace,
+    recipe: dict[str, Any] | None = None,
 ) -> Path:
     dataset = recipe.get("dataset", {}) if recipe else {}
     try:
@@ -594,7 +625,9 @@ def _materialize_dataset(
             revision=str(dataset.get("revision") or args.dataset_revision),
         )
     except LeRobotDatasetError as exc:
-        raise FastWAMPolicyError(f"could not materialize LeRobot dataset {source!r}: {exc}") from exc
+        raise FastWAMPolicyError(
+            f"could not materialize LeRobot dataset {source!r}: {exc}"
+        ) from exc
 
 
 def _materialize_directory(source: str, destination: Path) -> Path:
@@ -602,10 +635,14 @@ def _materialize_directory(source: str, destination: Path) -> Path:
     if source_path.is_dir():
         return source_path
     if not source.startswith("s3://"):
-        raise FastWAMPolicyError(f"stage artifact must be a local directory or s3:// prefix, got {source!r}")
+        raise FastWAMPolicyError(
+            f"stage artifact must be a local directory or s3:// prefix, got {source!r}"
+        )
     StorageClient.from_environment().download_directory(source, str(destination))
     if not destination.is_dir():
-        raise FastWAMPolicyError(f"artifact materialization did not create {destination}")
+        raise FastWAMPolicyError(
+            f"artifact materialization did not create {destination}"
+        )
     return destination
 
 
@@ -615,7 +652,9 @@ def _publish_directory(source: Path, destination: str) -> None:
         return
     target = Path(destination)
     if target.exists():
-        raise FastWAMPolicyError(f"refusing to overwrite existing local artifact {target}")
+        raise FastWAMPolicyError(
+            f"refusing to overwrite existing local artifact {target}"
+        )
     shutil.copytree(source, target)
 
 
@@ -625,15 +664,21 @@ def _read_recipe(prepared: Path) -> dict[str, Any]:
         raise FastWAMPolicyError("prepared input is not a FastWAM recipe")
     if recipe.get("policy") != "fastwam":
         raise FastWAMPolicyError("prepared recipe does not name FastWAM")
-    if not recipe.get("train_episode_indices") or not recipe.get("heldout_episode_indices"):
-        raise FastWAMPolicyError("prepared recipe does not contain a nonempty episode-disjoint split")
+    if not recipe.get("train_episode_indices") or not recipe.get(
+        "heldout_episode_indices"
+    ):
+        raise FastWAMPolicyError(
+            "prepared recipe does not contain a nonempty episode-disjoint split"
+        )
     return recipe
 
 
 def _assert_dataset_receipt(dataset: Path, recipe: dict[str, Any]) -> None:
     actual = _sha256(dataset / "meta" / "info.json")
     if actual != recipe.get("dataset_info_sha256"):
-        raise FastWAMPolicyError("materialized dataset metadata differs from the sealed preparation receipt")
+        raise FastWAMPolicyError(
+            "materialized dataset metadata differs from the sealed preparation receipt"
+        )
 
 
 def _final_checkpoint(training: Path) -> Path:
@@ -645,65 +690,97 @@ def _final_checkpoint(training: Path) -> Path:
 
 def _assert_checkpoint(checkpoint: Path) -> None:
     if not checkpoint.is_dir() or not any(checkpoint.glob("*.safetensors")):
-        raise FastWAMPolicyError(f"FastWAM checkpoint is missing safetensors weights: {checkpoint}")
+        raise FastWAMPolicyError(
+            f"FastWAM checkpoint is missing safetensors weights: {checkpoint}"
+        )
 
 
 def _video_receipt(root: Path) -> dict[str, dict[str, Any]]:
     try:
         import av
     except ImportError as exc:  # pragma: no cover - report toolRef declares av
-        raise FastWAMPolicyError("PyAV is required to validate native rollout videos") from exc
+        raise FastWAMPolicyError(
+            "PyAV is required to validate native rollout videos"
+        ) from exc
     videos: dict[str, dict[str, Any]] = {}
     for path in sorted(root.rglob("*.mp4")):
         with av.open(str(path)) as container:
             frames = sum(1 for _ in container.decode(video=0))
         if frames <= 0:
-            raise FastWAMPolicyError(f"native rollout video has no decodable frames: {path}")
-        videos[path.relative_to(root).as_posix()] = {"frames": frames, "sha256": _sha256(path)}
+            raise FastWAMPolicyError(
+                f"native rollout video has no decodable frames: {path}"
+            )
+        videos[path.relative_to(root).as_posix()] = {
+            "frames": frames,
+            "sha256": _sha256(path),
+        }
     return videos
 
 
-def _write_rrd(path: Path, run_id: str, evaluation: dict[str, Any], videos: dict[str, Any]) -> None:
+def _write_rrd(
+    path: Path, run_id: str, evaluation: dict[str, Any], videos: dict[str, Any]
+) -> None:
     try:
         import rerun as rr
     except ImportError as exc:  # pragma: no cover - report toolRef declares rerun
-        raise FastWAMPolicyError("rerun-sdk is required to emit FastWAM evidence") from exc
+        raise FastWAMPolicyError(
+            "rerun-sdk is required to emit FastWAM evidence"
+        ) from exc
     recording = rr.RecordingStream("npa_fastwam", recording_id=run_id)
     recording.save(str(path))
     recording.log(
         "provenance",
-        rr.TextDocument(json.dumps({"evaluation": evaluation, "videos": videos}, sort_keys=True)),
+        rr.TextDocument(
+            json.dumps({"evaluation": evaluation, "videos": videos}, sort_keys=True)
+        ),
         static=True,
     )
     success = evaluation["native_task_success"]
     latency = evaluation["direct_action_latency"]
-    recording.log("evaluation/success_percent", rr.Scalars(float(success["success_percent"])))
+    recording.log(
+        "evaluation/success_percent", rr.Scalars(float(success["success_percent"]))
+    )
     recording.log("evaluation/action_latency_ms", rr.Scalars(float(latency["mean_ms"])))
-    recording.log("evaluation/action_latency_p95_ms", rr.Scalars(float(latency["p95_ms"])))
+    recording.log(
+        "evaluation/action_latency_p95_ms", rr.Scalars(float(latency["p95_ms"]))
+    )
     recording.flush()
     recording.disconnect()
 
 
 def _inspect_rrd(path: Path, run_id: str) -> None:
     rerun = str(Path(sys.executable).parent / "rerun")
-    verified = subprocess.run([rerun, "rrd", "verify", str(path)], capture_output=True, text=True, check=True)
-    decoded = subprocess.run([rerun, "rrd", "print", "-vv", str(path)], capture_output=True, text=True, check=True)
+    verified = subprocess.run(
+        [rerun, "rrd", "verify", str(path)], capture_output=True, text=True, check=True
+    )
+    decoded = subprocess.run(
+        [rerun, "rrd", "print", "-vv", str(path)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     for expected in ("npa_fastwam", run_id, "evaluation/action_latency_ms"):
         if expected not in decoded.stdout:
             raise FastWAMPolicyError(f"Rerun recording is missing {expected!r}")
-    path.with_suffix(".inspection.txt").write_text(verified.stdout + decoded.stdout, encoding="utf-8")
+    path.with_suffix(".inspection.txt").write_text(
+        verified.stdout + decoded.stdout, encoding="utf-8"
+    )
 
 
 def _run_command(command: list[str], log_path: Path) -> None:
     with log_path.open("w", encoding="utf-8") as log:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        )
         assert process.stdout is not None
         for line in process.stdout:
             log.write(line)
             log.flush()
             print(line, end="", flush=True)
         if process.wait() != 0:
-            raise FastWAMPolicyError(f"native command failed ({process.returncode}): {' '.join(command)}")
+            raise FastWAMPolicyError(
+                f"native command failed ({process.returncode}): {' '.join(command)}"
+            )
 
 
 def _runtime_provenance() -> dict[str, Any]:
@@ -716,25 +793,56 @@ def _runtime_provenance() -> dict[str, Any]:
             "cuda_available": torch.cuda.is_available(),
         }
         if torch.cuda.is_available():
-            cuda |= {"device": torch.cuda.get_device_name(), "compute_capability": list(torch.cuda.get_device_capability())}
+            cuda |= {
+                "device": torch.cuda.get_device_name(),
+                "compute_capability": list(torch.cuda.get_device_capability()),
+            }
     except ImportError:
         cuda = {"torch": "unavailable"}
     return {"lerobot": importlib.metadata.version("lerobot"), **cuda}
 
 
-def _runtime_model_receipt(models: dict[str, Path], args: argparse.Namespace) -> dict[str, Any]:
+def _runtime_model_receipt(
+    models: dict[str, Path], args: argparse.Namespace
+) -> dict[str, Any]:
     return {
-        "fastwam_base": {"repository": FASTWAM_BASE_REPOSITORY, "revision": args.fastwam_base_revision, "path_sha256": _tree_digest(models["fastwam_base"])},
-        "wan": {"repository": WAN_REPOSITORY, "revision": args.wan_revision, "path_sha256": _tree_digest(models["wan"])},
-        "wan_diffusers": {"repository": WAN_DIFFUSERS_REPOSITORY, "revision": args.wan_diffusers_revision, "path_sha256": _tree_digest(models["wan_diffusers"])},
-        "umt5": {"repository": UMT5_REPOSITORY, "revision": args.umt5_revision, "path_sha256": _tree_digest(models["umt5"])},
+        "fastwam_base": {
+            "repository": FASTWAM_BASE_REPOSITORY,
+            "revision": args.fastwam_base_revision,
+            "path_sha256": _tree_digest(models["fastwam_base"]),
+        },
+        "wan": {
+            "repository": WAN_REPOSITORY,
+            "revision": args.wan_revision,
+            "path_sha256": _tree_digest(models["wan"]),
+        },
+        "wan_diffusers": {
+            "repository": WAN_DIFFUSERS_REPOSITORY,
+            "revision": args.wan_diffusers_revision,
+            "path_sha256": _tree_digest(models["wan_diffusers"]),
+        },
+        "umt5": {
+            "repository": UMT5_REPOSITORY,
+            "revision": args.umt5_revision,
+            "path_sha256": _tree_digest(models["umt5"]),
+        },
     }
 
 
 def _upstream_provenance() -> dict[str, Any]:
     return {
-        "lerobot": {"repository": "https://github.com/huggingface/lerobot", "version": LEROBOT_VERSION, "revision": LEROBOT_RELEASE_COMMIT, "license": "Apache-2.0", "copyright": "Hugging Face Inc. team"},
-        "fastwam": {"repository": "https://huggingface.co/lerobot/fastwam_base", "license": "Apache-2.0", "citation": "Yuan et al., Fast-WAM: Do World Action Models Need Test-time Future Imagination?, arXiv:2603.16666 (2026)"},
+        "lerobot": {
+            "repository": "https://github.com/huggingface/lerobot",
+            "version": LEROBOT_VERSION,
+            "revision": LEROBOT_RELEASE_COMMIT,
+            "license": "Apache-2.0",
+            "copyright": "Hugging Face Inc. team",
+        },
+        "fastwam": {
+            "repository": "https://huggingface.co/lerobot/fastwam_base",
+            "license": "Apache-2.0",
+            "citation": "Yuan et al., Fast-WAM: Do World Action Models Need Test-time Future Imagination?, arXiv:2603.16666 (2026)",
+        },
         "distinction": "This LeRobot FastWAM workflow is not the Cosmos3 FastWAM-K2 experiment.",
     }
 
@@ -750,7 +858,9 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -771,7 +881,9 @@ def _tree_digest(root: Path) -> str:
 
 def _quantile(values: list[float], quantile: float) -> float:
     if not values:
-        raise FastWAMPolicyError("cannot compute latency percentile from no measurements")
+        raise FastWAMPolicyError(
+            "cannot compute latency percentile from no measurements"
+        )
     index = min(len(values) - 1, max(0, round((len(values) - 1) * quantile)))
     return values[index]
 

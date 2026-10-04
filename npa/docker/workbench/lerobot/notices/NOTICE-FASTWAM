@@ -2,15 +2,15 @@ NPA FastWAM runtime notice
 ===========================
 
 This image recipe enables the ``fastwam`` optional feature from the upstream
-LeRobot 0.6.0 distribution. It does not include FastWAM, Wan, UMT5, robot
+LeRobot 0.6.1 distribution. It does not include FastWAM, Wan, UMT5, robot
 dataset, checkpoint, cache, or rollout-output bytes in an image layer.
 
 Upstream software
 -----------------
 
 * LeRobot: https://github.com/huggingface/lerobot
-  - pinned NPA runtime release: v0.6.0
-  - source revision: 30da8e687a6dfc617fcd94afc367ac7071c376ce
+  - pinned FastWAM runtime release: v0.6.1
+  - source revision: 7e241bd630a3719a56157a497ce5d08f244784f1
   - copyright: Hugging Face Inc. team
   - license: Apache License 2.0; see the upstream LICENSE.
 * FastWAM base model: https://huggingface.co/lerobot/fastwam_base

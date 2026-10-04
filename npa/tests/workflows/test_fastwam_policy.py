@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import inspect
 import json
 from pathlib import Path
@@ -16,6 +17,9 @@ from npa.workflows.lerobot_dataset import LeRobotDatasetSummary
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows" / "testing" / "fastwam-policy-qualification.yaml"
+READINESS = WORKFLOW.with_suffix(".readiness.json")
+FASTWAM_DOCKERFILE = ROOT / "npa" / "docker" / "workbench" / "lerobot" / "Dockerfile"
+FASTWAM_NOTICE = FASTWAM_DOCKERFILE.parent / "notices" / "NOTICE-FASTWAM"
 
 
 def _runtime_args() -> argparse.Namespace:
@@ -62,11 +66,48 @@ def test_workflow_has_five_connected_substantive_native_stages() -> None:
     assert all(step.argv or step.shell for step in plan.steps)
     assert spec.states["train"].inputs[0].uri == "{{config.prepared_uri}}recipe.json"
     assert spec.states["rollout"].inputs[1].uri == "{{config.training_uri}}checkpoint/"
-    assert spec.states["evaluate"].inputs[-1].uri == "{{config.rollouts_uri}}rollout.json"
+    assert (
+        spec.states["evaluate"].inputs[-1].uri == "{{config.rollouts_uri}}rollout.json"
+    )
     assert spec.states["report"].outputs[1].uri == "{{config.report_uri}}fastwam.rrd"
+    assert (
+        spec.resources["gpu"]["accelerators"]
+        == "{{config.gpu_type}}:{{config.gpu_count}}"
+    )
 
 
-def test_prepare_seals_disjoint_split_and_upstream_identity(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_adjacent_readiness_record_hash_binds_the_saved_workflow() -> None:
+    readiness = json.loads(READINESS.read_text())
+
+    assert readiness["schema_version"] == "workflow-readiness/v1"
+    assert (
+        readiness["workflow_sha256"]
+        == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
+    )
+    assert readiness["planning"]["validation"]["status"] == "verified"
+    assert readiness["planning"]["task_fidelity"]["status"] == "verified"
+    assert readiness["prerequisites"]["source_image"]["status"] == "verified"
+    assert readiness["prerequisites"]["target_runtime"]["status"] == "unverified"
+
+
+def test_fastwam_image_pins_the_stable_le_robot_release_and_feature_extra() -> None:
+    dockerfile = FASTWAM_DOCKERFILE.read_text()
+    notice = FASTWAM_NOTICE.read_text()
+
+    assert '"${LEROBOT_VERSION}" = "0.6.1"' in dockerfile
+    assert (
+        "lerobot[training,evaluation,pusht,libero,diffusion,smolvla,fastwam]"
+        in dockerfile
+    )
+    assert "LeRobot 0.6.1 distribution" in notice
+    assert "7e241bd630a3719a56157a497ce5d08f244784f1" in notice
+    assert fastwam.LEROBOT_VERSION == "0.6.1"
+    assert fastwam.LEROBOT_RELEASE_COMMIT == "7e241bd630a3719a56157a497ce5d08f244784f1"
+
+
+def test_prepare_seals_disjoint_split_and_upstream_identity(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source = tmp_path / "dataset"
     (source / "meta").mkdir(parents=True)
     (source / "meta" / "info.json").write_text('{"features": {}}\n')
@@ -87,7 +128,9 @@ def test_prepare_seals_disjoint_split_and_upstream_identity(tmp_path, monkeypatc
         loaded_with_lerobot_dataset=True,
     )
     monkeypatch.setattr(fastwam, "_materialize_dataset", lambda *_args: source)
-    monkeypatch.setattr(fastwam, "summarize_lerobot_dataset", lambda *_args, **_kwargs: summary)
+    monkeypatch.setattr(
+        fastwam, "summarize_lerobot_dataset", lambda *_args, **_kwargs: summary
+    )
     monkeypatch.setattr(
         fastwam,
         "_validate_native_fastwam_dataset_contract",
@@ -105,10 +148,17 @@ def test_prepare_seals_disjoint_split_and_upstream_identity(tmp_path, monkeypatc
     fastwam._prepare(args, tmp_path / "work", tmp_path / "prepared")
 
     recipe = json.loads((tmp_path / "prepared" / "recipe.json").read_text())
-    assert set(recipe["train_episode_indices"]).isdisjoint(recipe["heldout_episode_indices"])
-    assert sorted(recipe["train_episode_indices"] + recipe["heldout_episode_indices"]) == [2, 3, 7, 11]
+    assert set(recipe["train_episode_indices"]).isdisjoint(
+        recipe["heldout_episode_indices"]
+    )
+    assert sorted(
+        recipe["train_episode_indices"] + recipe["heldout_episode_indices"]
+    ) == [2, 3, 7, 11]
     assert recipe["policy"] == "fastwam"
-    assert recipe["native_fastwam_feature_contract"]["has_task_or_precomputed_context"] is True
+    assert (
+        recipe["native_fastwam_feature_contract"]["has_task_or_precomputed_context"]
+        is True
+    )
     assert recipe["physical_robot_tested"] is False
     assert "Cosmos3" in recipe["upstream"]["distinction"]
 
@@ -118,9 +168,15 @@ def test_native_commands_preserve_split_and_direct_action_contract(tmp_path) -> 
         "dataset": {"repo_id": "operator/robot-data", "revision": "f" * 40},
         "train_episode_indices": [1, 4, 8],
     }
-    models = {key: tmp_path / key for key in ("fastwam_base", "wan", "wan_diffusers", "umt5")}
-    train = fastwam._fastwam_train_command(_runtime_args(), recipe, tmp_path / "data", tmp_path / "out", models)
-    rollout = fastwam._fastwam_eval_command(_runtime_args(), tmp_path / "checkpoint", tmp_path / "eval", models)
+    models = {
+        key: tmp_path / key for key in ("fastwam_base", "wan", "wan_diffusers", "umt5")
+    }
+    train = fastwam._fastwam_train_command(
+        _runtime_args(), recipe, tmp_path / "data", tmp_path / "out", models
+    )
+    rollout = fastwam._fastwam_eval_command(
+        _runtime_args(), tmp_path / "checkpoint", tmp_path / "eval", models
+    )
 
     assert train[0] == "lerobot-train"
     assert "--policy.type=fastwam" in train
@@ -136,7 +192,9 @@ def test_native_commands_preserve_split_and_direct_action_contract(tmp_path) -> 
     assert all("generate_video" not in item for item in rollout)
 
 
-def test_runtime_fetch_requires_distinct_immutable_component_revisions(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_fetch_requires_distinct_immutable_component_revisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[tuple[str, str]] = []
 
     def fake_download(*, repo_id: str, revision: str, cache_dir: str | None) -> str:
@@ -162,7 +220,14 @@ def test_latency_stage_loads_the_exact_checkpoint_not_a_fresh_base_model() -> No
 
 def test_recipe_refuses_missing_or_overlapping_episode_contract(tmp_path) -> None:
     (tmp_path / "recipe.json").write_text(
-        json.dumps({"schema": "npa.fastwam.recipe.v1", "policy": "fastwam", "train_episode_indices": [1], "heldout_episode_indices": []})
+        json.dumps(
+            {
+                "schema": "npa.fastwam.recipe.v1",
+                "policy": "fastwam",
+                "train_episode_indices": [1],
+                "heldout_episode_indices": [],
+            }
+        )
     )
     with pytest.raises(fastwam.FastWAMPolicyError, match="episode-disjoint"):
         fastwam._read_recipe(tmp_path)

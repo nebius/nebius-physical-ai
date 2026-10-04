@@ -13,7 +13,7 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "fastwam/{{run.id}}"
-  # Supply an operator-built, immutable LeRobot 0.6.0 + fastwam-extra image at
+  # Supply an operator-built, immutable LeRobot 0.6.1 + fastwam-extra image at
   # submit time. No registry, credential, or project identity is committed here.
   fastwam_image: "REQUIRED_OPERATOR_IMAGE@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   input_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
@@ -42,6 +42,10 @@ config:
   rollout_episodes: "50"
   latency_warmup_actions: "10"
   latency_measured_actions: "50"
+  # The operator resolves the target hardware by config override. This default
+  # preserves the documented qualification profile without committing a cluster.
+  gpu_type: "B200"
+  gpu_count: "1"
 
   prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
   training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
@@ -57,7 +61,7 @@ resources:
     image: "{{config.fastwam_image}}"
   gpu:
     cloud: kubernetes
-    accelerators: B200:1
+    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
     cpus: 32
     memory: 128Gi
     image: "{{config.fastwam_image}}"

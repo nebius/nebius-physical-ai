@@ -17,8 +17,10 @@ the workflow does not generate a future video at test time. The pipeline is:
    held-out observation frames; and
 5. decode the real rollout MP4s and write/read-back a Rerun `.rrd` report.
 
-The supplied image must be an operator-built immutable LeRobot 0.6.0 image from
-the checked-in Dockerfile, whose 0.6 extra set includes `fastwam`. The image has
+The supplied image must be an operator-built immutable LeRobot 0.6.1 image from
+the checked-in Dockerfile, whose 0.6 extra set includes `fastwam`. Upstream's
+current FastWAM guide documents main as source-only and names 0.6.1 as the
+stable release; the image records the exact tag revision in its notice. The image has
 no model weights, datasets, credentials, or output artifacts. The stage fetches
 the FastWAM base checkpoint, Wan 2.2 components, and UMT5 at the exact revisions
 in the workflow into the configured Hugging Face cache, which provides the Hub's
@@ -26,7 +28,7 @@ revision-aware locking and immutable snapshot layout. Re-run an access probe if
 any source revision changes.
 
 All `REQUIRED_*` values are deliberate submit-time inputs: the dataset identity,
-license, simulator adapter and task, and image digest must name real
+license, simulator adapter and task, image digest, and target GPU profile must name real
 operator-selected artifacts. The rollout task's episode length, image geometry,
 batch size, policy dtype, and action-chunk count are passed directly to
 `lerobot-eval`; they must match the selected simulator and model observation

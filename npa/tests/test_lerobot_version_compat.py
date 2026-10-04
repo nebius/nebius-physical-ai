@@ -102,7 +102,10 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
         encoding="utf-8"
     )
 
-    assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla,fastwam]" in dockerfile
+    assert (
+        "lerobot[training,evaluation,pusht,libero,diffusion,smolvla,fastwam]"
+        in dockerfile
+    )
     assert "python -m npa.smoke.test_lerobot_env" in dockerfile
     assert "DiffusionPolicy(config)" in smoke
     assert "FastWAMConfig()" in smoke
@@ -110,7 +113,10 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
     assert notice.is_file()
     assert "NPA_LEROBOT_SMOKE_REQUIRE_CUDA" in smoke
     assert 'policy.to("cuda")' in smoke
-    assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla,fastwam]" in cloud_init
+    assert (
+        "lerobot[training,evaluation,pusht,libero,diffusion,smolvla,fastwam]"
+        in cloud_init
+    )
 
 
 def test_unsupported_version_raises(monkeypatch: pytest.MonkeyPatch) -> None:

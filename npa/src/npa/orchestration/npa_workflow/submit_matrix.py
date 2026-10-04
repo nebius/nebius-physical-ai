@@ -185,6 +185,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Pinned PushT data, matched real ACT training, paired closed-loop shifts, next-demo queue and RRD.",
     ),
     SubmitLiveCase(
+        "fastwam-policy-qualification.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "The FastWAM image is privately digest-qualified, but the native five-stage "
+            "path still needs immutable licensed LeRobot simulator data and its matching "
+            "task binding; shipped placeholders fail closed until the task-scoped route "
+            "binds those inputs."
+        ),
+        notes=(
+            "FastWAM trains with video world modeling and performs direct-action "
+            "inference; private GPU qualification must verify checkpoint, MP4, CUDA "
+            "latency, and decoded RRD artifacts before this case becomes live."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-mochi-1.yaml",
         "gpu",
         plan_only=True,

@@ -1,0 +1,60 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "18f7f9f9d6ecf5031659d272a1faad9628522e7c15fb5d9c36bff922b9c78b43",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The saved v0.0.1 specification validates and its hash-bound render plan contains the five declared serial stages.",
+      "evidence": [
+        "npa/tests/workflows/test_fastwam_policy.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Focused contract tests verify episode-disjoint preparation, upstream FastWAM training, direct-action rollout, native checkpoint latency evaluation, and factual RRD/MP4 reporting.",
+      "evidence": [
+        "npa/tests/workflows/test_fastwam_policy.py",
+        "npa/src/npa/workflows/fastwam_policy.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The configured S3 credential preflight succeeded previously, but no task-scoped output prefix has been exercised by the five-stage workflow.",
+      "evidence": [
+        "workflows/testing/fastwam-policy-qualification.yaml"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "A licensed immutable LeRobot v3 dataset and matching simulator task must be bound to the execution route before the dataset reader and rollout stages can run.",
+      "evidence": [
+        "workflows/testing/fastwam-policy-qualification.yaml"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "The exact runtime fetch and task-scoped storage access require verification on the selected worker; no credential values are recorded here.",
+      "evidence": [
+        "workflows/testing/fastwam-policy-qualification.yaml"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The FastWAM-enabled LeRobot 0.6.1 image was byte-scanned clean, pushed only to the operator-private registry, resolved to an immutable repository digest, and pulled by that digest. No public-image publication occurred.",
+      "evidence": [
+        "npa/docker/workbench/lerobot/Dockerfile",
+        "npa/docker/workbench/lerobot/notices/NOTICE-FASTWAM",
+        "operator-private image scan and digest-pull receipts retained separately"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "CUDA FastWAM action latency, native simulation rollout, and final artifact inspection have not yet run on the task-scoped Nebius GPU route.",
+      "evidence": [
+        "docs/workbench/guides/fastwam-policy.md"
+      ]
+    }
+  }
+}
