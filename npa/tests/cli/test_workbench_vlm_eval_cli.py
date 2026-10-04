@@ -384,6 +384,8 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
     payload = json.loads(result.output)
     assert payload["best_config"]["config"]["success_threshold"] == 0.8
     assert payload["best_config"]["metrics"]["accuracy"] == 1.0
+    assert payload["best_config"]["metrics"]["specificity"] == 1.0
+    assert payload["best_config"]["metrics"]["balanced_accuracy"] == 1.0
     assert payload["best_config"]["metrics"]["true_positives"] == 2
     assert payload["best_config"]["metrics"]["true_negatives"] == 3
     assert payload["schema_version"] == "npa_vlm_eval_benchmark_report_v2"
@@ -442,6 +444,40 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
     assert persisted["best_config"]["results"] == payload["best_config"]["results"]
     assert persisted["independent_human_label_calibration_established"] is False
     assert persisted["limitations"] == _BENCHMARK_FIXTURE_LIMITATIONS
+
+
+def test_workbench_vlm_eval_runs_packaged_agency_preflight(tmp_path) -> None:
+    output_path = tmp_path / "isaac-agency.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--dataset",
+            "isaac-agency",
+            "--output",
+            str(output_path),
+            "--backend",
+            "stub",
+            "--models",
+            "fixture-stub",
+            "--thresholds",
+            "0.5",
+            "--frame-selection",
+            "sequence",
+            "--max-frames",
+            "6",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    checks = json.loads(result.output)["sweep"]["structural_checks"]
+    assert checks["cube-elevated-positive"]["verdict"] == "pass"
+    assert checks["robot-grasp-lift-negative"]["verdict"] == "fail"
 
 
 def test_vlm_eval_sdk_benchmark_returns_report() -> None:

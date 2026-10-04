@@ -1300,7 +1300,13 @@ def test_real_benchmark_case_retains_per_request_evidence(
                         "rollout": str(rollout),
                         "expected_label": True,
                         "task": "Confirm that the frame is green.",
-                    }
+                    },
+                    {
+                        "id": "visible-red-negative",
+                        "rollout": str(rollout),
+                        "expected_label": False,
+                        "task": "Confirm that the frame is red.",
+                    },
                 ],
             }
         )
@@ -1327,6 +1333,13 @@ def test_real_benchmark_case_retains_per_request_evidence(
     assert case.evidence.provider.finish_reason == "stop"
     assert case.provider_success is True
     assert case.provider_success_matches_score_gate is True
+    negative = report.best_config.results[1]
+    assert negative.expected_label is False
+    assert negative.evidence is not None
+    assert negative.evidence.request.frames == case.evidence.request.frames
+    assert (
+        negative.evidence.request.prompt_sha256 != case.evidence.request.prompt_sha256
+    )
 
 
 def test_benchmark_case_retains_pre_provenance_positional_constructor() -> None:
