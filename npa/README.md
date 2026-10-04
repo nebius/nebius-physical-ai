@@ -18,6 +18,13 @@ optional `--baseline-path` compares both sources in both A/B orders. See the
 [visual-review guide](../docs/workbench/vlm-visual-review.md) for all options and
 the retained limitations. These records never affect the completion score or gate.
 
+VLM `--frame-selection sequence` samples uniformly. For known-count inputs,
+`keyframes` allocates half its frame budget to a terminal window covering at
+least the final 10%, widening when needed for unique samples. Both include the
+first and final frame when at least two are selected. This is temporal sampling,
+not event detection; unknown-count video compatibility is unchanged. See the
+[sampling evidence](../docs/workbench/evidence/vlm-frame-selection-semantics.md).
+
 The [NuRec sample workflow](../docs/workbench/guides/neural-reconstruction.md)
 and [four-camera warehouse workflow](../docs/workbench/multicamera-rgbd-capture.md)
 download public sample data automatically and publish compact, offline
@@ -441,6 +448,27 @@ make test-smoke PYTHON="$(pwd)/npa/.venv/bin/python"  # onboarding CLI checks
 make precheck  # CI pins, lint, formatting, and CI contract regressions
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
 ```
+
+VLM score, loop, and benchmark artifacts disclose that independent human-label
+calibration is not established. Their ordered limitations distinguish sampled
+observations, mean-score loop gates, and fixture/stub inputs from real provider
+evidence. Direct results also emit `provider_call_made`, which is false for
+stub and score-override paths.
+
+Packaged VLM benchmark samples are four synthetic 2x2 color swatches plus a
+tiny truncated-progress sequence with an omitted terminal outcome. Benchmark
+reports preserve their `illustrative_only` evidence scope and ordered dataset
+limitations; custom manifests without scope metadata remain `unspecified`.
+These sample metrics demonstrate wiring and do not validate physical tasks.
+
+See the
+[VLM runbook](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#outputs).
+
+Token Factory captions accept `--thinking` and `--no-thinking`; omitting both
+preserves the selected model's defaults. The SDK's `thinking` argument accepts
+a literal boolean or `None`. See the
+[Token Factory guide](../docs/workbench/token-factory.md) for model-specific
+controls and reasoning-only failures.
 
 For GPU VLM provenance, use the
 [operator verification lane](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#live-provenance-verification).
