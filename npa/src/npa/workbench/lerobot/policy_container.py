@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib
+import importlib.metadata
 import json
 import math
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -29,7 +31,10 @@ from npa.workflows.lerobot_dataset import (
     DEFAULT_PUBLIC_LEROBOT_REVISION,
 )
 from npa.workbench.lerobot.version_compat import (
+    LEROBOT_VERSION_ENV,
+    LeRobotVersionError,
     eval_checkpoint_arg,
+    resolve_lerobot_version,
     train_env_eval_arg,
 )
 
@@ -44,6 +49,19 @@ DEFAULT_TRAIN_TIMEOUT_SECONDS = 43200
 DEFAULT_EVAL_TIMEOUT_SECONDS = 7200
 REAL_WEIGHT_FILENAMES = ("model.safetensors", "pytorch_model.bin")
 TRAINING_DATASET_PROVENANCE_FILENAME = "training_dataset_provenance.json"
+# This is the pinned RoboCasa ACT closure, not a generally supported release.
+_ROBOCASA_ACT_TRAINING_VERSION = "0.6.1+npa2"
+_ROBOCASA_ACT_TRAINING_SOURCES = {
+    "lerobot/configs/train.py": (
+        "117d9829af0db49a681876861ac6fb014bf1927b03655c3428d0ec1db968af79"
+    ),
+    "lerobot/scripts/lerobot_train.py": (
+        "059bda054bbb188d4a40d0a32941aa4d9ac59252a37d67a258e685a0a6d063ec"
+    ),
+}
+_ROBOCASA_ACT_TRAINING_METADATA_SHA256 = (
+    "7b016caee01368c6c25ff6c24dd7138605c9205ae5788f9752f12f84d8850162"
+)
 
 # Request-supplied output directories are confined under this root so an
 # unauthenticated /feedback/train-step caller cannot write adapter checkpoints to
@@ -387,7 +405,12 @@ def build_lerobot_train_command(
     training_config: TrainingConfig | None = None,
     lerobot_version: str | None = None,
 ) -> list[str]:
-    """Build a real `lerobot-train` command for a local LeRobotDataset."""
+    """Build native training argv; an explicit version controls its eval flag.
+
+    The default retains the global compatibility manifest. The exact RoboCasa
+    ACT derivative has a separate, ACT-only command contract; this does not
+    register that derivative as a generally supported LeRobot release.
+    """
 
     config = training_config or TrainingConfig()
     if steps <= 0:
@@ -402,8 +425,10 @@ def build_lerobot_train_command(
     repo_id = dataset_repo_id or dataset_root.name
     if save_freq is None:
         save_freq = max(1, steps)
-    cmd = [
-        "lerobot-train",
+    executable = ["lerobot-train"]
+    if lerobot_version == _ROBOCASA_ACT_TRAINING_VERSION:
+        executable = [sys.executable, "-m", "lerobot.scripts.lerobot_train"]
+    cmd = executable + [
         f"--policy.type={policy_type}",
         "--policy.push_to_hub=false",
         f"--policy.device={device}",
@@ -412,7 +437,7 @@ def build_lerobot_train_command(
         f"--output_dir={output_dir}",
         f"--steps={steps}",
         f"--save_freq={save_freq}",
-        train_env_eval_arg(eval_freq, version=lerobot_version),
+        _training_eval_argument(eval_freq, lerobot_version, policy_type),
         f"--log_freq={log_freq}",
         f"--batch_size={batch_size}",
         f"--num_workers={num_workers}",
@@ -423,7 +448,84 @@ def build_lerobot_train_command(
     if extra_args:
         cmd.extend(extra_args)
     cmd.extend(format_override(override, style="cli") for override in config.overrides)
+    if lerobot_version == _ROBOCASA_ACT_TRAINING_VERSION:
+        _validate_robocasa_training_policy(cmd)
     return cmd
+
+
+def _training_eval_argument(value: int, version: str | None, policy_type: str) -> str:
+    if version != _ROBOCASA_ACT_TRAINING_VERSION:
+        return train_env_eval_arg(value, version=version)
+    if policy_type != "act":
+        raise PolicyContainerError("The RoboCasa LeRobot derivative supports ACT only")
+    return f"--env_eval_freq={int(value)}"
+
+
+def _verify_robocasa_training_runtime(distribution: Any, policy_type: str) -> None:
+    _training_eval_argument(0, distribution.version, policy_type)
+    metadata = distribution.read_text("METADATA")
+    if metadata is None or hashlib.sha256(metadata.encode()).hexdigest() != (
+        _ROBOCASA_ACT_TRAINING_METADATA_SHA256
+    ):
+        raise PolicyContainerError("RoboCasa ACT training metadata does not match")
+    for relative_path, expected in _ROBOCASA_ACT_TRAINING_SOURCES.items():
+        path = Path(distribution.locate_file(relative_path))
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise PolicyContainerError(
+                f"RoboCasa ACT training source does not match: {relative_path}"
+            )
+        module_name = relative_path.removesuffix(".py").replace("/", ".")
+        module = importlib.import_module(module_name)
+        module_path = Path(module.__file__).resolve()
+        if module_path != path.resolve():
+            raise PolicyContainerError(
+                f"RoboCasa ACT training module is shadowed: {relative_path}"
+            )
+
+
+def _validate_robocasa_training_policy(command: list[str]) -> None:
+    for index, argument in enumerate(command):
+        if argument == "--policy.type":
+            value = command[index + 1] if index + 1 < len(command) else ""
+        elif argument.startswith("--policy.type="):
+            value = argument.split("=", 1)[1]
+        else:
+            continue
+        if value != "act":
+            raise PolicyContainerError(
+                "The RoboCasa LeRobot derivative supports ACT only"
+            )
+
+
+def _installed_training_version(policy_type: str) -> str:
+    try:
+        distribution = importlib.metadata.distribution("lerobot")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise PolicyContainerError(
+            "LeRobot training requires installed package metadata"
+        ) from exc
+    installed = distribution.version
+    if (
+        not isinstance(installed, str)
+        or not installed
+        or installed.strip() != installed
+    ):
+        raise PolicyContainerError(
+            "LeRobot training package version is missing or invalid"
+        )
+    selected = os.environ.get(LEROBOT_VERSION_ENV, "").strip()
+    if selected and selected != installed:
+        raise PolicyContainerError(
+            f"Selected LeRobot version {selected!r} differs from installed {installed!r}"
+        )
+    if installed == _ROBOCASA_ACT_TRAINING_VERSION:
+        _verify_robocasa_training_runtime(distribution, policy_type)
+    else:
+        try:
+            resolve_lerobot_version(installed)
+        except LeRobotVersionError as exc:
+            raise PolicyContainerError(str(exc)) from exc
+    return installed
 
 
 def run_lerobot_training(
@@ -442,11 +544,20 @@ def run_lerobot_training(
     extra_args: list[str] | None = None,
     training_config: TrainingConfig | None = None,
 ) -> LeRobotTrainingResult:
-    """Run real LeRobot policy training and validate the resulting checkpoint."""
+    """Train with the installed runtime's argv and validate real checkpoint bytes.
+
+    Explicit version selection must match package metadata. The RoboCasa ACT
+    derivative additionally requires the pinned metadata, native parser and
+    trainer source identities before any training subprocess is launched.
+    """
 
     config = training_config or TrainingConfig()
     assert_lerobot_importable()
-    if shutil.which("lerobot-train") is None:
+    training_version = _installed_training_version(policy_type)
+    if (
+        training_version != _ROBOCASA_ACT_TRAINING_VERSION
+        and shutil.which("lerobot-train") is None
+    ):
         raise PolicyContainerError("lerobot-train was not found on PATH")
     dataset_root = Path(dataset_path)
     if not (dataset_root / "meta" / "info.json").exists():
@@ -474,6 +585,7 @@ def run_lerobot_training(
         resume=resume,
         extra_args=extra_args,
         training_config=config,
+        lerobot_version=training_version,
     )
     start = time.time()
     with log.open("w", encoding="utf-8") as handle:
