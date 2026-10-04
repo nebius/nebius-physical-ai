@@ -49,11 +49,12 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "A private CPU-only cloud-evidence image recipe is defined, but no exact image has yet been built, scanned, pushed, or remotely pulled. The submitted digest and source SHA must be supplied together; the image cannot qualify the target TensorRT plans.",
+      "status": "verified_private_delivery",
+      "reason": "The final-source CPU-only cloud-evidence image was built, byte-scanned, functionally exercised, pushed as an immutable private digest, and pulled through the configured Kubernetes imagePullSecret with the required SkyPilot bootstrap attestation. It remains an operator-private artifact and cannot qualify the target TensorRT plans.",
       "evidence": [
-        "workflows/testing/molmoact2-jetson-thor-edge.yaml config.require_baked_npa=1 and private runtime_image placeholder",
-        "npa/docker/workbench/molmoact2-jetson-thor/Dockerfile contains only the cloud evidence adapter and neutral Python dependencies."
+        "2026-10-04: private final-source build, OCI byte scan, non-root functional adapter check, digest-bound Kubernetes pull preflight, and SkyPilot bootstrap-attestation receipts retained in the operator task evidence directory; no registry or infrastructure identifier is recorded in this repository.",
+        "2026-10-04: an NPA submission using that immutable private digest reached SUBMITTED after the mandatory image preflight; it is an operational cloud smoke, not Thor validation.",
+        "workflows/testing/molmoact2-jetson-thor-edge.yaml config.require_baked_npa=1 binds the submitted source SHA to the baked module; the Dockerfile contains only the cloud-evidence adapter and neutral Python dependencies."
       ]
     },
     "target_runtime": {
