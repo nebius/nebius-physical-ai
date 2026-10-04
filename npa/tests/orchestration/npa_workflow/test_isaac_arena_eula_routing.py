@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -88,6 +89,7 @@ def test_arena_render_preserves_acceptance_and_bootstrap_refusal(
                 "ACCEPT_EULA": tasks[0]["envs"]["ACCEPT_EULA"],
                 "NPA_ISAAC_CACHE_DIR": str(cache),
                 "NPA_ISAAC_BOOTSTRAP_OFFLINE": "1",
+                "NPA_ISAAC_BASE_PYTHON": sys.executable,
             },
             capture_output=True,
             text=True,

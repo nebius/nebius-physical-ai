@@ -149,22 +149,23 @@ def run_contract(
             )
         )
     )
+    catalog_required = tuple(dict.fromkeys((*required, MINIMAX)))
     report: dict[str, Any] = {
         "schema": "npa.token_factory.contract.v1",
         "provider": "nebius_token_factory",
-        "required_models": [model_reference(model) for model in required],
+        "required_models": [model_reference(model) for model in catalog_required],
         "expected_json_behavior": expected_json_behavior,
         "checks": [],
     }
     checks = report["checks"]
     try:
         available = client.list_models()
-        missing = [model for model in required if model not in available]
+        missing = [model for model in catalog_required if model not in available]
         checks.append(
             {
                 "check": "required_model_catalog",
                 "passed": not missing,
-                "required_count": len(required),
+                "required_count": len(catalog_required),
                 "missing_models": [model_reference(model) for model in missing],
             }
         )

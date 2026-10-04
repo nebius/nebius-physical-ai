@@ -1,0 +1,59 @@
+{
+  "schema": "npa.cosmos3.wam-reproduction-readiness.v1",
+  "date": "2026-10-02",
+  "workbench_revision": "a26a2d1c08b3fc9feafe3d973bb6e7bb6a396974",
+  "scope": "Fresh native Slurm deployment and per-device CUDA qualification; training and quality are reported separately.",
+  "deployment": {
+    "nodes": 2,
+    "gpus_per_node": 8,
+    "distinct_physical_gpus_verified": 16,
+    "gpu": "NVIDIA B200",
+    "region": "us-central1",
+    "capacity_policy": "STRICT reserved",
+    "slurm": "23.11.4",
+    "storage": "NFS exported from the dedicated controller/GPU worker",
+    "controller_disk_gib": 2048,
+    "worker_disk_gib": 256
+  },
+  "runtime": {
+    "driver_versions": [
+      "580.173.02"
+    ],
+    "torch_version": "2.10.0+cu130",
+    "torch_cuda_version": "13.0",
+    "nccl_version": [
+      2,
+      28,
+      9
+    ],
+    "compute_capability": [
+      10,
+      0
+    ]
+  },
+  "cuda_qualification": {
+    "independent_passing_device_probes": 16,
+    "bf16_attention_forward_matches_fp32_reference": true,
+    "bf16_attention_backward_finite_nonzero": true,
+    "native_fused_adam_fp32_parameter_update": true,
+    "max_absolute_reference_error": 0.003830432891845703
+  },
+  "host_readiness": {
+    "ipc_survived_logout_on_both_workers": true,
+    "ipv4_and_ipv6_firewall_installed": true,
+    "slurmd_requires_firewall_restore_unit": true,
+    "fabric_manager_active_on_both_workers": true
+  },
+  "unexecuted": {
+    "four_node_soperator": "Insufficient reserved B200 capacity and non-GPU CPU quota at preflight; no Soperator cluster provisioned for this reproduction.",
+    "rtx_pro_6000": "No free reserved capacity at preflight; no RTX run or cross-architecture performance claim."
+  },
+  "private_source_sha256": {
+    "worker-0-gpu-proof.txt": "9b987d38d0cc95dcaa8c157f16dc5eb3cf0020727287c1eb5837acadbe87ee9f",
+    "worker-1-gpu-proof.txt": "044f1b9f250e4ec8db65258553bf434e5f3ee5b4c6c346f5d5c51fd7f0ec19fd",
+    "cluster-ready.txt": "125f8aeefec12a311ff16c49b8f30835e704d2890e54dea1ce2de2271d5f0f32",
+    "worker-ready.txt": "1bd5907f17a5a41b0d4e5a72f1c5435b35f8af7577c0adb6b01bdbd563d40908",
+    "native-runtime-ready.txt": "2ea07ad7158a2f11d105914b9ae5c41776ea4921ae609d39be44e1b526e0d207",
+    "reproduction-protocol.json": "d3b0d35dc541a3c0c39a4e8890b9c3144b1136a7bea27becdf3ed96b71c57504"
+  }
+}

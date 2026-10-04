@@ -1,0 +1,216 @@
+{
+  "schema": "npa.public-evidence.token-factory-image-unavailable-nested-normalization.v1",
+  "source": {
+    "commit": "3fdced71f6d42f3e1fa5e9375c305ae363101348",
+    "tree": "64a26f0d62ecb8e94511be44299efc41417d3091",
+    "parent": "40427dbe5d35883093648879f88cad9ec3132a20",
+    "archive_sha256": "41b0336a748d9b21d226381120040ef2fa71c9bbc410d1ee5c05cf561809dca2",
+    "parent_to_candidate_diff_sha256": "2a0b73552ef23468792193ab7e4dd20f089f6d2e500717e89287cea3e0c6ffb3",
+    "module_sha256": "3ff390708097d0f13f6c3891ae603ca9500df38471243df317a2eeab8553f98f",
+    "clean_worktree_before_and_after_validation": true
+  },
+  "historical_evidence": {
+    "directory": "../token-factory-image-unavailable-normalization/",
+    "preserved_byte_exactly": true,
+    "readme_sha256": "334fc1568365ff66a4d985345adeec78013f0269225e5e1c936507a9a30fda2e",
+    "evidence_json_sha256": "88e16d743f4d0f8d283b6dd1cfcd59a15d7a64bad0e49391e8762606666adb1a"
+  },
+  "approved_plan": {
+    "sha256": "f737fe3a168f79e871fac5559d7d41d819b0d15cebc570594f990c6441fcde99",
+    "independent_verdict": "APPROVED_PLAN",
+    "review_sha256": "55ef6749e4d255a7c9ca6c9c9e151f96e6a49897d4bbf0452a451e419416df1c"
+  },
+  "baseline": {
+    "commit": "40427dbe5d35883093648879f88cad9ec3132a20",
+    "trigger_case_count": 3,
+    "trigger_answers": [
+      "**\"NO IMAGE RECEIVED.\"**",
+      "\"**NO IMAGE RECEIVED.**\"",
+      "***NO IMAGE RECEIVED.***"
+    ],
+    "all_trigger_results": "completed"
+  },
+  "normalization_contract": {
+    "matching": "case-insensitive whole-answer equality",
+    "core": "NO IMAGE RECEIVED",
+    "optional_trailing_period_count": 1,
+    "outer_pairs": [
+      [
+        "**",
+        "**"
+      ],
+      [
+        "__",
+        "__"
+      ],
+      [
+        "*",
+        "*"
+      ],
+      [
+        "_",
+        "_"
+      ],
+      [
+        "'",
+        "'"
+      ],
+      [
+        "\"",
+        "\""
+      ],
+      [
+        "‘",
+        "’"
+      ],
+      [
+        "“",
+        "”"
+      ]
+    ],
+    "processing": "Remove exact matching outer pairs repeatedly, restarting at the first pair after each strict shortening; remove one optional period only after wrapper processing.",
+    "retained_caption": "Exact visible answer after the pre-existing outer whitespace strip.",
+    "termination_bound": "At most half the input length in successful pair removals."
+  },
+  "objective_matrix": {
+    "execution": "CPU-only local synthetic completions",
+    "end_to_end_case_count": 202,
+    "accepted_count": 184,
+    "accepted_breakdown": {
+      "unwrapped_and_single_wrapper_controls": 36,
+      "ordered_two_layer_controls": 128,
+      "exact_trigger_and_triple_emphasis_controls": 4,
+      "generated_depth_controls": 16
+    },
+    "completed_negative_count": 18,
+    "classifier_only_non_match_count": 5,
+    "generated_depth_min": 1,
+    "generated_depth_max": 16,
+    "all_expected_statuses_passed": true,
+    "all_visible_answers_retained_exactly": true,
+    "synthetic_calls_per_end_to_end_case": 1,
+    "case_ids_unique": true
+  },
+  "runtime_controls": {
+    "request_capture": {
+      "transport": "httpx.MockTransport",
+      "local_requests": 1,
+      "image_url_parts": 1,
+      "strict_base64_decode": true,
+      "decoded_sha256": "f965f4352a62295e4ae326ec8741ecc72eeaddd2a2bebf080f092106b98313b7",
+      "decoded_byte_count": 96,
+      "format": "PNG",
+      "mode": "RGB",
+      "dimensions": [
+        32,
+        24
+      ]
+    },
+    "empty_visible_output": {
+      "transport": "httpx.MockTransport",
+      "local_http_status": 200,
+      "result": "TokenFactoryToolError",
+      "caption_item_emitted": false,
+      "artifact_written": false
+    },
+    "continuation": {
+      "selected_images": 3,
+      "synthetic_calls": 3,
+      "statuses": [
+        "completed",
+        "image_unavailable",
+        "completed"
+      ],
+      "later_image_attempted": true,
+      "aggregate_status": "failed"
+    }
+  },
+  "mutation_analysis": {
+    "focused_tests_collected_per_mutant": 222,
+    "mutant_count": 19,
+    "meaningful_mutant_count": 17,
+    "meaningful_mutants_killed": 17,
+    "equivalent_mutant_count": 2,
+    "equivalent_mutants_excluded_from_killed_denominator": true,
+    "all_kills_were_assertion_failures": true,
+    "all_mutation_runs_avoided_collection_and_runtime_errors": true,
+    "source_restored_byte_exactly": true,
+    "independent_isolated_rerun_matched": true
+  },
+  "validation": [
+    {
+      "gate": "focused caption tool",
+      "result": "222 passed"
+    },
+    {
+      "gate": "Token Factory surface",
+      "result": "315 passed"
+    },
+    {
+      "gate": "skill contracts",
+      "result": "163 passed"
+    },
+    {
+      "gate": "smoke",
+      "result": "118 passed"
+    },
+    {
+      "gate": "guardrails",
+      "result": "4987 passed, 1 warning"
+    },
+    {
+      "gate": "managed-Git precheck",
+      "result": "266 passed; lint and format passed"
+    },
+    {
+      "gate": "Ruff, generated docs, confidentiality, and Gitleaks",
+      "result": "passed"
+    }
+  ],
+  "independent_source_review": {
+    "verdict": "APPROVED_SOURCE",
+    "review_sha256": "1eebc22743f6caa1334f72fced81ce3b5c591ad366b90e082f69ae1cbf8a7da5",
+    "source_receipt_sha256": "81c38a3882eb4c8a4c0af08716f5eb0c64323e3776883c3144b8237afd94d1d3",
+    "new_findings": 0,
+    "baseline_recomputed": true,
+    "candidate_matrix_recomputed": true,
+    "all_19_mutations_rerun_from_isolated_archive": true,
+    "repository_edited_by_reviewer": false
+  },
+  "hardware_applicability": [
+    {
+      "stage": "classifier, request capture, mutations, tests, and review",
+      "customer_hardware": "CPU; no GPU or cluster",
+      "hosted_hardware": "not applicable",
+      "result": "passed at the exact source commit"
+    },
+    {
+      "stage": "inherited hosted vision completions",
+      "customer_hardware": "no customer cluster or GPU",
+      "hosted_hardware": "provider-managed; accelerator not exposed",
+      "result": "no new hosted execution"
+    },
+    {
+      "stage": "visual or GPU evaluation",
+      "customer_hardware": "not applicable",
+      "hosted_hardware": "not applicable",
+      "result": "no visual or GPU behavior changed"
+    }
+  ],
+  "hosted_attribution": {
+    "new_provider_calls": 0,
+    "new_health_calls": 0,
+    "new_model_list_calls": 0,
+    "credentials_accessed": false,
+    "inherited_observation": "The prior hosted run observed only the exact punctuated sentinel and one positive pixel-grounded caption.",
+    "nested_variants_observed_by_provider": false,
+    "nested_variants_are_deterministic_local_controls": true
+  },
+  "limitations": [
+    "Whole-answer matching can false-fail when a legitimate image's complete salient text normalizes to the sentinel.",
+    "Operator or in-image text can induce or suppress a cooperative no-image answer.",
+    "The classifier does not semantically recognize arbitrary refusals.",
+    "This evidence does not prove provider pixel consumption or estimate a provider failure rate.",
+    "No visual judge, visual quality, physical correctness, usefulness, or robot-safety claim is made."
+  ]
+}

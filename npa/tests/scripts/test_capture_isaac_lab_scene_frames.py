@@ -27,6 +27,7 @@ RETIRED_TEMPLATE = (
 )
 EXAMPLE = REPO_ROOT / "npa" / "examples" / "isaac_franka_token_factory_reason.py"
 SAMPLE_FRAMES = REPO_ROOT / "docs" / "assets" / "hackathon" / "isaac-franka-lift-cube"
+HACKATHON_GUIDE = REPO_ROOT / "docs" / "hackathon-isaac-token-factory.md"
 
 
 def test_the_shim_still_works_for_a_checkout() -> None:
@@ -86,4 +87,12 @@ def test_the_retired_template_is_gone() -> None:
 def test_isaac_franka_sdk_example_and_sample_frames_exist() -> None:
     assert EXAMPLE.is_file()
     assert (SAMPLE_FRAMES / "frame_00.png").is_file()
-    assert len(list(SAMPLE_FRAMES.glob("frame_*.png"))) >= 4
+    assert len(list(SAMPLE_FRAMES.glob("frame_*.png"))) == 6
+
+
+def test_hackathon_guide_does_not_claim_stand_in_agency() -> None:
+    guide = HACKATHON_GUIDE.read_text(encoding="utf-8")
+
+    assert "stylized stand-ins, not Isaac Sim renders" in guide
+    assert "not as evidence that the arm" in guide
+    assert "isaac-agency" in guide

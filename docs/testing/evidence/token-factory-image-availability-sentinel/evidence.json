@@ -1,0 +1,184 @@
+{
+  "schema": "npa.public-evidence.token-factory-image-availability-sentinel.v1",
+  "source": {
+    "commit": "3df75c244e173ec1c3a134eaad20e6ed0b26db8e",
+    "tree": "40d54e519db8b25717cc378056eb5f23be7ef197",
+    "base_commit": "59514b9905c5427a250c2d0d3455b1f8e374b7e5",
+    "git_archive_sha256": "6b417a129c2ef435a5243a5906f34bc9980326deb2ddca7431e0070df16ac514"
+  },
+  "frozen_review": {
+    "plan_sha256": "8d9bb860ef32c69534cbb821fbdbad125c95c70578ddc33d7226bd8455a2d6b9",
+    "harness_sha256": "ab6a04cec95616374baa367b3578b8df7aa5a6ee6b229da3223e3b8b1fc5ceed",
+    "authorization_sha256": "9c5b1a1dae42b385b57e613cb32ff6a212812c0d5996bc7f066fe4a3607bdabd",
+    "pixel_first_review_verdict": "APPROVED_INPUT",
+    "post_run_review_verdict": "APPROVED_EVIDENCE",
+    "post_run_review_sha256": "3de7f1b6a7d2dbe8c6f9521cb811921cbb2689926fb911d9e4a92de6552a5a7a"
+  },
+  "input": {
+    "published_path": "three-shapes-submitted.png",
+    "media_type": "image/png",
+    "dimensions": [
+      256,
+      256
+    ],
+    "mode": "RGB",
+    "submitted_byte_count": 1062,
+    "submitted_sha256": "ce89995a92f4277d6cd943575a4d839f783bb337a42b46f71015cf60b021b943",
+    "source_sha256": "e364d16de381447c22f94bd046f10e0ebe6595fcea2034a4d73af9cf74e3e07c",
+    "source_and_submitted_pixels_equal": true,
+    "manifest_sha256": "9fc08986371c5de136d833eda3af4a8e0029fefe407c8f932462b2e18c9f69fd",
+    "independent_pixel_observation": {
+      "object_count": 3,
+      "objects_left_to_right": [
+        "red/crimson square",
+        "blue circle",
+        "green upright triangle"
+      ],
+      "visible_text": false,
+      "material_ambiguity": false
+    }
+  },
+  "request_contract": {
+    "requested_model": "MiniMaxAI/MiniMax-M3",
+    "temperature": 0,
+    "max_tokens": 512,
+    "thinking_mode": "disabled",
+    "instruction": "Describe this image in one or two sentences. Focus on the objects, the scene, and any action taking place. Be concrete and factual.",
+    "availability_directive": "If you cannot see the image pixels, respond exactly: NO IMAGE RECEIVED.",
+    "request_instruction": "Describe this image in one or two sentences. Focus on the objects, the scene, and any action taking place. Be concrete and factual.\n\nIf you cannot see the image pixels, respond exactly: NO IMAGE RECEIVED.",
+    "hash_semantics": "SHA-256 of sorted compact logical request JSON, not captured HTTP wire bytes",
+    "positive_canonical_logical_json_sha256": "7fd74fbb4278dd70e12bba68d54ce8207eae92f9b348553fec22e89fd8e998fe",
+    "negative_canonical_logical_json_sha256": "7f919776def111a7a33a4cc9e9d7f01e68faba79093991f00422fc667f15a6db"
+  },
+  "hosted_results": {
+    "positive_image": {
+      "physical_requests": 1,
+      "transport_attempts": 1,
+      "transport_retries": 0,
+      "http_status": 200,
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "finish_reason": "stop",
+      "visible_answer": "A red square, a blue circle, and a green triangle are arranged in a horizontal row against a white background.",
+      "required_terms": [
+        "red",
+        "blue",
+        "green",
+        "square",
+        "circle",
+        "triangle"
+      ],
+      "missing_terms": [],
+      "accepted": true,
+      "usage": {
+        "prompt_tokens": 290,
+        "completion_tokens": 24,
+        "reasoning_tokens": 0,
+        "total_tokens": 314
+      },
+      "raw_response_sha256": "49a2524588ceb2661a9d3cd6ba721f271129913a1166fbbd906137cdd0cdbee1",
+      "product_result_file_sha256": "03aa0671024a4cdfbacd2a1b68fddb9dafe2fb74376fba434d69152fed6200f5",
+      "product_result_canonical_sha256": "5f5cf85c41a229ae7fddebd654d3758e89a456ae26014a19e5f1f2958954c695"
+    },
+    "direct_no_image": {
+      "physical_requests": 1,
+      "transport_attempts": 1,
+      "transport_retries": 0,
+      "http_status": 200,
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "finish_reason": "stop",
+      "visible_answer": "NO IMAGE RECEIVED.",
+      "exact_sentinel_match": true,
+      "accepted": true,
+      "usage": {
+        "prompt_tokens": 207,
+        "completion_tokens": 6,
+        "reasoning_tokens": 0,
+        "total_tokens": 213
+      },
+      "raw_response_sha256": "7d72a0615052a65c676da8b452d50580aa2ef5ec64358b5c54b26ed7e94afcb9"
+    }
+  },
+  "candidate_and_cli_replay": {
+    "retained_response_sha256": "7d72a0615052a65c676da8b452d50580aa2ef5ec64358b5c54b26ed7e94afcb9",
+    "candidate_result": {
+      "status": "failed",
+      "failed_count": 1,
+      "image_count": 1,
+      "item_status": "image_unavailable",
+      "retained_visible_answer": "NO IMAGE RECEIVED."
+    },
+    "write_cli": {
+      "exit_code": 1,
+      "artifact_written_before_exit": true,
+      "artifact_sha256": "7c25ee3f2455a2271d53d6cbd622e5e7918e4ff356b06b3e689f16ab7cb95a15",
+      "raw_stdout_sha256": "146b836ecd019888a1378e4aa5a87cafa7ff8e7544afcf32b2f7fdecf9c1a4d3",
+      "raw_stdout_equals_artifact": false,
+      "parsed_relation": "stdout object minus its sole written_uri field equals the artifact object"
+    },
+    "dry_run_cli": {
+      "exit_code": 1,
+      "artifact_written": false,
+      "raw_stdout_sha256": "590d907e6d143f835de77261b8dd4199a4129442a3ca5486b9d3c85a3242aa2d"
+    },
+    "offline_mock_requests": 6,
+    "offline_provider_requests": 0,
+    "semantic_provider_replays": 0
+  },
+  "call_accounting": {
+    "credential_preflight_invocations": 1,
+    "credential_preflight_semantic_model_list_calls": 1,
+    "credential_preflight_physical_attempts": {
+      "minimum": 1,
+      "maximum": 4,
+      "reason": "The health CLI did not expose its internal TokenFactoryClient retry metrics."
+    },
+    "separate_model_list_physical_requests": 1,
+    "positive_inference_physical_requests": 1,
+    "negative_inference_physical_requests": 1,
+    "exact_inference_physical_requests": 2,
+    "bounded_total_live_http_attempts": {
+      "minimum": 4,
+      "maximum": 7
+    }
+  },
+  "hardware_applicability": [
+    {
+      "stage": "input normalization, candidate classification, CLI replay, and independent review",
+      "customer_hardware": "CPU; no local GPU required",
+      "hosted_hardware": "not applicable"
+    },
+    {
+      "stage": "vision completion",
+      "customer_hardware": "no customer cluster or GPU",
+      "hosted_hardware": "provider-managed; accelerator details not exposed",
+      "scope": "MiniMaxAI/MiniMax-M3 through Token Factory for these two bounded controls"
+    }
+  ],
+  "private_evidence_identity": {
+    "summary_sha256": "60de7a4efeafc30e4ed0682ea5b51f83c740ff095712410acc9488840013a8fa",
+    "original_artifact_count": 17,
+    "original_artifact_bytes": 36386,
+    "original_ordered_manifest_sha256": "850b175461d74018a54996dc3d5518936636015e80ec2e1b8f27bdd36001e705",
+    "original_artifacts_unchanged_after_reviews_and_supplement": true
+  },
+  "sanitization": {
+    "classification": "public derivative of independently accepted private operational evidence",
+    "omitted": [
+      "credentials and authorization headers",
+      "provider request identifiers and system fingerprints",
+      "key-scoped model inventory",
+      "raw provider response bodies",
+      "full data URLs",
+      "private paths and exact operational timestamps",
+      "private endpoints and infrastructure identifiers"
+    ]
+  },
+  "limitations": [
+    "Two controls do not estimate an operational image-delivery failure rate or establish general vision quality.",
+    "The cooperative sentinel is prompt-sensitive and can be induced or suppressed by operator text or in-image prompt injection.",
+    "A legitimate complete caption exactly equal to the sentinel would false-fail.",
+    "The original physical HTTP request bytes were not retained; logical request identities are not wire-body hashes.",
+    "The health command's internal physical retry count is bounded at one to four rather than known exactly.",
+    "This evidence does not qualify the model as a visual judge or prove physical correctness, usefulness, or robot safety."
+  ]
+}
