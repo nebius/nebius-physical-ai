@@ -899,6 +899,7 @@ class ServerlessClient:
         env: Mapping[str, str] | None = None,
         preset: str = "",
         timeout: str = "1h",
+        disk_size: str = "",
         subnet_id: str = "",
         preemptible: bool = False,
         durable: bool = False,
@@ -964,7 +965,11 @@ class ServerlessClient:
         for key, value in job_env.items():
             if value:
                 args.extend(["--env", f"{key}={value}"])
-        for flag, value in (("--timeout", timeout), ("--subnet-id", subnet_id)):
+        for flag, value in (
+            ("--timeout", timeout),
+            ("--disk-size", disk_size),
+            ("--subnet-id", subnet_id),
+        ):
             if value:
                 args.extend([flag, value])
         args.extend(["--format", "json"])

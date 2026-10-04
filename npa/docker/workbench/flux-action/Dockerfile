@@ -32,13 +32,14 @@ RUN git clone --filter=blob:none --no-checkout https://github.com/black-forest-l
     && /opt/uv/bin/uv sync --locked --no-dev --extra encoders --extra data \
     && /opt/uv/bin/uv pip install --python .venv/bin/python \
        'natten==0.21.6+torch2100cu128' --find-links https://whl.natten.org/
-COPY pyproject.toml README.md /opt/npa-src/
-COPY src/npa /opt/npa-src/src/npa
+COPY pyproject.toml README.md /opt/npa/
+COPY src/npa /opt/npa/src/npa
 RUN python3 -m venv /opt/npa-venv \
-    && /opt/npa-venv/bin/pip install --no-cache-dir /opt/npa-src \
+    && /opt/npa-venv/bin/pip install --no-cache-dir /opt/npa \
     && rm -rf /root/.cache /tmp/uv-cache \
     && install -d -o ubuntu -g ubuntu /workspace/.cache/huggingface
 COPY docker/workbench/flux-action/REDISTRIBUTION.md /usr/share/doc/npa-flux-action/REDISTRIBUTION.md
+ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}
 WORKDIR /workspace
 USER ubuntu
 CMD ["npa", "workbench", "flux-action", "--help"]
