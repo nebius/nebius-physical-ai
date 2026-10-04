@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import importlib.util
 import json
 import os
@@ -76,6 +77,12 @@ DM05_IMPLEMENTATION = {
     "libero_benchmark": {
         "repository": "https://github.com/Lifelong-Robot-Learning/LIBERO",
         "revision": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
+        "license": "MIT",
+    },
+    "hf_libero": {
+        "package": "hf-libero",
+        "version": "0.1.4",
+        "repository": "https://github.com/huggingface/LIBERO",
         "license": "MIT",
     },
 }
@@ -315,6 +322,16 @@ def _require_dm05_policy_runtime() -> dict[str, Any]:
     called ``dm05`` from silently selecting an unrelated implementation.
     """
     manifest = _read_dm05_runtime_manifest()
+    try:
+        hf_libero_version = importlib.metadata.version("hf-libero")
+    except importlib.metadata.PackageNotFoundError as error:
+        raise RuntimeError(
+            "DM05 evaluation image does not contain hf-libero"
+        ) from error
+    if hf_libero_version != DM05_IMPLEMENTATION["hf_libero"]["version"]:
+        raise RuntimeError(
+            "DM05 evaluation image has a different hf-libero runtime version"
+        )
     try:
         from lerobot.configs import PreTrainedConfig
         from lerobot.policies.dm05.configuration_dm05 import DM05Config

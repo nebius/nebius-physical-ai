@@ -26,7 +26,7 @@ RUN git clone --no-checkout https://github.com/hbzfeng/lerobot.git /opt/lerobot/
     && git -C /opt/lerobot/dm05-source config filter.lfs.required false \
     && git -C /opt/lerobot/dm05-source checkout --detach 6eede4f7d2efe6b4f6a58ddb7b13ed55e2346b9c \
     && /opt/lerobot/venv/bin/python -m pip install --no-cache-dir --upgrade \
-      --upgrade-strategy only-if-needed '/opt/lerobot/dm05-source[training,libero,dm05]' \
+      --upgrade-strategy only-if-needed '/opt/lerobot/dm05-source[training,libero,dm05]' 'hf-libero==0.1.4' \
     && /opt/lerobot/venv/bin/python -m pip uninstall -y wandb \
     && /opt/lerobot/venv/bin/python -c "from lerobot.configs import PreTrainedConfig; from lerobot.policies.dm05.configuration_dm05 import DM05Config; from lerobot.policies.dm05.modeling_dm05 import DM05Policy; from lerobot.policies.factory import get_policy_class; assert PreTrainedConfig.get_choice_class('dm05') is DM05Config; assert get_policy_class('dm05') is DM05Policy" \
     && rm -rf /opt/lerobot/dm05-source/.git

@@ -9,5 +9,11 @@
     "repository": "https://github.com/Lifelong-Robot-Learning/LIBERO",
     "revision": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
     "license": "MIT"
+  },
+  "hf_libero": {
+    "package": "hf-libero",
+    "version": "0.1.4",
+    "repository": "https://github.com/huggingface/LIBERO",
+    "license": "MIT"
   }
 }

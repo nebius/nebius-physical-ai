@@ -63,7 +63,9 @@ runtime-manifest check, and provenance/reporting logic only.
 2023 Lifelong Robot Learning) for its benchmark source and simulator assets,
 which the operator-private validation image retains with its `LICENSE` at
 `/opt/lerobot/libero-benchmark`. Its demonstration dataset is CC BY 4.0 and is
-not copied into this derivative image. The enhanced checkpoint card identifies Dexmal Team as author, names
+not copied into this derivative image. The image pins the compatible
+`hf-libero==0.1.4` runtime dependency (MIT; Hugging Face LIBERO fork); its
+separate package identity/version is bound in the runtime manifest. The enhanced checkpoint card identifies Dexmal Team as author, names
 `Dexmal/DM05-Lerobot` as its base model, and labels the weights `gemma`. The
 model card's [Gemma Terms of Use](https://ai.google.dev/gemma/terms) are a
 separate weights/service/redistribution boundary. The image contains no model
