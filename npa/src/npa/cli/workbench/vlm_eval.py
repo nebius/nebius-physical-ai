@@ -19,6 +19,7 @@ from npa.workbench.vlm_eval import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_BACKEND,
     DEFAULT_FRAME_SELECTION,
+    DEFAULT_ISAAC_AGENCY_BENCHMARK_PATH,
     DEFAULT_MAX_FRAMES,
     DEFAULT_MODEL,
     DEFAULT_SAMPLE_BENCHMARK_PATH,
@@ -614,7 +615,10 @@ def benchmark_cmd(
     dataset: str = typer.Option(
         str(DEFAULT_SAMPLE_BENCHMARK_PATH),
         "--dataset",
-        help="Benchmark manifest JSON or directory; defaults to the packaged sample fixture.",
+        help=(
+            "Benchmark manifest JSON, directory, or packaged alias "
+            "(sample or isaac-agency)."
+        ),
     ),
     output_path: str = typer.Option(
         ...,
@@ -750,6 +754,7 @@ def status_cmd(
             "benchmark_workflow": str(BENCHMARK_WORKFLOW_PATH),
             "token_factory_workflow": str(TOKEN_FACTORY_WORKFLOW_PATH),
             "sample_benchmark_dataset": str(DEFAULT_SAMPLE_BENCHMARK_PATH),
+            "isaac_agency_benchmark_dataset": str(DEFAULT_ISAAC_AGENCY_BENCHMARK_PATH),
         },
         output,
     )
@@ -806,6 +811,10 @@ def _emit_benchmark(payload: dict[str, Any], output: OutputFormat) -> None:
     typer.echo(f"    agreement: {metrics['agreement']}")
     typer.echo(f"    precision: {_format_metric(metrics['precision'])}")
     typer.echo(f"    recall: {_format_metric(metrics['recall'])}")
+    typer.echo(f"    specificity: {_format_metric(metrics.get('specificity'))}")
+    typer.echo(
+        f"    balanced_accuracy: {_format_metric(metrics.get('balanced_accuracy'))}"
+    )
     typer.echo(f"    f1: {_format_metric(metrics['f1'])}")
     typer.echo(
         "    confusion: "
