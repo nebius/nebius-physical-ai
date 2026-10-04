@@ -71,6 +71,19 @@ test, provider, full, current-head CI, or readiness result; held fixture/runner,
 independent-output-review, publication, and coordinator lifecycle requirements
 remain separate.
 
+## Main894 caption integration bridge
+
+[Main894 caption bridge](current-main894-caption-bridge.json) records the
+signed source integration of the landed caption changes. The sole README overlap
+retains both feature descriptions; the three changed Token Factory caption
+surfaces bind to main894 while the VLM request, response, writer, and grade paths
+remain bound to frozen6709. The proportionate offline CPU bridge reported 895
+passes and one explicit GPU-opt-in skip with no failures or errors. It made no
+provider, native-adapter, native CLI, signal, GPU, or full-suite call. The
+original all-zero/two-false-negative hosted result remains unchanged. This is
+source and CPU provenance only; current-head CI and coordinator lifecycle gates
+remain separate.
+
 ## Main4603 E005 fixture supplement
 
 [Main4603 E005 supplement](main4603-e005-source-supplement.json) records the
