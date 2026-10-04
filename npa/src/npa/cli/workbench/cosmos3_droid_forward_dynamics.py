@@ -12,6 +12,7 @@ from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.lifecycle_intent import json_stdout_contract
 from npa.workbench.cosmos.droid_forward_dynamics import (
     CHECKPOINT_REVISION,
+    DroidForwardDynamicsError,
     controls_droid_forward_dynamics,
     evaluate_droid_forward_dynamics,
     predict_droid_forward_dynamics,
@@ -24,7 +25,15 @@ def _invoke(function: Callable[..., dict[str, Any]], **kwargs: Any) -> None:
     try:
         result = function(**kwargs)
     except Exception as exc:
-        typer.echo(json.dumps({"status": "failed", "error_type": type(exc).__name__}))
+        # This typed error is raised only by the local DROID contract helpers,
+        # whose messages name invariant failures rather than credential-bearing
+        # transport details. Preserve it so a failed worker stage can be fixed
+        # from its durable scheduler log. Arbitrary dependency/transport errors
+        # remain type-only to avoid disclosing runtime URLs or credentials.
+        payload: dict[str, str] = {"status": "failed", "error_type": type(exc).__name__}
+        if isinstance(exc, DroidForwardDynamicsError):
+            payload["error_message"] = str(exc)
+        typer.echo(json.dumps(payload, sort_keys=True))
         raise typer.Exit(1) from exc
     typer.echo(json.dumps(result, sort_keys=True))
 
