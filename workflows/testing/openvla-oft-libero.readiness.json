@@ -45,9 +45,10 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "An initial neutral private bootstrap image was built with SBOM/provenance, pushed, independently pulled, manifest/config inspected, and nonroot-smoked. The current source revision still requires its own immutable private candidate and byte qualification; the template therefore requires an operator-selected immutable private runtime image.",
+      "status": "verified",
+      "reason": "The current neutral private bootstrap image was built with SBOM/provenance, pushed only to the operator-private registry, independently pulled, manifest/config inspected, and nonroot-smoked with the native preparation parser. It remains publication-quarantined; the template requires its immutable private image reference at submission time.",
       "evidence": [
+        "npa/docker/workbench/openvla-oft/build.sh",
         "docs/workbench/openvla-oft.md"
       ]
     },
