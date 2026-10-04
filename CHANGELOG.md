@@ -20,6 +20,13 @@ a versioned heading when a release is cut.
   benchmark populations. Requested modes are explicit, missing or extra cells
   still fail, and all frozen per-mode acceptance thresholds remain unchanged.
 
+### VLM evaluation discloses served-model identity enforcement
+
+- Single results, loop rows, and benchmark cases report requested and returned
+  model identities and whether the shared hosted profile enforced exact equality.
+  All current hosted profiles enforce equality; self-hosted and synthetic
+  evaluations do not claim that check.
+
 ### VLM gates reject incomplete self-hosted completions
 
 - Both real VLM-eval backends require exact `finish_reason="stop"` before
