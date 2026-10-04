@@ -4,7 +4,10 @@ import copy
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import stat
+import sys
 import tarfile
 
 import pytest
@@ -68,7 +71,7 @@ def test_unexpected_vendor_input_is_rejected(manifest, mutation):
 
 def test_public_download_is_verified_before_write(tmp_path, monkeypatch):
     data = b"authentic build input"
-    monkeypatch.setattr(builder.urllib.request, "urlopen", lambda _: io.BytesIO(data))
+    monkeypatch.setattr(builder, "_download_https", lambda _: data)
     row = {
         "url": "https://files.pythonhosted.org/packages/input.whl",
         "filename": "input.whl",
@@ -88,11 +91,14 @@ def test_public_download_is_verified_before_write(tmp_path, monkeypatch):
         "http://files.pythonhosted.org/x",
         "https://example.invalid/x",
         "file:///etc/passwd",
+        "https://user@files.pythonhosted.org/x",
+        "https://files.pythonhosted.org:444/x",
+        "https://files.pythonhosted.org/x#fragment",
     ],
 )
 def test_unapproved_download_origin_rejected_before_network(tmp_path, monkeypatch, url):
     monkeypatch.setattr(
-        builder.urllib.request, "urlopen", lambda _: pytest.fail("network attempted")
+        builder, "_download_https", lambda _: pytest.fail("network attempted")
     )
     with pytest.raises(ValueError, match="origin"):
         builder.fetch({"url": url, "filename": "input", "sha256": "0" * 64}, tmp_path)
@@ -101,7 +107,7 @@ def test_unapproved_download_origin_rejected_before_network(tmp_path, monkeypatc
 @pytest.mark.parametrize("name", ["../outside", "/absolute", "..", ""])
 def test_download_path_escape_rejected_before_network(tmp_path, monkeypatch, name):
     monkeypatch.setattr(
-        builder.urllib.request, "urlopen", lambda _: pytest.fail("network attempted")
+        builder, "_download_https", lambda _: pytest.fail("network attempted")
     )
     with pytest.raises(ValueError, match="filename"):
         builder.fetch(
@@ -153,3 +159,24 @@ def test_build_lock_preserves_marker_dependency():
     assert "vendoring==1.4.0" in lock
     assert "flit-core==3.12.0" in lock
     assert "setuptools==80.9.0" in lock
+
+
+@pytest.mark.parametrize("outer_mask", [0o022, 0o077])
+def test_child_build_mode_is_fixed_without_changing_parent(tmp_path, outer_mask):
+    previous = os.umask(outer_mask)
+    try:
+        builder.run(
+            [
+                sys.executable,
+                "-c",
+                "from pathlib import Path; Path('member').write_bytes(b'fixed')",
+            ],
+            cwd=tmp_path,
+            env={"PATH": os.environ["PATH"]},
+        )
+        assert stat.S_IMODE((tmp_path / "member").stat().st_mode) == 0o644
+        assert (tmp_path / "member").read_bytes() == b"fixed"
+        observed = os.umask(outer_mask)
+        assert observed == outer_mask
+    finally:
+        os.umask(previous)
