@@ -1,0 +1,130 @@
+{
+  "schema": "cursor-explore.vision-default-incoming634-live/v1",
+  "pr": 839,
+  "execution_head": "3dde4fd21fb0c29628a6ef33fcc19b0875dafc41",
+  "execution_tree": "33dda4c0eda8b338559949318ce776cbeac6f3f6",
+  "base": "88fd1b1356c942745244e49d2316800634c530ae",
+  "plan_sha256": "7154bfaf7c3daafae4bb8fc3857426723d7363beff8ce70cb3cecb8696b0df4e",
+  "harness_sha256": "0d16c6c4a2c9cc07547c534526827770113cdd7886d22670f48119b764bb7975",
+  "protocol": "One serial run of the same fixed positive/negative three-frame diagrams, original task, MiniMax model, sequence/max_frames4, labels and threshold0.8. Landed634 default rubric, grounded prompt and interleaved Frame anchors change payload. No label/threshold/model-answer tuning or favorable retry.",
+  "physical_inference_requests": 2,
+  "offline_mock_requests_in_live_run": 0,
+  "pytest": {
+    "passed": 2,
+    "skipped": 0,
+    "seconds": 6.75
+  },
+  "affected_cpu_tests": {
+    "passed": 1494,
+    "skipped": 1,
+    "warnings": 8,
+    "seconds": 113.54
+  },
+  "quiet_cpu_skip_node_identity": "Not captured; not invented",
+  "source_bindings": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "51c206a02f89a1c9ad3367f8e1e712d14165acfcdc5875a68ed5b4b516c886bd"
+    },
+    {
+      "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+      "sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e"
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+    },
+    {
+      "path": "npa/src/npa/live_verification/token_factory_contract.py",
+      "sha256": "fc2f57b5fdcbb70a99a36fe0905e703990a528c4e565ae3000e3a7f51ad52a21"
+    },
+    {
+      "path": "npa/src/npa/workbench/token_factory/__init__.py",
+      "sha256": "3bbf0a6610537c8a9a28e4404bcb7539b84b74989ddf9faa46c7e83fe39b5122"
+    },
+    {
+      "path": "npa/tests/e2e/test_token_factory_e2e.py",
+      "sha256": "6d96849836916427fe5e09fe29164aec8b5d282adfd2cfcb72b1aa28d290bb57"
+    },
+    {
+      "path": "npa/tests/e2e/conftest.py",
+      "sha256": "1491833c7278a579d820506fc8cbcbb016deb37054945cf4d6a97098f9916133"
+    },
+    {
+      "path": "npa/pyproject.toml",
+      "sha256": "91e044e814305e8643d3e3bc9216f66d6ccbe7337408b074a2f0ccb0b70329b2"
+    },
+    {
+      "path": "npa/ci/requirements.txt",
+      "sha256": "bb227e55b247618d733633efc93937df9587c8c41316cb9bc2fc63d3ee935a35"
+    }
+  ],
+  "cases": [
+    {
+      "label": "positive-final-square-inside",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "request_body_sha256": "5e0cbe0fd5ad283bb2e1f9afecfcd20cb88271c946274410af36a42790cdde9f",
+      "raw_response_sha256": "833c96c96cfe16eee74d40a9bdf4cd5ea93fbf8539011c45fc06068ed5de55d5",
+      "visible_answer_sha256": "18b52b73b101930a7551a5429dd90c151470c19f2cdfbe289d2ec10f707d972c",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "score": 1,
+      "provider_success": true,
+      "rationale": "Frame 1 shows a blue circle in the upper left, a red square in the middle-left area, and a green rectangular outline on the right. Frame 2 shows the same configuration with no visible movement. Frame 3 shows the red square now positioned fully inside the green rectangular outline, with the blue circle remaining in the upper left. The red square is entirely contained within the green outline boundaries in the final frame, satisfying the task requirement.",
+      "threshold": 0.8,
+      "decision": "promote_checkpoint",
+      "usage": {
+        "prompt_tokens": 1724,
+        "completion_tokens": 109,
+        "total_tokens": 1833
+      },
+      "submitted_frame_sha256": [
+        "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+        "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+        "89ff7a51cff347b206b6c98bd1cfaa9246c708567e22579db08a5a51984f786d"
+      ]
+    },
+    {
+      "label": "negative-final-square-outside",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "request_body_sha256": "f415662bb4eee483d3b17fdcea7a37456a660b10519c1c672289e3c298d5cf5c",
+      "raw_response_sha256": "54c7fec3d071af4ccf3bb7d1c8a49974adb9043b347a8ea477000cb65f48e86f",
+      "visible_answer_sha256": "67f2471bd1c7b0c6daba27bb49c3c15153a8bd05e900aba5e0917e8fe0f21139",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "score": 0,
+      "provider_success": false,
+      "rationale": "Across all three frames (Frame 1, Frame 2, Frame 3), the red square remains in the same position to the left of the green rectangular outline. The red square never moves into or inside the green outline. The blue circle also remains stationary in the upper-left. The requested terminal state—red square fully inside the green outline—is not achieved in the final frame.",
+      "threshold": 0.8,
+      "decision": "loop_back",
+      "usage": {
+        "prompt_tokens": 1724,
+        "completion_tokens": 97,
+        "total_tokens": 1821
+      },
+      "submitted_frame_sha256": [
+        "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+        "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+        "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707"
+      ]
+    }
+  ],
+  "reviewable_media": {
+    "inside": "inside-frame.png",
+    "outside": "outside-frame.png",
+    "source_order": "positive outside,outside,inside; negative outside,outside,outside"
+  },
+  "source_head_tree_and_own_package_before_after_equal": true,
+  "original_live_executions": [
+    "50111ebcb9a8604c63ad6cd9d702c3c703044e7d",
+    "0b265c0cf422dbc24678f57ce7d391aadf21009d"
+  ],
+  "original_full_execution_head": "cc8c408a598e168d961c7386f1fb329dc8295b19",
+  "old_wire_payloads_equal_current634": false,
+  "current_cpu_retained_response_replay": "Old raw answers exercise changed-request parser/capture/canonical writer/grade offline only, not new-payload model answers. Old prompt-bound canonical evidence fails closed. Seven malformed-score negatives use current CPU-produced evidence.",
+  "new_full_execution": false,
+  "new_Claude_review": false,
+  "limits": "Two synthetic controls establish traceable changed-request behavior only, not calibrated quality, real robot success, safety or image release. Model rationale is fallible; never-moves language is supported only at supplied discrete frames, not unseen intervals. No terminal-real-rollout four-case qualification is claimed. Original unfavorable answers and missing historical metadata remain retained."
+}

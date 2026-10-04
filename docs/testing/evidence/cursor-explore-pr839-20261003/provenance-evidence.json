@@ -1,0 +1,304 @@
+{
+  "schema": "npa.cursor-explore.vlm-image-proof/v1",
+  "pr": 839,
+  "execution": {
+    "execution_head": "0b265c0cf422dbc24678f57ce7d391aadf21009d",
+    "execution_tree": "73d9930984f4b1765754109526150696dbf811b5",
+    "plan_sha256": "86b6fd750455a174dc85b08208660c9fc6633b0fa9d58d553d626ce1cf140b89",
+    "harness_sha256": "e348e9fbf313e90d95607bb16582c07130844bf22533a6441788e2b2c9c755e1",
+    "pytest_exit": 0,
+    "outcomes": [
+      {
+        "nodeid": "tests/e2e/test_token_factory_e2e.py::test_live_visual_judge_distinguishes_completion[MiniMaxAI/MiniMax-M3-True]",
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "nodeid": "tests/e2e/test_token_factory_e2e.py::test_live_visual_judge_distinguishes_completion[MiniMaxAI/MiniMax-M3-False]",
+        "phase": "call",
+        "outcome": "passed"
+      }
+    ],
+    "physical_requests": 2,
+    "offline_mock_requests": 0,
+    "transport_records": 2,
+    "source_bindings": [
+      {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+      },
+      {
+        "path": "npa/src/npa/workbench/token_factory/__init__.py",
+        "sha256": "1e0ab8fb5d94c95231b41275c16bd54f6b16a8c50499978fffb211766e6d5904"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "sha256": "755a9185ccc78305a5af8331dd97c587d946d7a66712f9af05c2896ed8e377c2"
+      },
+      {
+        "path": "npa/tests/e2e/test_token_factory_e2e.py",
+        "sha256": "8ba3c5f2083fccde4651a65faad6fd11d40157080643ea227c844aef774cdc53"
+      }
+    ]
+  },
+  "scope": {
+    "synthetic_controls": true,
+    "quality_calibrated": false,
+    "real_robot_or_gpu_workload": false,
+    "hosted_hardware": "provider-managed, unobserved"
+  },
+  "observations": [
+    {
+      "ordinal": 0,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_visual_judge_distinguishes_completion[MiniMaxAI/MiniMax-M3-True]",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "53767b7c3bbca75358e20ea5ff4379fbd4082568490dd83b7196d912ef7874b3",
+      "response_sha256": "5812dfafb8f6c04e4616ccfd5181049f21bcc226570d718918c23fd069d1ed0f",
+      "response_bytes": 1139,
+      "visible_sha256": "26b5383a4d19c6a297c40645783ce0f5fb44fca375211c038af77cc818cef865",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 50,
+        "prompt_tokens": 1476,
+        "total_tokens": 1526
+      },
+      "generation_controls": {
+        "temperature": 0,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        },
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        },
+        {
+          "sha256": "89ff7a51cff347b206b6c98bd1cfaa9246c708567e22579db08a5a51984f786d",
+          "bytes": 1929,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "6ece94ec5403568dc114a1a79012d789f7dfb4183efb64a098c34cd4b73cba3d"
+        }
+      ]
+    },
+    {
+      "ordinal": 1,
+      "test": "tests/e2e/test_token_factory_e2e.py::test_live_visual_judge_distinguishes_completion[MiniMaxAI/MiniMax-M3-False]",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "b363f38cf08e499a8238a28f4901adcd1af67668e222bac5ea194d62f01fa90d",
+      "response_sha256": "bdfd78cef7490b64733de5dd99405b8489fc817bfc5aed3e8e12c0ea686a6ec4",
+      "response_bytes": 1218,
+      "visible_sha256": "781c08aaf9401f1a8f34cc7284e787447c4a006d29ee2e29586399abf065b015",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 62,
+        "prompt_tokens": 1476,
+        "total_tokens": 1538
+      },
+      "generation_controls": {
+        "temperature": 0,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        },
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        },
+        {
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "bytes": 1931,
+          "width": 640,
+          "height": 480,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "7d34e6d23d134403aed9dcbfdf619fd56aa086c8b1551bf54b09c0d70009031b"
+        }
+      ]
+    }
+  ],
+  "artifact_results": [
+    {
+      "status": "passed",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "frame_count": 3,
+      "score": 1,
+      "passed": true,
+      "success_threshold": 0.8,
+      "provider_success": true,
+      "provider_success_matches_score_gate": true,
+      "artifact_sha256": "dc1dff5c8e17fbdc3d8683efa5960ee46ce685f9db8f2dd137d2004873e6f715",
+      "artifact_role": "evaluation.json",
+      "source_provenance": {
+        "schema_version": "npa_vlm_eval_evidence_v2",
+        "request_manifest_sha256": "b47a94de576687f58dfe853fed8fb051c345c740e584ee4f31a460df47d496ba",
+        "prompt_sha256": "76c6578efbd647b67762b401d69999ecd475be216b311178cac750252c3f76e9",
+        "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+        "sampling": {
+          "coverage_complete": true,
+          "max_frames": 4,
+          "selected_count": 3,
+          "selected_indices": [
+            0,
+            1,
+            2
+          ],
+          "selected_timestamps_s": [
+            null,
+            null,
+            null
+          ],
+          "source_count": 3,
+          "source_kind": "image-sequence",
+          "strategy": "sequence",
+          "timestamps_complete": null
+        },
+        "frames": [
+          {
+            "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+            "byte_count": 1931,
+            "width": 640,
+            "height": 480,
+            "source_kind": "image-sequence",
+            "source_index": 0,
+            "source_count": 3,
+            "source_timestamp_s": null
+          },
+          {
+            "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+            "byte_count": 1931,
+            "width": 640,
+            "height": 480,
+            "source_kind": "image-sequence",
+            "source_index": 1,
+            "source_count": 3,
+            "source_timestamp_s": null
+          },
+          {
+            "sha256": "89ff7a51cff347b206b6c98bd1cfaa9246c708567e22579db08a5a51984f786d",
+            "byte_count": 1929,
+            "width": 640,
+            "height": 480,
+            "source_kind": "image-sequence",
+            "source_index": 2,
+            "source_count": 3,
+            "source_timestamp_s": null
+          }
+        ]
+      }
+    },
+    {
+      "status": "needs_iteration",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "frame_count": 3,
+      "score": 0,
+      "passed": false,
+      "success_threshold": 0.8,
+      "provider_success": false,
+      "provider_success_matches_score_gate": true,
+      "artifact_sha256": "6bf4f04f928e6d74aefeeb0d84996d484af4536049992ad21a26823e2364aa47",
+      "artifact_role": "evaluation.json",
+      "source_provenance": {
+        "schema_version": "npa_vlm_eval_evidence_v2",
+        "request_manifest_sha256": "ac15d3da244ac83734dfa846c18a9141d600ffb0b8667ccba0fa342bd695e470",
+        "prompt_sha256": "76c6578efbd647b67762b401d69999ecd475be216b311178cac750252c3f76e9",
+        "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+        "sampling": {
+          "coverage_complete": true,
+          "max_frames": 4,
+          "selected_count": 3,
+          "selected_indices": [
+            0,
+            1,
+            2
+          ],
+          "selected_timestamps_s": [
+            null,
+            null,
+            null
+          ],
+          "source_count": 3,
+          "source_kind": "image-sequence",
+          "strategy": "sequence",
+          "timestamps_complete": null
+        },
+        "frames": [
+          {
+            "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+            "byte_count": 1931,
+            "width": 640,
+            "height": 480,
+            "source_kind": "image-sequence",
+            "source_index": 0,
+            "source_count": 3,
+            "source_timestamp_s": null
+          },
+          {
+            "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+            "byte_count": 1931,
+            "width": 640,
+            "height": 480,
+            "source_kind": "image-sequence",
+            "source_index": 1,
+            "source_count": 3,
+            "source_timestamp_s": null
+          },
+          {
+            "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+            "byte_count": 1931,
+            "width": 640,
+            "height": 480,
+            "source_kind": "image-sequence",
+            "source_index": 2,
+            "source_count": 3,
+            "source_timestamp_s": null
+          }
+        ]
+      }
+    }
+  ],
+  "limitations": [
+    "Affected evaluator-only rerun after external #612; original caption, attribute, catalog and capability observations remain on their original execution identity.",
+    "Frozen synthetic positive and negative controls do not calibrate vision quality, physical correctness, policy performance or safety.",
+    "Two actual MiniMax calls; no semantic retries or label/threshold/model-answer tuning. Provider hardware was unobserved.",
+    "Coverage complete means selected-frame provenance is complete, not that an arbitrary long source episode is wholly observed."
+  ]
+}

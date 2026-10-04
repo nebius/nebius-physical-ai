@@ -1,0 +1,232 @@
+{
+  "schema": "npa.cursor-explore.vlm-image-proof/v1",
+  "pr": 827,
+  "execution": {
+    "execution_head": "d533859918d2fc03c898ca1a39aee94fc0943958",
+    "execution_tree": "4e7b00309a6b9756f3480db18f0f55cd1f5c7110",
+    "plan_sha256": "a499a4bc1d72c2952608c3e941e64df68552c4cd56034da0509498412647338c",
+    "harness_sha256": "e348e9fbf313e90d95607bb16582c07130844bf22533a6441788e2b2c9c755e1",
+    "source_bindings": [
+      {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+      },
+      {
+        "path": "npa/src/npa/workbench/token_factory/__init__.py",
+        "sha256": "e2e55a2e150fcdb1df8192c359e8bc588b7815504578dff27d32f835c33e8d1d"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "sha256": "f9bb7489dc5db5c7aa02cdf7e5da3a6041cb9d4d40b557b78eccafac0b6c663e"
+      },
+      {
+        "path": "npa/tests/e2e/test_token_factory_image_availability_live.py",
+        "sha256": "2cab3931eb9eb436fd7ef145b0a335b7b02bbd5c2f102b6d0dfb6b1349620899"
+      }
+    ],
+    "pytest_exit": 0,
+    "outcomes": [
+      {
+        "nodeid": "tests/e2e/test_token_factory_image_availability_live.py::test_live_caption_identifies_frozen_shapes",
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "nodeid": "tests/e2e/test_token_factory_image_availability_live.py::test_live_no_image_response_fails_caption_replay",
+        "phase": "call",
+        "outcome": "passed"
+      }
+    ],
+    "physical_requests": 2,
+    "offline_mock_requests": 1,
+    "transport_records": 3
+  },
+  "scope": {
+    "synthetic_controls": true,
+    "quality_calibrated": false,
+    "real_robot_or_gpu_workload": false,
+    "hosted_hardware": "provider-managed, unobserved"
+  },
+  "observations": [
+    {
+      "ordinal": 0,
+      "test": "tests/e2e/test_token_factory_image_availability_live.py::test_live_caption_identifies_frozen_shapes",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "44f6ebd050ad75d3bac1cae4b61b1c50e2cba1a5eda1b0389ec6341d1dfbb8a9",
+      "response_sha256": "173bf979be078972708225f20b2d4cd6c3101263a9d237b7fb13d88dc3e838fa",
+      "response_bytes": 1033,
+      "visible_sha256": "80897bfb08c5cc56e802f2105d0e40b3e22920c1a20e984f6b7048be3e2abb69",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 24,
+        "prompt_tokens": 290,
+        "total_tokens": 314
+      },
+      "generation_controls": {
+        "temperature": 0,
+        "max_tokens": 512,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "ce89995a92f4277d6cd943575a4d839f783bb337a42b46f71015cf60b021b943",
+          "bytes": 1062,
+          "width": 256,
+          "height": 256,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "44f242a534bd9de4e4b65fc1b3eaef1c5e86fdbadd0efcec8a3e494984f6fcad"
+        }
+      ],
+      "frozen_shape_terms": {
+        "red": true,
+        "blue": true,
+        "green": true,
+        "square": true,
+        "circle": true,
+        "triangle": true
+      }
+    },
+    {
+      "ordinal": 1,
+      "test": "tests/e2e/test_token_factory_image_availability_live.py::test_live_no_image_response_fails_caption_replay",
+      "mock_transport": false,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "ee7826953a000f8fc568a225365bb7d8829938c78aba33826e464ba7857067b2",
+      "response_sha256": "6881a08309dcdaec5197c89ad98b96eb6cf189374f90e89e8c5ee996a132aa1c",
+      "response_bytes": 940,
+      "visible_sha256": "07c8eef80effdba0ce766f27551a1db76b8b3ca6c3f2d97a89c7a1086bd96757",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 6,
+        "prompt_tokens": 207,
+        "total_tokens": 213
+      },
+      "generation_controls": {
+        "temperature": 0,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [],
+      "exact_no_image_sentinel": true
+    },
+    {
+      "ordinal": 2,
+      "test": "tests/e2e/test_token_factory_image_availability_live.py::test_live_no_image_response_fails_caption_replay",
+      "mock_transport": true,
+      "method": "POST",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "http_status": 200,
+      "finish_reason": "stop",
+      "request_body_sha256": "40427d13b4391060d6d4f2f07f5e785a344cd0f7b3175b9645616490baac1959",
+      "response_sha256": "6881a08309dcdaec5197c89ad98b96eb6cf189374f90e89e8c5ee996a132aa1c",
+      "response_bytes": 940,
+      "visible_sha256": "07c8eef80effdba0ce766f27551a1db76b8b3ca6c3f2d97a89c7a1086bd96757",
+      "request_body_hash_semantics": "Exact httpx request.content bytes, excluding headers",
+      "served_model_matches_requested": true,
+      "usage": {
+        "completion_tokens": 6,
+        "prompt_tokens": 207,
+        "total_tokens": 213
+      },
+      "generation_controls": {
+        "temperature": 0.2,
+        "max_tokens": 512,
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        }
+      },
+      "images": [
+        {
+          "sha256": "ce89995a92f4277d6cd943575a4d839f783bb337a42b46f71015cf60b021b943",
+          "bytes": 1062,
+          "width": 256,
+          "height": 256,
+          "mode": "RGB",
+          "decoded_pixels_sha256": "44f242a534bd9de4e4b65fc1b3eaef1c5e86fdbadd0efcec8a3e494984f6fcad"
+        }
+      ]
+    }
+  ],
+  "artifact_results": [
+    {
+      "status": "completed",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "failed_count": 0,
+      "image_count": 1,
+      "artifact_sha256": "4007ba8c6f2fba1a7c0f77e944fca53a83d22001214b6e1f2911a1d4c40e6f9c",
+      "artifact_role": "caption-result.json",
+      "item_statuses": [
+        "completed"
+      ]
+    },
+    {
+      "model": "MiniMaxAI/MiniMax-M3",
+      "artifact_sha256": "ef67bf29c147a2e8ccd0cbf550a959b1b4ec60e3dbf8840b3fcbc94b0f109f0b",
+      "artifact_role": "no-image-response.json"
+    },
+    {
+      "status": "failed",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "failed_count": 1,
+      "image_count": 1,
+      "artifact_sha256": "9e5c9382c2b086fe6fd3242ae61aca65291e2badd2df71ddc89cb98b11287c0a",
+      "artifact_role": "replay-result.json",
+      "item_statuses": [
+        "image_unavailable"
+      ]
+    }
+  ],
+  "limitations": [
+    "Frozen controls prove these observed paths only; they do not estimate broad vision quality, operational failure rates, task safety or robot performance.",
+    "Sentinel classification is cooperative and prompt-sensitive; only recognized whole-answer forms fail, and a legitimate caption exactly matching one false-fails.",
+    "A no-image provider response is replayed offline through the caption classifier; this does not simulate a real image-delivery incident.",
+    "Historical proof remains bound to its original execution commits. Fresh proof retains its original source and tree; later proof-only commits do not relabel execution.",
+    "No semantic response retries or label/threshold tuning occurred. Existing transport retry attempts are counted in raw records."
+  ],
+  "source_bridge": {
+    "integrated_main": "f1ecd4255131374c417cdbb1f6c3e0d84b2a3514",
+    "integrated_candidate": "99d89bf4f1e69a6e42f95f9624b7863d3747aaa1",
+    "bindings": [
+      {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "execution_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+        "integrated_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+        "byte_identical": true
+      },
+      {
+        "path": "npa/src/npa/workbench/token_factory/__init__.py",
+        "execution_sha256": "e2e55a2e150fcdb1df8192c359e8bc588b7815504578dff27d32f835c33e8d1d",
+        "integrated_sha256": "e2e55a2e150fcdb1df8192c359e8bc588b7815504578dff27d32f835c33e8d1d",
+        "byte_identical": true
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "execution_sha256": "f9bb7489dc5db5c7aa02cdf7e5da3a6041cb9d4d40b557b78eccafac0b6c663e",
+        "integrated_sha256": "755a9185ccc78305a5af8331dd97c587d946d7a66712f9af05c2896ed8e377c2",
+        "byte_identical": false
+      },
+      {
+        "path": "npa/tests/e2e/test_token_factory_image_availability_live.py",
+        "execution_sha256": "2cab3931eb9eb436fd7ef145b0a335b7b02bbd5c2f102b6d0dfb6b1349620899",
+        "integrated_sha256": "2cab3931eb9eb436fd7ef145b0a335b7b02bbd5c2f102b6d0dfb6b1349620899",
+        "byte_identical": true
+      }
+    ],
+    "caption_and_client_runtime_unchanged": true,
+    "evaluator_metadata_changed_after_execution": true,
+    "execution_was_not_relabelled": true,
+    "combined_registration_dependency_gates": "fresh local and current-head CI required separately"
+  }
+}
