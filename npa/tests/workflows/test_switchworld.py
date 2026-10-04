@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -16,6 +17,7 @@ from npa.workflows import switchworld
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows/testing/switchworld-lingbot-viewpoint-switch.yaml"
+READINESS = WORKFLOW.with_suffix(".readiness.json")
 
 
 def _video(path: Path, filter_graph: str) -> None:
@@ -201,9 +203,12 @@ def test_workflow_has_five_connected_real_stages() -> None:
     assert raw["config"]["source_overlay"] is True
     assert raw["config"]["gpu_type"] == "B200"
     assert raw["config"]["gpu_count"] == "1"
+    assert raw["config"]["runtime_image"] == "tool://lingbot-world"
     assert raw["resources"]["gpu"]["accelerators"] == (
         "{{config.gpu_type}}:{{config.gpu_count}}"
     )
+    assert raw["resources"]["cpu"]["image"] == "{{config.runtime_image}}"
+    assert raw["resources"]["gpu"]["image"] == "{{config.runtime_image}}"
     assert len(states) == 5
     assert spec.initial == "prepare-real-case"
     assert states["prepare-real-case"]["next"] == "generate-lingbot-baseline"
@@ -228,6 +233,16 @@ def test_workflow_has_five_connected_real_stages() -> None:
     assert "baseline.mp4" in str(states["measure-real-frames"]["inputs"])
     assert "adapted.mp4" in str(states["emit-paired-artifacts"]["inputs"])
     assert "switchworld.rrd" in str(states["emit-paired-artifacts"]["outputs"])
+
+
+def test_readiness_record_is_bound_to_configurable_runtime_workflow() -> None:
+    """Keep the readiness decision bound to the exact executable YAML bytes."""
+
+    readiness = json.loads(READINESS.read_text(encoding="utf-8"))
+    assert readiness["schema_version"] == "workflow-readiness/v1"
+    assert readiness["workflow_sha256"] == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
+    assert readiness["prerequisites"]["worker_input"]["status"] == "verified"
+    assert readiness["prerequisites"]["target_runtime"]["status"] == "unverified"
 
 
 def test_canonical_adapter_selection_is_hash_pinned() -> None:

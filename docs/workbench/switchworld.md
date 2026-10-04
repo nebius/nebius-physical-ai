@@ -9,6 +9,10 @@ Run [switchworld-lingbot-viewpoint-switch.yaml](../../workflows/testing/switchwo
 only after staging a genuine native SwitchWorld case bundle under the selected
 run prefix. The bundle has a source image, held-out target MP4, native latent,
 condition and prompt-context tensors, and `npa.switchworld.controls.v1`.
+The default `runtime_image` remains the catalog LingBot image. An operator may
+select a separately qualified private, immutable runtime with
+`--var runtime_image=...`; this does not suppress the workflow's required NPA
+source overlay and is not a public-image publication mechanism.
 Preparation fully decodes the target, verifies that the condition tensor agrees
 with its view schedule and switch index, and extracts actual before/after-switch
 context frames. It does not invent controls or frames.

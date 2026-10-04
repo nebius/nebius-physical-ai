@@ -1,13 +1,14 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "a441ea2450f1d7a4d819cca78f8ce1b93b70e3c98d78e9ea30bcfa0883debe5b",
+  "workflow_sha256": "8e173995610b121f9bb2dc373e7d2bffffa3b87c93f3fd37251dd835074f27c0",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The final YAML passed validate-spec and a five-task production render check. GPU type and count resolve through run configuration rather than a fixed target request.",
+      "reason": "The final YAML passed validate-spec and a five-task production render check. GPU type, count, and runtime image resolve through run configuration rather than a fixed target request.",
       "evidence": [
         "npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --json (2026-10-04)",
         "npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --run-id switchworld-configurable-gpu-readiness-20261004 --check-render --json (2026-10-04; render sha256 a35cce1ba46e62e8ff89ab631bc551d4da044a573ac892245ecdc23a83128435)",
+        "npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --run-id switchworld-private-runtime-config-20261004 --var runtime_image=registry.invalid/switchworld@sha256:<64-hex> --check-render --json (2026-10-04; five tasks resolve the supplied image; render sha256 369545eeff5eb97a211db5e113f3efd1754d84307e4d8e5de06703526a964318)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/independent-verification-20261003.json"
       ]
     },
@@ -33,12 +34,13 @@
       ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "A lawful original MuJoCo-derived case now supplies its rights-cleared reference image, held-out target video, native condition tensor, and controls; preparation passes their strict causal timing checks. The manager-owned real VAE latent and UMT5 prompt-context outputs have not reached terminal handoff, so the complete native input bundle remains unverified.",
+      "status": "verified",
+      "reason": "A lawful original MuJoCo-derived case supplies its rights-cleared reference image, held-out target video, native latent, native condition, controls, and UMT5 prompt context. The exact six inputs passed private upload/readback identity checks and the strict causal timing preflight. This verifies input delivery, not native generation.",
       "evidence": [
         "docs/workbench/switchworld.md",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/source-comparison.md",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/actual-case-control-preflight-20261004-private.json (original case condition/control timing passed, 2026-10-04)"
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/actual-case-control-preflight-20261004-private.json (original case condition/control timing passed, 2026-10-04)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/native-input-staging-20261004-private.json (six exact input objects upload/readback verified, 2026-10-04)"
       ]
     },
     "credentials": {
@@ -67,7 +69,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The approved private target has verified provider identity, RBAC, GPU capacity, and the selected exact-digest image bootstrap. A lawful original simulation case now passes the native condition/control timing preflight, but manager-owned real VAE latent and UMT5 context encoding is still in progress; native generation has not run.",
+      "reason": "The approved private target has verified provider identity, RBAC, GPU capacity, and the selected exact-digest image bootstrap. The native input bundle is staged, but native generation and final artifact readback have not run.",
       "evidence": [
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/execution-route.json (private operator evidence, 2026-10-04)",
         "/home/ubuntu/codex-runs/npa-onboarding-20261002/forward-20261003/tasks/switchworld/gpu-discovery-20261004-private.json",

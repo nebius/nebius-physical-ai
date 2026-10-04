@@ -18,6 +18,11 @@ config:
   # plan rendering; do not treat it as a claim that every target is qualified.
   gpu_type: B200
   gpu_count: "1"
+  # The default routes through the existing catalog entry.  A private,
+  # digest-pinned LingBot runtime may instead be supplied at submit time with
+  # ``--var runtime_image=...`` while this source-overlay workflow still stages
+  # the exact checked-out NPA adapter code.
+  runtime_image: tool://lingbot-world
 
   reference_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/reference.png"
   target_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/target.mp4"
@@ -37,13 +42,13 @@ resources:
     cloud: kubernetes
     cpus: 8
     memory: 64Gi
-    image: tool://lingbot-world
+    image: "{{config.runtime_image}}"
   gpu:
     cloud: kubernetes
     accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
     cpus: 32
     memory: 256Gi
-    image: tool://lingbot-world
+    image: "{{config.runtime_image}}"
 
 initial: prepare-real-case
 
