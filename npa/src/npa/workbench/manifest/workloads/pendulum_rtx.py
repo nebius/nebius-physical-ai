@@ -91,9 +91,9 @@ ground = bpy.context.active_object
 gmat = bpy.data.materials.new(name="ground")
 gmat.use_nodes = True
 bsdf = gmat.node_tree.nodes["Principled BSDF"]
-bsdf.inputs["Base Color"].default_value = (0.05, 0.05, 0.06, 1.0)
-bsdf.inputs["Roughness"].default_value = 0.7
-bsdf.inputs["Metallic"].default_value = 0.1
+bsdf.inputs["Base Color"].default_value = (0.02, 0.02, 0.025, 1.0)
+bsdf.inputs["Roughness"].default_value = 0.9
+bsdf.inputs["Metallic"].default_value = 0.0
 ground.data.materials.append(gmat)
 
 
@@ -101,7 +101,8 @@ def make_link(name, mat):
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 0))
     obj = bpy.context.active_object
     obj.name = name
-    obj.scale = (0.07, 0.07, 0.5)
+    # size=1.0 -> 1m cube; scale z by 1.0 for a true 1m link.
+    obj.scale = (0.07, 0.07, 1.0)
     obj.data.materials.append(mat)
     return obj
 
