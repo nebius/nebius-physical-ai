@@ -7,6 +7,17 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Distinct known-count frame sampling
+
+- Keep `sequence` as uniform full-span sampling and make `keyframes` allocate
+  half its budget to the final 10% or a wider unique terminal window. This is
+  deterministic temporal stratification, not pixel-aware event detection.
+  Short sources return every frame; unknown-count video fallback is unchanged.
+- Preserve the original six-call hosted negative result: neither strategy
+  improved the declared labels, and one rationale hallucinated absent objects.
+  This result remains a failed model-improvement gate, separately from the
+  sampler's deterministic source/provenance contract.
+
 ### VLM benchmarks distinguish outcome from agency
 
 - A packaged `isaac-agency` calibration pairs one true elevated-object claim
