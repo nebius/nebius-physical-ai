@@ -220,7 +220,9 @@ def _require_dm05_policy_runtime() -> dict[str, Any]:
         registered = PreTrainedConfig.get_choice_class("dm05")
         policy_class = get_policy_class("dm05")
     except Exception as error:
-        raise RuntimeError("DM05 policy type is not registered in this LeRobot runtime") from error
+        raise RuntimeError(
+            "DM05 policy type is not registered in this LeRobot runtime"
+        ) from error
     if registered is not DM05Config or policy_class is not DM05Policy:
         raise RuntimeError(
             "DM05 policy registration resolves to a class other than the reviewed "
