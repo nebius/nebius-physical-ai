@@ -43,6 +43,7 @@ RUN set -eux; \
     test "$(sha256sum /opt/openwam-libero-source/LICENSE | awk '{print $1}')" = \
       e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6; \
     install -d -m 0755 /usr/share/doc/npa-libero-plus-assets; \
+    chmod 0444 /opt/npa/src/npa/workflows/libero_plus_assets.py; \
     chmod 0444 /usr/share/doc/npa-libero-plus-assets/THIRD_PARTY_NOTICES.md \
       /usr/share/doc/npa-libero-plus-assets/native-executor-provenance.json; \
     chmod 0555 /usr/local/bin/npa-libero-plus-assets-entrypoint; \

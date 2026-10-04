@@ -215,6 +215,7 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
     assert "import libero, mujoco" in dockerfile
     assert "scanner-quarantined" in dockerfile
     assert "imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2" in dockerfile
+    assert "chmod 0444 /opt/npa/src/npa/workflows/libero_plus_assets.py" in dockerfile
     assert "COPY src/npa/workflows/libero_plus_assets.py" in dockerfile
     assert "COPY assets.zip" not in dockerfile
     assert "ghcr.io/nebius/nebius-physical-ai/*|docker.io/*|index.docker.io/*" in build
