@@ -45,7 +45,9 @@ LIBERO_REF = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
 
 TRAINING_ATTENTION = "flex"
 INFERENCE_ATTENTION = "torch"
-LIBERO_BENCHMARK = "libero_90"
+# LingBot's pinned client exposes ``libero_10`` for the ten official
+# long-horizon LIBERO tasks. It does not support a ``libero_90`` benchmark.
+LIBERO_BENCHMARK = "libero_10"
 UPSTREAM_TRAIN_STEPS = 5000
 UPSTREAM_TRAIN_GPUS = 8
 
@@ -925,22 +927,187 @@ def _snapshot_checkpoint(destination: Path) -> Path:
     )
 
 
-def _replace_training_episodes(dataset: Path, train_indices: list[int]) -> None:
-    episode_file = dataset / "meta" / "episodes.jsonl"
+def _materialize_training_subset(dataset: Path, train_indices: list[int]) -> None:
+    """Make a contiguous physical train-only LeRobot tree for the native loader.
+
+    LingBot's bundled LeRobot 0.3.3 loader builds its cumulative frame index from
+    ``meta/episodes.jsonl`` but enumerates every parquet below ``data/``.  Merely
+    filtering metadata would therefore shift frame offsets after the first held-out
+    episode.  Rewrite data, video, and latent paths together so its two views of
+    the dataset have exactly the same contiguous episode and global-frame indices.
+    The source-derived prepared manifest remains the held-out evaluation record.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    info_path = dataset / "meta" / "info.json"
+    episode_path = dataset / "meta" / "episodes.jsonl"
+    info = json.loads(info_path.read_text(encoding="utf-8"))
+    chunk_size = info.get("chunks_size")
+    if type(chunk_size) is not int or chunk_size < 1:
+        raise ValueError("Prepared LeRobot metadata has no valid chunk size")
     records = [
         json.loads(line)
-        for line in episode_file.read_text(encoding="utf-8").splitlines()
+        for line in episode_path.read_text(encoding="utf-8").splitlines()
         if line
     ]
-    selected = [
-        record for record in records if record["episode_index"] in set(train_indices)
-    ]
-    if not selected:
-        raise ValueError("Prepared manifest selects no training episodes")
-    episode_file.write_text(
-        "".join(json.dumps(record, sort_keys=True) + "\n" for record in selected),
+    requested = set(train_indices)
+    selected = sorted(
+        (record for record in records if record["episode_index"] in requested),
+        key=lambda record: record["episode_index"],
+    )
+    if not selected or len(selected) != len(requested):
+        raise ValueError("Prepared manifest selects missing or no training episodes")
+    _episode_records(dataset)
+
+    originals = {
+        name: dataset / f".{name}-before-training-subset"
+        for name in ("data", "videos", "latents")
+    }
+    if any(path.exists() for path in originals.values()):
+        raise RuntimeError("Training dataset already has an interrupted subset rewrite")
+    for name, original in originals.items():
+        shutil.move(str(dataset / name), original)
+        (dataset / name).mkdir(parents=True, exist_ok=False)
+
+    rewritten: list[dict[str, Any]] = []
+    global_frame_index = 0
+    try:
+        for new_index, record in enumerate(selected):
+            old_index = record["episode_index"]
+            length = record["length"]
+            old_chunk = old_index // chunk_size
+            new_chunk = new_index // chunk_size
+            source_data = (
+                originals["data"]
+                / f"chunk-{old_chunk:03d}"
+                / f"episode_{old_index:06d}.parquet"
+            )
+            target_data = (
+                dataset
+                / "data"
+                / f"chunk-{new_chunk:03d}"
+                / f"episode_{new_index:06d}.parquet"
+            )
+            table = pq.read_table(source_data)
+            if len(table) != length:
+                raise ValueError(
+                    "Prepared parquet length does not match episode metadata"
+                )
+            for name, values in {
+                "episode_index": [new_index] * length,
+                "index": list(range(global_frame_index, global_frame_index + length)),
+            }.items():
+                field_index = table.schema.get_field_index(name)
+                if field_index < 0:
+                    raise ValueError(f"Prepared parquet lacks required {name} column")
+                table = table.set_column(
+                    field_index,
+                    name,
+                    pa.array(values, type=table.schema.field(field_index).type),
+                )
+            target_data.parent.mkdir(parents=True, exist_ok=True)
+            pq.write_table(table, target_data)
+
+            configs = record.get("action_config")
+            if not isinstance(configs, list):
+                raise ValueError("Prepared episode lacks action_config")
+            for config in configs:
+                start, end = config["start_frame"], config["end_frame"]
+                for camera in CAMERAS:
+                    source_video = (
+                        originals["videos"]
+                        / f"chunk-{old_chunk:03d}"
+                        / camera
+                        / f"episode_{old_index:06d}.mp4"
+                    )
+                    source_latent = (
+                        originals["latents"]
+                        / f"chunk-{old_chunk:03d}"
+                        / camera
+                        / f"episode_{old_index:06d}_{start}_{end}.pth"
+                    )
+                    if not source_video.is_file() or not source_latent.is_file():
+                        raise ValueError(
+                            "Prepared training episode is missing its native video or latent"
+                        )
+                    target_video = (
+                        dataset
+                        / "videos"
+                        / f"chunk-{new_chunk:03d}"
+                        / camera
+                        / f"episode_{new_index:06d}.mp4"
+                    )
+                    target_latent = (
+                        dataset
+                        / "latents"
+                        / f"chunk-{new_chunk:03d}"
+                        / camera
+                        / f"episode_{new_index:06d}_{start}_{end}.pth"
+                    )
+                    target_video.parent.mkdir(parents=True, exist_ok=True)
+                    target_latent.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source_video, target_video)
+                    shutil.copy2(source_latent, target_latent)
+
+            rewritten.append(
+                {
+                    **record,
+                    "episode_index": new_index,
+                    "prepared_episode_index": old_index,
+                }
+            )
+            global_frame_index += length
+    except Exception:
+        # Keep the original tree intact for inspection/retry rather than silently
+        # letting LeRobot train against a partially rewritten subset.
+        raise
+    else:
+        for original in originals.values():
+            shutil.rmtree(original)
+
+    output_info = dict(info)
+    output_info.update(
+        {
+            "total_episodes": len(rewritten),
+            "total_frames": global_frame_index,
+            "total_videos": len(rewritten) * len(CAMERAS),
+            "total_chunks": (len(rewritten) + chunk_size - 1) // chunk_size,
+        }
+    )
+    _write_json(info_path, output_info)
+    episode_path.write_text(
+        "".join(json.dumps(record, sort_keys=True) + "\n" for record in rewritten),
         encoding="utf-8",
     )
+    stats_path = dataset / "meta" / "episodes_stats.jsonl"
+    if stats_path.is_file():
+        stats_by_index = {
+            record["episode_index"]: record
+            for record in (
+                json.loads(line)
+                for line in stats_path.read_text(encoding="utf-8").splitlines()
+                if line
+            )
+        }
+        stats_path.write_text(
+            "".join(
+                json.dumps(
+                    {
+                        **stats_by_index.get(
+                            record["prepared_episode_index"],
+                            {"episode_index": record["prepared_episode_index"]},
+                        ),
+                        "episode_index": record["episode_index"],
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+                for record in rewritten
+            ),
+            encoding="utf-8",
+        )
+    _episode_records(dataset)
 
 
 def _apply_action_contract(config: Any, action_contract: dict[str, Any]) -> None:
@@ -1034,7 +1201,7 @@ def train(prepared_uri: str, checkpoint_uri: str, training_uri: str) -> dict[str
         _assert_action_contract(prepared["action_contract"])
         dataset = _download_tree(prepared["prepared_dataset_uri"], work / "dataset")
         _episode_records(dataset)
-        _replace_training_episodes(dataset, list(prepared["train_episode_indices"]))
+        _materialize_training_subset(dataset, list(prepared["train_episode_indices"]))
         # Upstream LeRobot 0.3.3 resolves repo ids below HF_LEROBOT_HOME and
         # separately resolves latent paths relative to cwd.  The symlink keeps
         # one data copy while satisfying both native path contracts.
@@ -1155,7 +1322,7 @@ def rollout(
     task_start: int = 0,
     task_end: int = 10,
 ) -> dict[str, Any]:
-    """Run the actual upstream websocket policy and LIBERO-90 closed-loop client."""
+    """Run the actual upstream websocket policy and LIBERO-Long closed-loop client."""
     if test_num < 1 or task_start < 0 or task_end <= task_start:
         raise ValueError("Invalid LIBERO rollout range")
     with tempfile.TemporaryDirectory(prefix="npa-lingbot-va-rollout-") as temporary:
@@ -1197,8 +1364,6 @@ def rollout(
                 _enable_upstream()
                 from evaluation.libero.client import run as upstream_client_run
 
-                # The upstream CLI omits libero_90 from choices, but its native
-                # run function accepts every benchmark registered by LIBERO.
                 upstream_client_run(
                     LIBERO_BENCHMARK,
                     port,
@@ -1228,7 +1393,7 @@ def rollout(
         _upload_tree(output, rollout_root_uri)
         manifest = {
             "schema": "npa.lingbot_va.rollout.v1",
-            "stage": "libero_90_closed_loop_rollout",
+            "stage": "libero_long_closed_loop_rollout",
             "prepared_manifest_uri": prepared_uri,
             "checkpoint_uri": checkpoint_uri,
             "checkpoint_transformer": selected.name,
@@ -1298,7 +1463,7 @@ def evaluate(
         }
         metrics = {
             "schema": "npa.lingbot_va.evaluation.v1",
-            "stage": "libero_90_long_horizon_evaluation",
+            "stage": "libero_long_horizon_evaluation",
             "rollout_manifest_uri": rollout_uri,
             "benchmark": LIBERO_BENCHMARK,
             "task_count": len(rows),
