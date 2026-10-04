@@ -13,7 +13,7 @@ config:
   repo_auth: none
   repo_token_env: GH_TOKEN
   base_profile: prebuilt
-  base_image: "registry.example.invalid/npa-embodiedgen:operator-build-required"
+  base_image: "registry.example.invalid/npa-embodiedgen@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   build_command: ""
   workload: solution-smoke
   smoke_command: |

@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 import yaml
 
 from npa.deploy.images import (
+    is_public_registry,
     libero_image_manifest,
     libero_publication_lineage_values,
     validate_libero_customer_runtime_authorization,
@@ -102,6 +103,7 @@ DEFAULT_YAML = (
 )
 DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 LIBERO_SOLUTION_NAME = "libero"
+EMBODIEDGEN_SOLUTION_NAME = "embodiedgen"
 LIBERO_PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
 LIBERO_PAYLOAD_ROLE = "npa-byof-libero-pod-reader"
 LIBERO_PAYLOAD_ROLE_BINDING = "npa-byof-libero-payload-pod-reader"
@@ -2224,6 +2226,24 @@ def _materialize_task_kubernetes_config(document: dict[str, Any]) -> None:
     config["kubernetes"] = kubernetes
 
 
+def validate_embodiedgen_image_reference(image: str) -> str:
+    """Require the restricted EmbodiedGen runtime to use private immutable bytes."""
+
+    reference = image.strip().removeprefix("docker:")
+    if re.fullmatch(r"[^\s@]+/npa-embodiedgen@sha256:[0-9a-f]{64}", reference) is None:
+        raise ValueError(
+            "EmbodiedGen requires a private immutable "
+            "npa-embodiedgen@sha256:<64-hex> image"
+        )
+    registry = reference.split("@", 1)[0].rsplit("/", 1)[0]
+    host = registry.split("/", 1)[0]
+    if host != "localhost" and "." not in host and ":" not in host:
+        raise ValueError("EmbodiedGen requires a fully-qualified private registry host")
+    if is_public_registry(registry):
+        raise ValueError("EmbodiedGen cannot run from an anonymous/public registry")
+    return reference
+
+
 def render_workflow(
     yaml_path: Path,
     *,
@@ -2239,6 +2259,9 @@ def render_workflow(
 ) -> list[dict[str, Any]]:
     docs = _load_yaml_documents(yaml_path)
     robotwin = solution_name.strip().lower() == "robotwin"
+    embodiedgen = solution_name.strip().lower() == EMBODIEDGEN_SOLUTION_NAME
+    if embodiedgen:
+        image = validate_embodiedgen_image_reference(image)
     source = os.environ if runtime_env is None else runtime_env
     validate_gymnasium_task_configuration(docs, solution_name=solution_name)
     for doc in docs[1:]:

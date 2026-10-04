@@ -172,6 +172,7 @@ def _prepare(cache: Path) -> tuple[Path, Path]:
 def _install(source: Path, venv: Path, cache: Path) -> None:
     marker = venv / ".npa-embodiedgen-installed.json"
     if marker.is_file():
+        _verify_install_receipt(venv, marker, cache)
         return
     env = _venv_environment(venv, cache)
     pip = str(venv / "bin" / "python")
@@ -192,10 +193,57 @@ def _install(source: Path, venv: Path, cache: Path) -> None:
         ],
         env=env,
     )
-    freeze = subprocess.check_output(
-        [pip, "-m", "pip", "freeze", "--all"], env=env, text=True
+    _write_install_receipt(venv, marker, cache)
+
+
+def _venv_file_records(venv: Path) -> list[dict[str, str]]:
+    records = []
+    for root in (venv / "bin", venv / "lib"):
+        for path in sorted(root.rglob("*")) if root.is_dir() else ():
+            if (
+                path.is_file()
+                and "__pycache__" not in path.parts
+                and path.suffix != ".pyc"
+            ):
+                records.append(
+                    {"path": str(path.relative_to(venv)), "sha256": _sha256(path)}
+                )
+    return records
+
+
+def _installed_freeze(venv: Path, cache: Path) -> list[str]:
+    return subprocess.check_output(
+        [str(venv / "bin" / "python"), "-m", "pip", "freeze", "--all"],
+        env=_venv_environment(venv, cache),
+        text=True,
+    ).splitlines()
+
+
+def _write_install_receipt(venv: Path, marker: Path, cache: Path) -> None:
+    marker.write_text(
+        json.dumps(
+            {
+                "schema": "npa.embodiedgen.venv-receipt.v1",
+                "pip_freeze": _installed_freeze(venv, cache),
+                "files": _venv_file_records(venv),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
     )
-    marker.write_text(json.dumps({"pip_freeze": freeze.splitlines()}, indent=2) + "\n")
+
+
+def _verify_install_receipt(venv: Path, marker: Path, cache: Path) -> None:
+    receipt = json.loads(marker.read_text(encoding="utf-8"))
+    expected = receipt.get("files")
+    if receipt.get("schema") != "npa.embodiedgen.venv-receipt.v1":
+        raise RuntimeError("EmbodiedGen venv receipt has an unexpected schema")
+    if not isinstance(expected, list) or expected != _venv_file_records(venv):
+        raise RuntimeError("EmbodiedGen venv bytes do not match their receipt")
+    if receipt.get("pip_freeze") != _installed_freeze(venv, cache):
+        raise RuntimeError("EmbodiedGen venv packages do not match their receipt")
 
 
 def _download_model(venv: Path, cache: Path) -> Path:
@@ -318,6 +366,13 @@ def command_health(args: argparse.Namespace) -> int:
 
 def command_smoke(args: argparse.Namespace) -> int:
     _read_manifest(args.manifest)
+    if not (
+        os.environ.get("NEBIUS_TOKEN_FACTORY_KEY")
+        or os.environ.get("NPA_TOKEN_FACTORY_API_KEY")
+    ):
+        raise RuntimeError(
+            "Token Factory credential is required for EmbodiedGen URDF estimates"
+        )
     cache = _safe_cache_root(args.cache_root)
     lock = cache / ".embodiedgen.lock"
     with lock.open("w") as handle:

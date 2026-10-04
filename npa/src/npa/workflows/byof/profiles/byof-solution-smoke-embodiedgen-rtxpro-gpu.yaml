@@ -10,7 +10,7 @@ resources:
   cpus: 16+
   memory: 96+
   disk_size: 200
-  image_id: "docker:<operator-private>/npa-embodiedgen:dev-<full-git-sha>"
+  image_id: "docker:<operator-private>/npa-embodiedgen@sha256:<digest>"
   kubernetes:
     pod_config:
       spec:

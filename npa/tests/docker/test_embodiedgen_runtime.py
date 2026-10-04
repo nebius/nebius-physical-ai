@@ -2,16 +2,30 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
+import os
+import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from npa.orchestration.npa_workflow.skypilot_render import (
+    NpaWorkflowRenderError,
+    SkypilotRenderOptions,
+    validate_image_override_selectors,
+)
+from npa.orchestration.npa_workflow.spec import load_spec
+from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 
 
 ROOT = Path(__file__).resolve().parents[3]
 IMAGE = ROOT / "npa" / "docker" / "workbench" / "embodiedgen"
+WORKFLOW = ROOT / "workflows" / "testing" / "byof-embodiedgen.yaml"
 SPEC = importlib.util.spec_from_file_location(
     "embodiedgen_runtime_bootstrap", IMAGE / "runtime-bootstrap.py"
 )
@@ -59,6 +73,41 @@ def test_model_receipt_rejects_changed_cached_bytes(tmp_path: Path) -> None:
         BOOTSTRAP._verify_model_receipt(model, receipt)
 
 
+def test_venv_receipt_rejects_changed_cached_dependency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    venv = tmp_path / "venv"
+    dependency = venv / "lib" / "python3.12" / "site-packages" / "trellis.py"
+    executable = venv / "bin" / "img3d-cli"
+    dependency.parent.mkdir(parents=True)
+    executable.parent.mkdir(parents=True)
+    dependency.write_text("pinned dependency")
+    executable.write_text("pinned executable")
+    marker = venv / ".npa-embodiedgen-installed.json"
+    monkeypatch.setattr(BOOTSTRAP, "_installed_freeze", lambda *_: ["trellis==1"])
+    BOOTSTRAP._write_install_receipt(venv, marker, tmp_path / "cache")
+    BOOTSTRAP._verify_install_receipt(venv, marker, tmp_path / "cache")
+    dependency.write_text("changed dependency")
+    with pytest.raises(RuntimeError, match="venv bytes"):
+        BOOTSTRAP._verify_install_receipt(venv, marker, tmp_path / "cache")
+
+
+def test_smoke_requires_token_factory_before_creating_a_runtime_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("NEBIUS_TOKEN_FACTORY_KEY", raising=False)
+    monkeypatch.delenv("NPA_TOKEN_FACTORY_API_KEY", raising=False)
+    cache = tmp_path / "runtime-cache"
+    args = SimpleNamespace(
+        manifest=IMAGE / "runtime-manifest.json",
+        cache_root=str(cache),
+        smoke=IMAGE / "capability_smoke.py",
+    )
+    with pytest.raises(RuntimeError, match="Token Factory credential"):
+        BOOTSTRAP.command_smoke(args)
+    assert not cache.exists()
+
+
 def test_trellis_only_patch_removes_unselected_sam_import(tmp_path: Path) -> None:
     inference = tmp_path / "embodied_gen" / "utils" / "inference.py"
     image_to_3d = tmp_path / "embodied_gen" / "scripts" / "imageto3d.py"
@@ -80,25 +129,48 @@ def test_trellis_only_patch_removes_unselected_sam_import(tmp_path: Path) -> Non
     assert "NPA_EMBODIEDGEN_TRELLIS_MODEL_DIR" in image_to_3d.read_text()
 
 
-def test_capability_smoke_requires_real_generation_and_simulation() -> None:
-    text = (IMAGE / "capability_smoke.py").read_text(encoding="utf-8")
-    for token in (
-        "img3d-cli",
-        "--image3d_model",
-        "TRELLIS",
+def test_capability_smoke_executes_the_real_generation_and_simulation_chain() -> None:
+    tree = ast.parse((IMAGE / "capability_smoke.py").read_text(encoding="utf-8"))
+    functions = {
+        node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
+    }
+
+    def calls(name: str) -> set[str]:
+        result = set()
+        for node in ast.walk(functions[name]):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if isinstance(node.func.value, ast.Name):
+                    result.add(f"{node.func.value.id}.{node.func.attr}")
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                result.add(node.func.id)
+        return result
+
+    upstream_runs = [
+        node
+        for node in ast.walk(functions["run_upstream"])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and (node.func.value.id, node.func.attr) == ("subprocess", "run")
+    ]
+    assert any(
+        any(
+            keyword.arg == "check" and keyword.value.value is True
+            for keyword in run.keywords
+        )
+        for run in upstream_runs
+    )
+    assert "cvt_embodiedgen_asset_to_anysim" in calls("convert_to_mjcf")
+    assert {"bullet.loadURDF", "bullet.setGravity"} <= calls("pybullet_validation")
+    assert "bullet.stepSimulation" in calls("require_rigid_body_settle")
+    assert {"iio.imwrite", "iio.imiter"} <= calls("_write_decoded_view")
+    assert {
+        "run_upstream",
         "collision_meshes",
-        "cvt_embodiedgen_asset_to_anysim",
-        "embodiedgen_urdf_to_mjcf_conversion",
-        "bullet.loadURDF",
-        "bullet.stepSimulation",
-        "require_rigid_body_settle",
-        "linear_speed_m_per_s",
-        "decoded_video_frames",
-        "VLM_estimated_not_calibrated_ground_truth",
-        "http.client.HTTPSConnection",
-        "defusedxml",
-    ):
-        assert token in text
+        "convert_to_mjcf",
+        "pybullet_validation",
+    } <= calls("_generate_and_validate")
+    assert {"_generate_and_validate", "atomic_json"} <= calls("main")
 
 
 def test_prebuilt_image_and_standalone_profile_keep_the_byof_contract() -> None:
@@ -109,20 +181,41 @@ def test_prebuilt_image_and_standalone_profile_keep_the_byof_contract() -> None:
         / "byof-solution-smoke-embodiedgen-rtxpro-gpu.yaml"
     ).read_text(encoding="utf-8")
     build = (IMAGE / "build.sh").read_text(encoding="utf-8")
-    workflow = (ROOT / "workflows/testing/byof-embodiedgen.yaml").read_text(
-        encoding="utf-8"
-    )
+    workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "/opt/byof/npa_source_metadata.json" in dockerfile
     assert "git status --porcelain --untracked-files=all" in build
+    assert "NPA_REGISTRY must name the operator-controlled private registry" in build
+    assert "is_public_registry" in build
     assert "npa_byof_summary.json" in profile
     assert "client.head_object" in profile
     assert "allowPrivilegeEscalation: true" in profile
     assert "SETUID" in profile
     assert "allowPrivilegeEscalation: true" in workflow
     assert "SETUID" in workflow
+    assert "npa-embodiedgen@sha256:" in workflow
     assert "setpriv --no-new-privs" in (IMAGE / "entrypoint.sh").read_text(
         encoding="utf-8"
     )
+
+
+def test_build_script_rejects_docker_hub_shorthand_before_building() -> None:
+    source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+    ).strip()
+    result = subprocess.run(
+        [
+            "bash",
+            str(IMAGE / "build.sh"),
+            f"operator/npa-embodiedgen:dev-{source_sha}",
+        ],
+        cwd=ROOT,
+        env={**os.environ, "NPA_REGISTRY": "operator", "NPA_SOURCE_SHA": source_sha},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "fully-qualified private registry host" in result.stderr
 
 
 def test_token_factory_key_is_forwarded_only_to_embodiedgen() -> None:
@@ -139,3 +232,86 @@ def test_token_factory_key_is_forwarded_only_to_embodiedgen() -> None:
         solution_name="embodiedgen",
         environment={"NEBIUS_TOKEN_FACTORY_KEY": "value"},
     ) == ["NEBIUS_TOKEN_FACTORY_KEY"]
+
+
+def test_embodiedgen_byof_renderer_rejects_mutable_or_public_images() -> None:
+    runner_path = ROOT / "npa/scripts/run_byof_container_verify.py"
+    spec = importlib.util.spec_from_file_location("embodiedgen_byof_image", runner_path)
+    assert spec and spec.loader
+    runner = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = runner
+    spec.loader.exec_module(runner)
+    digest = "a" * 64
+    assert runner.validate_embodiedgen_image_reference(
+        f"registry.example.invalid/npa-embodiedgen@sha256:{digest}"
+    ).endswith(digest)
+    with pytest.raises(ValueError, match="immutable"):
+        runner.validate_embodiedgen_image_reference(
+            "registry.example.invalid/npa-embodiedgen:latest"
+        )
+    with pytest.raises(ValueError, match="anonymous/public"):
+        runner.validate_embodiedgen_image_reference(
+            f"docker.io/npa-embodiedgen@sha256:{digest}"
+        )
+    with pytest.raises(ValueError, match="fully-qualified"):
+        runner.validate_embodiedgen_image_reference(
+            f"operator/npa-embodiedgen@sha256:{digest}"
+        )
+
+
+def test_native_workflow_rejects_nonprivate_or_mutable_embodiedgen_override() -> None:
+    base_spec = load_spec(WORKFLOW)
+    digest = "b" * 64
+    validate_image_override_selectors(base_spec, SkypilotRenderOptions())
+    mutable = replace(
+        base_spec,
+        config={**base_spec.config, "base_image": "private/npa-embodiedgen:tag"},
+    )
+    with pytest.raises(NpaWorkflowRenderError, match="immutable image"):
+        validate_image_override_selectors(mutable, SkypilotRenderOptions())
+    public = replace(
+        base_spec,
+        config={
+            **base_spec.config,
+            "base_image": f"docker.io/npa-embodiedgen@sha256:{digest}",
+        },
+    )
+    with pytest.raises(NpaWorkflowRenderError, match="public registry"):
+        validate_image_override_selectors(public, SkypilotRenderOptions())
+    shorthand = replace(
+        base_spec,
+        config={
+            **base_spec.config,
+            "base_image": f"operator/npa-embodiedgen@sha256:{digest}",
+        },
+    )
+    with pytest.raises(NpaWorkflowRenderError, match="fully-qualified"):
+        validate_image_override_selectors(shorthand, SkypilotRenderOptions())
+    private = f"registry.example.invalid/npa-embodiedgen@sha256:{digest}"
+    accepted = replace(
+        base_spec,
+        config={**base_spec.config, "base_image": private},
+    )
+    validate_image_override_selectors(
+        accepted,
+        SkypilotRenderOptions(image_overrides={"workbench.byof.repo": private}),
+    )
+    with pytest.raises(NpaWorkflowRenderError, match="must name the same"):
+        validate_image_override_selectors(
+            accepted,
+            SkypilotRenderOptions(
+                image_overrides={
+                    "workbench.byof.repo": (
+                        "registry.example.invalid/npa-embodiedgen@sha256:" + "c" * 64
+                    )
+                }
+            ),
+        )
+
+
+def test_embodiedgen_workflow_is_explicitly_plan_only_until_gpu_accepted() -> None:
+    case = next(item for item in SUBMIT_LIVE_MATRIX if item.spec == WORKFLOW.name)
+    assert case.tier == "gpu"
+    assert case.plan_only
+    assert case.requires_token_factory
+    assert "private immutable" in case.plan_only_justification

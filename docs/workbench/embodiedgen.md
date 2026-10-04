@@ -37,18 +37,30 @@ committed NPA SHA:
 npa workbench health preflight --checks nebius --json
 npa workbench health preflight --json
 NPA_SOURCE_SHA=$(git rev-parse HEAD)
+IMAGE_TAG="${NPA_REGISTRY}/npa-embodiedgen:dev-${NPA_SOURCE_SHA}"
 bash npa/docker/workbench/embodiedgen/build.sh \
-  <private-registry>/npa-embodiedgen:dev-${NPA_SOURCE_SHA}
+  "${IMAGE_TAG}"
+IMAGE_DIGEST=$(docker buildx imagetools inspect "${IMAGE_TAG}" \
+  --format '{{.Manifest.Digest}}')
+IMAGE_REF="${NPA_REGISTRY}/npa-embodiedgen@${IMAGE_DIGEST}"
 ```
 
-Validate and plan the workflow before supplying the immutable private image
-digest and Token Factory secret through the normal workflow secret plumbing:
+`NPA_REGISTRY` must begin with a fully-qualified private registry host;
+`build.sh` rejects Docker shorthand and registries configured as anonymous/public,
+then only pushes the exact `dev-<full-source-sha>` tag. Resolve that tag to the
+registry-reported digest before planning or submitting; a tag is not an accepted
+execution input. Validate and plan the workflow with that immutable private image
+and pass the Token Factory secret through normal workflow secret plumbing:
 
 ```bash
 npa workbench workflow validate-spec workflows/testing/byof-embodiedgen.yaml
 npa workbench workflow plan-spec workflows/testing/byof-embodiedgen.yaml \
-  --run-id embodiedgen-check
+  --run-id embodiedgen-check \
+  --var "base_image=${IMAGE_REF}" \
+  --check-render
 npa workbench workflow submit workflows/testing/byof-embodiedgen.yaml \
+  --var "base_image=${IMAGE_REF}" \
+  --image-override "workbench.byof.repo=${IMAGE_REF}" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY
 ```
 
