@@ -385,12 +385,13 @@ def test_minimal_curobo_base_gets_the_unchanged_critical_vulnerability_gate():
     inventory = json.loads(
         (ROOT / "npa/docker/workbench/base-image-security.json").read_text()
     )
-    base = (
-        (ROOT / "npa/docker/workbench/curobo/Dockerfile")
-        .read_text()
-        .rsplit("FROM ", 1)[1]
-        .splitlines()[0]
-    )
+    dockerfile = (ROOT / "npa/docker/workbench/curobo/Dockerfile").read_text()
+    # The producer's vendor bytes still require the unchanged base scan even
+    # though the exported scratch stage excludes its superseded layer history.
+    matches = re.findall(r"^FROM (\S+) AS runtime-producer$", dockerfile, re.M)
+    assert len(matches) == 1
+    base = matches[0]
+    assert "\nFROM scratch AS runtime\n" in dockerfile
     entries = [entry for entry in inventory if entry["image"] == base]
     assert len(entries) == 1 and entries[0]["purge_linux_libc_dev"] is False
     scanner = (ROOT / "npa/scripts/scan_base_images.py").read_text()

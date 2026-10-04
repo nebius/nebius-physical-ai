@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 from types import ModuleType
@@ -44,6 +45,48 @@ IMPORT_CHECK = importlib.util.module_from_spec(IMPORT_SPEC)
 IMPORT_SPEC.loader.exec_module(IMPORT_CHECK)
 
 
+def runtime_producer():
+    return (
+        DOCKERFILE.read_text()
+        .split("\nFROM scratch AS runtime", 1)[0]
+        .rsplit("FROM ", 1)[1]
+    )
+
+
+def test_clean_root_recipe_retains_measured_cuda_and_launch_configuration():
+    text = DOCKERFILE.read_text()
+    final = text.split("\nFROM scratch AS runtime\n", 1)[1]
+    instructions = re.sub(r"\\\n\s*", " ", final).splitlines()
+    assert [line for line in instructions if line.startswith("COPY ")] == [
+        "COPY --from=runtime-producer / /"
+    ]
+    assert not any(line.startswith(("RUN ", "ADD ")) for line in instructions)
+    raw = DOCKERFILE.with_name("clean-root-config.json").read_bytes()
+    expected = json.loads(raw)
+    payload = json.loads(RUNTIME_PAYLOAD.read_text())
+    assert payload["clean_root_config_sha256"] == hashlib.sha256(raw).hexdigest()
+    environment = next(line for line in instructions if line.startswith("ENV "))
+    assert shlex.split(environment)[1:] == expected["config"]["Env"]
+    for name, key in [("USER", "User"), ("WORKDIR", "WorkingDir")]:
+        assert f"{name} {expected['config'][key]}" in instructions
+    for name, key in [("SHELL", "Shell"), ("ENTRYPOINT", "Entrypoint"), ("CMD", "Cmd")]:
+        value = next(
+            line[len(name) + 1 :]
+            for line in instructions
+            if line.startswith(name + " ")
+        )
+        assert json.loads(value) == expected["config"][key]
+    health = next(line for line in instructions if line.startswith("HEALTHCHECK "))
+    assert "--interval=30s --timeout=5s --retries=3 CMD " in health
+    assert (
+        json.loads(health.split(" CMD ", 1)[1])
+        == expected["config"]["Healthcheck"]["Test"][1:]
+    )
+    assert "EXPOSE 8080" in instructions
+    assert expected["layer_count"] == 1
+    assert expected["platform"] == {"os": "linux", "architecture": "amd64"}
+
+
 def test_baked_identity_uses_checked_build_input_and_absolute_interpreter():
     text = DOCKERFILE.read_text()
     assert "ARG NPA_SOURCE_SHA" in text
@@ -61,7 +104,7 @@ def test_baked_identity_uses_checked_build_input_and_absolute_interpreter():
 
 
 def test_bakes_proved_skypilot_core_bootstrap_closure():
-    text = DOCKERFILE.read_text().rsplit("FROM ", 1)[1]
+    text = runtime_producer()
     install_layer = text.split("apt-get install -y --no-install-recommends", 1)[
         1
     ].split("&& dpkg-query -W", 1)[0]
@@ -85,8 +128,23 @@ def test_full_distro_source_and_notice_closure_is_baked_and_byte_bound():
         "size": len(raw),
         "sha256": hashlib.sha256(raw).hexdigest(),
     }
-    assert binding["package_databases"] == source["dpkg_databases"]
-    assert binding["copyright_files"] == source["notice_files"]
+    assert binding["package_databases"] == [
+        row
+        for row in source["dpkg_databases"]
+        if row["sha256"] == source["final_dpkg_database_sha256"]
+    ]
+    assert len(binding["package_databases"]) == 1
+    for selected, original in zip(
+        binding["copyright_files"], source["notice_files"], strict=True
+    ):
+        assert {
+            key: value for key, value in selected.items() if key != "ancestor_versions"
+        } == {
+            key: value for key, value in original.items() if key != "ancestor_versions"
+        }
+        assert selected["ancestor_versions"] == [
+            {"sha256": selected["sha256"], "size": selected["size"]}
+        ]
     assert binding["final_dpkg_database_sha256"] == source["final_dpkg_database_sha256"]
     assert len(source["packages"]) == 250
     assert len(source["dpkg_databases"]) == 4
@@ -130,7 +188,7 @@ def test_pip_bootstrap_distribution_is_content_pinned():
     assert "AS secure-pip-builder" in text
     assert "COPY docker/workbench/common/secure_pip" in text
     assert "--work-dir /opt/secure-pip-work --output-dir /opt/secure-pip-wheels" in text
-    final = text.rsplit("FROM ", 1)[1]
+    final = runtime_producer()
     assert "pip-bootstrap.lock" not in final
     assert 'hashlib.sha256(w.read_bytes()).hexdigest() == r["sha256"]' in final
     assert "pip-26.2.1+npa.1-py3-none-any.whl" in final
@@ -160,7 +218,8 @@ def test_full_setuptools_seed_has_its_own_fixed_wheel_lock():
     runtime_lock = DOCKERFILE.with_name("requirements.lock").read_text()
     assert f"setuptools==84.0.0 \\\n    --hash=sha256:{digest}" in runtime_lock
     text = DOCKERFILE.read_text()
-    builder, final = text.rsplit("FROM ", 1)
+    builder = text.split("AS runtime-producer", 1)[0]
+    final = runtime_producer()
     assert (
         "COPY docker/workbench/curobo/setuptools-seed.lock /opt/setuptools-seed.lock"
     ) in builder
@@ -182,7 +241,7 @@ def test_full_setuptools_seed_has_its_own_fixed_wheel_lock():
 
 
 def test_full_seed_replacement_occurs_before_the_apt_layer_is_committed():
-    final = DOCKERFILE.read_text().rsplit("FROM ", 1)[1]
+    final = runtime_producer()
     instructions = re.sub(r"\\\n\s*", " ", final).splitlines()
     apt = next(line for line in instructions if line.startswith("RUN --mount="))
     wheel = "setuptools-84.0.0-py3-none-any.whl"

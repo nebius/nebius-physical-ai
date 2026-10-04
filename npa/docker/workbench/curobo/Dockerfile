@@ -12,7 +12,7 @@ RUN python -m pip --isolated download --no-cache-dir --no-deps \
     --requirement /opt/setuptools-seed.lock --dest /opt/setuptools-seed
 
 # Pinned Apache-2.0 cuRobo V2 plus MIT/BSD benchmark data; no model weights.
-FROM nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701
+FROM nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701 AS runtime-producer
 
 # cuRobo V2 uses the pinned cuda.core/NVRTC and Warp wheel compilers.
 # A runtime-only base avoids unused profiler binaries and development headers.
@@ -141,5 +141,43 @@ WORKDIR /workspace
 USER ubuntu
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+ENTRYPOINT ["curobo-entrypoint"]
+CMD ["serve"]
+
+# Export only the repaired filesystem, never the superseded vendor/base layers.
+# COPY retains original runtime and licence bytes; config is explicit because a
+# scratch stage inherits neither CUDA driver requirements nor launch metadata.
+FROM scratch AS runtime
+ARG NPA_SOURCE_SHA
+COPY --from=runtime-producer / /
+LABEL npa.tool="curobo" \
+      npa.version="0.8.0-cuda13-blackwell-unbuilt" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.base.name="nvidia/cuda:13.0.2-base-ubuntu24.04" \
+      org.opencontainers.image.base.digest="sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701" \
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND BSD-3-Clause AND GPL-2.0-or-later AND GPL-3.0-or-later AND LGPL-2.1-or-later AND (GPL-3.0-or-later WITH GCC-exception-3.1) AND LicenseRef-NPA-cuRobo-Other-Notices"
+ENV \
+    PATH="/opt/npa-venv/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    NVARCH="x86_64" \
+    NVIDIA_REQUIRE_CUDA="cuda>=13.0 brand=unknown,driver>=535,driver<536 brand=grid,driver>=535,driver<536 brand=tesla,driver>=535,driver<536 brand=nvidia,driver>=535,driver<536 brand=quadro,driver>=535,driver<536 brand=quadrortx,driver>=535,driver<536 brand=nvidiartx,driver>=535,driver<536 brand=vapps,driver>=535,driver<536 brand=vpc,driver>=535,driver<536 brand=vcs,driver>=535,driver<536 brand=vws,driver>=535,driver<536 brand=cloudgaming,driver>=535,driver<536 brand=unknown,driver>=550,driver<551 brand=grid,driver>=550,driver<551 brand=tesla,driver>=550,driver<551 brand=nvidia,driver>=550,driver<551 brand=quadro,driver>=550,driver<551 brand=quadrortx,driver>=550,driver<551 brand=nvidiartx,driver>=550,driver<551 brand=vapps,driver>=550,driver<551 brand=vpc,driver>=550,driver<551 brand=vcs,driver>=550,driver<551 brand=vws,driver>=550,driver<551 brand=cloudgaming,driver>=550,driver<551 brand=unknown,driver>=565,driver<566 brand=grid,driver>=565,driver<566 brand=tesla,driver>=565,driver<566 brand=nvidia,driver>=565,driver<566 brand=quadro,driver>=565,driver<566 brand=quadrortx,driver>=565,driver<566 brand=nvidiartx,driver>=565,driver<566 brand=vapps,driver>=565,driver<566 brand=vpc,driver>=565,driver<566 brand=vcs,driver>=565,driver<566 brand=vws,driver>=565,driver<566 brand=cloudgaming,driver>=565,driver<566 brand=unknown,driver>=570,driver<571 brand=grid,driver>=570,driver<571 brand=tesla,driver>=570,driver<571 brand=nvidia,driver>=570,driver<571 brand=quadro,driver>=570,driver<571 brand=quadrortx,driver>=570,driver<571 brand=nvidiartx,driver>=570,driver<571 brand=vapps,driver>=570,driver<571 brand=vpc,driver>=570,driver<571 brand=vcs,driver>=570,driver<571 brand=vws,driver>=570,driver<571 brand=cloudgaming,driver>=570,driver<571 brand=unknown,driver>=575,driver<576 brand=grid,driver>=575,driver<576 brand=tesla,driver>=575,driver<576 brand=nvidia,driver>=575,driver<576 brand=quadro,driver>=575,driver<576 brand=quadrortx,driver>=575,driver<576 brand=nvidiartx,driver>=575,driver<576 brand=vapps,driver>=575,driver<576 brand=vpc,driver>=575,driver<576 brand=vcs,driver>=575,driver<576 brand=vws,driver>=575,driver<576 brand=cloudgaming,driver>=575,driver<576" \
+    NV_CUDA_CUDART_VERSION="13.0.96-1" \
+    CUDA_VERSION="13.0.2" \
+    LD_LIBRARY_PATH="/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64" \
+    NVIDIA_VISIBLE_DEVICES="all" \
+    NVIDIA_DRIVER_CAPABILITIES="compute,utility" \
+    DEBIAN_FRONTEND="noninteractive" \
+    PYTHONUNBUFFERED="1" \
+    NPA_BAKED_PYTHON="/opt/npa-venv/bin/python" \
+    NPA_IMAGE_SOURCE_SHA="${NPA_SOURCE_SHA}" \
+    NPA_CUROBO_SOURCE="/opt/curobo" \
+    NPA_CUROBO_WORK_DIR="/workspace" \
+    MPLCONFIGDIR="/workspace/.cache/matplotlib" \
+    XDG_CACHE_HOME="/workspace/.cache" \
+    CUDA_HOME="/usr/local/cuda"
+SHELL ["/bin/bash","-o","pipefail","-c"]
+WORKDIR /workspace
+USER ubuntu
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["python","-c","import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
 ENTRYPOINT ["curobo-entrypoint"]
 CMD ["serve"]

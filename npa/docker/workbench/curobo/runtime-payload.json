@@ -7,21 +7,6 @@
     },
     "package_databases": [
       {
-        "sha256": "92bf7629da2d2ae4313157b27cec9a1b3a34ee94cc2413ee64eb76190ed7e5f8",
-        "size": 87151,
-        "package_count": 92
-      },
-      {
-        "sha256": "a02f1a48f98941e299d71f98e9c71ba4e11ab2d7d810d0b6f788e2f0862a1f35",
-        "size": 110068,
-        "package_count": 112
-      },
-      {
-        "sha256": "a4ab4caf1c43dd2f7e9fbd8d6e38121a239bdf152980f63fa98c458db34bfb79",
-        "size": 112409,
-        "package_count": 117
-      },
-      {
         "sha256": "0ce00bd079c818b83dbfb708ffdea15d8faa1e68cea0fb5b12e06f5349ed3fed",
         "size": 183034,
         "package_count": 194
@@ -2820,5 +2805,6 @@
         "size": 1676
       }
     ]
-  }
+  },
+  "clean_root_config_sha256": "067d8ba2bbe033729cf2b29ae3ee652fb02df948f271f557d9ccb2b30c3fb855"
 }

@@ -60,6 +60,9 @@ def tar_bytes(entries):
 def payload():
     """Tiny independent contract; no proprietary payload or fabricated GPU output."""
     contract = copy.deepcopy(json.loads((IMAGE / "runtime-payload.json").read_text()))
+    # Layout/config controls below exercise the clean-root contract separately;
+    # the original layer, whiteout and payload corpus must still test its paths.
+    contract.pop("clean_root_config_sha256")
     contract.pop(
         "torch_cudnn_adapters"
     )  # Adapter qualification has separate exact-byte fixtures.
@@ -198,6 +201,144 @@ def verify(tmp_path, payload, layers=None, **kwargs):
 
 def codes(report):
     return {finding["code"] for finding in report["findings"]}
+
+
+def clean_root_config(config):
+    expected = json.loads((IMAGE / "clean-root-config.json").read_text())
+    config.update(expected["platform"])
+    config["config"] = expected["config"]
+    config["config"]["Env"] = [
+        value.replace("${NPA_SOURCE_SHA}", "1" * 40)
+        for value in config["config"]["Env"]
+    ]
+    config["config"]["Labels"] = {"org.opencontainers.image.revision": "1" * 40}
+
+
+def use_clean_root_contract(payload):
+    payload[0]["clean_root_config_sha256"] = digest(
+        (IMAGE / "clean-root-config.json").read_bytes()
+    )
+
+
+def test_clean_root_retains_runtime_contract_and_all_payloads(tmp_path, payload):
+    use_clean_root_contract(payload)
+    report = verify(tmp_path, payload, config_update=clean_root_config)
+    assert report["valid"] is True
+    assert report["clean_root_config_sha256"] == digest(
+        (IMAGE / "clean-root-config.json").read_bytes()
+    )
+
+
+def test_clean_root_rejects_superseded_layer_even_after_whiteout(tmp_path, payload):
+    use_clean_root_contract(payload)
+    layers = [
+        [entry("superseded-libssl.so", b"old vulnerable object")],
+        [*payload[1], entry(".wh.superseded-libssl.so")],
+    ]
+    report = verify(tmp_path, payload, layers, config_update=clean_root_config)
+    assert report["valid"] is False
+    assert "clean_root_layer_population_mismatch" in codes(report)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("User", "root"),
+        ("WorkingDir", "/"),
+        ("Entrypoint", ["sh"]),
+        ("Cmd", ["version"]),
+        ("Healthcheck", {}),
+        ("Shell", ["/bin/sh", "-c"]),
+        ("ExposedPorts", {}),
+        ("Labels", []),
+        ("Labels", {"org.opencontainers.image.revision": "main"}),
+        ("Labels", {"org.opencontainers.image.revision": "2" * 40}),
+    ],
+)
+def test_clean_root_rejects_changed_launch_metadata(tmp_path, payload, key, value):
+    use_clean_root_contract(payload)
+
+    def changed(config):
+        clean_root_config(config)
+        config["config"][key] = value
+
+    report = verify(tmp_path, payload, config_update=changed)
+    assert report["valid"] is False
+    assert "clean_root_runtime_config_mismatch" in codes(report)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "PATH",
+        "NVARCH",
+        "NVIDIA_REQUIRE_CUDA",
+        "NV_CUDA_CUDART_VERSION",
+        "CUDA_VERSION",
+        "LD_LIBRARY_PATH",
+        "NVIDIA_VISIBLE_DEVICES",
+        "NVIDIA_DRIVER_CAPABILITIES",
+        "NPA_BAKED_PYTHON",
+        "NPA_IMAGE_SOURCE_SHA",
+        "NPA_CUROBO_SOURCE",
+        "NPA_CUROBO_WORK_DIR",
+        "CUDA_HOME",
+    ],
+)
+def test_clean_root_rejects_changed_runtime_environment(tmp_path, payload, name):
+    use_clean_root_contract(payload)
+
+    def changed(config):
+        clean_root_config(config)
+        config["config"]["Env"] = [
+            name + "=changed" if value.startswith(name + "=") else value
+            for value in config["config"]["Env"]
+        ]
+
+    assert "clean_root_runtime_config_mismatch" in codes(
+        verify(tmp_path, payload, config_update=changed)
+    )
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "duplicate", "not-string"])
+def test_clean_root_rejects_ambiguous_environment(tmp_path, payload, mutation):
+    use_clean_root_contract(payload)
+
+    def changed(config):
+        clean_root_config(config)
+        environment = config["config"]["Env"]
+        if mutation == "missing":
+            environment.pop()
+        elif mutation == "extra":
+            environment.append("UNKNOWN=unexpected")
+        elif mutation == "duplicate":
+            environment.append(environment[0])
+        else:
+            environment.append(None)
+
+    assert "clean_root_runtime_config_mismatch" in codes(
+        verify(tmp_path, payload, config_update=changed)
+    )
+
+
+@pytest.mark.parametrize("key,value", [("architecture", "arm64"), ("os", "windows")])
+def test_clean_root_rejects_changed_platform(tmp_path, payload, key, value):
+    use_clean_root_contract(payload)
+
+    def changed(config):
+        clean_root_config(config)
+        config[key] = value
+
+    assert "clean_root_platform_mismatch" in codes(
+        verify(tmp_path, payload, config_update=changed)
+    )
+
+
+def test_clean_root_rejects_changed_contract_bytes(tmp_path, payload):
+    use_clean_root_contract(payload)
+    payload[0]["clean_root_config_sha256"] = "0" * 64
+    with pytest.raises(VERIFIER.ImageVerificationError, match="contract digest"):
+        verify(tmp_path, payload, config_update=clean_root_config)
 
 
 @pytest.mark.parametrize(

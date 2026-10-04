@@ -16,6 +16,7 @@ import tarfile
 
 
 CONTRACT = Path(__file__).with_name("runtime-payload.json")
+CLEAN_ROOT_CONFIG = Path(__file__).with_name("clean-root-config.json")
 _SDK_NAME = re.compile(r"(?i)(?:cudnn\w*\.(?:h|hpp|hxx|cuh)|libcudnn\w*\.(?:a|lib))$")
 _RUNTIME_NAME = re.compile(r"(?i)libcudnn\w*\.so(?:\.\d+)*$")
 _MANIFEST_TYPES = {
@@ -148,6 +149,51 @@ def _oci_graph(archive, members, config_member, config_hash, layers):
         ):
             raise ImageVerificationError("OCI and saved-image layer order disagree")
     return descriptor["digest"], described_layers
+
+
+def _clean_root_runtime_matches(config, expected):
+    actual = config.get("config")
+    if not isinstance(actual, dict):
+        return False
+    labels = actual.get("Labels", {})
+    if not isinstance(labels, dict):
+        return False
+    revision = labels.get("org.opencontainers.image.revision")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        return False
+    environment = actual.get("Env")
+    if not isinstance(environment, list) or not all(
+        isinstance(value, str) for value in environment
+    ):
+        return False
+    pinned_environment = [
+        value.replace("${NPA_SOURCE_SHA}", revision) for value in expected["Env"]
+    ]
+    if sorted(environment) != sorted(pinned_environment):
+        return False
+    return all(
+        actual.get(key) == value for key, value in expected.items() if key != "Env"
+    )
+
+
+def _clean_root_findings(config, layers, contract):
+    pinned_hash = contract.get("clean_root_config_sha256")
+    if pinned_hash is None:
+        return []
+    raw = CLEAN_ROOT_CONFIG.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != pinned_hash:
+        raise ImageVerificationError("clean-root runtime contract digest mismatch")
+    expected = json.loads(raw)
+    if expected["schema_version"] != "npa.curobo.clean-root-config.v1":
+        raise ImageVerificationError("unsupported clean-root runtime contract")
+    findings = []
+    if len(layers) != expected["layer_count"]:
+        findings.append({"code": "clean_root_layer_population_mismatch"})
+    if any(config.get(key) != value for key, value in expected["platform"].items()):
+        findings.append({"code": "clean_root_platform_mismatch"})
+    if not _clean_root_runtime_matches(config, expected["config"]):
+        findings.append({"code": "clean_root_runtime_config_mismatch"})
+    return findings
 
 
 def verify_image(
@@ -310,6 +356,7 @@ def verify_image(
             raise ImageVerificationError(
                 "image config requires root filesystem identity"
             )
+        findings.extend(_clean_root_findings(config, layers, contract))
         if config["rootfs"].get("type") != "layers":
             raise ImageVerificationError("unsupported image root filesystem")
         diff_ids = config.get("rootfs", {}).get("diff_ids")
@@ -548,6 +595,7 @@ def verify_image(
         "contract_sha256": hashlib.sha256(
             json.dumps(contract, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
+        "clean_root_config_sha256": contract.get("clean_root_config_sha256"),
         "cudnn_source_wheel_sha256": cudnn["wheel_sha256"],
         "torch_source_wheel_sha256": torch_contract["wheel_sha256"]
         if torch_contract is not None

@@ -10,6 +10,23 @@ runtime exception to the compiler, shell tools, or their dependencies.
 
 ## Distro closure, including ancestor versions
 
+The current recipe adds a separate `FROM scratch` final stage that copies the
+repaired runtime filesystem without the producer's superseded layers. This is
+an intended packaging repair, not an assertion that a new image has passed its
+gates. All historical images, findings and the four-database source census below
+remain as-issued. The final artifact contract now requires exactly one layer,
+only the measured final package database, and the 164 final notices. It rejects
+the earlier databases/notices if reintroduced as distributed ancestor bytes.
+`clean-root-config.json` pins the measured producer's CUDA environment, driver
+requirements, interpreter, non-root user and launch behavior; the verifier
+checks those fields and the source-revision binding on the saved final image.
+The NVIDIA/Ubuntu provenance remains in the pinned producer and base labels,
+not a claim that NVIDIA maintains or qualifies the resulting NPA image.
+Actual rebuilt-byte, configuration, bootstrap, security and GPU checks are
+still required. The unchanged source census deliberately remains a superset:
+excluding superseded binaries from a future artifact does not erase their
+historical provenance or already incurred source-conveyance obligations.
+
 The immutable census below describes the measured security-refresh reference
 image `sha256:5d34001b80585269a0825acfba62ae4718da7576d38d0f0e8b59c70814df9a6d`,
 not automatic acceptance of a successor. The current recipe installs
@@ -46,9 +63,11 @@ their own GPL obligations without the runtime-library exception; fuse and
 pciutils include GPL2-family components and shared libraries have their own LGPL
 or other terms. Netcat-openbsd is BSD-licensed, not a GPL substitute. The exact
 installed copyright texts, including additional OpenSSL and documentation terms,
-remain authoritative. The saved-image verifier binds 164 resolved final copyright
-files, their explicitly retained ancestor versions, all four package-database
-hashes and this source manifest. An unknown historical version, modified notice,
+remain authoritative. The historical layered-image verifier bound 164 final
+copyright files, their retained ancestor versions, all four package-database
+hashes and this source manifest. The clean-root contract keeps all final notice
+identities and the source manifest, but refuses superseded versions in the
+exported artifact. An unknown historical version, modified notice,
 missing final notice or changed package database fails validation.
 
 `LicenseRef-NPA-cuRobo-Other-Notices` refers to the additional package-specific
