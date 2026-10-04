@@ -21,7 +21,9 @@ config:
   runtime_image: "registry.example.invalid/operator/molmoact2@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   work_root: /tmp/npa-molmoact2
   heldout_fraction: "0.1"
-  libero_eval_episodes: "10"
+  # Preserve LeRobot's upstream evaluation default rather than introducing a
+  # short onboarding-only rollout cap.
+  libero_eval_episodes: "50"
   run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
   prepared_dataset_uri: "{{config.run_root_uri}}prepared/libero-dataset/"
   prepare_report_uri: "{{config.run_root_uri}}reports/prepare.json"

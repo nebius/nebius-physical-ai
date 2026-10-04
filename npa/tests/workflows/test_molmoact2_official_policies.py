@@ -38,6 +38,7 @@ def test_official_libero_workflow_has_five_connected_substantive_stages() -> Non
     assert plan.steps[3].inputs[2]["uri"] == plan.steps[2].outputs[0]["uri"]
     assert plan.steps[4].inputs[0]["uri"] == plan.steps[2].outputs[0]["uri"]
     assert plan.steps[4].inputs[1]["uri"] == plan.steps[3].outputs[0]["uri"]
+    assert plan.steps[2].argv[-1] == "50"
     assert "stub" not in SPEC.read_text(encoding="utf-8").lower()
 
 

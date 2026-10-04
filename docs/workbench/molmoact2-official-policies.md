@@ -63,6 +63,11 @@ complete `step*-merged` checkpoint for the downstream LeRobot rollout. It
 does not supply a locally invented duration, GPU count, or benchmark-success
 threshold.
 
+The rollout stage passes LeRobot's upstream default of 50 evaluation episodes;
+it is not shortened to an onboarding-only trial count. Its success metric is
+reported as factual simulator evidence, not as a convergence benchmark or a
+physical-robot result.
+
 The source also publishes contracts for, but this workflow does not yet accept:
 
 | Capability | Official upstream contract | Status |
