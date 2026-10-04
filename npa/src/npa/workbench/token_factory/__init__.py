@@ -47,6 +47,7 @@ from npa.clients.token_factory import (
     TokenFactoryClient,
     TokenFactoryError,
     split_reasoning,
+    thinking_chat_extra,
 )
 
 if TYPE_CHECKING:
@@ -274,29 +275,36 @@ def caption_images(
     max_images: int = DEFAULT_MAX_IMAGES,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = 0.2,
+    thinking: bool | None = None,
     client: TokenFactoryClient | None = None,
 ) -> CaptionResult:
-    """Caption every image and fail closed on the exact no-image sentinel.
+    """Caption each image with an optional explicit reasoning control.
 
     Args:
-        input_path: Local path or S3 URI containing images.
-        output_path: Requested caption artifact destination.
-        model: Token Factory vision model.
-        instruction: Operator caption instruction.
-        max_images: Maximum number of images to attempt.
-        max_tokens: Maximum visible tokens per answer.
-        temperature: Sampling temperature.
-        client: Optional configured Token Factory client.
+        input_path: Local or S3 image path.
+        output_path: Destination for the caption artifact.
+        model: Hosted vision model ID.
+        instruction: Instruction applied to every image.
+        max_images: Maximum images to process.
+        max_tokens: Output allowance for each provider request.
+        temperature: Provider sampling temperature.
+        thinking: Literal boolean override, or None to retain model defaults.
+        client: Optional configured client.
+
     Returns:
         Every attempted caption and aggregate image-availability status.
+
     Raises:
-        TokenFactoryToolError: Input discovery or hosted inference fails.
+        TokenFactoryToolError: If input or reasoning control is invalid, or a
+            provider call produces no usable caption.
     """
 
     _require(input_path, "input_path")
     _require(output_path, "output_path")
     if max_images <= 0:
         raise TokenFactoryToolError("--max-images must be positive")
+    if thinking is not None and not isinstance(thinking, bool):
+        raise TokenFactoryToolError("thinking must be a literal boolean or None")
     effective_model = model or DEFAULT_VISION_MODEL
     effective_instruction = (instruction or DEFAULT_CAPTION_INSTRUCTION).strip()
     request_instruction = _caption_request_instruction(effective_instruction)
@@ -318,6 +326,7 @@ def caption_images(
                 max_tokens=max_tokens,
                 temperature=temperature,
                 client=active,
+                thinking=thinking,
             )
             for image_path in image_paths
         ]
@@ -402,6 +411,7 @@ def _caption_image(
     max_tokens: int,
     temperature: float,
     client: TokenFactoryClient,
+    thinking: bool | None,
 ) -> CaptionItem:
     label = _relative_label(image_path, local_input)
     content = [
@@ -414,14 +424,32 @@ def _caption_image(
             messages=[{"role": "user", "content": content}],
             temperature=temperature,
             max_tokens=max_tokens,
+            extra=thinking_chat_extra(model, thinking)
+            if thinking is not None
+            else None,
         )
     except TokenFactoryError as exc:
-        raise TokenFactoryToolError(f"captioning {label} failed: {exc}") from exc
+        detail = _caption_failure_detail(str(exc), thinking)
+        raise TokenFactoryToolError(f"captioning {label} failed: {detail}") from exc
     caption = text.strip()
     status = (
         "image_unavailable" if _is_image_unavailable_answer(caption) else "completed"
     )
     return CaptionItem(image=label, caption=caption, status=status)
+
+
+def _caption_failure_detail(detail: str, thinking: bool | None) -> str:
+    if "reasoning-only response with no visible answer" not in detail:
+        return detail
+    if thinking is None:
+        return (
+            "Token Factory returned a reasoning-only response with no visible "
+            "caption. Retry with thinking=False (CLI: --no-thinking)."
+        )
+    return (
+        "Token Factory returned a reasoning-only response with no visible "
+        f"caption despite the explicit thinking={thinking} override."
+    )
 
 
 def generate_text(
