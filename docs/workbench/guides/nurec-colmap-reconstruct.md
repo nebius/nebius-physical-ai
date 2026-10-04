@@ -279,7 +279,7 @@ parent workflow run and rejects reused job, pod, or task identities.
 
 Visual review uses the committed one-shot harness only after objective workload
 checks pass. `freeze` deterministically selects two source-camera positives,
-builds one fixed 32-pixel block-rotation control and one local seam/floater
+builds one fixed global 32-pixel tile-permutation control and one local seam/floater
 control from real rendered frames, and selects four novel-view frames by index
 from one explicitly selected camera trajectory. An independent reviewer must
 open all controls and final frames, review the prompts, and emit the exact
@@ -287,6 +287,15 @@ owner-only freeze-review receipt before `accept-freeze`. Every hosted call then
 conditionally creates and reads back a separate marker under an external S3
 attempt prefix. Run `final` once only when calibration has TP=2, TN=2, FP=0,
 and FN=0:
+
+The permutation moves tiles across the image; the older row-major cyclic
+rotation mostly translated a coherent photograph and is not a reliable known
+negative. Preserve any old freeze and its labels as rejected or unresolved
+evidence. A revised control needs a new freeze and independent pixel review,
+not relabeling or a changed threshold. A seam added to an already poor render
+does not isolate sensitivity to that seam. These small control populations do
+not establish calibrated model quality. Diagnostic review of a failed workload
+is audit-only and cannot replace the objective quality gates.
 
 ```bash
 npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py freeze \
@@ -333,6 +342,11 @@ timing, finish/usage metadata, and a transport manifest. Final execution
 rebuilds each request and re-derives each score/rationale from raw response
 bytes, requires the complete attempt set, and rejects a calibration from any
 other freeze.
+
+Response envelopes and embedded verdict JSON reject duplicate keys, including
+identical repeats, and any nonempty or malformed refusal field. A refused or
+ambiguous response is retained as a failure, never converted to a valid score;
+the attempt remains consumed and cannot be retried.
 
 The converter image fetches its immutable, hash-locked Python dependencies on
 first use. Downloads require no artificial credential gate. A writable cache

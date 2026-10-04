@@ -160,6 +160,37 @@ def _uniform_controls(
     return controls
 
 
+def _block_order(count: int) -> list[int]:
+    order = sorted(
+        range(count),
+        key=lambda index: hashlib.sha256(
+            f"ncore-global-permutation-32-v1:{index}".encode()
+        ).digest(),
+    )
+    for index in range(count):
+        if order[index] == index:
+            neighbor = (index + 1) % count
+            order[index], order[neighbor] = order[neighbor], order[index]
+    return order
+
+
+def _scramble_blocks(image: Image.Image) -> Image.Image:
+    if image.width <= 32 or image.height <= 32:
+        raise VlmEvidenceError("block control needs two-dimensional tiles")
+    boxes = [
+        (x, y, min(x + 32, image.width), min(y + 32, image.height))
+        for y in range(0, image.height, 32)
+        for x in range(0, image.width, 32)
+    ]
+    tiles = [image.crop(box) for box in boxes]
+    transformed = Image.new("RGB", image.size)
+    for box, origin in zip(boxes, _block_order(len(boxes)), strict=True):
+        width = box[2] - box[0]
+        height = box[3] - box[1]
+        transformed.paste(tiles[origin].resize((width, height)), box[:2])
+    return transformed
+
+
 def _block_corrupt(selected: list[Path]) -> list[bytes]:
     controls = []
     for path in selected:
@@ -167,21 +198,7 @@ def _block_corrupt(selected: list[Path]) -> list[bytes]:
             original, _ = _image_bytes(path)
             with Image.open(path) as source:
                 image = source.convert("RGB")
-                boxes = [
-                    (x, y, min(x + 32, image.width), min(y + 32, image.height))
-                    for y in range(0, image.height, 32)
-                    for x in range(0, image.width, 32)
-                ]
-                if len(boxes) < 2:
-                    transformed = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-                else:
-                    tiles = [image.crop(box) for box in boxes]
-                    transformed = Image.new("RGB", image.size)
-                    rotated = tiles[1:] + tiles[:1]
-                    for box, tile in zip(boxes, rotated, strict=True):
-                        width = box[2] - box[0]
-                        height = box[3] - box[1]
-                        transformed.paste(tile.resize((width, height)), box[:2])
+                transformed = _scramble_blocks(image)
                 from io import BytesIO
 
                 stream = BytesIO()
@@ -312,7 +329,9 @@ def freeze(args: argparse.Namespace) -> dict[str, Any]:
                     [_image_bytes(path)[0] for path in selected],
                 )
             )
-        roles.append(("block-rotate-32", False, _block_corrupt(positives[1][1])))
+        roles.append(
+            ("block-global-permutation-32-v1", False, _block_corrupt(positives[1][1]))
+        )
     render_camera, render_frames = _render_trajectory(
         args.render_dir, args.render_camera
     )
@@ -476,16 +495,34 @@ def _validate_rationale(value: Any) -> str:
     return rationale
 
 
-def _response_semantics(response_bytes: bytes) -> dict[str, Any]:
+def _unique_response_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    fields = {}
+    for key, value in pairs:
+        if key in fields:
+            raise VlmEvidenceError("hosted VLM response contains a duplicate key")
+        fields[key] = value
+    return fields
+
+
+def _response_fields(response_bytes: bytes) -> tuple[dict, dict, dict]:
     try:
-        response_payload = json.loads(response_bytes)
+        response_payload = json.loads(
+            response_bytes, object_pairs_hook=_unique_response_fields
+        )
         choices = response_payload["choices"]
         if not isinstance(choices, list) or len(choices) != 1:
             raise TypeError
         choice = choices[0]
-        message = json.loads(choice["message"]["content"])
-        served_model = response_payload["model"]
-        usage = response_payload["usage"]
+        provider_message = choice["message"]
+        if not isinstance(provider_message, dict):
+            raise TypeError
+        if provider_message.get("refusal") not in (None, ""):
+            raise VlmEvidenceError("hosted VLM response contains a refusal")
+        message = json.loads(
+            provider_message["content"], object_pairs_hook=_unique_response_fields
+        )
+        response_payload["model"]
+        response_payload["usage"]
     except (
         KeyError,
         IndexError,
@@ -494,6 +531,13 @@ def _response_semantics(response_bytes: bytes) -> dict[str, Any]:
         json.JSONDecodeError,
     ) as exc:
         raise VlmEvidenceError("hosted VLM response schema differs") from exc
+    return response_payload, choice, message
+
+
+def _response_semantics(response_bytes: bytes) -> dict[str, Any]:
+    response_payload, choice, message = _response_fields(response_bytes)
+    served_model = response_payload["model"]
+    usage = response_payload["usage"]
     if served_model != MODEL or choice.get("finish_reason") != "stop":
         raise VlmEvidenceError("hosted VLM model or finish reason differs")
     score = message.get("score") if isinstance(message, dict) else None

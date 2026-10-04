@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+from io import BytesIO
 import json
 from pathlib import Path
 import sys
@@ -81,6 +83,122 @@ def _response(*, model: str = vlm_evidence.MODEL):
         ],
         "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
     }
+
+
+def _ambiguous_response(corruption: str) -> bytes:
+    payload = _response()
+    message = payload["choices"][0]["message"]
+    if corruption == "content-score":
+        message["content"] = message["content"].replace(
+            '"score": 0.9', '"score": 0.1, "score": 0.9'
+        )
+    elif corruption == "content-success":
+        message["content"] = message["content"].replace(
+            '"success": true', '"success": false, "success": true'
+        )
+    elif corruption == "refusal":
+        message["refusal"] = "I cannot evaluate this request."
+    raw = json.dumps(payload)
+    duplicates = {
+        "envelope-model": ('"model": ', '"model": "other/model", "model": '),
+        "nested-finish": (
+            '"finish_reason": "stop"',
+            '"finish_reason": "length", "finish_reason": "stop"',
+        ),
+        "nested-usage": (
+            '"prompt_tokens": 10',
+            '"prompt_tokens": 1, "prompt_tokens": 10',
+        ),
+        "same-key": ('"score": 0.9', '"score": 0.9, "score": 0.9'),
+    }
+    if corruption == "same-key":
+        before, after = duplicates[corruption]
+        message["content"] = message["content"].replace(before, after)
+        raw = json.dumps(payload)
+    elif corruption in duplicates:
+        raw = raw.replace(*duplicates[corruption])
+    return raw.encode()
+
+
+def _one_shot_arguments(root, records):
+    return {
+        "root": root,
+        "attempt_id": "strict-control",
+        "freeze_sha256": "a" * 64,
+        "purpose": "calibration",
+        "frame_records": records,
+        "task": "Review visible coherence.",
+        "rubric": "Use visible pixels only.",
+    }
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "content-score",
+        "content-success",
+        "envelope-model",
+        "nested-finish",
+        "nested-usage",
+        "same-key",
+        "refusal",
+    ],
+)
+def test_one_shot_rejects_ambiguous_json_and_refusal(monkeypatch, tmp_path, corruption):
+    root, records = _root(tmp_path)
+    storage = _Storage()
+    raw = _ambiguous_response(corruption)
+    calls = []
+
+    def respond(*args):
+        calls.append(args)
+        return httpx.Response(200, content=raw)
+
+    monkeypatch.setattr(vlm_evidence, "_post_hosted_bytes", respond)
+    arguments = _one_shot_arguments(root, records)
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="duplicate|refusal"):
+        vlm_evidence._call_once(
+            **arguments,
+            api_key="not-retained",
+            external_attempt_prefix="s3://private/run/vlm/",
+            storage_client=storage,
+        )
+    transport = root / "transport/strict-control"
+    assert (transport / "response.json").read_bytes() == raw
+    outcome = json.loads((transport / "outcome.json").read_bytes())
+    assert outcome["status"] == "response_failed"
+    assert outcome["response_sha256"] == vlm_evidence._sha_bytes(raw)
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="duplicate|refusal"):
+        vlm_evidence._verified_transport(**arguments)
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="retry is prohibited"):
+        vlm_evidence._call_once(
+            **arguments,
+            api_key="not-retained",
+            external_attempt_prefix="s3://private/run/vlm/",
+            storage_client=storage,
+        )
+    assert len(calls) == 1 and len(storage.objects) == 1
+
+
+@pytest.mark.parametrize("score", [0.0, 0.2, 0.8, 0.9, 1.0])
+@pytest.mark.parametrize("refusal", [None, ""])
+def test_strict_response_preserves_positive_and_negative_scores(score, refusal):
+    payload = _response()
+    message = payload["choices"][0]["message"]
+    verdict = json.loads(message["content"])
+    verdict.update(score=score, success=score >= vlm_evidence.THRESHOLD)
+    message.update(content=json.dumps(verdict), refusal=refusal)
+    result = vlm_evidence._response_semantics(json.dumps(payload).encode())
+    assert result["score"] == score
+    assert result["success"] is (score >= vlm_evidence.THRESHOLD)
+
+
+@pytest.mark.parametrize("refusal", [False, 0, [], {}, ["refused"], "refused"])
+def test_response_refusal_is_not_accepted_as_valid_content(refusal):
+    payload = _response()
+    payload["choices"][0]["message"]["refusal"] = refusal
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="refusal"):
+        vlm_evidence._response_semantics(json.dumps(payload).encode())
 
 
 def test_one_shot_call_retains_exact_transport_without_labels(
@@ -181,6 +299,45 @@ def test_block_control_is_deterministic_and_nonidentical(tmp_path: Path) -> None
     assert first == second
     assert first[0] != vlm_evidence._image_bytes(source)[0]
     assert vlm_evidence._indices(10) == [0, 3, 6, 9]
+
+
+def test_block_control_breaks_global_geometry_not_just_translation(tmp_path):
+    source = tmp_path / "coordinate-grid.png"
+    image = Image.new("RGB", (256, 192))
+    for index in range(48):
+        column, row = index % 8, index // 8
+        image.paste(
+            (index, column, row),
+            (column * 32, row * 32, (column + 1) * 32, (row + 1) * 32),
+        )
+    image.save(source)
+    body = vlm_evidence._block_corrupt([source])[0]
+    with Image.open(BytesIO(body)) as decoded:
+        order = [
+            decoded.getpixel((index % 8 * 32 + 16, index // 8 * 32 + 16))[0]
+            for index in range(48)
+        ]
+    assert sorted(order) == list(range(48))
+    assert all(destination != origin for destination, origin in enumerate(order))
+    displacements = Counter(
+        (origin % 8 - destination % 8, origin // 8 - destination // 8)
+        for destination, origin in enumerate(order)
+    )
+    assert max(displacements.values()) < 24
+    preserved_neighbors = sum(
+        right == left + 1 for left, right in zip(order, order[1:])
+    )
+    assert preserved_neighbors < 12
+
+
+@pytest.mark.parametrize("size", [(1, 1), (32, 32), (32, 128), (128, 32)])
+def test_block_control_rejects_images_without_two_dimensional_tiles(tmp_path, size):
+    source = tmp_path / "tiny.png"
+    image = Image.new("RGB", size)
+    image.putpixel((0, 0), (1, 2, 3))
+    image.save(source)
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="two-dimensional"):
+        vlm_evidence._block_corrupt([source])
 
 
 def test_render_defect_control_is_deterministic_and_visibly_changed(
