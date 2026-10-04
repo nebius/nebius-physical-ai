@@ -1,0 +1,7 @@
+{
+  "world_size": 16,
+  "hosts": 2,
+  "backend": "nccl",
+  "all_reduce_sum": 136.0,
+  "status": "passed"
+}

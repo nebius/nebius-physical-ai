@@ -68,4 +68,8 @@ and SHA-256 checks for every training archive and 515 additional evaluation,
 visualization and telemetry files. Raw operational identifiers stay private;
 the public records retain numeric evidence and source hashes. Both owned GPU
 VMs were stopped after terminal jobs, empty queues and evidence preservation.
-Checkpoint disks and private archives remain retained.
+Checkpoint disks and private archives were retained at that point. The later
+[post-merge cleanup](../cosmos3-wam-soperator-32/post-merge-cleanup.json) removed
+them on October 2 at the operator's request. The committed numeric evidence
+remains reproducible with the reducer above; a fresh GPU run downloads the
+pinned inputs and trains new checkpoints.

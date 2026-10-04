@@ -1,0 +1,63 @@
+{
+  "schema": "npa.cosmos3.wam-offline-validation.v1",
+  "source_revision": "eb8be2d08475096baeed5269d1738dbd25806dab",
+  "environment": {
+    "os": "Ubuntu 24.04",
+    "architecture": "x86_64, native",
+    "python": "3.12.3",
+    "cpu_vcpus": 8,
+    "memory_gib": 32,
+    "gpus": 0,
+    "user": "unprivileged",
+    "torch": "2.14.0+cpu",
+    "dependency_constraints": "npa/ci/requirements.txt"
+  },
+  "precheck": {
+    "passed": 270,
+    "seconds": 4.74
+  },
+  "full_suite": {
+    "passed": 37258,
+    "skipped": 186,
+    "xpassed": 1,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 1378.54,
+    "selected": "Full unit suite with repository live/GPU marker exclusions, four pytest workers."
+  },
+  "security_regressions": {
+    "passed": 898,
+    "skipped": 0,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 31.09,
+    "scope": "Exact pre-PR security regression list, including real CPU checkpoint decoding."
+  },
+  "previous_native_attempt": {
+    "passed": 37257,
+    "failed": 1,
+    "skipped": 186,
+    "xpassed": 1,
+    "seconds": 1419.41,
+    "failure": "Rerun first-use welcome text preceded a successful verification line. The same assertion failed on unchanged main with a fresh configuration; the corrected assertion and all recording content checks passed in a fresh configuration."
+  },
+  "private_sources_sha256": {
+    "results/full-tests-exit.txt": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "results/full-tests.xml": "189050acc2644295f5e3cccbd6d055538599267c6e2f1fac1af805e82d3a5563",
+    "results/packages.txt": "5789d61004029febc66cfef628040b16b1df20fea9d7185cc10019ce5d6cc82f",
+    "results/security-tests-exit.txt": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "results/security-tests.xml": "5bc69e396099c3aaa728adce9eaa35ecca229694c576ce9ba89cd093e3f1f49e",
+    "results/source-sha.txt": "a08dfffb64ec2bdf485fe4388478a7cca73d3a8d7cc4c72c1bc70b85e53544a2",
+    "run.log": "0f5edb4ddf8831e92967f9283ef18bebb7c3b54b94f3ca5c523fe88b306f360c",
+    "service.txt": "f18dede16304585b562247623d7d682e048a0485142b4860b3798f8ee070cb2c"
+  },
+  "cpu_validation_cleanup": {
+    "phase": "completed",
+    "validation_preserved": true,
+    "removed_cpu_instances": 1,
+    "removed_disks": 1,
+    "provider_verified_absent": true,
+    "observed_unix": 1790979962.24487
+  },
+  "scope": "CPU-only repository validation. GPU training and communication qualification are recorded separately."
+}

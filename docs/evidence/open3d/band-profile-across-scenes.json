@@ -1,0 +1,89 @@
+{
+  "superseded_conclusion_notice": "The measurements in this file are unaltered and still stand. The `note` text recorded inside each scene is the tool's output at the time, and two of its claims have since been retracted: that sample spacing cannot explain area in the far band, and that the reading has no false positive so an area it flags is invented. Both are refuted by irregular-density-counterexample.json, where a cube that is exactly its own ground truth reads 0.4169 in the far band with nothing invented in it. The notes are kept verbatim as a record of what was reported, not as current guidance; the current wording is in capability-record-support-claim-correction.json.",
+  "finding": {
+    "coverage_cannot_separate_the_cases": "Cropping moved coverage by 0.00e+00 on the invented shell and 5.36e-04 on the complete capture. Both are negligible and the smaller belongs to the case where correct geometry was destroyed, so coverage is not evidence either way.",
+    "headline_fraction_cannot_separate_the_cases": "0.5273 against 0.2027: the same order of magnitude, so no threshold on this number alone distinguishes an extrapolated shell from discretization.",
+    "readings": {
+      "armadillo_complete": "near-threshold surface",
+      "demo_scans": "extrapolated shell",
+      "eagle": "undecided"
+    },
+    "share_beyond_three_voxels_does": "0.7297 against 0.0000."
+  },
+  "scenes": {
+    "armadillo_complete": {
+      "after_crop_unsupported_area_fraction": 0.0,
+      "coverage_after": 0.992604942063109,
+      "coverage_before": 0.993141169072376,
+      "coverage_movement": 0.0005362270092670318,
+      "crop_justification": {
+        "note": "The unsupported area was concentrated within three voxels of a sample, which is where a correct surface reconstructed from samples of this spacing also falls. The crop may have removed correct geometry, and coverage cannot rule that out. Raise --support-distance-factor to 1.5 or 2.0, or pass 0, unless the tighter crop is wanted deliberately. This reading is a lower bound and not a clean bill of health: it cannot see fabrication below the sensitivity floor, which is setup-dependent, so a small invented region reads exactly like none at all.",
+        "removed_surface_reads_as": "near-threshold surface",
+        "undecided_band": [
+          0.05,
+          0.2
+        ],
+        "unsupported_area_share_beyond_3_voxels": 0.0,
+        "vertex_fraction_removed": 0.0833182100386838,
+        "vertices_removed": 43615
+      },
+      "max_vertex_distance_in_voxels": 2.295832163329117,
+      "samples": 205137,
+      "unsupported_area_beyond_1_5_voxels": 0.007123920448913504,
+      "unsupported_area_beyond_3_voxels": 0.0,
+      "unsupported_area_fraction": 0.20268153174393094,
+      "vertex_distance_to_ground_truth_in_voxels": {
+        "max": 0.7397960291461196,
+        "median": 0.02051271752149966,
+        "p99": 0.16382400812799697
+      },
+      "voxel_size": 0.334902112238427
+    },
+    "demo_scans": {
+      "after_crop_unsupported_area_fraction": 0.0,
+      "coverage_after": 0.9927456237186564,
+      "coverage_before": 0.9927456237186564,
+      "coverage_movement": 0.0,
+      "crop_justification": {
+        "note": "Most of the unsupported area lay more than three voxels from any sample, which sample spacing cannot explain, so the crop removed invented surface. This direction has no measured false positive: across twelve zero-error reconstructions spanning two geometries, two sampling schemes and voxel-to-spacing ratios from 1 to 3, none read as a shell. So an area called invented above this band is invented.",
+        "removed_surface_reads_as": "extrapolated shell",
+        "undecided_band": [
+          0.05,
+          0.2
+        ],
+        "unsupported_area_share_beyond_3_voxels": 0.7297397768448516,
+        "vertex_fraction_removed": 0.19969586705045347,
+        "vertices_removed": 3677
+      },
+      "max_vertex_distance_in_voxels": 18.10675848320032,
+      "samples": 6341,
+      "unsupported_area_beyond_1_5_voxels": 0.48415286720543543,
+      "unsupported_area_beyond_3_voxels": 0.3848090672451354,
+      "unsupported_area_fraction": 0.5273236836683344,
+      "voxel_size": 0.05
+    },
+    "eagle": {
+      "after_crop_unsupported_area_fraction": 0.0,
+      "coverage_after": 0.9964043278494146,
+      "coverage_before": 0.9968252556691863,
+      "coverage_movement": 0.00042092781977176585,
+      "crop_justification": {
+        "note": "This share, 0.1012, is inside the undecided band [0.05, 0.2] around the reporting boundary of 0.1, so there is no reading here worth acting on. Below this band a real fabrication reads as a clean surface, which is the error worth protecting against, and that is why the band declines rather than guesses. Read unsupported_area_beyond_1_5_voxels and unsupported_area_beyond_3_voxels directly and judge against the sample spacing of this capture: area a long way past the voxel is invented, area just past it is where a correct surface also falls.",
+        "removed_surface_reads_as": "undecided",
+        "undecided_band": [
+          0.05,
+          0.2
+        ],
+        "unsupported_area_share_beyond_3_voxels": 0.10121299711488799,
+        "vertex_fraction_removed": 0.07446892045630932,
+        "vertices_removed": 40780
+      },
+      "max_vertex_distance_in_voxels": 5.327922641467636,
+      "samples": 337350,
+      "unsupported_area_beyond_1_5_voxels": 0.06420360495764633,
+      "unsupported_area_beyond_3_voxels": 0.012643426637669505,
+      "unsupported_area_fraction": 0.12491900248065782,
+      "voxel_size": 0.019697681555263743
+    }
+  }
+}

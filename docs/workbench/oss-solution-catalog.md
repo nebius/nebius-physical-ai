@@ -30,6 +30,7 @@ unique and must be tested with its own upstream-named capabilities.
 | flex-pi (**accepted public image**) | `geyan21/flex-pi` `20c1b2b…` | strict released-checkpoint action-only inference | `actions.json` + input/result provenance | `flex-pi-b200-inference.yaml` / `flex-pi-rtxpro-inference.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | evo trajectory evaluation | `MichaelGrupp/evo` `8dd6cfe0…` (`v1.35.1`) | `evo_ape_rpe_trajectory_evaluation` | metric archives + matched PNGs + `evo_trajectory_evaluation.json` | `byof-evo.yaml` |
+| AprilTag 3 | `AprilRobotics/apriltag` `94be7839…` (`v3.4.5`) | `apriltag_real_image_fiducial_detection` | labeled corner metrics + camera-consumer records + annotated PNGs + `apriltag_fiducial_evaluation.json` | `byof-apriltag.yaml` |
 | robomimic | `ARISE-Initiative/robomimic` `d309eae…` | `lift_ph_lowdim_checkpoint_reload_action` (deferred) | `robomimic-smoke.json` (not produced) | `byof-robomimic.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
@@ -68,6 +69,7 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
 | evo | `evo_ape` / `evo_rpe` / `evo_traj` | **live-qualified candidate** | `evo-live-20260920t0111z`: digest-pinned CPU Kubernetes execution passed 2 positive and 2 negative controls, decoded 10 native result archives, preserved native KITTI plots plus hash-linked labeled review copies, and passed identify-first hosted-VLM review after exact-prompt cross-swap controls; registry admission remains a maintainer decision |
+| AprilTag 3 | `apriltag_real_image_fiducial_detection` | **live-qualified private-image candidate** | Standard SkyPilot CPU execution matched all 47 upstream labels across three photographs, rejected blank/noise controls, and reproduced the complete overlay pixels covered by retained calibrated visual review; registry admission and public image publication are not claimed |
 | Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **accepted** | `byof-open-dreamer-mc-20260726T013512Z` (real Minecraft/VPT, jax 0.10.1, 2×RTX PRO 6000 Blackwell, mesh `{data:2, model:1}`) |
 | Open Dreamer | `minecraft_vpt_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` minecraft_vpt batch `[48,24,128,128,3]` sharded across 2 devices) |
 | Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0, 15000 steps on real Minecraft; reconstruction closely tracks gameplay — sky/grass/trees/hotbar, see `gt_decoded`) |
@@ -384,6 +386,55 @@ identity-labeled review copies, while the corresponding `*_native` entries are
 evo's untouched maps. Review entries link back through `source_path` and
 `source_sha256`; consumers must follow those fields rather than infer provenance
 from the key suffix.
+
+### AprilTag 3 fiducial detection
+
+NPA pins `AprilRobotics/apriltag` release `v3.4.5`
+(`94be783968e5091bcc9972c72c84fd63efce2935`) under BSD-2-Clause. The
+representative upstream test photographs depict NASA Swarmathon and are
+separately identified upstream as CC-BY-SA-2.0. This is an operator-built BYOF
+candidate; no container-image publication is claimed. The derived
+[CPU workload proof](evidence/apriltag-fiducial/README.md) retains the required
+photo attribution and share-alike license.
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `native_apriltag_ctest` | accepted (live CPU) | Pinned native detector regression suite passed 3/3 in the digest-pinned Kubernetes workload |
+| `apriltag_real_image_fiducial_detection` | accepted upstream-parity gate (live CPU) | Reproduced all 47 recorded `tag36h11` IDs/corners across three photographs; precision/recall 1.0 and the 0.000050 px maximum residual describe parity with four-decimal upstream records, not localization accuracy (upstream tolerance: 0.1 px) |
+| `blank_and_noise_false_positive_controls` | accepted objective gate (live CPU) | Blank and fixed-seed random-noise images both produced zero detections |
+| `camera_consumer_observation_export` | accepted (live CPU) | 47 source-hashed records with IDs, centers, ordered corners, margins, and hamming distances |
+| `source_linked_annotation_capture` | accepted objective bytes; retained calibrated presentation review | Three source-bound annotated PNGs match the complete overlay pixels in the later qualified Kimi-K3 review sheets; no fresh VLM call was made |
+
+The 2026-10-02 standard SkyPilot CPU rerun used client source
+`3301aa36eb9f386dcca067fc709de3118149c504` and the qualified private image index
+`sha256:7bb4606386f4487eeeb6953ee5843a1e4698a485eac4cde3cbdd7f3a69d6612e`,
+built from `d0057c80bd19563c2484bd793d9f8ef0a443ce4f`. Its recipe and smoke
+commands match the executing client. All 24 output objects were downloaded and
+rehashed. Independent checks matched 47 detections and 376 corner coordinates,
+with aggregate residual RMSE `0.0000273889 px`, zero false positives/negatives,
+and three passing native CTests. The actual task image and CPU requests were
+observed; owned task, controller, and pull-secret cleanup was verified. The
+pod observer reported a connection error on shutdown, retained separately from
+the successful workload and independent resource-absence checks.
+
+Earlier hosted-judge calibration failed, and that attempt's final review was
+correctly gated off; the [original CPU proof](evidence/apriltag-fiducial/README.md)
+retains that history. The later
+[immutable calibrated visual proof](https://github.com/nebius/nebius-physical-ai/blob/e5f4210090dac2d1a1880bdffdc33a9e042c102b/docs/testing/evidence/apriltag-kimi-k3-production-census/README.md)
+records four disclosed controls and four committed holdout cases passing before
+all three production sheets scored `0.95`. The fresh overlays match the entire
+overlay pixels embedded in those retained sheets. Reusing that presentation
+evidence makes no new model-quality claim: the production census overlaps
+calibration inputs and is not an independent holdout or generalization estimate.
+
+The detector produces image-space fiducial observations, not a camera-pose or
+navigation-success claim. Pose accuracy additionally requires calibrated
+intrinsics and known tag size/layout. The three real photographs do not prove
+generalization to arbitrary cameras, lighting, motion blur, occlusion, or tag
+families. The exact image was qualified for private delivery and this CPU
+workflow, including complete-byte review with recorded finding dispositions.
+Registry admission remains a maintainer decision; public image publication and
+current-head CI readiness are not claimed by these workload results.
 
 ### robomimic
 

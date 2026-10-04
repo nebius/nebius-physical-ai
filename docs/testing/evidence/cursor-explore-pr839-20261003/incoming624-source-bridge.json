@@ -1,0 +1,99 @@
+{
+  "schema": "cursor-explore.incoming624-source-bridge/v1",
+  "execution_head": "5097b90f2b4dd4073e33fa3d3e2d8304c646c6ef",
+  "execution_tree": "fedad5d56c8fe57cc891166529158c29d77c3b54",
+  "incoming_main": "e1f627dfd54c961cbe10d82084f97e334b9e12c9",
+  "previous_published_head": "59f7c35d22fda5e17323738c015c3819cfd0327b",
+  "affected_cpu_tests": {
+    "passed": 180,
+    "skipped": 1,
+    "skip_scope": "Inherited opt-in local-model/GPU control; quiet output does not retain per-node skip identity",
+    "full_suite": false
+  },
+  "new_hosted_requests": 0,
+  "original_hosted_execution_heads": [
+    "50111ebcb9a8604c63ad6cd9d702c3c703044e7d",
+    "0b265c0cf422dbc24678f57ce7d391aadf21009d"
+  ],
+  "retained_response_controls": {
+    "original_responses": 2,
+    "invalid_score_negatives": 7,
+    "request_object_and_serialized_bytes_equal": true,
+    "raw_response_bytes_equal": true,
+    "scores": [
+      1,
+      0
+    ],
+    "threshold": 0.8,
+    "scope": "Offline replay through actual scalar request/capture/canonical writer and grade, not new hosted inference"
+  },
+  "incoming_test_repair": {
+    "scope": "Two incoming benchmark live-test references replaced with literal MiniMax pin; all existing response/score assertions retained",
+    "path": "npa/tests/e2e/test_token_factory_e2e.py",
+    "sha256": "6d96849836916427fe5e09fe29164aec8b5d282adfd2cfcb72b1aa28d290bb57"
+  },
+  "evaluator": {
+    "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+    "sha256": "dc12f2a44a5c56a0a368de3a2ab421beaf2eb6ee4edb3d89a15384b1f9c42123",
+    "only_existing_ast_changes": [
+      "VlmBenchmarkMetrics",
+      "VlmBenchmarkReport",
+      "benchmark_vlm_eval",
+      "load_benchmark_dataset",
+      "_benchmark_metrics"
+    ],
+    "scalar_request_prompt_transport_parser_result_writer_ast_unchanged": true
+  },
+  "byte_equal_source_bindings": [
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "byte_equal_published_head": true
+    },
+    {
+      "path": "npa/src/npa/workbench/token_factory/__init__.py",
+      "sha256": "1e0ab8fb5d94c95231b41275c16bd54f6b16a8c50499978fffb211766e6d5904",
+      "byte_equal_published_head": true
+    },
+    {
+      "path": "npa/src/npa/cli/workbench/token_factory.py",
+      "sha256": "8744ec5faa80e54e6122b291c698348ca538d2cff6b5dcf7202054b206394aa6",
+      "byte_equal_published_head": true
+    },
+    {
+      "path": "npa/src/npa/sdk/workbench/token_factory.py",
+      "sha256": "58fc897fbc3a93eca88618eb14a1ce47a7d8b3cd8e92593e8e59c1f57ad4bbc0",
+      "byte_equal_published_head": true
+    },
+    {
+      "path": "npa/src/npa/_sdk.py",
+      "sha256": "ccd630c1aab7b3fa790c489c1d08ebe7ec658a12c6dede94d24623d188e1a16d",
+      "byte_equal_published_head": true
+    },
+    {
+      "path": "npa/src/npa/live_verification/token_factory_contract.py",
+      "sha256": "fc2f57b5fdcbb70a99a36fe0905e703990a528c4e565ae3000e3a7f51ad52a21",
+      "byte_equal_published_head": true
+    },
+    {
+      "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+      "sha256": "3ccd5a76addc53841d98fc4b724cd618f9e6c6435482dfdcb80d154301d72faf",
+      "byte_equal_published_head": true
+    },
+    {
+      "path": "npa/pyproject.toml",
+      "sha256": "91e044e814305e8643d3e3bc9216f66d6ccbe7337408b074a2f0ccb0b70329b2",
+      "byte_equal_published_head": true
+    },
+    {
+      "path": "npa/ci/requirements.txt",
+      "sha256": "bb227e55b247618d733633efc93937df9587c8c41316cb9bc2fc63d3ee935a35",
+      "byte_equal_published_head": true
+    }
+  ],
+  "limits": [
+    "Original full and hosted executions retain original SHAs; no final-head full or inference claimed",
+    "Benchmark confusion arithmetic is not judge quality calibration",
+    "Synthetic images and retained transport evidence do not establish robot safety or server-attested image association"
+  ]
+}
