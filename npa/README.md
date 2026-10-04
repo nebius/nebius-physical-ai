@@ -449,6 +449,13 @@ make precheck  # CI pins, lint, formatting, and CI contract regressions
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
 ```
 
+VLM score, loop, and benchmark artifacts disclose that independent human-label
+calibration is not established. Their ordered limitations distinguish sampled
+observations, mean-score loop gates, and fixture/stub inputs from real provider
+evidence. Direct results also emit `provider_call_made`, which is false for
+stub and score-override paths. See the
+[VLM runbook](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#outputs).
+
 Token Factory captions accept `--thinking` and `--no-thinking`; omitting both
 preserves the selected model's defaults. The SDK's `thinking` argument accepts
 a literal boolean or `None`. See the
