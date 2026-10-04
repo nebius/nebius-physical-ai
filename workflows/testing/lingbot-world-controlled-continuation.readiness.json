@@ -23,19 +23,19 @@
   },
   "prerequisites": {
     "output_storage": {
-      "status": "unverified",
-      "reason": "The prior input route is retired because the example asset's provenance was not established. A new private execution scope must prove its selected bucket belongs to the Kubernetes project before the lawful image and sidecar are staged.",
+      "status": "verified",
+      "reason": "The manager-provided private route passed storage-owner and read/write preflight, and the lawful CC0 context image plus checksum-bound sidecar were independently uploaded and read back there. This proves staging, not a completed workflow run.",
       "evidence": [
-        "owned compatibility submission stopped by execution-scope storage-ownership preflight before workload admission (private receipt, 2026-10-04)",
-        "/tmp/npa-onboarding-20261002-lingbot-world/novel-issues.md"
+        "private route scope/storage preflight (2026-10-04)",
+        "private CC0 input and provenance sidecar staging/readback receipt (2026-10-04)"
       ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "The workflow now rejects an input without a source/author/license/source-hash/derivation record bound to its selected bytes. A CC0 candidate and sidecar are privately prepared but must be staged only after a coherent execution scope is supplied.",
+      "status": "verified",
+      "reason": "The selected CC0 image and its source/author/license/source-hash/derivation sidecar are staged under content-addressed private keys. The prepare stage still verifies those exact selected bytes before it creates control arrays.",
       "evidence": [
         "input-provenance contract is covered by npa/tests/workflows/test_lingbot_world.py",
-        "private CC0 input provenance record (2026-10-04)"
+        "private CC0 input and provenance sidecar staging/readback receipt (2026-10-04)"
       ]
     },
     "credentials": {
@@ -47,17 +47,19 @@
       ]
     },
     "source_image": {
-      "status": "verified",
-      "reason": "The exact immutable public npa-lingbot-world image digest passed the selected Kubernetes target pull preflight. The image is a source-and-OSS bootstrap; LingBot weights and tokenizer assets are runtime fetches.",
+      "status": "unverified",
+      "reason": "The public digest resolves but cannot be pulled by the private target's available credentials. Its archived layers also fail the current fail-closed scanner because they retain historical easydict bytes and a stale Debian libssh2 build. A corrected LingBot child with a freshly built, separately scanned private Wan parent is being qualified; it is not published.",
       "evidence": [
-        "npa workbench workflow preflight-images workflows/testing/lingbot-world-controlled-continuation.yaml --infra k8s/<configured-context> --json: verified_target_pull (2026-10-03)"
+        "private target image preflight receipt (2026-10-04): public manifest resolves but target pull is unverified",
+        "public archived-image scanner baseline (2026-10-04): fail-closed findings retained in private evidence"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The upstream topology is eight local FSDP/Ulysses ranks, while the accelerator product is selected through NPA workflow configuration. An owned eight-rank RTX compatibility attempt was rendered and stopped by execution-scope ownership preflight before source staging or workload admission; it is not a B200-equivalence claim. This graph remains unverified until a compatible target admits it and its final MP4/RRD artifacts are independently inspected. No workflow manifest, model output, MP4, RRD, or GPU acceptance result exists for this graph. Historical single-workflow image qualification is not evidence for it.",
+      "reason": "The upstream topology is eight local FSDP/Ulysses ranks, while the accelerator product is selected through NPA workflow configuration. The coherent private route resolves the required compatible eight-GPU configuration, but the prior owned run is VERIFICATION_UNAVAILABLE and has no producer-stage evidence. It must be reconciled from original absence evidence or an explicit release procedure before another launch. This graph remains unverified until a compatible target admits it and its final MP4/RRD artifacts are independently inspected. No workflow manifest, model output, MP4, RRD, or GPU acceptance result exists for this graph. Historical single-workflow image qualification is not evidence for it.",
       "evidence": [
-        "owned compatibility submission: stopped by execution-scope preflight before workload admission (private receipt, 2026-10-04)",
+        "private route scope/GPU preflight (2026-10-04)",
+        "owned run status: VERIFICATION_UNAVAILABLE without producer-stage evidence (private receipt, 2026-10-04)",
         "/tmp/npa-onboarding-20261002-lingbot-world/novel-issues.md"
       ]
     }
