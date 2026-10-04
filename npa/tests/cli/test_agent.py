@@ -4369,6 +4369,20 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
 
     captured: dict[str, object] = {}
     creds = {"service_account_id": "sa", "s3_bucket": "b", "s3_endpoint": "e"}
+    project_region_calls: list[str] = []
+    provider_queries: list[list[str]] = []
+
+    def _project_region(project_id: str) -> str:
+        project_region_calls.append(project_id)
+        assert project_id == "project-1"
+        return "eu-north1"
+
+    def _unexpected_provider_query(argv: list[str], **_kwargs: object) -> None:
+        provider_queries.append(list(argv))
+        raise AssertionError("model-ladder fixture must not query the provider")
+
+    monkeypatch.setattr("npa.clients.nebius.get_project_region", _project_region)
+    monkeypatch.setattr("npa.clients.nebius._run_json", _unexpected_provider_query)
 
     monkeypatch.setattr(
         "npa.cli.agent.resolve_environment",
@@ -4450,6 +4464,8 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
         "MiniMaxAI/MiniMax-M3",
     ):
         assert expected in configured, f"{expected} missing from {configured}"
+    assert project_region_calls == ["project-1"]
+    assert provider_queries == []
 
 
 def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
@@ -4784,6 +4800,20 @@ def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
     """Deploy aborts on a missing SSH key BEFORE any cloud IAM side effects."""
     from npa.cli.agent import deploy_cmd
 
+    project_region_calls: list[str] = []
+    provider_queries: list[list[str]] = []
+
+    def _project_region(project_id: str) -> str:
+        project_region_calls.append(project_id)
+        assert project_id == "project-1"
+        return "us-central1"
+
+    def _unexpected_provider_query(argv: list[str], **_kwargs: object) -> None:
+        provider_queries.append(list(argv))
+        raise AssertionError("missing-key fixture must not query the provider")
+
+    monkeypatch.setattr("npa.clients.nebius.get_project_region", _project_region)
+    monkeypatch.setattr("npa.clients.nebius._run_json", _unexpected_provider_query)
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
         "npa.cli.agent.resolve_environment",
@@ -4820,6 +4850,8 @@ def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
             no_public_https=False,
         )
     assert exc.value.exit_code == 1
+    assert project_region_calls == ["project-1"]
+    assert provider_queries == []
 
 
 def test_deploy_fails_fast_on_missing_terraform(monkeypatch, tmp_path) -> None:
@@ -4876,6 +4908,20 @@ def test_deploy_warns_on_missing_token_factory_key(
     from npa.cli.agent import deploy_cmd
     from npa.clients.nebius import NebiusError
 
+    project_region_calls: list[str] = []
+    provider_queries: list[list[str]] = []
+
+    def _project_region(project_id: str) -> str:
+        project_region_calls.append(project_id)
+        assert project_id == "project-1"
+        return "us-central1"
+
+    def _unexpected_provider_query(argv: list[str], **_kwargs: object) -> None:
+        provider_queries.append(list(argv))
+        raise AssertionError("missing-token fixture must not query the provider")
+
+    monkeypatch.setattr("npa.clients.nebius.get_project_region", _project_region)
+    monkeypatch.setattr("npa.clients.nebius._run_json", _unexpected_provider_query)
     (tmp_path / "id_ed25519.pub").write_text(
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f test\n"
     )
@@ -4918,6 +4964,8 @@ def test_deploy_warns_on_missing_token_factory_key(
         )
     err = capsys.readouterr().err
     assert "503" in err
+    assert project_region_calls == ["project-1"]
+    assert provider_queries == []
 
 
 def test_agent_nebius_auth_result_pass(monkeypatch) -> None:
