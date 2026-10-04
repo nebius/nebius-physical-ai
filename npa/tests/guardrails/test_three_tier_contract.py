@@ -241,6 +241,22 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
     ),
     CapabilityContract(
+        name="openvla/prepare",
+        cli_module="npa.cli.workbench.openvla",
+        cli_callback="prepare_cmd",
+        sdk_module="npa.sdk.workbench.openvla",
+        sdk_attr="prepare",
+        spec_path=SPECS / "openvla-oft-libero.yaml",
+        tool_ref="workbench.openvla.prepare",
+        params=(
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("dataset_name", "dataset_name", "--dataset-name"),
+            _p("task_suite", "task_suite", "--task-suite"),
+            _p("runtime_root", "runtime_root", "--runtime-root"),
+            _p("output_uri", "output_uri", "--output-uri"),
+        ),
+    ),
+    CapabilityContract(
         name="openvla/train",
         cli_module="npa.cli.workbench.openvla",
         cli_callback="train_cmd",

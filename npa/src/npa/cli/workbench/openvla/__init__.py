@@ -29,12 +29,15 @@ def prepare_cmd(
     dataset_uri: str = typer.Option(..., "--dataset-uri"),
     dataset_name: str = typer.Option(..., "--dataset-name"),
     task_suite: str = typer.Option(..., "--task-suite"),
+    runtime_root: str = typer.Option(..., "--runtime-root"),
     output_uri: str = typer.Option(..., "--output-uri"),
 ) -> None:
-    """Inspect real RLDS data and publish normalization provenance."""
+    """Decode real RLDS trajectories and publish normalization provenance."""
     _run(
         pipeline.prepare,
-        pipeline.PrepareConfig(dataset_uri, output_uri, dataset_name, task_suite),
+        pipeline.PrepareConfig(
+            dataset_uri, output_uri, dataset_name, task_suite, runtime_root
+        ),
     )
 
 

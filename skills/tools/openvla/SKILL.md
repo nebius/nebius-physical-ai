@@ -11,7 +11,7 @@ and 8-D proprioception projector; do not pass an OFT adapter to the stock
 OpenVLA decoder or treat a decoder-only checkpoint as compatible.
 
 The native path is `prepare → train → rollout → evaluate → visualize`:
-RLDS/normalization inspection, upstream OFT fine-tuning, closed-loop LIBERO
+pinned-dlimp RLDS trajectory decoding and normalization, upstream OFT fine-tuning, closed-loop LIBERO
 rollout with MP4s, numerical success verification, and factual SVG/CSV
 comparison output. Every stage hands off a hash-bound artifact bundle. Source,
 base model, OFT adapters, LIBERO data, and populated caches are runtime-only.
@@ -19,10 +19,12 @@ Training materializes the exact Hub revision into that cache and calls the
 upstream script through single-node eight-process `torchrun`.
 
 The current pinned OFT package declares an unversioned `moojink/dlimp_openvla`
-direct dependency whose repository has no declared license. The runtime fails
-closed before fetching it; do not claim an OFT train/rollout acceptance until
-the upstream owners publish an authoritative license or permission for a pinned
-revision. This is not an NPA acceptance control.
+direct dependency whose repository has no declared license. Do not fetch it.
+The runtime instead installs Apache-2.0 `kvablack/dlimp` at its immutable
+revision with `--no-deps`, applies the one reviewed `deterministic=True` source
+change, preserves the Apache notice, and runs both ordered parallel-map and
+staged-RLDS decode checks. This resolves the source route only; native GPU
+training and rollout still need their own actual qualification.
 
 ## Interfaces
 

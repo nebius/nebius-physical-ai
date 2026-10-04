@@ -13,11 +13,18 @@ from npa.workflows.byof import openvla_pipeline as pipeline
 
 
 def prepare(
-    *, dataset_uri: str, dataset_name: str, task_suite: str, output_uri: str
+    *,
+    dataset_uri: str,
+    dataset_name: str,
+    task_suite: str,
+    runtime_root: str,
+    output_uri: str,
 ) -> dict[str, Any]:
-    """Inspect RLDS data and publish hash-bound normalization provenance."""
+    """Decode RLDS through pinned dlimp and publish normalization provenance."""
     return pipeline.prepare(
-        pipeline.PrepareConfig(dataset_uri, output_uri, dataset_name, task_suite)
+        pipeline.PrepareConfig(
+            dataset_uri, output_uri, dataset_name, task_suite, runtime_root
+        )
     )
 
 

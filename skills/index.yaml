@@ -775,8 +775,8 @@ skills:
     path: skills/tools/openvla/SKILL.md
     smoke:
       - type: cli_help
-        args: ["workbench", "openvla", "train", "--help"]
-        contains: "dataset-uri"
+        args: ["workbench", "openvla", "prepare", "--help"]
+        contains: "runtime-root"
       - type: file_exists
         path: skills/tools/openvla/SKILL.md
   - name: molmoact
