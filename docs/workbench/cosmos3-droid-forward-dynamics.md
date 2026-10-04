@@ -99,6 +99,13 @@ action loader plus DROID raw width/domain mapping. Artifacts retain both the
 card export commit and actual runtime source revision, so this is not represented
 as a source-level reproduction of the retired commit.
 
+The derivative checkpoint and the card-pinned Wan VAE and Qwen tokenizer were
+each anonymously probed at their immutable revisions using a real payload byte.
+Consequently this workflow does not request `HF_TOKEN` or inherit the generic
+Cosmos guarded-generation access capability. That is an access finding, not a
+redistribution grant; all model bytes remain runtime-fetched and private to the
+operator run.
+
 NPA’s modifications are limited to staging and hash-checking the selected input,
 constructing the documented DROID action format, calling the upstream native
 entrypoint, computing decoded-video diagnostics, and emitting Rerun/provenance

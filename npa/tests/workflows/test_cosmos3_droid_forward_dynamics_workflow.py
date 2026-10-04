@@ -39,12 +39,12 @@ def test_droid_forward_dynamics_has_five_connected_substantive_stages() -> None:
         "workbench.cosmos3.droid_fd_visualize",
     ]
     assert all(TOOL_CATALOG[ref].stub is False for ref in refs)
-    assert TOOL_CATALOG["workbench.cosmos3.droid_fd_predict"].access_capabilities == (
-        "cosmos3",
-    )
-    assert TOOL_CATALOG["workbench.cosmos3.droid_fd_controls"].access_capabilities == (
-        "cosmos3",
-    )
+    # This derivative's checkpoint and the two card-pinned runtime auxiliaries
+    # are anonymously accessible at their immutable revisions. It does not run
+    # the guarded generic Cosmos generation path, so inheriting its gated
+    # ``cosmos3`` access capability would add a false HF_TOKEN prerequisite.
+    assert TOOL_CATALOG["workbench.cosmos3.droid_fd_predict"].access_capabilities == ()
+    assert TOOL_CATALOG["workbench.cosmos3.droid_fd_controls"].access_capabilities == ()
     assert "prepared.json" in str(states["predict_true"]["inputs"])
     predict_argv = TOOL_CATALOG["workbench.cosmos3.droid_fd_predict"].argv_template
     controls_argv = TOOL_CATALOG["workbench.cosmos3.droid_fd_controls"].argv_template
