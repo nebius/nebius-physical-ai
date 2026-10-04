@@ -23,12 +23,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 USER root
+# SkyPilot's Kubernetes bootstrap runs inside this non-root image.  It needs
+# rsync plus passwordless sudo for its own in-pod setup; no host credential is
+# included in the image.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-      build-essential ca-certificates ffmpeg git git-lfs libgl1 libglib2.0-0 \
+      build-essential ca-certificates ffmpeg git git-lfs libgl1 libglib2.0-0 rsync sudo \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && (id -u "${NPA_RUNTIME_USER}" >/dev/null 2>&1 \
         || useradd -m -s /bin/bash -u 1000 "${NPA_RUNTIME_USER}") \
+    && printf '%s ALL=(ALL) NOPASSWD:ALL\n' "${NPA_RUNTIME_USER}" > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
     && install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
       /workspace /workspace/.cache/npa/openvla-oft /opt/npa/openvla-oft \
     && install -d -m 0755 -o root -g root /usr/share/doc/npa-openvla-oft

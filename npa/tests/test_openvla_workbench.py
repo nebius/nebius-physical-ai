@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 from npa.deploy import images
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
@@ -190,6 +191,26 @@ def test_neutral_image_preserves_nonroot_access_to_its_notices() -> None:
         "install -d -m 0755 -o root -g root /usr/share/doc/npa-openvla-oft"
         in dockerfile
     )
+
+
+def test_workflow_resources_declare_the_skypilot_task_container() -> None:
+    """Every native stage gets SkyPilot's named non-root Kubernetes task container."""
+    workflow = (
+        Path(__file__).resolve().parents[2]
+        / "workflows/testing/openvla-oft-libero.yaml"
+    )
+    document = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+    for resource_name, resource in document["resources"].items():
+        pod_spec = resource["kubernetes"]["pod_config"]["spec"]
+        assert pod_spec["automountServiceAccountToken"] is False, resource_name
+        container = pod_spec["containers"][0]
+        assert container["name"] == "ray-node", resource_name
+        assert container["securityContext"] == {
+            "runAsNonRoot": True,
+            "privileged": False,
+            "allowPrivilegeEscalation": False,
+            "capabilities": {"drop": ["ALL"]},
+        }, resource_name
 
 
 def test_private_build_contract_refuses_official_public_pushes() -> None:

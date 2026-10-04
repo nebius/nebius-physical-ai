@@ -42,6 +42,23 @@ resources:
     cpus: 8
     memory: 32Gi
     image: "{{config.runtime_image}}"
+    # SkyPilot's Kubernetes runtime creates and execs this named task container.
+    kubernetes:
+      pod_config:
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: ray-node
+              securityContext:
+                runAsNonRoot: true
+                privileged: false
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
   train:
     cloud: kubernetes
     # The configured NPA route resolves this standard alias to its exact RTX PRO
@@ -51,17 +68,65 @@ resources:
     cpus: 16
     memory: 128Gi
     image: "{{config.runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: ray-node
+              securityContext:
+                runAsNonRoot: true
+                privileged: false
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
   rollout:
     cloud: kubernetes
     accelerators: RTXPRO6000:1
     cpus: 16
     memory: 128Gi
     image: "{{config.runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: ray-node
+              securityContext:
+                runAsNonRoot: true
+                privileged: false
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
   evidence:
     cloud: kubernetes
     cpus: 4
     memory: 16Gi
     image: "{{config.runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: ray-node
+              securityContext:
+                runAsNonRoot: true
+                privileged: false
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
 
 initial: prepare
 

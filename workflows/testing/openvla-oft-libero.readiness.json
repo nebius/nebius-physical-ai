@@ -1,13 +1,14 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "bd6ed747d43be513a73ddcf82b4a6a0da00cf2271f5123399f77f9b32f8c7d79",
+  "workflow_sha256": "fe16a6ebf9146fcb770ba411bfda08743386573de6338869aec163b5967cc8b6",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected; its configured RTX PRO train and rollout profiles retain the same GPU product.",
+      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected; every Kubernetes resource declares SkyPilot's named non-root ray-node task container, and its configured RTX PRO train and rollout profiles retain the same GPU product.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/openvla-oft-libero.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/openvla-oft-libero.yaml --check-render --json"
+        "npa workbench workflow plan-spec workflows/testing/openvla-oft-libero.yaml --waves --check-render --json",
+        "npa/tests/test_openvla_workbench.py::test_workflow_resources_declare_the_skypilot_task_container"
       ]
     },
     "task_fidelity": {
@@ -45,8 +46,8 @@
       ]
     },
     "source_image": {
-      "status": "verified",
-      "reason": "The current neutral private bootstrap image was built with SBOM/provenance, pushed only to the operator-private registry, independently pulled, manifest/config inspected, and nonroot-smoked with the native preparation parser. It remains publication-quarantined; the template requires its immutable private image reference at submission time.",
+      "status": "unverified",
+      "reason": "The prior neutral private bootstrap image was built with SBOM/provenance, pushed only to the operator-private registry, independently pulled, manifest/config inspected, and nonroot-smoked with the native preparation parser. The Dockerfile now carries the required SkyPilot in-pod bootstrap prerequisites, so a replacement private image must repeat those byte and pull gates. It remains publication-quarantined.",
       "evidence": [
         "npa/docker/workbench/openvla-oft/build.sh",
         "docs/workbench/openvla-oft.md"
@@ -54,7 +55,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "No NPA/SkyPilot/Kubernetes execution was submitted because a qualified immutable runtime image and staged RLDS input were unavailable. No simulator metric, benchmark, convergence, or physical-robot claim is made.",
+      "reason": "An owned native prepare submission reached controller launch but the rendered pod omitted SkyPilot's required ray-node container, so the controller could not start a worker and the managed job was cancelled after evidence collection. The workflow and bootstrap now declare the verified Kubernetes contract; replacement-image qualification and a fresh native run are still required. No simulator metric, benchmark, convergence, or physical-robot claim is made.",
       "evidence": [
         "docs/workbench/openvla-oft.md"
       ]
