@@ -265,6 +265,7 @@ def _exercise_dlimp_determinism() -> dict[str, Any]:
                 train=True,
                 shuffle=False,
                 state_obs_keys=("state",),
+                action_proprio_normalization_type="normal",
                 dataset_statistics={
                     "action": {"mean": [0.0, 0.0], "std": [1.0, 1.0]},
                     "proprio": {"mean": [0.0], "std": [1.0]},

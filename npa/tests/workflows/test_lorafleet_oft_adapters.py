@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from pathlib import Path
 
 import pytest
@@ -146,6 +147,12 @@ def test_dlimp_build_recipe_excludes_unlicensed_fork_and_pins_replacement() -> N
     assert "NPA_MODIFICATIONS.md" in recipe
     assert "test -x /usr/bin/ffmpeg" in recipe
     assert "imageio_ffmpeg/binaries/ffmpeg-*" in recipe
+
+
+def test_dlimp_reader_regression_supplies_pinned_oft_normalization_argument() -> None:
+    """Keep the real OFT reader call compatible with its required keyword-only API."""
+    source = inspect.getsource(qualification._exercise_dlimp_determinism)
+    assert 'action_proprio_normalization_type="normal"' in source
 
 
 def test_s3_parser_requires_complete_s3_object_uri() -> None:
