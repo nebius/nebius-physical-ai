@@ -49,7 +49,7 @@
       ]
     },
     "source_image": {
-      "status": "premerge_digest_qualified_rebuild_required",
+      "status": "unverified",
       "reason": "A CPU-only cloud-evidence image for the pre-merge source was built, byte-scanned, functionally exercised, pushed as an immutable private digest, and pulled through the configured Kubernetes imagePullSecret with the required SkyPilot bootstrap attestation. The merged tree changes copied image-context bytes, so it needs a new private digest and the same qualification sequence. Neither digest can qualify the target TensorRT plans.",
       "evidence": [
         "2026-10-04: the pre-merge private build, OCI byte scan, non-root functional adapter check, digest-bound Kubernetes pull preflight, and SkyPilot bootstrap-attestation receipts are retained in operator task evidence; no registry or infrastructure identifier is recorded in this repository.",

@@ -64,6 +64,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",
         "source inventory hashes match; no functional capture validation claimed",
     ],
+    "molmoact2-jetson-thor": [
+        "actual two-camera LIBERO observations are decoded with finite states and split labels",
+        "a target-produced vla-edge compatibility and checksum receipt is bound to the exact engine, runtime, and prepared observations",
+        "target action chunks and Torch-reference actions are numerically verified with measured latency metrics and a factual Rerun recording",
+        "the target receipt must originate on an exact Jetson AGX Thor; this CPU evidence worker does not qualify cloud hardware as Thor",
+    ],
     "open3d": [
         "real RANSAC/FPFH global registration refined by Open3D ICP",
         "recovered transform matches the applied ground-truth pose within 1 deg",

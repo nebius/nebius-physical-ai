@@ -200,6 +200,7 @@ CONTAINER_IMAGE_NAMES = {
     "mjlab": "npa-mjlab",
     "content-agents": "npa-content-agents",
     "ncore": "npa-ncore",
+    "molmoact2-jetson-thor": "npa-molmoact2-jetson-thor",
     "robotwin": "npa-robotwin",
     "libero": "npa-libero",
 }

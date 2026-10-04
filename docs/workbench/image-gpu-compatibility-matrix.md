@@ -159,6 +159,7 @@ likewise predates its current coherent release.
 | `npa-groot` | supported | supported | **verified** [accepted records](#accepted-release-evidence) (inference) | unverified | unverified |
 | `npa-cosmos-curate` | CPU | CPU | CPU | CPU | CPU |
 | `npa-ncore` (unpublished ingestion candidate) | CPU | CPU | CPU | CPU | CPU |
+| `npa-molmoact2-jetson-thor` (private evidence worker; target runtime separate) | CPU only; unqualified image | CPU only; unqualified image | CPU only; unqualified image | CPU only; unqualified image | CPU only; unqualified image |
 | `npa-cosmos-evaluator` | CPU | CPU | CPU | CPU | CPU |
 | `npa-sim2real-control` | CPU | CPU | CPU | CPU | CPU |
 | `npa-antioch` | CPU | CPU | CPU | CPU | CPU |
