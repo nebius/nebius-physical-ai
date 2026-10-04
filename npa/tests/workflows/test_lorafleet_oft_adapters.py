@@ -75,6 +75,77 @@ def test_reconstruction_metadata_rejects_non_exact_or_wrong_rank() -> None:
         qualification._validate_reconstruction_metadata(wrong_rank, suite)
 
 
+def test_licensed_dlimp_provenance_requires_exact_deterministic_override(
+    tmp_path: Path,
+) -> None:
+    """Do not let the historical unlicensed fork return through the image recipe."""
+    source_root = tmp_path / "dlimp"
+    package = source_root / "dlimp"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (source_root / "LICENSE").write_text("Apache license fixture\n", encoding="utf-8")
+    (package / "dataset.py").write_text(
+        "options.deterministic = True\n", encoding="utf-8"
+    )
+    provenance = {
+        "schema": "npa.lorafleet.dlimp-runtime/v1",
+        "source": qualification.DLIMP_REPO,
+        "revision": qualification.DLIMP_REVISION,
+        "license": "Apache-2.0",
+        "license_sha256": qualification._sha256(source_root / "LICENSE"),
+        "original_dataset_sha256": qualification.DLIMP_ORIGINAL_DATASET_SHA256,
+        "modified_dataset_sha256": qualification._sha256(package / "dataset.py"),
+        "modification": {
+            "path": "dlimp/dataset.py",
+            "from": "options.deterministic = False",
+            "to": "options.deterministic = True",
+        },
+    }
+    provenance_path = tmp_path / qualification.DLIMP_PROVENANCE_NAME
+    provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
+
+    original_license = qualification.DLIMP_LICENSE_SHA256
+    original_modified = qualification.DLIMP_DETERMINISTIC_DATASET_SHA256
+    try:
+        qualification.DLIMP_LICENSE_SHA256 = provenance["license_sha256"]
+        qualification.DLIMP_DETERMINISTIC_DATASET_SHA256 = provenance[
+            "modified_dataset_sha256"
+        ]
+        assert (
+            qualification._verify_dlimp_runtime(
+                source_root=source_root,
+                provenance_path=provenance_path,
+                module_path=package / "__init__.py",
+            )["revision"]
+            == qualification.DLIMP_REVISION
+        )
+        (package / "dataset.py").write_text(
+            "options.deterministic = False\n", encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="deterministic source"):
+            qualification._verify_dlimp_runtime(
+                source_root=source_root,
+                provenance_path=provenance_path,
+                module_path=package / "__init__.py",
+            )
+    finally:
+        qualification.DLIMP_LICENSE_SHA256 = original_license
+        qualification.DLIMP_DETERMINISTIC_DATASET_SHA256 = original_modified
+
+
+def test_dlimp_build_recipe_excludes_unlicensed_fork_and_pins_replacement() -> None:
+    """Keep the reviewed dependency route executable by the generic BYOF builder."""
+    recipe = (ROOT / "npa" / "scripts" / "build_lorafleet_oft_adapters.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "pip install --no-cache-dir --no-deps -e /opt/byof" in recipe
+    assert "https://github.com/moojink/dlimp_openvla" not in recipe
+    assert qualification.DLIMP_REPO in recipe
+    assert qualification.DLIMP_REVISION in recipe
+    assert "options.deterministic = True" in recipe
+    assert "NPA_MODIFICATIONS.md" in recipe
+
+
 def test_s3_parser_requires_complete_s3_object_uri() -> None:
     """Avoid accidentally treating a local path or a bucket root as stage input."""
     assert qualification._s3_parts("s3://bucket/prefix/result.json") == (

@@ -13,6 +13,8 @@ image, a common-base serving system, or original NPA research.
 | Reconstruction release | [`LoRAFleet/openvla-oft-libero-reconstructed-r64@0b75d5b`](https://huggingface.co/LoRAFleet/openvla-oft-libero-reconstructed-r64/tree/0b75d5b19ba43ac3efa870bdf830192e98cb4d4e) | LoRAFleet; model card declares MIT | Runtime-fetched rank-64 factors, suite action/proprio heads, statistics, checksum inventory, and reconstruction diagnostics |
 | Base VLA | [`openvla/openvla-7b@47a0ec7`](https://huggingface.co/openvla/openvla-7b/tree/47a0ec7fc4ec123775a391911046cf33cf9ed83f) | OpenVLA authors; MIT as declared by the model card | Runtime-fetched, complete-byte-verified base operand only |
 | OFT runtime | [`moojink/openvla-oft@e4287e9`](https://github.com/moojink/openvla-oft/tree/e4287e94541f459edc4feabc4e181f537cd569a8) | Moo Jin Kim, Chelsea Finn, and Percy Liang; [MIT](https://github.com/moojink/openvla-oft/blob/e4287e94541f459edc4feabc4e181f537cd569a8/LICENSE) | Pinned runtime and its native LIBERO policy/evaluation components |
+| OFT data loader | [`kvablack/dlimp@92e3eca`](https://github.com/kvablack/dlimp/tree/92e3eca97af3b14d0b6aa15182c0dc240407698d) | Kevin Black; [Apache-2.0](https://github.com/kvablack/dlimp/blob/92e3eca97af3b14d0b6aa15182c0dc240407698d/LICENSE) | Licensed parent used in place of the unlicensed historical fork; its LICENSE and a modification notice remain in the private image |
+| OFT transformer runtime | [`moojink/transformers-openvla-oft@bc339d9`](https://github.com/moojink/transformers-openvla-oft/tree/bc339d9ad707454c0c115970db43c260067c61ab) | Moo Jin Kim and Hugging Face Transformers contributors; [Apache-2.0](https://github.com/moojink/transformers-openvla-oft/blob/bc339d9ad707454c0c115970db43c260067c61ab/LICENSE) | Immutable bidirectional-attention runtime dependency, installed by the private image recipe |
 | Original merged policy baselines | four revision-pinned repos recorded in the release [`manifest.json`](https://huggingface.co/LoRAFleet/openvla-oft-libero-reconstructed-r64/blob/0b75d5b19ba43ac3efa870bdf830192e98cb4d4e/manifest.json) | OpenVLA-OFT / moojink; cards declare MIT | Runtime-fetched only for the published-policy baseline stage |
 | Simulator | [`Lifelong-Robot-Learning/LIBERO@8f1084e`](https://github.com/Lifelong-Robot-Learning/LIBERO/tree/8f1084e3132a39270c3a13ebe37270a43ece2a01) | LIBERO contributors; [MIT](https://github.com/Lifelong-Robot-Learning/LIBERO/blob/8f1084e3132a39270c3a13ebe37270a43ece2a01/LICENSE) | Pinned simulation runtime for upstream-native rollouts |
 
@@ -33,6 +35,30 @@ Please credit OpenVLA, OpenVLA-OFT, LoRAFleet, and LIBERO when using any
 artifacts produced from this workflow. The release attributes its randomized
 SVD/FlashTSQR reconstruction implementation to LoRAFleet; this repository does
 not claim to have produced that method or the source checkpoints.
+
+### Licensed dlimp replacement
+
+The upstream OFT project names `moojink/dlimp_openvla` without an immutable
+revision or LICENSE. This integration does **not** fetch or redistribute that
+fork. It uses the verified Apache-2.0 parent
+`kvablack/dlimp@92e3eca97af3b14d0b6aa15182c0dc240407698d` instead. A recursive
+blob-tree comparison established that the only code difference is
+`dlimp/dataset.py`: the fork sets `options.deterministic = True`, while the
+licensed parent sets it to `False`. The private recipe makes only that same
+one-line change, retains the unmodified Apache `LICENSE`, writes
+`NPA_MODIFICATIONS.md`, and records before/after source hashes in
+`npa_lorafleet_dlimp_provenance.json`. The first workflow stage rejects a
+missing, substituted, or non-deterministic loader before downloading model
+payloads. It then runs a delayed multi-worker map and creates a two-step local
+RLDS fixture that the real OFT reader consumes, proving deterministic ordering
+and the replacement loader's actual OFT data path without fetching the
+separately governed training dataset.
+
+[`npa/scripts/build_lorafleet_oft_adapters.sh`](../../npa/scripts/build_lorafleet_oft_adapters.sh)
+is the canonical `--build-command` content for the generic BYOF builder. It
+installs OFT with `--no-deps`, so the historical fork cannot be resolved
+transitively, then pins both licensed replacement sources. The resulting image
+is operator-private; no public registry upload or public image claim is made.
 
 ## Reconstruction and behavioral boundary
 

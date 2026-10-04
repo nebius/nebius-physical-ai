@@ -16,6 +16,8 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -28,6 +30,18 @@ BASE_REPO = "openvla/openvla-7b"
 BASE_REVISION = "47a0ec7fc4ec123775a391911046cf33cf9ed83f"
 OFT_REPO = "https://github.com/moojink/openvla-oft"
 OFT_REVISION = "e4287e94541f459edc4feabc4e181f537cd569a8"
+DLIMP_REPO = "https://github.com/kvablack/dlimp"
+DLIMP_REVISION = "92e3eca97af3b14d0b6aa15182c0dc240407698d"
+DLIMP_LICENSE_SHA256 = (
+    "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+)
+DLIMP_ORIGINAL_DATASET_SHA256 = (
+    "54f7cf110d4ca1300c3c31726ee89d1f02d4105beb0b3520ffa0c0abbda77c42"
+)
+DLIMP_DETERMINISTIC_DATASET_SHA256 = (
+    "86bc13c005112961498170f5258639dd52cc46a7614995aff6b8ef6851803d48"
+)
+DLIMP_PROVENANCE_NAME = "npa_lorafleet_dlimp_provenance.json"
 SCHEMA_VERSION = "npa.lorafleet-oft-adapters/v1"
 SUITE_ORDER = ("spatial", "object", "goal", "10")
 _OPENVLA_CLASSES_REGISTERED = False
@@ -99,6 +113,177 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _verify_dlimp_runtime(
+    *,
+    source_root: Path = Path("/opt/dlimp"),
+    provenance_path: Path = Path(f"/opt/byof/{DLIMP_PROVENANCE_NAME}"),
+    module_path: Path | None = None,
+) -> dict[str, Any]:
+    """Reject a runtime that did not use the pinned licensed deterministic dlimp.
+
+    ``moojink/dlimp_openvla`` is deliberately never fetched. The Apache-2.0
+    upstream parent is byte-identical except for its LICENSE and the original
+    ``options.deterministic`` default, so the image recipe makes that one
+    explicit local modification and records both source file digests.
+    """
+
+    provenance = _json_load(provenance_path)
+    expected = {
+        "schema": "npa.lorafleet.dlimp-runtime/v1",
+        "source": DLIMP_REPO,
+        "revision": DLIMP_REVISION,
+        "license": "Apache-2.0",
+        "license_sha256": DLIMP_LICENSE_SHA256,
+        "original_dataset_sha256": DLIMP_ORIGINAL_DATASET_SHA256,
+        "modified_dataset_sha256": DLIMP_DETERMINISTIC_DATASET_SHA256,
+        "modification": {
+            "path": "dlimp/dataset.py",
+            "from": "options.deterministic = False",
+            "to": "options.deterministic = True",
+        },
+    }
+    if provenance != expected:
+        raise ValueError("dlimp provenance does not match the licensed pinned recipe")
+
+    license_path = source_root / "LICENSE"
+    dataset_path = source_root / "dlimp" / "dataset.py"
+    if _sha256(license_path) != DLIMP_LICENSE_SHA256:
+        raise ValueError("dlimp Apache-2.0 notice is missing or changed")
+    if _sha256(dataset_path) != DLIMP_DETERMINISTIC_DATASET_SHA256:
+        raise ValueError(
+            "dlimp deterministic source modification is missing or changed"
+        )
+    source = dataset_path.read_text(encoding="utf-8")
+    if source.count("options.deterministic = True") != 1 or (
+        "options.deterministic = False" in source
+    ):
+        raise ValueError("dlimp deterministic override is not exact")
+
+    if module_path is None:
+        import dlimp  # type: ignore[import-not-found]
+
+        module_path = Path(str(dlimp.__file__ or ""))
+    try:
+        module_path.resolve().relative_to(source_root.resolve())
+    except ValueError as exc:
+        raise ValueError(
+            "imported dlimp is not the pinned licensed source tree"
+        ) from exc
+    return provenance
+
+
+def _exercise_dlimp_determinism() -> dict[str, Any]:
+    """Run the patched loader through parallel mapping and OFT's real RLDS reader.
+
+    This deliberately creates a tiny local RLDS dataset instead of substituting
+    fixture JSON. It is an image-runtime regression check, not a model-training
+    claim, and avoids downloading the separately governed training data.
+    """
+
+    import dlimp  # type: ignore[import-not-found]
+    from dlimp.dataset import _wrap  # type: ignore[import-not-found]
+    import tensorflow as tf  # type: ignore[import-not-found]
+    import tensorflow_datasets as tfds  # type: ignore[import-not-found]
+    from prismatic.vla.datasets.rlds import dataset as oft_rlds  # type: ignore[import-not-found]
+
+    def delayed(value: Any) -> Any:
+        # A reverse delay makes the assertion meaningful when map ordering is
+        # allowed to float; the dlimp option must keep source order instead.
+        time.sleep((7 - int(value.numpy())) * 0.001)
+        return value
+
+    def mapped(value: Any) -> Any:
+        return tf.py_function(delayed, [value], Tout=tf.int64)
+
+    parallel = _wrap(tf.data.Dataset.from_tensor_slices, False)(
+        tf.range(8, dtype=tf.int64)
+    )._apply_options()
+    parallel = parallel.map(mapped, num_parallel_calls=4)
+    observed_order = [int(value.numpy()) for value in parallel]
+    if parallel.options().deterministic is not True or observed_order != list(range(8)):
+        raise RuntimeError("dlimp parallel map did not preserve deterministic ordering")
+
+    class FixtureRlds(tfds.core.GeneratorBasedBuilder):
+        """A two-step RLDS source consumed through the actual OFT reader."""
+
+        VERSION = tfds.core.Version("1.0.0")
+
+        def _info(self) -> Any:
+            return tfds.core.DatasetInfo(
+                builder=self,
+                features=tfds.features.FeaturesDict(
+                    {
+                        "steps": tfds.features.Dataset(
+                            {
+                                "observation": tfds.features.FeaturesDict(
+                                    {
+                                        "state": tfds.features.Tensor(
+                                            shape=(1,), dtype=tf.float32
+                                        )
+                                    }
+                                ),
+                                "action": tfds.features.Tensor(
+                                    shape=(2,), dtype=tf.float32
+                                ),
+                            }
+                        )
+                    }
+                ),
+            )
+
+        def _split_generators(self, _manager: Any) -> dict[str, Any]:
+            return {"train": self._generate_examples()}
+
+        def _generate_examples(self) -> Iterable[tuple[str, dict[str, Any]]]:
+            yield (
+                "fixture-episode",
+                {
+                    "steps": [
+                        {"observation": {"state": [0.0]}, "action": [0.0, 1.0]},
+                        {"observation": {"state": [1.0]}, "action": [1.0, 0.0]},
+                    ]
+                },
+            )
+
+    with tempfile.TemporaryDirectory(prefix="npa-lorafleet-rlds-") as directory:
+        builder = FixtureRlds(data_dir=directory)
+        builder.download_and_prepare()
+        direct = dlimp.DLataset.from_rlds(
+            builder, split="train", shuffle=False, num_parallel_reads=2
+        )
+        direct_item = next(iter(direct.take(1)))
+        direct_frames = int(tf.shape(direct_item["action"])[0].numpy())
+
+        original_builder = oft_rlds.tfds.builder
+        oft_rlds.tfds.builder = lambda _name, data_dir: builder
+        try:
+            oft_dataset, _ = oft_rlds.make_dataset_from_rlds(
+                "fixture_rlds",
+                directory,
+                train=True,
+                shuffle=False,
+                state_obs_keys=("state",),
+                dataset_statistics={
+                    "action": {"mean": [0.0, 0.0], "std": [1.0, 1.0]},
+                    "proprio": {"mean": [0.0], "std": [1.0]},
+                },
+                num_parallel_reads=2,
+                num_parallel_calls=2,
+            )
+            oft_item = next(iter(oft_dataset.take(1)))
+        finally:
+            oft_rlds.tfds.builder = original_builder
+        oft_frames = int(tf.shape(oft_item["action"])[0].numpy())
+
+    if direct_frames != 2 or oft_frames != 2:
+        raise RuntimeError("dlimp/OFT RLDS regression fixture lost trajectory frames")
+    return {
+        "parallel_map_order": observed_order,
+        "direct_rlds_trajectory_frames": direct_frames,
+        "oft_rlds_trajectory_frames": oft_frames,
+    }
 
 
 def _cache_root() -> Path:
@@ -276,6 +461,8 @@ def _validate_adapter(root: Path, suite: SuiteSpec) -> dict[str, Any]:
 
 def _verify_stage(output: Path) -> None:
     """Fetch and verify all immutable public payloads needed by later stages."""
+    dlimp = _verify_dlimp_runtime()
+    dlimp_regression = _exercise_dlimp_determinism()
     release_root = _snapshot(RELEASE_REPO, RELEASE_REVISION, _release_patterns())
     release_hashes = _required_file_hashes(release_root)
     _check_release_hashes(release_hashes, _expected_release_hashes(release_root))
@@ -306,6 +493,7 @@ def _verify_stage(output: Path) -> None:
             },
             "base": {"repo": BASE_REPO, "revision": BASE_REVISION},
             "upstream": {"repo": OFT_REPO, "revision": OFT_REVISION},
+            "runtime_dependency": {"dlimp": dlimp, "regression": dlimp_regression},
             "hub_commits": commits,
             "publisher_manifest": manifest,
             "suites": suites,
