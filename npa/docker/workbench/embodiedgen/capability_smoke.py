@@ -24,6 +24,14 @@ import trimesh
 from PIL import Image
 
 CAPABILITY = "img3d-cli_trellis_image_to_urdf_pybullet"
+CAPABILITIES_EXERCISED = [
+    "trellis_image_to_mesh_generation",
+    "embodiedgen_urdf_export",
+    "embodiedgen_urdf_to_mjcf_conversion",
+    "collision_geometry_validation",
+    "pybullet_rigid_body_settle",
+    "pybullet_viewable_result",
+]
 DEFAULT_INPUT = (
     "https://raw.githubusercontent.com/HorizonRobotics/EmbodiedGen/"
     "f0124197888c2b733e4eaa65acd81ad9cfda3b79/apps/assets/example_image/sample_00.jpg"
@@ -175,27 +183,7 @@ def collision_meshes(urdf: Path) -> list[dict[str, Any]]:
     return records
 
 
-def convert_to_mjcf(urdf: Path, output: Path) -> dict[str, Any]:
-    """Exercise EmbodiedGen's documented URDF-to-MJCF converter.
-
-    PyBullet consumes the exact generated URDF below. The separate MJCF export
-    is an upstream-supported handoff for MuJoCo/Genesis; it is deliberately not
-    described as a MuJoCo physics result.
-    """
-    from embodied_gen.data.asset_converter import cvt_embodiedgen_asset_to_anysim
-    from embodied_gen.utils.enum import AssetType
-
-    target_dir = output / "mjcf"
-    converted = cvt_embodiedgen_asset_to_anysim(
-        urdf_files=[str(urdf)],
-        target_dirs=[str(target_dir)],
-        target_type=AssetType.MJCF,
-        source_type=AssetType.URDF,
-        overwrite=True,
-    )
-    converted_path = Path(converted[str(urdf)]).resolve()
-    if not converted_path.is_file():
-        raise RuntimeError("EmbodiedGen MJCF converter did not write its output")
+def _validate_mjcf(converted_path: Path) -> tuple[int, int]:
     root = ET.parse(converted_path).getroot()
     meshes = root.findall("./asset/mesh")
     geoms = root.findall(".//geom[@type='mesh']")
@@ -210,12 +198,36 @@ def convert_to_mjcf(urdf: Path, output: Path) -> dict[str, Any]:
             or not path.is_relative_to(converted_path.parent)
         ):
             raise RuntimeError(f"invalid MJCF mesh reference: {relative}")
+    return len(meshes), len(geoms)
+
+
+def convert_to_mjcf(urdf: Path, output: Path) -> dict[str, Any]:
+    """Exercise EmbodiedGen's documented URDF-to-MJCF converter.
+
+    PyBullet consumes the exact generated URDF below. The separate MJCF export
+    is an upstream-supported handoff for MuJoCo/Genesis; it is deliberately not
+    described as a MuJoCo physics result.
+    """
+    from embodied_gen.data.asset_converter import cvt_embodiedgen_asset_to_anysim
+    from embodied_gen.utils.enum import AssetType
+
+    converted = cvt_embodiedgen_asset_to_anysim(
+        urdf_files=[str(urdf)],
+        target_dirs=[str(output / "mjcf")],
+        target_type=AssetType.MJCF,
+        source_type=AssetType.URDF,
+        overwrite=True,
+    )
+    converted_path = Path(converted[str(urdf)]).resolve()
+    if not converted_path.is_file():
+        raise RuntimeError("EmbodiedGen MJCF converter did not write its output")
+    mesh_assets, mesh_geoms = _validate_mjcf(converted_path)
     return {
         "target": "MuJoCo/Genesis MJCF",
         "path": str(converted_path.relative_to(output)),
         "sha256": sha256(converted_path),
-        "mesh_assets": len(meshes),
-        "mesh_geoms": len(geoms),
+        "mesh_assets": mesh_assets,
+        "mesh_geoms": mesh_geoms,
     }
 
 
@@ -266,6 +278,45 @@ def require_rigid_body_settle(body: int) -> dict[str, Any]:
     }
 
 
+def _capture_pybullet_frames() -> list[np.ndarray]:
+    projection = bullet.computeProjectionMatrixFOV(55, 4 / 3, 0.05, 5.0)
+    view = bullet.computeViewMatrix([2.0, -2.0, 1.5], [0, 0, 0.35], [0, 0, 1])
+    frames = []
+    for step in range(480):
+        bullet.stepSimulation()
+        if step % 8 == 0:
+            pixels = bullet.getCameraImage(
+                640, 480, view, projection, renderer=bullet.ER_TINY_RENDERER
+            )[2]
+            frames.append(np.asarray(pixels, dtype=np.uint8)[..., :3])
+    return frames
+
+
+def _write_decoded_view(
+    output: Path, frames: list[np.ndarray]
+) -> tuple[Path, Path, int]:
+    view_png, view_mp4 = output / "pybullet_view.png", output / "pybullet_settle.mp4"
+    iio.imwrite(view_png, frames[-1])
+    iio.imwrite(view_mp4, np.stack(frames), fps=30)
+    decoded = sum(1 for _ in iio.imiter(view_mp4))
+    if decoded != len(frames):
+        raise RuntimeError("PyBullet video did not decode completely")
+    return view_png, view_mp4, decoded
+
+
+def _validate_pybullet_body(
+    body: int, plane: int, initial: Any
+) -> tuple[Any, Any, Any]:
+    settle = require_rigid_body_settle(body)
+    final = bullet.getBasePositionAndOrientation(body)[0]
+    contacts = bullet.getContactPoints(bodyA=body, bodyB=plane)
+    if not contacts or not all(math.isfinite(value) for value in (*initial, *final)):
+        raise RuntimeError("generated URDF did not make stable rigid-body contact")
+    if final[2] >= initial[2] - 0.1:
+        raise RuntimeError("generated URDF did not fall under gravity")
+    return final, contacts, settle
+
+
 def pybullet_validation(urdf: Path, output: Path) -> dict[str, Any]:
     client = bullet.connect(bullet.DIRECT)
     try:
@@ -274,34 +325,9 @@ def pybullet_validation(urdf: Path, output: Path) -> dict[str, Any]:
         bullet.setGravity(0, 0, -9.81)
         body = bullet.loadURDF(str(urdf), basePosition=[0, 0, 1.0], useFixedBase=False)
         initial = bullet.getBasePositionAndOrientation(body)[0]
-        frames: list[np.ndarray] = []
-        projection = bullet.computeProjectionMatrixFOV(55, 4 / 3, 0.05, 5.0)
-        view = bullet.computeViewMatrix([2.0, -2.0, 1.5], [0, 0, 0.35], [0, 0, 1])
-        for step in range(480):
-            bullet.stepSimulation()
-            if step % 8 == 0:
-                pixels = bullet.getCameraImage(
-                    640, 480, view, projection, renderer=bullet.ER_TINY_RENDERER
-                )[2]
-                frames.append(np.asarray(pixels, dtype=np.uint8)[..., :3])
-        settle = require_rigid_body_settle(body)
-        final = bullet.getBasePositionAndOrientation(body)[0]
-        contacts = bullet.getContactPoints(bodyA=body, bodyB=plane)
-        if not contacts or not all(
-            math.isfinite(value) for value in (*initial, *final)
-        ):
-            raise RuntimeError("generated URDF did not make stable rigid-body contact")
-        if final[2] >= initial[2] - 0.1:
-            raise RuntimeError("generated URDF did not fall under gravity")
-        view_png, view_mp4 = (
-            output / "pybullet_view.png",
-            output / "pybullet_settle.mp4",
-        )
-        iio.imwrite(view_png, frames[-1])
-        iio.imwrite(view_mp4, np.stack(frames), fps=30)
-        decoded = sum(1 for _ in iio.imiter(view_mp4))
-        if decoded != len(frames):
-            raise RuntimeError("PyBullet video did not decode completely")
+        frames = _capture_pybullet_frames()
+        final, contacts, settle = _validate_pybullet_body(body, plane, initial)
+        view_png, view_mp4, decoded = _write_decoded_view(output, frames)
         return {
             "simulator": "PyBullet DIRECT",
             "steps": 600,
@@ -325,10 +351,9 @@ def file_record(path: Path, root: Path) -> dict[str, Any]:
     }
 
 
-def main() -> int:
-    output = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"]).resolve()
-    source = Path(os.environ["NPA_EMBODIEDGEN_SOURCE_ROOT"]).resolve()
-    output.mkdir(parents=True, exist_ok=True)
+def _generate_and_validate(
+    output: Path, source: Path
+) -> tuple[str, Path, list[dict[str, Any]], dict[str, Any], dict[str, Any], float]:
     input_path, input_hash = require_input(output)
     generated = output / "generated"
     started = time.time()
@@ -337,24 +362,23 @@ def main() -> int:
     collisions = collision_meshes(urdf)
     mjcf = convert_to_mjcf(urdf, output)
     physics = pybullet_validation(urdf, output)
-    artifacts = [
-        file_record(path, output)
-        for path in sorted(output.rglob("*"))
-        if path.is_file()
-    ]
-    report = {
+    return (
+        input_hash,
+        urdf,
+        collisions,
+        mjcf,
+        physics,
+        time.time() - started,
+    )
+
+
+def _report_base(input_hash: str) -> dict[str, Any]:
+    return {
         "schema": "npa.embodiedgen.image-to-rigid-object.v1",
         "status": "success",
         "solution": "embodiedgen",
         "capability": CAPABILITY,
-        "capabilities_exercised": [
-            "trellis_image_to_mesh_generation",
-            "embodiedgen_urdf_export",
-            "embodiedgen_urdf_to_mjcf_conversion",
-            "collision_geometry_validation",
-            "pybullet_rigid_body_settle",
-            "pybullet_viewable_result",
-        ],
+        "capabilities_exercised": CAPABILITIES_EXERCISED,
         "source_revision": "f0124197888c2b733e4eaa65acd81ad9cfda3b79",
         "trellis_revision": "55a8e8164b195bbf927e0978f00e76c835e6011f",
         "trellis_model_revision": "25e0d31ffbebe4b5a97464dd851910efc3002d96",
@@ -367,18 +391,48 @@ def main() -> int:
         },
         "image_reference": os.environ.get("BYOF_IMAGE", ""),
         "gpu": gpu_evidence(),
-        "urdf": {
-            "path": str(urdf.relative_to(output)),
-            "sha256": sha256(urdf),
-            "properties": xml_properties(urdf),
-            "physical_property_semantics": "VLM_estimated_not_calibrated_ground_truth",
-        },
-        "mjcf_conversion": mjcf,
-        "collision_geometry": collisions,
-        "physics": physics,
-        "artifacts": artifacts,
-        "elapsed_seconds": round(time.time() - started, 3),
     }
+
+
+def _report(
+    output: Path,
+    input_hash: str,
+    urdf: Path,
+    details: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], float],
+) -> dict[str, Any]:
+    collisions, mjcf, physics, elapsed = details
+    artifacts = [
+        file_record(path, output)
+        for path in sorted(output.rglob("*"))
+        if path.is_file()
+    ]
+    report = _report_base(input_hash)
+    report.update(
+        {
+            "urdf": {
+                "path": str(urdf.relative_to(output)),
+                "sha256": sha256(urdf),
+                "properties": xml_properties(urdf),
+                "physical_property_semantics": "VLM_estimated_not_calibrated_ground_truth",
+            },
+            "mjcf_conversion": mjcf,
+            "collision_geometry": collisions,
+            "physics": physics,
+            "artifacts": artifacts,
+            "elapsed_seconds": round(elapsed, 3),
+        }
+    )
+    return report
+
+
+def main() -> int:
+    output = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"]).resolve()
+    source = Path(os.environ["NPA_EMBODIEDGEN_SOURCE_ROOT"]).resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    input_hash, urdf, collisions, mjcf, physics, elapsed = _generate_and_validate(
+        output, source
+    )
+    report = _report(output, input_hash, urdf, (collisions, mjcf, physics, elapsed))
     atomic_json(output / "embodiedgen_image_to_rigid_object.json", report)
     return 0
 
