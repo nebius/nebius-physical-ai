@@ -1441,7 +1441,12 @@ def default_npa_setup() -> str:
         # launcher is already on PATH: vendor-interpreter setup still needs the source root
         # to install NPA into the runtime-fetched Isaac environment.  Live Isaac job 4
         # otherwise retained NPA_BAKED_PYTHON and failed on `No module named isaaclab`.
-        "if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
+        # Some narrow workbench images carry a server-only ``/opt/npa`` tree for
+        # their own entrypoint.  It has ``pyproject.toml`` and ``src/npa`` but
+        # deliberately omits the CLI and Hatch build hook.  Treating that tree
+        # as installable makes a source-overlay stage fail in setup before its
+        # complete, staged NPA source can be used.
+        "if [ -f /opt/npa/pyproject.toml ] \\\n        && [ -f /opt/npa/src/npa/cli/main.py ] \\\n        && [ -f /opt/npa/src/npa/workflow_build.py ]; then\n"
         "  npa_record_src_root /opt/npa\n"
         "fi\n"
         # Debian/Ubuntu >= 24.04 mark the system interpreter externally managed
@@ -1476,7 +1481,7 @@ def default_npa_setup() -> str:
         # branch, has no staged source URI, and exits before its GPU command runs.
         # Install from the image-local source before falling back to the legacy
         # layout or external source staging.
-        "  if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
+        "  if [ -f /opt/npa/pyproject.toml ] \\\n        && [ -f /opt/npa/src/npa/cli/main.py ] \\\n        && [ -f /opt/npa/src/npa/workflow_build.py ]; then\n"
         "    npa_pip_install -e /opt/npa\n"
         "    npa_record_src_root /opt/npa\n"
         "  elif [ -d /opt/nebius-physical-ai/npa ]; then\n"

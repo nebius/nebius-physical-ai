@@ -2711,12 +2711,12 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
 
 
 def test_default_npa_setup_installs_the_image_local_runtime_source_first() -> None:
-    """Runtime-fetch images may carry /opt/npa without a PATH-visible CLI."""
+    """Only a complete image-local NPA tree may preempt staged source."""
 
     from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
 
     setup = default_npa_setup()
-    modern_guard = "[ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]"
+    modern_guard = "[ -f /opt/npa/pyproject.toml ] \\\n        && [ -f /opt/npa/src/npa/cli/main.py ] \\\n        && [ -f /opt/npa/src/npa/workflow_build.py ]"
     assert modern_guard in setup
     assert "npa_pip_install -e /opt/npa" in setup
     # The image-local source must win before legacy / external paths, otherwise
