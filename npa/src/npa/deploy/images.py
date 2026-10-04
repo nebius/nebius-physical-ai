@@ -324,7 +324,9 @@ PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
 # artifact inspection are accepted.  It is deliberately distinct from a source
 # license restriction and still refuses any public reference.
 NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"libero-plus-assets"})
-NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {
+    "libero-plus-assets": "licensed-assets-camera-private-unbuilt",
+}
 # Previously accepted releases whose published bytes no longer satisfy the
 # repository's current security contract. Keep this separate from
 # UNVALIDATED_PUBLICATION_TOOLS: these images were built and capability-tested,
@@ -523,9 +525,6 @@ SUPPORTED_TOOL_VERSIONS = {
     "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",
     "robotwin": "2.0-curobo-v0.7.8-rtfetch-unbuilt",
     "libero": "public-neutral-bootstrap-unbuilt",
-    # Private-only candidate. Publication quarantine rejects this placeholder
-    # from public consumers; operators must select an inspected private digest.
-    "libero-plus-assets": "licensed-assets-camera-private-unbuilt",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
@@ -537,6 +536,9 @@ SUPPORTED_TOOL_VERSIONS = {
 # giving planning and private qualification a fail-closed, visibly unbuilt tag.
 UNBUILT_CANDIDATE_TOOL_VERSIONS: dict[str, str] = {
     "habitat-sim": "0.3.3-public-unbuilt",
+    # Private-only camera-compatibility candidate. The neutral display sentinel
+    # above and public-refusal inventory prevent it from resolving as a release.
+    "libero-plus-assets": "licensed-assets-camera-private-unbuilt",
 }
 
 
