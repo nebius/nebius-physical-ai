@@ -173,6 +173,14 @@ assert "from torchvision.io.video import read_video" not in source
 path.unlink()
 PY
 
+# The ML installer is a build dependency, not an inference dependency. Remove
+# it before exporting this environment so its vendored code is absent from
+# every final-image layer, not merely hidden by a later whiteout.
+FROM seedvr2-build AS seedvr2-ml-runtime
+RUN /opt/seedvr2-venv/bin/python -m pip uninstall --yes pip \
+    && /opt/seedvr2-venv/bin/python -c \
+      'import importlib.util; assert importlib.util.find_spec("pip") is None'
+
 FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@sha256:4d242f206abc4b9588a6506cce2d88932cc879849395aae3785075179718cc49
 
 ARG SEEDVR2_SOURCE_REF=e4de8c24441a67e1b7df56abea10645059bb1185
@@ -221,7 +229,7 @@ RUN rm -f /etc/apt/sources.list.d/*.list \
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
     && chmod 0440 /etc/sudoers.d/npa-runtime
 
-COPY --from=seedvr2-build /opt/seedvr2-venv /opt/seedvr2-venv
+COPY --from=seedvr2-ml-runtime /opt/seedvr2-venv /opt/seedvr2-venv
 COPY --from=seedvr2-build /opt/seedvr2 /opt/seedvr2
 COPY --from=seedvr2-build /usr/share/doc/npa-seedvr2/extension-arches /usr/share/doc/npa-seedvr2/extension-arches
 COPY --from=seedvr2-build /opt/seedvr2-build-reports/cudnn-runtime.json /usr/share/doc/npa-seedvr2/cudnn-runtime.json
@@ -229,8 +237,13 @@ COPY --from=seedvr2-build /opt/seedvr2-build-reports/nvshmem-runtime.json /usr/s
 COPY --from=seedvr2-build /opt/seedvr2-build-reports/video-io-compat.json /usr/share/doc/npa-seedvr2/video-io-compat.json
 COPY --from=seedvr2-build --chmod=0444 /opt/npa-legal/NVSHMEM-License-v3.4.5-0.txt /usr/share/doc/npa-seedvr2/NVSHMEM-License-v3.4.5-0.txt
 
-RUN /opt/seedvr2-venv/bin/pip check \
+# Keep the final installed-dependency gate, with its installer mounted only for
+# this build instruction. The separate NPA service installer remains available
+# for standard workflow bootstrap; the frozen ML environment does not use it.
+RUN --mount=type=bind,from=seedvr2-build,source=/opt/seedvr2-venv/lib/python3.12/site-packages/pip,target=/opt/pip-check/pip,ro \
+    /opt/seedvr2-venv/bin/python /opt/pip-check/pip check \
     && /opt/seedvr2-venv/bin/python - <<'PY'
+import importlib.util
 import os
 import torch
 import torchvision
@@ -249,6 +262,7 @@ assert expected_arches <= set(torch._C._cuda_getArchFlags().split())
 assert torchvision.__version__.startswith("0.28.0")
 assert FusedLayerNorm and FusedRMSNorm and flash_attn_varlen_func
 assert read_video and read_image
+assert importlib.util.find_spec("pip") is None
 PY
 
 COPY --chmod=u=rwX,go=rX pyproject.toml README.md /opt/npa-src/

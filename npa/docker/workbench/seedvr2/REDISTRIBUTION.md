@@ -32,6 +32,12 @@ This record is engineering classification, not legal advice.
    decoder. Its original, patched, and adapter hashes are retained in
    `/usr/share/doc/npa-seedvr2/video-io-compat.json`; the model path remains the
    official upstream implementation.
+   The ML environment's pip installer is removed in an intermediate export
+   stage before any final-image copy. Final installed-dependency validation
+   still runs with a read-only build-only installer mount. Inference and the
+   pinned model downloader do not install ML packages at runtime. The separate
+   NPA service environment retains its installer for workflow bootstrap; this
+   is not a claim that the whole image is installer-free or vulnerability-free.
 3. Weights: `ByteDance-Seed/SeedVR2-3B` revision
    `37255ff8cccfb01071b87f635a5948ca8d53117c` is public and marked
    Apache-2.0. The four required payloads are fetched at runtime and verified

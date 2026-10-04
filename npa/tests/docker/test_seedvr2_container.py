@@ -86,7 +86,7 @@ def test_seedvr2_dockerfile_pins_source_and_native_dependencies() -> None:
         "1f5b7ada702926bc73327e6eb02dc2d41facc844cc4512ac900451bda06a459e" in dockerfile
     )
     assert "NVSHMEM-License-v3.4.5-0.txt" in dockerfile
-    assert "COPY --from=seedvr2-build /opt/seedvr2-venv" in dockerfile
+    assert "COPY --from=seedvr2-ml-runtime /opt/seedvr2-venv" in dockerfile
 
 
 def test_seedvr2_runtime_source_follows_compilers_and_payload_removal() -> None:
@@ -102,7 +102,7 @@ def test_seedvr2_runtime_source_follows_compilers_and_payload_removal() -> None:
     assert final_stage.index("COPY --chmod=u=rwX,go=rX src/npa") < final_stage.index(
         'LABEL org.opencontainers.image.revision="${NPA_SOURCE_SHA}"'
     )
-    assert "/opt/seedvr2-venv/bin/pip check" in final_stage
+    assert "/opt/seedvr2-venv/bin/python /opt/pip-check/pip check" in final_stage
     assert "from flash_attn import flash_attn_varlen_func" in final_stage
     assert "from apex.normalization import FusedLayerNorm" in final_stage
     assert "install -d -m 0700 -o ubuntu -g ubuntu /workspace/tmp" in final_stage
@@ -118,6 +118,32 @@ def test_seedvr2_runtime_source_follows_compilers_and_payload_removal() -> None:
     assert "/opt/seedvr2/pos_emb.pt" in source_layer
     assert str(CONTAINER_TEMP_ROOT / "seedvr2.tar.gz") in source_layer
     assert source_layer.index("rm -f") < source_layer.index("find /opt/seedvr2")
+
+
+def test_seedvr2_ml_installer_is_removed_before_final_layer_export() -> None:
+    dockerfile = (DOCKER_DIR / "Dockerfile").read_text()
+    export_stage, final_stage = dockerfile.split(
+        "FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@", 1
+    )
+    export_stage = export_stage.split("FROM seedvr2-build AS seedvr2-ml-runtime", 1)[1]
+    assert "/opt/seedvr2-venv/bin/python -m pip uninstall --yes pip" in export_stage
+    assert 'assert importlib.util.find_spec("pip") is None' in export_stage
+    assert (
+        "COPY --from=seedvr2-ml-runtime /opt/seedvr2-venv /opt/seedvr2-venv"
+        in final_stage
+    )
+    assert "COPY --from=seedvr2-build /opt/seedvr2-venv" not in final_stage
+    assert (
+        "--mount=type=bind,from=seedvr2-build,"
+        "source=/opt/seedvr2-venv/lib/python3.12/site-packages/pip,"
+        "target=/opt/pip-check/pip,ro"
+    ) in final_stage
+    assert "/opt/seedvr2-venv/bin/python /opt/pip-check/pip check" in final_stage
+    assert 'assert importlib.util.find_spec("pip") is None' in final_stage
+    # The service environment retains the installer used by normal workflow
+    # bootstrap. This packaging change does not claim a pip-free whole image.
+    assert "/opt/npa-venv/bin/pip check" in final_stage
+    assert "/opt/npa-venv/bin/pip uninstall" not in final_stage
 
 
 def test_seedvr2_video_compatibility_patch_is_identity_bound(
