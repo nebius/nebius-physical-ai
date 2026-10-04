@@ -294,7 +294,18 @@ def finetune(args: argparse.Namespace) -> dict[str, Any]:
     base_checkpoint = _download_base_checkpoint(work)
     local_lerobot_root = work / "lerobot-data-root" / "allenai"
     local_lerobot_root.mkdir(parents=True, exist_ok=True)
-    os.symlink(data_root, local_lerobot_root / "MolmoAct2-LIBERO-Dataset")
+    local_dataset = local_lerobot_root / "MolmoAct2-LIBERO-Dataset"
+    if local_dataset.is_symlink():
+        # A runtime retry may preserve this work root. Reuse only the exact
+        # prepared input; replacing an ordinary path could discard evidence.
+        if local_dataset.resolve() != data_root.resolve():
+            local_dataset.unlink()
+    elif local_dataset.exists():
+        raise MolmoAct2PipelineError(
+            f"LeRobot dataset mount is not a symlink: {local_dataset}"
+        )
+    if not local_dataset.is_symlink():
+        os.symlink(data_root, local_dataset)
     environment = dict(os.environ)
     environment.update(
         {
