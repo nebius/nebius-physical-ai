@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.clients.storage import StorageClient
+from npa.literal_values import require_boolean, require_integer, require_number
 from npa.workflows.sim2real import byo_isaac_eval as isaac_eval
 from npa.workflows.sim2real.utils import _write_json_artifact
 
@@ -17,29 +18,54 @@ CANARY_SCHEMA = "npa.sim2real.placement_canary.v1"
 STRICT_DISTANCE_M = 0.05
 
 
+def _require_boolean(value: Any, *, field: str) -> bool:
+    return require_boolean(value, field=f"placement canary {field}")
+
+
 def assess_placement_report(
     report: dict[str, Any],
     *,
     checkpoint_uri: str,
     expected_scenarios: int,
 ) -> dict[str, Any]:
-    """Fail closed unless validation shows at least one strict stable placement."""
+    """Assess strict stable-placement evidence from the validation split.
 
+    Args:
+        report: Evaluator evidence with literal booleans and finite distances.
+        checkpoint_uri: Required checkpoint lineage.
+        expected_scenarios: Positive literal count of validation scenarios.
+    Returns:
+        Assessment including whether any strict stable placement was observed.
+    Raises:
+        ValueError: If evidence is malformed, inconsistent, or lacks provenance.
+    """
+
+    require_integer(expected_scenarios, field="expected_scenarios", minimum=1)
     if report.get("evaluation_split") != "validation":
         raise ValueError("placement canary may consume only the validation split")
     if report.get("policy_checkpoint") != checkpoint_uri:
         raise ValueError("placement canary checkpoint lineage mismatch")
     inference = dict(report.get("policy_inference_provenance") or {})
+    loaded_for_inference = _require_boolean(
+        inference.get("loaded_for_inference"), field="loaded_for_inference"
+    )
+    actor_is_learned = _require_boolean(
+        inference.get("actor_is_learned"), field="actor_is_learned"
+    )
+    scripted_controller = _require_boolean(
+        inference.get("scripted_post_actor_controller"),
+        field="scripted_post_actor_controller",
+    )
     if (
         inference.get("checkpoint_uri") != checkpoint_uri
-        or not inference.get("loaded_for_inference")
+        or not loaded_for_inference
         or not inference.get("checkpoint_sha256")
     ):
         raise ValueError("placement canary lacks loaded checkpoint byte provenance")
     if (
         inference.get("policy_composition") != "learned_actor_only"
-        or inference.get("actor_is_learned") is not True
-        or inference.get("scripted_post_actor_controller") is not False
+        or not actor_is_learned
+        or scripted_controller
         or inference.get("post_actor_controller") is not None
     ):
         raise ValueError("placement canary requires learned-actor-only provenance")
@@ -62,31 +88,44 @@ def assess_placement_report(
             "placement canary scenario digests must be non-empty and unique"
         )
     strict_rows = []
+    stages = {name: 0 for name in ("reach", "contact", "stable_grasp", "lift", "place")}
     for row in rows:
         details = dict(row.get("details") or {})
-        distance = float(details.get("object_goal_distance_m", float("inf")))
-        stable = bool(details.get("placement_stable", details.get("place", False)))
-        if bool(row.get("success")) != (stable and distance < STRICT_DISTANCE_M):
+        success = _require_boolean(row.get("success"), field="row success")
+        stable_key = "placement_stable" if "placement_stable" in details else "place"
+        stable = _require_boolean(details.get(stable_key), field=stable_key)
+        for name in stages:
+            stages[name] += _require_boolean(
+                details.get(name), field=f"decomposed stage {name}"
+            )
+        distance = require_number(
+            details.get("object_goal_distance_m"),
+            field="object_goal_distance_m",
+            minimum=0,
+        )
+        if success != (stable and distance < STRICT_DISTANCE_M):
             raise ValueError(
                 "placement canary strict success semantics are inconsistent"
             )
         if stable and distance < STRICT_DISTANCE_M:
             strict_rows.append(row)
-    stages = {
-        name: sum(bool((row.get("details") or {}).get(name)) for row in rows)
-        for name in ("reach", "contact", "stable_grasp", "lift", "place")
-    }
     invocation = dict(report.get("component_invocation") or {})
     provenance = dict(invocation.get("gpu_provenance") or {})
     if not provenance.get("image_digests"):
         raise ValueError("placement canary lacks immutable runtime image provenance")
     scenario_input = dict(report.get("scenario_input_provenance") or {})
     scenario_digest = str(scenario_input.get("sha256") or "")
+    content_addressed = _require_boolean(
+        scenario_input.get("content_addressed"), field="content_addressed"
+    )
+    scenario_count = require_integer(
+        scenario_input.get("scenario_count"), field="scenario_count", minimum=1
+    )
+    require_integer(scenario_input.get("size_bytes"), field="size_bytes", minimum=1)
     if (
         scenario_input.get("transport") != "s3_sha256"
-        or not scenario_input.get("content_addressed")
-        or int(scenario_input.get("scenario_count") or 0) != expected_scenarios
-        or int(scenario_input.get("size_bytes") or 0) <= 0
+        or not content_addressed
+        or scenario_count != expected_scenarios
         or not str(scenario_input.get("uri") or "").endswith(
             f"/{scenario_digest}.jsonl"
         )
@@ -148,12 +187,26 @@ def run_validation_canary(
     scenario_count: int,
     output_uri: str = "",
 ) -> dict[str, Any]:
-    """Run the ordinary digest-pinned Isaac evaluator on validation only."""
+    """Run the ordinary digest-pinned Isaac evaluator on validation only.
+
+    Args:
+        run_id: Run identifier passed to the evaluator.
+        checkpoint_uri: Exact S3 checkpoint object.
+        validation_envs_uri: Exact validation scenario object.
+        gold_envs_uri: Separate gold object used to prove split separation.
+        output_json: Local path for the validated report and assessment.
+        scenario_count: Positive literal number of scenarios to evaluate.
+        output_uri: Optional S3 destination for the validated output.
+    Returns:
+        Evaluator report and strict placement assessment.
+    Raises:
+        ValueError: If inputs or resulting evidence fail validation.
+        Exception: If storage access or evaluation fails.
+    """
 
     if not checkpoint_uri.startswith("s3://"):
         raise ValueError("placement canary requires an exact s3:// checkpoint")
-    if scenario_count < 1:
-        raise ValueError("placement canary scenario count must be positive")
+    require_integer(scenario_count, field="scenario_count", minimum=1)
     endpoint = os.environ.get("AWS_ENDPOINT_URL", "")
     rows = _validation_rows(
         validation_envs_uri=validation_envs_uri,

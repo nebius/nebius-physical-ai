@@ -74,7 +74,8 @@ def test_native_validation_modalities_keep_unique_entities_and_frame_pixels(
 
     # Each native modality gets its own bounded review sequence. Reusing the
     # camera basename would collapse three images onto the same entity/frame.
-    selected = {int(index * 38 / 24) for index in range(24)}
+    # The bounded review sequence retains both source endpoints (0 and 37).
+    selected = {index * 37 // 23 for index in range(24)}
     identities = [(entity, frame) for entity, frame, _ in rows]
     assert result["frames_logged"] == len(rows) == 72
     assert len(set(identities)) == len(rows)

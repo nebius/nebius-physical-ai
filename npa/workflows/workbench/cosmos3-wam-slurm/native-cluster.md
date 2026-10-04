@@ -13,6 +13,14 @@ STRICT binding to the selected B200 reservation. Each worker uses
 `gpu-b200-sxm`, preset `8gpu-160vcpu-1792gb`. Two workers require sixteen
 available reserved GPUs. Check CPU, disk-count and disk-capacity quotas too.
 
+Attach an explicit security group to both VM network interfaces. Allow SSH
+only from the operator's verified source CIDR, allow private traffic between
+the two worker interfaces, and allow outbound traffic for package and model
+downloads. Keep Slurm and NFS ports private. A running VM and an assigned public
+address do not prove SSH reachability. If HTTPS and SSH use different network
+routes, an HTTPS address-discovery service does not establish the SSH source
+address. Retain the verified network rules with the private creation receipts.
+
 Create a [Nebius GPU cluster](https://docs.nebius.com/compute/clusters/gpu) on
 the reservation's `us-central1-b` InfiniBand fabric and attach both VMs **when
 creating them**. GPU-cluster membership cannot be added to an existing VM.
@@ -66,8 +74,10 @@ the worker's own address. `persist-firewall.sh` preserves both address families
 across reboots. IPv6 allows loopback, established connections, SSH and ICMPv6;
 new inbound Slurm/NFS connections are denied because cluster peers use IPv4.
 Bootstrap fails if IPv6 filtering cannot be installed. This IPv6 hardening was
-added after the benchmark and is covered by offline tests; the recorded GPU
-campaign used the earlier IPv4-only firewall.
+added after the original benchmark, which used the earlier IPv4-only firewall.
+The October 2 fresh reproduction installs both families and verifies the
+Slurm service's dependency on firewall restoration. Reboot failure handling
+remains covered by offline tests.
 
 The final `srun` must enumerate all eight B200s. Verify `nvidia-smi topo -m`,
 `systemctl is-active nvidia-fabricmanager` and `ibstat`: all GPU pairs should
@@ -136,6 +146,26 @@ of `scontrol show node` and `journalctl -u slurmd`, followed by correction and
 an explicit resume; do not hide a resource mismatch by overriding hardware
 counts. The two-node training preflight must report sixteen ranks on two
 hosts and an all-reduce sum of 136 before training starts.
+
+Verify the effective RDMA memory-lock allowance before cross-node training:
+
+```bash
+systemctl show slurmd --property=LimitMEMLOCK --property=LimitMEMLOCKSoft
+srun --nodes=2 --ntasks-per-node=1 bash -c 'ulimit -l'
+```
+
+After joining both workers, require `infinity` for the daemon and `unlimited`
+from each task. The native Slurm template excludes `MEMLOCK` from submitter
+limit propagation, so jobs inherit the worker daemon's allowance. Without
+this setting, a systemd service's 8 MiB limit can reach every rank even when
+interactive SSH reports `unlimited`; the fresh reproduction failed with
+`ibv_create_qp` / `ibv_reg_mr_iova2: Cannot allocate memory` under that condition.
+For an existing dedicated cluster, preserve its configuration, add
+`PropagateResourceLimitsExcept=MEMLOCK` consistently on both workers, and run
+`sudo scontrol reconfigure` while the owned job queue is empty. Retest inside
+Slurm using the actual submitter. See the
+[Slurm memory-lock guidance](https://slurm.schedmd.com/faq.html#memlock) and
+[NCCL InfiniBand troubleshooting](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/troubleshooting/networking_troubleshooting.html).
 
 ## Evidence and cleanup
 

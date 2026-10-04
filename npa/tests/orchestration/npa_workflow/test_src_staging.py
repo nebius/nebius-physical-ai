@@ -166,6 +166,54 @@ def test_iter_source_files_excludes_build_artifacts(tmp_path: Path) -> None:
     assert files == {"pyproject.toml", "src/npa/__init__.py", "src/npa/cli.py"}
 
 
+@pytest.mark.parametrize("source_view", ["walk", "untracked", "tracked"])
+def test_source_staging_ignores_coverage_churn(
+    tmp_path: Path, source_view: str
+) -> None:
+    import subprocess
+
+    from npa.orchestration.npa_workflow.src_staging import (
+        source_fingerprint,
+        staged_source_files,
+    )
+
+    root = _fake_package(tmp_path / "npa")
+    if source_view != "walk":
+        subprocess.run(["git", "init", str(root)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(root), "add", "."], check=True, capture_output=True
+        )
+    client = FakeStorageClient()
+    original = ensure_npa_source(bucket="my-bucket", source_root=root, client=client)
+    artifacts = [
+        root / ".coverage",
+        root / ".coverage.3.12.1",
+        root / "src/npa/.coverage.3.12.1.worker.pid123.random",
+    ]
+    for path in artifacts:
+        path.write_bytes(b"temporary coverage data")
+    if source_view == "tracked":
+        subprocess.run(
+            ["git", "-C", str(root), "add", *map(str, artifacts)],
+            check=True,
+            capture_output=True,
+        )
+
+    # Coverage combines and removes worker files between source enumeration
+    # and fingerprinting. Generated data must not enter either source view.
+    files = staged_source_files(root)
+    for path in artifacts:
+        path.unlink()
+    assert source_fingerprint(root, files) == original.fingerprint
+
+    for path in artifacts:
+        path.write_bytes(b"new coverage data")
+    restaged = ensure_npa_source(bucket="my-bucket", source_root=root, client=client)
+    assert restaged.fingerprint == original.fingerprint
+    assert restaged.reused is True
+    assert all(".coverage" not in destination for _, destination in client.uploads)
+
+
 def test_stage_npa_source_uploads_to_expected_uri(tmp_path: Path) -> None:
     root = _fake_package(tmp_path / "npa")
     client = FakeStorageClient()

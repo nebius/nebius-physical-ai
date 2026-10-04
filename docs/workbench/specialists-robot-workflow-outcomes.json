@@ -1,0 +1,886 @@
+{
+  "schema": "npa.specialists.robot_repair_outcomes.v1",
+  "arms": [
+    {
+      "arm": "pair1/astra-only",
+      "verified_tasks": 2,
+      "coordinator_seconds": 177.05392595398007,
+      "exit_code": 0,
+      "tasks": {
+        "simulation": {
+          "verified": true,
+          "final_source_sha256": "b3f32928b34c526aaef21676577a879f6479c18c8491fc6f09bc18bae1fa8232",
+          "final_edit_author": "astra coordinator",
+          "verification_origin": "coordinator",
+          "successful_edit_count": 1,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 3,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_sim.py\n+++ b/npa/src/npa/workbench/token_factory/robot_sim.py\n@@ -161,9 +161,9 @@\n     action = np.r_[\n         np.clip((target - observation[\"observation\"][:3]) * 8, -1, 1), gripper\n     ].astype(np.float32)\n-    next_observation, reward, _, _, info = env.step(action)\n     workspace, wrist = _frames(env, renderer, camera)\n     state = _robot_state(env)\n+    next_observation, reward, _, _, info = env.step(action)\n     sample = {\n         \"obs_workspace\": workspace,\n         \"obs_wrist\": wrist,\n"
+          ],
+          "verification_receipt_sha256": "b4aecabf7efb39a26cc69dde872a3c9cf9150e167c11a96051f526ea9357d7bd",
+          "artifact_manifest_sha256": "2f4975566c380e3d88714e0aec681206b3fefcb5a762f88ac14e9d81d0ae4427",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          }
+        },
+        "export": {
+          "verified": true,
+          "final_source_sha256": "52e0be834505e23c9339fee3ca56140f5d234af473636aeb11d3055c0a797ce6",
+          "final_edit_author": "astra coordinator",
+          "verification_origin": "coordinator",
+          "successful_edit_count": 2,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 6,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_artifacts.py\n+++ b/npa/src/npa/workbench/token_factory/robot_artifacts.py\n@@ -29,7 +29,7 @@\n         AdapterError: Video encoding or dataset conversion fails.\n         OSError: Artifact writing fails.\n     \"\"\"\n-    accepted = list(records)\n+    accepted = [record for record in records if record[\"status\"] == \"accepted\"]\n     if not accepted:\n         return 0\n     with TemporaryDirectory(prefix=\"npa-robot-demos-\") as temporary:\n"
+          ],
+          "verification_receipt_sha256": "438ea7b011b94973f8f701abc834c12ad30df4d792560536da42a3911bcc8616",
+          "artifact_manifest_sha256": "7b317fb69c6ff3c9e10c66c92479faac613b3e516e17badb11314bd45193f39e",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          }
+        }
+      },
+      "coordinator_recovery": false,
+      "frozen_input_bindings_passed": true
+    },
+    {
+      "arm": "pair1/astra-tofa",
+      "verified_tasks": 2,
+      "coordinator_seconds": 397.9161241609836,
+      "exit_code": 0,
+      "tasks": {
+        "simulation": {
+          "verified": true,
+          "final_source_sha256": "b3f32928b34c526aaef21676577a879f6479c18c8491fc6f09bc18bae1fa8232",
+          "final_edit_author": "astra coordinator",
+          "verification_origin": "coordinator",
+          "successful_edit_count": 1,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 3,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_sim.py\n+++ b/npa/src/npa/workbench/token_factory/robot_sim.py\n@@ -161,9 +161,9 @@\n     action = np.r_[\n         np.clip((target - observation[\"observation\"][:3]) * 8, -1, 1), gripper\n     ].astype(np.float32)\n-    next_observation, reward, _, _, info = env.step(action)\n     workspace, wrist = _frames(env, renderer, camera)\n     state = _robot_state(env)\n+    next_observation, reward, _, _, info = env.step(action)\n     sample = {\n         \"obs_workspace\": workspace,\n         \"obs_wrist\": wrist,\n"
+          ],
+          "verification_receipt_sha256": "bbfc15fb2dd768cdb0c8d61666c23ba32d4b48f46f0e827ead3773da189e5658",
+          "artifact_manifest_sha256": "85ed0567481ead36f7fb87193566b65eef463ee6c9bc85a28749222b766964e8",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          }
+        },
+        "export": {
+          "verified": true,
+          "final_source_sha256": "52e0be834505e23c9339fee3ca56140f5d234af473636aeb11d3055c0a797ce6",
+          "final_edit_author": "astra coordinator",
+          "verification_origin": "coordinator",
+          "successful_edit_count": 2,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 6,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_artifacts.py\n+++ b/npa/src/npa/workbench/token_factory/robot_artifacts.py\n@@ -29,7 +29,7 @@\n         AdapterError: Video encoding or dataset conversion fails.\n         OSError: Artifact writing fails.\n     \"\"\"\n-    accepted = list(records)\n+    accepted = [record for record in records if record[\"status\"] == \"accepted\"]\n     if not accepted:\n         return 0\n     with TemporaryDirectory(prefix=\"npa-robot-demos-\") as temporary:\n"
+          ],
+          "verification_receipt_sha256": "148877ac9423046fbe7504f9b92bbeeabb70a4c595cbf73dc609df2a061f794d",
+          "artifact_manifest_sha256": "8e9734eb2f73a9fa1941967e171379de1309a03741c4e25e65f895427d122ad5",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          }
+        }
+      },
+      "coordinator_recovery": true,
+      "frozen_input_bindings_passed": true
+    },
+    {
+      "arm": "pair2/astra-only",
+      "verified_tasks": 2,
+      "coordinator_seconds": 148.31605173798744,
+      "exit_code": 0,
+      "tasks": {
+        "simulation": {
+          "verified": true,
+          "final_source_sha256": "b3f32928b34c526aaef21676577a879f6479c18c8491fc6f09bc18bae1fa8232",
+          "final_edit_author": "astra coordinator",
+          "verification_origin": "coordinator",
+          "successful_edit_count": 1,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 3,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_sim.py\n+++ b/npa/src/npa/workbench/token_factory/robot_sim.py\n@@ -161,9 +161,9 @@\n     action = np.r_[\n         np.clip((target - observation[\"observation\"][:3]) * 8, -1, 1), gripper\n     ].astype(np.float32)\n-    next_observation, reward, _, _, info = env.step(action)\n     workspace, wrist = _frames(env, renderer, camera)\n     state = _robot_state(env)\n+    next_observation, reward, _, _, info = env.step(action)\n     sample = {\n         \"obs_workspace\": workspace,\n         \"obs_wrist\": wrist,\n"
+          ],
+          "verification_receipt_sha256": "cda5c2ba3ec25fe6a2a7ea934b06d286fbe228757aca19429d559db8f980ba2d",
+          "artifact_manifest_sha256": "6d39e8b6b73a36e3980f20608d1fd2942d32437ca6e0d1f502e07b3d809b316c",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          }
+        },
+        "export": {
+          "verified": true,
+          "final_source_sha256": "52e0be834505e23c9339fee3ca56140f5d234af473636aeb11d3055c0a797ce6",
+          "final_edit_author": "astra coordinator",
+          "verification_origin": "coordinator",
+          "successful_edit_count": 2,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 6,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_artifacts.py\n+++ b/npa/src/npa/workbench/token_factory/robot_artifacts.py\n@@ -29,7 +29,7 @@\n         AdapterError: Video encoding or dataset conversion fails.\n         OSError: Artifact writing fails.\n     \"\"\"\n-    accepted = list(records)\n+    accepted = [record for record in records if record[\"status\"] == \"accepted\"]\n     if not accepted:\n         return 0\n     with TemporaryDirectory(prefix=\"npa-robot-demos-\") as temporary:\n"
+          ],
+          "verification_receipt_sha256": "abeddaf29907c5f41a42848104f28c4bd199f8afa165c7b8d302e51ee87b4d55",
+          "artifact_manifest_sha256": "d9cacba73c6924da4a82e2c6cac93c7ccf076aa2a8add1d72a77646c73858fd8",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          }
+        }
+      },
+      "coordinator_recovery": false,
+      "frozen_input_bindings_passed": true
+    },
+    {
+      "arm": "pair2/astra-tofa",
+      "verified_tasks": 2,
+      "coordinator_seconds": 184.8581038590055,
+      "exit_code": 0,
+      "tasks": {
+        "simulation": {
+          "verified": true,
+          "final_source_sha256": "b3f32928b34c526aaef21676577a879f6479c18c8491fc6f09bc18bae1fa8232",
+          "final_edit_author": "zai-org/GLM-5.3",
+          "verification_origin": "worker",
+          "successful_edit_count": 1,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 3,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_sim.py\n+++ b/npa/src/npa/workbench/token_factory/robot_sim.py\n@@ -161,9 +161,9 @@\n     action = np.r_[\n         np.clip((target - observation[\"observation\"][:3]) * 8, -1, 1), gripper\n     ].astype(np.float32)\n-    next_observation, reward, _, _, info = env.step(action)\n     workspace, wrist = _frames(env, renderer, camera)\n     state = _robot_state(env)\n+    next_observation, reward, _, _, info = env.step(action)\n     sample = {\n         \"obs_workspace\": workspace,\n         \"obs_wrist\": wrist,\n"
+          ],
+          "verification_receipt_sha256": "30977f803875dc1a9e704fe20aea9f2ff00d0d6fee2e429a4d36f2e099b72a80",
+          "artifact_manifest_sha256": "8818f85a909f72a9f48683feb60a61c0f05789d4057d4d2d1f30dbc29fa6fc4d",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          }
+        },
+        "export": {
+          "verified": true,
+          "final_source_sha256": "e8eb3e008244d389a06b0d3efc2aa2f8e12a881c2902dec9f1a4674c0fc344db",
+          "final_edit_author": "zai-org/GLM-5.3",
+          "verification_origin": "worker",
+          "successful_edit_count": 1,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 6,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_artifacts.py\n+++ b/npa/src/npa/workbench/token_factory/robot_artifacts.py\n@@ -29,7 +29,13 @@\n         AdapterError: Video encoding or dataset conversion fails.\n         OSError: Artifact writing fails.\n     \"\"\"\n-    accepted = list(records)\n+    accepted = [\n+        record\n+        for record in records\n+        if record.get(\"status\") == \"accepted\"\n+        and \"simulation\" in record\n+        and \"episode_path\" in record\n+    ]\n     if not accepted:\n         return 0\n     with TemporaryDirectory(prefix=\"npa-robot-demos-\") as temporary:\n"
+          ],
+          "verification_receipt_sha256": "6427164a67be8fb96e3e1f90323fcbeed6d82ccc486ffbef65868e8a014368b9",
+          "artifact_manifest_sha256": "568aa962ec068a3d00ec6df3c159d0e7fa0ff69df1e79b305ad09d1f9c1fc86b",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          }
+        }
+      },
+      "coordinator_recovery": false,
+      "frozen_input_bindings_passed": true
+    },
+    {
+      "arm": "pair3/astra-only",
+      "verified_tasks": 2,
+      "coordinator_seconds": 154.34988309198525,
+      "exit_code": 0,
+      "tasks": {
+        "simulation": {
+          "verified": true,
+          "final_source_sha256": "b3f32928b34c526aaef21676577a879f6479c18c8491fc6f09bc18bae1fa8232",
+          "final_edit_author": "astra coordinator",
+          "verification_origin": "coordinator",
+          "successful_edit_count": 1,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 3,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_sim.py\n+++ b/npa/src/npa/workbench/token_factory/robot_sim.py\n@@ -161,9 +161,9 @@\n     action = np.r_[\n         np.clip((target - observation[\"observation\"][:3]) * 8, -1, 1), gripper\n     ].astype(np.float32)\n-    next_observation, reward, _, _, info = env.step(action)\n     workspace, wrist = _frames(env, renderer, camera)\n     state = _robot_state(env)\n+    next_observation, reward, _, _, info = env.step(action)\n     sample = {\n         \"obs_workspace\": workspace,\n         \"obs_wrist\": wrist,\n"
+          ],
+          "verification_receipt_sha256": "fd43709f37c7445aec22e2420886101f15526b926b4d1d5111e82a4090c555e3",
+          "artifact_manifest_sha256": "7795293344672bf91e796fd700e0a11d645d9746e1c862faa1c254759b385596",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          }
+        },
+        "export": {
+          "verified": true,
+          "final_source_sha256": "52e0be834505e23c9339fee3ca56140f5d234af473636aeb11d3055c0a797ce6",
+          "final_edit_author": "astra coordinator",
+          "verification_origin": "coordinator",
+          "successful_edit_count": 2,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 6,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_artifacts.py\n+++ b/npa/src/npa/workbench/token_factory/robot_artifacts.py\n@@ -29,7 +29,7 @@\n         AdapterError: Video encoding or dataset conversion fails.\n         OSError: Artifact writing fails.\n     \"\"\"\n-    accepted = list(records)\n+    accepted = [record for record in records if record[\"status\"] == \"accepted\"]\n     if not accepted:\n         return 0\n     with TemporaryDirectory(prefix=\"npa-robot-demos-\") as temporary:\n"
+          ],
+          "verification_receipt_sha256": "d2c3f58476143b94daf20a4eea330f24f09620665280cd66289ca4d7aa12fc8f",
+          "artifact_manifest_sha256": "8e4c62807ba637c01bb4b407005cb440d81534ae3417050ca58d9267d60a54de",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          }
+        }
+      },
+      "coordinator_recovery": false,
+      "frozen_input_bindings_passed": true,
+      "coordinator_invocation_phases": [
+        "work"
+      ]
+    },
+    {
+      "arm": "pair3/astra-tofa",
+      "verified_tasks": 2,
+      "coordinator_seconds": 241.17840623902157,
+      "exit_code": 0,
+      "tasks": {
+        "simulation": {
+          "verified": true,
+          "final_source_sha256": "b3f32928b34c526aaef21676577a879f6479c18c8491fc6f09bc18bae1fa8232",
+          "final_edit_author": "zai-org/GLM-5.3",
+          "verification_origin": "worker",
+          "successful_edit_count": 1,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 3,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_sim.py\n+++ b/npa/src/npa/workbench/token_factory/robot_sim.py\n@@ -161,9 +161,9 @@\n     action = np.r_[\n         np.clip((target - observation[\"observation\"][:3]) * 8, -1, 1), gripper\n     ].astype(np.float32)\n-    next_observation, reward, _, _, info = env.step(action)\n     workspace, wrist = _frames(env, renderer, camera)\n     state = _robot_state(env)\n+    next_observation, reward, _, _, info = env.step(action)\n     sample = {\n         \"obs_workspace\": workspace,\n         \"obs_wrist\": wrist,\n"
+          ],
+          "verification_receipt_sha256": "5fb5cc2d4da0eaec80b004e09de1ffd5ded1badeb4096d8482ec8af6e9ef2302",
+          "artifact_manifest_sha256": "05063a1c3cbab15f6eeae0197e19c5cec1acb47286d5d7d1587d25d9b6319e29",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          }
+        },
+        "export": {
+          "verified": true,
+          "final_source_sha256": "af0cbf6a20efe86fd93e8d1f796750fd7a86ad62a921731be1caed123fd9e3a8",
+          "final_edit_author": "zai-org/GLM-5.3",
+          "verification_origin": "worker",
+          "successful_edit_count": 1,
+          "native_attempt_count": 1,
+          "heldout_contract_checks": 6,
+          "source_and_receipt_bindings_passed": true,
+          "verified_before_coordinator_end": true,
+          "final_patch": [
+            "--- a/npa/src/npa/workbench/token_factory/robot_artifacts.py\n+++ b/npa/src/npa/workbench/token_factory/robot_artifacts.py\n@@ -29,7 +29,9 @@\n         AdapterError: Video encoding or dataset conversion fails.\n         OSError: Artifact writing fails.\n     \"\"\"\n-    accepted = list(records)\n+    accepted = [\n+        record for record in records if record.get(\"status\") == \"accepted\"\n+    ]\n     if not accepted:\n         return 0\n     with TemporaryDirectory(prefix=\"npa-robot-demos-\") as temporary:\n"
+          ],
+          "verification_receipt_sha256": "ba94738bb963bae603c763cfa30bab20d68f6c49c9deee03215115be61ff8a6a",
+          "artifact_manifest_sha256": "81c9c44e04d71bc16aba1afc9ffaca102355dde483e29b77d08d487133a4208e",
+          "native_physics_steps": 555,
+          "native_raw_camera_frames": 1110,
+          "decoded_preview_frames": 555,
+          "accepted_physical_episodes": 2,
+          "rejected_physical_episodes": 1,
+          "native_dataset": {
+            "status": "passed",
+            "lerobot_version": "0.5.1",
+            "native_episodes": 2,
+            "native_frames": 370,
+            "decoded_dataset_camera_frames": 740,
+            "aligned_dataset_camera_samples": 740,
+            "training_batch_shapes": {
+              "observation.images.workspace": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "observation.images.wrist": [
+                4,
+                3,
+                360,
+                480
+              ],
+              "action": [
+                4,
+                4
+              ],
+              "episode_index": [
+                4
+              ],
+              "frame_index": [
+                4
+              ],
+              "index": [
+                4
+              ],
+              "observation.state": [
+                4,
+                9
+              ],
+              "task_index": [
+                4
+              ],
+              "timestamp": [
+                4
+              ]
+            }
+          }
+        }
+      },
+      "coordinator_recovery": false,
+      "frozen_input_bindings_passed": true,
+      "coordinator_invocation_phases": [
+        "delegate"
+      ],
+      "host_completion": {
+        "receipt_sha256": "292aaf2b17e81406302330aab679b91c11daa3ecc0ce4310ca765969a32e5939",
+        "all_bindings_passed": true,
+        "acceptance_scope": "configured_required_operations",
+        "review_skipped": true
+      }
+    }
+  ],
+  "task_scope": "Repair two deliberately seeded faults in disposable Workbench code copies, then run native MuJoCo simulation and native LeRobot dataset acceptance.",
+  "faults": [
+    "Camera and robot state sampled after the corresponding action",
+    "Rejected physical episodes included in exported training data"
+  ],
+  "native_execution": "CPU Gymnasium-Robotics FetchPickAndPlace-v4 with MuJoCo; scripted privileged-state controller, two RGB cameras and LeRobot 0.5.1 reader/training batch.",
+  "amendment": "Pairs 1 and 2 use the original frozen runtime. Pair 3 is a separately declared matched pair after provider failure handling/accounting and the host completion gate improved; original outcomes remain retained.",
+  "authorship": "Actual accepted model responses preceding edits establish authorship. DSV4 participation or a profile primary does not establish authorship; pair2 hybrid export was repaired by GLM after DSV4 truncation.",
+  "audit_scope": "Source hashes, patch content, original independent grader receipts and final coordinator boundaries checked read-only. Heavy replay/decoding was performed by the original independent graders, not repeated during this audit.",
+  "limitations": [
+    "Three matched pairs are descriptive evidence, not a general performance ranking.",
+    "No learned policy or physical robot transfer was tested.",
+    "The repairs restore seeded behavior; they are not newly discovered production defects.",
+    "Jev inference was not used in these runs.",
+    "Cost and usage are reported separately.",
+    "Some GLM patches skip malformed accepted records missing metadata; inspect each actual patch before any production adoption."
+  ]
+}

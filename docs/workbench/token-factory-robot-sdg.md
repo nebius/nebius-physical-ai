@@ -153,6 +153,15 @@ dataset. Publication writes `report.json` last; its hashes bind the recorded
 arrays, delivered videos and dataset. S3 prefixes must be empty, although the
 emptiness check is not a concurrent-writer lock. Use distinct run prefixes.
 
+Physics judging requires the complete, aligned trace and real numeric state and
+action vectors. Before encoding, the adapter validates every episode's frame
+counts, feature widths, finite values and matching uint8 RGB camera dimensions.
+Accepted episode directories must belong to the run and cannot alias one another.
+The local exporter builds the dataset in staging, publishes it after metadata is
+complete, and then assigns provenance indices. A conversion failure preserves
+the raw episodes and leaves no dataset, allowing an export retry. This does not
+add automatic resume to the top-level robot SDG command; use one writer per run.
+
 ## Reproduce the live proof
 
 Recorded on 2026-09-20: **six accepted episodes**, **1,110 timesteps**, and
