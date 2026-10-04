@@ -1,6 +1,7 @@
 {
   "schema_version": "workflow-readiness/v1",
   "workflow_sha256": "8bb0de242eb9aea093e0bce8c83ab9d362aa261ccf3c413930e1db82a1c8bca7",
+  "stage_count": 5,
   "planning": {
     "validation": {
       "status": "verified",
@@ -39,18 +40,20 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "A local-only BYOF build completed, but its aggregate runtime import exposed dependency and renderer-base defects. The corrected local build was queued at zero Docker build steps on this shared host and was stopped without a successful image; the earlier remote push had already been refused. The committed image remains a non-routable digest sentinel until a remotely pushed immutable image is independently inspected.",
+      "status": "verified",
+      "reason": "An operator-private immutable image was built, remotely pulled, inspected, and scanned after removing the wheel-bundled static FFmpeg payload. It is deliberately not a public NPA catalog image; the committed configuration remains a non-routable digest sentinel and the private digest is supplied only at submit time.",
       "evidence": [
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/lorafleet-oft-adapters/image-build-v7.json",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/lorafleet-oft-adapters/local-image-runtime-v7-rerun.log",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/lorafleet-oft-adapters/image-build-v10.json"
+        "docs/workbench/lorafleet-oft-adapters.md",
+        "npa/tests/workflows/test_lorafleet_oft_adapters.py",
+        "operator-private image qualification receipt (not distributed)"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "No real Kubernetes workflow stage has completed on the private immutable image yet.",
-      "evidence": []
+      "reason": "The scoped Kubernetes submission passed workflow validation, image pull preflight, source staging, and controller-isolation checks, then scheduler preflight reported no compatible free placement before any managed job was created. No workflow stage, model fetch, rollout, or final artifact is represented as complete.",
+      "evidence": [
+        "operator-private scoped-submit receipt (not distributed)"
+      ]
     }
   }
 }

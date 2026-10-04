@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
+import hashlib
 import inspect
+import json
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from npa.workflows import lorafleet_oft_adapters as qualification
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows" / "testing" / "lorafleet-oft-adapters.yaml"
+READINESS = ROOT / "workflows" / "testing" / "lorafleet-oft-adapters.readiness.json"
 
 
 def _workflow() -> dict[str, object]:
@@ -56,6 +58,19 @@ def test_workflow_consumes_exact_prior_stage_artifact_uris() -> None:
     assert "--reconstruction-uri" in text
     assert "--baseline-uri" in text
     assert "--reconstructed-uri" in text
+
+
+def test_readiness_is_bound_to_the_saved_five_stage_workflow() -> None:
+    """Keep readiness evidence tied to the executable graph it describes."""
+    readiness = json.loads(READINESS.read_text(encoding="utf-8"))
+    workflow = _workflow()
+    assert readiness["schema_version"] == "workflow-readiness/v1"
+    assert (
+        readiness["workflow_sha256"]
+        == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
+    )
+    assert readiness["stage_count"] == 5
+    assert len(workflow["states"]) == readiness["stage_count"]
 
 
 def test_reconstruction_metadata_rejects_non_exact_or_wrong_rank() -> None:
