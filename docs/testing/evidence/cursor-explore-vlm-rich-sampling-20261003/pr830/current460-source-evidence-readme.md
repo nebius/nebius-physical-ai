@@ -3,8 +3,8 @@
 This additive [machine-readable bridge](current460-source-evidence-measurements.json)
 binds signed source `3ec7a0c6d8517d31b47185e54cb37166709c763e` to integrated main
 `4603e7e1d8ffede505161448fe92368e7c6bda45`. It does not rewrite the
-[six original hosted responses](actual-main88-hosted-readme.md) or the earlier
-[strict-parser bridge](strict-source-cpu-bridge-readme.md).
+[six original hosted responses](https://github.com/nebius/nebius-physical-ai/blob/69cf4e3c1440770ab2657e7f9935ba2efcdca6aa/docs/testing/evidence/cursor-explore-vlm-rich-sampling-20261003/pr830/actual-main88-hosted-readme.md) or the earlier
+[strict-parser bridge](https://github.com/nebius/nebius-physical-ai/blob/69cf4e3c1440770ab2657e7f9935ba2efcdca6aa/docs/testing/evidence/cursor-explore-vlm-rich-sampling-20261003/pr830/strict-source-cpu-bridge-readme.md).
 
 The original six requests ran at a52 on the main88 protocol. Zero-network CPU
 replay ran at exact464, through current evaluation extraction, reversible wire
