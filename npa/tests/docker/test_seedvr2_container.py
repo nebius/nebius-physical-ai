@@ -146,6 +146,41 @@ def test_seedvr2_ml_installer_is_removed_before_final_layer_export() -> None:
     assert "/opt/npa-venv/bin/pip uninstall" not in final_stage
 
 
+def test_seedvr2_system_seed_wheels_are_repaired_before_export() -> None:
+    dockerfile = (DOCKER_DIR / "Dockerfile").read_text()
+    build_stage, final_stage = dockerfile.split(
+        "FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@", 1
+    )
+    manifest = json.loads(
+        (DOCKER_DIR.parent / "common/secure_pip/inputs.json").read_text()
+    )
+    donor = next(row for row in manifest["vendors"] if row["name"] == "setuptools")
+    assert "FROM seedvr2-build AS seedvr2-bootstrap" in build_stage
+    assert "COPY docker/workbench/common/secure_pip /opt/secure-pip" in build_stage
+    assert donor["filename"] in build_stage
+    # The OS package seed is replaced within its creation RUN, never hidden
+    # by a later whiteout. Only derived wheels and provenance leave the builder.
+    apt_layer = final_stage.split("COPY --from=seedvr2-ml-runtime", 1)[0]
+    assert apt_layer.count("\nRUN ") == 1
+    assert "--mount=type=bind,from=seedvr2-bootstrap" in apt_layer
+    assert (
+        apt_layer.index("apt-get install")
+        < apt_layer.index("find /usr/share/python-wheels")
+        < apt_layer.index("install -m 0644 /opt/secure-pip-wheels/*.whl")
+    )
+    assert "-name 'pip-*.whl' -o -name 'setuptools-*.whl'" in apt_layer
+    assert "-delete" in apt_layer
+    assert "python3.12 -m venv /opt/npa-venv" in final_stage
+    assert f'pip.__version__ == "{manifest["derived_version"]}"' in final_stage
+    assert "secure-pip-build.json" in final_stage
+    assert "COPY docker/workbench/common/secure_pip" not in final_stage
+    assert "COPY --from=seedvr2-bootstrap /tmp/secure-pip-build" not in final_stage
+    build_script = (DOCKER_DIR / "build.sh").read_text()
+    inputs = build_script.split("BUILD_INPUTS=(", 1)[1].split(")", 1)[0]
+    assert "npa/docker/workbench/common/secure_pip" in inputs
+    assert 'archive "$SOURCE_SHA" -- "${BUILD_INPUTS[@]}"' in build_script
+
+
 def test_seedvr2_video_compatibility_patch_is_identity_bound(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

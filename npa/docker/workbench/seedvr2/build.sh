@@ -75,6 +75,7 @@ BUILD_INPUTS=(
   npa/README.md
   npa/.dockerignore
   npa/docker/workbench/seedvr2
+  npa/docker/workbench/common/secure_pip
   npa/scripts/measure_extension_arches.py
   workflows/main
   workflows/testing

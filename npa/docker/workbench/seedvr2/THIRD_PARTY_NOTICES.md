@@ -67,3 +67,16 @@ Inc, under the MIT license. The exact upstream grant is delivered as
 `da11235665c17d4c1634072dae92b8ba1b38d6fdde2ccf19a6bbede33253f58d`).
 Source: [the MCAP 1.4.0 release license](https://github.com/foxglove/mcap/blob/b33fa682a5c517b1d213faeabd118e0b4f9d9d93/LICENSE).
 The upstream wheel's metadata names MIT but does not deliver this notice.
+
+## Source-identified pip bootstrap derivative
+
+The image uses `pip==26.2.1+npa.1`, derived from upstream pip 26.2.1 with the
+repository's hash-pinned `common/secure_pip` builder. It is not an upstream pip
+release. The upstream MIT grant, complete vendored notices, actual vendor list
+and BOM, and `pip/NPA_VENDOR_REPAIR.json` are retained in the wheel and installed
+service environment. The pkg_resources donor's exact setuptools grant is also
+retained as `pip/_vendor/pkg_resources/LICENSE.setuptools`. The fixed
+setuptools 80.9.0 seed wheel retains its original complete distribution notices.
+The final image's exact derivative wheel hash and source/build inputs are in
+`/usr/share/doc/npa-seedvr2/secure-pip-build.json`. No model payload or scientific
+dependency is replaced by this bootstrap repair.

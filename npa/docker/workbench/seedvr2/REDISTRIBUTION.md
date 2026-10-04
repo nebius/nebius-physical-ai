@@ -38,6 +38,14 @@ This record is engineering classification, not legal advice.
    pinned model downloader do not install ML packages at runtime. The separate
    NPA service environment retains its installer for workflow bootstrap; this
    is not a claim that the whole image is installer-free or vulnerability-free.
+   The service installer is the source-identified `pip==26.2.1+npa.1`
+   derivative documented in `../common/secure_pip/README.md`, not an upstream
+   pip release. Ubuntu's pip and setuptools seed wheels are replaced by the
+   derivative and pinned setuptools 80.9.0 in the same package-install layer,
+   before any final layer export. Standard Python 3.12 venv creation uses this
+   repaired seed, and the exact build receipt is retained at
+   `/usr/share/doc/npa-seedvr2/secure-pip-build.json`. Temporary upstream
+   bootstrap and vendoring tools remain confined to a separate build stage.
 3. Weights: `ByteDance-Seed/SeedVR2-3B` revision
    `37255ff8cccfb01071b87f635a5948ca8d53117c` is public and marked
    Apache-2.0. The four required payloads are fetched at runtime and verified

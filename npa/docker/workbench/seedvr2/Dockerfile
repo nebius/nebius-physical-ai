@@ -181,6 +181,16 @@ RUN /opt/seedvr2-venv/bin/python -m pip uninstall --yes pip \
     && /opt/seedvr2-venv/bin/python -c \
       'import importlib.util; assert importlib.util.find_spec("pip") is None'
 
+# Build-only upstream tooling never enters the final image. The source-identified
+# derivative also seeds ordinary venv creation through Ubuntu's ensurepip path.
+FROM seedvr2-build AS seedvr2-bootstrap
+COPY docker/workbench/common/secure_pip /opt/secure-pip
+RUN /usr/bin/python3.12 /opt/secure-pip/build.py \
+      --work-dir /tmp/secure-pip-build --output-dir /opt/secure-pip-wheels \
+    && install -m 0644 \
+      /tmp/secure-pip-build/vendors/setuptools-80.9.0-py3-none-any.whl \
+      /opt/secure-pip-wheels/setuptools-80.9.0-py3-none-any.whl
+
 FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@sha256:4d242f206abc4b9588a6506cce2d88932cc879849395aae3785075179718cc49
 
 ARG SEEDVR2_SOURCE_REF=e4de8c24441a67e1b7df56abea10645059bb1185
@@ -216,12 +226,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
 
-RUN rm -f /etc/apt/sources.list.d/*.list \
+RUN --mount=type=bind,from=seedvr2-bootstrap,source=/opt/secure-pip-wheels,target=/opt/secure-pip-wheels,ro \
+    rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
       ca-certificates ffmpeg libgl1 libglib2.0-0 openssh-server \
       python3.12 python3.12-venv rsync sudo \
+    && find /usr/share/python-wheels -maxdepth 1 -type f \
+      \( -name 'pip-*.whl' -o -name 'setuptools-*.whl' \) -delete \
+    && install -m 0644 /opt/secure-pip-wheels/*.whl /usr/share/python-wheels/ \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
     && rm -rf /opt/nvidia/nsight-compute \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
@@ -236,6 +250,7 @@ COPY --from=seedvr2-build /opt/seedvr2-build-reports/cudnn-runtime.json /usr/sha
 COPY --from=seedvr2-build /opt/seedvr2-build-reports/nvshmem-runtime.json /usr/share/doc/npa-seedvr2/nvshmem-runtime.json
 COPY --from=seedvr2-build /opt/seedvr2-build-reports/video-io-compat.json /usr/share/doc/npa-seedvr2/video-io-compat.json
 COPY --from=seedvr2-build --chmod=0444 /opt/npa-legal/NVSHMEM-License-v3.4.5-0.txt /usr/share/doc/npa-seedvr2/NVSHMEM-License-v3.4.5-0.txt
+COPY --from=seedvr2-bootstrap --chmod=0444 /opt/secure-pip-wheels/build-receipt.json /usr/share/doc/npa-seedvr2/secure-pip-build.json
 
 # Keep the final installed-dependency gate, with its installer mounted only for
 # this build instruction. The separate NPA service installer remains available
@@ -270,6 +285,8 @@ COPY --chmod=u=rwX,go=rX src/npa /opt/npa-src/src/npa
 COPY docker/workbench/seedvr2/service-requirements.lock /tmp/seedvr2-service.lock
 COPY --chmod=0555 docker/workbench/seedvr2/verify_no_weight_payloads.py /opt/npa-tools/verify_no_weight_payloads.py
 RUN python3.12 -m venv /opt/npa-venv \
+    && /opt/npa-venv/bin/python -c \
+      'import pip; from pip._vendor import urllib3; assert pip.__version__ == "26.2.1+npa.1"; assert urllib3.__version__ == "2.8.0"' \
     && /opt/npa-venv/bin/pip install --no-cache-dir --require-hashes \
       -r /tmp/seedvr2-service.lock \
     && /opt/npa-venv/bin/pip install --no-cache-dir --no-deps \

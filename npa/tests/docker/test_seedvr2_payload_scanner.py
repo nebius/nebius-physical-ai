@@ -596,11 +596,22 @@ def test_nested_wheel_cudnn_and_nvshmem_sdk_payloads_fail(tmp_path: Path) -> Non
     ]
 
 
-def test_exact_setuptools_path_files_pass_in_wheel_and_venv(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("version", "contents", "accepted"),
+    [
+        ("80.9.0", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE, True),
+        ("80.9.0", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE + b"changed", False),
+        ("68.1.2", scanner.SETUPTOOLS_DISTUTILS_PATH_FILE, False),
+    ],
+)
+def test_setuptools_seed_wheel_path_and_contents_are_exactly_bound(
+    tmp_path: Path, version: str, contents: bytes, accepted: bool
+) -> None:
+    filename = f"setuptools-{version}-py3-none-any.whl"
     wheel = _zip(
-        tmp_path / "setuptools-68.1.2-py3-none-any.whl",
+        tmp_path / filename,
         {
-            "distutils-precedence.pth": scanner.SETUPTOOLS_DISTUTILS_PATH_FILE,
+            "distutils-precedence.pth": contents,
         },
     )
     findings, _ = scanner.scan_saved_image(
@@ -608,8 +619,7 @@ def test_exact_setuptools_path_files_pass_in_wheel_and_venv(tmp_path: Path) -> N
             tmp_path,
             [
                 {
-                    "usr/share/python-wheels/"
-                    "setuptools-68.1.2-py3-none-any.whl": wheel.read_bytes(),
+                    "usr/share/python-wheels/" + filename: wheel.read_bytes(),
                     "opt/seedvr2-venv/lib/python3.12/site-packages/"
                     "distutils-precedence.pth": (
                         scanner.SETUPTOOLS_DISTUTILS_PATH_FILE
@@ -618,11 +628,13 @@ def test_exact_setuptools_path_files_pass_in_wheel_and_venv(tmp_path: Path) -> N
             ],
         )
     )
-    assert findings == []
+    assert [finding.kind for finding in findings] == (
+        [] if accepted else ["model_weight"]
+    )
 
 
 def test_exact_setuptools_path_file_cannot_be_zip_symlink(tmp_path: Path) -> None:
-    wheel = tmp_path / "setuptools-68.1.2-py3-none-any.whl"
+    wheel = tmp_path / "setuptools-80.9.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         info = zipfile.ZipInfo("distutils-precedence.pth")
         info.create_system = 3
@@ -634,7 +646,7 @@ def test_exact_setuptools_path_file_cannot_be_zip_symlink(tmp_path: Path) -> Non
             [
                 {
                     "usr/share/python-wheels/"
-                    "setuptools-68.1.2-py3-none-any.whl": wheel.read_bytes(),
+                    "setuptools-80.9.0-py3-none-any.whl": wheel.read_bytes(),
                 }
             ],
         )
