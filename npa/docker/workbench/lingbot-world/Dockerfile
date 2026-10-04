@@ -1,5 +1,8 @@
 # Public source-only job runtime. CUDA and model weights are fetched at runtime.
-FROM ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837
+# The immutable default is the accepted public Wan parent. A separately scanned,
+# operator-private parent may be supplied only for private qualification.
+ARG WAN_BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837
+FROM ${WAN_BASE_IMAGE}
 
 ARG NPA_SOURCE_SHA
 LABEL npa.tool="lingbot-world" \
@@ -23,8 +26,18 @@ RUN /opt/npa/model_source.sh \
       https://github.com/Robbyant/lingbot-world.git \
       a43bec7f8091c83e9b30b16b912f6fc906236fa6 \
       wan generate.py generate_fast.py pyproject.toml requirements.txt LICENSE.txt README.md \
+    && cp -a /opt/npa/wan2-2/source/wan/utils /opt/byof/wan/ \
+    && sed -i \
+      's/^from easydict import EasyDict$/from wan.utils.easydict import EasyDict/' \
+      /opt/byof/wan/configs/*.py \
+    && sed -i '/^easydict$/d' /opt/byof/requirements.txt \
+    && sed -i '/"easydict",/d' /opt/byof/pyproject.toml \
+    && ! grep -Rqs '^from easydict import EasyDict$' /opt/byof/wan/configs \
+    && ! grep -qx 'easydict' /opt/byof/requirements.txt \
+    && ! grep -Fq '"easydict"' /opt/byof/pyproject.toml \
+    && /opt/wan-base/bin/python -c 'import runpy; cls = runpy.run_path("/opt/byof/wan/utils/easydict.py")["EasyDict"]; assert cls({"nested": {"value": 7}}).nested.value == 7' \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps \
-      protobuf==6.33.6 scipy==1.15.3 easydict==1.13 \
+      protobuf==6.33.6 scipy==1.15.3 \
     && /opt/wan-base/bin/python -m pip freeze --all > /opt/byof/npa_baked_python_inventory.txt \
     && ! grep -Eiq '^(torch|torchvision|torchaudio|nvidia-)' /opt/byof/npa_baked_python_inventory.txt \
     && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \
