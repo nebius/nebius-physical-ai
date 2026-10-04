@@ -210,7 +210,7 @@ def _statement(root, directory, manifest, monkeypatch):
     monkeypatch.setattr(
         acceptance.images, "validate_ncore_accepted_image_manifest", lambda value: value
     )
-    for name in ("_prepublication", "_qualification", "_visual"):
+    for name in ("_prepublication", "_qualification", "_visual", "_retained_inventory"):
         monkeypatch.setattr(acceptance, name, lambda *_: {})
     statement_path = root / acceptance.STATEMENT_PATH
     return acceptance.build_statement(

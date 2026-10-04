@@ -166,3 +166,43 @@ def validate_selected_base_scan(manifest: dict) -> None:
         _count(scan, "critical_total", 0) == _count(scan, "critical_unfixed", 0),
         "selected-base CRITICAL accounting",
     )
+
+
+def validate_retained_source_contract(manifest: dict) -> None:
+    """Keep accepted retained image and current consumer identities distinct.
+
+    Args:
+        manifest: Receipt-derived aggregate, not a standalone provenance proof.
+    Returns:
+        None. Complete Git/evidence verification belongs to the private assembler.
+    Raises:
+        RuntimeError: An unknown version or identity/digest binding is supplied.
+    """
+    contract = _record(manifest, "retained_compatibility")
+    _require(
+        contract.get("format") == "npa_ncore_retained_source_compatibility_v1",
+        "retained compatibility format",
+    )
+    for field in ("producer_commit", "consumer_commit", "consumer_tree"):
+        _require(
+            re.fullmatch(r"[0-9a-f]{40}", str(contract.get(field, ""))),
+            "retained " + field,
+        )
+    _require(
+        contract["producer_commit"] == manifest["development_sha"],
+        "retained producer identity",
+    )
+    _hash(contract, "bridge_sha256")
+    verification = _record(manifest, "acceptance_verification")
+    _require(
+        verification.get("format") == "npa_ncore_receipt_derived_acceptance_v2",
+        "retained acceptance format",
+    )
+    for field in ("producer_commit", "consumer_commit", "consumer_tree"):
+        _require(
+            verification.get(field) == contract[field], "retained verification " + field
+        )
+    _require(
+        verification.get("compatibility_bridge_sha256") == contract["bridge_sha256"],
+        "retained verification bridge",
+    )

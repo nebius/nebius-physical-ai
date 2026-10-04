@@ -136,6 +136,7 @@ def accepted():
             "status": "pass",
             "source_acquisition_receipt_sha256": HASH,
             "s3_probe_receipt_sha256": HASH,
+            "s3_probe_provenance_sha256": HASH,
             "source_staging_receipt_sha256": HASH,
             "candidate_image_receipt_sha256": HASH,
             "qualification_execution_receipt_sha256": HASH,

@@ -356,6 +356,53 @@ creation/tag/digest ownership before
 any cleanup, and use the existing explicit cleanup procedure. Public downloads
 cannot be revoked by deleting a tag.
 
+### Retained producer and current consumer
+
+An unchanged original image can have a later evidence consumer without becoming
+a build from that later source. Aggregate assembly accepts the explicit
+`npa_ncore_retained_source_compatibility_v1` contract in
+`retained_compatibility`: `producer_commit`, `consumer_commit`, `consumer_tree`,
+and `bridge_sha256`. The original `development_sha` remains the image producer.
+Place its protected bridge at `retained/source-compatibility.json` beneath the
+qualification evidence directory; do not edit original receipts to change their
+source or status. This path does not relax the publication CLI's own source,
+policy, transfer or cleanup gates.
+
+The bridge records both complete Git contexts and host-source closures with
+every path, mode, blob and content hash. It independently derives all Dockerfile
+COPY inputs and the complete recipe/lock subtree; those inputs must remain equal.
+All host changes are enumerated for exact independent review, not accepted merely
+because the producer is an ancestor. Original build arguments, provenance,
+labels, ordered layers and receipt hashes stay bound. Conversion, runtime and
+hosted inference retain separate original execution and review identities.
+Current HEAD, relevant dirty files and imported-source origin checks remain
+mandatory; final verification rechecks the bridge on that exact consumer.
+
+Retained assembly emits statement/review/acceptance **v2**, binding both commits,
+the consumer tree and bridge digest. The independent review must explicitly set
+`retained_compatibility_reviewed: true` and repeat the exact compatibility tuple.
+Every original referenced receipt must also appear in the protected inventory.
+Neither a bridge nor a synthetic positive test is aggregate image acceptance.
+
+The S3 adapter accepts only the genuine `npa_ncore_s3_handoff_probe_v1` literal
+`status: ok`, all five literal-true controls, confirmed deletion, positive byte
+count and valid hashes. `s3-probe-provenance.json` binds the original producer,
+invocation and selected historical scope; its hash is required in
+`qualification_controls.s3_probe_provenance_sha256`. A successful old probe is
+not fresh connectivity, authorization for another prefix or universal cleanup.
+
+For the pinned scratch-image Trivy format, omitted `Results` is distinct from
+explicit null, malformed rows or a failed scanner. The optional
+`prepublication.retained_trivy_provenance_sha256` binds
+`retained-trivy-provenance.json` in the original gate directory. This adapter
+requires the original completed check driver, exact committed subprocess and
+scanner-command contract, tool/policy identities, both raw reports, independent
+config and ordered layer identities, and same-image selected-base,
+component/license/source/lock/SBOM supplements. Scanner commands derived from
+the original successful driver/source are not newly observed scanner calls.
+Missing original provenance fails closed. Zero scratch analyzer rows do not
+erase the separate selected-base findings, including unfixed CRITICALs.
+
 No passing image result follows from unit tests or this wiring. A fresh build
 and the actual native byte, source/license/payload, image and supplemental Trivy,
 bootstrap and registry readback gates must pass on the final committed artifact.

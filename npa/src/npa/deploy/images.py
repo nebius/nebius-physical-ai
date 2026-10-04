@@ -2084,6 +2084,7 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     for field in (
         "source_acquisition_receipt_sha256",
         "s3_probe_receipt_sha256",
+        "s3_probe_provenance_sha256",
         "source_staging_receipt_sha256",
         "candidate_image_receipt_sha256",
         "qualification_execution_receipt_sha256",
@@ -2253,7 +2254,12 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     )
     equal(cleanup, "orphan_count", 0)
     acceptance = record(payload, "acceptance_verification")
-    equal(acceptance, "format", "npa_ncore_receipt_derived_acceptance_v1")
+    if "retained_compatibility" in payload:
+        from npa.deploy.ncore_acceptance import validate_retained_source_contract
+
+        validate_retained_source_contract(payload)
+    else:
+        equal(acceptance, "format", "npa_ncore_receipt_derived_acceptance_v1")
     for field in (
         "statement_sha256",
         "evidence_inventory_sha256",

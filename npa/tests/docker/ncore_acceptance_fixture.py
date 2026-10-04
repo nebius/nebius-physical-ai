@@ -3,6 +3,8 @@
 import copy
 import importlib.util
 import json
+import hashlib
+import subprocess
 from pathlib import Path
 
 from npa.workbench.nurec.qualification_audit import _usdz
@@ -44,16 +46,95 @@ def _acquisition(root, manifest):
             "archive_sha256": manifest["conversion"]["source_archive_sha256"],
         },
     )
-    for role, format_name in (
-        ("s3-handoff-probe", "s3_handoff_probe"),
-        ("source-staging", "source_staging"),
-    ):
-        _write(
-            root,
-            role + ".json",
-            {"format": f"npa_ncore_{format_name}_v1", "status": "pass"},
-        )
+    _write(
+        root,
+        "source-staging.json",
+        {"format": "npa_ncore_source_staging_v1", "status": "pass"},
+    )
+    _s3_probe(root, manifest)
     return candidate
+
+
+def _probe_producer():
+    from ncore_publication import retained_receipts
+
+    commit = (
+        subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT).decode().strip()
+    )
+    source = retained_receipts.S3_PRODUCER
+    blob = (
+        subprocess.check_output(["git", "rev-parse", f"{commit}:{source}"], cwd=ROOT)
+        .decode()
+        .strip()
+    )
+    return {
+        "path": source,
+        "commit": commit,
+        "blob": blob,
+        "sha256": hashlib.sha256((ROOT / source).read_bytes()).hexdigest(),
+    }
+
+
+def _probe_payload(scope):
+    from ncore_publication import retained_receipts
+
+    return {
+        "format": "npa_ncore_s3_handoff_probe_v1",
+        "status": "ok",
+        "scope_sha256": scope,
+        "payload_bytes": 257,
+        "delete_status": "confirmed",
+        **dict.fromkeys(retained_receipts.S3_CONTROLS, True),
+        **dict.fromkeys(
+            (
+                "payload_sha256",
+                "etag_sha256",
+                "before_inventory_sha256",
+                "during_inventory_sha256",
+                "after_inventory_sha256",
+            ),
+            "a" * 64,
+        ),
+    }
+
+
+def _s3_probe(root, manifest):
+    from ncore_publication import process
+
+    producer = _probe_producer()
+    scope = hashlib.sha256(b"s3://synthetic-bucket/original-probe/").hexdigest()
+    probe = _probe_payload(scope)
+    path = _write(root, "s3-handoff-probe.json", probe)
+    selected = _write(
+        root,
+        "synthetic-scope.json",
+        {
+            "bucket": "synthetic-bucket",
+            "prefix": "original-probe",
+            "execution_sha": producer["commit"],
+        },
+    )
+    execution = _write(root, "synthetic-probe-execution.json", {"synthetic": True})
+
+    def binding(file):
+        return {
+            "path": file.relative_to(root).as_posix(),
+            "bytes": file.stat().st_size,
+            "sha256": process.file_sha(file),
+        }
+
+    provenance = {
+        "format": "npa_ncore_s3_probe_provenance_v1",
+        "receipt_sha256": process.file_sha(path),
+        "producer": producer,
+        "scope_sha256": scope,
+        "scope_selection": binding(selected),
+        "execution": binding(execution),
+    }
+    path = _write(root, "s3-probe-provenance.json", provenance)
+    manifest["qualification_controls"]["s3_probe_provenance_sha256"] = process.file_sha(
+        path
+    )
 
 
 def _execution_controls(root, candidate, sha):

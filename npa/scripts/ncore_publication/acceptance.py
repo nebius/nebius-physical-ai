@@ -14,7 +14,7 @@ from image_byte_scan import core as W, prepare as P
 from npa.deploy import images
 from npa.workbench.nurec.evidence import validate_runtime_attestation
 
-from . import byte_acceptance
+from . import byte_acceptance, retained_receipts, retained_security, retained_source
 from .process import ROOT, committed_source, file_sha, write_json
 from .vlm_evidence import verify_complete_evidence
 
@@ -93,46 +93,28 @@ def _hash_field(record: dict[str, Any], field: str, path: Path) -> None:
 
 
 def _trivy_counts(payload: dict[str, Any]) -> dict[str, int]:
-    results = payload.get("Results")
-    W.require(isinstance(results, list), "acceptance_trivy_results")
-    vulnerabilities = []
-    secrets = []
-    for result in results:
-        W.require(isinstance(result, dict), "acceptance_trivy_result")
-        vulnerabilities.extend(
-            finding
-            for finding in (result.get("Vulnerabilities") or [])
-            if isinstance(finding, dict)
-            and str(finding.get("Severity") or "").upper() == "CRITICAL"
-        )
-        secrets.extend(
-            finding
-            for finding in (result.get("Secrets") or [])
-            if isinstance(finding, dict)
-        )
-    fixed = [
-        finding
-        for finding in vulnerabilities
-        if str(finding.get("FixedVersion") or "").strip()
-    ]
-    return {
-        "critical_total": len(vulnerabilities),
-        "critical_with_fix": len(fixed),
-        "critical_unfixed": len(vulnerabilities) - len(fixed),
-        "secrets": len(secrets),
-    }
+    return retained_security.counts(payload)
 
 
 def _prepublication(
-    manifest: dict[str, Any], analysis_root: Path, gate_dir: Path
+    manifest: dict[str, Any],
+    analysis_root: Path,
+    gate_dir: Path,
+    evidence_root: Path | None = None,
 ) -> None:
     build = _json(analysis_root / "build/build.json")
     prepublication = _json(gate_dir / "prepublication.json")
     evidence_manifest_path = gate_dir / "evidence-manifest.json"
     evidence_manifest = _json(evidence_manifest_path)
+    if "retained_compatibility" in manifest:
+        W.require(evidence_root is not None, "retained_evidence_root_required")
+        retained_source.verify(manifest, analysis_root, evidence_root)
+        context_sha = build.get("context_sha256")
+    else:
+        context_sha = committed_source(manifest["development_sha"])
     W.require(
         manifest.get("development_sha") == build.get("source_sha")
-        and committed_source(manifest["development_sha"]) == build.get("context_sha256")
+        and context_sha == build.get("context_sha256")
         and manifest.get("oci_digest") == build.get("image_digest")
         and manifest.get("amd64_manifest") == prepublication.get("platform_digest")
         and manifest.get("config_digest") == prepublication.get("config_digest")
@@ -188,6 +170,12 @@ def _prepublication(
         "acceptance_payload_scan_results",
     )
     vulnerability = manifest["vulnerability_scan"]
+    trivy = _json(gate_dir / "trivy-all.json")
+    scan_counts = (
+        retained_security.authenticated_counts(manifest, analysis_root, gate_dir)
+        if "Results" not in trivy
+        else _trivy_counts(trivy)
+    )
     W.require(
         vulnerability.get("status") == "pass"
         and vulnerability.get("report_sha256") == file_sha(gate_dir / "trivy-all.json")
@@ -201,7 +189,7 @@ def _prepublication(
                 "secrets",
             )
         }
-        == _trivy_counts(_json(gate_dir / "trivy-all.json")),
+        == scan_counts,
         "acceptance_vulnerability_scan_results",
     )
     selected = _json(gate_dir / "selected-base/selected.receipt.json")
@@ -243,13 +231,12 @@ def _qualification(
         for role in ("wrong-source", "convert", "audit")
     }
     wrong = _json(evidence_root / "wrong-source.json")
+    retained_receipts.s3_probe(manifest, evidence_root, probe)
     W.require(
         acquisition.get("format") == "npa_ncore_public_source_acquisition_v1"
         and acquisition.get("status") == "pass"
         and acquisition.get("archive_sha256")
         == manifest["conversion"]["source_archive_sha256"]
-        and probe.get("format") == "npa_ncore_s3_handoff_probe_v1"
-        and probe.get("status") == "pass"
         and staging.get("format") == "npa_ncore_source_staging_v1"
         and staging.get("status") == "pass"
         and candidate.get("format") == "npa.ncore.qualification-candidate-image.v1"
@@ -568,11 +555,24 @@ def build_statement(
         "review_receipt_sha256": "0" * 64,
         "reviewer_id_sha256": "0" * 64,
     }
+    if "retained_compatibility" in manifest:
+        contract = manifest["retained_compatibility"]
+        validated["acceptance_verification"].update(
+            format="npa_ncore_receipt_derived_acceptance_v2",
+            producer_commit=contract.get("producer_commit"),
+            consumer_commit=contract.get("consumer_commit"),
+            consumer_tree=contract.get("consumer_tree"),
+            compatibility_bridge_sha256=contract.get("bridge_sha256"),
+        )
     images.validate_ncore_accepted_image_manifest(validated)
-    _prepublication(manifest, analysis_root, gate_dir)
+    if "retained_compatibility" in manifest:
+        _prepublication(manifest, analysis_root, gate_dir, evidence_root)
+    else:
+        _prepublication(manifest, analysis_root, gate_dir)
     objective = _qualification(manifest, evidence_root)
     visual = _visual(manifest, evidence_root)
     inventory = _inventory(analysis_root, evidence_root, gate_dir)
+    _retained_inventory(manifest, analysis_root, evidence_root, gate_dir, inventory)
     statement = {
         "format": STATEMENT_FORMAT,
         "status": "pending_independent_review",
@@ -584,16 +584,26 @@ def build_statement(
         "objective": objective,
         "visual": visual,
     }
+    if "retained_compatibility" in manifest:
+        statement.update(
+            format="npa_ncore_acceptance_statement_v2",
+            candidate_commit=manifest["retained_compatibility"]["consumer_commit"],
+            retained_compatibility=manifest["retained_compatibility"],
+            retained_evidence_root=evidence_root.relative_to(analysis_root).as_posix(),
+        )
     output_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     write_json(output_path, statement)
     return statement
 
 
 def _review_binding(statement, review, statement_sha):
+    retained = "retained_compatibility" in statement.get("manifest", {})
     W.require(
-        statement.get("format") == STATEMENT_FORMAT
+        statement.get("format")
+        == ("npa_ncore_acceptance_statement_v2" if retained else STATEMENT_FORMAT)
         and statement.get("status") == "pending_independent_review"
-        and review.get("format") == REVIEW_FORMAT
+        and review.get("format")
+        == ("npa_ncore_acceptance_review_v2" if retained else REVIEW_FORMAT)
         and review.get("verdict") == "ACCEPTED"
         and review.get("candidate_commit") == statement.get("candidate_commit")
         and review.get("statement_sha256") == statement_sha
@@ -607,6 +617,15 @@ def _review_binding(statement, review, statement_sha):
         and bool(review["reviewer_id"].strip()),
         "acceptance_independent_review",
     )
+    if retained:
+        contract = statement["manifest"]["retained_compatibility"]
+        W.require(
+            statement.get("retained_compatibility") == contract
+            and statement.get("candidate_commit") == contract["consumer_commit"]
+            and review.get("retained_compatibility") == contract
+            and review.get("retained_compatibility_reviewed") is True,
+            "acceptance_retained_independent_review",
+        )
     W.require(
         statement.get("evidence_inventory_sha256")
         == _sha_value(statement.get("evidence_inventory")),
@@ -643,6 +662,7 @@ def finalize_acceptance(
             review["reviewer_id"].encode()
         ).hexdigest(),
     }
+    _retained_final_binding(manifest, statement, analysis_root)
     images.validate_ncore_accepted_image_manifest(manifest)
     write_json(output_path, manifest)
     return manifest
@@ -699,4 +719,56 @@ def verify_final_acceptance(
         and _sha_value(without_verification) == statement.get("manifest_sha256"),
         "accepted_manifest_statement_changed",
     )
+    _retained_final_binding(manifest, statement, analysis_root, verify_only=True)
     return images.validate_ncore_accepted_image_manifest(manifest)
+
+
+def _retained_final_binding(manifest, statement, root, *, verify_only=False):
+    if "retained_compatibility" not in manifest:
+        return
+    relative = Path(statement.get("retained_evidence_root", ""))
+    W.require(
+        relative.parts and not relative.is_absolute() and ".." not in relative.parts,
+        "retained_final_evidence_root",
+    )
+    contract = retained_source.verify(manifest, root, root / relative)
+    expected = {
+        "format": "npa_ncore_receipt_derived_acceptance_v2",
+        "producer_commit": contract["producer_commit"],
+        "consumer_commit": contract["consumer_commit"],
+        "consumer_tree": contract["consumer_tree"],
+        "compatibility_bridge_sha256": contract["bridge_sha256"],
+    }
+    verification = manifest["acceptance_verification"]
+    if verify_only:
+        W.require(
+            all(verification.get(key) == value for key, value in expected.items()),
+            "retained_final_verification_binding",
+        )
+    else:
+        verification.update(expected)
+
+
+def _retained_inventory(manifest, root, evidence, gates, inventory):
+    documents = [(evidence / "s3-probe-provenance.json", evidence)]
+    if "retained_compatibility" in manifest:
+        documents.append((evidence / retained_source.BRIDGE_PATH, root))
+    if "retained_trivy_provenance_sha256" in manifest["prepublication"]:
+        documents.append((gates / "retained-trivy-provenance.json", root))
+    indexed = {row["path"]: row for row in inventory}
+    for path, relative_root in documents:
+        pending = [_json(path)]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, list):
+                pending.extend(value)
+            elif isinstance(value, dict):
+                if set(value) == {"path", "bytes", "sha256"}:
+                    bound = retained_receipts.bound_file(relative_root, value)
+                    record = dict(value, path=bound.relative_to(root).as_posix())
+                    W.require(
+                        indexed.get(record["path"]) == record,
+                        "retained_input_missing_from_protected_inventory",
+                    )
+                else:
+                    pending.extend(value.values())
