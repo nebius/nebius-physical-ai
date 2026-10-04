@@ -214,3 +214,14 @@ def test_runtime_image_declares_the_verified_skypilot_bootstrap_contract() -> No
     assert "rsync sudo" in dockerfile
     assert 'USER ubuntu' in dockerfile
     assert "NOPASSWD:ALL" in dockerfile
+
+
+def test_runtime_image_bakes_the_npa_console_for_skypilot_setup() -> None:
+    """The worker setup clears PYTHONPATH before discovering the image CLI."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "COPY pyproject.toml README.md /opt/npa-src/" in dockerfile
+    assert "COPY src/npa /opt/npa-src/src/npa" in dockerfile
+    assert "pip install --no-deps /opt/npa-src" in dockerfile
+    assert "command -v npa" in dockerfile
+    assert "env -u PYTHONPATH npa --help >/dev/null" in dockerfile

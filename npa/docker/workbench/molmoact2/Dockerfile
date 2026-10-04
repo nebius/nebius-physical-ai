@@ -73,7 +73,15 @@ RUN cd /opt/molmoact2/experiments \
 
 COPY docker/workbench/molmoact2/THIRD_PARTY_NOTICES.md /usr/share/doc/molmoact2/THIRD_PARTY_NOTICES.md
 COPY docker/workbench/molmoact2/REDISTRIBUTION.md /usr/share/doc/molmoact2/REDISTRIBUTION.md
-COPY src/npa /opt/npa/src/npa
+# SkyPilot's worker setup intentionally clears PYTHONPATH while it discovers
+# the image bootstrap. Copying the package source alone is therefore not
+# sufficient: install the NPA console entry point into the selected runtime
+# venv, so ``command -v npa`` remains true during that guarded setup phase.
+COPY pyproject.toml README.md /opt/npa-src/
+COPY src/npa /opt/npa-src/src/npa
+RUN pip install --no-deps /opt/npa-src \
+    && command -v npa \
+    && env -u PYTHONPATH npa --help >/dev/null
 
 RUN useradd --create-home --shell /bin/bash --uid 1000 ubuntu \
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
