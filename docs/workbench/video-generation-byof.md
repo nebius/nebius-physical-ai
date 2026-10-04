@@ -148,8 +148,10 @@ the context and paired trajectories, make a prescribed native continuation, make
 matched alternative-control continuation while consuming the first result, decode
 and measure the two videos, then publish an all-frame synchronized comparison MP4,
 RRD and provenance. The two generation stages call the pinned upstream
-`generate.py` path through its documented eight-rank B200 FSDP/Ulysses topology;
-they are not a metadata wrapper or a training job.
+`generate.py` path through its documented eight-rank FSDP/Ulysses topology. The
+upstream command does not prescribe an accelerator product; NPA resolves the
+eight-GPU product through workflow configuration for the selected target. They are
+not a metadata wrapper or a training job.
 
 The upstream Base (Cam) README prescribes eight local FSDP/Ulysses ranks, and
 this contract rejects any other degree before it fetches stage artifacts or
@@ -159,13 +161,20 @@ does **not** qualify this controlled-continuation graph, its topology, quality,
 throughput, or scaling.
 
 The input, both controls, model result, decode facts, and final media artifacts are
-bound by SHA-256 in run-scoped S3 manifests. The evaluation reports decoded frame
-counts, media dimensions and motion statistics, pose-trajectory divergence, and
-paired RGB difference. A nonzero RGB difference only establishes an observed
-rendered response to different authored controls; it does not establish calibrated
-pose accuracy, robot-action dynamics, physical-world accuracy, robot success, or
-real-time performance. The RRD timeline is generated-video frame time, not a
-physical-camera clock.
+bound by SHA-256 in run-scoped S3 manifests. Preparation also requires a separate
+`input_provenance_uri`: a JSON record that binds the exact selected image bytes to
+the source URL, author, license, source hash, disclosed transformation, and
+redistribution decision. The preparation artifact copies that record into its new
+run-scoped prefix. This records actual input terms and credit; it is not a new
+EULA, checkbox, or acceptance environment variable. Do not substitute an upstream
+example image unless its asset-level provenance is recorded in that input sidecar.
+
+The evaluation reports decoded frame counts, media dimensions and motion statistics,
+pose-trajectory divergence, and paired RGB difference. A nonzero RGB difference
+only establishes an observed rendered response to different authored controls; it
+does not establish calibrated pose accuracy, robot-action dynamics, physical-world
+accuracy, robot success, or real-time performance. The RRD timeline is
+generated-video frame time, not a physical-camera clock.
 
 #### Attribution, terms, and redistribution boundary
 
@@ -197,8 +206,9 @@ respective provider terms; Base (Cam) weights and tokenizer assets are fetched
 under their recorded Apache-2.0 releases; no training or evaluation dataset is
 used by this inference contract. User-provided context media, their S3 retention,
 and downstream generated outputs remain the operator's separate data-governance
-responsibility. Recheck these upstream pages before publishing a different source
-or checkpoint revision; access to a payload alone is not a redistribution grant.
+responsibility and must be represented by the checksum-bound provenance sidecar.
+Recheck these upstream pages before publishing a different source or checkpoint
+revision; access to a payload alone is not a redistribution grant.
 
 `byof-depth-anything-v2.yaml` uses the shared Diffusers/Transformers image.
 The native Transformers `AutoModelForDepthEstimation` runs the pinned Depth

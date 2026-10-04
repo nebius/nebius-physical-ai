@@ -1,48 +1,49 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "418edc6b4c7138fdc3746ce5ddf4c3e9e79d0e6c463180dafa19cb80b3462fcc",
+  "workflow_sha256": "3950842cc402e69c5628a4af3106b97f5c5a31095ebce89865f6e75b59dbf643",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The local NPA CLI validated the exact five-state spec and planned its CPU and documented B200:8 stages with run-scoped S3 handoffs, including a configured run with a real checksum-bound upstream context image.",
+      "reason": "The local NPA CLI validated the exact five-state spec and planned its CPU and configurable eight-GPU stages with run-scoped S3 handoffs, including a required image checksum and a separate author/terms/derivation provenance record.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/lingbot-world-controlled-continuation.yaml --json: status valid",
         "npa workbench workflow plan-spec workflows/testing/lingbot-world-controlled-continuation.yaml --run-id lingbot-world-readiness --json: 5 ordered steps",
-        "npa workbench workflow plan-spec with the owned JPEG input override: 5 ordered steps and no placeholder bucket",
-        "configured plan: B200:8 prescribed and alternative stages; each downstream URI consumes its predecessor artifact"
+        "configured plan: preparation requires both a selected image and input provenance sidecar",
+        "default configured plan: B200:8 prescribed and alternative stages; an operator-selected compatible eight-GPU product is resolved through workflow configuration; each downstream URI consumes its predecessor artifact"
       ]
     },
     "task_fidelity": {
       "status": "verified",
       "reason": "The graph test requires five genuine module stages and exact preparation, prescribed generation, alternative-generation, evaluation, and visualization handoffs. The local artifact test creates both 161-frame MP4s, fully decodes and measures them, and independently verifies the emitted RRD.",
       "evidence": [
-        "npa/tests/workflows/test_lingbot_world.py: 4 passed",
+        "npa/tests/workflows/test_lingbot_world.py: 6 passed",
         "npa/tests/smoke/test_all_workflow_yamls.py -k lingbot-world-controlled-continuation: 2 passed"
       ]
     }
   },
   "prerequisites": {
     "output_storage": {
-      "status": "verified",
-      "reason": "The selected project-scoped object store passed its NPA S3 probe and accepted an owned, checksum-bound upstream JPEG test input.",
+      "status": "unverified",
+      "reason": "The prior input route is retired because the example asset's provenance was not established. A new private execution scope must prove its selected bucket belongs to the Kubernetes project before the lawful image and sidecar are staged.",
       "evidence": [
-        "npa workbench health preflight --checks s3 --project <configured-project> --json: PASS",
-        "owned upstream example JPEG upload: SHA-256 c17c56aa08a20579c55307085d79b01587a500fd030fac600d808058daa2dccb"
+        "owned compatibility submission stopped by execution-scope storage-ownership preflight before workload admission (private receipt, 2026-10-04)",
+        "/tmp/npa-onboarding-20261002-lingbot-world/novel-issues.md"
       ]
     },
     "worker_input": {
-      "status": "verified",
-      "reason": "A real 1280x720 RGB JPEG from upstream examples/00 at source revision a43bec7f8091c83e9b30b16b912f6fc906236fa6 was staged under an owned run-scoped input path and bound by its complete SHA-256.",
+      "status": "unverified",
+      "reason": "The workflow now rejects an input without a source/author/license/source-hash/derivation record bound to its selected bytes. A CC0 candidate and sidecar are privately prepared but must be staged only after a coherent execution scope is supplied.",
       "evidence": [
-        "input SHA-256 c17c56aa08a20579c55307085d79b01587a500fd030fac600d808058daa2dccb"
+        "input-provenance contract is covered by npa/tests/workflows/test_lingbot_world.py",
+        "private CC0 input provenance record (2026-10-04)"
       ]
     },
     "credentials": {
       "status": "verified",
-      "reason": "NPA Nebius authentication and the selected project S3 access passed live preflight. The public Base (Cam) model page has no observed gate or separate acceptance mechanism at the pinned revision.",
+      "reason": "NPA Nebius authentication passed live preflight. The public Base (Cam) model page has no observed gate or separate acceptance mechanism at the pinned revision. The final bucket/cluster ownership relation remains separately unverified.",
       "evidence": [
         "npa workbench health preflight --checks nebius --json: PASS",
-        "npa workbench health preflight --checks s3 --project <configured-project> --json: PASS"
+        "NPA storage preflight must be repeated in the coherent private execution scope"
       ]
     },
     "source_image": {
@@ -54,9 +55,9 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Fresh owned GPU discovery found one allocatable RTX PRO 6000 and no B200 product on the configured target. This exact upstream-native workflow requires the documented B200:8 topology, so NPA rejects it before workload admission. It remains unverified until an eight-GPU compatible target admits it and its final MP4/RRD artifacts are independently inspected. No workflow manifest, model output, MP4, RRD, or GPU acceptance result exists for this graph. Historical single-workflow image qualification is not evidence for it.",
+      "reason": "The upstream topology is eight local FSDP/Ulysses ranks, while the accelerator product is selected through NPA workflow configuration. An owned eight-rank RTX compatibility attempt was rendered and stopped by execution-scope ownership preflight before source staging or workload admission; it is not a B200-equivalence claim. This graph remains unverified until a compatible target admits it and its final MP4/RRD artifacts are independently inspected. No workflow manifest, model output, MP4, RRD, or GPU acceptance result exists for this graph. Historical single-workflow image qualification is not evidence for it.",
       "evidence": [
-        "owned GPU discovery: allocatable=1; advertised product=RTX PRO 6000; requested topology=B200:8",
+        "owned compatibility submission: stopped by execution-scope preflight before workload admission (private receipt, 2026-10-04)",
         "/tmp/npa-onboarding-20261002-lingbot-world/novel-issues.md"
       ]
     }

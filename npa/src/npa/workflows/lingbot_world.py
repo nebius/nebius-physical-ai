@@ -28,6 +28,7 @@ from npa.solutions.media_input import download_input
 
 
 SCHEMA = "npa.workbench.lingbot_world.controlled_continuation.v1"
+MEDIA_PROVENANCE_SCHEMA = "npa.workbench.media-provenance.v1"
 MODEL_CARD_URL = "https://huggingface.co/robbyant/lingbot-world-base-cam"
 PAPER_URL = "https://arxiv.org/abs/2601.20540"
 SOURCE_LICENSE_URL = (
@@ -41,10 +42,11 @@ UPSTREAM_CITATION_URL = (
 UPSTREAM_CITATION = (
     "Robbyant Team, Advancing Open-source World Models, arXiv:2601.20540, 2026"
 )
-# The exact Base (Cam) model card's prescribed command uses eight local ranks for
-# both FSDP and Ulysses. This durable SwitchWorld contract intentionally does
-# not turn the separately-qualified two/four-rank legacy smoke into a claim of
-# equivalence with that upstream configuration.
+# The exact Base (Cam) README prescribes eight local ranks for both FSDP and
+# Ulysses, but does not prescribe an accelerator product. This durable
+# SwitchWorld contract intentionally does not turn the separately-qualified
+# two/four-rank legacy smoke into a claim of equivalence with that upstream
+# topology.
 UPSTREAM_DISTRIBUTED_WORLD_SIZE = 8
 
 
@@ -224,11 +226,118 @@ def _normalized_context(source: Path, destination: Path) -> None:
     normalized.replace(destination)
 
 
+def _require_sha256(value: Any, label: str) -> str:
+    """Require a complete SHA-256 string and return its normalized spelling."""
+
+    normalized = str(value).lower()
+    if len(normalized) != 64 or any(
+        character not in "0123456789abcdef" for character in normalized
+    ):
+        raise LingBotWorldStageError(f"{label} must be a complete SHA-256")
+    return normalized
+
+
+def _require_text(value: Any, label: str) -> str:
+    """Require one nonempty provenance text field."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise LingBotWorldStageError(f"{label} must be a nonempty string")
+    return value.strip()
+
+
+def _input_media_provenance(
+    provenance_uri: str,
+    input_sha256: str,
+    root: Path,
+    storage: Any,
+) -> dict[str, Any]:
+    """Download and validate rights provenance for the exact selected input bytes.
+
+    The stage deliberately copies the validated record into its new output prefix so
+    downstream consumers can inspect the same author/terms chain without relying on
+    a mutable input location. This is a provenance record, not a new acceptance gate.
+    """
+
+    _require_s3_uri(provenance_uri, "input_provenance_uri")
+    record = _read_json(provenance_uri, root / "input-provenance.json", storage)
+    if record.get("schema") != MEDIA_PROVENANCE_SCHEMA:
+        raise LingBotWorldStageError("input provenance has an unsupported schema")
+    selected = record.get("selected_input")
+    source = record.get("source")
+    derivation = record.get("derivation")
+    if not isinstance(selected, Mapping):
+        raise LingBotWorldStageError("input provenance lacks selected_input")
+    if not isinstance(source, Mapping):
+        raise LingBotWorldStageError("input provenance lacks source")
+    if not isinstance(derivation, Mapping):
+        raise LingBotWorldStageError("input provenance lacks derivation")
+    expected = _require_sha256(input_sha256, "input_sha256")
+    selected_hash = _require_sha256(
+        selected.get("sha256"), "input provenance selected_input.sha256"
+    )
+    if selected_hash != expected:
+        raise LingBotWorldStageError(
+            "input provenance selected_input.sha256 does not bind input_sha256"
+        )
+    media_type = _require_text(
+        selected.get("media_type"), "input provenance selected_input.media_type"
+    )
+    if not media_type.startswith("image/"):
+        raise LingBotWorldStageError(
+            "input provenance selected_input must be image media"
+        )
+    normalized_source = {
+        field: _require_text(source.get(field), f"input provenance source.{field}")
+        for field in ("url", "author", "license", "license_url")
+    }
+    normalized_source["sha256"] = _require_sha256(
+        source.get("sha256"), "input provenance source.sha256"
+    )
+    title = source.get("title")
+    if title is not None:
+        normalized_source["title"] = _require_text(
+            title, "input provenance source.title"
+        )
+    dimensions = selected.get("dimensions")
+    if dimensions is not None:
+        if (
+            not isinstance(dimensions, list)
+            or len(dimensions) != 2
+            or any(not isinstance(value, int) or value < 1 for value in dimensions)
+        ):
+            raise LingBotWorldStageError(
+                "input provenance selected_input.dimensions must be [width, height]"
+            )
+    normalized_selected: dict[str, Any] = {
+        "sha256": selected_hash,
+        "media_type": media_type,
+    }
+    if dimensions is not None:
+        normalized_selected["dimensions"] = dimensions
+    return {
+        "schema": MEDIA_PROVENANCE_SCHEMA,
+        "input_provenance_uri": provenance_uri,
+        "selected_input": normalized_selected,
+        "source": normalized_source,
+        "derivation": {
+            "modification": _require_text(
+                derivation.get("modification"),
+                "input provenance derivation.modification",
+            )
+        },
+        "redistribution_decision": _require_text(
+            record.get("redistribution_decision"),
+            "input provenance redistribution_decision",
+        ),
+    }
+
+
 def _prepared_document(
     *,
     manifest_uri: str,
     input_uri: str,
     input_sha256: str,
+    input_provenance: Mapping[str, Any],
     context: Path,
     prescribed: dict[str, str],
     alternative: dict[str, str],
@@ -245,6 +354,7 @@ def _prepared_document(
         "input": {
             "source_uri": input_uri,
             "source_sha256": input_sha256,
+            "media_provenance": dict(input_provenance),
             "context_uri": root + "/context.png",
             "context_sha256": file_sha256(context),
         },
@@ -272,6 +382,7 @@ def _prepared_document(
 def prepare_context(
     input_uri: str,
     input_sha256: str,
+    input_provenance_uri: str,
     manifest_uri: str,
     run_id: str,
 ) -> dict[str, Any]:
@@ -280,6 +391,7 @@ def prepare_context(
     Args:
         input_uri: S3 URI of the user-selected context image.
         input_sha256: Required SHA-256 of the source image bytes.
+        input_provenance_uri: S3 URI of source author/terms and selected-byte record.
         manifest_uri: Run-scoped S3 URI for the prepared manifest.
         run_id: Workflow run identity included in provenance.
 
@@ -296,6 +408,10 @@ def prepare_context(
     with tempfile.TemporaryDirectory(prefix="npa-lingbot-prepare-") as temporary:
         root = Path(temporary) / "prepared"
         root.mkdir()
+        storage = _storage()
+        input_provenance = _input_media_provenance(
+            input_provenance_uri, input_sha256, root, storage
+        )
         source = download_input(input_uri, input_sha256, root / "source-image")
         context = root / "context.png"
         _normalized_context(source, context)
@@ -315,13 +431,17 @@ def prepare_context(
             manifest_uri=manifest_uri,
             input_uri=input_uri,
             input_sha256=input_sha256,
+            input_provenance={
+                **input_provenance,
+                "copied_uri": _uri_parent(manifest_uri) + "/input-provenance.json",
+            },
             context=context,
             prescribed=prescribed,
             alternative=alternative,
             run_id=run_id,
         )
         _write_json(root / _uri_filename(manifest_uri), document)
-        _publish_directory(root, manifest_uri, _storage())
+        _publish_directory(root, manifest_uri, storage)
     return document
 
 
@@ -980,6 +1100,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare = subcommands.add_parser("prepare")
     prepare.add_argument("--input-uri", required=True)
     prepare.add_argument("--input-sha256", required=True)
+    prepare.add_argument("--input-provenance-uri", required=True)
     prepare.add_argument("--manifest-uri", required=True)
     prepare.add_argument("--run-id", required=True)
     generate = subcommands.add_parser("generate")
@@ -1021,7 +1142,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "prepare":
         result = prepare_context(
-            args.input_uri, args.input_sha256, args.manifest_uri, args.run_id
+            args.input_uri,
+            args.input_sha256,
+            args.input_provenance_uri,
+            args.manifest_uri,
+            args.run_id,
         )
     elif args.command == "generate":
         result = generate_continuation(

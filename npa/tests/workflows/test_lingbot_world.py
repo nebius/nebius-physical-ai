@@ -14,6 +14,7 @@ import pytest
 
 from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.spec import load_spec
+from npa.orchestration.npa_workflow.submit import merge_config_overrides
 from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 from npa.solutions.lingbot_camera import FRAME_COUNT, create_camera_controls
 from npa.workflows import lingbot_world
@@ -110,6 +111,40 @@ def _copy_input(source: Path):
     return copy
 
 
+def _input_provenance(image: Path) -> dict[str, object]:
+    """Build a complete selected-byte provenance record for one fixture image."""
+
+    digest = lingbot_world.file_sha256(image)
+    return {
+        "schema": lingbot_world.MEDIA_PROVENANCE_SCHEMA,
+        "selected_input": {
+            "sha256": digest,
+            "media_type": "image/png",
+            "dimensions": [48, 32],
+        },
+        "source": {
+            "title": "Workflow test image",
+            "url": "https://example.invalid/lingbot-test-image",
+            "author": "NPA test fixture",
+            "license": "Apache-2.0",
+            "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "sha256": digest,
+        },
+        "derivation": {"modification": "No transformation before the fixture upload."},
+        "redistribution_decision": "Test-only fixture; not distributed with a runtime image.",
+    }
+
+
+def _write_input_provenance(
+    storage: MemoryStorage, uri: str, image: Path
+) -> None:
+    """Publish one fixture provenance record where the preparation stage expects it."""
+
+    target = storage._path(uri)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(_input_provenance(image)), encoding="utf-8")
+
+
 def test_camera_controls_are_native_shape_and_matched(tmp_path: Path) -> None:
     """Paired authored trajectories retain LingBot's documented array contract."""
 
@@ -149,14 +184,43 @@ def test_workflow_has_five_real_stages_with_exact_artifact_handoffs() -> None:
     ]
     assert all("npa.workflows.lingbot_world" in step.shell for step in plan.steps)
     assert "prepare" in prepare.shell
+    assert "--input-provenance-uri" in prepare.shell
     assert "generate" in prescribed.shell and "--controls prescribed" in prescribed.shell
     assert "generate" in alternative.shell and "--controls alternative" in alternative.shell
     assert "evaluate" in evaluate.shell
     assert "visualize" in visualize.shell
+    spec = load_spec(SPEC)
+    assert spec.config["gpu_type"] == "B200"
+    assert spec.config["gpu_count"] == 8
+    assert spec.resources["lingbot"]["accelerators"] == (
+        "{{config.gpu_type}}:{{config.gpu_count}}"
+    )
     assert prescribed.resources_profile["accelerators"] == "B200:8"
     assert alternative.resources_profile["accelerators"] == "B200:8"
+    rtx_compatibility = build_plan(
+        merge_config_overrides(
+            load_spec(SPEC),
+            {
+                "gpu_type": "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+                "gpu_count": "8",
+            },
+        ),
+        run_id="lingbot-rtx-compatibility",
+    )
+    assert [
+        step.resources_profile["accelerators"]
+        for step in rtx_compatibility.steps
+        if step.state.startswith("generate-")
+    ] == [
+        "RTXPRO-6000-BLACKWELL-SERVER-EDITION:8",
+        "RTXPRO-6000-BLACKWELL-SERVER-EDITION:8",
+    ]
     assert "--degree 8" in prescribed.shell
     assert "--degree 8" in alternative.shell
+    assert {item["schema"] for item in prepare.inputs} == {
+        "application/json",
+        "image/jpeg",
+    }
     prepared_uri = prepare.outputs[0]["uri"]
     prescribed_uri = prescribed.outputs[0]["uri"]
     alternative_uri = alternative.outputs[0]["uri"]
@@ -202,13 +266,16 @@ def test_connected_stages_publish_and_reconsume_real_media(
     monkeypatch.setattr(lingbot_world, "download_input", _copy_input(source))
     monkeypatch.setattr(lingbot_world, "generate_camera_video", _fake_generation)
     prepared_uri = "s3://unit/runs/demo/prepared/manifest.json"
+    provenance_uri = "s3://unit/inputs/context.provenance.json"
     prescribed_uri = "s3://unit/runs/demo/prescribed/manifest.json"
     alternative_uri = "s3://unit/runs/demo/alternative/manifest.json"
     report_uri = "s3://unit/runs/demo/reports/evaluation/control-response.json"
     visualization_uri = "s3://unit/runs/demo/reports/visualization/manifest.json"
+    _write_input_provenance(storage, provenance_uri, source)
     prepared = lingbot_world.prepare_context(
         "s3://unit/inputs/context.png",
         lingbot_world.file_sha256(source),
+        provenance_uri,
         prepared_uri,
         "demo",
     )
@@ -240,6 +307,12 @@ def test_connected_stages_publish_and_reconsume_real_media(
         prescribed_uri, alternative_uri, report_uri, visualization_uri, "demo"
     )
     assert prepared["input"]["context_sha256"]
+    assert prepared["input"]["media_provenance"]["selected_input"]["sha256"] == (
+        lingbot_world.file_sha256(source)
+    )
+    assert prepared["input"]["media_provenance"]["copied_uri"] == (
+        "s3://unit/runs/demo/prepared/input-provenance.json"
+    )
     assert prepared["upstream"]["source"]["license_url"].endswith("LICENSE.txt")
     assert prepared["upstream"]["citation_url"].endswith("README.md#-citation")
     assert (
@@ -260,6 +333,35 @@ def test_connected_stages_publish_and_reconsume_real_media(
     assert storage._path(
         "s3://unit/runs/demo/reports/visualization/comparison.rrd"
     ).is_file()
+
+
+def test_preparation_rejects_provenance_for_different_input(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Preparation cannot make an unbound image look rights-cleared downstream."""
+
+    source = tmp_path / "context.png"
+    Image.fromarray(np.full((32, 48, 3), 127, dtype=np.uint8)).save(source)
+    storage = MemoryStorage(tmp_path / "objects")
+    monkeypatch.setattr(lingbot_world, "_storage", lambda: storage)
+    provenance_uri = "s3://unit/inputs/context.provenance.json"
+    _write_input_provenance(storage, provenance_uri, source)
+    path = storage._path(provenance_uri)
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["selected_input"]["sha256"] = "0" * 64
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    with pytest.raises(
+        lingbot_world.LingBotWorldStageError,
+        match="does not bind input_sha256",
+    ):
+        lingbot_world.prepare_context(
+            "s3://unit/inputs/context.png",
+            lingbot_world.file_sha256(source),
+            provenance_uri,
+            "s3://unit/runs/demo/prepared/manifest.json",
+            "demo",
+        )
 
 
 def test_controlled_contract_rejects_legacy_four_rank_topology() -> None:

@@ -17,8 +17,11 @@ config:
   prompt: A smooth camera move reveals a large bright industrial hangar, preserving coherent geometry and lighting.
   seed: 42
   degree: 8
+  gpu_type: B200
+  gpu_count: 8
   input_uri: s3://example-bucket/inputs/scene.jpg
   input_sha256: <complete-input-sha256>
+  input_provenance_uri: s3://example-bucket/inputs/scene.provenance.json
 
   prepared_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/manifest.json"
   prescribed_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/prescribed/manifest.json"
@@ -37,7 +40,7 @@ resources:
   lingbot:
     cloud: kubernetes
     image: ghcr.io/nebius/nebius-physical-ai/npa-lingbot-world@sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277
-    accelerators: B200:8
+    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
     cpus: 64
     memory: 700Gi
     disk_size: 256
@@ -52,11 +55,14 @@ states:
       shell: >
         test -n "$NPA_CONTROL_PYTHON" && "$NPA_CONTROL_PYTHON" -m
         npa.workflows.lingbot_world prepare --input-uri "{{config.input_uri}}"
-        --input-sha256 "{{config.input_sha256}}" --manifest-uri
+        --input-sha256 "{{config.input_sha256}}" --input-provenance-uri
+        "{{config.input_provenance_uri}}" --manifest-uri
         "{{config.prepared_manifest_uri}}" --run-id "{{run.id}}"
     inputs:
       - uri: "{{config.input_uri}}"
         schema: image/jpeg
+      - uri: "{{config.input_provenance_uri}}"
+        schema: application/json
     outputs:
       - uri: "{{config.prepared_manifest_uri}}"
         schema: npa.workbench.lingbot_world.controlled_continuation.v1

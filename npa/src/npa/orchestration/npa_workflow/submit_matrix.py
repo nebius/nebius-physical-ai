@@ -218,9 +218,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         rotation_skip=True,
         skip_reason=(
-            "Requires an eight-B200 Kubernetes pod and an explicit, checksum-bound "
-            "context input; keep it out of the shared rotation until that exact topology "
-            "is configured."
+            "Requires an eight-GPU Kubernetes pod and explicit checksum-bound context "
+            "plus provenance inputs; keep it out of the shared rotation until a "
+            "compatible single-node topology is configured."
         ),
         notes=(
             "Five connected Base (Cam) stages with two native eight-rank continuations, "
