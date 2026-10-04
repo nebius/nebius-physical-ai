@@ -1,0 +1,45 @@
+{
+  "schema": "npa.public-evidence.caption-default-incoming-interface.v1",
+  "base": "cbd10457cb77d2054f63ad66979df0971579b3c8",
+  "integration_head": "8931a4ec79a809407e3c7c1852267551ae01bf18",
+  "integration_tree": "14413173f58b521d2e2f4cfb761e5c1aba6479cd",
+  "reviewed_feature_head": "2cc3cefd6e8cc2f77109157034f11beb99f621ae",
+  "source_bindings": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "c405024d5cc733110b61083d28b1e9a93fe6f18b36e7418dbd51563c23b6d688",
+      "scope": "Landed paired-audit integration, not byte-equal to earlier evaluator"
+    },
+    {
+      "path": "npa/tests/e2e/test_token_factory_e2e.py",
+      "sha256": "23d52c86df343c31a280720150dea6e9842af5e0639eefd52daa245b93bb8d15",
+      "byte_equal_reviewed_2cc": true
+    }
+  ],
+  "existing_evaluator_AST_changes": [
+    "_resolve_task_text",
+    "_post_with_readiness_retry",
+    "write_result"
+  ],
+  "request_prompt_parser_metric_ASTs_unchanged": true,
+  "caption_client_CLI_SDK_bytes_unchanged": true,
+  "grade_evidence_bytes_unchanged": true,
+  "affected_CPU_execution": {
+    "passed": 1350,
+    "warnings": 8,
+    "seconds": 84.55,
+    "original_response_controls": 2,
+    "invalid_score_negatives": 7,
+    "actual_canonical_writer_and_grade_consumer": true,
+    "original_execution_head": "0b265c0cf422dbc24678f57ce7d391aadf21009d",
+    "request_objects_equal": true,
+    "raw_response_bytes_equal": true,
+    "scores": [1.0, 0.0],
+    "frozen_threshold": 0.8,
+    "new_provider_calls": 0
+  },
+  "original_full_execution_head": "cc8c408a598e168d961c7386f1fb329dc8295b19",
+  "new_full_execution": false,
+  "paired_audit_is_not_scalar_promotion": true,
+  "limits": "Exact retained-request/response CPU bridge, not new hosted inference, paired model quality, calibrated safety, global catalog availability or GPU proof"
+}
