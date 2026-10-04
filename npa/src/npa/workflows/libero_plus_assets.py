@@ -40,6 +40,10 @@ ASSET_ARCHIVE_URL = (
     "https://huggingface.co/datasets/Sylvest/LIBERO-plus/resolve/"
     f"{ASSET_REVISION}/{ASSET_FILE}?download=true"
 )
+# The author-published archive has a producer-specific leading directory.  Do
+# not persist that directory as an NPA contract: it is not the licensed scene
+# identity and it is not needed to select the one bounded asset.  The suffix is
+# still exact, and ambiguous roots fail closed below.
 SCENE_MEMBER = "assets/scenes/libero_tabletop_base_style.xml"
 SCENE_SHA256 = "5e69f8568bedf4a71641fcb62285182d0f6dbe498ea18adad86a13706558033f"
 MAX_SCENE_BYTES = 1_048_576
@@ -194,10 +198,16 @@ def _extract_allowlisted_scene(archive: Path) -> bytes:
         members = bundle.infolist()
         if len(members) != ASSET_MEMBER_COUNT:
             raise LiberoPlusAssetsError("MIT asset archive member inventory drift")
-        try:
-            member = bundle.getinfo(SCENE_MEMBER)
-        except KeyError as error:
-            raise LiberoPlusAssetsError("allowlisted MIT scene is absent") from error
+        matches = [
+            member
+            for member in members
+            if _is_allowlisted_scene_member(member.filename)
+        ]
+        if len(matches) != 1:
+            raise LiberoPlusAssetsError(
+                "allowlisted MIT scene must have exactly one normalized archive member"
+            )
+        member = matches[0]
         mode = member.external_attr >> 16
         if member.is_dir() or (mode & 0o170000) == 0o120000:
             raise LiberoPlusAssetsError("allowlisted MIT scene has unsafe ZIP metadata")
@@ -208,6 +218,22 @@ def _extract_allowlisted_scene(archive: Path) -> bytes:
     if len(scene) != member.file_size or _sha256_bytes(scene) != SCENE_SHA256:
         raise LiberoPlusAssetsError("allowlisted MIT scene SHA-256 mismatch")
     return scene
+
+
+def _is_allowlisted_scene_member(name: str) -> bool:
+    """Accept the one bounded scene below an opaque archive root.
+
+    The Hugging Face asset archive has an upstream producer directory before the
+    asset path.  Keeping it opaque avoids treating that incidental directory as
+    a source contract, while rejecting absolute and traversal paths prevents a
+    similarly named unsafe entry from satisfying the allowlist.
+    """
+    normalized = name.replace("\\", "/")
+    if normalized.startswith("/") or any(
+        part in {"", ".", ".."} for part in normalized.split("/")
+    ):
+        return False
+    return normalized == SCENE_MEMBER or normalized.endswith(f"/{SCENE_MEMBER}")
 
 
 def acquire(output_uri: str, scene_uri: str) -> None:

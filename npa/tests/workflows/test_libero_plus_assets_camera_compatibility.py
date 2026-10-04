@@ -72,11 +72,11 @@ def test_workflow_has_five_connected_native_asset_stages() -> None:
 def test_acquire_only_emits_allowlisted_mit_scene(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Archive selection never extracts task definitions or source utilities."""
+    """Archive selection normalizes the archive root and excludes source bytes."""
     scene = b"<mujoco model='licensed-scene'/>"
     archive = tmp_path / "assets.zip"
     with zipfile.ZipFile(archive, "w") as bundle:
-        bundle.writestr(assets.SCENE_MEMBER, scene)
+        bundle.writestr(f"author-published-root/{assets.SCENE_MEMBER}", scene)
         bundle.writestr("assets/not-selected.py", "not executed")
         bundle.writestr("bddl_files/not-a-task.bddl", "not fetched")
     monkeypatch.setattr(assets, "ASSET_MEMBER_COUNT", 3)
@@ -94,6 +94,22 @@ def test_acquire_only_emits_allowlisted_mit_scene(
         "not present in asset archive and not fetched"
     )
     assert "10,030-task" in observed["limitation"]
+
+
+def test_allowlisted_scene_rejects_ambiguous_or_unsafe_archive_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A producer-rooted suffix must select exactly one regular ZIP member."""
+    scene = b"<mujoco model='licensed-scene'/>"
+    archive = tmp_path / "ambiguous.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(f"first-root/{assets.SCENE_MEMBER}", scene)
+        bundle.writestr(f"second-root/{assets.SCENE_MEMBER}", scene)
+        bundle.writestr(f"../{assets.SCENE_MEMBER}", scene)
+    monkeypatch.setattr(assets, "ASSET_MEMBER_COUNT", 3)
+
+    with pytest.raises(assets.LiberoPlusAssetsError, match="exactly one"):
+        assets._extract_allowlisted_scene(archive)
 
 
 def _png(path: Path, pixel: tuple[int, int, int]) -> dict[str, object]:
