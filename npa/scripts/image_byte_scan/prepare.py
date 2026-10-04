@@ -279,6 +279,7 @@ def authorize(args, directory):
         and report.get("schema_version")
         in (
             "npa.curobo.image-verification.v1",
+            "npa.generic-oci-verification.v1",
             "npa.ncore.oci-verification.v1",
             "npa.robotwin.image-verification.v1",
         ),

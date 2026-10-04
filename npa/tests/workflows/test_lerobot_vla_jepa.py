@@ -67,6 +67,8 @@ def test_live_matrix_registers_the_private_candidate_without_a_generic_fallback(
     }
     assert "unroutable image sentinel" in case.plan_only_justification
     assert "private" in case.plan_only_justification
+    assert "LIBERO dataset endpoint" in case.plan_only_justification
+    assert "no acceptance mechanism" in case.plan_only_justification
 
 
 def test_candidate_image_removes_the_inherited_pip_cache() -> None:
@@ -91,7 +93,9 @@ def test_candidate_image_removes_the_inherited_pip_cache() -> None:
 def test_candidate_image_declares_and_implements_skypilot_bootstrap_contract() -> None:
     """Keep the separately built candidate eligible for the real K8s preflight."""
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-    assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in dockerfile
+    assert (
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in dockerfile
+    )
     for token in (
         "openssh-server",
         "rsync",
@@ -100,7 +104,7 @@ def test_candidate_image_declares_and_implements_skypilot_bootstrap_contract() -
         "PasswordAuthentication no",
         "PermitRootLogin no",
         "rm -f /etc/ssh/ssh_host_*",
-        "ENTRYPOINT [\"/usr/local/bin/npa-lerobot-vla-jepa-entrypoint\"]",
+        'ENTRYPOINT ["/usr/local/bin/npa-lerobot-vla-jepa-entrypoint"]',
     ):
         assert token in dockerfile
     entrypoint = DOCKERFILE.parent / "entrypoint.sh"

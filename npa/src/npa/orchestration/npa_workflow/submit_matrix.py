@@ -193,7 +193,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "The checked-in spec intentionally has no generic-image fallback: its "
             "unroutable image sentinel must be replaced only by a private, "
             "exact-digest VLA-JEPA candidate after byte and pull qualification. "
-            "The shared rotation cannot safely supply that operator-owned digest."
+            "The shared rotation cannot safely supply that operator-owned digest. "
+            "The pinned LIBERO dataset endpoint requires the operator's existing "
+            "Hugging Face credential at runtime; this adds no acceptance mechanism."
         ),
         notes=(
             "Five connected native LeRobot VLA-JEPA stages; the dedicated private "

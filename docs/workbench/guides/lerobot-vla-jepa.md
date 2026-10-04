@@ -39,12 +39,16 @@ arXiv:2602.10098 (2026). The full notice and LeRobot BibTeX are in
 [`THIRD_PARTY_NOTICES.md`](../../../npa/docker/workbench/lerobot-vla-jepa/THIRD_PARTY_NOTICES.md).
 NPA only supplies packaging, orchestration, and provenance adapters.
 
-All listed payloads were public and ungated at the pinned revisions during
-qualification. The candidate uses anonymous runtime fetches with no NPA EULA,
-acceptance environment variable, telemetry opt-in, or copied credential. Model
-weights, datasets, caches, checkpoints, videos, and run output are never image
-layers. Public redistribution remains **unvalidated** until the exact built
-bytes, source closure, and runtime evidence are reviewed; this workflow uses an
+The three model repositories accepted anonymous exact-revision range probes
+during qualification. The pinned `HuggingFaceVLA/libero` dataset endpoint
+returned HTTP 401 without a Hugging Face credential, so the workflow passes the
+operator's existing `HF_TOKEN` only through NPA's native secret plumbing. This
+is an access prerequisite for the exact dataset, not an NPA EULA, a new
+acceptance checkbox, or a statement of use rights. Telemetry remains disabled,
+and no credential is copied into image layers. Model weights, datasets, caches,
+checkpoints, videos, and run output are never image layers. Public
+redistribution remains **unvalidated** until the exact built bytes, source
+closure, and runtime evidence are reviewed; this workflow uses an
 operator-private image candidate only.
 
 ## Execute and inspect
@@ -55,19 +59,25 @@ VLA-JEPA support. Supply the resulting immutable digest as an exact toolRef
 override; the checked-in image value is intentionally non-routable.
 
 ```bash
+VLA_JEPA_IMAGE='private-registry.invalid/operator/lerobot-vla-jepa@sha256:REPLACE_WITH_64_HEX_DIGEST'
+NPA_PROJECT='operator-project'
+NPA_K8S_CONTEXT='operator-kubernetes-context'
+NPA_BUCKET='operator-authorized-bucket'
+
 npa/.venv/bin/npa workbench health preflight --checks nebius,s3 --json
 npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/lerobot-vla-jepa.yaml --json
 npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/lerobot-vla-jepa.yaml \
   --run-id vla-jepa-operator-run --waves --json \
-  --var vla_jepa_image=<private-image@sha256:...>
+  --var "vla_jepa_image=${VLA_JEPA_IMAGE}"
 npa/.venv/bin/npa workbench workflow preflight-images workflows/testing/lerobot-vla-jepa.yaml \
-  --infra k8s/<context> \
-  --image-override workbench.lerobot.vla_jepa=<private-image@sha256:...>
+  --infra "k8s/${NPA_K8S_CONTEXT}" \
+  --image-override "workbench.lerobot.vla_jepa=${VLA_JEPA_IMAGE}"
 npa/.venv/bin/npa workbench workflow submit workflows/testing/lerobot-vla-jepa.yaml \
-  --project <project> --infra k8s/<context> --runtime --stage-src \
-  --run-id vla-jepa-operator-run --var bucket=<authorized-bucket> \
-  --image-override workbench.lerobot.vla_jepa=<private-image@sha256:...> \
-  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+  --project "$NPA_PROJECT" --infra "k8s/${NPA_K8S_CONTEXT}" --runtime --stage-src \
+  --run-id vla-jepa-operator-run --var "bucket=${NPA_BUCKET}" \
+  --image-override "workbench.lerobot.vla_jepa=${VLA_JEPA_IMAGE}" \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN
 ```
 
 After completion, materialize the report prefix and independently check
