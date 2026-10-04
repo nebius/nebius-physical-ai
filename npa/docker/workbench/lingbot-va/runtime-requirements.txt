@@ -4,12 +4,18 @@
 # PyPI. Security-motivated updates still require verified native GPU execution
 # before they can support a capability claim.
 --extra-index-url https://download.pytorch.org/whl/cu126
-torch==2.9.1+cu126
-torchvision==0.24.1+cu126
-torchaudio==2.9.1+cu126
+# LingBot's project metadata declares torch/torchvision lower bounds (2.9/0.24),
+# rather than an upper bound.  Keep CUDA 12.6 but use the first patched Torch
+# line accepted by the repository security gate.  Native GPU qualification is
+# required before this maintained ABI can support a capability claim.
+torch==2.13.0+cu126
+torchvision==0.28.0+cu126
 diffusers==0.38.0
 transformers==5.10.0
-accelerate==1.14.0
+# The upstream requirements file names torchaudio and accelerate, but the pinned
+# source has no import of either.  Diffusers exposes accelerate only through
+# opt-in extras, while this recipe uses native torch/FSDP.  Do not install the
+# scanner-blocked unused packages into the runtime closure.
 einops==0.8.1
 easydict==1.13
 # Flash Attention is optional upstream. The supported paths are Flex training
