@@ -28,7 +28,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    WANDB_MODE=offline
+    WANDB_MODE=offline \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
@@ -100,7 +101,13 @@ RUN git clone --filter=blob:none --no-checkout "${LIBERO_SOURCE_URL}" /opt/openw
 
 COPY pyproject.toml README.md /opt/npa/
 COPY src/npa /opt/npa/src/npa
+# Each upstream environment declares imageio-ffmpeg, whose wheel bundles a
+# second static executable. The Ubuntu ffmpeg package above is sufficient for
+# the runtime and avoids shipping those redundant binaries.
 RUN /opt/openwam-venv/bin/python -m pip install --no-cache-dir --no-deps /opt/npa \
+    && find /opt/openwam-venv /opt/openwam-libero -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && /opt/openwam-venv/bin/python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
+    && /opt/openwam-libero/bin/python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
     && /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
     && /opt/openwam-venv/bin/rerun rrd --help >/dev/null \
     && test -z "$(find /opt/openwam /opt/openwam-venv /opt/openwam-libero /opt/openwam-libero-source -type f \

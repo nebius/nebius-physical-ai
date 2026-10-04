@@ -178,10 +178,12 @@ images:
       workflow evidence have been recorded.
     notes: >-
       Pinned Apache-2.0 OpenWAM source plus its upstream CUDA dependency lock
-      and a separate MIT LIBERO client environment. OpenWAM-alpha, Wan 2.2,
-      LIBERO data, checkpoints, credentials, and populated caches are fetched
-      only at run time. No exact built-byte scan, digest, or GPU workflow
-      qualification exists yet; keep the candidate operator-private.
+      and a separate MIT LIBERO client environment. The two imageio-ffmpeg
+      wheel-bundled executables are stripped in favor of the system ffmpeg.
+      OpenWAM-alpha, Wan 2.2, LIBERO data, checkpoints, credentials, and
+      populated caches are fetched only at run time. No exact built-byte scan,
+      digest, or GPU workflow qualification exists yet; keep the candidate
+      operator-private.
   libero:
     dockerfile: libero/Dockerfile
     tier: job
