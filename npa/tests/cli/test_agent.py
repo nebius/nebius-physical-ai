@@ -4385,6 +4385,20 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
 
     captured: dict[str, object] = {}
     creds = {"service_account_id": "sa", "s3_bucket": "b", "s3_endpoint": "e"}
+    project_region_calls: list[str] = []
+    provider_queries: list[list[str]] = []
+
+    def _project_region(project_id: str) -> str:
+        project_region_calls.append(project_id)
+        assert project_id == "project-1"
+        return "eu-north1"
+
+    def _unexpected_provider_query(argv: list[str], **_kwargs: object) -> None:
+        provider_queries.append(list(argv))
+        raise AssertionError("model-ladder fixture must not query the provider")
+
+    monkeypatch.setattr("npa.clients.nebius.get_project_region", _project_region)
+    monkeypatch.setattr("npa.clients.nebius._run_json", _unexpected_provider_query)
 
     monkeypatch.setattr(
         "npa.cli.agent.resolve_environment",
@@ -4466,6 +4480,8 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
         "MiniMaxAI/MiniMax-M3",
     ):
         assert expected in configured, f"{expected} missing from {configured}"
+    assert project_region_calls == ["project-1"]
+    assert provider_queries == []
 
 
 def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
