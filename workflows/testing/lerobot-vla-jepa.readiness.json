@@ -18,7 +18,7 @@
         "sha256:66c76cea25e6738a6ed5b1f6200cbd6a1d38a0de07dad331a7d294f22b510f52 workflows/testing/lerobot-vla-jepa.yaml",
         "sha256:2ef4c91707a0b30d1756f4d7d806ba61386c05056069aa9b39915f8f978877b4 npa/docker/workbench/lerobot-vla-jepa/Dockerfile",
         "sha256:cfbda831c59974e98d626b6416de29c82a3e599b2a104379d87ed93c3b2aedd6 npa/src/npa/workflows/lerobot_vla_jepa.py",
-        "sha256:03c22b83609e2aa8c942477ccb7c55124911e46736fc81c6ec82248b722369f8 npa/tests/workflows/test_lerobot_vla_jepa.py"
+        "sha256:a812ed41e933fa80dad7beb769f344fad22dd357f044824350fa70c0ca87b1ac npa/tests/workflows/test_lerobot_vla_jepa.py"
       ]
     }
   },
@@ -46,8 +46,8 @@
       ]
     },
     "source_image": {
-      "status": "blocked",
-      "reason": "The checked-in workflow deliberately defaults to a non-routable sentinel so it cannot select a generic LeRobot 0.5.1 or 0.6.0 image. The separately pinned LeRobot 0.6.1 candidate is not yet an authorized private-registry immutable digest with image-pull and exact-byte validation.",
+      "status": "unverified",
+      "reason": "The checked-in workflow deliberately defaults to a non-routable sentinel so it cannot select a generic LeRobot 0.5.1 or 0.6.0 image. A private registry route is available, but the separately pinned LeRobot 0.6.1 candidate has not yet completed exact-byte, immutable-digest, and Kubernetes-pull qualification.",
       "evidence": [
         "npa/docker/workbench/packaging-contract.yaml",
         "npa/docker/workbench/lerobot-vla-jepa/Dockerfile",
@@ -55,8 +55,8 @@
       ]
     },
     "target_runtime": {
-      "status": "blocked",
-      "reason": "No exact candidate digest has completed the required Kubernetes pull, native fine-tune, held-out LIBERO rollout, artifact upload, independent MP4/RRD inspection, and owned cleanup. This workflow therefore has no live-ready or accepted capability claim.",
+      "status": "unverified",
+      "reason": "GPU-capable Kubernetes targets are available, but no exact candidate digest has completed the required Kubernetes pull, native fine-tune, held-out LIBERO rollout, artifact upload, independent MP4/RRD inspection, and owned cleanup. This workflow therefore has no live-ready or accepted capability claim.",
       "evidence": [
         "workflows/testing/lerobot-vla-jepa.yaml",
         "docs/workbench/guides/lerobot-vla-jepa.md"

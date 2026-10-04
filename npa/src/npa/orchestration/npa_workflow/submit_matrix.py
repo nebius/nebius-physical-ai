@@ -185,6 +185,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Pinned PushT data, matched real ACT training, paired closed-loop shifts, next-demo queue and RRD.",
     ),
     SubmitLiveCase(
+        "lerobot-vla-jepa.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        plan_only=True,
+        plan_only_justification=(
+            "The checked-in spec intentionally has no generic-image fallback: its "
+            "unroutable image sentinel must be replaced only by a private, "
+            "exact-digest VLA-JEPA candidate after byte and pull qualification. "
+            "The shared rotation cannot safely supply that operator-owned digest."
+        ),
+        notes=(
+            "Five connected native LeRobot VLA-JEPA stages; the dedicated private "
+            "qualification submits the exact candidate rather than a generic 0.5.1/0.6.0 image."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-mochi-1.yaml",
         "gpu",
         plan_only=True,

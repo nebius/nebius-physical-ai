@@ -11,6 +11,7 @@ import numpy as np
 
 from npa.orchestration.npa_workflow import load_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 from npa.workflows import lerobot_vla_jepa as vla
 
 
@@ -46,6 +47,23 @@ def test_stage_templates_pass_exact_predecessor_artifacts() -> None:
     assert "{{config.prepared_uri}}" in templates["evaluate"]
     assert "{{config.evaluation_uri}}" in templates["report"]
     assert "{{config.training_uri}}" in templates["report"]
+
+
+def test_live_matrix_registers_the_private_candidate_without_a_generic_fallback() -> (
+    None
+):
+    """The rotation may plan the graph, but cannot silently select another image."""
+    case = next(item for item in SUBMIT_LIVE_MATRIX if item.spec == WORKFLOW.name)
+    assert case.tier == "gpu"
+    assert case.plan_only
+    assert not case.image_tool
+    assert set(case.secret_envs) == {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+    }
+    assert "unroutable image sentinel" in case.plan_only_justification
+    assert "private" in case.plan_only_justification
 
 
 def test_task_disjoint_split_and_numeric_training_statistics() -> None:
@@ -176,5 +194,5 @@ def test_readiness_is_hash_bound_and_does_not_claim_live_acceptance() -> None:
         assert hashes[str(path)] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert readiness["planning"]["validation"]["status"] == "verified"
     assert readiness["planning"]["task_fidelity"]["status"] == "verified"
-    assert readiness["prerequisites"]["source_image"]["status"] == "blocked"
-    assert readiness["prerequisites"]["target_runtime"]["status"] == "blocked"
+    assert readiness["prerequisites"]["source_image"]["status"] == "unverified"
+    assert readiness["prerequisites"]["target_runtime"]["status"] == "unverified"
