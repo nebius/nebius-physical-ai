@@ -538,19 +538,19 @@ images:
   lingbot-va:
     dockerfile: lingbot-va/Dockerfile
     tier: job
-    redistribution: public
+    redistribution: restricted
     passwordless_root_exemption: "Inherited SkyPilot bootstrap only; the final runtime user is non-root and no credentials are baked."
     notes: >-
       Apache-2.0 LingBot-VA source with retained notices and NPA's narrow
       workflow adapter. CUDA PyTorch, checkpoints, LIBERO, and runtime caches
-      are operator-owned runtime fetches; the CC BY-NC-SA 4.0 LIBERO-Long
-      dataset is neither fetched nor packaged. No credentials, acceptance
-      records, or generated outputs are in the image. This source-only image is
-      publication-quarantined pending complete built-byte security/license/SBOM
-      scans, immutable-digest pull evidence, and a real GPU workflow that
-      produces independently inspected rollout, evaluation, RRD, and MP4
-      artifacts. The absence of a declared operator use classification prevents
-      NPA from staging or claiming a live dataset run.
+      are operator-owned runtime fetches. The exact CC-BY-4.0
+      HuggingFaceVLA/libero raw source and all fresh derived MP4/latent data are
+      neither fetched nor packaged. No credentials, acceptance records, or
+      generated outputs are in the image. This source-only image is restricted
+      to operator-private validation and publication-quarantined pending
+      complete built-byte security/license/SBOM scans, immutable-digest pull
+      evidence, and a real GPU workflow that produces independently inspected
+      rollout, evaluation, RRD, and MP4 artifacts.
   sam3:
     dockerfile: sam3/Dockerfile
     tier: job

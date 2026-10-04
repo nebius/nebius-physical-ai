@@ -2,7 +2,9 @@
 
 This is a source-only onboarding candidate for [Robbyant's LingBot-VA](https://github.com/Robbyant/lingbot-va), not an accepted NPA model, benchmark, image, or robot capability. The executable specification is [`workflows/testing/lingbot-va-libero-long.yaml`](../../workflows/testing/lingbot-va-libero-long.yaml). Its successful path has five connected substantive stages:
 
-1. Validate and split an operator-staged LeRobot 2.1 + Wan latent dataset.
+1. Select, reindex, and split actual operator-staged CC-BY LeRobot v2.1
+   LIBERO-Long episodes; decode both embedded cameras to 10 Hz MP4 and use the
+   native Wan2.2 VAE/text encoder to make fresh latents.
 2. Continue the official LIBERO-Long derivative with upstream `wan_va.train`.
 3. Serve and roll out the upstream websocket policy on native LIBERO-90 tasks.
 4. Aggregate actual success JSON and emitted action-prediction validity metrics.
@@ -18,9 +20,25 @@ The implementation deliberately invokes upstream training/server/client code; NP
 | Base checkpoint | [`robbyant/lingbot-va-base@68b7bc1b35da6ddc67ea94c4ceb58d768fbb3f9c`](https://huggingface.co/robbyant/lingbot-va-base) | Apache-2.0 card; runtime only |
 | Official LIBERO-Long derivative | [`robbyant/lingbot-va-posttrain-libero-long@0e89d1e753019988aba484e8da2dc0810e264d9f`](https://huggingface.co/robbyant/lingbot-va-posttrain-libero-long) | Apache-2.0 card; runtime only and continuation origin |
 | LIBERO source | [`Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01`](https://github.com/Lifelong-Robot-Learning/LIBERO/tree/8f1084e3132a39270c3a13ebe37270a43ece2a01) | MIT; runtime-only dependency |
-| LIBERO-Long LeRobot data | [`robbyant/libero-long-lerobot@8c0313b1c7cd9fa3798798479cbf59b11af8979d`](https://huggingface.co/datasets/robbyant/libero-long-lerobot) | CC BY-NC-SA 4.0; never fetched by the image or workflow |
+| Raw LIBERO LeRobot data | [`HuggingFaceVLA/libero@affa19c0de0f6bce2a7edd26dddef8a532e7e6f6`](https://huggingface.co/datasets/HuggingFaceVLA/libero/tree/affa19c0de0f6bce2a7edd26dddef8a532e7e6f6) | CC-BY-4.0 card; runtime-staged raw input only |
 
-The dataset's non-commercial condition is material because the operator scope does not declare commercial or noncommercial use. This is not an EULA or a request for one: the workflow requires an operator-staged, authorized object-store prefix and records no assertion about the operator's rights. It does not package data, fetch it through a credential, or add `ACCEPT_*` variables, checkboxes, duplicate attestations, or telemetry consent. A staged input is not evidence that a future public image may redistribute it.
+The raw input is the HuggingFace VLA Team's LeRobot v2.1 conversion of the
+original LIBERO data. The stage requires its exact metadata, selects task IDs
+0–9 only after confirming their authoritative multi-step labels, and creates a
+contiguous derivative because those source episodes are interleaved with the
+other 30 tasks. The run manifest preserves every source episode ID, task ID,
+source revision, action-statistics digest, and derived-tree inventory. It
+decodes the embedded `image` and `image2` bytes and never reads or derives from
+`robbyant/libero-long-lerobot`. CC-BY-4.0 attribution remains required for the
+raw source and derived run artifacts; the raw data, derived MP4s, latents, and
+outputs are not packaged in an image. No additional NPA EULA, acceptance
+variable, checkbox, or telemetry consent is used.
+
+The raw-source card asks users to cite the original LIBERO work: Liu, Zeng,
+Patil, Mu, Xu, Liu, Wu, Liu, Tenenbaum, et al., “LIBERO: Benchmarking Knowledge
+Transfer for Lifelong Robot Learning,” arXiv:2306.03310 (2023). That credit,
+the linked card, and its CC-BY-4.0 declaration must travel with any derived
+artifact provenance.
 
 LingBot-VA credits Robbyant and inherits Wan-Video and Mixture-of-Transformers (MoT) components. The image's notices preserve this credit, the upstream citation (`Lin et al., arXiv:2601.21998, 2026`), source revision, model lineage, and NPA-only modifications. NPA does not relabel the underlying research as original work.
 
@@ -40,4 +58,13 @@ The evaluation stage reports real LIBERO-90 result JSON aggregation and numerica
 
 ## Current acceptance status
 
-The checked-in image is a source-only candidate and has no release route. A local non-root build verified the source-only boundary plus the pinned runtime's Torch/Flex Attention, LingBot, LeRobot, and adapter imports; it did not fetch model weights, run CUDA, or establish any performance result. The workflow is registered in the live-submit matrix as a fail-closed plan-only case while its immutable image and data prerequisites are unavailable. A real execution needs an independently scanned and pushed immutable candidate digest, an authorized staged dataset, and a real NPA/SkyPilot/Kubernetes run. The RRD is bound to the renderer-provided workflow run ID and carries sanitized source/provenance plus its explicit prediction-quality limitation. After a run, independently download and inspect the final evaluation manifest, RRD, and MP4 before changing any status to accepted or live-ready. The hash-bound readiness record names all pending requirements.
+The checked-in image is a source-only candidate and has no public release
+route. Its private-validation disposition remains fail-closed: an immutable
+candidate digest, built-byte/security/license/SBOM scans, a native GPU
+preparation run, and a real NPA/SkyPilot/Kubernetes execution are still
+required before any live-ready claim. The RRD is bound to the
+renderer-provided workflow run ID and carries sanitized source/provenance plus
+its explicit prediction-quality limitation. After a run, independently
+download and inspect the final evaluation manifest, RRD, and MP4 before
+changing any status to accepted or live-ready. The hash-bound readiness record
+names the pending qualification evidence.

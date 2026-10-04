@@ -36,8 +36,16 @@ remains unsupported by this candidate.
   operator-owned runtime cache.
 - LeRobot 0.3.3 is isolated to this runtime because upstream LingBot-VA requires
   it; this is distinct from newer NPA LeRobot tool runtimes.
-- `robbyant/libero-long-lerobot` data: CC BY-NC-SA 4.0, operator-staged only,
-  never copied into public image layers or fetched by NPA.
+- Raw data: [HuggingFaceVLA/libero](https://huggingface.co/datasets/HuggingFaceVLA/libero)
+  at `affa19c0de0f6bce2a7edd26dddef8a532e7e6f6`, whose immutable card declares
+  CC-BY-4.0. It is the HuggingFace VLA Team's LeRobot v2.1 conversion of the
+  original LIBERO data and is operator-staged only, never copied into image
+  layers. The preparation stage selects source task IDs 0–9, decodes raw image
+  bytes, and creates fresh run-scoped MP4/latent outputs; it does not use the
+  separate Robbyant CC-BY-NC-SA latent dataset.
+- LIBERO data credit: Liu, Zeng, Patil, Mu, Xu, Liu, Wu, Liu, Tenenbaum, et
+  al., *LIBERO: Benchmarking Knowledge Transfer for Lifelong Robot Learning*,
+  arXiv:2306.03310 (2023), as requested by the exact raw-source card.
 
 Dependency licenses and redistribution rights remain governed by their own
 authoritative distributions. This notice neither requests nor records consent.

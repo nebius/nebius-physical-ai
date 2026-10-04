@@ -3,8 +3,10 @@ kind: Workflow
 metadata:
   name: lingbot-va-libero-long
   description: >-
-    Quarantined LingBot-VA LIBERO-Long path: validate an operator-staged
-    LeRobot/latent dataset, run the upstream eight-GPU Flex Attention
+    Quarantined LingBot-VA LIBERO-Long path: select actual multi-step episodes
+    from a pinned operator-staged CC-BY raw LeRobot v2.1 dataset, decode its
+    embedded cameras and create fresh upstream Wan2.2 latents, then run the
+    upstream eight-GPU Flex Attention
     post-train recipe from the official LIBERO-Long derivative, run upstream
     Torch-attention websocket inference with genuine LIBERO-90 rollouts,
     aggregate numerical evidence, then emit an RRD plus a real rollout MP4.
@@ -15,9 +17,10 @@ config:
   # Must be replaced with a pushed, immutable, source-only candidate after its
   # exact byte/security checks. It is intentionally not a released tool route.
   candidate_image: "ghcr.io/nebius/nebius-physical-ai/npa-lingbot-va@sha256:REPLACE_WITH_VERIFIED_CANDIDATE_DIGEST"
-  # Operator-staged only. NPA does not fetch robbyant/libero-long-lerobot,
-  # whose card declares CC BY-NC-SA-4.0, and does not infer a use category.
-  source_dataset_uri: "s3://{{config.bucket}}/operator-staged/lingbot-va/libero-long/"
+  # Operator-staged only: exact HuggingFaceVLA/libero@affa19... raw LeRobot v2.1
+  # source (CC-BY-4.0). This is not the Robbyant CC-BY-NC-SA latent dataset.
+  source_dataset_uri: "s3://{{config.bucket}}/operator-staged/lingbot-va/hfvla-libero-v2.1/"
+  prepared_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepare/dataset/"
   prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepare/prepared.json"
   checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/checkpoints/"
   training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/training.json"
@@ -39,28 +42,31 @@ resources:
   train:
     cloud: kubernetes
     image: "{{config.candidate_image}}"
-    accelerators: B200:8
+    accelerators: RTXPRO6000:8
     cpus: 128
     memory: 1Ti
   gpu:
     cloud: kubernetes
     image: "{{config.candidate_image}}"
-    accelerators: B200:1
+    accelerators: RTXPRO6000:1
     cpus: 32
     memory: 256Gi
 initial: prepare
 states:
   prepare:
     description: >-
-      Materialize and validate real LeRobot metadata, action segmentation,
-      Wan latent tensors, and the 30-channel action contract before creating a
-      trajectory-disjoint training/held-out split manifest.
-    resources: cpu
+      Select actual LIBERO-Long episodes from raw LeRobot v2.1 parquet data,
+      decode embedded image/image2 PNG/JPEG frames to 10 Hz MP4s, create fresh
+      upstream Wan2.2 VAE/text latents, add task-label action segmentation, and
+      recompute train-split 7D-to-30D action statistics before publishing the
+      derived dataset and trajectory-disjoint split manifest.
+    resources: gpu
     run:
-      argv: [lingbot-va-runtime, exec, python, -m, npa.solutions.lingbot_va, prepare, --source-uri, "{{config.source_dataset_uri}}", --output-uri, "{{config.prepared_uri}}"]
+      argv: [lingbot-va-runtime, exec, python, -m, npa.solutions.lingbot_va, prepare, --source-uri, "{{config.source_dataset_uri}}", --prepared-dataset-uri, "{{config.prepared_dataset_uri}}", --output-uri, "{{config.prepared_uri}}"]
     inputs:
-      - {uri: "{{config.source_dataset_uri}}", schema: npa.lingbot_va.lerobot_latent_dataset.v1}
+      - {uri: "{{config.source_dataset_uri}}", schema: npa.lingbot_va.raw_lerobot_v2_1.v1}
     outputs:
+      - {uri: "{{config.prepared_dataset_uri}}", schema: npa.lingbot_va.lerobot_wan_latent_dataset.v1}
       - {uri: "{{config.prepared_uri}}", schema: npa.lingbot_va.prepared.v1}
     next: posttrain
   posttrain:
