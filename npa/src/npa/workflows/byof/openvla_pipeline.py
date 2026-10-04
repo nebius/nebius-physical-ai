@@ -78,6 +78,15 @@ DEFAULT_TRIALS = 50
 # been installed.  TensorFlow 2.15 wheels are built against NumPy 1.x, so keep
 # the compatible version in that final resolver invocation as well.
 TENSORFLOW_NUMPY_REQUIREMENT = "numpy==1.26.4"
+PYTORCH_CUDA_INDEX_URL = "https://download.pytorch.org/whl/cu128"
+# PyTorch 2.7 is the first upstream release with NVIDIA Blackwell support and
+# CUDA 12.8 wheels.  The 2.2 wheels pinned by OFT predate sm_120 and fail on
+# the verified RTX PRO 6000 target before a policy can train or evaluate.
+PYTORCH_CUDA_REQUIREMENTS: tuple[str, ...] = (
+    "torch==2.7.1+cu128",
+    "torchvision==0.22.1+cu128",
+    "torchaudio==2.7.1+cu128",
+)
 OFT_PYPI_DIRECT_DEPENDENCIES: tuple[str, ...] = (
     "accelerate>=0.25.0",
     "draccus==0.8.0",
@@ -93,9 +102,6 @@ OFT_PYPI_DIRECT_DEPENDENCIES: tuple[str, ...] = (
     "sentencepiece==0.1.99",
     "timm==0.9.10",
     "tokenizers==0.19.1",
-    "torch==2.2.0",
-    "torchvision==0.17.0",
-    "torchaudio==2.2.0",
     "wandb",
     "tensorflow==2.15.0",
     "tensorflow_datasets==4.9.3",
@@ -493,6 +499,15 @@ def _runtime_install_commands(
     """Return the explicit install graph that excludes OFT's moving dlimp fork."""
     return (
         (str(python), "-m", "pip", "install", "--upgrade", "pip"),
+        (
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--index-url",
+            PYTORCH_CUDA_INDEX_URL,
+            *PYTORCH_CUDA_REQUIREMENTS,
+        ),
         (str(python), "-m", "pip", "install", "--no-deps", "-e", str(transformers)),
         (str(python), "-m", "pip", "install", "--no-deps", "-e", str(dlimp)),
         (str(python), "-m", "pip", "install", "--no-deps", "-e", str(source)),

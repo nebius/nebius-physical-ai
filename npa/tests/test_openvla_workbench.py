@@ -167,6 +167,14 @@ def test_runtime_install_graph_cannot_follow_the_unlicensed_dlimp_fork(
     editable = [command for command in commands if "-e" in command]
     assert all("--no-deps" in command for command in editable[:3])
     assert all("dlimp_openvla" not in " ".join(command) for command in commands)
+    cuda_install = commands[1]
+    assert "--index-url" in cuda_install
+    assert pipe.PYTORCH_CUDA_INDEX_URL in cuda_install
+    assert set(pipe.PYTORCH_CUDA_REQUIREMENTS).issubset(cuda_install)
+    assert all(
+        requirement not in pipe.OFT_PYPI_DIRECT_DEPENDENCIES
+        for requirement in pipe.PYTORCH_CUDA_REQUIREMENTS
+    )
     assert str(tmp_path / "dlimp") in editable[1]
     assert pipe.DLIMP_REPOSITORY == "https://github.com/kvablack/dlimp.git"
     assert re.fullmatch(r"[0-9a-f]{40}", pipe.DLIMP_REVISION)
