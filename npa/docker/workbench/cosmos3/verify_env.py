@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 import sys
 import tempfile
 from importlib import metadata
@@ -35,6 +37,7 @@ VISION_MODES = {"image2image", "image2video", "video2video"}
 WEIGHT_SUFFIXES = (".safetensors", ".ckpt", ".pth", ".pt")
 WEIGHT_MIN_BYTES = 50 * 1024 * 1024
 XET_KNOWN_BAD_PAIR = ("1.23.0", "1.5.1")
+NATIVE_SOURCE_MARKER = ".npa_source_revision"
 
 failures: list[str] = []
 
@@ -107,6 +110,44 @@ def check_inference_entrypoint() -> str:
     from cosmos_framework.scripts import inference
 
     return inference.__name__
+
+
+def check_pinned_framework_source() -> str:
+    """Bind the removed-git checkout to the exact source revision in the image."""
+
+    root = Path(os.environ.get("COSMOS3_REPO", "/opt/cosmos3/cosmos-framework"))
+    marker = root / NATIVE_SOURCE_MARKER
+    revision = marker.read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise RuntimeError(f"invalid or absent framework source marker: {marker}")
+    return f"cosmos-framework={revision}"
+
+
+def check_action_inference_contract() -> str:
+    """Verify the native DROID forward-dynamics flags and embodiment mapping."""
+
+    from cosmos_framework.data.generator.action.domain_utils import (
+        EMBODIMENT_TO_RAW_ACTION_DIM,
+        get_domain_id,
+    )
+
+    if EMBODIMENT_TO_RAW_ACTION_DIM.get("droid_lerobot") != 10:
+        raise RuntimeError("droid_lerobot must retain its 10-channel raw action contract")
+    if get_domain_id("droid_lerobot") != 8:
+        raise RuntimeError("droid_lerobot must retain embodiment domain id 8")
+    result = subprocess.run(
+        [sys.executable, "-m", "cosmos_framework.scripts.inference", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        raise RuntimeError(f"native inference help failed: {result.stderr[-500:]}")
+    required = ("--action-path", "--domain-name", "--action-chunk-size")
+    absent = [flag for flag in required if flag not in result.stdout]
+    if absent:
+        raise RuntimeError(f"native inference is missing DROID action flags: {absent}")
+    return "droid_lerobot domain=8 raw_action_dim=10 action_flags=present"
 
 
 def check_model_module() -> str:
@@ -198,7 +239,9 @@ def main() -> int:
     step("flags", check_flags)
     step("torch + flash-attn", check_torch_stack)
     step("Hugging Face transfer pair", check_hf_transfer_pair)
+    step("pinned framework source", check_pinned_framework_source)
     step("scripts.inference import", check_inference_entrypoint)
+    step("DROID action inference contract", check_action_inference_contract)
     step("inference.model import", check_model_module)
     step("guardrail import", check_guardrail)
     step("checkpoint db lookup", check_checkpoint_lookup)

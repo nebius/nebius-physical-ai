@@ -30,7 +30,7 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "A genuine 17-frame DROID window from the documented held-out split was independently extracted and hash-checked, but it must be re-emitted with its aligned raw action.gripper_position array before staging. The new manifest is intentionally deferred until an authorized immutable image and matching target are ready.",
+      "reason": "A genuine 17-frame DROID window from the documented held-out split was re-emitted from observation.state.cartesian_position (including the upstream DROID-to-OpenCV rotation) and aligned source action.gripper_position values. It has not yet been staged and processed by the rebuilt private image.",
       "evidence": [
         "access-controlled operator input-selection evidence"
       ]
@@ -43,16 +43,16 @@
       ]
     },
     "source_image": {
-      "status": "blocked",
-      "reason": "The configured public Cosmos3 image is repository-quarantined pending a repaired, exact-digest scan and capability qualification; this workflow does not bypass that policy or publish a new image.",
+      "status": "unverified",
+      "reason": "The configured public Cosmos3 image remains repository-quarantined. A private validation rebuild now pins the available OpenMDW-1.1 framework revision and writes a fail-closed source marker, but it still requires exact-digest scan, pull, and native capability qualification. This workflow does not bypass quarantine or publish an image.",
       "evidence": [
         "npa/deploy/public_release_manifest.json",
         "npa/docker/workbench/packaging-contract.yaml"
       ]
     },
     "target_runtime": {
-      "status": "blocked",
-      "reason": "The checked target advertises one RTX PRO 6000 rather than the workflow's B200:1 requirement, and the configured Cosmos3 image remains quarantined. No live acceptance, benchmark result, or robot claim is made.",
+      "status": "unverified",
+      "reason": "A compatible operator-configured GPU target and the rebuilt private image must be selected together before submission. No live acceptance, benchmark result, or robot claim is made.",
       "evidence": [
         "docs/workbench/cosmos3-droid-forward-dynamics.md"
       ]

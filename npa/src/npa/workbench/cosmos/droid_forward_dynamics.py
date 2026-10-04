@@ -47,6 +47,14 @@ VISUALIZATION_SCHEMA = "npa.cosmos3.droid-fd.visualization.v1"
 CHECKPOINT_REPOSITORY = "jere-mybao/cosmos3-nano-droid-forward-dynamics"
 CHECKPOINT_REVISION = "1dfff3cc3b86548b208341bb123d1c4f71043114"
 CARD_FRAMEWORK_REVISION = "9cbd0841b50a1e667577292be1a4ad79cbc8e3d9"
+NATIVE_FRAMEWORK_REPOSITORY = "https://github.com/NVIDIA/cosmos-framework.git"
+# The original export revision above has been pruned from the public remote.  This
+# is the independently available OpenMDW-1.1 pin used by npa-cosmos3; it retains
+# the native forward-dynamics action CLI and DROID domain mapping.  The workflow
+# records both identities and never describes this as a bit-identical rebuild.
+NATIVE_FRAMEWORK_REVISION = "5e67049cd94acb667786f1e6dd0dab821cb90c97"
+NATIVE_FRAMEWORK_LICENSE = "OpenMDW-1.1"
+NATIVE_SOURCE_MARKER = ".npa_source_revision"
 COSMOS3_DROID_REPOSITORY = "nvidia/Cosmos3-DROID"
 COSMOS3_DROID_DATASET_VERSION = "droid_plus_lerobot_640x360_20260412"
 OPENMDW_LICENSE_URL = "https://openmdw.ai/license/1-1/"
@@ -459,6 +467,11 @@ def _download_checkpoint(revision: str) -> tuple[Path, dict[str, Any]]:
 
 
 def _runtime_framework_revision(repo: Path) -> str:
+    marker = repo / NATIVE_SOURCE_MARKER
+    if marker.is_file():
+        revision = marker.read_text(encoding="utf-8").strip()
+        if len(revision) == 40 and all(character in "0123456789abcdef" for character in revision):
+            return revision
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=False
@@ -466,6 +479,15 @@ def _runtime_framework_revision(repo: Path) -> str:
     except OSError:
         return "unavailable"
     return result.stdout.strip() if result.returncode == 0 else "unavailable"
+
+
+def _require_pinned_runtime_framework(repo: Path) -> str:
+    revision = _runtime_framework_revision(repo)
+    if revision != NATIVE_FRAMEWORK_REVISION:
+        raise DroidForwardDynamicsError(
+            "native cosmos-framework revision does not match the qualified DROID runtime pin"
+        )
+    return revision
 
 
 def _native_inference_argv(
@@ -507,6 +529,7 @@ def _run_native_inference(
     repo = Path(os.environ.get("COSMOS3_REPO") or "/opt/cosmos3/cosmos-framework")
     if not (repo / "cosmos_framework" / "scripts" / "inference.py").is_file():
         raise DroidForwardDynamicsError("native cosmos-framework inference is absent from this image")
+    runtime_framework_revision = _require_pinned_runtime_framework(repo)
     checkpoint, checkpoint_identity = _download_checkpoint(revision)
     input_json = root / "forward_dynamics_input.json"
     input_json.write_bytes(
@@ -546,7 +569,11 @@ def _run_native_inference(
         )
     provenance = {
         "native_argv": argv,
-        "runtime_framework_revision": _runtime_framework_revision(repo),
+        "runtime_framework": {
+            "repository": NATIVE_FRAMEWORK_REPOSITORY,
+            "revision": runtime_framework_revision,
+            "license": NATIVE_FRAMEWORK_LICENSE,
+        },
         "checkpoint_identity": checkpoint_identity,
         "action_payload_sha256": _sha256_bytes(_canonical_json(action_payload)),
         "native_raw_action_sha256": _sha256_bytes(_canonical_json(native_actions)),

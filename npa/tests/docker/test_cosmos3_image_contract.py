@@ -108,6 +108,10 @@ def test_dockerfile_pins_the_framework_and_guards_against_baked_weights() -> Non
     assert "model weights baked into image" in instructions
     # Upstream attribution travels with the redistributed source.
     assert "/opt/cosmos3/licenses" in instructions
+    # Removing .git is fine only because the build leaves an immutable source
+    # marker for action-conditioned runtime provenance.
+    assert ".npa_source_revision" in instructions
+    assert 'rev-parse HEAD > "${COSMOS3_REPO}/.npa_source_revision"' in instructions
 
 
 def test_image_build_requires_the_fail_closed_generated_media_wrapper() -> None:
@@ -117,6 +121,8 @@ def test_image_build_requires_the_fail_closed_generated_media_wrapper() -> None:
     assert "npa.workbench.cosmos.guarded_inference" in instructions
     assert "npa.cosmos3.guardrail-state.v1" in instructions
     assert "VideoContentSafetyFilter" in verifier
+    assert "check_pinned_framework_source" in verifier
+    assert "check_action_inference_contract" in verifier
 
 
 def test_image_repairs_inherited_unused_or_stale_vulnerable_bytes() -> None:

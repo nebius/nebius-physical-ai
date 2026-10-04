@@ -13,6 +13,7 @@ from npa.workbench.cosmos.droid_forward_dynamics import (
     CHECKPOINT_REVISION,
     CONTROLS_SCHEMA,
     EVALUATION_SCHEMA,
+    NATIVE_FRAMEWORK_REVISION,
     PREDICTION_SCHEMA,
     PREPARED_SCHEMA,
     SELECTION_SCHEMA,
@@ -20,6 +21,7 @@ from npa.workbench.cosmos.droid_forward_dynamics import (
     DroidForwardDynamicsError,
     _native_inference_argv,
     _native_raw_actions,
+    _require_pinned_runtime_framework,
     _write_video,
     evaluate_droid_forward_dynamics,
     prepare_droid_forward_dynamics,
@@ -193,6 +195,17 @@ def test_native_argv_uses_the_card_contract(tmp_path: Path) -> None:
     assert argv[argv.index("--action-chunk-size") + 1] == "16"
     assert argv[argv.index("-i") + 1].endswith("input.json")
     assert argv[argv.index("--seed") + 1] == "7"
+
+
+def test_native_runtime_requires_the_qualified_framework_marker(tmp_path: Path) -> None:
+    repo = tmp_path / "framework"
+    repo.mkdir()
+    (repo / ".npa_source_revision").write_text(NATIVE_FRAMEWORK_REVISION + "\n")
+    assert _require_pinned_runtime_framework(repo) == NATIVE_FRAMEWORK_REVISION
+
+    (repo / ".npa_source_revision").write_text("0" * 40 + "\n")
+    with pytest.raises(DroidForwardDynamicsError, match="qualified DROID runtime pin"):
+        _require_pinned_runtime_framework(repo)
 
 
 def test_relative_action_contract_is_not_accidentally_normalized(tmp_path: Path) -> None:
