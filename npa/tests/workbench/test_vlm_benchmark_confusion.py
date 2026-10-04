@@ -154,6 +154,22 @@ def test_f1_uses_exact_counts_until_final_rounding(
     ]
     dataset = _write_dataset(tmp_path, items)
 
+    if expected_f1 is None:
+        # A zero denominator remains undefined, but a generated benchmark
+        # cannot measure balanced accuracy from one class. Keep both contracts.
+        assert vlm_eval._safe_ratio(0, 0) is None
+        with pytest.raises(
+            vlm_eval.VlmEvalError,
+            match="at least one pass and one fail expected_label",
+        ):
+            benchmark(dataset=str(dataset), backend="stub", thresholds=(0.8,))
+        return
+    if all(label for label, _score in labels_and_scores):
+        # A true negative supplies the required negative class without changing
+        # the exact TP/FP/FN counts or the F1 rounding oracle under test.
+        items.append(_fixture_item("negative-control", False, 0.0))
+        dataset = _write_dataset(tmp_path, items)
+
     report = benchmark(dataset=str(dataset), backend="stub", thresholds=(0.8,))
 
     assert report.best_config.metrics.f1 == expected_f1

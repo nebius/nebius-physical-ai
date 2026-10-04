@@ -198,6 +198,42 @@ def _validate_chat_completion_input(
         raise TokenFactoryError("messages must be a non-empty sequence")
 
 
+def thinking_chat_extra(model: str, enabled: bool) -> dict[str, Any]:
+    """Build an explicit model-specific thinking override.
+
+    Verified template controls come from the centralized request profile.
+    Profiles using reasoning_effort reject a boolean override rather than
+    silently retain that effort. Other explicit IDs use the generic thinking
+    key; defaults for unknown models remain untouched.
+
+    Args:
+        model: Exact model ID sent to Token Factory.
+        enabled: Whether the model should emit a reasoning trace.
+    Returns:
+        Extra chat-completion fields for :meth:`TokenFactoryClient.chat_completion`.
+
+    Raises:
+        TokenFactoryError: If the boolean or model control is unsupported.
+    """
+
+    if not isinstance(enabled, bool):
+        raise TokenFactoryError("thinking must be a literal boolean")
+    profile = token_factory_chat_profile(model)
+    if profile.reasoning_effort is not None:
+        raise TokenFactoryError(
+            f"{model} does not support a boolean thinking override; "
+            "use its reasoning_effort control explicitly"
+        )
+    template = dict(profile.chat_template_kwargs)
+    if "enable_thinking" in template:
+        control: dict[str, Any] = {"enable_thinking": enabled}
+    elif "thinking_mode" in template:
+        control = {"thinking_mode": "enabled" if enabled else "disabled"}
+    else:
+        control = {"thinking": enabled}
+    return {"chat_template_kwargs": control}
+
+
 @dataclass(frozen=True)
 class TokenFactoryAccessResult:
     """Secret-free model availability and billable-inference preflight result."""
