@@ -1,0 +1,80 @@
+# syntax=docker/dockerfile:1.7
+#
+# This is deliberately an admission image, not a LIBERO-Plus simulator image.
+# It contains no upstream repository, HF asset, model, simulator, renderer, or
+# populated cache.  Its only executable benchmark operation is the adapter's
+# source-license refusal, before a network or cache side effect.
+FROM python:3.10-slim-bookworm@sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496
+
+ARG NPA_SOURCE_SHA
+ARG SOURCE_DATE_EPOCH
+ARG DEBIAN_SNAPSHOT=20260824T000000Z
+
+LABEL org.opencontainers.image.title="NPA LIBERO-Plus source-admission image" \
+      org.opencontainers.image.description="Private unvalidated source-admission image; it contains no LIBERO-Plus payload and refuses unresolved source execution" \
+      org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-NPA-LIBERO-Plus-Admission-Third-Party" \
+      org.nebius.npa.redistribution="unvalidated-private-qualification" \
+      org.nebius.npa.validation-status="source-admission-only" \
+      org.nebius.npa.upstream-payload="absent"
+
+COPY docker/workbench/libero/debian-packages.lock /opt/npa/libero-plus/debian-packages.lock
+COPY docker/workbench/libero-plus/THIRD_PARTY_NOTICES.md /opt/npa/libero-plus/THIRD_PARTY_NOTICES.md
+COPY docker/workbench/libero-plus/entrypoint.sh /usr/local/bin/npa-libero-plus-entrypoint
+COPY src/npa/__init__.py /opt/npa/src/npa/__init__.py
+COPY src/npa/workflows/__init__.py /opt/npa/src/npa/workflows/__init__.py
+COPY src/npa/workflows/libero_plus.py /opt/npa/src/npa/workflows/libero_plus.py
+
+RUN set -eux; \
+    test -n "${NPA_SOURCE_SHA}"; \
+    test "${#NPA_SOURCE_SHA}" -eq 40; \
+    case "${NPA_SOURCE_SHA}" in *[!0-9a-f]*) exit 64 ;; esac; \
+    case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
+    test "${SOURCE_DATE_EPOCH}" -gt 0; \
+    printf '%s\n' \
+      'Types: deb' \
+      "URIs: https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" \
+      'Suites: bookworm bookworm-updates' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      '' \
+      'Types: deb' \
+      "URIs: https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}" \
+      'Suites: bookworm-security' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/debian.sources; \
+    apt-get -o Acquire::Check-Valid-Until=false update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      $(awk -F '\t' '$1 ~ /^(base|dependency|direct)$/ { printf "%s=%s ", $2, $3 }' /opt/npa/libero-plus/debian-packages.lock); \
+    while IFS="$(printf '\t')" read -r kind package version _; do \
+      case "$kind" in base|dependency|direct) test "$(dpkg-query -W -f='${Version}' "$package")" = "$version" ;; esac; \
+    done < /opt/npa/libero-plus/debian-packages.lock; \
+    for package in openssh-server rsync sudo; do \
+      test "$(dpkg-query -W -f='${Status}' "$package")" = 'install ok installed'; \
+    done; \
+    groupadd --gid 1001 npa-admission; \
+    useradd --no-log-init --uid 1000 --create-home --shell /bin/bash ubuntu; \
+    usermod --append --groups npa-admission ubuntu; \
+    chage --lastday "$((SOURCE_DATE_EPOCH / 86400))" ubuntu; \
+    install -d -m 0755 /run/sshd /opt/npa/libero-plus; \
+    install -d -m 0750 -o ubuntu -g npa-admission /workspace /workspace/.cache; \
+    printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-skypilot; \
+    chmod 0440 /etc/sudoers.d/npa-skypilot; \
+    visudo -cf /etc/sudoers.d/npa-skypilot; \
+    rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    chmod 0555 /usr/local/bin/npa-libero-plus-entrypoint; \
+    python3 -I -m py_compile /opt/npa/src/npa/workflows/libero_plus.py; \
+    ! find /opt/npa -type f \( -iname '*.zip' -o -iname '*.mp4' -o -iname '*.hdf5' -o -iname '*.pth' -o -iname '*.ckpt' \) -print -quit | grep -q .
+
+ENV HOME=/home/ubuntu \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/npa/src
+
+USER ubuntu
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/npa-libero-plus-entrypoint"]
+CMD ["python3", "-m", "npa.workflows.libero_plus", "--help"]

@@ -22,3 +22,20 @@ The checked-in `smoke` configuration selects one real task per perturbation cate
 All result artifacts are run-scoped S3 objects. The implementation records native per-episode camera MP4s and independently decodable RRD metrics when an authorized runtime executes it. A full accepted run must have both artifacts before it can be described as live-ready. No extra NPA EULA flag, consent environment variable, telemetry consent, or duplicate per-image attestation is introduced.
 
 The checked-in workflow uses an intentionally invalid example registry digest for offline validation. A future operator run must replace it with a private, immutable, independently inspected bootstrap image; no unverified image is published by this onboarding. Local contract tests validate the five-stage graph and independently decode a generated RRD, but they are not upstream simulator, benchmark, convergence, image, or physical-robot evidence.
+
+## Source-admission image
+
+`npa/docker/workbench/libero-plus/Dockerfile.admission` is an intentionally
+limited private-qualification image recipe. It contains only the NPA adapter,
+the digest-pinned Python/Debian bootstrap, and attribution notices; it contains
+no LIBERO-Plus source, asset archive, model, simulator, renderer, cache, output,
+or credential. Its only permitted live check is that `prepare` refuses before a
+source clone or asset fetch while the reviewed source record is unresolved.
+
+`build-private.sh` produces an OCI archive, scans it, loads a local private tag,
+and writes a private receipt. It refuses official/public registry targets and
+does not push. This source-admission check is useful image evidence, but it is
+not a successful workflow stage or a benchmark result. A separate authorized
+source grant (or an independently proven, licensed equivalent that is not
+relabeled as LIBERO-Plus) is still required before a source-capable image or
+the five-stage native path can be qualified.

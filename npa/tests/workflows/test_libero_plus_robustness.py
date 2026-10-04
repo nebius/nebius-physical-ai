@@ -14,6 +14,9 @@ from npa.workflows import libero_plus
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "workflows/testing/libero-plus-robustness.yaml"
+ADMISSION_DOCKERFILE = ROOT / "npa/docker/workbench/libero-plus/Dockerfile.admission"
+ADMISSION_BUILD = ROOT / "npa/docker/workbench/libero-plus/build-private.sh"
+ADMISSION_NOTICE = ROOT / "npa/docker/workbench/libero-plus/THIRD_PARTY_NOTICES.md"
 
 
 def test_workflow_has_five_connected_substantive_stages() -> None:
@@ -144,3 +147,28 @@ def test_unlicensed_pinned_source_fails_before_any_upstream_fetch() -> None:
         assert "source execution is blocked" in str(error)
     else:
         raise AssertionError("unlicensed source fetch was not blocked")
+
+
+def test_private_admission_image_contains_no_upstream_payload() -> None:
+    dockerfile = ADMISSION_DOCKERFILE.read_text()
+    notice = ADMISSION_NOTICE.read_text()
+
+    assert "COPY src/npa/workflows/libero_plus.py" in dockerfile
+    assert "USER ubuntu" in dockerfile
+    assert 'org.nebius.npa.upstream-payload="absent"' in dockerfile
+    assert "git clone" not in dockerfile
+    assert "hf_hub_download" not in dockerfile
+    assert "LIBERO-Plus source" in notice
+    assert "is not copied into this image" in notice
+    assert "asset archive is not copied into this image" in notice
+
+
+def test_private_admission_build_refuses_public_targets_and_scans_output() -> None:
+    build = ADMISSION_BUILD.read_text()
+
+    assert "ghcr.io/nebius/nebius-physical-ai/*|docker.io/*|index.docker.io/*" in build
+    assert "refusing public image target" in build
+    assert "--provenance=mode=max" in build
+    assert "--sbom=true" in build
+    assert "scan_image_omniverse_payload.py" in build
+    assert "built-local-not-pushed" in build
