@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 from itertools import accumulate
+import importlib.util
 from pathlib import Path
 import shutil
+import sys
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -22,6 +24,7 @@ from npa.solutions import lingbot_va as L
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows/testing/lingbot-va-libero-long.yaml"
 DOCKERFILE = ROOT / "npa/docker/workbench/lingbot-va/Dockerfile"
+STORAGE_HELPER = DOCKERFILE.parent / "lingbot_va_storage.py"
 
 
 class _PinnedLeRobotTensor:
@@ -478,7 +481,64 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
     assert "robbyant/libero-long-lerobot" not in dockerfile
     assert "npa-wan2-2@sha256:" in dockerfile
     assert "install -d -m 0755 /opt/npa-native/npa/solutions" in dockerfile
+    assert "lingbot_va_storage.py /opt/npa-native/npa/clients/storage.py" in dockerfile
+    assert (
+        "src/npa/clients/storage.py /opt/npa-native/npa/clients/storage.py"
+        not in dockerfile
+    )
     assert "/usr/share/doc/npa-lingbot-va" in dockerfile
+
+
+def test_image_storage_facade_uses_runtime_boto_credentials_without_key_literals(
+    tmp_path: Path,
+) -> None:
+    """Exercise the narrow image helper without copying a credential-shaped API."""
+    source = STORAGE_HELPER.read_text(encoding="utf-8")
+    assert "aws_secret_access_key" not in source
+    assert "boto3.client" in source
+    spec = importlib.util.spec_from_file_location(
+        "lingbot_va_image_storage", STORAGE_HELPER
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    class _Paginator:
+        def paginate(self, **_kwargs):
+            return [{"Contents": [{"Key": "prefix/child.txt"}]}]
+
+    class _S3:
+        def __init__(self) -> None:
+            self.uploaded: list[tuple[str, str, str]] = []
+            self.downloaded: list[tuple[str, str, str]] = []
+
+        def upload_file(self, source: str, bucket: str, key: str) -> None:
+            self.uploaded.append((source, bucket, key))
+
+        def download_file(self, bucket: str, key: str, destination: str) -> None:
+            self.downloaded.append((bucket, key, destination))
+            Path(destination).write_text(key, encoding="utf-8")
+
+        def get_paginator(self, name: str):
+            assert name == "list_objects_v2"
+            return _Paginator()
+
+    s3 = _S3()
+    client = module.StorageClient(s3)
+    source_file = tmp_path / "source.txt"
+    source_file.write_text("payload", encoding="utf-8")
+    assert (
+        client.upload_file(str(source_file), "s3://bucket/key.txt")
+        == "s3://bucket/key.txt"
+    )
+    destination = tmp_path / "download.txt"
+    client.download_file("s3://bucket/key.txt", str(destination))
+    tree = tmp_path / "tree"
+    client.download_directory("s3://bucket/prefix", str(tree))
+    assert s3.uploaded == [(str(source_file), "bucket", "key.txt")]
+    assert destination.read_text(encoding="utf-8") == "key.txt"
+    assert (tree / "child.txt").read_text(encoding="utf-8") == "prefix/child.txt"
 
 
 def test_visualization_binds_the_recording_to_the_workflow_run() -> None:

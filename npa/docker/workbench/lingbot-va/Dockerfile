@@ -55,7 +55,10 @@ COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/lo
 # must remain traversable by the non-root workload user.
 RUN install -d -m 0755 /opt/npa-native/npa/solutions /opt/npa-native/npa/clients /usr/share/doc/npa-lingbot-va
 COPY --chmod=0444 src/npa/solutions/lingbot_va.py /opt/npa-native/npa/solutions/lingbot_va.py
-COPY --chmod=0444 src/npa/clients/storage.py /opt/npa-native/npa/clients/storage.py
+# The LingBot adapter needs only four S3 methods.  Preserve credential lookup
+# at runtime through Boto3's standard provider chain rather than copying the
+# general storage client's explicit key-parameter source into image bytes.
+COPY --chmod=0444 docker/workbench/lingbot-va/lingbot_va_storage.py /opt/npa-native/npa/clients/storage.py
 COPY --chmod=0444 docker/workbench/lingbot-va/REDISTRIBUTION.md /usr/share/doc/npa-lingbot-va/REDISTRIBUTION.md
 COPY --chmod=0444 docker/workbench/lingbot-va/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-lingbot-va/THIRD_PARTY_NOTICES.md
 
