@@ -192,6 +192,11 @@ def _native_environment(native_python: str, *, repo_root: Path) -> dict[str, str
     environment["PYTHONPATH"] = (
         str(repo_root) + os.pathsep + environment.get("PYTHONPATH", "")
     )
+    # imageio-ffmpeg is retained only as its BSD-2-Clause Python wrapper. Its
+    # PyPI wheel bundles a separate static executable, which the private image
+    # contract rejects. The image installs the wrapper from source and uses
+    # Ubuntu's dynamically packaged FFmpeg for actual evaluator MP4 output.
+    environment["IMAGEIO_FFMPEG_EXE"] = "/usr/bin/ffmpeg"
     return environment
 
 

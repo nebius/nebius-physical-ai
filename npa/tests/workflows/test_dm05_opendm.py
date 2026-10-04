@@ -268,6 +268,7 @@ def test_native_environment_keeps_upstream_launcher_in_its_pinned_venv(
     )
     assert environment["PATH"].split(":", 1)[0] == str(native_python.parent)
     assert environment["PYTHONPATH"].split(":", 1)[0] == str(tmp_path / "opendm")
+    assert environment["IMAGEIO_FFMPEG_EXE"] == "/usr/bin/ffmpeg"
     parsed = dm05_opendm.build_parser().parse_args(
         [
             "train",

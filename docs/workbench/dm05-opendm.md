@@ -96,6 +96,11 @@ The build command must:
 - install `rerun-sdk`, `pyarrow`, and the NPA runtime dependencies used by
   the staged adapter; `pyarrow` reads the licensed LeRobot v2.1 Parquet
   records before the adapter writes OpenDM's native JSONL/image representation;
+- install the BSD-2-Clause `imageio-ffmpeg` wrapper from its source
+  distribution (`--no-binary imageio-ffmpeg`), not the wheel-bundled static
+  executable. Set `IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg`, verify that the wrapper
+  resolves to Ubuntu's dynamically packaged FFmpeg, and reject any
+  `imageio_ffmpeg/binaries/ffmpeg*` path before the image can qualify; and
 - emit source/dependency/license inventory into the private build evidence; and
 - scan the complete image before the private push. It remains outside public
   registry admission unless a separate, complete redistribution review passes.
