@@ -34,9 +34,9 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The checked-in digest is intentionally a refusal placeholder. A private source-only candidate has been built and byte-scanned, but a target preflight has not yet qualified the immutable image for this workflow hash. Public release is not authorized.",
-      "next_gate": "Build the current source-only candidate privately, inspect its notices and bytes, run the payload/license scan, push it to the operator-private registry, then run image-pull and bootstrap preflight by immutable digest.",
+      "status": "verified",
+      "reason": "The checked-in digest remains an intentional refusal placeholder. Private operator evidence records an immutable source-only candidate whose local health and full OCI byte scan passed, then whose exact target pull and disposable Kubernetes bootstrap capability probe passed with cleanup verified. The candidate remains private-validation-only; public release is not authorized.",
+      "next_gate": "Use the private qualified digest only for the native five-stage workflow, preserve its private evidence, and do not promote or publish it.",
       "evidence": [
         "npa/docker/workbench/lingbot-va/Dockerfile",
         "npa/docker/workbench/lingbot-va/REDISTRIBUTION.md",
