@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from itertools import accumulate
 from pathlib import Path
+import shutil
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -168,6 +169,41 @@ def _fake_native_latents(
             latent.write_bytes(f"test-only native latent:{camera}:{index}".encode())
 
 
+def test_stage_raw_source_downloads_only_exact_cc_by_long_input(
+    tmp_path: Path, monkeypatch
+) -> None:
+    raw = _raw_dataset(tmp_path / "reviewed-hfvla")
+    staged = tmp_path / "staged"
+
+    def copy_reviewed_file(relative_path: str, destination: Path) -> Path:
+        source = raw / relative_path
+        assert source.is_file(), relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        return destination
+
+    monkeypatch.setattr(L, "_download_raw_hf_file", copy_reviewed_file)
+    result = L.stage_raw_source(f"file://{staged}")
+
+    manifest = json.loads((staged / L.RAW_SOURCE_MANIFEST).read_text())
+    assert result["source_dataset_uri"] == f"file://{staged}"
+    assert manifest["complete"] is True
+    assert manifest["dataset_id"] == L.RAW_DATASET_ID
+    assert manifest["dataset_revision"] == L.RAW_DATASET_REF
+    assert manifest["dataset_license"] == "CC-BY-4.0"
+    assert manifest["selected_task_ids"] == list(range(10))
+    assert manifest["selected_episode_count"] == 20
+    assert set(manifest["selected_source_episode_indices"]) == set(range(0, 260, 13))
+    assert all(
+        entry["sha256"] != "test-only" and entry["size_bytes"] > 0
+        for entry in manifest["files"].values()
+    )
+    assert not list(staged.rglob("*.pth"))
+    assert not list(staged.rglob("*.safetensors"))
+    loaded = L._load_raw_source_manifest(f"file://{staged}", tmp_path / "receipt")
+    assert loaded["files"] == manifest["files"]
+
+
 def test_prepare_selects_cc_by_raw_long_data_and_reindexes_sparse_episodes(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -305,27 +341,32 @@ def test_training_subset_physically_reindexes_parquet_videos_and_latents(
     assert not list(prepared_dataset.glob(".*-before-training-subset"))
 
 
-def test_workflow_is_five_connected_native_stages_with_exact_artifact_handoffs() -> (
-    None
-):
+def test_workflow_is_six_connected_native_stages_with_exact_artifact_handoffs() -> None:
     spec = load_spec(WORKFLOW)
     validate_spec(spec)
     plan = build_plan(spec, run_id="lingbot-va-contract")
     payload = yaml.safe_load(WORKFLOW.read_text())
 
     assert list(spec.states) == [
+        "stage_raw",
         "prepare",
         "posttrain",
         "rollout",
         "evaluate",
         "visualize",
     ]
-    assert len(plan.steps) == 5
+    assert len(plan.steps) == 6
     assert payload["resources"]["train"]["accelerators"] == "RTXPRO6000:8"
     assert payload["resources"]["gpu"]["accelerators"] == "RTXPRO6000:1"
     assert (
         "REPLACE_WITH_VERIFIED_CANDIDATE_DIGEST" in payload["config"]["candidate_image"]
     )
+    stage_raw = payload["states"]["stage_raw"]
+    assert stage_raw["run"]["argv"][-2:] == [
+        "--output-uri",
+        "{{config.source_dataset_uri}}",
+    ]
+    assert stage_raw["outputs"][0]["uri"] == "{{config.source_dataset_uri}}"
     prepare = payload["states"]["prepare"]
     assert prepare["run"]["argv"][-2:] == [
         "--output-uri",
@@ -347,6 +388,10 @@ def test_workflow_is_five_connected_native_stages_with_exact_artifact_handoffs()
         ]
         assert "echo" not in argv
         assert "sleep" not in argv
+    assert (
+        payload["states"]["prepare"]["inputs"][0]["uri"]
+        == stage_raw["outputs"][0]["uri"]
+    )
     assert (
         payload["states"]["posttrain"]["inputs"][0]["uri"]
         == payload["states"]["prepare"]["outputs"][1]["uri"]
@@ -394,7 +439,7 @@ def test_pinned_candidate_receives_staged_npa_source_for_worker_bootstrap(
         ),
     )
 
-    assert len(docs) == 5
+    assert len(docs) == 6
     for doc in docs:
         assert doc["resources"]["image_id"] == f"docker:{candidate_image}"
         assert doc["envs"]["NPA_SRC_S3_URI"] == source_uri
