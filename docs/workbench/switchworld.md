@@ -87,6 +87,17 @@ baseline run established that the optional implementation was unavailable. It
 does not fetch or redistribute FlashAttention and makes no performance-
 equivalence claim.
 
+The pinned SwitchWorld perspective adapter has one separate, direct import of
+that optional LingBot FlashAttention entry point. At runtime, NPA records a
+source-overlay modification limited to that upstream call site. It delegates
+unchanged to the pinned LingBot FlashAttention implementation if present; when
+it is absent, it executes a per-sequence PyTorch SDPA compatibility path that
+preserves native query/key lengths, dtype conversion, causal/local masking,
+query scaling, and zeroed query padding. This is a correctness and portability
+compatibility implementation, not a claim of FlashAttention throughput or
+numerical-performance equivalence. The produced adapter record identifies the
+upstream revision plus before/after hashes of that one modified source file.
+
 ## Legal delivery decision
 
 The selected SwitchWorld code and adapter cards declare Apache-2.0, but base

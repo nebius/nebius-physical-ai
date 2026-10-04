@@ -115,6 +115,108 @@ def test_native_tensor_loads_are_weights_only() -> None:
     assert source.count("weights_only=True") == 4
 
 
+def test_strict_sdpa_fallback_preserves_lengths_scale_and_local_causal_mask() -> None:
+    """Exercise the numeric fallback used by the real adapter call site."""
+
+    torch = pytest.importorskip("torch")
+    functional = torch.nn.functional
+    torch.manual_seed(7)
+    q = torch.randn(2, 5, 2, 4, dtype=torch.bfloat16)
+    k = torch.randn(2, 6, 2, 4, dtype=torch.bfloat16)
+    v = torch.randn(2, 6, 2, 3, dtype=torch.bfloat16)
+    q_lens = torch.tensor([3, 5])
+    k_lens = torch.tensor([4, 6])
+
+    observed = switchworld._lingbot_sdpa_attention(
+        q,
+        k,
+        v,
+        q_lens=q_lens,
+        k_lens=k_lens,
+        q_scale=0.75,
+        softmax_scale=0.4,
+        causal=True,
+        window_size=(2, 0),
+        dtype=torch.bfloat16,
+    )
+    expected = torch.zeros_like(observed)
+    for index, (query_length, key_length) in enumerate(zip(q_lens, k_lens)):
+        query_length, key_length = int(query_length), int(key_length)
+        query = q[index, :query_length].transpose(0, 1).unsqueeze(0) * 0.75
+        keys = k[index, :key_length].transpose(0, 1).unsqueeze(0)
+        values = v[index, :key_length].transpose(0, 1).unsqueeze(0)
+        mask = switchworld._local_attention_mask(
+            query_length=query_length,
+            key_length=key_length,
+            causal=True,
+            window_size=(2, 0),
+            device=q.device,
+        )
+        expected[index, :query_length] = (
+            functional.scaled_dot_product_attention(
+                query,
+                keys,
+                values,
+                attn_mask=mask,
+                dropout_p=0.0,
+                is_causal=False,
+                scale=0.4,
+            )
+            .squeeze(0)
+            .transpose(0, 1)
+        )
+    torch.testing.assert_close(observed, expected, rtol=0.03, atol=0.03)
+    assert torch.count_nonzero(observed[0, 3:]) == 0
+
+
+def test_adapter_attention_source_overlay_is_scoped_and_recorded(
+    tmp_path: Path,
+) -> None:
+    """Replace only the reviewed direct adapter call with the strict shim."""
+
+    source = tmp_path / "SwitchWorld" / "models"
+    source.mkdir(parents=True)
+    target = source / "lingbot_perspective_molora.py"
+    target.write_text(
+        "from wan.modules.attention import flash_attention\n"
+        "output = flash_attention(q=q, k=k, v=v)\n",
+        encoding="utf-8",
+    )
+
+    modification = switchworld._source_overlay_attention_fallback(
+        tmp_path / "SwitchWorld"
+    )
+    patched = target.read_text(encoding="utf-8")
+    assert "from wan.modules.attention import flash_attention" not in patched
+    assert "from npa.workflows.switchworld import lingbot_attention" in patched
+    assert "output = lingbot_attention(" in patched
+    assert modification["upstream_revision"] == switchworld.SWITCHWORLD_REVISION
+    assert modification["before_sha256"] != modification["after_sha256"]
+
+
+def test_adapter_command_explicitly_requires_anchor_only_visual_history(
+    tmp_path: Path,
+) -> None:
+    """Never permit later target frames as canonical-adapter conditioning."""
+
+    (tmp_path / "controls.json").write_text(
+        json.dumps({"sampling_steps": 70}), encoding="utf-8"
+    )
+    adapters = {
+        "joint_high_rank128.pt": tmp_path / "high.pt",
+        "joint_low_rank128.pt": tmp_path / "low.pt",
+    }
+    command = switchworld._native_command(
+        tmp_path / "SwitchWorld",
+        tmp_path,
+        tmp_path / "model",
+        tmp_path / "out.mp4",
+        1,
+        adapters,
+    )
+    assert command[-2:] == ["--visual-history-mode", "anchors_only"]
+
+
 def test_causal_transition_timing_uses_native_video_frames(tmp_path: Path) -> None:
     """Never linearly project a latent transition onto the real target timeline."""
 

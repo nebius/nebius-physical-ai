@@ -543,6 +543,229 @@ def _checkout_source(root: Path) -> Path:
     return checkout
 
 
+def _source_overlay_attention_fallback(checkout: Path) -> dict[str, Any]:
+    """Route the one adapter-only attention call through the strict SDPA shim.
+
+    SwitchWorld imports LingBot's optional FlashAttention entry point directly
+    in its perspective adapter, bypassing the LingBot model-level compatibility
+    import.  This scoped source overlay retains the pinned upstream checkout and
+    changes only that call site.  :func:`lingbot_attention` delegates to the
+    upstream FlashAttention implementation when it is present; otherwise it
+    uses a length-preserving PyTorch SDPA implementation.
+    """
+
+    target = checkout / "models" / "lingbot_perspective_molora.py"
+    before = target.read_text(encoding="utf-8")
+    import_line = "from wan.modules.attention import flash_attention"
+    call = "output = flash_attention("
+    if before.count(import_line) != 1 or before.count(call) != 1:
+        raise SwitchWorldError(
+            "pinned SwitchWorld adapter attention call site did not match the "
+            "reviewed source"
+        )
+    after = before.replace(
+        import_line, "from npa.workflows.switchworld import lingbot_attention"
+    ).replace(call, "output = lingbot_attention(")
+    if after == before:
+        raise SwitchWorldError("could not apply SwitchWorld attention source overlay")
+    target.write_text(after, encoding="utf-8")
+    return {
+        "schema": "npa.switchworld.source_modification.v1",
+        "kind": "adapter_attention_compatibility",
+        "target": str(target.relative_to(checkout)),
+        "upstream_revision": SWITCHWORLD_REVISION,
+        "before_sha256": hashlib.sha256(before.encode()).hexdigest(),
+        "after_sha256": hashlib.sha256(after.encode()).hexdigest(),
+        "upstream_import": import_line,
+        "replacement_import": "from npa.workflows.switchworld import lingbot_attention",
+        "behavior": (
+            "delegates to pinned LingBot FlashAttention when available; otherwise "
+            "uses per-sequence PyTorch SDPA with explicit padding and local masks"
+        ),
+    }
+
+
+def _attention_lengths(
+    lengths: Any, *, batch: int, maximum: int, name: str
+) -> list[int]:
+    """Validate one optional native attention-length vector."""
+
+    if lengths is None:
+        return [maximum] * batch
+    try:
+        values = lengths.detach().cpu().tolist()
+    except AttributeError:
+        values = list(lengths)
+    if (
+        not isinstance(values, list)
+        or len(values) != batch
+        or any(
+            type(value) is not int or value < 0 or value > maximum for value in values
+        )
+    ):
+        raise SwitchWorldError(
+            f"{name} must contain exactly {batch} lengths in the range 0..{maximum}"
+        )
+    return values
+
+
+def _local_attention_mask(
+    *,
+    query_length: int,
+    key_length: int,
+    causal: bool,
+    window_size: tuple[int, int],
+    device: Any,
+) -> Any | None:
+    """Build FlashAttention-compatible causal/local access for one sequence."""
+
+    import torch
+
+    if len(window_size) != 2 or any(
+        type(value) is not int or value < -1 for value in window_size
+    ):
+        raise SwitchWorldError(
+            "window_size must contain two integers greater than or equal to -1"
+        )
+    left, right = window_size
+    if not causal and (left, right) == (-1, -1):
+        return None
+    query_positions = torch.arange(query_length, device=device)
+    key_positions = torch.arange(key_length, device=device)
+    # FlashAttention aligns unequal causal query/key lengths at their right
+    # edges.  That is important for image-to-video attention where K can carry
+    # an additional prefix.
+    center = query_positions[:, None] + (key_length - query_length)
+    allowed = torch.ones((query_length, key_length), device=device, dtype=torch.bool)
+    if causal:
+        allowed &= key_positions[None, :] <= center
+    if left != -1:
+        allowed &= key_positions[None, :] >= center - left
+    if right != -1:
+        allowed &= key_positions[None, :] <= center + right
+    return allowed
+
+
+def _lingbot_sdpa_attention(
+    q: Any,
+    k: Any,
+    v: Any,
+    q_lens: Any = None,
+    k_lens: Any = None,
+    dropout_p: float = 0.0,
+    softmax_scale: float | None = None,
+    q_scale: float | None = None,
+    causal: bool = False,
+    window_size: tuple[int, int] = (-1, -1),
+    deterministic: bool = False,
+    dtype: Any = None,
+    **_: Any,
+) -> Any:
+    """Run strict, per-sequence SDPA when optional FlashAttention is absent.
+
+    The upstream generic fallback discards ``q_lens`` and ``k_lens``.  This
+    implementation slices each native sequence before calling SDPA, preserves
+    output padding as zeros, applies ``q_scale`` and ``softmax_scale``, and
+    constructs causal/local masks without exposing invalid padded keys.  The
+    accepted ``deterministic`` argument preserves the upstream call signature;
+    PyTorch's configured deterministic-kernel policy remains authoritative.
+    """
+
+    import torch
+    import torch.nn.functional as functional
+
+    if any(tensor.ndim != 4 for tensor in (q, k, v)):
+        raise SwitchWorldError(
+            "native attention expects [batch, length, heads, channels]"
+        )
+    batch, query_maximum, query_heads, query_channels = q.shape
+    key_batch, key_maximum, key_heads, key_channels = k.shape
+    value_batch, value_maximum, value_heads, _ = v.shape
+    if (
+        key_batch != batch
+        or value_batch != batch
+        or key_maximum != value_maximum
+        or key_heads != value_heads
+        or query_channels != key_channels
+        or query_heads % key_heads
+        or q.device != k.device
+        or q.device != v.device
+    ):
+        raise SwitchWorldError(
+            "native attention tensors have incompatible batch, head, or device shapes"
+        )
+    if dtype is None:
+        dtype = torch.bfloat16
+    if dtype not in (torch.float16, torch.bfloat16):
+        raise SwitchWorldError("native attention dtype must be float16 or bfloat16")
+    output_dtype = q.dtype
+    compute_dtype = v.dtype if v.dtype in (torch.float16, torch.bfloat16) else dtype
+    query_lengths = _attention_lengths(
+        q_lens, batch=batch, maximum=query_maximum, name="q_lens"
+    )
+    key_lengths = _attention_lengths(
+        k_lens, batch=batch, maximum=key_maximum, name="k_lens"
+    )
+    output = torch.zeros(
+        (batch, query_maximum, query_heads, v.shape[-1]),
+        device=q.device,
+        dtype=output_dtype,
+    )
+    for index, (query_length, key_length) in enumerate(
+        zip(query_lengths, key_lengths, strict=True)
+    ):
+        if query_length == 0:
+            continue
+        if key_length == 0:
+            raise SwitchWorldError("a nonempty attention query sequence requires keys")
+        query = q[index, :query_length].transpose(0, 1).unsqueeze(0).to(compute_dtype)
+        keys = k[index, :key_length].transpose(0, 1).unsqueeze(0).to(compute_dtype)
+        values = v[index, :key_length].transpose(0, 1).unsqueeze(0).to(compute_dtype)
+        if q_scale is not None:
+            query = query * q_scale
+        if query_heads != key_heads:
+            repeats = query_heads // key_heads
+            keys = keys.repeat_interleave(repeats, dim=1)
+            values = values.repeat_interleave(repeats, dim=1)
+        mask = _local_attention_mask(
+            query_length=query_length,
+            key_length=key_length,
+            causal=causal,
+            window_size=window_size,
+            device=q.device,
+        )
+        attended = functional.scaled_dot_product_attention(
+            query,
+            keys,
+            values,
+            attn_mask=mask,
+            dropout_p=dropout_p,
+            is_causal=False,
+            scale=softmax_scale,
+        )
+        output[index, :query_length] = (
+            attended.squeeze(0).transpose(0, 1).to(output_dtype)
+        )
+    # The native flag controls FlashAttention's backward implementation.  This
+    # inference fallback deliberately leaves PyTorch's global deterministic
+    # algorithm policy untouched.
+    del deterministic
+    return output
+
+
+def lingbot_attention(*args: Any, **kwargs: Any) -> Any:
+    """Use pinned LingBot FlashAttention when present, else strict PyTorch SDPA."""
+
+    from wan.modules import attention as native_attention
+
+    if (
+        native_attention.FLASH_ATTN_2_AVAILABLE
+        or native_attention.FLASH_ATTN_3_AVAILABLE
+    ):
+        return native_attention.flash_attention(*args, **kwargs)
+    return _lingbot_sdpa_attention(*args, **kwargs)
+
+
 def _lingbot_checkpoint(root: Path) -> Path:
     """Materialize the exact LingBot checkpoint layout through its existing runtime fetcher."""
 
@@ -603,6 +826,8 @@ def _native_command(
                 str(adapters["joint_high_rank128.pt"]),
                 "--low-adapter",
                 str(adapters["joint_low_rank128.pt"]),
+                "--visual-history-mode",
+                "anchors_only",
             ]
         )
     return command
@@ -700,6 +925,7 @@ def run_adapter(*, prepared_uri: str, output_uri: str, seed: int) -> dict[str, A
         root = Path(temporary)
         _download_prepared(storage, prepared_uri, root)
         checkout = _checkout_source(root)
+        source_modifications = _source_overlay_attention_fallback(checkout)
         adapters = _download_adapters(root)
         model_dir = _lingbot_checkpoint(root / "model-cache")
         output = root / "adapted.mp4"
@@ -713,6 +939,7 @@ def run_adapter(*, prepared_uri: str, output_uri: str, seed: int) -> dict[str, A
             "lineage": _runtime_lineage(),
             "command": command,
             "prepared_sha256": _sha256(root / "prepared.json"),
+            "source_modifications": [source_modifications],
             "adapter": {
                 "repository": CANONICAL_ADAPTER_REPOSITORY,
                 "revision": CANONICAL_ADAPTER_REVISION,
