@@ -109,6 +109,7 @@ def test_package_imports_and_lists_both_tools(tmp_path: Path) -> None:
         "cuda-matmul@0.1.0",
         "gpu-info@0.1.0",
         "large-artifact@0.1.0",
+        "openvla-predict@0.1.0",
         "pendulum-viz@0.1.0",
     ]
 
@@ -221,6 +222,7 @@ def test_api_surface_translates_to_invoke(tmp_path: Path) -> None:
         "cuda-matmul@0.1.0",
         "gpu-info@0.1.0",
         "large-artifact@0.1.0",
+        "openvla-predict@0.1.0",
         "pendulum-viz@0.1.0",
     ]
 
@@ -863,3 +865,13 @@ def test_pendulum_viz_descriptor_validates(tmp_path: Path) -> None:
     }
     assert desc.artifact_store is not None
     assert "pendulum-viz@0.1.0" in rt.catalog.list()
+
+
+def test_openvla_predict_descriptor_validates(tmp_path: Path) -> None:
+    rt, _ = make_runtime(tmp_path)
+    desc = rt.catalog.get("openvla-predict", "0.1.0")
+    assert "transformers==4.40.1" in desc.environment.pip
+    assert desc.resources.gpu == 1
+    assert desc.resources.memory_gb == 32
+    assert desc.artifact_store is not None
+    assert desc.commands["run"].outputs["action"].format == "binary"

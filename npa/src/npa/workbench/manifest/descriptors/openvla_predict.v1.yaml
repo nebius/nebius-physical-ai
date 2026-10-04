@@ -1,0 +1,76 @@
+apiVersion: manifest/v0.1
+name: openvla-predict
+version: 0.1.0
+description: >
+  Production OpenVLA inference: openvla-7b predict_action on cuda:0. The
+  exact workload from the 2026-09-27 GPU validation, onboarded by
+  descriptor only — pinned transformers/timm/tokenizers via environment.pip,
+  model weights from Hugging Face in-pod, action + observation artifacts
+  via the artifact store. Zero per-tool code.
+image:
+  repository: pytorch/pytorch
+  tag: 2.8.0-cuda12.8-cudnn9-runtime
+  digest: sha256:417bd75df6365104c283ea4c1651fb3530d9eb5a4c2fafa51943cff2a94e6385
+environment:
+  pip:
+    - transformers==4.40.1
+    - timm==0.9.10
+    - tokenizers==0.19.1
+    - pillow
+artifact_store:
+  type: s3
+  bucket: my-bucket
+  prefix: manifest-mvp/openvla-predict/
+  endpoint_url: https://storage.eu-north1.nebius.cloud
+payload_files:
+  - container_path: /work/openvla_predict.py
+    host_path: workloads/openvla_predict.py
+commands:
+  run:
+    argv: ["python", "/work/openvla_predict.py", "--model-id", "{{model_id}}", "--prompt", "{{prompt}}", "--seed", "{{seed}}", "--out-action", "{{action_path}}", "--out-obs", "{{obs_path}}", "--out-json", "{{json_path}}"]
+    params:
+      model_id:
+        type: string
+        default: openvla/openvla-7b
+      prompt:
+        type: string
+        default: "In: What action should the robot take to pick up the red block?\nOut:"
+      seed:
+        type: integer
+        default: 7
+      action_path:
+        type: string
+        default: /work/action.npy
+      obs_path:
+        type: string
+        default: /work/observation.png
+      json_path:
+        type: string
+        default: /work/summary.json
+    outputs:
+      action:
+        path: /work/action.npy
+        format: binary
+        required: true
+      observation:
+        path: /work/observation.png
+        format: binary
+        required: true
+      summary:
+        path: /work/summary.json
+        format: json
+        required: true
+resources:
+  gpu: 1
+  memory_gb: 32
+success:
+  checks:
+    - artifact: summary
+      json_path: device_ok
+      equals: true
+    - artifact: summary
+      json_path: action_shape
+      equals: [7]
+    - artifact: summary
+      json_path: predict_s
+      greater_than: 0
