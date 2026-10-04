@@ -71,7 +71,8 @@ RUN set -eux; \
     test ! -e /workspace/.cache/npa-model/libero-plus-assets; \
     ! find /opt/npa -type f \( -iname '*.zip' -o -iname '*.mp4' -o -iname '*.hdf5' -o -iname '*.pth' -o -iname '*.ckpt' \) -print -quit | grep -q .
 
-ENV NPA_MODEL_CACHE_DIR=/workspace/.cache/npa-model \
+ENV NPA_BAKED_PYTHON=/opt/openwam-libero/bin/python \
+    NPA_MODEL_CACHE_DIR=/workspace/.cache/npa-model \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 

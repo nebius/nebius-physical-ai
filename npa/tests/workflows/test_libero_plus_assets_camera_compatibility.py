@@ -227,6 +227,7 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
     assert 'exec "$@"' in entrypoint
     assert "boto3==1.42.91 rerun-sdk==0.38.1" in dockerfile
     assert "import libero, mujoco" in dockerfile
+    assert "NPA_BAKED_PYTHON=/opt/openwam-libero/bin/python" in dockerfile
     assert "scanner-quarantined" in dockerfile
     assert "imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2" in dockerfile
     assert "chmod 0444 /opt/npa/src/npa/workflows/libero_plus_assets.py" in dockerfile
