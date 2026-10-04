@@ -1,14 +1,15 @@
 # Runtime-only closure for LingBot-VA's documented Python 3.10 / CUDA 12.6
 # environment.  Models and datasets are intentionally absent.  The CUDA wheel
 # index is the exact upstream PyTorch channel; non-CUDA dependencies are from
-# PyPI.  Refresh this lock after a verified native GPU build, not opportunistically.
+# PyPI. Security-motivated updates still require verified native GPU execution
+# before they can support a capability claim.
 --extra-index-url https://download.pytorch.org/whl/cu126
-torch==2.9.0+cu126
-torchvision==0.24.0+cu126
-torchaudio==2.9.0+cu126
-diffusers==0.36.0
-transformers==4.55.2
-accelerate==1.9.0
+torch==2.9.1+cu126
+torchvision==0.24.1+cu126
+torchaudio==2.9.1+cu126
+diffusers==0.38.0
+transformers==5.10.0
+accelerate==1.14.0
 einops==0.8.1
 easydict==1.13
 # Flash Attention is optional upstream. The supported paths are Flex training
@@ -18,16 +19,16 @@ numpy==1.26.4
 tqdm==4.67.1
 imageio[ffmpeg]==2.37.0
 websockets==15.0.1
-msgpack==1.1.1
+msgpack==1.2.1
 opencv-python-headless==4.11.0.86
 matplotlib==3.10.3
 ftfy==6.3.1
 safetensors==0.5.3
-Pillow==11.3.0
+Pillow==12.3.0
 # LeRobot itself is installed with --no-deps by the runtime, exactly as the
 # upstream LingBot-VA instructions require: its metadata caps Torch below the
 # source-required 2.9.0. Keep the non-Torch 0.3.3 data dependencies explicit.
-datasets==3.6.0
+datasets==5.0.1
 pyarrow==25.0.1
 cmake==4.0.3
 av==16.0.1
@@ -38,8 +39,8 @@ jsonlines==4.0.0
 torchcodec==0.5
 draccus==0.10.0
 gymnasium==0.29.1
-deepdiff==8.6.1
-Flask==3.1.1
+deepdiff==8.6.2
+Flask==3.1.3
 termcolor==3.1.0
 scipy==1.15.3
 wandb==0.20.1

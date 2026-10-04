@@ -40,7 +40,7 @@ verify() {
   fi
   "$1/venv/bin/python" - <<'PY'
 import torch
-assert torch.__version__.split('+', 1)[0] == '2.9.0', torch.__version__
+assert torch.__version__.split('+', 1)[0] == '2.9.1', torch.__version__
 assert torch.version.cuda == '12.6', torch.version.cuda
 from torch.nn.attention.flex_attention import flex_attention
 import wan_va.modules.model
@@ -94,7 +94,7 @@ ensure() {
     # first, then resolve the rest of the upstream closure. The selected Flex
     # training and Torch inference paths do not execute Flash Attention.
     "$tmp/venv/bin/python" -m pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu126 \
-      'torch==2.9.0+cu126' 'torchvision==0.24.0+cu126' 'torchaudio==2.9.0+cu126'
+      'torch==2.9.1+cu126' 'torchvision==0.24.1+cu126' 'torchaudio==2.9.1+cu126'
     "$tmp/venv/bin/python" -m pip install --no-cache-dir -r "$REQUIREMENTS"
     # Upstream explicitly installs this historical LeRobot revision with
     # --no-deps because its package metadata caps Torch below LingBot-VA's
