@@ -101,7 +101,11 @@ def _write_bytes(uri: str, payload: bytes, *, content_type: str) -> None:
 
 
 def _write_json(uri: str, payload: Mapping[str, Any]) -> None:
-    _write_bytes(uri, json.dumps(payload, indent=2, sort_keys=True).encode() + b"\n", content_type="application/json")
+    _write_bytes(
+        uri,
+        json.dumps(payload, indent=2, sort_keys=True).encode() + b"\n",
+        content_type="application/json",
+    )
 
 
 def _read_json(uri: str) -> dict[str, Any]:
@@ -132,7 +136,9 @@ def _download_file(uri: str, destination: Path) -> None:
 
 def _runtime_image_provenance(expected_image: str) -> dict[str, str]:
     if "@sha256:" not in expected_image:
-        raise OpenWAMPipelineError("runtime image must be supplied as an immutable digest")
+        raise OpenWAMPipelineError(
+            "runtime image must be supplied as an immutable digest"
+        )
     observed = os.environ.get("NPA_TASK_IMAGE", "").strip()
     if observed and "@sha256:" in observed and observed != expected_image:
         raise OpenWAMPipelineError(
@@ -151,11 +157,15 @@ def _require_repository(root: Path) -> Path:
 def _copy_repository(source: Path, destination: Path) -> Path:
     if destination.exists():
         shutil.rmtree(destination)
-    shutil.copytree(source, destination, ignore=shutil.ignore_patterns("assets", "outputs", ".git"))
+    shutil.copytree(
+        source, destination, ignore=shutil.ignore_patterns("assets", "outputs", ".git")
+    )
     return _require_repository(destination)
 
 
-def _snapshot_download(repo_id: str, revision: str, destination: Path, *, repo_type: str) -> None:
+def _snapshot_download(
+    repo_id: str, revision: str, destination: Path, *, repo_type: str
+) -> None:
     from huggingface_hub import snapshot_download
 
     snapshot_download(
@@ -176,9 +186,15 @@ def _copy_license(source: Path, destination: Path, name: str) -> None:
 
 def _clone_libero(destination: Path) -> None:
     subprocess.run(["git", "clone", LIBERO_REPOSITORY, str(destination)], check=True)
-    subprocess.run(["git", "-C", str(destination), "checkout", "--detach", LIBERO_SOURCE_REF], check=True)
+    subprocess.run(
+        ["git", "-C", str(destination), "checkout", "--detach", LIBERO_SOURCE_REF],
+        check=True,
+    )
     observed = subprocess.run(
-        ["git", "-C", str(destination), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        ["git", "-C", str(destination), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     if observed != LIBERO_SOURCE_REF:
         raise OpenWAMPipelineError(f"LIBERO source revision mismatch: {observed}")
@@ -189,7 +205,10 @@ def _archive_tree(source: Path, destination: Path) -> dict[str, Any]:
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(destination, "w:gz", format=tarfile.PAX_FORMAT) as archive:
         archive.add(source, arcname="payload", recursive=True)
-    return {"sha256": _sha256_file(destination), "size_bytes": destination.stat().st_size}
+    return {
+        "sha256": _sha256_file(destination),
+        "size_bytes": destination.stat().st_size,
+    }
 
 
 def _safe_extract(archive: tarfile.TarFile, destination: Path) -> None:
@@ -197,7 +216,9 @@ def _safe_extract(archive: tarfile.TarFile, destination: Path) -> None:
     for member in archive.getmembers():
         target = (destination / member.name).resolve()
         if target != root and root not in target.parents:
-            raise OpenWAMPipelineError(f"Archive member escapes destination: {member.name}")
+            raise OpenWAMPipelineError(
+                f"Archive member escapes destination: {member.name}"
+            )
         if member.issym() or member.islnk():
             raise OpenWAMPipelineError(f"Archive links are not accepted: {member.name}")
     # ``filter=`` is a Python 3.12 addition.  The explicit path and link
@@ -236,7 +257,9 @@ def _checkpoint_record(root: Path) -> dict[str, Any]:
     config = checkpoint.parent / "config.yaml"
     normalization = checkpoint.parent / "normalization_stats.npy"
     if not config.is_file() or not normalization.is_file():
-        raise OpenWAMPipelineError("OpenWAM checkpoint is missing config or normalization statistics")
+        raise OpenWAMPipelineError(
+            "OpenWAM checkpoint is missing config or normalization statistics"
+        )
     return {
         "relative_checkpoint": str(checkpoint.relative_to(root)),
         "sha256": _sha256_file(checkpoint),
@@ -246,7 +269,9 @@ def _checkpoint_record(root: Path) -> dict[str, Any]:
     }
 
 
-def _command(command: list[str], *, cwd: Path, env: Mapping[str, str] | None = None) -> None:
+def _command(
+    command: list[str], *, cwd: Path, env: Mapping[str, str] | None = None
+) -> None:
     merged = dict(os.environ)
     merged.update(env or {})
     subprocess.run(command, cwd=cwd, env=merged, check=True)
@@ -259,12 +284,21 @@ def prepare_assets(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.work_dir).resolve()
     repo = _copy_repository(Path(args.openwam_root).resolve(), workspace / "repo")
     assets = repo / "assets"
-    foundation = assets / "openwam_ckpt" / "openwam_alpha" / "OpenWAM-Alpha-Pretrain-Foundation-Model"
+    foundation = (
+        assets
+        / "openwam_ckpt"
+        / "openwam_alpha"
+        / "OpenWAM-Alpha-Pretrain-Foundation-Model"
+    )
     backbone = assets / "video_backbone_ckpt" / "Wan2.2-TI2V-5B"
     dataset = assets / "benchmark_data" / "libero"
-    _snapshot_download(FOUNDATION_REPOSITORY, FOUNDATION_REVISION, foundation, repo_type="model")
+    _snapshot_download(
+        FOUNDATION_REPOSITORY, FOUNDATION_REVISION, foundation, repo_type="model"
+    )
     _snapshot_download(WAN_REPOSITORY, WAN_REVISION, backbone, repo_type="model")
-    _snapshot_download(LIBERO_DATASET, LIBERO_DATASET_REVISION, dataset, repo_type="dataset")
+    _snapshot_download(
+        LIBERO_DATASET, LIBERO_DATASET_REVISION, dataset, repo_type="dataset"
+    )
     libero_source = assets / "libero_source"
     _clone_libero(libero_source)
     notices = assets / "notices"
@@ -281,14 +315,39 @@ def prepare_assets(args: argparse.Namespace) -> dict[str, Any]:
         "archive_sha256": observed["sha256"],
         "archive_size_bytes": observed["size_bytes"],
         "sources": {
-            "openwam": {"repository": OPENWAM_REPOSITORY, "revision": OPENWAM_SOURCE_REF, "license": OPENWAM_LICENSE},
-            "foundation": {"repository": FOUNDATION_REPOSITORY, "revision": FOUNDATION_REVISION, "license": "Apache-2.0", "role": "fine_tune_only"},
-            "wan22_ti2v_5b": {"repository": WAN_REPOSITORY, "revision": WAN_REVISION, "license": "Apache-2.0"},
-            "libero_data": {"repository": LIBERO_DATASET, "revision": LIBERO_DATASET_REVISION, "license": LIBERO_DATA_LICENSE},
-            "libero_code": {"repository": LIBERO_REPOSITORY, "revision": LIBERO_SOURCE_REF, "license": LIBERO_LICENSE},
+            "openwam": {
+                "repository": OPENWAM_REPOSITORY,
+                "revision": OPENWAM_SOURCE_REF,
+                "license": OPENWAM_LICENSE,
+            },
+            "foundation": {
+                "repository": FOUNDATION_REPOSITORY,
+                "revision": FOUNDATION_REVISION,
+                "license": "Apache-2.0",
+                "role": "fine_tune_only",
+            },
+            "wan22_ti2v_5b": {
+                "repository": WAN_REPOSITORY,
+                "revision": WAN_REVISION,
+                "license": "Apache-2.0",
+            },
+            "libero_data": {
+                "repository": LIBERO_DATASET,
+                "revision": LIBERO_DATASET_REVISION,
+                "license": LIBERO_DATA_LICENSE,
+            },
+            "libero_code": {
+                "repository": LIBERO_REPOSITORY,
+                "revision": LIBERO_SOURCE_REF,
+                "license": LIBERO_LICENSE,
+            },
         },
         "checkpoint": _checkpoint_record(foundation),
-        "redistribution": {"image": "operator_private_only", "weights": "runtime_fetched_private_artifact", "dataset": "runtime_fetched_private_artifact"},
+        "redistribution": {
+            "image": "operator_private_only",
+            "weights": "runtime_fetched_private_artifact",
+            "dataset": "runtime_fetched_private_artifact",
+        },
     }
     _write_json(args.output_uri, manifest)
     return manifest
@@ -303,14 +362,23 @@ def fine_tune(args: argparse.Namespace) -> dict[str, Any]:
     assets = _restore_archive(prepared, workspace / "prepared")
     repo = _copy_repository(Path(args.openwam_root).resolve(), workspace / "repo")
     shutil.copytree(assets, repo / "assets")
-    foundation = repo / "assets" / "openwam_ckpt" / "openwam_alpha" / "OpenWAM-Alpha-Pretrain-Foundation-Model"
+    foundation = (
+        repo
+        / "assets"
+        / "openwam_ckpt"
+        / "openwam_alpha"
+        / "OpenWAM-Alpha-Pretrain-Foundation-Model"
+    )
     _checkpoint_record(foundation)
     output = workspace / "training-output"
     started = time.monotonic()
     _command(
         [
-            "bash", "scripts/train.sh", "dataloader=libero",
-            f"training.finetune_ckpt_path={foundation}", "training.debug=true",
+            "bash",
+            "scripts/train.sh",
+            "dataloader=libero",
+            f"training.finetune_ckpt_path={foundation}",
+            "training.debug=true",
             f"training.output_path={output}",
         ],
         cwd=repo,
@@ -340,10 +408,23 @@ def fine_tune(args: argparse.Namespace) -> dict[str, Any]:
     return report
 
 
-def _start_server(repo: Path, checkpoint_root: Path, port: int) -> subprocess.Popen[str]:
+def _start_server(
+    repo: Path, checkpoint_root: Path, port: int
+) -> subprocess.Popen[str]:
     record = _checkpoint_record(checkpoint_root)
     process = subprocess.Popen(
-        ["python", "scripts/deploy.py", "--ckpt-dir", str(checkpoint_root), "--ckpt-name", Path(record["relative_checkpoint"]).name, "--compile-enabled", "false", "--port", str(port)],
+        [
+            "python",
+            "scripts/deploy.py",
+            "--ckpt-dir",
+            str(checkpoint_root),
+            "--ckpt-name",
+            Path(record["relative_checkpoint"]).name,
+            "--compile-enabled",
+            "false",
+            "--port",
+            str(port),
+        ],
         cwd=repo,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -357,7 +438,9 @@ def _wait_for_port(process: subprocess.Popen[str], port: int) -> None:
     while time.monotonic() < deadline:
         if process.poll() is not None:
             output = process.stdout.read() if process.stdout else ""
-            raise OpenWAMPipelineError(f"OpenWAM policy server exited early: {output[-4000:]}")
+            raise OpenWAMPipelineError(
+                f"OpenWAM policy server exited early: {output[-4000:]}"
+            )
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=2):
                 return
@@ -380,7 +463,9 @@ def _apply_libero_patch(repo: Path, source: Path) -> None:
 
     patch = repo / "benchmarks" / "libero" / "patches" / "libero-pytorch-load.patch"
     if not patch.is_file():
-        raise OpenWAMPipelineError(f"Missing OpenWAM LIBERO compatibility patch: {patch}")
+        raise OpenWAMPipelineError(
+            f"Missing OpenWAM LIBERO compatibility patch: {patch}"
+        )
     applied = subprocess.run(
         ["patch", "--dry-run", "--reverse", "--strip=1", "--input", str(patch)],
         cwd=source,
@@ -422,7 +507,9 @@ def _run_libero_trial(
     process = _start_server(repo, checkpoint_root, port)
     try:
         _wait_for_port(process, port)
-        python_path = os.pathsep.join((str(source), str(repo), os.environ.get("PYTHONPATH", "")))
+        python_path = os.pathsep.join(
+            (str(source), str(repo), os.environ.get("PYTHONPATH", ""))
+        )
         _command(
             [
                 client_python,
@@ -445,7 +532,13 @@ def _run_libero_trial(
                 str(result),
             ],
             cwd=repo,
-            env={"LIBERO_PATH": str(source), "LIBERO_CONFIG_ROOT": str(result / "libero-config"), "MUJOCO_GL": "egl", "PYOPENGL_PLATFORM": "egl", "PYTHONPATH": python_path},
+            env={
+                "LIBERO_PATH": str(source),
+                "LIBERO_CONFIG_ROOT": str(result / "libero-config"),
+                "MUJOCO_GL": "egl",
+                "PYOPENGL_PLATFORM": "egl",
+                "PYTHONPATH": python_path,
+            },
         )
     finally:
         server_log = _stop_server(process)
@@ -477,13 +570,19 @@ def _trial_request(args: argparse.Namespace) -> dict[str, int | str]:
     }
 
 
-def _ensure_heldout(request: dict[str, int | str], rollout_report: dict[str, Any]) -> None:
+def _ensure_heldout(
+    request: dict[str, int | str], rollout_report: dict[str, Any]
+) -> None:
     """Reject overlapping same-task evaluation ranges before consuming GPU time."""
 
     prior = rollout_report.get("request")
     if not isinstance(prior, dict):
-        raise OpenWAMPipelineError("Rollout report lacks the recorded LIBERO trial request")
-    if request["suite"] != prior.get("suite") or request["task_id"] != prior.get("task_id"):
+        raise OpenWAMPipelineError(
+            "Rollout report lacks the recorded LIBERO trial request"
+        )
+    if request["suite"] != prior.get("suite") or request["task_id"] != prior.get(
+        "task_id"
+    ):
         return
     start = int(request["trial_start"])
     stop = start + int(request["num_trials"])
@@ -500,10 +599,16 @@ def _trial_metrics(result: dict[str, Any]) -> tuple[int, float]:
 
     trials = result.get("trials")
     if not isinstance(trials, list) or not trials:
-        raise OpenWAMPipelineError("LIBERO result does not contain completed trial metrics")
+        raise OpenWAMPipelineError(
+            "LIBERO result does not contain completed trial metrics"
+        )
     steps = [trial.get("policy_steps") for trial in trials if isinstance(trial, dict)]
-    if len(steps) != len(trials) or not all(isinstance(value, (int, float)) for value in steps):
-        raise OpenWAMPipelineError("LIBERO trials do not contain numerical policy-step metrics")
+    if len(steps) != len(trials) or not all(
+        isinstance(value, (int, float)) for value in steps
+    ):
+        raise OpenWAMPipelineError(
+            "LIBERO trials do not contain numerical policy-step metrics"
+        )
     return len(steps), sum(steps) / len(steps)
 
 
@@ -515,14 +620,29 @@ def rollout(args: argparse.Namespace) -> dict[str, Any]:
     training = _read_json(args.training_uri)
     workspace = Path(args.work_dir).resolve()
     assets = _restore_archive(prepared, workspace / "prepared")
-    trained = _restore_archive({"archive_uri": training["checkpoint_archive_uri"], "archive_sha256": training["checkpoint_archive_sha256"]}, workspace / "trained")
+    trained = _restore_archive(
+        {
+            "archive_uri": training["checkpoint_archive_uri"],
+            "archive_sha256": training["checkpoint_archive_sha256"],
+        },
+        workspace / "trained",
+    )
     repo = _copy_repository(Path(args.openwam_root).resolve(), workspace / "repo")
     shutil.copytree(assets, repo / "assets")
     result_dir = workspace / "rollout"
     result_dir.mkdir(parents=True, exist_ok=True)
     request = _trial_request(args)
     payload = _run_libero_trial(repo, trained, result_dir, port=args.port, **request)
-    report = {"schema": "npa.openwam.libero-rollout.v1", "run_id": args.run_id, "runtime_image": image, "training_uri": args.training_uri, "training_checkpoint_sha256": training["checkpoint"]["sha256"], "request": request, "result": payload, "server_log_sha256": _sha256_file(result_dir / "openwam-server.log")}
+    report = {
+        "schema": "npa.openwam.libero-rollout.v1",
+        "run_id": args.run_id,
+        "runtime_image": image,
+        "training_uri": args.training_uri,
+        "training_checkpoint_sha256": training["checkpoint"]["sha256"],
+        "request": request,
+        "result": payload,
+        "server_log_sha256": _sha256_file(result_dir / "openwam-server.log"),
+    }
     _write_json(args.output_uri, report)
     return report
 
@@ -536,7 +656,13 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     rollout_report = _read_json(args.rollout_uri)
     workspace = Path(args.work_dir).resolve()
     assets = _restore_archive(prepared, workspace / "prepared")
-    trained = _restore_archive({"archive_uri": training["checkpoint_archive_uri"], "archive_sha256": training["checkpoint_archive_sha256"]}, workspace / "trained")
+    trained = _restore_archive(
+        {
+            "archive_uri": training["checkpoint_archive_uri"],
+            "archive_sha256": training["checkpoint_archive_sha256"],
+        },
+        workspace / "trained",
+    )
     repo = _copy_repository(Path(args.openwam_root).resolve(), workspace / "repo")
     shutil.copytree(assets, repo / "assets")
     result_dir = workspace / "evaluation"
@@ -544,7 +670,18 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     request = _trial_request(args)
     _ensure_heldout(request, rollout_report)
     payload = _run_libero_trial(repo, trained, result_dir, port=args.port, **request)
-    report = {"schema": "npa.openwam.libero-heldout-evaluation.v1", "run_id": args.run_id, "runtime_image": image, "training_uri": args.training_uri, "rollout_uri": args.rollout_uri, "request": request, "rollout_request": rollout_report["request"], "result": payload, "server_log_sha256": _sha256_file(result_dir / "openwam-server.log"), "limitation": "The debug-trained operational smoke is not a full LIBERO benchmark result."}
+    report = {
+        "schema": "npa.openwam.libero-heldout-evaluation.v1",
+        "run_id": args.run_id,
+        "runtime_image": image,
+        "training_uri": args.training_uri,
+        "rollout_uri": args.rollout_uri,
+        "request": request,
+        "rollout_request": rollout_report["request"],
+        "result": payload,
+        "server_log_sha256": _sha256_file(result_dir / "openwam-server.log"),
+        "limitation": "The debug-trained operational smoke is not a full LIBERO benchmark result.",
+    }
     _write_json(args.output_uri, report)
     return report
 
@@ -563,27 +700,75 @@ def visualize(args: argparse.Namespace) -> dict[str, Any]:
     evaluation_count, evaluation_mean_steps = _trial_metrics(evaluation["result"])
     recording = rr.RecordingStream("npa.openwam.libero", recording_id=args.run_id)
     recording.save(str(local_rrd))
-    recording.log("provenance/run", rr.TextDocument(json.dumps({"training_uri": args.training_uri, "rollout_uri": args.rollout_uri, "evaluation_uri": args.evaluation_uri}, sort_keys=True), media_type="application/json"), static=True)
+    recording.log(
+        "provenance/run",
+        rr.TextDocument(
+            json.dumps(
+                {
+                    "training_uri": args.training_uri,
+                    "rollout_uri": args.rollout_uri,
+                    "evaluation_uri": args.evaluation_uri,
+                },
+                sort_keys=True,
+            ),
+            media_type="application/json",
+        ),
+        static=True,
+    )
     recording.set_time("workflow_stage", sequence=1)
-    recording.log("metrics/checkpoint_size_bytes", rr.Scalars(training["checkpoint"]["size_bytes"]))
-    recording.log("metrics/rollout_success_rate", rr.Scalars(rollout_report["result"]["success_rate"]))
+    recording.log(
+        "metrics/checkpoint_size_bytes",
+        rr.Scalars(training["checkpoint"]["size_bytes"]),
+    )
+    recording.log(
+        "metrics/rollout_success_rate",
+        rr.Scalars(rollout_report["result"]["success_rate"]),
+    )
     recording.log("metrics/rollout_trial_count", rr.Scalars(rollout_count))
     recording.log("metrics/rollout_mean_policy_steps", rr.Scalars(rollout_mean_steps))
     recording.set_time("workflow_stage", sequence=2)
-    recording.log("metrics/heldout_success_rate", rr.Scalars(evaluation["result"]["success_rate"]))
+    recording.log(
+        "metrics/heldout_success_rate", rr.Scalars(evaluation["result"]["success_rate"])
+    )
     recording.log("metrics/heldout_trial_count", rr.Scalars(evaluation_count))
-    recording.log("metrics/heldout_mean_policy_steps", rr.Scalars(evaluation_mean_steps))
+    recording.log(
+        "metrics/heldout_mean_policy_steps", rr.Scalars(evaluation_mean_steps)
+    )
     recording.flush()
     recording.disconnect()
     rerun_cli = Path(sys.executable).with_name("rerun")
     if not rerun_cli.is_file():
         raise OpenWAMPipelineError(f"Rerun CLI is unavailable beside {sys.executable}")
     subprocess.run([str(rerun_cli), "rrd", "verify", str(local_rrd)], check=True)
-    inspected = subprocess.run([str(rerun_cli), "rrd", "print", "-vv", str(local_rrd)], check=True, capture_output=True, text=True).stdout
+    inspected = subprocess.run(
+        [str(rerun_cli), "rrd", "print", "-vv", str(local_rrd)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
     if "metrics/heldout_success_rate" not in inspected:
-        raise OpenWAMPipelineError("Rerun inspection did not find held-out metric entity")
+        raise OpenWAMPipelineError(
+            "Rerun inspection did not find held-out metric entity"
+        )
     _upload_file(args.rrd_uri, local_rrd)
-    report = {"schema": "npa.openwam.visualization.v1", "run_id": args.run_id, "rrd_uri": args.rrd_uri, "rrd_sha256": _sha256_file(local_rrd), "rrd_size_bytes": local_rrd.stat().st_size, "training_checkpoint_sha256": training["checkpoint"]["sha256"], "rollout_success_rate": rollout_report["result"]["success_rate"], "rollout_trial_count": rollout_count, "rollout_mean_policy_steps": rollout_mean_steps, "heldout_success_rate": evaluation["result"]["success_rate"], "heldout_trial_count": evaluation_count, "heldout_mean_policy_steps": evaluation_mean_steps, "verification": {"rerun_rrd_verify": "passed", "entity": "metrics/heldout_success_rate"}}
+    report = {
+        "schema": "npa.openwam.visualization.v1",
+        "run_id": args.run_id,
+        "rrd_uri": args.rrd_uri,
+        "rrd_sha256": _sha256_file(local_rrd),
+        "rrd_size_bytes": local_rrd.stat().st_size,
+        "training_checkpoint_sha256": training["checkpoint"]["sha256"],
+        "rollout_success_rate": rollout_report["result"]["success_rate"],
+        "rollout_trial_count": rollout_count,
+        "rollout_mean_policy_steps": rollout_mean_steps,
+        "heldout_success_rate": evaluation["result"]["success_rate"],
+        "heldout_trial_count": evaluation_count,
+        "heldout_mean_policy_steps": evaluation_mean_steps,
+        "verification": {
+            "rerun_rrd_verify": "passed",
+            "entity": "metrics/heldout_success_rate",
+        },
+    }
     _write_json(args.output_uri, report)
     return report
 
@@ -595,7 +780,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--work-dir", required=True)
 
 
-def _add_stage_parser(subparsers: argparse._SubParsersAction, name: str) -> argparse.ArgumentParser:
+def _add_stage_parser(
+    subparsers: argparse._SubParsersAction, name: str
+) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(name)
     _add_common(parser)
     return parser
@@ -639,7 +826,13 @@ def main(argv: Iterable[str] | None = None) -> int:
     """Dispatch one substantive OpenWAM workflow stage."""
 
     args = build_parser().parse_args(argv)
-    operations = {"prepare": prepare_assets, "fine-tune": fine_tune, "rollout": rollout, "evaluate": evaluate, "visualize": visualize}
+    operations = {
+        "prepare": prepare_assets,
+        "fine-tune": fine_tune,
+        "rollout": rollout,
+        "evaluate": evaluate,
+        "visualize": visualize,
+    }
     operations[args.command](args)
     return 0
 

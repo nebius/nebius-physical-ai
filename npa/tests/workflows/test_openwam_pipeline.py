@@ -25,7 +25,9 @@ def test_openwam_sources_are_pinned_to_the_documented_architecture() -> None:
     assert pipeline.FOUNDATION_REVISION == "52df4e66c82c5c8b480adcc8d01f4db7415dfb56"
     assert pipeline.WAN_REVISION == "921dbaf3f1674a56f47e83fb80a34bac8a8f203e"
     assert pipeline.LIBERO_SOURCE_REF == "8f1084e3132a39270c3a13ebe37270a43ece2a01"
-    assert pipeline.LIBERO_DATASET_REVISION == "bcb2eaf1121ae4cbd324f8862807abce282500e8"
+    assert (
+        pipeline.LIBERO_DATASET_REVISION == "bcb2eaf1121ae4cbd324f8862807abce282500e8"
+    )
 
 
 def test_workflow_has_five_connected_substantive_stages() -> None:
@@ -41,11 +43,25 @@ def test_workflow_has_five_connected_substantive_stages() -> None:
         "emit-factual-rrd",
     ]
     assert len(plan.steps) == 5
-    assert spec.states["fine-tune-openwam"].inputs[1].uri == spec.states["prepare-assets"].outputs[1].uri
-    assert spec.states["deployed-policy-rollout"].inputs[2].uri == spec.states["fine-tune-openwam"].outputs[1].uri
-    assert spec.states["evaluate-heldout-episode"].inputs[3].uri == spec.states["deployed-policy-rollout"].outputs[0].uri
-    assert spec.states["emit-factual-rrd"].inputs[2].uri == spec.states["evaluate-heldout-episode"].outputs[0].uri
-    assert spec.states["emit-factual-rrd"].outputs[0].schema == "application/vnd.rerun.rrd"
+    assert (
+        spec.states["fine-tune-openwam"].inputs[1].uri
+        == spec.states["prepare-assets"].outputs[1].uri
+    )
+    assert (
+        spec.states["deployed-policy-rollout"].inputs[2].uri
+        == spec.states["fine-tune-openwam"].outputs[1].uri
+    )
+    assert (
+        spec.states["evaluate-heldout-episode"].inputs[3].uri
+        == spec.states["deployed-policy-rollout"].outputs[0].uri
+    )
+    assert (
+        spec.states["emit-factual-rrd"].inputs[2].uri
+        == spec.states["evaluate-heldout-episode"].outputs[0].uri
+    )
+    assert (
+        spec.states["emit-factual-rrd"].outputs[0].schema == "application/vnd.rerun.rrd"
+    )
 
 
 def test_openwam_toolrefs_call_real_pipeline_stages() -> None:
@@ -69,23 +85,36 @@ def test_openwam_toolrefs_call_real_pipeline_stages() -> None:
         argv = TOOL_CATALOG[tool_ref].argv_template
         for flag in ("--suite", "--task-id", "--trial-start", "--num-trials"):
             index = argv.index(flag)
-            assert argv[index + 1] == f"{{{{config.{prefix}_{flag.removeprefix('--').replace('-', '_')}}}}}"
+            assert (
+                argv[index + 1]
+                == f"{{{{config.{prefix}_{flag.removeprefix('--').replace('-', '_')}}}}}"
+            )
 
 
 def test_parser_exposes_native_libero_suite_task_and_trial_controls() -> None:
     args = pipeline.build_parser().parse_args(
         [
             "rollout",
-            "--run-id", "contract",
-            "--runtime-image", DIGEST_IMAGE,
-            "--work-dir", "/tmp/openwam-contract",
-            "--prepared-assets-uri", "s3://bucket/prepared.json",
-            "--training-uri", "s3://bucket/training.json",
-            "--output-uri", "s3://bucket/rollout.json",
-            "--suite", "libero_goal",
-            "--task-id", "3",
-            "--trial-start", "8",
-            "--num-trials", "4",
+            "--run-id",
+            "contract",
+            "--runtime-image",
+            DIGEST_IMAGE,
+            "--work-dir",
+            "/tmp/openwam-contract",
+            "--prepared-assets-uri",
+            "s3://bucket/prepared.json",
+            "--training-uri",
+            "s3://bucket/training.json",
+            "--output-uri",
+            "s3://bucket/rollout.json",
+            "--suite",
+            "libero_goal",
+            "--task-id",
+            "3",
+            "--trial-start",
+            "8",
+            "--num-trials",
+            "4",
         ]
     )
 
@@ -112,7 +141,9 @@ def test_fine_tune_invokes_the_upstream_libero_entrypoint(
         (destination / "scripts" / "deploy.py").write_text("\n")
         return destination
 
-    monkeypatch.setattr(pipeline, "_runtime_image_provenance", lambda image: {"declared": image})
+    monkeypatch.setattr(
+        pipeline, "_runtime_image_provenance", lambda image: {"declared": image}
+    )
     monkeypatch.setattr(
         pipeline,
         "_read_json",
@@ -123,12 +154,24 @@ def test_fine_tune_invokes_the_upstream_libero_entrypoint(
     monkeypatch.setattr(
         pipeline,
         "_checkpoint_record",
-        lambda _root: {"sha256": "b" * 64, "size_bytes": 7, "relative_checkpoint": "checkpoint_step_20.safetensors"},
+        lambda _root: {
+            "sha256": "b" * 64,
+            "size_bytes": 7,
+            "relative_checkpoint": "checkpoint_step_20.safetensors",
+        },
     )
-    monkeypatch.setattr(pipeline, "_command", lambda command, **_kwargs: commands.append(command))
-    monkeypatch.setattr(pipeline, "_archive_tree", lambda _root, _archive: {"sha256": "c" * 64, "size_bytes": 9})
+    monkeypatch.setattr(
+        pipeline, "_command", lambda command, **_kwargs: commands.append(command)
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_archive_tree",
+        lambda _root, _archive: {"sha256": "c" * 64, "size_bytes": 9},
+    )
     monkeypatch.setattr(pipeline, "_upload_file", lambda _uri, _source: None)
-    monkeypatch.setattr(pipeline, "_write_json", lambda uri, payload: persisted.update({uri: payload}))
+    monkeypatch.setattr(
+        pipeline, "_write_json", lambda uri, payload: persisted.update({uri: payload})
+    )
 
     report = pipeline.fine_tune(
         argparse.Namespace(
@@ -164,7 +207,9 @@ def test_rollout_uses_the_separate_upstream_libero_client(
     source = repo / "assets" / "libero_source"
     source.mkdir(parents=True)
     (repo / "benchmarks" / "libero").mkdir(parents=True)
-    (repo / "benchmarks" / "libero" / "policy_config.yml").write_text("action_mode: eef\n")
+    (repo / "benchmarks" / "libero" / "policy_config.yml").write_text(
+        "action_mode: eef\n"
+    )
     client = tmp_path / "libero-client-python"
     client.write_text("#!/bin/sh\n")
     client.chmod(0o755)
@@ -203,8 +248,16 @@ def test_rollout_uses_the_separate_upstream_libero_client(
     assert calls[0][0][0] == str(client)
     assert calls[0][0][1:3] == ["benchmarks/libero/single_eval.py", "--config"]
     assert calls[0][0][-10:] == [
-        "--suite", "libero_goal", "--task-id", "3", "--trial-start", "8",
-        "--num-trials", "4", "--result-dir", str(result),
+        "--suite",
+        "libero_goal",
+        "--task-id",
+        "3",
+        "--trial-start",
+        "8",
+        "--num-trials",
+        "4",
+        "--result-dir",
+        str(result),
     ]
     assert calls[0][1]["LIBERO_PATH"] == str(source)
     assert str(source) in calls[0][1]["PYTHONPATH"]
@@ -213,7 +266,9 @@ def test_rollout_uses_the_separate_upstream_libero_client(
     assert (result / "openwam-server.log").read_text() == "server stopped"
 
 
-def test_visualize_writes_and_decodes_an_rrd_from_local_test_artifacts(tmp_path: Path) -> None:
+def test_visualize_writes_and_decodes_an_rrd_from_local_test_artifacts(
+    tmp_path: Path,
+) -> None:
     """Exercise the real Rerun writer with test-only numerical fixtures."""
 
     training_uri = str(tmp_path / "training.json")
@@ -221,7 +276,9 @@ def test_visualize_writes_and_decodes_an_rrd_from_local_test_artifacts(tmp_path:
     evaluation_uri = str(tmp_path / "evaluation.json")
     rrd_uri = str(tmp_path / "openwam-libero.rrd")
     output_uri = str(tmp_path / "visualization.json")
-    Path(training_uri).write_text(json.dumps({"checkpoint": {"sha256": "a" * 64, "size_bytes": 123}}))
+    Path(training_uri).write_text(
+        json.dumps({"checkpoint": {"sha256": "a" * 64, "size_bytes": 123}})
+    )
     Path(rollout_uri).write_text(
         json.dumps({"result": {"success_rate": 0.0, "trials": [{"policy_steps": 7}]}})
     )

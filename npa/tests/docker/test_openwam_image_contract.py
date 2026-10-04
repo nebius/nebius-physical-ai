@@ -16,7 +16,7 @@ def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
     assert "ffmpeg git git-lfs" in dockerfile
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
     assert "*/imageio_ffmpeg/binaries/ffmpeg*' -delete" in dockerfile
-    assert "imageio_ffmpeg.get_ffmpeg_exe() == \"/usr/bin/ffmpeg\"" in dockerfile
+    assert 'imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' in dockerfile
 
 
 def test_openwam_recipe_retains_runtime_fetch_and_private_quarantine() -> None:
@@ -31,4 +31,7 @@ def test_openwam_recipe_retains_runtime_fetch_and_private_quarantine() -> None:
     assert 'npa.dataset="operator-runtime-fetch"' in dockerfile
     assert 'org.nebius.npa.redistribution="unvalidated-operator-private"' in dockerfile
     assert "openwam:\n    dockerfile: openwam/Dockerfile" in contract
-    assert "redistribution: unvalidated" in contract.split("  openwam:", 1)[1].split("  libero:", 1)[0]
+    assert (
+        "redistribution: unvalidated"
+        in contract.split("  openwam:", 1)[1].split("  libero:", 1)[0]
+    )
