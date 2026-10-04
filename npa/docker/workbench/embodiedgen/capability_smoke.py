@@ -28,7 +28,9 @@ DEFAULT_INPUT = (
     "https://raw.githubusercontent.com/HorizonRobotics/EmbodiedGen/"
     "f0124197888c2b733e4eaa65acd81ad9cfda3b79/apps/assets/example_image/sample_00.jpg"
 )
-DEFAULT_INPUT_SHA256 = "d60272ce039e4a230cb2654b5ecb74021b1e3048a82e4d27b62e2c027a109dcd"
+DEFAULT_INPUT_SHA256 = (
+    "d60272ce039e4a230cb2654b5ecb74021b1e3048a82e4d27b62e2c027a109dcd"
+)
 
 
 def sha256(path: Path) -> str:
@@ -41,7 +43,9 @@ def sha256(path: Path) -> str:
 
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
     temp = path.with_name(f".{path.name}.tmp")
-    temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temp.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     temp.replace(path)
 
 
@@ -54,7 +58,9 @@ def fetch_input(uri: str, destination: Path) -> None:
     if parsed.scheme == "s3":
         import boto3
 
-        boto3.client("s3").download_file(parsed.netloc, parsed.path.lstrip("/"), str(destination))
+        boto3.client("s3").download_file(
+            parsed.netloc, parsed.path.lstrip("/"), str(destination)
+        )
         return
     raise ValueError("input URI must use https or s3")
 
@@ -96,7 +102,9 @@ def locate_urdf(generated: Path) -> Path:
 
 def xml_properties(urdf: Path) -> dict[str, str]:
     root = ET.parse(urdf).getroot()
-    values = {node.tag: (node.text or "").strip() for node in root.findall(".//extra_info/*")}
+    values = {
+        node.tag: (node.text or "").strip() for node in root.findall(".//extra_info/*")
+    }
     mass = root.find(".//inertial/mass")
     if mass is not None:
         values["urdf_mass_kg"] = mass.attrib.get("value", "")
@@ -109,15 +117,33 @@ def collision_meshes(urdf: Path) -> list[dict[str, Any]]:
     for node in root.findall(".//collision/geometry/mesh"):
         relative = node.attrib.get("filename", "")
         mesh_path = (urdf.parent / relative).resolve()
-        if not relative or not mesh_path.is_file() or not mesh_path.is_relative_to(urdf.parent.resolve()):
+        if (
+            not relative
+            or not mesh_path.is_file()
+            or not mesh_path.is_relative_to(urdf.parent.resolve())
+        ):
             raise RuntimeError(f"missing or unsafe collision mesh: {relative}")
         mesh = trimesh.load(mesh_path, force="mesh")
-        if not isinstance(mesh, trimesh.Trimesh) or len(mesh.vertices) < 4 or len(mesh.faces) < 4:
+        if (
+            not isinstance(mesh, trimesh.Trimesh)
+            or len(mesh.vertices) < 4
+            or len(mesh.faces) < 4
+        ):
             raise RuntimeError(f"invalid collision mesh: {relative}")
         bounds = mesh.bounds.tolist()
-        if not np.isfinite(np.asarray(bounds)).all() or np.any(np.subtract(bounds[1], bounds[0]) <= 0):
+        if not np.isfinite(np.asarray(bounds)).all() or np.any(
+            np.subtract(bounds[1], bounds[0]) <= 0
+        ):
             raise RuntimeError(f"degenerate collision mesh: {relative}")
-        records.append({"path": relative, "sha256": sha256(mesh_path), "vertices": len(mesh.vertices), "faces": len(mesh.faces), "bounds": bounds})
+        records.append(
+            {
+                "path": relative,
+                "sha256": sha256(mesh_path),
+                "vertices": len(mesh.vertices),
+                "faces": len(mesh.faces),
+                "bounds": bounds,
+            }
+        )
     if not records:
         raise RuntimeError("generated URDF contains no collision mesh")
     return records
@@ -152,7 +178,11 @@ def convert_to_mjcf(urdf: Path, output: Path) -> dict[str, Any]:
     for mesh in meshes:
         relative = mesh.attrib.get("file", "")
         path = (converted_path.parent / relative).resolve()
-        if not relative or not path.is_file() or not path.is_relative_to(converted_path.parent):
+        if (
+            not relative
+            or not path.is_file()
+            or not path.is_relative_to(converted_path.parent)
+        ):
             raise RuntimeError(f"invalid MJCF mesh reference: {relative}")
     return {
         "target": "MuJoCo/Genesis MJCF",
@@ -166,7 +196,11 @@ def convert_to_mjcf(urdf: Path, output: Path) -> dict[str, Any]:
 def gpu_evidence() -> dict[str, Any]:
     try:
         text = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=name,driver_version,uuid", "--format=csv,noheader"],
+            [
+                "nvidia-smi",
+                "--query-gpu=name,driver_version,uuid",
+                "--format=csv,noheader",
+            ],
             text=True,
         ).strip()
     except (OSError, subprocess.CalledProcessError) as error:
@@ -175,7 +209,12 @@ def gpu_evidence() -> dict[str, Any]:
 
     if not torch.cuda.is_available():
         raise RuntimeError("TRELLIS run did not receive a CUDA GPU")
-    return {"nvidia_smi": text.splitlines(), "torch_cuda": torch.version.cuda, "device_name": torch.cuda.get_device_name(0), "capability": list(torch.cuda.get_device_capability(0))}
+    return {
+        "nvidia_smi": text.splitlines(),
+        "torch_cuda": torch.version.cuda,
+        "device_name": torch.cuda.get_device_name(0),
+        "capability": list(torch.cuda.get_device_capability(0)),
+    }
 
 
 def require_rigid_body_settle(body: int) -> dict[str, Any]:
@@ -215,16 +254,23 @@ def pybullet_validation(urdf: Path, output: Path) -> dict[str, Any]:
         for step in range(480):
             bullet.stepSimulation()
             if step % 8 == 0:
-                pixels = bullet.getCameraImage(640, 480, view, projection, renderer=bullet.ER_TINY_RENDERER)[2]
+                pixels = bullet.getCameraImage(
+                    640, 480, view, projection, renderer=bullet.ER_TINY_RENDERER
+                )[2]
                 frames.append(np.asarray(pixels, dtype=np.uint8)[..., :3])
         settle = require_rigid_body_settle(body)
         final = bullet.getBasePositionAndOrientation(body)[0]
         contacts = bullet.getContactPoints(bodyA=body, bodyB=plane)
-        if not contacts or not all(math.isfinite(value) for value in (*initial, *final)):
+        if not contacts or not all(
+            math.isfinite(value) for value in (*initial, *final)
+        ):
             raise RuntimeError("generated URDF did not make stable rigid-body contact")
         if final[2] >= initial[2] - 0.1:
             raise RuntimeError("generated URDF did not fall under gravity")
-        view_png, view_mp4 = output / "pybullet_view.png", output / "pybullet_settle.mp4"
+        view_png, view_mp4 = (
+            output / "pybullet_view.png",
+            output / "pybullet_settle.mp4",
+        )
         iio.imwrite(view_png, frames[-1])
         iio.imwrite(view_mp4, np.stack(frames), fps=30)
         decoded = sum(1 for _ in iio.imiter(view_mp4))
@@ -246,7 +292,11 @@ def pybullet_validation(urdf: Path, output: Path) -> dict[str, Any]:
 
 
 def file_record(path: Path, root: Path) -> dict[str, Any]:
-    return {"path": str(path.relative_to(root)), "sha256": sha256(path), "bytes": path.stat().st_size}
+    return {
+        "path": str(path.relative_to(root)),
+        "sha256": sha256(path),
+        "bytes": path.stat().st_size,
+    }
 
 
 def main() -> int:
@@ -261,23 +311,42 @@ def main() -> int:
     collisions = collision_meshes(urdf)
     mjcf = convert_to_mjcf(urdf, output)
     physics = pybullet_validation(urdf, output)
-    artifacts = [file_record(path, output) for path in sorted(output.rglob("*")) if path.is_file()]
+    artifacts = [
+        file_record(path, output)
+        for path in sorted(output.rglob("*"))
+        if path.is_file()
+    ]
     report = {
         "schema": "npa.embodiedgen.image-to-rigid-object.v1",
         "status": "success",
         "solution": "embodiedgen",
         "capability": CAPABILITY,
-        "capabilities_exercised": ["trellis_image_to_mesh_generation", "embodiedgen_urdf_export", "embodiedgen_urdf_to_mjcf_conversion", "collision_geometry_validation", "pybullet_rigid_body_settle", "pybullet_viewable_result"],
+        "capabilities_exercised": [
+            "trellis_image_to_mesh_generation",
+            "embodiedgen_urdf_export",
+            "embodiedgen_urdf_to_mjcf_conversion",
+            "collision_geometry_validation",
+            "pybullet_rigid_body_settle",
+            "pybullet_viewable_result",
+        ],
         "source_revision": "f0124197888c2b733e4eaa65acd81ad9cfda3b79",
         "trellis_revision": "55a8e8164b195bbf927e0978f00e76c835e6011f",
         "trellis_model_revision": "25e0d31ffbebe4b5a97464dd851910efc3002d96",
         "runtime_receipt_sha256": sha256(
             Path(os.environ["NPA_EMBODIEDGEN_RUNTIME_RECEIPT"])
         ),
-        "input": {"sha256": input_hash, "source": os.environ.get("NPA_EMBODIEDGEN_INPUT_URI", DEFAULT_INPUT)},
+        "input": {
+            "sha256": input_hash,
+            "source": os.environ.get("NPA_EMBODIEDGEN_INPUT_URI", DEFAULT_INPUT),
+        },
         "image_reference": os.environ.get("BYOF_IMAGE", ""),
         "gpu": gpu_evidence(),
-        "urdf": {"path": str(urdf.relative_to(output)), "sha256": sha256(urdf), "properties": xml_properties(urdf), "physical_property_semantics": "VLM_estimated_not_calibrated_ground_truth"},
+        "urdf": {
+            "path": str(urdf.relative_to(output)),
+            "sha256": sha256(urdf),
+            "properties": xml_properties(urdf),
+            "physical_property_semantics": "VLM_estimated_not_calibrated_ground_truth",
+        },
         "mjcf_conversion": mjcf,
         "collision_geometry": collisions,
         "physics": physics,

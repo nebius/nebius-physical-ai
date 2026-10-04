@@ -73,7 +73,7 @@ def test_trellis_only_patch_removes_unselected_sam_import(tmp_path: Path) -> Non
     )
     image_to_3d.write_text(
         "TrellisImageTo3DPipeline.from_pretrained(\n"
-        "            \"microsoft/TRELLIS-image-large\"\n        )"
+        '            "microsoft/TRELLIS-image-large"\n        )'
     )
     BOOTSTRAP._patch_trellis_only_import(tmp_path)
     assert "Sam3dInference" not in inference.read_text()
@@ -115,7 +115,9 @@ def test_prebuilt_image_and_standalone_profile_keep_the_byof_contract() -> None:
 
 def test_token_factory_key_is_forwarded_only_to_embodiedgen() -> None:
     runner_path = ROOT / "npa/scripts/run_byof_container_verify.py"
-    spec = importlib.util.spec_from_file_location("embodiedgen_byof_runner", runner_path)
+    spec = importlib.util.spec_from_file_location(
+        "embodiedgen_byof_runner", runner_path
+    )
     assert spec and spec.loader
     runner = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = runner

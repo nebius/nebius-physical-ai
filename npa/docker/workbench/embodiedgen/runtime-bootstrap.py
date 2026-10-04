@@ -35,7 +35,9 @@ def _read_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _run(argv: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
+def _run(
+    argv: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None
+) -> None:
     subprocess.run(argv, cwd=cwd, env=env, check=True)
 
 
@@ -69,7 +71,9 @@ def _clone_exact(source: Path, url: str, revision: str) -> None:
     _run(["git", "clean", "-ffdx"], cwd=source)
     _run(["git", "fetch", "--depth", "1", "origin", revision], cwd=source)
     _run(["git", "checkout", "--detach", revision], cwd=source)
-    observed = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
+    observed = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=source, text=True
+    ).strip()
     if observed != revision:
         raise RuntimeError(f"source revision mismatch: {observed}")
 
@@ -78,7 +82,14 @@ def _install_trellis(source: Path) -> Path:
     trellis = source / "thirdparty" / "TRELLIS"
     if not (trellis / ".git").exists():
         _run(
-            ["git", "submodule", "update", "--init", "--recursive", "thirdparty/TRELLIS"],
+            [
+                "git",
+                "submodule",
+                "update",
+                "--init",
+                "--recursive",
+                "thirdparty/TRELLIS",
+            ],
             cwd=source,
         )
     _clone_exact(trellis, TRELLIS_URL, TRELLIS_REVISION)
@@ -106,8 +117,8 @@ def _pin_install_script(source: Path) -> None:
     script = source / "install" / "install_basic.sh"
     text = script.read_text(encoding="utf-8")
     replacements = {
-        "https://github.com/openai/CLIP.git\"": "https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6\"",
-        "https://github.com/HochCC/Kolors.git\"": "https://github.com/HochCC/Kolors.git@c59c0aa67587e472de657bc9f4f9c18272c94165\"",
+        'https://github.com/openai/CLIP.git"': 'https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6"',
+        'https://github.com/HochCC/Kolors.git"': 'https://github.com/HochCC/Kolors.git@c59c0aa67587e472de657bc9f4f9c18272c94165"',
         "https://github.com/autonomousvision/mip-splatting.git#": "https://github.com/autonomousvision/mip-splatting.git@dda02ab5ecf45d6edb8c540d9bb65c7e451345a9#",
     }
     for old, new in replacements.items():
@@ -122,7 +133,9 @@ def _patch_trellis_only_import(source: Path) -> None:
     text = path.read_text(encoding="utf-8")
     old = "from embodied_gen.models.sam3d import Sam3dInference\n"
     if old not in text:
-        raise RuntimeError("upstream TRELLIS-only compatibility patch no longer applies")
+        raise RuntimeError(
+            "upstream TRELLIS-only compatibility patch no longer applies"
+        )
     text = text.replace(old, "")
     text = text.replace(
         "TrellisImageTo3DPipeline | Sam3dInference", "TrellisImageTo3DPipeline"
@@ -162,10 +175,15 @@ def _install(source: Path, venv: Path, cache: Path) -> None:
         return
     env = _venv_environment(venv, cache)
     pip = str(venv / "bin" / "python")
-    _run([pip, "-m", "pip", "install", "pip==22.3.1", "setuptools==80.10.2", "wheel"], env=env)
+    _run(
+        [pip, "-m", "pip", "install", "pip==22.3.1", "setuptools==80.10.2", "wheel"],
+        env=env,
+    )
     _run(["bash", "install/install_basic.sh"], cwd=source, env=env)
     _run([pip, "-m", "pip", "install", "pybullet==3.2.7", "boto3==1.35.99"], env=env)
-    freeze = subprocess.check_output([pip, "-m", "pip", "freeze", "--all"], env=env, text=True)
+    freeze = subprocess.check_output(
+        [pip, "-m", "pip", "freeze", "--all"], env=env, text=True
+    )
     marker.write_text(json.dumps({"pip_freeze": freeze.splitlines()}, indent=2) + "\n")
 
 
@@ -176,7 +194,9 @@ def _download_model(venv: Path, cache: Path) -> Path:
         _verify_model_receipt(model, marker)
         return model
     if model.exists():
-        raise RuntimeError("TRELLIS model cache is incomplete; use a new scoped cache path")
+        raise RuntimeError(
+            "TRELLIS model cache is incomplete; use a new scoped cache path"
+        )
     temporary = model.with_name(f".{model.name}.download-{uuid.uuid4().hex}")
     temporary.mkdir(parents=True)
     script = (
@@ -200,7 +220,9 @@ def _write_model_receipt(model: Path) -> None:
     files = []
     for path in sorted(model.rglob("*")):
         if path.is_file() and path.name != ".npa-model-receipt.json":
-            files.append({"path": str(path.relative_to(model)), "sha256": _sha256(path)})
+            files.append(
+                {"path": str(path.relative_to(model)), "sha256": _sha256(path)}
+            )
     receipt = {"revision": MODEL_REVISION, "files": files}
     (model / ".npa-model-receipt.json").write_text(
         json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -249,7 +271,11 @@ def _runtime_receipt(source: Path, venv: Path, cache: Path) -> Path:
         "venv_path": str(venv),
         "install_marker_sha256": _sha256(venv / ".npa-embodiedgen-installed.json"),
         "model_receipt_sha256": _sha256(
-            cache / RUNTIME_NAME / "models" / "TRELLIS-image-large" / ".npa-model-receipt.json"
+            cache
+            / RUNTIME_NAME
+            / "models"
+            / "TRELLIS-image-large"
+            / ".npa-model-receipt.json"
         ),
         "trellis_submodules": subprocess.check_output(
             ["git", "submodule", "status", "--recursive"], cwd=trellis, text=True
@@ -263,7 +289,9 @@ def _runtime_receipt(source: Path, venv: Path, cache: Path) -> Path:
 def _token_factory_environment(env: dict[str, str]) -> dict[str, str]:
     key = env.get("NEBIUS_TOKEN_FACTORY_KEY") or env.get("NPA_TOKEN_FACTORY_API_KEY")
     if not key:
-        raise RuntimeError("Token Factory credential is required for EmbodiedGen URDF estimates")
+        raise RuntimeError(
+            "Token Factory credential is required for EmbodiedGen URDF estimates"
+        )
     env["GPT_PROVIDER"] = "openai"
     env["ENDPOINT"] = "https://api.tokenfactory.nebius.com/v1/"
     env["API_KEY"] = key
