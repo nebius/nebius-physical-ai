@@ -174,3 +174,42 @@ def test_native_environment_keeps_upstream_launcher_in_its_pinned_venv(
         ]
     )
     assert parsed.opendm_python == str(native_python)
+
+
+def test_hf_download_uses_the_pinned_native_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    native_python = tmp_path / "opendm-venv" / "bin" / "python"
+    native_python.parent.mkdir(parents=True)
+    native_python.touch()
+    captured: dict[str, object] = {}
+
+    def fake_run(
+        command: list[str], *, cwd: Path, env: dict[str, str] | None = None
+    ) -> None:
+        captured.update(command=command, cwd=cwd, env=env)
+
+    monkeypatch.setattr(dm05_opendm, "_run", fake_run)
+    dm05_opendm._hf_download(
+        repo_id="Dexmal/DM05",
+        revision="0123456789abcdef",
+        repo_type="model",
+        destination=tmp_path / "payload",
+        cwd=tmp_path,
+        native_python=str(native_python),
+    )
+
+    assert captured["command"] == [
+        "hf",
+        "download",
+        "Dexmal/DM05",
+        "--repo-type",
+        "model",
+        "--revision",
+        "0123456789abcdef",
+        "--local-dir",
+        str(tmp_path / "payload"),
+    ]
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert environment["PATH"].split(":", 1)[0] == str(native_python.parent)
