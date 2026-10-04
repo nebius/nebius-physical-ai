@@ -20,6 +20,12 @@ a versioned heading when a release is cut.
   benchmark populations. Requested modes are explicit, missing or extra cells
   still fail, and all frozen per-mode acceptance thresholds remain unchanged.
 
+### VLM gates reject incomplete self-hosted completions
+
+- Both real VLM-eval backends require exact `finish_reason="stop"` before
+  parsing a verdict. Truncated, filtered, aborted, tool-call, or metadata-missing
+  responses fail closed even when they contain valid-looking JSON.
+
 ### Paired VLM output contract
 
 - Paired judge requests explicitly require bare JSON, with the same instruction

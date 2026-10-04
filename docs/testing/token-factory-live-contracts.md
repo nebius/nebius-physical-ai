@@ -75,8 +75,12 @@ npa/.venv/bin/python npa/scripts/token_factory_live_recheck.py \
 
 Load the authorized key into the process environment without printing it. The
 runner requires an explicit environment key; it fails before invoking pytest
-if that key is absent. Direct pytest jobs can enforce the same prerequisite
-with `--require-token-factory-live`. Ordinary developer invocations retain their
+if that key is absent. The trusted runner opts its selected live suites into
+`NPA_INTEGRATION_E2E=1` for the pytest invocation and restores the previous value
+afterward; the protected workflow supplies that opt-in explicitly as well.
+Direct pytest jobs require both `NPA_INTEGRATION_E2E=1` and
+`--require-token-factory-live` to enforce the same prerequisites. Ordinary
+developer invocations retain their
 credential-free skip behavior. The runner requires all three suites, nonzero
 collection, equality of collected/executed/passed counts, and zero failures,
 skips, deselections or collection errors. A skipped/xfail or filtered-out test
