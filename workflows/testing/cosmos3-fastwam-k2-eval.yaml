@@ -31,9 +31,11 @@ resources:
   closed_loop:
     cloud: kubernetes
     # RoboLab records sensor video through Isaac; use an RT-core GPU rather than
-    # treating a datacenter accelerator as a rendering substitute. GPU 0 hosts
-    # the policy server and GPU 1 runs the simulator client.
-    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:2
+    # treating a datacenter accelerator as a rendering substitute. On workers
+    # with two visible GPUs the policy server uses GPU 0 and RoboLab uses GPU 1;
+    # on a verified one-GPU worker both native processes use GPU 0 and record
+    # that co-location in the measured run provenance.
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
     cpus: 32
     memory: 256Gi
 

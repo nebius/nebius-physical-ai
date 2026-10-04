@@ -19,6 +19,7 @@ from npa.workbench.cosmos.fastwam_k2 import (
     _prepared_payload,
     _rrd_recording_id,
     _run_robolab,
+    _select_cuda_topology,
     apply_k2_runtime_overlay,
     compare_variants,
     server_argv,
@@ -134,12 +135,34 @@ def test_robolab_client_keeps_the_shared_isaac_acceptance_surface(
         "full-wam",
         {"ACCEPT_EULA": "Y"},
         tmp_path / "robolab.log",
+        cuda_visible_devices="0",
     )
 
     assert result == output
     assert captured["ACCEPT_EULA"] == "Y"
     assert captured["OMNI_KIT_ACCEPT_EULA"] == "Y"
-    assert captured["CUDA_VISIBLE_DEVICES"] == "1"
+    assert captured["CUDA_VISIBLE_DEVICES"] == "0"
+
+
+def test_cuda_topology_preserves_two_gpu_split_and_allows_one_gpu_colocation() -> None:
+    assert _select_cuda_topology(2) == {
+        "visible_cuda_device_count": 2,
+        "policy_server_cuda_visible_devices": "0",
+        "robolab_cuda_visible_devices": "1",
+        "shared_cuda_device": False,
+    }
+    assert _select_cuda_topology(1) == {
+        "visible_cuda_device_count": 1,
+        "policy_server_cuda_visible_devices": "0",
+        "robolab_cuda_visible_devices": "0",
+        "shared_cuda_device": True,
+    }
+    try:
+        _select_cuda_topology(0)
+    except FastWamK2Error as exc:
+        assert "at least one CUDA device" in str(exc)
+    else:  # pragma: no cover - zero CUDA devices must not start native evaluation
+        raise AssertionError("zero CUDA devices were accepted")
 
 
 def test_prepared_payload_hashes_matched_task_sources(tmp_path: Path) -> None:

@@ -295,6 +295,50 @@ def _sync_framework(framework: Path, env: dict[str, str], log: Path) -> Path:
     return python
 
 
+def _select_cuda_topology(device_count: int) -> dict[str, Any]:
+    """Choose the native server/client placement available on this worker.
+
+    RoboLab and the policy server remain isolated when a worker exposes two or
+    more GPUs.  A single-GPU RT-core worker is also a valid native deployment:
+    both processes use device zero and the resulting contention is explicitly
+    retained in the measured latency provenance rather than hidden.
+    """
+    if device_count < 1:
+        raise FastWamK2Error("FastWAM-K2 closed-loop evaluation requires at least one CUDA device")
+    client_device = "1" if device_count >= 2 else "0"
+    return {
+        "visible_cuda_device_count": device_count,
+        "policy_server_cuda_visible_devices": "0",
+        "robolab_cuda_visible_devices": client_device,
+        "shared_cuda_device": client_device == "0",
+    }
+
+
+def _detect_cuda_topology(framework_python: Path, framework: Path, env: dict[str, str], log: Path) -> dict[str, Any]:
+    """Record the exact CUDA topology seen by the pinned framework runtime."""
+    probe = subprocess.run(
+        [str(framework_python), "-c", "import torch; print(torch.cuda.device_count())"],
+        cwd=framework,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("a") as stream:
+        stream.write("CUDA topology probe stdout:\n")
+        stream.write(probe.stdout)
+        stream.write("CUDA topology probe stderr:\n")
+        stream.write(probe.stderr)
+    if probe.returncode:
+        raise FastWamK2Error("pinned framework CUDA topology probe failed")
+    try:
+        device_count = int(probe.stdout.strip())
+    except ValueError as exc:
+        raise FastWamK2Error("pinned framework CUDA topology probe returned a non-integer device count") from exc
+    return _select_cuda_topology(device_count)
+
+
 def _sync_robolab(robolab: Path, env: dict[str, str], log: Path) -> Path:
     """Materialize the upstream RoboLab Isaac 5 runtime without baking it."""
     runtime_env = _isaac_runtime_env(env)
@@ -369,6 +413,8 @@ def _run_robolab(
     variant: str,
     env: dict[str, str],
     log: Path,
+    *,
+    cuda_visible_devices: str,
 ) -> Path:
     """Run actual closed-loop RoboLab episodes and retain their native result rows."""
     output_name = f"npa-fastwam-k2-{variant}"
@@ -395,7 +441,7 @@ def _run_robolab(
         "--output-folder-name",
         output_name,
     ]
-    client_env = dict(_isaac_runtime_env(env), CUDA_VISIBLE_DEVICES="1")
+    client_env = dict(_isaac_runtime_env(env), CUDA_VISIBLE_DEVICES=cuda_visible_devices)
     _run(argv, cwd=robolab, env=client_env, log=log)
     output = robolab / "output" / output_name
     if not output.is_dir():
@@ -501,6 +547,9 @@ def run_variant(*, input_path: str, output_path: str, variant: str, baseline_pat
         overlay = apply_k2_runtime_overlay(framework, artifacts) if variant == "fastwam-k2" else None
         framework_env = dict(os.environ, COSMOS_TRAINING="1", PYTHONPATH=str(framework))
         framework_python = _sync_framework(framework, framework_env, root / "framework-sync.log")
+        cuda_topology = _detect_cuda_topology(
+            framework_python, framework, framework_env, root / "framework-sync.log"
+        )
         robolab_python = _sync_robolab(robolab, dict(os.environ), root / "robolab-sync.log")
         repo, revision, subdirectory = _variant_checkpoint(variant)
         checkpoint_root = _snapshot_checkpoint(repo, revision, root / "checkpoint", framework_python, root / "checkpoint.log")
@@ -508,8 +557,11 @@ def run_variant(*, input_path: str, output_path: str, variant: str, baseline_pat
         if not checkpoint.is_dir():
             raise FastWamK2Error("checkpoint does not contain the expected immutable subdirectory")
         command = server_argv(framework_python, checkpoint, variant)
-        write_local_json(artifacts / "serving-command.json", {"argv": command, "variant": variant})
-        server_env = dict(framework_env, CUDA_VISIBLE_DEVICES="0")
+        write_local_json(
+            artifacts / "serving-command.json",
+            {"argv": command, "variant": variant, "cuda_topology": cuda_topology},
+        )
+        server_env = dict(framework_env, CUDA_VISIBLE_DEVICES=cuda_topology["policy_server_cuda_visible_devices"])
         with (root / "policy-server.log").open("wb") as stream:
             process = subprocess.Popen(command, cwd=framework, env=server_env, stdout=stream, stderr=stream)
             try:
@@ -521,6 +573,7 @@ def run_variant(*, input_path: str, output_path: str, variant: str, baseline_pat
                     variant,
                     dict(os.environ),
                     root / "robolab.log",
+                    cuda_visible_devices=cuda_topology["robolab_cuda_visible_devices"],
                 )
             finally:
                 process.terminate()
@@ -531,7 +584,7 @@ def run_variant(*, input_path: str, output_path: str, variant: str, baseline_pat
                     process.wait()
         rows = _episode_rows(output, request.tasks)
         _copy_run_artifacts(output, artifacts / "closed-loop")
-        report = _variant_report(variant, prepared, request, rows, overlay)
+        report = _variant_report(variant, prepared, request, rows, overlay, cuda_topology)
         write_local_json(artifacts / "variant-result.json", report)
         for name in ("policy-server.log", "robolab.log", "framework-sync.log", "robolab-sync.log", "checkpoint.log"):
             source = root / name
@@ -554,6 +607,7 @@ def _variant_report(
     request: EvaluationRequest,
     rows: list[dict[str, Any]],
     overlay: dict[str, Any] | None,
+    cuda_topology: dict[str, Any],
 ) -> dict[str, Any]:
     """Build the durable result report without presenting screening as a benchmark."""
     report = {
@@ -568,6 +622,7 @@ def _variant_report(
         "measurement": "closed-loop RoboLab task success and native policy inference latency",
         "metrics": summarize_episode_metrics(rows, request.tasks),
         "model_lineage": _model_lineage(),
+        "cuda_topology": cuda_topology,
     }
     if overlay is not None:
         report["serving_contract"] = overlay

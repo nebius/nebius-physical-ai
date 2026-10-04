@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "96993f084df90c4ce251585b179e543ddfe9c639da4dd71ea309b42361b2690f",
+  "workflow_sha256": "17b3741aee9c28bd1120f1e1ee575ff2487fa9c90bbe5c6ae8e6416d344d4f00",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec accepted the workflow and plan-spec expanded five connected waves: prepare, full_wam, fastwam_k2, compare, and visualize. The plan binds every handoff to a run-scoped S3 URI.",
+      "reason": "validate-spec accepted the workflow and plan-spec expanded five connected waves: prepare, full_wam, fastwam_k2, compare, and visualize. The plan binds every handoff to a run-scoped S3 URI and requests one verified RT-core GPU; the runtime records whether it used native two-device separation or one-device co-location.",
       "evidence": [
         "workflows/testing/cosmos3-fastwam-k2-eval.yaml",
         "npa/tests/workbench/test_cosmos3_fastwam_k2.py",

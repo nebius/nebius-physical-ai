@@ -59,6 +59,13 @@ The supplied request uses `RubiksCubesInBinTask` and `StackYellowOnRedTask` with
 RoboLab's adaptive sampling (`--num-episodes-adaptive 200 --ci-pp-width 0.14`).
 A positive screen still requires a separately defined full-suite evaluation.
 
+On a worker exposing two or more CUDA devices, the native policy server uses
+device zero and the RoboLab Isaac client uses device one. A verified one-RTX
+worker is also executable: both native processes use device zero and each
+variant report records that co-location in `cuda_topology`. Its latency is the
+actual measured latency for that topology, not a substitute for an unrun
+two-GPU measurement.
+
 ## Attribution, terms, and delivery
 
 | Boundary | Upstream identity and credit | Terms / delivery decision |
