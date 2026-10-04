@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "f7eed5e0ab538ec9584833aded1e72694516f9d84a0c5773093aef492ac6277d",
+  "workflow_sha256": "b36772381d803f81e39fe3ee015fb0a58eb00a10be13525b2fc6e7d71b7c4f49",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,9 +12,9 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused tests bind the five substantive stages to source-pinned original LIBERO task and initial-state bytes; stage one atomically runtime-fetches and inventories the evaluator, dlimp, and both exact checkpoints, and each GPU stage independently verifies the inputs it loads. The two evaluators use one paired configuration and native OpenVLA-OFT run_task trial mapping; the final report consumes preparation provenance/notices and requires measured paired data with decodable MP4/RRD artifacts.",
+      "reason": "Focused tests bind the five substantive stages to source-pinned original LIBERO task and initial-state bytes; stage one atomically runtime-fetches and inventories the evaluator, Apache-licensed OFT bidirectional Transformers dependency, dlimp, and both exact checkpoints, and each GPU stage independently verifies the inputs it loads. The two evaluators use one paired configuration and native OpenVLA-OFT run_task trial mapping; the final report consumes preparation provenance/notices and requires measured paired data with decodable MP4/RRD artifacts.",
       "evidence": [
-        "npa/tests/workflows/test_sylvest_oft_mixdata.py: 14 passed",
+        "npa/tests/workflows/test_sylvest_oft_mixdata.py: 16 passed",
         "Original LIBERO source preparation produced a private 10-task, 30-case protocol for libero_spatial with source/task-map/initial-state hashes. It predates the subsequent checkpoint-inventory extension and is source-preparation evidence only, not completion of the current stage-one contract.",
         "npa/.venv/bin/rerun rrd verify and rerun rrd print independently decoded the local measured-fixture comparison.rrd and exposed metrics/delta_success"
       ]
@@ -30,9 +30,10 @@
     },
     "worker_input": {
       "status": "verified",
-      "reason": "Original LIBERO code is pinned to its MIT LICENSE and the upstream README records CC-BY-4.0 benchmark-data attribution. Apache-2.0 kvablack/dlimp is pinned and produces one noticed deterministic private derivative. Both model revisions are configured for operator runtime fetch; no training-task inventory is available, so the workflow remains training_coverage_unknown.",
+      "reason": "Original LIBERO code is pinned to its MIT LICENSE and the upstream README records CC-BY-4.0 benchmark-data attribution. Apache-2.0 kvablack/dlimp is pinned and produces one noticed deterministic private derivative. OFT's documented bidirectional Transformers fork is separately pinned to an Apache-2.0 source revision and license-verified before import. Both model revisions are configured for operator runtime fetch; no training-task inventory is available, so the workflow remains training_coverage_unknown.",
       "evidence": [
         "Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01 LICENSE SHA-256 e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6",
+        "moojink/transformers-openvla-oft@bc339d9ad707454c0c115970db43c260067c61ab LICENSE SHA-256 77fd4710def9ec3c0f6225800e0235f15a425abd4a8b03559127fcd782612049",
         "kvablack/dlimp@92e3eca97af3b14d0b6aa15182c0dc240407698d LICENSE SHA-256 c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
         "private exact-revision Hugging Face payload access receipt"
       ]
@@ -46,7 +47,7 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The earlier neutral digest was rejected before pod launch for missing SkyPilot bootstrap-contract attestation. A task-compatible, operator-private immutable runtime with verified bootstrap behavior and target pull remains the next gate; no public image publication is authorized.",
+      "reason": "The earlier neutral and sibling OFT digests were rejected before pod launch for missing SkyPilot bootstrap-contract attestation. The locally available bootstrap-attested OpenWAM image is CPU-only and lacks the OFT evaluator/Prismatic runtime. A task-compatible, operator-private immutable CUDA runtime with verified bootstrap behavior, target pull, and RTX architecture proof remains the next gate; no public image publication is authorized.",
       "evidence": [
         "private neutral-image build/push/pull and Kubernetes-preflight receipts"
       ]

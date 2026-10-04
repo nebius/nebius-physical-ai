@@ -28,6 +28,13 @@ from npa.clients.storage import StorageClient
 WORKFLOW_SCHEMA = "npa.sylvest-oft-mixdata.v1"
 OFT_SOURCE_REPOSITORY = "https://github.com/moojink/openvla-oft"
 OFT_LICENSE_SHA256 = "53f449ef3886b1ccd71039d9a75a9f503fda1a6912e4095d1d72e2ac7b8767bd"
+OFT_TRANSFORMERS_SOURCE_REPOSITORY = (
+    "https://github.com/moojink/transformers-openvla-oft"
+)
+OFT_TRANSFORMERS_SOURCE_REVISION = "bc339d9ad707454c0c115970db43c260067c61ab"
+OFT_TRANSFORMERS_LICENSE_SHA256 = (
+    "77fd4710def9ec3c0f6225800e0235f15a425abd4a8b03559127fcd782612049"
+)
 LIBERO_PLUS_SOURCE_REPOSITORY = "https://github.com/sylvestf/LIBERO-plus"
 LIBERO_SOURCE_REPOSITORY = "https://github.com/Lifelong-Robot-Learning/LIBERO"
 LIBERO_SOURCE_REVISION = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
@@ -344,6 +351,24 @@ def _require_oft_license(root: Path) -> Path:
     return license_file
 
 
+def _require_oft_transformers_license(root: Path) -> Path:
+    """Verify the Apache-2.0 bidirectional-attention dependency source."""
+
+    license_file = root / "LICENSE"
+    if (
+        not license_file.is_file()
+        or _sha256_file(license_file) != OFT_TRANSFORMERS_LICENSE_SHA256
+    ):
+        raise SylvestComparisonError(
+            "OpenVLA-OFT transformers source is missing its expected Apache-2.0 LICENSE"
+        )
+    if not (root / "src" / "transformers").is_dir():
+        raise SylvestComparisonError(
+            "OpenVLA-OFT transformers source is missing its src/transformers package"
+        )
+    return license_file
+
+
 def _original_libero_suite_cases(
     root: Path, suite: str
 ) -> tuple[list[dict[str, Any]], Path]:
@@ -596,6 +621,12 @@ def _prepare_protocol(args: argparse.Namespace, output: Path) -> None:
         args.openvla_oft_root, args.openvla_oft_revision, OFT_SOURCE_REPOSITORY
     )
     openvla_license = _require_oft_license(openvla_root)
+    oft_transformers_root = _materialize_runtime_source(
+        args.oft_transformers_root,
+        args.oft_transformers_revision,
+        OFT_TRANSFORMERS_SOURCE_REPOSITORY,
+    )
+    oft_transformers_license = _require_oft_transformers_license(oft_transformers_root)
     dlimp_root = _materialize_runtime_source(
         args.dlimp_root, args.dlimp_revision, DLIMP_SOURCE_REPOSITORY
     )
@@ -656,6 +687,12 @@ def _prepare_protocol(args: argparse.Namespace, output: Path) -> None:
                 "license_file": openvla_license.name,
                 "license_sha256": _sha256_file(openvla_license),
             },
+            "oft_transformers": {
+                "repository": OFT_TRANSFORMERS_SOURCE_REPOSITORY,
+                "revision": args.oft_transformers_revision,
+                "license_file": oft_transformers_license.name,
+                "license_sha256": _sha256_file(oft_transformers_license),
+            },
             "dlimp": {
                 "repository": DLIMP_SOURCE_REPOSITORY,
                 "revision": args.dlimp_revision,
@@ -682,7 +719,11 @@ def _prepare_protocol(args: argparse.Namespace, output: Path) -> None:
     }
     protocol["protocol_sha256"] = hashlib.sha256(_canonical_bytes(protocol)).hexdigest()
     notices = _third_party_notices(
-        protocol, license_file, openvla_license, dlimp_license
+        protocol,
+        license_file,
+        openvla_license,
+        oft_transformers_license,
+        dlimp_license,
     )
     _write_json(output / "protocol.json", protocol)
     _write_json(output / "notices.json", notices)
@@ -693,6 +734,7 @@ def _third_party_notices(
     protocol: Mapping[str, Any],
     benchmark_license: Path,
     oft_license: Path,
+    oft_transformers_license: Path,
     dlimp_license: Path,
 ) -> dict[str, Any]:
     """Produce attribution carried from preparation to the final report stage."""
@@ -727,6 +769,17 @@ def _third_party_notices(
                 "license_text": oft_license.read_text(encoding="utf-8"),
                 "credit": "Moo Jin Kim, Chelsea Finn, and Percy Liang",
                 "citation": "Kim, Finn, and Liang, Fine-Tuning Vision-Language-Action Models (2025)",
+            },
+            {
+                "name": "OpenVLA-OFT bidirectional Transformers dependency",
+                "repository": runtime_sources["oft_transformers"]["repository"],
+                "revision": runtime_sources["oft_transformers"]["revision"],
+                "license": "Apache-2.0",
+                "license_file": oft_transformers_license.name,
+                "license_sha256": _sha256_file(oft_transformers_license),
+                "license_text": oft_transformers_license.read_text(encoding="utf-8"),
+                "credit": "Hugging Face team and Moo Jin Kim",
+                "modification": "OpenVLA-OFT upstream fork supplies its documented full bidirectional-attention implementation; NPA pins the immutable revision without modifying it.",
             },
             {
                 "name": "dlimp deterministic private derivative",
@@ -867,6 +920,7 @@ def _prepare_provenance(
             "benchmark": args.benchmark,
             "libero_revision": args.libero_revision,
             "openvla_oft_revision": args.openvla_oft_revision,
+            "oft_transformers_revision": args.oft_transformers_revision,
             "dlimp_revision": args.dlimp_revision,
             "training_task_ids_uri": args.training_task_ids_uri,
             "comparison_scope": protocol["comparison_scope"],
@@ -1008,9 +1062,26 @@ def _link_or_copy(source: Path, target: Path) -> None:
 
 
 def _runtime_modules(
-    openvla_root: Path, libero_root: Path, deterministic_dlimp_root: Path
+    oft_transformers_root: Path,
+    openvla_root: Path,
+    libero_root: Path,
+    deterministic_dlimp_root: Path,
 ) -> Any:
     importlib.invalidate_caches()
+    transformers_source = oft_transformers_root / "src"
+    if not (transformers_source / "transformers").is_dir():
+        raise SylvestComparisonError(
+            "pinned OpenVLA-OFT transformers source has no importable package"
+        )
+    loaded_transformers = sys.modules.get("transformers")
+    if loaded_transformers is not None:
+        loaded_file = getattr(loaded_transformers, "__file__", None)
+        if not loaded_file or not Path(loaded_file).resolve().is_relative_to(
+            transformers_source.resolve()
+        ):
+            raise SylvestComparisonError(
+                "an unverified transformers module was imported before rollout"
+            )
     loaded_dlimp = sys.modules.get("dlimp")
     if loaded_dlimp is not None:
         loaded_file = getattr(loaded_dlimp, "__file__", None)
@@ -1021,6 +1092,7 @@ def _runtime_modules(
                 "a non-deterministic or unverified dlimp module was imported before rollout"
             )
     paths = [
+        str(transformers_source),
         str(deterministic_dlimp_root),
         str(libero_root / "libero"),
         str(openvla_root),
@@ -1076,6 +1148,12 @@ def _rollout(args: argparse.Namespace, output: Path) -> None:
         args.openvla_oft_root, args.openvla_oft_revision, OFT_SOURCE_REPOSITORY
     )
     _require_oft_license(openvla_root)
+    oft_transformers_root = _materialize_runtime_source(
+        args.oft_transformers_root,
+        args.oft_transformers_revision,
+        OFT_TRANSFORMERS_SOURCE_REPOSITORY,
+    )
+    _require_oft_transformers_license(oft_transformers_root)
     _require_prepared_runtime_sources(protocol, args)
     checkpoint_snapshot = _snapshot_checkpoint(
         args.checkpoint_id, args.checkpoint_revision, Path(args.model_cache_root)
@@ -1095,6 +1173,7 @@ def _rollout(args: argparse.Namespace, output: Path) -> None:
         results = _run_upstream_rollouts(
             protocol,
             checkpoint,
+            oft_transformers_root,
             openvla_root,
             libero_root,
             deterministic_dlimp_root,
@@ -1158,6 +1237,11 @@ def _require_prepared_runtime_sources(
             "repository": OFT_SOURCE_REPOSITORY,
             "revision": args.openvla_oft_revision,
             "license_sha256": OFT_LICENSE_SHA256,
+        },
+        "oft_transformers": {
+            "repository": OFT_TRANSFORMERS_SOURCE_REPOSITORY,
+            "revision": args.oft_transformers_revision,
+            "license_sha256": OFT_TRANSFORMERS_LICENSE_SHA256,
         },
         "dlimp": {
             "repository": DLIMP_SOURCE_REPOSITORY,
@@ -1225,6 +1309,10 @@ def _validate_protocol(protocol: Any) -> None:
     runtime_sources = protocol.get("runtime_sources")
     expected_sources = {
         "openvla_oft": (OFT_SOURCE_REPOSITORY, OFT_LICENSE_SHA256),
+        "oft_transformers": (
+            OFT_TRANSFORMERS_SOURCE_REPOSITORY,
+            OFT_TRANSFORMERS_LICENSE_SHA256,
+        ),
         "dlimp": (DLIMP_SOURCE_REPOSITORY, DLIMP_LICENSE_SHA256),
     }
     if (
@@ -1264,13 +1352,16 @@ def _validate_protocol(protocol: Any) -> None:
 def _run_upstream_rollouts(
     protocol: Mapping[str, Any],
     checkpoint: Path,
+    oft_transformers_root: Path,
     openvla_root: Path,
     libero_root: Path,
     deterministic_dlimp_root: Path,
     output: Path,
     runtime_workspace: Path,
 ) -> list[dict[str, Any]]:
-    evaluator = _runtime_modules(openvla_root, libero_root, deterministic_dlimp_root)
+    evaluator = _runtime_modules(
+        oft_transformers_root, openvla_root, libero_root, deterministic_dlimp_root
+    )
     evaluation_config = protocol["evaluation_config"]
     if not isinstance(evaluation_config, Mapping):
         raise SylvestComparisonError("protocol lacks evaluator configuration")
@@ -1568,6 +1659,10 @@ def _rollout_provenance(
         "openvla_oft": {
             "repository": OFT_SOURCE_REPOSITORY,
             "revision": args.openvla_oft_revision,
+        },
+        "oft_transformers": {
+            "repository": OFT_TRANSFORMERS_SOURCE_REPOSITORY,
+            "revision": args.oft_transformers_revision,
         },
         "benchmark_source": {
             **_comparison_source(args.benchmark, args.libero_revision),
@@ -1925,6 +2020,8 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--model-cache-root", required=True)
     prepare.add_argument("--openvla-oft-root", required=True)
     prepare.add_argument("--openvla-oft-revision", required=True)
+    prepare.add_argument("--oft-transformers-root", required=True)
+    prepare.add_argument("--oft-transformers-revision", required=True)
     prepare.add_argument("--dlimp-root", required=True)
     prepare.add_argument("--dlimp-revision", required=True)
     prepare.add_argument("--baseline-checkpoint-id", required=True)
@@ -1938,6 +2035,8 @@ def build_parser() -> argparse.ArgumentParser:
     rollout.add_argument("--model-cache-root", required=True)
     rollout.add_argument("--openvla-oft-root", required=True)
     rollout.add_argument("--openvla-oft-revision", required=True)
+    rollout.add_argument("--oft-transformers-root", required=True)
+    rollout.add_argument("--oft-transformers-revision", required=True)
     rollout.add_argument("--dlimp-root", required=True)
     rollout.add_argument("--dlimp-revision", required=True)
     rollout.add_argument("--dlimp-runtime-root", required=True)

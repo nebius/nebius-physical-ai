@@ -77,6 +77,7 @@ visualization.
 | Component | Pinned source/revision | Credit and role |
 | --- | --- | --- |
 | OpenVLA-OFT evaluator | [`moojink/openvla-oft@e4287e94541f459edc4feabc4e181f537cd569a8`](https://github.com/moojink/openvla-oft/tree/e4287e94541f459edc4feabc4e181f537cd569a8) | Moo Jin Kim, Chelsea Finn, and Percy Liang; `GenerateConfig`, model initialization, `run_task`, and rollout videos are upstream-native. |
+| OFT bidirectional Transformers dependency | [`moojink/transformers-openvla-oft@bc339d9ad707454c0c115970db43c260067c61ab`](https://github.com/moojink/transformers-openvla-oft/tree/bc339d9ad707454c0c115970db43c260067c61ab) | Hugging Face team and Moo Jin Kim; Apache-2.0 fork used by OFT for documented full bidirectional attention. The primary workflow pins and license-verifies it rather than resolving OFT's mutable dependency URL. |
 | OpenVLA foundation | [`openvla/openvla`](https://github.com/openvla/openvla) | Moo Jin Kim and OpenVLA collaborators; architecture/base-model lineage. |
 | OFT data dependency | [`kvablack/dlimp@92e3eca97af3b14d0b6aa15182c0dc240407698d`](https://github.com/kvablack/dlimp/tree/92e3eca97af3b14d0b6aa15182c0dc240407698d) | Kevin Black; licensed Apache-2.0 parent. NPA derives a private runtime copy with only `dlimp/dataset.py`'s `options.deterministic = False` changed to `True`, preserves `LICENSE`, and writes `NPA_MODIFICATIONS.md`. It does not fetch the unlicensed `moojink/dlimp_openvla` fork. |
 | Original LIBERO benchmark | [`Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01`](https://github.com/Lifelong-Robot-Learning/LIBERO/tree/8f1084e3132a39270c3a13ebe37270a43ece2a01) | Yifeng Zhu and LIBERO authors; MIT-licensed benchmark source, task map, simulator, and stored initial states for the primary paired route. |
@@ -87,7 +88,8 @@ visualization.
 NPA adds task/initial-state pairing, an inventory-gated held-out rule, an
 explicit unknown-coverage alternative, source and revision checks, complete
 checkpoint-inventory provenance, cache ready markers, and report artifacts.
-The primary runtime fetches source-only OpenVLA-OFT, dlimp, and original LIBERO
+The primary runtime fetches source-only OpenVLA-OFT, its pinned Apache-2.0
+bidirectional Transformers dependency, dlimp, and original LIBERO
 checkouts by immutable revision to lock-protected, atomically marked worker
 caches; it does not assume a source checkout is baked in the image. Preparation
 writes a third-party notice record that the final report stage consumes and
@@ -130,6 +132,7 @@ Preserve the upstream citations with reports:
 | Boundary | Current authoritative finding | Decision |
 | --- | --- | --- |
 | OpenVLA-OFT source | Pinned `LICENSE` is MIT, copyright Moo Jin Kim, Chelsea Finn, and Percy Liang (2025). | Attribution retained; source-only checkout is fetched at the exact revision into the operator-owned runtime cache. |
+| OFT bidirectional Transformers dependency | Pinned `moojink/transformers-openvla-oft@bc339d9a…` has Apache-2.0 `LICENSE` (SHA-256 `77fd4710…2049`) and identifies the documented Transformers 4.40.1 line. | Fetch the exact source-only revision into the operator-owned runtime cache and reject a pre-imported or unpinned Transformers module; it is not a model payload. |
 | OpenVLA source | Upstream [`LICENSE`](https://github.com/openvla/openvla/blob/main/LICENSE) is MIT, copyright Moo Jin Kim, Karl Pertsch, and Siddharth Karamcheti (2024). | Lineage recorded; base-model/dependency rights remain separate. |
 | dlimp data dependency | Pinned `kvablack/dlimp@92e3eca…` carries Apache-2.0 (`LICENSE` SHA-256 `c71d239d…d0ab4`). The former OFT fork differs only by omitting that license and setting `options.deterministic = True`. | Runtime-fetch the licensed parent only. Derive a private content-inventoried copy with that exact one-line change plus a modification notice; preserve Apache notice. |
 | Original LIBERO source | Pinned source `LICENSE` is MIT (SHA-256 `e2885fd3…68ff6`). | Runtime-fetch or use in an operator-private runtime; preserve its copyright/license and source revision in protocol provenance. |

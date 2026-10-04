@@ -22,6 +22,10 @@ config:
   # to this operator-owned worker cache at their exact revisions, never baked.
   openvla_oft_root: "/workspace/.cache/npa/sources/openvla-oft"
   openvla_oft_revision: "e4287e94541f459edc4feabc4e181f537cd569a8"
+  # OFT requires its Apache-2.0 bidirectional-attention Transformers fork.
+  # Pin it separately instead of resolving the mutable upstream dependency URL.
+  oft_transformers_root: "/workspace/.cache/npa/sources/transformers-openvla-oft"
+  oft_transformers_revision: "bc339d9ad707454c0c115970db43c260067c61ab"
   dlimp_root: "/workspace/.cache/npa/sources/dlimp"
   dlimp_revision: "92e3eca97af3b14d0b6aa15182c0dc240407698d"
   dlimp_runtime_root: "/workspace/.cache/npa/dlimp-deterministic"
@@ -84,6 +88,8 @@ states:
         --model-cache-root "{{config.model_cache_root}}"
         --openvla-oft-root "{{config.openvla_oft_root}}"
         --openvla-oft-revision "{{config.openvla_oft_revision}}"
+        --oft-transformers-root "{{config.oft_transformers_root}}"
+        --oft-transformers-revision "{{config.oft_transformers_revision}}"
         --dlimp-root "{{config.dlimp_root}}"
         --dlimp-revision "{{config.dlimp_revision}}"
         --baseline-checkpoint-id "{{config.baseline_checkpoint_id}}"
@@ -113,6 +119,8 @@ states:
         --model-cache-root "{{config.model_cache_root}}"
         --openvla-oft-root "{{config.openvla_oft_root}}"
         --openvla-oft-revision "{{config.openvla_oft_revision}}"
+        --oft-transformers-root "{{config.oft_transformers_root}}"
+        --oft-transformers-revision "{{config.oft_transformers_revision}}"
         --dlimp-root "{{config.dlimp_root}}"
         --dlimp-revision "{{config.dlimp_revision}}"
         --dlimp-runtime-root "{{config.dlimp_runtime_root}}"
@@ -145,6 +153,8 @@ states:
         --model-cache-root "{{config.model_cache_root}}"
         --openvla-oft-root "{{config.openvla_oft_root}}"
         --openvla-oft-revision "{{config.openvla_oft_revision}}"
+        --oft-transformers-root "{{config.oft_transformers_root}}"
+        --oft-transformers-revision "{{config.oft_transformers_revision}}"
         --dlimp-root "{{config.dlimp_root}}"
         --dlimp-revision "{{config.dlimp_revision}}"
         --dlimp-runtime-root "{{config.dlimp_runtime_root}}"

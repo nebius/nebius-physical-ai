@@ -46,6 +46,11 @@ def _rollouts(
                 "revision": "pinned-oft",
                 "license_sha256": workflow.OFT_LICENSE_SHA256,
             },
+            "oft_transformers": {
+                "repository": workflow.OFT_TRANSFORMERS_SOURCE_REPOSITORY,
+                "revision": "pinned-transformers",
+                "license_sha256": workflow.OFT_TRANSFORMERS_LICENSE_SHA256,
+            },
             "dlimp": {
                 "repository": workflow.DLIMP_SOURCE_REPOSITORY,
                 "revision": "pinned-dlimp",
@@ -374,6 +379,51 @@ def test_licensed_dlimp_parent_becomes_noticed_deterministic_derivative(
     )
 
 
+def test_oft_transformers_source_requires_license_and_importable_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refuse a mutable OFT fork checkout without its Apache notice and package."""
+
+    source = tmp_path / "transformers-source"
+    package = source / "src" / "transformers"
+    package.mkdir(parents=True)
+    license_file = source / "LICENSE"
+    license_file.write_text("Apache License\n")
+    monkeypatch.setattr(
+        workflow,
+        "OFT_TRANSFORMERS_LICENSE_SHA256",
+        hashlib.sha256(license_file.read_bytes()).hexdigest(),
+    )
+
+    assert workflow._require_oft_transformers_license(source) == license_file
+    package.rmdir()
+    with pytest.raises(
+        workflow.SylvestComparisonError, match="src/transformers package"
+    ):
+        workflow._require_oft_transformers_license(source)
+
+
+def test_rollout_rejects_preimported_unpinned_transformers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Do not let an image-installed Transformers override the pinned OFT fork."""
+
+    transformers_root = tmp_path / "oft-transformers"
+    (transformers_root / "src" / "transformers").mkdir(parents=True)
+    foreign = SimpleNamespace(__file__=str(tmp_path / "foreign-transformers.py"))
+    monkeypatch.setitem(sys.modules, "transformers", foreign)
+
+    with pytest.raises(
+        workflow.SylvestComparisonError, match="unverified transformers"
+    ):
+        workflow._runtime_modules(
+            transformers_root,
+            tmp_path / "openvla",
+            tmp_path / "libero",
+            tmp_path / "dlimp",
+        )
+
+
 def test_initial_state_indices_are_upstream_trial_indices() -> None:
     """Reject index sets that cannot map to upstream run_task trials.
 
@@ -439,6 +489,11 @@ def test_protocol_scope_rejects_an_unsupported_or_unproven_held_out_label() -> N
                 "repository": workflow.OFT_SOURCE_REPOSITORY,
                 "revision": "pinned-oft",
                 "license_sha256": workflow.OFT_LICENSE_SHA256,
+            },
+            "oft_transformers": {
+                "repository": workflow.OFT_TRANSFORMERS_SOURCE_REPOSITORY,
+                "revision": "pinned-transformers",
+                "license_sha256": workflow.OFT_TRANSFORMERS_LICENSE_SHA256,
             },
             "dlimp": {
                 "repository": workflow.DLIMP_SOURCE_REPOSITORY,
@@ -539,6 +594,11 @@ def test_gpu_runtime_sources_must_match_stage_one_pins() -> None:
                 "revision": "oft-pinned",
                 "license_sha256": workflow.OFT_LICENSE_SHA256,
             },
+            "oft_transformers": {
+                "repository": workflow.OFT_TRANSFORMERS_SOURCE_REPOSITORY,
+                "revision": "transformers-pinned",
+                "license_sha256": workflow.OFT_TRANSFORMERS_LICENSE_SHA256,
+            },
             "dlimp": {
                 "repository": workflow.DLIMP_SOURCE_REPOSITORY,
                 "revision": "dlimp-pinned",
@@ -547,10 +607,12 @@ def test_gpu_runtime_sources_must_match_stage_one_pins() -> None:
         }
     }
     args = SimpleNamespace(
-        openvla_oft_revision="oft-pinned", dlimp_revision="dlimp-pinned"
+        openvla_oft_revision="oft-pinned",
+        oft_transformers_revision="transformers-pinned",
+        dlimp_revision="dlimp-pinned",
     )
     workflow._require_prepared_runtime_sources(protocol, args)
-    args.dlimp_revision = "substituted"
+    args.oft_transformers_revision = "substituted"
     with pytest.raises(workflow.SylvestComparisonError, match="differs"):
         workflow._require_prepared_runtime_sources(protocol, args)
 
@@ -679,6 +741,10 @@ def test_original_libero_workflow_has_five_connected_substantive_stages() -> Non
     assert spec["config"]["comparison_scope"] == "training_coverage_unknown"
     assert spec["config"]["benchmark"] == "original_libero"
     assert spec["config"]["libero_revision"] == workflow.LIBERO_SOURCE_REVISION
+    assert (
+        spec["config"]["oft_transformers_revision"]
+        == workflow.OFT_TRANSFORMERS_SOURCE_REVISION
+    )
     assert spec["resources"]["gpu"]["accelerators"] == "{{config.gpu_type}}:1"
     prepare_shell = states["prepare"]["run"]["shell"]
     for option in (
@@ -689,6 +755,8 @@ def test_original_libero_workflow_has_five_connected_substantive_stages() -> Non
         "--model-cache-root",
         "--openvla-oft-root",
         "--openvla-oft-revision",
+        "--oft-transformers-root",
+        "--oft-transformers-revision",
         "--dlimp-root",
         "--dlimp-revision",
     ):
@@ -707,5 +775,7 @@ def test_original_libero_workflow_has_five_connected_substantive_stages() -> Non
         assert "--dlimp-root" in shell
         assert "--dlimp-revision" in shell
         assert "--dlimp-runtime-root" in shell
+        assert "--oft-transformers-root" in shell
+        assert "--oft-transformers-revision" in shell
         assert "--benchmark" in shell
         assert "--libero-root" in shell
