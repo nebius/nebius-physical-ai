@@ -1,0 +1,310 @@
+{
+  "schema": "ncore-failed-vlm-diagnostic-public-v1",
+  "execution_source": "aa3958d9d63de78a127e55ad1759311dd9848374",
+  "source_tree": "1cc813fb800e3f0eebce9f2d50bbb8735ae12340",
+  "gpu_producer_source": "10b3c34dd6033a1de8798d0013b062848c73a3a0",
+  "module_sha256": "5CA5248DA50F3CC92A8FBF2C4C6ADF5F81FB09BDDB48C5EE69D972DA9AE110C7",
+  "freeze_sha256": "35E0D595C9CDCA2C552F4FB754B4DE2E3CE7D2C501C2795EF817384B7600B81E",
+  "label_commitment_sha256": "69EFFC84D09DE6C777F7DBAB15508A2E62ACD07ED45D6E9DE4DB25315FF713BC",
+  "freeze_acceptance_sha256": "FC570A6AEFFF3A9A8F5E19D7866D35C1675102FE6B16E55C786408FDB9BC126E",
+  "calibration_sha256": "E1894C6676ECB12CEE35F8C84740979C0DA19CA873C86B6AC04DCD26D68666A3",
+  "model": "openbmb/MiniCPM-V-4_5",
+  "threshold": 0.8,
+  "status": "FAILED",
+  "confusion": {
+    "true_positives": 2,
+    "true_negatives": 1,
+    "false_positives": 1,
+    "false_negatives": 0
+  },
+  "provider_calls": 4,
+  "final_provider_calls": 0,
+  "final_score": null,
+  "outcomes": [
+    {
+      "attempt_id": "case-9b0f5fde653b0b74",
+      "score": 1.0,
+      "success": true,
+      "rationale": "The sequence presents a consistent static scene with a water feature, a building with large windows, and a metallic abstract sculpture. Object shapes, relative placement, depth ordering, texture, lighting, and background structure remain consistent across all frames. There are no obvious duplicate geometry, tearing, large holes, block corruption, or unexplained object motion. The views are coherent and detailed, with no significant defects or inconsistencies in the visual sequence.",
+      "finish_reason": "stop",
+      "served_model": "openbmb/MiniCPM-V-4_5",
+      "http_status": 200,
+      "usage": {
+        "completion_tokens": 109,
+        "completion_tokens_details": null,
+        "prompt_tokens": 1715,
+        "prompt_tokens_details": null,
+        "total_tokens": 1824
+      },
+      "latency_ms": 3140,
+      "request_sha256": "1ABC7D5B0ADA0BD8DDE48994A13B63A2693FA796024FA782777A712C21E429AD",
+      "response_sha256": "01EF817C62F2B3B917D7B50516BDF5563D901DF8062C12157A11C61D9FCA0184",
+      "role": "render-local-seam-floater",
+      "expected_label": false,
+      "predicted_label": true,
+      "outcome_sha256": "B4471C31B5C5373449CF6B0545667A64520EDEAFCDADB06BECF59AC96424FE69"
+    },
+    {
+      "attempt_id": "case-28fc2744fc42167c",
+      "score": 1.0,
+      "success": true,
+      "rationale": "The sequence presents a consistent view of a static scene featuring a metallic sculpture in a water body. Object shapes, relative placement, depth ordering, texture, lighting, and background structure remain consistent across all frames. The sculpture and its base are clearly visible in each image, with no obvious duplicate geometry, tearing, large holes, or block corruption. The background elements, such as the building and vegetation, also show consistent positioning and appearance. The lighting and reflections in the water are consistent, indicating no significant change in the scene or viewpoint. There is no unexplained object motion, and the views are coherent and detailed, forming a reviewable ordered view sequence of one static scene.",
+      "finish_reason": "stop",
+      "served_model": "openbmb/MiniCPM-V-4_5",
+      "http_status": 200,
+      "usage": {
+        "completion_tokens": 158,
+        "completion_tokens_details": null,
+        "prompt_tokens": 2771,
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 2768
+        },
+        "total_tokens": 2929
+      },
+      "latency_ms": 6298,
+      "request_sha256": "85FE90181170471BD10D5BF1A40E30935BE249C9BF986061827492FB9E8A1732",
+      "response_sha256": "F82797A138BAB87BD021B77BF70C34AB6D2EE03729EC4BB43E608E89C3C554BE",
+      "role": "source-camera:camera2",
+      "expected_label": true,
+      "predicted_label": true,
+      "outcome_sha256": "813851F1160839D49587B5CC9865894515E043441FB23FE2AC0E29CC343FE7D5"
+    },
+    {
+      "attempt_id": "case-ce11af7af01cfa49",
+      "score": 0.2,
+      "success": false,
+      "rationale": "The sequence contains severe geometry and texture inconsistencies, with no clear coherent scene structure. There are large missing regions, block corruption, and unexplained object motion. The views are not compatible with each other, and the scene evidence is undecodable in substance.",
+      "finish_reason": "stop",
+      "served_model": "openbmb/MiniCPM-V-4_5",
+      "http_status": 200,
+      "usage": {
+        "completion_tokens": 75,
+        "completion_tokens_details": null,
+        "prompt_tokens": 2771,
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 2768
+        },
+        "total_tokens": 2846
+      },
+      "latency_ms": 5971,
+      "request_sha256": "FF7FB4B25FAE6CEC5DD725B303F8654B78ACC74262B4EB2EA2F3FF92517B6823",
+      "response_sha256": "633ED08E2608A80CA22FE7B9748D2B4A58C7C8DEB344D696EC08153C2B1FB270",
+      "role": "block-global-permutation-32-v1",
+      "expected_label": false,
+      "predicted_label": false,
+      "outcome_sha256": "C4642436B28967E1379594AC1600800FD195C88E4C6319BF355838BDB8FCA50E"
+    },
+    {
+      "attempt_id": "case-d4bff0fc8d9d7504",
+      "score": 1.0,
+      "success": true,
+      "rationale": "The sequence presents a consistent scene with a metallic abstract sculpture in a water feature, viewed from different angles. Object shapes, relative placement, depth ordering, texture, lighting, and background structure remain consistent across all frames. There are no obvious duplicates, large holes, or unexplained motion. The reflections in the water and the shadows cast by the sculpture and surrounding structures align across the images, indicating a static scene captured from varying viewpoints without distortion or corruption.",
+      "finish_reason": "stop",
+      "served_model": "openbmb/MiniCPM-V-4_5",
+      "http_status": 200,
+      "usage": {
+        "completion_tokens": 114,
+        "completion_tokens_details": null,
+        "prompt_tokens": 3039,
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 3024
+        },
+        "total_tokens": 3153
+      },
+      "latency_ms": 7445,
+      "request_sha256": "5053979B2DEC21FC533BF5B88390A3F439CCB437EDF1F5E2593280FA3E309B48",
+      "response_sha256": "0224232AADF8A8F081A1D87914F367745B8F9F6CDBFCF565760F8D236CE71E4C",
+      "role": "source-camera:camera1",
+      "expected_label": true,
+      "predicted_label": true,
+      "outcome_sha256": "872B89B942E3C6D667A17F05ED9E2688B6E029E863070C440BDE9F84233E5B6A"
+    }
+  ],
+  "usage_total": {
+    "prompt_tokens": 10296,
+    "completion_tokens": 456,
+    "total_tokens": 10752
+  },
+  "authoritative_billed_cost": null,
+  "external_marker_readbacks": {
+    "count": 4,
+    "all_exact": true,
+    "private_location_not_published": true
+  },
+  "media": [
+    {
+      "path": "controls/case-9b0f5fde653b0b74/frame-000.png",
+      "sha256": "8A265C0C32DBD4CF757808B83BDDF3E52C1BA53CFB88A82DE7E6984CB97A5EAF",
+      "bytes": 722902,
+      "role": "calibration-control",
+      "case_id": "case-9b0f5fde653b0b74",
+      "order": 0
+    },
+    {
+      "path": "controls/case-9b0f5fde653b0b74/frame-001.png",
+      "sha256": "FAAC46F91E055EA03DF3EA35B78B22D80C4936F93C275C329602FABAA11AD7A1",
+      "bytes": 768174,
+      "role": "calibration-control",
+      "case_id": "case-9b0f5fde653b0b74",
+      "order": 1
+    },
+    {
+      "path": "controls/case-9b0f5fde653b0b74/frame-002.png",
+      "sha256": "51472E54682E67AB0E24FACCBCCFA5BB63EE855A0F068586A046DDE4ADDF0C3A",
+      "bytes": 713454,
+      "role": "calibration-control",
+      "case_id": "case-9b0f5fde653b0b74",
+      "order": 2
+    },
+    {
+      "path": "controls/case-9b0f5fde653b0b74/frame-003.png",
+      "sha256": "DB1637665A34ACE2B0A16BE58EFE8996BA2B52E19E3669AE5018EF279113DD47",
+      "bytes": 618312,
+      "role": "calibration-control",
+      "case_id": "case-9b0f5fde653b0b74",
+      "order": 3
+    },
+    {
+      "path": "controls/case-28fc2744fc42167c/frame-000.png",
+      "sha256": "15C51E2C70C9F13E54B87BA1DA7B4C8D481EDE9DA1EC925EC5804DC950385583",
+      "bytes": 2553163,
+      "role": "calibration-control",
+      "case_id": "case-28fc2744fc42167c",
+      "order": 0
+    },
+    {
+      "path": "controls/case-28fc2744fc42167c/frame-001.png",
+      "sha256": "7A1937F140656F15E31ABB575ADA180487D7DFF14CBFEC90A8443AB8A81E7886",
+      "bytes": 4017561,
+      "role": "calibration-control",
+      "case_id": "case-28fc2744fc42167c",
+      "order": 1
+    },
+    {
+      "path": "controls/case-28fc2744fc42167c/frame-002.png",
+      "sha256": "35F366142C3CF07CF85A9CA0326E819114C7C985BDAAB3AE56ABFBB31B10CF61",
+      "bytes": 3583917,
+      "role": "calibration-control",
+      "case_id": "case-28fc2744fc42167c",
+      "order": 2
+    },
+    {
+      "path": "controls/case-28fc2744fc42167c/frame-003.png",
+      "sha256": "15DBA65C346C5CB1A55430F7BF5E67B8B99D88D6FBAEC0F60C321BCA0083022F",
+      "bytes": 3782407,
+      "role": "calibration-control",
+      "case_id": "case-28fc2744fc42167c",
+      "order": 3
+    },
+    {
+      "path": "controls/case-ce11af7af01cfa49/frame-000.png",
+      "sha256": "1519DA53E3B09FD952B3E801595D4EAF853FA50D9FD8A4E043E956144F9209D6",
+      "bytes": 2609972,
+      "role": "calibration-control",
+      "case_id": "case-ce11af7af01cfa49",
+      "order": 0
+    },
+    {
+      "path": "controls/case-ce11af7af01cfa49/frame-001.png",
+      "sha256": "33344CD16229B4BC6AAF14D7FFAE068B0D44A91019C3359B319997025CCB6F0D",
+      "bytes": 4119677,
+      "role": "calibration-control",
+      "case_id": "case-ce11af7af01cfa49",
+      "order": 1
+    },
+    {
+      "path": "controls/case-ce11af7af01cfa49/frame-002.png",
+      "sha256": "38870F097CD1B85E8F54CBF9C9CBE02E387036E0EB881FC4FA2E7E7B05BE94B4",
+      "bytes": 3664615,
+      "role": "calibration-control",
+      "case_id": "case-ce11af7af01cfa49",
+      "order": 2
+    },
+    {
+      "path": "controls/case-ce11af7af01cfa49/frame-003.png",
+      "sha256": "130DFB95938CAF113F08297B66DE285976727764E64BD77B9E3CE22855F3E4BE",
+      "bytes": 3848617,
+      "role": "calibration-control",
+      "case_id": "case-ce11af7af01cfa49",
+      "order": 3
+    },
+    {
+      "path": "controls/case-d4bff0fc8d9d7504/frame-000.png",
+      "sha256": "25B89157890D246EA1FFA216E3447DF75F73E68CEE73F565617E0625B22F879D",
+      "bytes": 4925549,
+      "role": "calibration-control",
+      "case_id": "case-d4bff0fc8d9d7504",
+      "order": 0
+    },
+    {
+      "path": "controls/case-d4bff0fc8d9d7504/frame-001.png",
+      "sha256": "82347E45F287D02D593C8938F7760A6766E24495794E0CCB13622587A7977FA9",
+      "bytes": 4308554,
+      "role": "calibration-control",
+      "case_id": "case-d4bff0fc8d9d7504",
+      "order": 1
+    },
+    {
+      "path": "controls/case-d4bff0fc8d9d7504/frame-002.png",
+      "sha256": "8635ECFD4A0FE65912B13358E688F1CA4F991DFA9A38F471488384D0993D8CA0",
+      "bytes": 4488199,
+      "role": "calibration-control",
+      "case_id": "case-d4bff0fc8d9d7504",
+      "order": 2
+    },
+    {
+      "path": "controls/case-d4bff0fc8d9d7504/frame-003.png",
+      "sha256": "09231C72A38F72270E15B21B2207AC8A409687B5E98B1A8467D619621DC86512",
+      "bytes": 4862381,
+      "role": "calibration-control",
+      "case_id": "case-d4bff0fc8d9d7504",
+      "order": 3
+    },
+    {
+      "path": "final/frame-000.png",
+      "sha256": "95EEFA0C3EA7339389D377B936FB49A2E988A2FBE87B23FD89AC77B4D3A3AD19",
+      "bytes": 682906,
+      "role": "frozen-final-NOT-SENT",
+      "order": 0
+    },
+    {
+      "path": "final/frame-001.png",
+      "sha256": "1D86B2B9FEA04BD2C032E867DE3AC94E81FA460BEE3CDACDDD049A3F54CE1455",
+      "bytes": 761700,
+      "role": "frozen-final-NOT-SENT",
+      "order": 1
+    },
+    {
+      "path": "final/frame-002.png",
+      "sha256": "9AFBC9B555F2C3C74F138D6C5216A82CD9BD5586D548CFF636C460A5892BEE0E",
+      "bytes": 713069,
+      "role": "frozen-final-NOT-SENT",
+      "order": 2
+    },
+    {
+      "path": "final/frame-003.png",
+      "sha256": "450B949103B0CD6A3378A8CF692E86ECC1F94FD04705D2EFDD387EEBBB8C096D",
+      "bytes": 621046,
+      "role": "frozen-final-NOT-SENT",
+      "order": 3
+    }
+  ],
+  "fitted_metrics_unchanged": {
+    "PSNR": 23.871788024902344,
+    "SSIM": 0.6742462515830994,
+    "LPIPS": 0.4939148724079132,
+    "scope": "518 fitted frames; not heldout or novel-view VLM acceptance"
+  },
+  "limitations": [
+    "Synthetic controls are explicitly altered diagnostic images, not native output defects.",
+    "All four final frames were frozen but never sent for final inference because calibration failed.",
+    "The model missed the conspicuous local duplicate patch; no retry, relabeling, threshold, prompt or model change.",
+    "Current source/CI and fitted metrics remain separately accepted; this failed diagnostic is not complete image/source qualification.",
+    "No public image release, customer infrastructure, private locations, credentials or provider identifiers are included.",
+    "Independent terminal-response review was pending at this proof preparation; prior source/pixel-protocol/current-CI reviews accepted their exact scopes."
+  ],
+  "hash_encoding": "All64hexSHA256 values use uppercase uniformly; case preserves every digest bit."
+}
