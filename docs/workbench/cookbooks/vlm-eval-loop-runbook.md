@@ -2,6 +2,10 @@
 
 [Cookbooks](README.md)
 
+For a separate qualitative audit, use [rich visual review](../vlm-visual-review.md).
+Its private evidence, counterbalanced comparisons, and usefulness hypotheses
+never supply a completion score or pipeline gate.
+
 This runbook runs the sim-to-real VLM-eval loop on the self-hosted serving path:
 serve a VLM with vLLM, score rollout directories with `vlm-eval`, and write a
 task-success report.

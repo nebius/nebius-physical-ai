@@ -12,6 +12,12 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+`npa workbench vlm-eval review-visual` and its SDK write a separate private rich
+visual audit. Choose an exact hosted model, neutral task, and fresh output path;
+optional `--baseline-path` compares both sources in both A/B orders. See the
+[visual-review guide](../docs/workbench/vlm-visual-review.md) for all options and
+the retained limitations. These records never affect the completion score or gate.
+
 The [NuRec sample workflow](../docs/workbench/guides/neural-reconstruction.md)
 and [four-camera warehouse workflow](../docs/workbench/multicamera-rgbd-capture.md)
 download public sample data automatically and publish compact, offline
