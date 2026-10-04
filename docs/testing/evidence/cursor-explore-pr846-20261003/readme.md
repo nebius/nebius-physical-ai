@@ -461,3 +461,86 @@ is relabeled. Historical064 terminal-journal absence remains disclosure only.
 Five qualified immutable images, compatible cache/seed and the genuine14-stage
 GPU/model/render and Stage8/Stage14 restart acceptance remain absent. No private
 image publication, draft removal, owner merge or enqueue has occurred.
+
+## Frozen 3682 full-CI and current source convergence
+
+The independent receipt for signed `3682f628d0541bf29b7c19b2fa2a5d9e8234f01a`
+accepts its actual [six-shard CI run](https://github.com/nebius/nebius-physical-ai/actions/runs/37172131944),
+not execution of a later source. Execution merge
+`290069f578a69be4b5d4cbd09894eacc5c77604b` has exactly the published tree
+`0ad25f7b93d232d47dce32cc2992dbf9bf27044e`. All 42,997 verbose test-node outcomes
+are retained: 42,149 pass, 847 item skips and one existing XPASS; 42 additional
+non-item skip reports explain the original 889 summary skips. No JUnit was
+generated or invented. Coverage displays 78% against the 60% gate. Twenty checks
+succeed and four remain distinct skips, including native/image scopes;
+gitleaks, scan and security-regression succeed from app15368. Artifact ZIP
+SHA-256: `be63fee5126e14b6bd076a85a6eb71b5d7ceb2e66d5e5f618c9654f192544a55`.
+Original064 missing terminal metadata remains disclosed; this fresh CI does
+not reconstruct it or turn native skips into native execution.
+
+Separate committed source `1e69282d86b7caf8bb98f87bcf8fc546db8700b7` integrates
+landed main `4603e7e1d8ffede505161448fe92368e7c6bda45`, accepted isolated fixture
+repairs and the reviewed generic OCI component. Earlier current-main CPU
+executions retain their identities: 734 agency controls pass with one opt-in
+live skip at `ec1a1901`; 193 publication/stage-authority controls pass at
+import-only successor `72524047`; root collection reports 43,408 tests.
+The original standalone collection error is retained. The import repair
+changes no assertions or production source.
+
+Four retained-response/writer/grade controls pass at725, while a fifth whole-AST
+assertion fails because main4603 changes one helper's type annotation from
+`list` to `Sequence`. A separate exact source/annotation bridge passes;
+neither result is rewritten into a single five-pass execution. Request bodies
+and original hosted-response hashes remain bound; there was no new hosted call.
+
+On exact1e source, all 333 consuming agent/cleanup/configure controls pass with
+the reviewed private before-spawn guard enabled on a native-CLI host. Its
+summary records no forbidden attempts and no journal error. The prior05a8 run
+retains 332 passes, one failure and one teardown error after blocking a native
+version query before spawn; the already independently accepted narrow fixture
+repair was subsequently Git-composed. This guard covers direct configured/bare
+Python Popen, not shell grandchildren or HTTP. Native and signal evidence
+remain their separate original executions. Local precheck270 and merge-precheck
+pass at1e. Protected current-head full CI is still a separate gate.
+
+## Generic original-OCI verifier and repaired-image limits
+
+Signed component `832bb63fdd68121bae34a2920294af31a4ca8009` received an actual
+first-party Claude Opus5 source/text review: Clear for this six-file component,
+with no blocking finding. Its committed files are byte-identical in the Git
+integration. Original component evidence is 1,029 regression passes, including
+38 new controls, plus actual pinned native clean/hostile/cancellation controls.
+Thirty-eight owner consuming controls also pass after integration. This is
+AI review, not human approval, pixel review, whole-PR or image qualification.
+
+The product-neutral OCI path authenticates exact archive/index/config/ordered
+layers/diffIDs and complete ancestor file/byte counts while preserving four
+product-specific contracts. Scanner-source changes require new prepare
+authorization; old source-bound authorization must fail closed. Attestation-free
+exports and generic finding adjudication remain unsupported. Original OCI
+input avoids the converted archive's retained unsupported-PAX failure; no PAX,
+policy or scanner relaxation was introduced.
+
+All five original3682 builds succeeded but failed their fixed-critical gates;
+EnvGen also had a retained secret finding. Signed39b recipes repair observed
+Debian package floors and PyJWT pins. EnvGen removes one hash/RECORD/AST-bound
+inert sample expression before its existing final scratch flattening, not by
+deleting bytes from an already delivered ancestor layer. No token was exercised
+or finding waived. Actual new-image complete-byte absence remains required.
+
+The repaired39b controller built and its inventory, fixed-critical, all-secret,
+SPDX and payload commands exit zero. That is narrow progress, not complete
+security, capability, delivery or GPU acceptance. EnvGen's actual39b APT
+transaction selected headers5.15.0-198.208, then refused the explicit lower
+194.204 request (APT100/build1), before sanitizer or final image generation.
+Signed correction `ed04e9b8a2c3a887cf617013b19aa797a221cdc1` binds the selected
+198.208 package from the same signed frozen index without forced downgrade;
+59 affected controls pass. Original build/log/archive failures stay immutable.
+
+No image is yet qualified or delivered. The existing exclusive builder remains
+responsible for private image qualification/delivery. Approved external customer
+policy is still missing; an empty or merely observed-literal policy is not an
+acceptable replacement. Genuine standard-runtime full14 GPU/model/render,
+same-digest cache/seed and Stage8/Stage14 restarts remain unexecuted. No image
+publication, source overlay, IAM expansion, draft removal, owner enqueue or
+merge is claimed. This appendix changes prose only after the exact1e CPU work.
