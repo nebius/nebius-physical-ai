@@ -18,6 +18,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     MOLMOACT2_UPSTREAM_ROOT=/opt/molmoact2/experiments \
     MUJOCO_GL=egl \
     PYOPENGL_PLATFORM=egl \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     WANDB_MODE=disabled
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -38,7 +39,8 @@ ENV PATH=/opt/venv/bin:$PATH
 
 # Fetch source only. LFS smudging is disabled so no checkpoint/data payload can
 # enter a layer. The runnable trainer imports the ``experiments/lerobot`` tree
-# committed at this source revision; it is not the separate root gitlink.
+# committed at this source revision; it is not the separate root gitlink. The
+# test-only fixtures are removed before this source layer is committed.
 RUN git lfs install --skip-smudge \
     && GIT_LFS_SKIP_SMUDGE=1 git clone --no-checkout https://github.com/allenai/molmoact2.git /opt/molmoact2 \
     && git -C /opt/molmoact2 config filter.lfs.process '' \
@@ -47,18 +49,24 @@ RUN git lfs install --skip-smudge \
     && cd /opt/molmoact2 \
     && GIT_LFS_SKIP_SMUDGE=1 git checkout --force --detach "${MOLMOACT2_REVISION}" \
     && test -f experiments/lerobot/pyproject.toml \
+    && rm -rf /opt/molmoact2/experiments/lerobot/tests \
     && rm -rf /opt/molmoact2/.git
 
 # The two upstream dependency sets both permit this current protobuf release;
 # installing it after LeRobot lets `pip check` verify the assembled runtime.
-# The editable LeRobot source includes tiny test fixture tensors/datasets. They
-# are not runtime code and must not be redistributed in the BYOF runtime image.
+# The editable LeRobot source has already had its test fixtures removed in the
+# source layer. Remove non-runtime wheel payloads in this same install layer:
+# LPIPS downloads a bundled VGG weight and imageio-ffmpeg bundles a static
+# executable, while the Ubuntu ffmpeg package remains the selected runtime.
 RUN cd /opt/molmoact2/experiments \
     && pip install -e ".[all]" \
     && pip install -e "./lerobot[async,libero]" \
     && pip install "protobuf>=6.33.5,<7" \
     && pip check \
-    && rm -rf /opt/molmoact2/experiments/lerobot/tests
+    && rm -rf /opt/venv/lib/python3.12/site-packages/torchmetrics/functional/image/lpips_models \
+    && rm -rf /opt/venv/lib/python3.12/site-packages/imageio_ffmpeg/binaries/* \
+    && test ! -e /opt/venv/lib/python3.12/site-packages/torchmetrics/functional/image/lpips_models/vgg.pth \
+    && test -z "$(find /opt/venv/lib/python3.12/site-packages/imageio_ffmpeg/binaries -type f -print -quit)"
 
 COPY docker/workbench/molmoact2/THIRD_PARTY_NOTICES.md /usr/share/doc/molmoact2/THIRD_PARTY_NOTICES.md
 COPY docker/workbench/molmoact2/REDISTRIBUTION.md /usr/share/doc/molmoact2/REDISTRIBUTION.md

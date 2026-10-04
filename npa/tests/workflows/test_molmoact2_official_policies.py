@@ -11,6 +11,7 @@ from npa.workflows.byof import molmoact2_pipeline as pipeline
 
 REPO_ROOT = Path(__file__).parents[3]
 SPEC = REPO_ROOT / "workflows" / "testing" / "molmoact2-official-policies.yaml"
+DOCKERFILE = REPO_ROOT / "npa" / "docker" / "workbench" / "molmoact2" / "Dockerfile"
 
 
 def test_official_libero_workflow_has_five_connected_substantive_stages() -> None:
@@ -90,3 +91,16 @@ def test_training_uses_upstream_lora_path_that_emits_an_inference_checkpoint() -
     assert '"--lora_enable=true"' in source
     assert '"--lora_rank=64"' in source
     assert 'root.glob("step*-merged")' in source
+
+
+def test_runtime_image_removes_nonruntime_payloads_in_their_creating_layers() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    source_layer = dockerfile.split("# The two upstream dependency sets", maxsplit=1)[0]
+
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    assert "rm -rf /opt/molmoact2/experiments/lerobot/tests" in source_layer
+    assert source_layer.index("experiments/lerobot/tests") < source_layer.index(
+        "rm -rf /opt/molmoact2/.git"
+    )
+    assert "torchmetrics/functional/image/lpips_models" in dockerfile
+    assert "imageio_ffmpeg/binaries/*" in dockerfile
