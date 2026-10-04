@@ -2263,7 +2263,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.openvla.prepare": ToolEntry(
         name="workbench.openvla.prepare",
-        description="Inspect RLDS bytes and publish OFT normalization provenance.",
+        description="Decode staged RLDS trajectories with OFT dlimp and publish normalization provenance.",
         argv_template=[
             *_OPENVLA_PIPELINE,
             "prepare",
@@ -2273,6 +2273,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.dataset_name}}",
             "--task-suite",
             "{{config.task_suite}}",
+            "--runtime-root",
+            "{{config.runtime_root}}",
             "--output-uri",
             "{{config.prepared_uri}}",
         ],

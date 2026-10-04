@@ -104,6 +104,9 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # fetch can exceed the anonymous Hub rate limit. Forward an operator token
     # only through the workflow secret channel when one is available.
     "workbench.flex_pi": ("HF_TOKEN",),
+    # OFT fetches the base model and suite checkpoint at immutable Hub
+    # revisions. Object-store credentials remain standard NPA runtime plumbing.
+    "workbench.openvla": ("HF_TOKEN",),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.

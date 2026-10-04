@@ -9,13 +9,13 @@ and measured-artifact lineage needed to distinguish it from stock OpenVLA.
 `workflows/testing/openvla-oft-libero.yaml` has five connected substantive
 stages:
 
-1. `prepare` reads supplied RLDS TFRecord bytes and records the real data
-   inventory plus normalization metadata.
-2. `train`, once its exact upstream dependency licensing is resolved, materializes
-   the exact base-model Hub revision in the writable cache, then invokes the
-   pinned upstream `vla-scripts/finetune.py` through upstream-style single-node
-   eight-process `torchrun`, with its continuous L1 action head, 8-D
-   proprioception projector, two images, and LoRA rank 32.
+1. `prepare` materializes supplied RLDS TFRecords, decodes one trajectory through
+   the pinned deterministic `dlimp.DLataset.from_tfrecords` reader, and records
+   that decode evidence with the data inventory and normalization metadata.
+2. `train` materializes the exact base-model Hub revision in the writable cache,
+   then invokes the pinned upstream `vla-scripts/finetune.py` through upstream-
+   style single-node eight-process `torchrun`, with its continuous L1 action
+   head, 8-D proprioception projector, two images, and LoRA rank 32.
 3. `rollout` invokes upstream `run_libero_eval.py` in closed loop and retains
    the upstream MP4s and final log.
 4. `evaluate` independently checks the raw episode/success counts, recalculates
@@ -30,12 +30,12 @@ LoRAFleet work. It does not imply their data, checkpoints, or results are
 interchangeable.
 
 The checked-in template carries upstream's published eight-process, 150,005-step
-recipe and 50 trials per task. It uses H100 for both training and evaluation:
-the pinned PyTorch 2.2.0 predates B200, while upstream reports A100 execution
-and asks that training and evaluation use the same GPU product. This is a
-compatibility selection, not a paper-reproduction claim. It makes no
-convergence, full-benchmark, or physical-robot claim. A deliberately small
-operational smoke must be identified as such, not presented as those results.
+recipe and 50 trials per task. It requests the NPA `RTXPRO6000` accelerator alias
+for both training and evaluation, so the route resolves both phases to one GPU
+product. This is a deployment selection, not a paper-reproduction claim. It
+makes no convergence, full-benchmark, or physical-robot claim. A deliberately
+small operational smoke must be identified as such, not presented as those
+results.
 
 ## Upstream lineage and credit
 

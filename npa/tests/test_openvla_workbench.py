@@ -61,16 +61,30 @@ def _write_rollout_bundle(root: Path, *, successes: int = 3, episodes: int = 5) 
 
 
 def test_prepare_reads_actual_rlds_file_and_publishes_normalization(
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     dataset = tmp_path / "dataset"
     dataset.mkdir()
     (dataset / "episode-000.tfrecord").write_bytes(b"not-a-placeholder-rlds-record")
     (dataset / "dataset_statistics.json").write_text('{"action": {"mean": [0]}}')
     output = tmp_path / "prepared"
+    runtime = tmp_path / "runtime"
+    monkeypatch.setattr(pipe, "bootstrap_runtime", lambda root: runtime)
+    monkeypatch.setattr(
+        pipe,
+        "_verify_dlimp_rlds_read",
+        lambda python, records: {
+            "trajectories_read": 1,
+            "feature_keys": ["action", "observation"],
+        },
+    )
     report = pipe.prepare(
         pipe.PrepareConfig(
-            str(dataset), str(output), "libero_spatial_no_noops", "libero_spatial"
+            str(dataset),
+            str(output),
+            "libero_spatial_no_noops",
+            "libero_spatial",
+            str(runtime),
         )
     )
     assert report["schema"] == pipe.PREPARE_SCHEMA
@@ -78,6 +92,10 @@ def test_prepare_reads_actual_rlds_file_and_publishes_normalization(
     assert normalization["proprio_dim"] == 8
     assert normalization["action_mode"] == "continuous_l1"
     assert normalization["rlds_files"][0]["sha256"]
+    assert normalization["dlimp_rlds_probe"] == {
+        "trajectories_read": 1,
+        "feature_keys": ["action", "observation"],
+    }
 
 
 def test_stock_decoder_bundle_is_rejected(tmp_path: Path) -> None:
@@ -293,6 +311,8 @@ def test_pipeline_main_dispatches_prepare(monkeypatch: pytest.MonkeyPatch, capsy
             "libero_spatial_no_noops",
             "--task-suite",
             "libero_spatial",
+            "--runtime-root",
+            "/cache/openvla-oft",
             "--output-uri",
             "s3://bucket/prepare/",
         ]

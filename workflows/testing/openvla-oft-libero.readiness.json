@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "fc1f32beb57ba68d2447c08df646409660878cc7546cde98ee42b015ca26c7e5",
+  "workflow_sha256": "bd6ed747d43be513a73ddcf82b4a6a0da00cf2271f5123399f77f9b32f8c7d79",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected; its upstream-compatible H100 train and rollout profiles retain the same GPU product.",
+      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected; its configured RTX PRO train and rollout profiles retain the same GPU product.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/openvla-oft-libero.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/openvla-oft-libero.yaml --check-render --json"
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused tests execute the RLDS preparation and verified rollout-to-evaluation-to-visualization artifact chain, bind all five native toolRefs to their real CLI flags, verify the documented upstream torchrun argv and immutable model-cache identity, preserve the training LoRA rank through rollout, reject stock OpenVLA decoder-only checkpoints, and fail closed before an unlicensed direct dependency can mutate a runtime cache.",
+      "reason": "Focused tests execute the preparation and verified rollout-to-evaluation-to-visualization artifact chain, bind all five native toolRefs to their real CLI flags, require preparation to invoke the pinned dlimp RLDS decoder, verify the documented upstream torchrun argv and immutable model-cache identity, preserve the training LoRA rank through rollout, and reject stock OpenVLA decoder-only checkpoints.",
       "evidence": [
         "npa/tests/test_openvla_workbench.py",
         "npa/tests/guardrails/test_three_tier_contract.py",
@@ -30,14 +30,15 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "Authoritative public source, model, suite-checkpoint, and modified LIBERO metadata were inspected, but this session did not materialize the full RLDS data or OFT runtime on a worker. The pinned upstream package's unversioned dlimp_openvla dependency lacks a repository license, so the runtime now refuses before it is fetched or installed.",
+      "reason": "Authoritative public source, model, suite-checkpoint, and modified LIBERO metadata were inspected, and exact-revision access probes succeeded. The runtime now uses the Apache-2.0 kvablack/dlimp revision with the reviewed deterministic one-line override, rather than fetching the unlicensed dlimp_openvla fork. Full RLDS materialization and OFT runtime execution on a worker remain unverified.",
       "evidence": [
-        "docs/workbench/openvla-oft.md"
+        "docs/workbench/openvla-oft.md",
+        "npa/tests/test_openvla_workbench.py"
       ]
     },
     "credentials": {
       "status": "verified",
-      "reason": "NPA HF, object-storage, Nebius, and NGC preflight checks passed using existing operator configuration. Exact-revision model, adapter, and dataset payload access remains unverified until the direct-dependency terms issue is resolved and the runtime fetch can lawfully proceed.",
+      "reason": "NPA HF, object-storage, Nebius, and NGC preflight checks passed using existing operator configuration. Exact-revision access probes for the base model, modified LIBERO metadata, and an official action-head component passed. Worker-side runtime fetch remains a separate pending qualification.",
       "evidence": [
         "npa workbench health preflight --json",
         "npa workbench health preflight --checks nebius --json"
@@ -45,7 +46,7 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "A neutral local bootstrap image was built and smoke-run, but it has not been byte-scanned, pushed, independently pulled, or qualified; the template therefore requires an operator-selected immutable private runtime image.",
+      "reason": "An initial neutral private bootstrap image was built with SBOM/provenance, pushed, independently pulled, manifest/config inspected, and nonroot-smoked. The current source revision still requires its own immutable private candidate and byte qualification; the template therefore requires an operator-selected immutable private runtime image.",
       "evidence": [
         "docs/workbench/openvla-oft.md"
       ]

@@ -419,6 +419,56 @@ print(json.dumps({"deterministic": deterministic, "parallel_values": len(values)
     return payload
 
 
+def _verify_dlimp_rlds_read(python: Path, records: Sequence[Path]) -> dict[str, Any]:
+    """Read one staged trajectory through the installed OFT dlimp runtime.
+
+    The preparation stage is deliberately a data-processing stage, not a file
+    inventory. ``DLataset.from_tfrecords`` is the same dlimp reader used by the
+    upstream OFT data path, so this proves that the copied object-store records
+    can be decoded by the pinned deterministic dlimp revision before the
+    multi-GPU training stage starts.
+    """
+    if not records:
+        raise OpenVLAPipelineError("dlimp RLDS probe received no TFRecord files")
+    script = """
+import json
+import sys
+from dlimp.dataset import DLataset
+
+records = json.loads(sys.argv[1])
+dataset = DLataset.from_tfrecords(
+    records,
+    shuffle=False,
+    num_parallel_reads=4,
+)
+sample = next(iter(dataset.take(1).as_numpy_iterator()))
+if not isinstance(sample, dict) or not sample:
+    raise RuntimeError("dlimp did not decode a non-empty trajectory mapping")
+print(json.dumps({
+    "trajectories_read": 1,
+    "feature_keys": sorted(str(key) for key in sample),
+}))
+"""
+    try:
+        payload = json.loads(
+            subprocess.check_output(
+                [str(python), "-c", script, json.dumps([str(path) for path in records])],
+                text=True,
+            )
+        )
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        raise OpenVLAPipelineError(
+            "pinned dlimp could not decode the staged RLDS TFRecord data"
+        ) from exc
+    if (
+        payload.get("trajectories_read") != 1
+        or not isinstance(payload.get("feature_keys"), list)
+        or not payload["feature_keys"]
+    ):
+        raise OpenVLAPipelineError("dlimp RLDS probe returned invalid data")
+    return payload
+
+
 def _runtime_install_commands(
     python: Path, source: Path, transformers: Path, dlimp: Path, libero: Path
 ) -> tuple[tuple[str, ...], ...]:
@@ -603,11 +653,13 @@ class PrepareConfig:
     output_uri: str
     dataset_name: str
     task_suite: str
+    runtime_root: str
 
     def validate(self) -> None:
         _require(self.dataset_uri, "dataset_uri")
         _require(self.output_uri, "output_uri")
         _require(self.dataset_name, "dataset_name")
+        _require(self.runtime_root, "runtime_root")
         if self.task_suite not in OFFICIAL_SUITE_CHECKPOINTS:
             raise OpenVLAPipelineError(
                 f"unsupported OFT LIBERO suite: {self.task_suite}"
@@ -625,6 +677,11 @@ def prepare(cfg: PrepareConfig) -> dict[str, Any]:
         ]
         if not rlds_files:
             raise OpenVLAPipelineError("prepared data contains no RLDS TFRecord files")
+        runtime = bootstrap_runtime(cfg.runtime_root)
+        dlimp_rlds_probe = _verify_dlimp_rlds_read(
+            runtime / "venv" / "bin" / "python",
+            [materialized / entry["path"] for entry in rlds_files],
+        )
         normalization = {
             "schema": "npa.workbench.openvla-oft.normalization.v1",
             "dataset_uri": cfg.dataset_uri,
@@ -634,6 +691,7 @@ def prepare(cfg: PrepareConfig) -> dict[str, Any]:
             "proprio_dim": 8,
             "action_mode": "continuous_l1",
             "rlds_files": rlds_files,
+            "dlimp_rlds_probe": dlimp_rlds_probe,
             "dataset_statistics": _dataset_statistics(materialized),
         }
         write_local_json(workspace / "normalization.json", normalization)
@@ -644,6 +702,7 @@ def prepare(cfg: PrepareConfig) -> dict[str, Any]:
             "dataset_name": cfg.dataset_name,
             "task_suite": cfg.task_suite,
             "rlds_file_count": len(rlds_files),
+            "dlimp_rlds_probe": dlimp_rlds_probe,
             "normalization": "normalization.json",
             "dataset_inventory_sha256": hashlib.sha256(
                 json.dumps(inventory, sort_keys=True).encode()
@@ -1109,6 +1168,7 @@ def build_parser() -> argparse.ArgumentParser:
     prep.add_argument(
         "--task-suite", required=True, choices=sorted(OFFICIAL_SUITE_CHECKPOINTS)
     )
+    prep.add_argument("--runtime-root", required=True)
     prep.add_argument("--output-uri", required=True)
     train_p = commands.add_parser("train", help="Run upstream OFT fine-tuning.")
     train_p.add_argument("--prepared-manifest-uri", required=True)
