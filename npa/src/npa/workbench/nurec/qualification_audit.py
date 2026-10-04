@@ -203,6 +203,8 @@ def _complete_readback(root: Path, receipt_path: Path) -> dict[str, Any]:
     if (
         receipt.get("format") != READBACK_FORMAT
         or receipt.get("status") != "pass"
+        or re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("prefix_sha256") or ""))
+        is None
         or receipt.get("stable_listing") is not True
         or receipt.get("object_count") != len(local)
         or receipt.get("local_inventory") != local
@@ -222,10 +224,35 @@ def _complete_readback(root: Path, receipt_path: Path) -> dict[str, Any]:
         )
     return {
         "receipt_sha256": _sha(receipt_path),
+        "prefix_sha256": receipt["prefix_sha256"],
         "object_count": len(local),
         "local_inventory_sha256": _canonical_sha(local),
         "s3_inventory_sha256": receipt["s3_inventory_sha256"],
     }
+
+
+def _final_report(path: Path, *, recording_id: str, prefix_sha256: str) -> str:
+    from npa.workflows.data_factory_viz import _run_id_from_uri
+
+    final = _json(path)
+    run_uri = final.get("run_uri")
+    # The standard producer includes descriptive counts and stage metadata.
+    # Bind its identity and literal success contract, not an abbreviated fixture.
+    if (
+        final.get("status") != "ok"
+        or final.get("capability") != "neural-reconstruction"
+        or final.get("run_id") != recording_id
+        or not isinstance(run_uri, str)
+        or hashlib.sha256(run_uri.encode()).hexdigest() != prefix_sha256
+        or final.get("errors") != []
+        or any(
+            final.get(key) is not True
+            for key in ("has_usdz", "has_novel_views", "has_rrd")
+        )
+    ):
+        raise NcoreQualificationAuditError("terminal qualification report differs")
+    # Workflow IDs are independent of the standard visualizer's prefix-based ID.
+    return _run_id_from_uri(run_uri)
 
 
 def _usdz(path: Path) -> dict[str, Any]:
@@ -645,10 +672,12 @@ def audit_qualification(
     ):
         raise NcoreQualificationAuditError("rendered media receipt differs")
     final_path = root / "reports/final.json"
-    final = _json(final_path)
-    if final != {"has_usdz": True, "has_novel_views": True, "has_rrd": True}:
-        raise NcoreQualificationAuditError("terminal qualification report differs")
-    rrd = _rrd(root, recording_id)
+    visualizer_recording_id = _final_report(
+        final_path,
+        recording_id=recording_id,
+        prefix_sha256=readback["prefix_sha256"],
+    )
+    rrd = _rrd(root, visualizer_recording_id)
     receipt = {
         "format": AUDIT_FORMAT_VERSION,
         "status": "pass",

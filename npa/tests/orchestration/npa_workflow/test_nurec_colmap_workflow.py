@@ -472,6 +472,11 @@ def _write_synthetic_nurec_lineage(root, helpers):
         root,
         "reports/final.json",
         {
+            "status": "ok",
+            "capability": "neural-reconstruction",
+            "run_id": root.name,
+            "run_uri": f"s3://example-bucket/{root.name}/",
+            "errors": [],
             "has_usdz": True,
             "has_novel_views": True,
             "has_rrd": True,
@@ -738,7 +743,9 @@ def _write_readback_receipt(root):
             {
                 "format": READBACK_FORMAT,
                 "status": "pass",
-                "prefix_sha256": "a" * 64,
+                "prefix_sha256": hashlib.sha256(
+                    f"s3://example-bucket/{root.name}/".encode()
+                ).hexdigest(),
                 "stable_listing": True,
                 "object_count": len(local),
                 "s3_inventory_sha256": hashlib.sha256(
@@ -815,6 +822,34 @@ def test_qualification_usd_runtime_matches_development_pin():
             if pin.startswith("usd-core")
         ]
         assert usd_pins == [f"usd-core=={version}"]
+
+
+def test_production_qualification_rejects_a_foreign_recording(downstream_run):
+    from npa.workbench.nurec.qualification_audit import (
+        NcoreQualificationAuditError,
+        _rrd,
+    )
+
+    _write_proof_rrd(downstream_run)
+    with pytest.raises(NcoreQualificationAuditError, match="recording identity"):
+        _rrd(downstream_run, "different-recording")
+
+
+@pytest.mark.parametrize("prefix_sha256", [None, "", "wrong", True])
+def test_production_qualification_requires_a_prefix_binding(
+    downstream_run, prefix_sha256
+):
+    from npa.workbench.nurec.qualification_audit import (
+        NcoreQualificationAuditError,
+        _complete_readback,
+    )
+
+    path = _write_readback_receipt(downstream_run)
+    payload = json.loads(path.read_text())
+    payload["prefix_sha256"] = prefix_sha256
+    path.write_text(json.dumps(payload))
+    with pytest.raises(NcoreQualificationAuditError, match="readback binding"):
+        _complete_readback(downstream_run, path)
 
 
 def test_qualification_rejects_an_unpinned_usd_runtime(tmp_path, monkeypatch):
@@ -1170,7 +1205,8 @@ def test_success_booleans_cannot_replace_missing_artifact_bodies(
 ):
     root, bodies, _ = published_proof
     del bodies[root + relative]
-    assert all(json.loads(bodies[root + "reports/final.json"]).values())
+    final = json.loads(bodies[root + "reports/final.json"])
+    assert all(final[key] is True for key in ("has_usdz", "has_novel_views", "has_rrd"))
     with pytest.raises(KeyError):
         helpers.assert_nurec_colmap_live_outputs(bucket="unit-bucket", run_id="unit")
 
