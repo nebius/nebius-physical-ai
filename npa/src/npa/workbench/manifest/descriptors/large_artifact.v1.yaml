@@ -14,7 +14,6 @@ artifact_store:
   type: s3
   bucket: my-bucket  # operator overrides via MANIFEST_S3_BUCKET
   prefix: manifest-mvp/large-artifact/
-  endpoint_url: https://storage.eu-north1.nebius.cloud
 inputs:
   - name: config
     s3_uri: s3://my-bucket/manifest-mvp/inputs/large_artifact_config.json

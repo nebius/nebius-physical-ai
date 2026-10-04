@@ -590,6 +590,25 @@ def test_unpinned_pip_entry_rejected() -> None:
     parse_descriptor(d)  # pinned entries pass
 
 
+def test_unpinned_apt_entry_rejected() -> None:
+    # apt mutates the image more than pip does; same pinning rule, Debian
+    # single-'=' syntax.
+    d = _desc_dict()
+    d["environment"] = {"apt": ["libx11-6"]}
+    with pytest.raises(DescriptorError, match=r"version-pinned with '='"):
+        parse_descriptor(d)
+    d["environment"] = {"apt": ["libx11-6=2:1.8.7-1build1"]}
+    parse_descriptor(d)  # pinned entries pass
+
+
+def test_parse_apt_update_failure_marks_failure() -> None:
+    be = NebiusBackend()
+    logs = "@@APT:libx11-6@@\n@@APTFAIL:update@@\n"
+    res = be._parse(logs, 1.0)
+    assert res.exit_code == 3
+    assert "@@APTFAIL:" not in res.stdout
+
+
 def test_check_naming_undeclared_artifact_rejected() -> None:
     d = _desc_dict()
     d["success"] = {"checks": [{"artifact": "ghost", "json_path": "a", "equals": True}]}
@@ -654,7 +673,8 @@ def test_binary_outputs_require_store_on_s3_backend(tmp_path: Path) -> None:
     assert "artifact_store" in res.error
 
 
-def test_s3_inputs_and_prefix_reach_backend(tmp_path: Path) -> None:
+def test_s3_inputs_and_prefix_reach_backend(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MANIFEST_S3_BUCKET", "live-bucket")
     rt, _ = make_runtime(tmp_path)
     stub = StubBackend()
     rt.backends["stub"] = stub
@@ -662,16 +682,32 @@ def test_s3_inputs_and_prefix_reach_backend(tmp_path: Path) -> None:
     call = stub.calls[0]
     assert call["s3_inputs"] == [
         (
-            "s3://my-bucket/manifest-mvp/inputs/large_artifact_config.json",
+            "s3://live-bucket/manifest-mvp/inputs/large_artifact_config.json",
             "/work/config.json",
         )
     ]
     assert call["s3_output_names"] == ["matrix"]
-    assert call["s3_prefix"].startswith("s3://my-bucket/manifest-mvp/large-artifact/")
+    assert call["s3_prefix"].startswith("s3://live-bucket/manifest-mvp/large-artifact/")
     # Stub echoes a base64 blob for the binary artifact; it stays a string.
     assert res.artifacts["matrix"] == "stub-base64-blob"
     # And the summary check ran against the JSON artifact.
     assert any(c["check"] == "summary.device_ok" and c["ok"] for c in res.checks)
+
+
+def test_placeholder_bucket_without_override_refuses_to_schedule(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # The committed my-bucket placeholder must never reach a real schedule:
+    # without MANIFEST_S3_BUCKET the run fails before the backend is called.
+    monkeypatch.delenv("MANIFEST_S3_BUCKET", raising=False)
+    rt, _ = make_runtime(tmp_path)
+    stub = StubBackend()
+    rt.backends["stub"] = stub
+    res = rt.invoke("large-artifact", "0.1.0", "run", {"size": 1024}, backend="stub")
+    assert not res.success
+    assert "my-bucket" in (res.error or "")
+    assert "MANIFEST_S3_BUCKET" in (res.error or "")
+    assert stub.calls == []  # nothing was scheduled
 
 
 def test_binary_artifact_stays_string_not_parsed() -> None:
@@ -1061,6 +1097,61 @@ def test_wait_done_poll_timeout_becomes_timeout_error() -> None:
         be._wait_done("job-1")
 
 
+def test_timeout_keeps_partial_logs_in_record(tmp_path: Path) -> None:
+    # A hung job's partial logs must reach the verification record, not an
+    # empty log: the backend carries them on the JobTimeoutError.
+    from npa.workbench.manifest.nebius_backend import JobTimeoutError
+
+    class _TimeoutBackend(StubBackend):
+        name = "timeoutstub"
+
+        def run(self, *a, **k):
+            raise JobTimeoutError(
+                "job x reached no terminal condition in 1s",
+                partial_logs="@@PIP:newton==1.6.0@@\nTraceback: boom\n",
+            )
+
+    rt, _ = make_runtime(tmp_path)
+    rt.backends["timeoutstub"] = _TimeoutBackend()
+    res = rt.invoke("cuda-matmul", "0.1.0", "run", {"size": 8}, backend="timeoutstub")
+    assert not res.success
+    assert "JobTimeoutError" in (res.error or "")
+    assert "Traceback: boom" in res.logs
+    assert "@@PIP:" not in res.logs
+
+
+def test_truncate_logs_strips_marker_lines_first() -> None:
+    # The tail of raw logs is usually a base64 artifact blob; stripping
+    # marker lines before truncating keeps the traceback, not the blob.
+    from npa.workbench.manifest.runtime import _truncate_logs
+
+    blob = "@@ARTIFACT:m:" + "A" * 50000 + "@@"
+    logs = "Traceback: boom\n" + blob + "\nmore context\n"
+    out = _truncate_logs(logs, limit=20000)
+    assert "Traceback: boom" in out
+    assert "more context" in out
+    assert "@@ARTIFACT:" not in out
+
+
+def test_kc_control_plane_calls_bounded_by_default(monkeypatch) -> None:
+    # Teardown must not hang forever on a dead API server: control-plane
+    # calls get a generous bound, distinct from the job-duration timeout_s.
+    # The operator can opt out with control_plane_timeout_s=None.
+    import subprocess as sp
+
+    seen: dict = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(kw)
+        return sp.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(sp, "run", fake_run)
+    NebiusBackend()._kc("get", "job", "x")
+    assert seen["timeout"] == 300
+    NebiusBackend(control_plane_timeout_s=None)._kc("get", "job", "x")
+    assert seen["timeout"] is None
+
+
 def test_configmap_keys_preserve_basenames_and_dedupe() -> None:
     be = _FakeKc()
     m = be._create_configmap("cm-1", {"/work/a.py": "AAA", "/other/a.py": "BBB"})
@@ -1146,13 +1237,13 @@ def test_s3_preflight_passes_with_explicit_s3_env() -> None:
 
 def test_environment_apt_parses_and_reaches_backend(tmp_path: Path) -> None:
     d = _desc_dict()
-    d["environment"] = {"apt": ["libx11-6"]}
+    d["environment"] = {"apt": ["libx11-6=2:1.8.7-1build1"]}
     desc = parse_descriptor(d)
-    assert desc.environment.apt == ("libx11-6",)
+    assert desc.environment.apt == ("libx11-6=2:1.8.7-1build1",)
     rt, stub = make_runtime(tmp_path)
     rt.catalog._entries["apttest@0.1.0"] = desc
     rt.invoke("apttest", "0.1.0", "run", {}, backend="stub")
-    assert stub.calls[0]["apt_packages"] == ["libx11-6"]
+    assert stub.calls[0]["apt_packages"] == ["libx11-6=2:1.8.7-1build1"]
 
 
 def test_manifest_apt_env_in_job_spec() -> None:
@@ -1171,14 +1262,14 @@ def test_manifest_apt_env_in_job_spec() -> None:
         "",
         {},
         [],
-        ["libx11-6"],
+        ["libx11-6=2:1.8.7-1build1"],
     )
     job = be.created[0]
     env = {
         e["name"]: e["value"]
         for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
     }
-    assert json.loads(env["MANIFEST_APT"]) == ["libx11-6"]
+    assert json.loads(env["MANIFEST_APT"]) == ["libx11-6=2:1.8.7-1build1"]
 
 
 def test_parse_apt_markers() -> None:
@@ -1192,5 +1283,5 @@ def test_parse_apt_markers() -> None:
 def test_pendulum_rtx_has_apt_and_blender_input(tmp_path: Path) -> None:
     rt, _ = make_runtime(tmp_path)
     desc = rt.catalog.get("pendulum-rtx", "0.1.0")
-    assert "libx11-6" in desc.environment.apt
+    assert "libx11-6=2:1.8.7-1build1" in desc.environment.apt
     assert desc.inputs[0].container_path == "/work/blender.tar.xz"

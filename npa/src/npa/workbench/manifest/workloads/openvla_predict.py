@@ -19,6 +19,12 @@ from PIL import Image
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-id", default="openvla/openvla-7b")
+    # B615 / reproducibility: the weights must be pinned like every other
+    # dep. This is the openvla-7b commit that was HEAD on 2026-10-04, i.e.
+    # exactly what the validated live runs loaded.
+    ap.add_argument(
+        "--model-revision", default="47a0ec7fc4ec123775a391911046cf33cf9ed83f"
+    )
     ap.add_argument(
         "--prompt",
         default=(
@@ -38,9 +44,14 @@ def main() -> None:
     gpu_name = torch.cuda.get_device_name(0)
 
     t0 = time.time()
-    processor = AutoProcessor.from_pretrained(args.model_id, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(
+        args.model_id, revision=args.model_revision, trust_remote_code=True
+    )
     vla = AutoModelForVision2Seq.from_pretrained(
-        args.model_id, trust_remote_code=True, torch_dtype=torch.bfloat16
+        args.model_id,
+        revision=args.model_revision,
+        trust_remote_code=True,
+        torch_dtype=torch.bfloat16,
     ).to(device)
     vla.eval()
     load_s = time.time() - t0
@@ -70,6 +81,7 @@ def main() -> None:
         "device": device,
         "gpu": gpu_name,
         "model_id": args.model_id,
+        "model_revision": args.model_revision,
         "torch": torch.__version__,
         "load_s": round(load_s, 1),
         "predict_s": round(predict_s, 2),

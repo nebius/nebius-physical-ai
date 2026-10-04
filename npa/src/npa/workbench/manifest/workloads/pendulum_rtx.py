@@ -8,16 +8,17 @@ artifact store. Descriptor-only onboarding, as always.
 """
 
 import argparse
+import http.client
 import json
 import os
 import subprocess
 import sys
 import tarfile
-import urllib.request
 
-BLENDER_URL = (
-    "https://download.blender.org/release/Blender4.2/blender-4.2.3-linux-x64.tar.xz"
-)
+# Fixed host + path (B310): no URL is ever parsed, so there is no
+# scheme/host injection surface; no redirects are followed.
+BLENDER_HOST = "download.blender.org"
+BLENDER_PATH = "/release/Blender4.2/blender-4.2.3-linux-x64.tar.xz"
 BLENDER_DIR = "/work/blender-4.2.3-linux-x64"
 BLENDER_BIN = os.path.join(BLENDER_DIR, "blender")
 
@@ -166,6 +167,42 @@ print("RENDER_DONE", flush=True)
 """
 
 
+def _download_blender(tarball: str) -> None:
+    print(f"downloading blender from https://{BLENDER_HOST}{BLENDER_PATH}", flush=True)
+    conn = http.client.HTTPSConnection(BLENDER_HOST, timeout=300)
+    conn.request("GET", BLENDER_PATH)
+    resp = conn.getresponse()
+    if resp.status != 200:
+        raise RuntimeError(f"blender download failed: HTTP {resp.status}")
+    with open(tarball, "wb") as f:
+        while True:
+            chunk = resp.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
+
+
+def _safe_extract(tf: tarfile.TarFile, dest: str) -> None:
+    # B202: never trust archive member paths. Reject absolute paths and
+    # ".." escapes lexically (including link targets, which could redirect
+    # a later member outside dest), then extract with the data filter as
+    # defense in depth. Requires Python 3.12+ (the pod's pinned image).
+    abs_dest = os.path.abspath(dest)
+    for member in tf.getmembers():
+        if os.path.isabs(member.name):
+            raise ValueError(f"tar member has absolute path: {member.name!r}")
+        target = os.path.abspath(os.path.join(abs_dest, member.name))
+        if os.path.commonpath((abs_dest, target)) != abs_dest:
+            raise ValueError(f"tar member escapes destination: {member.name!r}")
+        if member.issym() or member.islnk():
+            link_target = os.path.abspath(
+                os.path.join(os.path.dirname(target), member.linkname)
+            )
+            if os.path.commonpath((abs_dest, link_target)) != abs_dest:
+                raise ValueError(f"tar link escapes destination: {member.name!r}")
+    tf.extractall(dest, filter="data")
+
+
 def fetch_blender() -> None:
     if os.path.exists(BLENDER_BIN):
         print("blender already present", flush=True)
@@ -174,11 +211,10 @@ def fetch_blender() -> None:
     # to the public internet is restricted; S3 is always reachable).
     tarball = "/work/blender.tar.xz"
     if not os.path.exists(tarball):
-        print(f"downloading blender from {BLENDER_URL}", flush=True)
-        urllib.request.urlretrieve(BLENDER_URL, tarball)
+        _download_blender(tarball)
     print("extracting blender", flush=True)
     with tarfile.open(tarball) as tf:
-        tf.extractall("/work")
+        _safe_extract(tf, "/work")
     try:
         os.remove(tarball)
     except OSError:

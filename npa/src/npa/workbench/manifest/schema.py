@@ -83,7 +83,6 @@ class ArtifactStore:
     type: str  # s3
     bucket: str
     prefix: str
-    endpoint_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -345,7 +344,6 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
             type="s3",
             bucket=s["bucket"],
             prefix=s.get("prefix", ""),
-            endpoint_url=s.get("endpoint_url", ""),
         )
     env_raw = raw.get("environment") or {}
     pip_pkgs = env_raw.get("pip") or []
@@ -363,6 +361,14 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
             raise DescriptorError(
                 f"{source}: environment.pip entries must be version-pinned "
                 f"with '==': {p!r}"
+            )
+    # Same for apt, which mutates the image more than pip does: Debian pin
+    # syntax is a single '=' (pkg=version).
+    for p in apt_pkgs:
+        if "=" not in p:
+            raise DescriptorError(
+                f"{source}: environment.apt entries must be version-pinned "
+                f"with '=': {p!r}"
             )
     return Descriptor(
         api_version=raw["apiVersion"],

@@ -20,7 +20,6 @@ artifact_store:
   type: s3
   bucket: my-bucket  # operator overrides via MANIFEST_S3_BUCKET
   prefix: manifest-mvp/pendulum-viz/
-  endpoint_url: https://storage.eu-north1.nebius.cloud
 payload_files:
   - container_path: /work/pendulum_viz.py
     host_path: workloads/pendulum_viz.py

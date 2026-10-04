@@ -21,17 +21,19 @@ artifact_store:
   type: s3
   bucket: my-bucket  # operator overrides via MANIFEST_S3_BUCKET
   prefix: manifest-mvp/openvla-predict/
-  endpoint_url: https://storage.eu-north1.nebius.cloud
 payload_files:
   - container_path: /work/openvla_predict.py
     host_path: workloads/openvla_predict.py
 commands:
   run:
-    argv: ["python", "/work/openvla_predict.py", "--model-id", "{{model_id}}", "--prompt", "{{prompt}}", "--seed", "{{seed}}", "--out-action", "{{action_path}}", "--out-obs", "{{obs_path}}", "--out-json", "{{json_path}}"]
+    argv: ["python", "/work/openvla_predict.py", "--model-id", "{{model_id}}", "--model-revision", "{{model_revision}}", "--prompt", "{{prompt}}", "--seed", "{{seed}}", "--out-action", "{{action_path}}", "--out-obs", "{{obs_path}}", "--out-json", "{{json_path}}"]
     params:
       model_id:
         type: string
         default: openvla/openvla-7b
+      model_revision:
+        type: string
+        default: 47a0ec7fc4ec123775a391911046cf33cf9ed83f  # openvla-7b HEAD @ 2026-10-04
       prompt:
         type: string
         default: "In: What action should the robot take to pick up the red block?\nOut:"

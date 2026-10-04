@@ -26,6 +26,23 @@ from typing import Any, Protocol
 from .catalog import Catalog
 from .schema import CommandSpec
 
+#: Committed descriptors must name this placeholder bucket, never a live one
+#: (repo confidentiality rule). The operator's live bucket arrives via the
+#: MANIFEST_S3_BUCKET env var; scheduling against the unresolved placeholder
+#: is refused outright.
+PLACEHOLDER_BUCKET = "my-bucket"
+
+
+def _truncate_logs(logs: str | None, limit: int = 20000) -> str:
+    """Keep the most useful `limit` chars of backend logs.
+
+    Runner marker lines (``@@ARTIFACT:<base64>@@`` etc.) are stripped first:
+    the tail of raw ``kubectl logs`` is usually a base64 blob, which would
+    otherwise push the workload's traceback out of the retained window.
+    """
+    lines = [line for line in (logs or "").splitlines() if not line.startswith("@@")]
+    return "\n".join(lines)[-limit:]
+
 
 class Backend(Protocol):
     name: str
@@ -171,6 +188,16 @@ class Runtime:
             bucket = os.environ.get("MANIFEST_S3_BUCKET") or (
                 store.bucket if store else ""
             )
+            if (
+                store
+                and not os.environ.get("MANIFEST_S3_BUCKET")
+                and bucket == PLACEHOLDER_BUCKET
+            ):
+                raise ValueError(
+                    "artifact_store.bucket is the 'my-bucket' placeholder and "
+                    "MANIFEST_S3_BUCKET is not set; refusing to schedule a "
+                    "job against a bucket that isn't the operator's"
+                )
             s3_prefix = (
                 f"s3://{bucket}/{store.prefix.rstrip('/')}/{run_id}/" if store else ""
             )
@@ -195,7 +222,7 @@ class Runtime:
                 apt_packages=list(descriptor.environment.apt),
             )
             exit_code = bres.exit_code
-            backend_logs = (bres.logs or "")[-20000:]
+            backend_logs = _truncate_logs(bres.logs)
             artifacts, parse_errors = self._collect_artifacts(spec, bres)
             check_results.extend(parse_errors)
             all_ok = bres.exit_code == 0 and not parse_errors
@@ -222,6 +249,11 @@ class Runtime:
         except Exception as e:
             error = f"{type(e).__name__}: {e}"
             check_results.append({"check": "invoke", "ok": False, "detail": error})
+            # A hung job carries its partial logs on the exception so the
+            # record keeps the evidence instead of an empty log.
+            partial = getattr(e, "partial_logs", "")
+            if partial:
+                backend_logs = _truncate_logs(partial)
 
         result = InvocationResult(
             descriptor_id=descriptor.id,

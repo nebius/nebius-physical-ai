@@ -46,6 +46,9 @@ apt_pkgs = json.loads(os.environ.get("MANIFEST_APT", "[]"))
 if apt_pkgs:
     print(f"@@APT:{','.join(apt_pkgs)}@@", flush=True)
     r = subprocess.run(["apt-get", "update", "-qq"])
+    if r.returncode != 0:
+        print("@@APTFAIL:update@@", flush=True)
+        sys.exit(3)
     r = subprocess.run(["apt-get", "install", "-y", "-qq", *apt_pkgs])
     if r.returncode != 0:
         print("@@APTFAIL@@", flush=True)
@@ -106,6 +109,14 @@ STANDARD_LABELS = {
 }
 
 
+class JobTimeoutError(TimeoutError):
+    """_wait_done timed out; carries the job's partial logs for the record."""
+
+    def __init__(self, message: str, partial_logs: str = ""):
+        super().__init__(message)
+        self.partial_logs = partial_logs
+
+
 class NebiusBackend:
     name = "nebius"
     s3_upload = True
@@ -118,6 +129,7 @@ class NebiusBackend:
         timeout_s: int = 2400,
         s3_profile: str | None = None,
         s3_endpoint_url: str = "",
+        control_plane_timeout_s: int | None = 300,
     ):
         self.kubectl = kubectl
         self.namespace = namespace
@@ -125,6 +137,12 @@ class NebiusBackend:
         self.timeout_s = timeout_s
         self.s3_profile = s3_profile
         self.s3_endpoint_url = s3_endpoint_url
+        # Bound on individual kubectl control-plane calls (create/get/logs/
+        # delete). This is NOT a job-duration limit: the job itself is
+        # bounded only by the operator's timeout_s. Without it, a hung API
+        # server would wedge teardown forever and leak the Job/ConfigMap/
+        # Secret. None means truly unbounded (operator opt-out).
+        self.control_plane_timeout_s = control_plane_timeout_s
 
     def _kc(
         self,
@@ -132,10 +150,8 @@ class NebiusBackend:
         input_text: str | None = None,
         timeout: int | None = None,
     ) -> subprocess.CompletedProcess:
-        # No default time limit on control-plane calls: a job is bounded only
-        # by the operator's timeout_s (also enforced as activeDeadlineSeconds
-        # on the Job and as the _wait_done poll deadline). Repo convention:
-        # no time/cost/job-count limits unless the operator asks for them.
+        if timeout is None:
+            timeout = self.control_plane_timeout_s
         cmd = [self.kubectl]
         if self.kube_context:
             cmd += ["--context", self.kube_context]
@@ -241,14 +257,33 @@ class NebiusBackend:
                 secret_name=secret_name if secret_data else "",
                 secret_keys=tuple(secret_keys),
             )
-            self._wait_done(job_name)
-            logs = self._kc("logs", f"job/{job_name}").stdout
+            try:
+                self._wait_done(job_name)
+            except JobTimeoutError as e:
+                # The hung-job case: carry the partial logs on the exception
+                # so the verification record keeps the evidence instead of
+                # an empty log. Teardown still runs in the outer finally.
+                e.partial_logs = self._logs_or_empty(job_name)
+                raise
+            logs = self._logs_or_empty(job_name)
             return self._parse(logs, time.time() - t0)
         finally:
             self._kc("delete", "job", job_name, "--wait=false")
             self._kc("delete", "configmap", cm_name, "--wait=false")
             if secret_data:
                 self._kc("delete", "secret", secret_name, "--wait=false")
+
+    def _logs_or_empty(self, job_name: str) -> str:
+        """Fetch job logs, returning "" when the fetch itself fails.
+
+        Used in the teardown path so a hung API server can't mask the
+        original failure (or hang teardown behind a second unbounded call).
+        """
+        try:
+            r = self._kc("logs", f"job/{job_name}")
+        except Exception:
+            return ""
+        return r.stdout if r.returncode == 0 else ""
 
     def _create_secret(self, secret_name: str, data: dict[str, str]) -> None:
         secret = {
@@ -434,7 +469,7 @@ class NebiusBackend:
                 if conds.get("Complete") == "True" or conds.get("Failed") == "True":
                     return
             time.sleep(15)
-        raise TimeoutError(
+        raise JobTimeoutError(
             f"job {job_name} reached no terminal condition in {self.timeout_s}s"
         )
 
@@ -474,6 +509,9 @@ class NebiusBackend:
                 continue
             if self._strip_marker(line, "@@APT:") is not None:
                 continue
+            if self._strip_marker(line, "@@APTFAIL:") is not None:
+                exit_code = 3
+                continue
             if self._strip_marker(line, "@@APTFAIL@@") is not None:
                 exit_code = 3
                 continue
@@ -502,6 +540,7 @@ class NebiusBackend:
             and self._strip_marker(line, "@@PIP:") is None
             and self._strip_marker(line, "@@PIPFAIL:") is None
             and self._strip_marker(line, "@@APT:") is None
+            and self._strip_marker(line, "@@APTFAIL:") is None
             and self._strip_marker(line, "@@APTFAIL@@") is None
         ]
         return BackendResult(
