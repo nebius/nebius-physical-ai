@@ -1105,6 +1105,7 @@ def _verified_calibration(
     freeze_acceptance_sha256: str,
     task: str,
     rubric: str,
+    final_attempt_present: bool = False,
 ) -> dict[str, Any]:
     path = root / "calibration.json"
     if _sha_file(path) != calibration_sha256:
@@ -1133,7 +1134,10 @@ def _verified_calibration(
         != case_order
     ):
         raise VlmEvidenceError("calibration contract differs")
-    _exact_attempt_set(root, set(case_order))
+    expected_attempts = set(case_order)
+    if final_attempt_present:
+        expected_attempts.add("final-one-shot")
+    _exact_attempt_set(root, expected_attempts)
     derived = []
     for result in results:
         case_id = result["case_id"]
@@ -1424,6 +1428,7 @@ def verify_complete_evidence(
         freeze_acceptance_sha256=freeze_acceptance_sha256,
         task=calibration_task,
         rubric=rubric,
+        final_attempt_present=True,
     )
     if _sha_file(root / "final.json") != final_sha256:
         raise VlmEvidenceError("final VLM result SHA-256 differs")

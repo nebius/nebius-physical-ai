@@ -572,6 +572,203 @@ def test_final_rejects_passing_calibration_from_another_freeze(
         vlm_evidence.final(args)
 
 
+def _calibrated_schedule(monkeypatch, tmp_path, *, final_score=0.9):
+    """Exercise real evidence producers/checkers with synthetic media and transport."""
+    root, records = _root(tmp_path)
+    labels = {
+        f"case-{index}": {"role": "synthetic-control", "expected_label": index < 2}
+        for index in range(4)
+    }
+    frames = [(root / record["path"]).read_bytes() for record in records]
+    cases = {
+        case_id: {"frames": vlm_evidence._write_case(root, case_id, frames)}
+        for case_id in labels
+    }
+    vlm_evidence._write_json(root / "labels.json", {"cases": labels})
+    vlm_evidence._write_json(
+        root / "final-frame-manifest.json",
+        {
+            "format": "npa_ncore_vlm_final_frames_v1",
+            "render_inventory_sha256": "b" * 64,
+            "frames": records,
+        },
+    )
+    prompts = {}
+    for name in ("rubric", "calibration_task", "final_task"):
+        path = tmp_path / f"{name}.txt"
+        path.write_text(f"Review visible scene geometry: {name}.")
+        prompts[name] = path
+    manifest = {
+        "format": vlm_evidence.FREEZE_FORMAT,
+        "schedule_id": "a" * 32,
+        "model": vlm_evidence.MODEL,
+        "threshold": vlm_evidence.THRESHOLD,
+        "case_order": list(labels),
+        "cases": cases,
+        "label_commitment_sha256": vlm_evidence._sha_file(root / "labels.json"),
+        "final_frame_manifest_sha256": vlm_evidence._sha_file(
+            root / "final-frame-manifest.json"
+        ),
+        "render_inventory_sha256": "b" * 64,
+        "final_frames": records,
+        **{name + "_sha256": vlm_evidence._sha_file(p) for name, p in prompts.items()},
+    }
+    vlm_evidence._write_json(root / "freeze.json", manifest)
+    prefix = "s3://test-bucket/synthetic-schedule/"
+    review = tmp_path / "synthetic-review.json"
+    vlm_evidence._write_json(
+        review,
+        {
+            "format": vlm_evidence.FREEZE_REVIEW_FORMAT,
+            "verdict": "ACCEPTED",
+            "freeze_sha256": vlm_evidence._sha_file(root / "freeze.json"),
+            "label_commitment_sha256": manifest["label_commitment_sha256"],
+            "final_frame_manifest_sha256": manifest["final_frame_manifest_sha256"],
+            "external_attempt_prefix_sha256": vlm_evidence._sha_bytes(prefix.encode()),
+            "controls_opened": 4,
+            "final_frames_opened": 4,
+            "prompts_reviewed": True,
+            "reviewer_id": "synthetic-test-reviewer",
+        },
+    )
+    args = argparse.Namespace(
+        evidence_root=root,
+        freeze_sha256=vlm_evidence._sha_file(root / "freeze.json"),
+        review_path=review,
+        external_attempt_prefix=prefix,
+        api_key_env="NCORE_SYNTHETIC_TEST_KEY",
+        **prompts,
+    )
+    args.freeze_acceptance_sha256 = vlm_evidence.accept_freeze(args)["sha256"]
+    storage = _Storage()
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment", lambda: storage
+    )
+    monkeypatch.setenv(args.api_key_env, "synthetic-not-retained")
+    calls = []
+    scores = (0.9, 0.9, 0.2, 0.2, final_score)
+
+    def respond(request_bytes, _api_key):
+        assert len(calls) < len(scores), "unexpected extra inference"
+        score = scores[len(calls)]
+        calls.append(request_bytes)
+        payload = _response()
+        verdict = json.loads(payload["choices"][0]["message"]["content"])
+        verdict.update(score=score, success=score >= vlm_evidence.THRESHOLD)
+        payload["choices"][0]["message"]["content"] = json.dumps(verdict)
+        return _Response(payload)
+
+    monkeypatch.setattr(vlm_evidence, "_post_hosted_bytes", respond)
+    result = vlm_evidence.calibrate(args)
+    assert result["verdict"] == "pass"
+    args.calibration_sha256 = result["sha256"]
+    assert len(calls) == len(storage.objects) == 4
+    return args, calls, storage
+
+
+def _verify_schedule(args, final_sha256):
+    return vlm_evidence.verify_complete_evidence(
+        args.evidence_root,
+        freeze_sha256=args.freeze_sha256,
+        freeze_acceptance_sha256=args.freeze_acceptance_sha256,
+        calibration_sha256=args.calibration_sha256,
+        final_sha256=final_sha256,
+        external_attempt_prefix=args.external_attempt_prefix,
+        rubric_path=args.rubric,
+        calibration_task_path=args.calibration_task,
+        final_task_path=args.final_task,
+    )
+
+
+def test_completed_schedule_replays_five_attempts_without_new_calls(
+    monkeypatch, tmp_path
+):
+    args, calls, storage = _calibrated_schedule(monkeypatch, tmp_path)
+    final = vlm_evidence.final(args)
+
+    verified = _verify_schedule(args, final["sha256"])
+
+    assert verified["calibration"]["attempt_count"] == 4
+    assert verified["final"]["attempt_count"] == 5
+    assert verified["final"]["status"] == "pass"
+    assert len(calls) == len(storage.objects) == 5
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="schedule differs"):
+        vlm_evidence.final(args)
+    assert len(calls) == len(storage.objects) == 5
+
+
+def test_calibration_only_schedule_is_not_complete(monkeypatch, tmp_path):
+    args, calls, storage = _calibrated_schedule(monkeypatch, tmp_path)
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="schedule differs"):
+        _verify_schedule(args, "f" * 64)
+    assert len(calls) == len(storage.objects) == 4
+
+
+@pytest.mark.parametrize("directory", ["attempt-ledger", "transport"])
+@pytest.mark.parametrize("change", ["extra", "missing-calibration", "missing-final"])
+def test_completed_schedule_rejects_changed_attempt_population(
+    monkeypatch, tmp_path, directory, change
+):
+    args, calls, storage = _calibrated_schedule(monkeypatch, tmp_path)
+    final = vlm_evidence.final(args)
+    attempt = "case-0" if change == "missing-calibration" else "final-one-shot"
+    target = args.evidence_root / directory
+    if change == "extra":
+        if directory == "attempt-ledger":
+            vlm_evidence._write_json(target / "unexpected.json", {})
+        else:
+            (target / "unexpected").mkdir()
+    else:
+        source = target / (
+            attempt + ".json" if directory == "attempt-ledger" else attempt
+        )
+        source.rename(tmp_path / "removed-attempt")
+
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="schedule differs"):
+        _verify_schedule(args, final["sha256"])
+    assert len(calls) == len(storage.objects) == 5
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "labels.json",
+        "freeze-acceptance.json",
+        "calibration.json",
+        "final.json",
+        "final/frame-000.png",
+        "attempt-ledger/case-0.json",
+        "attempt-ledger/final-one-shot.json",
+        "transport/case-0/response.json",
+        "transport/final-one-shot/request.json",
+        "transport/final-one-shot/response.json",
+        "transport/final-one-shot/outcome.json",
+        "transport-manifest.json",
+    ],
+)
+def test_completed_schedule_rejects_substituted_evidence(
+    monkeypatch, tmp_path, relative
+):
+    args, calls, storage = _calibrated_schedule(monkeypatch, tmp_path)
+    final = vlm_evidence.final(args)
+    path = args.evidence_root / relative
+    path.write_bytes(path.read_bytes() + b" ")
+
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="differ"):
+        _verify_schedule(args, final["sha256"])
+    assert len(calls) == len(storage.objects) == 5
+
+
+def test_completed_schedule_does_not_accept_failed_final(monkeypatch, tmp_path):
+    args, calls, storage = _calibrated_schedule(monkeypatch, tmp_path, final_score=0.2)
+    final = vlm_evidence.final(args)
+    assert final["verdict"] == "failed"
+
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="final VLM result differs"):
+        _verify_schedule(args, final["sha256"])
+    assert len(calls) == len(storage.objects) == 5
+
+
 @pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
 def test_provider_redirect_is_retained_without_following_or_retry(
     monkeypatch, tmp_path, status
