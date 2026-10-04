@@ -333,24 +333,28 @@ class NebiusBackend:
             raise RuntimeError(f"job create failed: {r.stderr[:500]}")
 
     def _wait_done(self, job_name: str) -> None:
-        # Watch for either terminal condition: a failed job never gains
-        # condition=complete, so waiting only for complete would burn the
-        # whole timeout on every failure.
-        # The kubectl client timeout must cover the whole wait, not just the
-        # default 120s used for control-plane calls.
-        r = self._kc(
-            "wait",
-            f"job/{job_name}",
-            "--for=condition=complete",
-            "--for=condition=failed",
-            f"--timeout={self.timeout_s}s",
-            timeout=self.timeout_s + 120,
+        # Poll the job status instead of `kubectl wait`: multiple --for
+        # conditions are not an OR (a failed job never gains Complete, so
+        # waiting on both hangs), and a failed job must be detected
+        # promptly rather than burning the whole timeout.
+        deadline = time.time() + self.timeout_s
+        while time.time() < deadline:
+            r = self._kc("get", "job", job_name, "-o", "json")
+            if r.returncode == 0:
+                try:
+                    data = json.loads(r.stdout or "{}")
+                except json.JSONDecodeError:
+                    data = {}
+                conds = {
+                    c.get("type"): c.get("status")
+                    for c in data.get("status", {}).get("conditions", [])
+                }
+                if conds.get("Complete") == "True" or conds.get("Failed") == "True":
+                    return
+            time.sleep(15)
+        raise TimeoutError(
+            f"job {job_name} reached no terminal condition in {self.timeout_s}s"
         )
-        if r.returncode != 0:
-            raise TimeoutError(
-                f"job {job_name} reached no terminal condition in "
-                f"{self.timeout_s}s: {r.stderr[:300]}"
-            )
 
     @staticmethod
     def _strip_marker(line: str, prefix: str) -> str | None:

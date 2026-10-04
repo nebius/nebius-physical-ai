@@ -888,14 +888,29 @@ def test_pendulum_rtx_descriptor_validates(tmp_path: Path) -> None:
     assert desc.commands["run"].outputs["video"].format == "binary"
 
 
-def test_wait_done_uses_full_job_timeout() -> None:
-    # Regression: kubectl wait must not be killed by the 120s default
-    # client timeout when the job itself may run for timeout_s.
-    be = _FakeKc(timeout_s=3600)
+def test_wait_done_returns_on_failed_condition() -> None:
+    # Regression: a failed job never gains condition=complete; the wait
+    # must detect the Failed condition promptly, not burn the timeout.
+    # (kubectl wait with multiple --for flags does not OR them.)
+    calls = {"n": 0}
+
+    class _StatusKc(_FakeKc):
+        def _kc(self, *args, input_text=None, timeout=120):
+            calls["n"] += 1
+            conds = [{"type": "Failed", "status": "True"}] if calls["n"] >= 2 else []
+            import json as _json
+
+            self.kc_calls.append((args, input_text))
+            return subprocess.CompletedProcess(
+                args=list(args),
+                returncode=0,
+                stdout=_json.dumps({"status": {"conditions": conds}}),
+                stderr="",
+            )
+
+    be = _StatusKc(timeout_s=3600)
     be._wait_done("job-1")
-    assert be.last_timeout == 3720
-    args, _ = be.kc_calls[-1]
-    assert "--timeout=3600s" in args
+    assert calls["n"] == 2  # polled, then saw Failed
 
 
 def test_configmap_keys_preserve_basenames_and_dedupe() -> None:

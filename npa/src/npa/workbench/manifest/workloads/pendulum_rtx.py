@@ -165,13 +165,19 @@ def fetch_blender() -> None:
     if os.path.exists(BLENDER_BIN):
         print("blender already present", flush=True)
         return
-    print(f"downloading blender from {BLENDER_URL}", flush=True)
+    # Preferred: tarball staged via the descriptor's s3 inputs (pod egress
+    # to the public internet is restricted; S3 is always reachable).
     tarball = "/work/blender.tar.xz"
-    urllib.request.urlretrieve(BLENDER_URL, tarball)
+    if not os.path.exists(tarball):
+        print(f"downloading blender from {BLENDER_URL}", flush=True)
+        urllib.request.urlretrieve(BLENDER_URL, tarball)
     print("extracting blender", flush=True)
     with tarfile.open(tarball) as tf:
         tf.extractall("/work")
-    os.remove(tarball)
+    try:
+        os.remove(tarball)
+    except OSError:
+        pass
     assert os.path.exists(BLENDER_BIN), "blender binary missing after extract"
 
 
