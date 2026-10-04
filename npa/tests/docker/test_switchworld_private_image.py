@@ -48,7 +48,7 @@ def test_private_recipe_runtime_fetches_the_hash_locked_real_frame_decoder() -> 
 
 
 def test_private_recipe_uses_the_reviewed_wan_attention_fallback() -> None:
-    """Do not add FlashAttention when the pinned Wan source needs its fallback."""
+    """Apply the fallback after LingBot source materialization replaces Wan."""
 
     text = DOCKERFILE.read_text(encoding="utf-8")
     wan_text = WAN_DOCKERFILE.read_text(encoding="utf-8")
@@ -58,6 +58,9 @@ def test_private_recipe_uses_the_reviewed_wan_attention_fallback() -> None:
     assert "/opt/byof/wan/modules/model.py" in text
     assert '"flash_attn",/d' in text
     assert "FlashAttention wheel or CUDA build is fetched at runtime" in text
+    assert text.index(
+        "from .attention import attention as flash_attention"
+    ) > text.index("https://github.com/Robbyant/lingbot-world.git")
 
 
 def test_private_recipe_keeps_the_skypilot_sudo_contract_without_invoking_sudo() -> (
