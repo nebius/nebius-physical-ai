@@ -965,7 +965,7 @@ def test_robocasa_pip_bootstrap_excludes_old_seed_layers() -> None:
 
 def test_robocasa_bootstraps_only_verified_derivative_offline() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8").rsplit("\nFROM ", 1)[1]
-    expected_hash = "7767c69586fcedb89b9b1dd692abb5b1c4328c19dffb2a40cad4fb17a62ff818"
+    expected_hash = "422c172b8b7d4fd1363e56a105cc6cc3ed50d16a7729eb5e2cba7265a6f0ca20"
     lock = (IMAGE_DIR / "pip-bootstrap.lock").read_text(encoding="utf-8")
     assert "pip==26.2.1+npa.1" in lock
     assert f"--hash=sha256:{expected_hash}" in lock
