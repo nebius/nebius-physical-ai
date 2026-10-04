@@ -67,8 +67,8 @@ ENV WANDB_MODE=disabled \
     WANDB_DISABLED=true \
     HF_HUB_DISABLE_TELEMETRY=1 \
     NPA_LEROBOT_VERSION=0.6.1 \
-    PYTHONPATH=/opt/vla-jepa-npa/src:$PYTHONPATH \
-    PATH=/opt/lerobot/venv/bin:$PATH
+    PYTHONPATH=/opt/vla-jepa-npa/src \
+    PATH=/opt/lerobot/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # The parent service entrypoint would start FastAPI rather than the workflow's
 # native CLI.  A job image leaves command selection to the NPA stage renderer.

@@ -16,9 +16,9 @@
       "evidence": [
         "npa/tests/workflows/test_lerobot_vla_jepa.py",
         "sha256:66c76cea25e6738a6ed5b1f6200cbd6a1d38a0de07dad331a7d294f22b510f52 workflows/testing/lerobot-vla-jepa.yaml",
-        "sha256:b77a984589e069962f32f75fd49ece63da6f569af847fb64d3c07d02b2fba9c1 npa/docker/workbench/lerobot-vla-jepa/Dockerfile",
+        "sha256:bf0edbf5fdc1b32ab1137035107b6d06c81b4a207858ff66beacd1e816156759 npa/docker/workbench/lerobot-vla-jepa/Dockerfile",
         "sha256:4212b57f0e29d81f63d9c0cff7ad2e169aedd8ee0b47023435165ffba6ad4ad7 npa/src/npa/workflows/lerobot_vla_jepa.py",
-        "sha256:68e3d0c36d55c1c3460f560537fa1283a0ed738a7d6d4d949af36985f87ec26c npa/tests/workflows/test_lerobot_vla_jepa.py"
+        "sha256:9ac709490561824ecf9432eef195cc52743580769edd0c9ff9a81be6985e9ebf npa/tests/workflows/test_lerobot_vla_jepa.py"
       ]
     }
   },

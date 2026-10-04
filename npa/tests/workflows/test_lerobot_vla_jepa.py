@@ -79,6 +79,9 @@ def test_candidate_image_removes_the_inherited_pip_cache() -> None:
     final_copy = "COPY --from=vla_jepa_build / /"
     assert final_copy in dockerfile
     assert dockerfile.index(cleanup) < dockerfile.index(final_copy)
+    assert "PYTHONPATH=/opt/vla-jepa-npa/src:$PYTHONPATH" not in dockerfile
+    assert "PYTHONPATH=/opt/vla-jepa-npa/src" in dockerfile
+    assert "PATH=/opt/lerobot/venv/bin:$PATH" not in dockerfile
 
 
 def test_task_disjoint_split_and_numeric_training_statistics() -> None:
