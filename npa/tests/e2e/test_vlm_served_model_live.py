@@ -167,7 +167,7 @@ def _assert_provider_evidence(provider: dict, config: dict) -> None:
     fence = re.fullmatch(
         r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL | re.IGNORECASE
     )
-    expected_parser = "npa_vlm_eval_compatible_json_v1"
+    expected_parser = "npa_vlm_eval_compatible_json_v2"
     if fence:
         content = fence.group(1)
         expected_parser += "+markdown-fence-v1"
