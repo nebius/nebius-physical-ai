@@ -13,6 +13,13 @@ image:
 environment:
   pip:
     - newton
+  apt:
+    - libx11-6
+    - libxi6
+    - libxrender1
+    - libxfixes3
+    - libsm6
+    - libgl1
 inputs:
   - name: blender
     s3_uri: s3://my-bucket/manifest-mvp/deps/blender-4.2.3-linux-x64.tar.xz

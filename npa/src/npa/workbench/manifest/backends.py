@@ -42,6 +42,7 @@ class LocalDockerBackend:
         s3_prefix: str = "",
         s3_env: dict[str, str] | None = None,
         pip_packages: list[str] | None = None,
+        apt_packages: list[str] | None = None,
     ) -> BackendResult:
         if s3_inputs:
             raise ValueError("s3 inputs require the nebius backend")
@@ -50,6 +51,8 @@ class LocalDockerBackend:
                 "environment.pip requires the nebius backend "
                 "(local docker run cannot install into the image)"
             )
+        if apt_packages:
+            raise ValueError("environment.apt requires the nebius backend")
         t0 = time.time()
         with tempfile.TemporaryDirectory(prefix="manifest-out-") as tmpd:
             outdir = Path(tmpd)

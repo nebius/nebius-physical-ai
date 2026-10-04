@@ -89,6 +89,7 @@ class ArtifactStore:
 @dataclass(frozen=True)
 class Environment:
     pip: tuple[str, ...] = ()  # pip packages installed in-pod before argv
+    apt: tuple[str, ...] = ()  # apt packages installed in-pod before pip
 
 
 @dataclass(frozen=True)
@@ -346,8 +347,12 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
         )
     env_raw = raw.get("environment") or {}
     pip_pkgs = env_raw.get("pip") or []
-    if not isinstance(pip_pkgs, list) or not all(isinstance(p, str) for p in pip_pkgs):
-        raise DescriptorError(f"{source}: environment.pip must be a list of strings")
+    apt_pkgs = env_raw.get("apt") or []
+    for field_name, pkgs in (("pip", pip_pkgs), ("apt", apt_pkgs)):
+        if not isinstance(pkgs, list) or not all(isinstance(p, str) for p in pkgs):
+            raise DescriptorError(
+                f"{source}: environment.{field_name} must be a list of strings"
+            )
     return Descriptor(
         api_version=raw["apiVersion"],
         name=raw["name"],
@@ -364,5 +369,5 @@ def parse_descriptor(raw: dict[str, Any], source: str = "<dict>") -> Descriptor:
         payload_files=payload,
         inputs=inputs,
         artifact_store=store,
-        environment=Environment(pip=tuple(pip_pkgs)),
+        environment=Environment(pip=tuple(pip_pkgs), apt=tuple(apt_pkgs)),
     )

@@ -54,6 +54,7 @@ class StubBackend:
         s3_prefix="",
         s3_env=None,
         pip_packages=None,
+        apt_packages=None,
     ):
         self.calls.append(
             {
@@ -67,6 +68,7 @@ class StubBackend:
                 "s3_output_names": s3_output_names,
                 "s3_prefix": s3_prefix,
                 "pip_packages": pip_packages,
+                "apt_packages": apt_packages,
             }
         )
         artifacts = {}
@@ -718,6 +720,7 @@ def _job(gpu: int, memory_gb: int = 0) -> dict:
         "",
         {},
         [],
+        [],
     )
     assert len(be.created) == 1
     return be.created[0]
@@ -832,6 +835,7 @@ def test_manifest_pip_env_in_job_spec() -> None:
         "",
         {},
         ["newton", "matplotlib"],
+        [],
     )
     job = be.created[0]
     env = {
@@ -933,3 +937,55 @@ def test_manifest_s3_bucket_env_override(tmp_path: Path, monkeypatch) -> None:
             "/work/config.json",
         )
     ]
+
+
+def test_environment_apt_parses_and_reaches_backend(tmp_path: Path) -> None:
+    d = _desc_dict()
+    d["environment"] = {"apt": ["libx11-6"]}
+    desc = parse_descriptor(d)
+    assert desc.environment.apt == ("libx11-6",)
+    rt, stub = make_runtime(tmp_path)
+    rt.catalog._entries["apttest@0.1.0"] = desc
+    rt.invoke("apttest", "0.1.0", "run", {}, backend="stub")
+    assert stub.calls[0]["apt_packages"] == ["libx11-6"]
+
+
+def test_manifest_apt_env_in_job_spec() -> None:
+    be = _FakeKc()
+    be._create_job(
+        "job-1",
+        "cm-1",
+        "img@sha256:abc",
+        ["python", "a.py"],
+        1,
+        0,
+        [("out", "/work/o", "json", "file")],
+        {},
+        [],
+        [],
+        "",
+        {},
+        [],
+        ["libx11-6"],
+    )
+    job = be.created[0]
+    env = {
+        e["name"]: e["value"]
+        for e in job["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert json.loads(env["MANIFEST_APT"]) == ["libx11-6"]
+
+
+def test_parse_apt_markers() -> None:
+    be = NebiusBackend()
+    res = be._parse("@@APT:libx11-6@@\nok\n@@EXIT:0@@\n", 1.0)
+    assert "@@APT:" not in res.stdout and res.exit_code == 0
+    res = be._parse("@@APTFAIL@@\n", 1.0)
+    assert res.exit_code == 3
+
+
+def test_pendulum_rtx_has_apt_and_blender_input(tmp_path: Path) -> None:
+    rt, _ = make_runtime(tmp_path)
+    desc = rt.catalog.get("pendulum-rtx", "0.1.0")
+    assert "libx11-6" in desc.environment.apt
+    assert desc.inputs[0].container_path == "/work/blender.tar.xz"

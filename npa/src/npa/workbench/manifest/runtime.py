@@ -44,6 +44,7 @@ class Backend(Protocol):
         s3_prefix: str = "",
         s3_env: dict[str, str] | None = None,
         pip_packages: list[str] | None = None,
+        apt_packages: list[str] | None = None,
     ) -> "BackendResult": ...
 
 
@@ -191,6 +192,7 @@ class Runtime:
                 s3_prefix=s3_prefix,
                 s3_env=None,
                 pip_packages=list(descriptor.environment.pip),
+                apt_packages=list(descriptor.environment.apt),
             )
             exit_code = bres.exit_code
             backend_logs = (bres.logs or "")[-20000:]
