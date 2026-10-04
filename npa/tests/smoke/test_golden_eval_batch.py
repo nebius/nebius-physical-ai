@@ -60,6 +60,7 @@ def test_needs_image_update_exclusions_can_only_shrink() -> None:
         "curobo",
         "genesis",
         "gymnasium-robotics",
+        "hy-world",
         "isaac-arena",
         "isaac-lab",
         "lerobot",

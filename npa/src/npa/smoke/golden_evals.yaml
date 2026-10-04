@@ -1155,7 +1155,7 @@ containers:
       role: SAM 3.1 text-prompted video segmentation with per-frame object masks.
     safety:
       runs_as: ubuntu
-      base_image: python:3.12-slim-bookworm (digest pinned)
+      base_image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04 (digest pinned; native extensions compile at operator runtime)
       network: Operator-only pinned source, model and CUDA runtime fetch
       external_fetch: [github, huggingface, pytorch-cu130]
       notes: >-
