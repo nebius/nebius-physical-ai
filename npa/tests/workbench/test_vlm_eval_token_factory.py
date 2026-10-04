@@ -941,20 +941,20 @@ def test_self_hosted_judge_keeps_legacy_parsing_for_completed_response(
             {
                 "finish_reason": "stop",
                 "message": {
-                    "content": '```json\n{"success":"yes","score":7,"rationale":"legacy"}\n```'
+                    "content": '```json\n{"success":true,"score":0.7,"rationale":"legacy"}\n```'
                 },
             }
         ]
     }
     result = _call_completion(monkeypatch, completion, backend="self-hosted")
     assert result.success is True
-    assert result.provider_success is None
-    assert result.score == 1.0
+    assert result.provider_success is True
+    assert result.score == 0.7
     assert result.served_model is None
     assert result.evidence is not None
     assert (
         result.evidence.provider.parser_version
-        == "npa_vlm_eval_compatible_json_v1+markdown-fence-v1"
+        == "npa_vlm_eval_compatible_json_v2+markdown-fence-v1"
     )
 
 
@@ -963,8 +963,11 @@ def test_self_hosted_judge_keeps_legacy_parsing_for_completed_response(
     [
         ("Explanation: " + _VALID_CONTENT, "stop", 0.9),
         ("```json\n" + _VALID_CONTENT, "stop", 0.9),
-        ('{"score":0.1,"score":0.9,"rationale":"duplicate"}', "stop", 0.9),
-        ('{"success":"yes","score":"2","rationale":null}', "stop", 1.0),
+        (
+            '{"success":true,"score":0.1,"score":0.9,"rationale":"duplicate"}',
+            "stop",
+            0.9,
+        ),
     ],
 )
 def test_self_hosted_compatibility_retains_non_strict_verdicts(
@@ -975,7 +978,7 @@ def test_self_hosted_compatibility_retains_non_strict_verdicts(
     )
     assert result.score == score
     assert result.evidence.provider.finish_reason == finish
-    assert result.evidence.provider.parser_version == "npa_vlm_eval_compatible_json_v1"
+    assert result.evidence.provider.parser_version == "npa_vlm_eval_compatible_json_v2"
     with pytest.raises(VlmEvalError):
         _call_completion(monkeypatch, _completion(content=content, finish=finish))
 
