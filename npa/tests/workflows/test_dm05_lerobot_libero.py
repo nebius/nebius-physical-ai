@@ -272,7 +272,7 @@ def test_private_dm05_image_retains_bootstrap_attestation_and_telemetry_boundary
     assert "Lifelong-Robot-Learning/LIBERO.git" in instructions
     assert "checkout --detach 8f1084e3132a39270c3a13ebe37270a43ece2a01" in instructions
     assert (
-        "NPA_DM05_LIBERO_BENCHMARK_ROOT=/opt/lerobot/libero-benchmark/libero"
+        "NPA_DM05_LIBERO_BENCHMARK_ROOT=/opt/lerobot/libero-benchmark/libero/libero"
         in instructions
     )
     assert "/opt/lerobot/venv/bin/python -m pip uninstall -y wandb" in instructions

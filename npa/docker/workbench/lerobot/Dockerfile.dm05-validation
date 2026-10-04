@@ -37,13 +37,13 @@ RUN git clone --no-checkout https://github.com/Lifelong-Robot-Learning/LIBERO.gi
     && git -C /opt/lerobot/libero-benchmark config filter.lfs.required false \
     && git -C /opt/lerobot/libero-benchmark checkout --detach 8f1084e3132a39270c3a13ebe37270a43ece2a01 \
     && test -f /opt/lerobot/libero-benchmark/LICENSE \
-    && test -d /opt/lerobot/libero-benchmark/libero/bddl_files \
-    && test -d /opt/lerobot/libero-benchmark/libero/init_files \
-    && test -d /opt/lerobot/libero-benchmark/libero/assets \
+    && test -d /opt/lerobot/libero-benchmark/libero/libero/bddl_files \
+    && test -d /opt/lerobot/libero-benchmark/libero/libero/init_files \
+    && test -d /opt/lerobot/libero-benchmark/libero/libero/assets \
     && rm -rf /opt/lerobot/libero-benchmark/.git
 
 COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/dm05-runtime-manifest.json /opt/lerobot/dm05-runtime.json
 COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/DM05-ATTRIBUTION.md /opt/lerobot/DM05-ATTRIBUTION.md
 
 ENV NPA_DM05_RUNTIME_MANIFEST=/opt/lerobot/dm05-runtime.json
-ENV NPA_DM05_LIBERO_BENCHMARK_ROOT=/opt/lerobot/libero-benchmark/libero
+ENV NPA_DM05_LIBERO_BENCHMARK_ROOT=/opt/lerobot/libero-benchmark/libero/libero
