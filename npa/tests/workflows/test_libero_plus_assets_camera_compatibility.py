@@ -281,6 +281,8 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
         "cleanup_flat_base\n"
     )
     assert "ssh_host_*_key" in build
+    assert 'docker run --rm "$image" /bin/bash -c' in build
+    assert 'docker run --rm "$image" /bin/sh -c' not in build
     assert "built-local-not-pushed" in build
     assert "It is **not**" in notice
     assert "LIBERO-Plus benchmark image" in notice

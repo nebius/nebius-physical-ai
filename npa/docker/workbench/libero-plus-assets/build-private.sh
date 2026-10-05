@@ -126,7 +126,7 @@ docker run --rm --entrypoint /bin/bash "$image" -c '\
   test -s /usr/share/doc/npa-libero-plus-assets/THIRD_PARTY_NOTICES.md; \
   test -s /usr/share/doc/npa-libero-plus-assets/native-executor-provenance.json; \
   test -z "$(find /etc/ssh -maxdepth 1 -type f -name "ssh_host_*_key" -print -quit)"'
-docker run --rm "$image" /bin/sh -c '\
+docker run --rm "$image" /bin/bash -c '\
   set -euo pipefail; \
   test "$(id -u)" -eq 1000; \
   test -w /tmp; test -w "$HOME"; \
