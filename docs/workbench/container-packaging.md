@@ -97,6 +97,12 @@ Docker directory copies otherwise preserve files removed from that revision.
 These build changes require new immutable images and fresh validation before
 release promotion.
 
+Both CPU builds also upgrade the system Python bootstrap from an exact shared
+lock, use `urllib3==2.8.0`, and replace pip's vendored MessagePack with the actual
+`msgpack==1.2.1` wheel bytes while retaining its license. Upgrading only the
+viewer virtualenv leaves the system bootstrap vulnerable; installing a newer
+external MessagePack package leaves pip's independent vendor copy unchanged.
+
 All first-class images live under `npa/docker/workbench/`:
 
 | Image / role | Dockerfile | Default exposure |

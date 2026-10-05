@@ -74,6 +74,23 @@ def test_envgen_clears_inherited_source_before_copying_exact_revision() -> None:
     assert catalog_copy < text.index("FROM scratch AS runtime")
 
 
+def test_cpu_images_update_system_and_viewer_bootstrap_dependencies() -> None:
+    lock = (WORKBENCH / "common/sim2real-cpu-build-requirements.txt").read_text()
+    assert "pip==26.2.1" in lock
+    assert "setuptools==84.0.0" in lock
+    assert "wheel==0.48.0" in lock
+    assert "msgpack==1.2.1" in lock
+    for relative in ("sim2real-control/Dockerfile", "rerun-viewer/Dockerfile"):
+        text = (WORKBENCH / relative).read_text()
+        bootstrap = text.index(
+            "python -m pip install --no-cache-dir --no-deps --upgrade"
+        )
+        assert bootstrap < text.index("USER ubuntu")
+        assert "python /opt/npa/update_pip_msgpack_vendor.py" in text
+    viewer = (WORKBENCH / "rerun-viewer/Dockerfile").read_text()
+    assert viewer.count("python /opt/npa/update_pip_msgpack_vendor.py") == 2
+
+
 def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
     installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text(
