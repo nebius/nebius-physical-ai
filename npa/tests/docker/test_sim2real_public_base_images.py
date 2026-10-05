@@ -80,15 +80,16 @@ def test_cpu_images_update_system_and_viewer_bootstrap_dependencies() -> None:
     assert "setuptools==84.0.0" in lock
     assert "wheel==0.48.0" in lock
     assert "msgpack==1.2.1" in lock
+    assert "urllib3==2.8.0" in lock
     for relative in ("sim2real-control/Dockerfile", "rerun-viewer/Dockerfile"):
         text = (WORKBENCH / relative).read_text()
         bootstrap = text.index(
             "python -m pip install --no-cache-dir --no-deps --upgrade"
         )
         assert bootstrap < text.index("USER ubuntu")
-        assert "python /opt/npa/update_pip_msgpack_vendor.py" in text
+        assert "python /opt/npa/update_pip_vendor.py" in text
     viewer = (WORKBENCH / "rerun-viewer/Dockerfile").read_text()
-    assert viewer.count("python /opt/npa/update_pip_msgpack_vendor.py") == 2
+    assert viewer.count("python /opt/npa/update_pip_vendor.py") == 2
 
 
 def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:

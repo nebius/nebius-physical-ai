@@ -66,11 +66,11 @@ WORKDIR /workspace
 
 COPY --chmod=0644 docker/workbench/common/sim2real-cpu-build-requirements.txt \
     /opt/npa/sim2real-cpu-build-requirements.txt
-COPY --chmod=0644 docker/workbench/common/update_pip_msgpack_vendor.py \
-    /opt/npa/update_pip_msgpack_vendor.py
+COPY --chmod=0644 docker/workbench/common/update_pip_vendor.py \
+    /opt/npa/update_pip_vendor.py
 RUN python -m pip install --no-cache-dir --no-deps --upgrade \
       -r /opt/npa/sim2real-cpu-build-requirements.txt \
-    && python /opt/npa/update_pip_msgpack_vendor.py \
+    && python /opt/npa/update_pip_vendor.py \
     && python -m pip check
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml

@@ -68,11 +68,11 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
 
 COPY --chmod=0644 docker/workbench/common/sim2real-cpu-build-requirements.txt \
     /opt/npa/sim2real-cpu-build-requirements.txt
-COPY --chmod=0644 docker/workbench/common/update_pip_msgpack_vendor.py \
-    /opt/npa/update_pip_msgpack_vendor.py
+COPY --chmod=0644 docker/workbench/common/update_pip_vendor.py \
+    /opt/npa/update_pip_vendor.py
 RUN /usr/local/bin/python -m pip install --no-cache-dir --no-deps --upgrade \
       -r /opt/npa/sim2real-cpu-build-requirements.txt \
-    && /usr/local/bin/python /opt/npa/update_pip_msgpack_vendor.py \
+    && /usr/local/bin/python /opt/npa/update_pip_vendor.py \
     && /usr/local/bin/python -m pip check
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
@@ -94,7 +94,7 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m venv /opt/rerun/venv \
     && python -m pip install --no-cache-dir --no-deps --upgrade \
       -r /opt/npa/sim2real-cpu-build-requirements.txt \
-    && python /opt/npa/update_pip_msgpack_vendor.py \
+    && python /opt/npa/update_pip_vendor.py \
     && python -m pip install --no-cache-dir "rerun-sdk==${RERUN_SDK_VERSION}" \
     && python -m pip install --no-cache-dir --no-deps \
       -r /opt/npa/sim2real-viewer-requirements.txt \

@@ -98,14 +98,16 @@ These build changes require new immutable images and fresh validation before
 release promotion.
 
 Both CPU builds also upgrade the system Python bootstrap from an exact shared
-lock, use `urllib3==2.8.0`, and replace pip's vendored MessagePack with the actual
-`msgpack==1.2.1` wheel bytes while retaining its license. Upgrading only the
+lock and replace pip's vendored MessagePack and urllib3 with the actual
+`msgpack==1.2.1` and `urllib3==2.8.0` wheel bytes while retaining their licenses. Upgrading only the
 viewer virtualenv leaves the system bootstrap vulnerable; installing a newer
 external MessagePack package leaves pip's independent vendor copy unchanged.
 The replacement also updates pip's vendor inventory and CycloneDX dependency
-references to describe the installed bytes. Both builds upgrade inherited
-Debian packages against the same fixed snapshot. This is partial hardening;
-remaining vendored dependency findings still require review before promotion.
+references to describe the installed bytes. The pinned Python 3.11 CPU images
+use pip's default importlib metadata backend and remove the unused legacy
+`pkg_resources` subset; opting into that removed backend is unsupported. See
+[pip's metadata backend migration](https://pip.pypa.io/en/stable/news/#v22-1).
+Both builds upgrade inherited Debian packages against the same fixed snapshot.
 
 All first-class images live under `npa/docker/workbench/`:
 
