@@ -390,6 +390,85 @@ def test_cv2_cross_check_and_pyav_evidence_are_distinct_decode_paths(
     assert upstream_decoder["evaluated_frames"] == 4
 
 
+def test_measure_serializes_actual_upstream_cv2_cross_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep the measured report bound to both actual OpenCV cross-checks."""
+
+    cross_check = {
+        "engine": "npa.switchworld.upstream_cv2_pixels.v1",
+        "status": "passed",
+        "evaluated_frames": 57,
+    }
+    decoded_check = {
+        "engine": "npa.switchworld.independent_decoded_pixels.v1",
+        "status": "passed",
+        "evaluated_frames": 57,
+    }
+    pair_report = {
+        "all_frames": {"frames": 57},
+        "future_frames_excluding_reference": {"frames": 56},
+        "npa_upstream_cv2_pixel_cross_check": cross_check,
+        "npa_independent_decoded_pixel_check": decoded_check,
+    }
+
+    monkeypatch.setattr(
+        switchworld.StorageClient,
+        "from_environment",
+        staticmethod(lambda: object()),
+    )
+    monkeypatch.setattr(
+        switchworld,
+        "_download_prepared",
+        lambda _storage, _uri, root: {
+            "target.mp4": root / "target.mp4",
+            "controls.json": root / "controls.json",
+        },
+    )
+    monkeypatch.setattr(switchworld, "_download", lambda *_: None)
+    monkeypatch.setattr(switchworld, "_checkout_source", lambda root: root)
+    monkeypatch.setattr(
+        switchworld,
+        "_load_controls",
+        lambda *_: {"switch_frame": 13, "source_video_switch_frames": [13]},
+    )
+    monkeypatch.setattr(
+        switchworld,
+        "_video_evidence",
+        lambda _: {"frame_count": 57, "sha256": "actual-video"},
+    )
+    monkeypatch.setattr(
+        switchworld,
+        "_switch_window",
+        lambda *_: {"first_frame": 12, "last_frame": 14, "frames": 3},
+    )
+    monkeypatch.setattr(switchworld, "_upload_tree", lambda *_: None)
+
+    def evaluate(*args: object) -> dict[str, object]:
+        output = args[3]
+        assert isinstance(output, Path)
+        output.mkdir(parents=True)
+        (output / "comparison.mp4").write_bytes(b"real-comparison-placeholder")
+        return deepcopy(pair_report)
+
+    monkeypatch.setattr(switchworld, "_run_pair_evaluation", evaluate)
+
+    report = switchworld.measure(
+        prepared_uri="s3://test/prepared/",
+        baseline_uri="s3://test/baseline.mp4",
+        adapted_uri="s3://test/adapted.mp4",
+        output_uri="s3://test/metrics/",
+    )
+
+    assert report["target_vs_adapter"]["upstream_cv2_pixel_cross_check"] == cross_check
+    assert (
+        report["baseline_vs_adapter"]["upstream_cv2_pixel_cross_check"] == cross_check
+    )
+    assert (
+        report["target_vs_adapter"]["independent_decoded_pixel_check"] == decoded_check
+    )
+
+
 def test_workflow_has_five_connected_real_stages() -> None:
     """Require the workflow's substantive source, inference, metric, and viz path."""
 
@@ -432,6 +511,35 @@ def test_workflow_has_five_connected_real_stages() -> None:
     assert "baseline.mp4" in str(states["measure-real-frames"]["inputs"])
     assert "adapted.mp4" in str(states["emit-paired-artifacts"]["inputs"])
     assert "switchworld.rrd" in str(states["emit-paired-artifacts"]["outputs"])
+
+
+@pytest.mark.parametrize(
+    ("state", "action"),
+    (
+        ("prepare-real-case", "prepare"),
+        ("generate-lingbot-baseline", "baseline"),
+        ("generate-adapter-switch", "adapter"),
+        ("measure-real-frames", "measure"),
+        ("emit-paired-artifacts", "visualize"),
+    ),
+)
+def test_all_raw_stage_argv_parse_against_switchworld_parser(
+    state: str, action: str
+) -> None:
+    """Pin every executable YAML state to the module's real argparse surface."""
+
+    raw = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    argv = raw["states"][state]["run"]["argv"]
+    assert argv[:5] == [
+        "wan-runtime",
+        "exec",
+        "python3",
+        "-m",
+        "npa.workflows.switchworld",
+    ]
+    parser_argv = ["1" if value == "{{config.seed}}" else value for value in argv[5:]]
+    parsed = switchworld._parser().parse_args(parser_argv)
+    assert parsed.action == action
 
 
 def test_readiness_record_is_bound_to_configurable_runtime_workflow() -> None:

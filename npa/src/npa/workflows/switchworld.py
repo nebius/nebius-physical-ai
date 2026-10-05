@@ -1296,6 +1296,9 @@ def measure(
                     "future_frames_excluding_reference"
                 ],
                 "switch_window": _switch_window(target_vs_adapter, controls),
+                "upstream_cv2_pixel_cross_check": target_vs_adapter[
+                    "npa_upstream_cv2_pixel_cross_check"
+                ],
                 "independent_decoded_pixel_check": target_vs_adapter[
                     "npa_independent_decoded_pixel_check"
                 ],
@@ -1303,6 +1306,9 @@ def measure(
             "baseline_vs_adapter": {
                 "all_frames": baseline_vs_adapter["all_frames"],
                 "switch_window": _switch_window(baseline_vs_adapter, controls),
+                "upstream_cv2_pixel_cross_check": baseline_vs_adapter[
+                    "npa_upstream_cv2_pixel_cross_check"
+                ],
                 "independent_decoded_pixel_check": baseline_vs_adapter[
                     "npa_independent_decoded_pixel_check"
                 ],
