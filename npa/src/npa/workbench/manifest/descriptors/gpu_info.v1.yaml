@@ -1,0 +1,24 @@
+apiVersion: manifest/v0.1
+name: gpu-info
+version: 0.1.0
+description: >
+  Reports GPU inventory via nvidia-smi as a text artifact. Second tool
+  onboarded with zero code changes — proves the descriptor mechanism
+  generalizes.
+image:
+  repository: pytorch/pytorch
+  tag: 2.8.0-cuda12.8-cudnn9-runtime
+  digest: sha256:417bd75df6365104c283ea4c1651fb3530d9eb5a4c2fafa51943cff2a94e6385
+commands:
+  probe:
+    argv: ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv"]
+    params: {}
+    outputs:
+      report:
+        source: stdout
+        format: text
+        required: true
+resources:
+  gpu: 1
+success:
+  checks: []

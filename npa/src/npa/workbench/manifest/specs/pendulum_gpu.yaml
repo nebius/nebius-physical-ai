@@ -1,0 +1,8 @@
+# Full GPU workflow through the YAML surface: the real Newton double-pendulum
+# workload (onboarded by descriptor only) simulated on cuda:0 and rendered
+# to MP4, driven by one YAML document through Runtime.invoke.
+tool: pendulum-viz
+version: 0.1.0
+command: run
+inputs:
+  steps: 600
