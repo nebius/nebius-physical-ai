@@ -873,6 +873,40 @@ def test_selector_refuses_unvalidated_neutral_redistribution() -> None:
     assert all(not is_publicly_redistributable(tool) for tool in contract_unvalidated)
 
 
+def test_neutral_unbuilt_selector_allows_only_the_implicit_planning_sentinel() -> None:
+    """Planning can name an unbuilt candidate without making it pullable."""
+
+    assert container_image_for_tool("molmoact2-jetson-thor") == (
+        DEFAULT_PUBLIC_CONTAINER_REGISTRY
+        + "/npa-molmoact2-jetson-thor:edge-evidence-private-unbuilt"
+    )
+
+
+@pytest.mark.parametrize(
+    "tag",
+    ["edge-evidence-private-unbuilt", "dev-" + "0" * 40],
+)
+def test_neutral_unbuilt_selector_refuses_explicit_public_consumption(tag: str) -> None:
+    """Neither a display nor dev tag may turn the public default into a route."""
+
+    with pytest.raises(ValueError, match="publication-quarantined"):
+        container_image_for_tool("molmoact2-jetson-thor", tag=tag)
+
+
+def test_neutral_unbuilt_selector_allows_explicit_private_dev_candidate() -> None:
+    """Exact-source candidates remain available only to operator-private qualification."""
+
+    tag = "dev-" + "0" * 40
+    assert (
+        container_image_for_tool(
+            "molmoact2-jetson-thor",
+            registry="registry.example/operator-private",
+            tag=tag,
+        )
+        == f"registry.example/operator-private/npa-molmoact2-jetson-thor:{tag}"
+    )
+
+
 # --- Resolution guard: a restricted tool must never resolve from a public registry ----
 #
 # Explicitly selecting the public release namespace for a restricted tool must

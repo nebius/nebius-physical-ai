@@ -2452,14 +2452,14 @@ def container_image_for_tool(
             "image after its source/delivery gates pass; see "
             "docs/workbench/byof-habitat-sim.md."
         )
-    # The neutral planning sentinel and an explicit dev candidate must reach
-    # the quarantine gate below.  That gate permits no release consumption:
-    # it only renders the checked-in sentinel for planning or an exact source
-    # candidate reference for an operator-private qualification transaction.
-    neutral_quarantine_reference = tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS and (
-        public_unbuilt_planning_ref
-        or str(tag) == NEUTRAL_UNBUILT_DISPLAY_TAGS[tool]
-        or re.fullmatch(r"dev-[0-9a-f]{40}", str(tag or "")) is not None
+    # A neutral candidate has one public-registry exception: its *implicit*
+    # checked-in sentinel lets planning describe an unbuilt workflow.  Every
+    # explicit tag, including a full-SHA dev candidate, is consumption and must
+    # use an operator-private registry.  In particular, do not let a caller
+    # turn the public default registry into a private-qualification route just
+    # by supplying ``dev-<sha>``.
+    neutral_quarantine_reference = (
+        tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS and public_unbuilt_planning_ref
     )
     if (
         not is_publicly_redistributable(tool)
