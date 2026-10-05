@@ -81,6 +81,16 @@ jobs:
             npa/tests/guardrails/test_workbench_image_k8s_prereqs.py \
             -q
 
+      - name: Verify governed workflow defaults against anonymous registry bytes
+        if: steps.scope.outputs.deep == 'true'
+        env:
+          NPA_INTEGRATION_E2E: "1"
+        run: |
+          npa/.venv/bin/python -m pytest \
+            npa/tests/guardrails/test_public_workflow_candidate_governance.py \
+            npa/tests/e2e/test_paidf_public_images_live.py \
+            -q
+
       - name: Exercise exact native complete-byte scanner dependencies
         if: steps.scope.outputs.deep == 'true'
         run: |

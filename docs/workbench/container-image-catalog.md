@@ -475,12 +475,18 @@ re-enters this table.
 PAIDF workflow rendering separately selects repaired immutable development
 candidates for `npa-cosmos3`, `npa-cosmos-evaluator`, and `npa-cosmos-curate`.
 Their exact source and digest pins are recorded in
-[`public_image_defaults.py`](../../npa/src/npa/orchestration/npa_workflow/public_image_defaults.py).
+[`public_release_manifest.json`](../../npa/src/npa/deploy/public_release_manifest.json),
+validated and selected by [`images.py`](../../npa/src/npa/deploy/images.py).
 Each candidate passed its trusted publication job, including image-security and
 anonymous manifest checks. This is candidate-selection evidence, not a supported
 release promotion or completed PAIDF workflow acceptance; these candidates do
 not re-enter the accepted-release table below. Explicit operator registries and
 image overrides remain supported.
+
+The [default-workflow impact audit](validation/public-default-quarantine-impact-20261005.md)
+checks all shipped plans without image overrides and records the remaining
+blocked workflows and derivative images. It distinguishes canonical Sim2Real's
+required operator images from legacy automatic public-image selection.
 
 ## 2026-09-24 OCI metadata and runtime-user quarantine
 

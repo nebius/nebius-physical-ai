@@ -758,7 +758,8 @@ Each curation/evaluation tool has its own CPU-only workbench image:
 Workflow rendering selects repaired public development candidates for Cosmos3,
 Cosmos Evaluator, and Cosmos Curator, pinned by both full source SHA and manifest
 digest. The pins live in
-[`public_image_defaults.py`](../../../npa/src/npa/orchestration/npa_workflow/public_image_defaults.py).
+[`public_release_manifest.json`](../../../npa/src/npa/deploy/public_release_manifest.json),
+validated and selected by [`images.py`](../../../npa/src/npa/deploy/images.py).
 These candidates passed their individual trusted image-publication jobs; this
 does not establish full PAIDF workflow acceptance. The old release tags remain
 quarantined and are never used as a fallback. An explicit operator `--registry`,

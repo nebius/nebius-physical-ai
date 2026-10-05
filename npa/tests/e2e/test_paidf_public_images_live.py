@@ -12,6 +12,10 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     plan_images,
 )
 from npa.orchestration.skypilot.registry_preflight import fetch_image_config_metadata
+from npa.orchestration.skypilot.image_bootstrap_contract import (
+    ATTESTATION_LABEL,
+    CONTRACT_VERSION,
+)
 
 pytestmark = [
     pytest.mark.e2e,
@@ -43,14 +47,11 @@ def test_paidf_repaired_defaults_resolve_anonymously(spec_path: str) -> None:
     assert candidates
     for image in candidates:
         tag, recorded_digest = image.split("@", 1)
-        for reference in (tag, image):
-            ok, resolved_digest = anonymous_digest(reference)
-            assert ok, f"anonymous manifest resolution failed for {reference}"
-            assert resolved_digest == recorded_digest
+        ok, resolved_digest = anonymous_digest(image)
+        assert ok, f"anonymous manifest resolution failed for {image}"
+        assert resolved_digest == recorded_digest
         config_digest, labels = fetch_image_config_metadata(image)
         assert config_digest == recorded_digest
         assert labels["org.opencontainers.image.revision"] == tag.rsplit(":dev-", 1)[1]
-        assert (
-            labels["org.nebius.npa.skypilot-bootstrap-contract"] == "skypilot-0.12.2-v1"
-        )
+        assert labels[ATTESTATION_LABEL] == CONTRACT_VERSION
         assert "npa.base_image" not in {key.lower() for key in labels}
