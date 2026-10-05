@@ -3183,6 +3183,11 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "rm -f /etc/ssh/ssh_host_*" in text
     assert "ENV HOME=/home/ubuntu" in text
     assert 'exec \\"$@\\"' in text
+    # Kubernetes starts a BYOF container before SkyPilot execs its setup/run
+    # commands. A noninteractive default shell exits before that exec can
+    # happen; the generated image must remain alive while still forwarding
+    # any explicit command through the entrypoint.
+    assert 'CMD ["sleep", "infinity"]' in text
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
     assert 'org.nebius.npa.byof-bootstrap-guard="skypilot-0.12.2-v1"' in text
 

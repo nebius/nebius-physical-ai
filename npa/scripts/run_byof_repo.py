@@ -2134,7 +2134,7 @@ def _dockerfile_text() -> str:
         "ENV HOME=/home/ubuntu\n"
         f"WORKDIR {BYOF_REPO_MOUNT}\n"
         'ENTRYPOINT ["/bin/sh", "-c", "if [ \\"$#\\" -gt 0 ]; then exec \\"$@\\"; fi; exec /bin/bash", "npa-byof-entrypoint"]\n'
-        'CMD ["/bin/bash"]\n'
+        'CMD ["sleep", "infinity"]\n'
     )
 
 
