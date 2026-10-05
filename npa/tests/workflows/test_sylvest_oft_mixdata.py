@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -703,6 +705,26 @@ def test_upstream_task_capture_pairs_each_initial_state() -> None:
     assert [row["initial_state_index"] for row in results] == [0, 1]
 
 
+def _load_workflow_spec(name: str) -> dict[str, object]:
+    """Load a committed Sylvest workflow specification by filename."""
+
+    root = Path(__file__).resolve().parents[3]
+    return yaml.safe_load((root / "workflows/testing" / name).read_text())
+
+
+def _parse_stage_shell_argv(
+    spec: dict[str, object], state_name: str
+) -> argparse.Namespace:
+    """Render config references and parse one workflow stage's module argv."""
+
+    shell = spec["states"][state_name]["run"]["shell"]
+    for key, value in spec["config"].items():
+        shell = shell.replace("{{config." + key + "}}", str(value))
+    tokens = shlex.split(shell)
+    module_index = tokens.index("npa.workflows.sylvest_oft_mixdata")
+    return workflow.build_parser().parse_args(tokens[module_index + 1 :])
+
+
 def test_original_libero_workflow_has_five_connected_substantive_stages() -> None:
     """Keep all five actual data, rollout, metric, and visualization stages wired.
 
@@ -716,13 +738,7 @@ def test_original_libero_workflow_has_five_connected_substantive_stages() -> Non
         None.
     """
 
-    root = Path(__file__).resolve().parents[3]
-    spec = yaml.safe_load(
-        (
-            root
-            / "workflows/testing/sylvest-oft-mixdata-original-libero-comparison.yaml"
-        ).read_text()
-    )
+    spec = _load_workflow_spec("sylvest-oft-mixdata-original-libero-comparison.yaml")
     states = spec["states"]
     assert list(states) == [
         "prepare",
@@ -779,3 +795,26 @@ def test_original_libero_workflow_has_five_connected_substantive_stages() -> Non
         assert "--oft-transformers-revision" in shell
         assert "--benchmark" in shell
         assert "--libero-root" in shell
+
+
+@pytest.mark.parametrize(
+    ("spec_name", "benchmark"),
+    (
+        ("sylvest-oft-mixdata-original-libero-comparison.yaml", "original_libero"),
+        ("sylvest-oft-mixdata-libero-plus-comparison.yaml", "libero_plus"),
+    ),
+)
+def test_both_workflow_specs_render_and_parse_pinned_transformers_argv(
+    spec_name: str, benchmark: str
+) -> None:
+    """Parse every model stage so both specs carry required OFT source pins."""
+
+    spec = _load_workflow_spec(spec_name)
+    for state_name in ("prepare", "baseline_rollouts", "candidate_rollouts"):
+        args = _parse_stage_shell_argv(spec, state_name)
+        assert args.benchmark == benchmark
+        assert args.oft_transformers_root == spec["config"]["oft_transformers_root"]
+        assert (
+            args.oft_transformers_revision
+            == spec["config"]["oft_transformers_revision"]
+        )
