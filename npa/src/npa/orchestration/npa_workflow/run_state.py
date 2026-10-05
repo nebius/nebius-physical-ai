@@ -139,6 +139,16 @@ def _exact_workflow_storage(exact_uri: str, run_id: str) -> RunStorageLocation:
     parsed = urlparse(exact_uri)
     if not parsed.hostname:
         raise ValueError("--workflow-s3-uri must be a canonical s3://bucket/key URI")
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if parts and parts[-1] == "manifest.json":
+        parts.pop()
+    if parts and parts[-1] == "npa-workflow":
+        parts.pop()
+    if str(run_id or "") not in parts[-2:]:
+        raise ValueError(
+            "--workflow-s3-uri must identify the requested run in its trailing "
+            "run/workflow layout"
+        )
     location = resolve_run_storage_location(
         {"bucket": parsed.hostname, "prefix": exact_uri}, run_id=run_id
     )
