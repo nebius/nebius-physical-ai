@@ -277,6 +277,16 @@ block.
 
 ## Interpreting A Failure
 
+When GitHub cancels jobs without ever assigning a runner, check
+`https://www.githubstatus.com/` and the check-run startup annotations. Use the
+read-only `npa/.venv/bin/python -I npa/scripts/ci_recover_validation.py
+--repository <owner>/<repository> --pr <number>` diagnosis. After runner service
+recovers, explicit `--rerun` requests a complete new attempt only when the current
+PR head, tested base, latest attempt, and all component failures are verified.
+Unknown or executed component failures refuse recovery. A removed merge candidate
+needs a fresh queue entry after required PR checks pass; rerunning its old checks
+does not restore it. See `CONTRIBUTING.md#recover-hosted-runner-startup-failures`.
+
 Guardrail failures map to fixes through
 `skills/atomic/guardrail-failures/SKILL.md`. Report numeric results — pass
 counts and exact error messages — rather than a subjective assessment; the repo
