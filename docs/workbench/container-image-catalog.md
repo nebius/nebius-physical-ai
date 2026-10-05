@@ -472,6 +472,16 @@ package-generated keys in the same build layer. Replacements and derivatives
 must pass exact-image scanning and capability evaluation before any of the six
 re-enters this table.
 
+PAIDF workflow rendering separately selects repaired immutable development
+candidates for `npa-cosmos3`, `npa-cosmos-evaluator`, and `npa-cosmos-curate`.
+Their exact source and digest pins are recorded in
+[`public_image_defaults.py`](../../npa/src/npa/orchestration/npa_workflow/public_image_defaults.py).
+Each candidate passed its trusted publication job, including image-security and
+anonymous manifest checks. This is candidate-selection evidence, not a supported
+release promotion or completed PAIDF workflow acceptance; these candidates do
+not re-enter the accepted-release table below. Explicit operator registries and
+image overrides remain supported.
+
 ## 2026-09-24 OCI metadata and runtime-user quarantine
 
 Exact-config inspection found that six more previously accepted releases no
