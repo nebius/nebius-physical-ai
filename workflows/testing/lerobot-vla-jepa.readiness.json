@@ -22,8 +22,8 @@
         "sha256:42cef35862ecd1eed8aa11812fbd80f5e826175654c1ff2beb8d7b345327008e npa/src/npa/deploy/images.py",
         "sha256:a1002b2b0c0ee813b87370e67bfcbd23e5fed6789a7a7e2cc987b7427b93a3ed npa/src/npa/smoke/golden_evals.yaml",
         "sha256:16eea43a1f3cb47a5a4197cc41098d696b2330d013a6939cadef952f300b63bb npa/src/npa/smoke/capabilities.py",
-        "sha256:c7849bd4d3932885879507c8fda6345ca1250dc6ef88725a5be8eb5530078e95 npa/src/npa/workflows/lerobot_vla_jepa.py",
-        "sha256:200eb9ec14d35557dec954f75b45f85b6d19911c478ecae4837a13ae478eb5e1 npa/tests/workflows/test_lerobot_vla_jepa.py"
+        "sha256:b3c15412f0a41671ba344fa1231c9182ad100ad64457cb0609b936edff95c0f5 npa/src/npa/workflows/lerobot_vla_jepa.py",
+        "sha256:b92a211fee8e918cd9ae6a5e9fd97e64afa5a717b43bd8b8cce5f232e121f6c3 npa/tests/workflows/test_lerobot_vla_jepa.py"
       ]
     }
   },
@@ -37,14 +37,14 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "One-byte range probes reached the exact VLA-JEPA checkpoint, Qwen support model, V-JEPA support model, and LIBERO metadata revisions. The three model endpoints accepted anonymous probes; the exact LIBERO metadata endpoint returned HTTP 401 without the operator's Hugging Face credential. Full immutable snapshot download, artifact hashing, and dataset processing occur only in the real worker stages.",
+      "reason": "One-byte range probes reached the exact VLA-JEPA checkpoint, Qwen support model, V-JEPA support model, and a pinned LIBERO parquet member with no cached login. Full immutable snapshot download, artifact hashing, and dataset processing occur only in the real worker stages.",
       "evidence": [
         "private evidence: /home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/vla-jepa/public-payload-access.json"
       ]
     },
     "credentials": {
       "status": "verified",
-      "reason": "The required selected-project Nebius and S3 preflight checks passed. Exact model payload probes succeeded anonymously, while the pinned LIBERO dataset endpoint requires the operator's existing Hugging Face credential. No additional upstream acceptance mechanism was found or invoked.",
+      "reason": "The required selected-project Nebius and S3 preflight checks passed. Exact model and pinned LIBERO dataset probes succeeded anonymously; an operator credential remains optional Hugging Face client behavior, not a prerequisite or acceptance mechanism. No additional upstream acceptance mechanism was found or invoked.",
       "evidence": [
         "private evidence: /home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/vla-jepa/preflight.json",
         "private evidence: /home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/vla-jepa/public-payload-access.json"

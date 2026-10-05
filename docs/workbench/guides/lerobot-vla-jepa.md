@@ -42,14 +42,14 @@ arXiv:2602.10098 (2026). The full notice and LeRobot BibTeX are in
 [`THIRD_PARTY_NOTICES.md`](../../../npa/docker/workbench/lerobot-vla-jepa/THIRD_PARTY_NOTICES.md).
 NPA only supplies packaging, orchestration, and provenance adapters.
 
-The three model repositories accepted anonymous exact-revision range probes
-during qualification. The pinned `HuggingFaceVLA/libero` dataset endpoint
-returned HTTP 401 without a Hugging Face credential, so the workflow passes the
-operator's existing `HF_TOKEN` only through NPA's native secret plumbing. This
-is an access prerequisite for the exact dataset, not an NPA EULA, a new
-acceptance checkbox, or a statement of use rights. Telemetry remains disabled,
-and no credential is copied into image layers. Model weights, datasets, caches,
-checkpoints, videos, and run output are never image layers. Public
+The three model repositories and a pinned `HuggingFaceVLA/libero` parquet member
+accepted anonymous exact-revision byte-range probes with no cached login. The
+runtime uses the normal optional Hugging Face credential behavior, but the
+pinned public payload does not require one, so the native submit forwards only
+the genuine S3 credentials. This is not an NPA EULA, a new acceptance checkbox,
+or a statement of use rights. Telemetry remains disabled, and no credential is
+copied into image layers. Model weights, datasets, caches, checkpoints, videos,
+and run output are never image layers. Public
 redistribution remains **unvalidated** until the exact built bytes, source
 closure, and runtime evidence are reviewed; this workflow uses an
 operator-private image candidate only.
@@ -79,8 +79,7 @@ npa/.venv/bin/npa workbench workflow submit workflows/testing/lerobot-vla-jepa.y
   --project "$NPA_PROJECT" --infra "k8s/${NPA_K8S_CONTEXT}" --runtime --stage-src \
   --run-id vla-jepa-operator-run --var "bucket=${NPA_BUCKET}" \
   --image-override "workbench.lerobot.vla_jepa=${VLA_JEPA_IMAGE}" \
-  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
-  --secret-env HF_TOKEN
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
 After completion, materialize the report prefix and independently check

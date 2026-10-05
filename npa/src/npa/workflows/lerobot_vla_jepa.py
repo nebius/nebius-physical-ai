@@ -345,6 +345,25 @@ def _verify_training(training: Path, prepared: Path) -> dict[str, Any]:
     return record
 
 
+def _sealed_heldout_task_ids(prepared: Path) -> list[int]:
+    """Read the authoritative held-out task ids from a prepared artifact."""
+    record = json.loads((prepared / "prepare.json").read_text())
+    try:
+        return _ids(json.dumps(record["heldout_task_ids"]))
+    except KeyError as error:
+        raise ValueError("prepared artifact lacks sealed held-out task ids") from error
+
+
+def _require_sealed_heldout_task_ids(
+    prepared: Path, observed: list[int], artifact: str
+) -> list[int]:
+    """Reject task ids that differ from the prepared train/held-out split."""
+    sealed = _sealed_heldout_task_ids(prepared)
+    if observed != sealed:
+        raise ValueError(f"{artifact} task ids differ from the sealed prepare split")
+    return sealed
+
+
 def _eval_command(
     checkpoint: Path, output: Path, args: argparse.Namespace, models: dict[str, Path]
 ) -> list[str]:
@@ -391,6 +410,9 @@ def rollout(
     _verify_training(training, prepared)
     if args.eval_episodes <= 0 or args.eval_batch_size <= 0:
         raise ValueError("evaluation episodes and batch size must be positive")
+    heldout_task_ids = _require_sealed_heldout_task_ids(
+        prepared, _ids(args.heldout_task_ids), "requested held-out"
+    )
     models = _support_paths(_runtime_cache())
     run_output = output / "native-eval"
     command = _eval_command(training / "checkpoint", run_output, args, models)
@@ -404,7 +426,7 @@ def rollout(
         {
             "schema": "npa.lerobot-vla-jepa.rollout.v1",
             "training_sha256": file_sha256(training / "training.json"),
-            "heldout_task_ids": _ids(args.heldout_task_ids),
+            "heldout_task_ids": heldout_task_ids,
             "suite": args.libero_suite,
             "native_metrics": metrics,
             "videos": _inspect_videos(run_output),
@@ -419,6 +441,11 @@ def evaluate(rollouts: Path, training: Path, prepared: Path, output: Path) -> No
     rollout_record = json.loads((rollouts / "rollout.json").read_text())
     if rollout_record.get("training_sha256") != file_sha256(training / "training.json"):
         raise ValueError("rollout does not derive from this exact checkpoint")
+    heldout_task_ids = _require_sealed_heldout_task_ids(
+        prepared,
+        _ids(json.dumps(rollout_record.get("heldout_task_ids"))),
+        "rollout held-out",
+    )
     overall = (rollout_record.get("native_metrics") or {}).get("overall") or {}
     success = overall.get("pc_success")
     if not isinstance(success, (float, int)) or not 0 <= float(success) <= 1:
@@ -430,7 +457,7 @@ def evaluate(rollouts: Path, training: Path, prepared: Path, output: Path) -> No
             "training_sha256": file_sha256(training / "training.json"),
             "rollout_sha256": file_sha256(rollouts / "rollout.json"),
             "checkpoint_hashes": training_record["checkpoint_hashes"],
-            "heldout_task_ids": rollout_record["heldout_task_ids"],
+            "heldout_task_ids": heldout_task_ids,
             "suite": rollout_record["suite"],
             "pc_success": float(success),
             "native_metrics": rollout_record["native_metrics"],

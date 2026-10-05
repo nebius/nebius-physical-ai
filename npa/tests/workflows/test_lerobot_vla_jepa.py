@@ -68,11 +68,10 @@ def test_live_matrix_registers_the_private_candidate_without_a_generic_fallback(
     assert set(case.secret_envs) == {
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
-        "HF_TOKEN",
     }
     assert "unroutable image sentinel" in case.plan_only_justification
     assert "private" in case.plan_only_justification
-    assert "LIBERO dataset endpoint" in case.plan_only_justification
+    assert "anonymous runtime fetches" in case.plan_only_justification
     assert "no acceptance mechanism" in case.plan_only_justification
 
 
@@ -210,14 +209,17 @@ def test_evaluation_rejects_missing_or_out_of_range_native_success(
     prepared = tmp_path / "prepared"
     training = tmp_path / "training"
     rollouts = tmp_path / "rollouts"
-    vla.write_json(prepared / "prepare.json", {"seed": 42})
+    vla.write_json(prepared / "prepare.json", {"seed": 42, "heldout_task_ids": [0]})
     vla.write_json(
         training / "training.json",
         {"prepare_sha256": vla.file_sha256(prepared / "prepare.json")},
     )
     vla.write_json(
         rollouts / "rollout.json",
-        {"training_sha256": vla.file_sha256(training / "training.json")},
+        {
+            "training_sha256": vla.file_sha256(training / "training.json"),
+            "heldout_task_ids": [0],
+        },
     )
     (training / "checkpoint").mkdir()
     original = vla._verify_training
@@ -233,6 +235,58 @@ def test_evaluation_rejects_missing_or_out_of_range_native_success(
             raise AssertionError("missing native success unexpectedly accepted")
     finally:
         vla._verify_training = original
+
+
+def test_rollout_rejects_task_ids_outside_the_sealed_prepare_split(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Prevent a direct rollout invocation from evaluating training tasks."""
+    prepared = tmp_path / "prepared"
+    vla.write_json(prepared / "prepare.json", {"heldout_task_ids": [0]})
+    monkeypatch.setattr(vla, "_verify_training", lambda *_: {})
+    monkeypatch.setattr(
+        vla,
+        "_support_paths",
+        lambda *_: (_ for _ in ()).throw(AssertionError("evaluation dispatched")),
+    )
+    args = SimpleNamespace(
+        eval_episodes=1,
+        eval_batch_size=1,
+        heldout_task_ids="[1]",
+    )
+
+    try:
+        vla.rollout(tmp_path / "training", prepared, tmp_path / "rollouts", args)
+    except ValueError as error:
+        assert "sealed prepare split" in str(error)
+    else:
+        raise AssertionError("rollout accepted task ids outside the sealed split")
+
+
+def test_evaluation_rejects_rollout_task_ids_outside_the_sealed_prepare_split(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Prevent a forged rollout record from relabeling training tasks as held-out."""
+    prepared = tmp_path / "prepared"
+    training = tmp_path / "training"
+    rollouts = tmp_path / "rollouts"
+    vla.write_json(prepared / "prepare.json", {"heldout_task_ids": [0]})
+    vla.write_json(training / "training.json", {"training": "test"})
+    vla.write_json(
+        rollouts / "rollout.json",
+        {
+            "training_sha256": vla.file_sha256(training / "training.json"),
+            "heldout_task_ids": [1],
+        },
+    )
+    monkeypatch.setattr(vla, "_verify_training", lambda *_: {"checkpoint_hashes": {}})
+
+    try:
+        vla.evaluate(rollouts, training, prepared, tmp_path / "evaluation")
+    except ValueError as error:
+        assert "sealed prepare split" in str(error)
+    else:
+        raise AssertionError("evaluation accepted a rollout from training tasks")
 
 
 def test_report_writes_and_decodes_a_rerun_recording(tmp_path: Path) -> None:
