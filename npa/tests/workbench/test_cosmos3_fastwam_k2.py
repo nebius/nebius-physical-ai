@@ -185,15 +185,16 @@ def test_robolab_uses_only_the_shared_isaac_acceptance_surface() -> None:
         raise AssertionError("explicit Isaac opt-out was accepted")
 
 
-def test_robolab_client_keeps_the_shared_isaac_acceptance_surface(
+def test_robolab_client_uses_app_launcher_device_without_cuda_visible_devices(
     tmp_path: Path, monkeypatch
 ) -> None:
-    captured: dict[str, str] = {}
+    captured: dict[str, object] = {}
     output = tmp_path / "robolab/output/npa-fastwam-k2-full-wam"
     output.mkdir(parents=True)
 
-    def fake_run(_argv, *, cwd, env, log) -> None:
-        captured.update(env)
+    def fake_run(argv, *, cwd, env, log) -> None:
+        captured["argv"] = argv
+        captured["env"] = env
 
     monkeypatch.setattr("npa.workbench.cosmos.fastwam_k2._run", fake_run)
     result = _run_robolab(
@@ -201,28 +202,32 @@ def test_robolab_client_keeps_the_shared_isaac_acceptance_surface(
         tmp_path / "robolab",
         EvaluationRequest(),
         "full-wam",
-        {"ACCEPT_EULA": "Y"},
+        {"ACCEPT_EULA": "Y", "CUDA_VISIBLE_DEVICES": "0"},
         tmp_path / "robolab.log",
-        cuda_visible_devices="0",
+        cuda_device="1",
     )
 
     assert result == output
-    assert captured["ACCEPT_EULA"] == "Y"
-    assert captured["OMNI_KIT_ACCEPT_EULA"] == "Y"
-    assert captured["CUDA_VISIBLE_DEVICES"] == "0"
+    assert captured["env"] == {"ACCEPT_EULA": "Y", "OMNI_KIT_ACCEPT_EULA": "Y"}
+    assert captured["argv"][-4:] == [
+        "--device",
+        "cuda:1",
+        "--output-folder-name",
+        "npa-fastwam-k2-full-wam",
+    ]
 
 
 def test_cuda_topology_preserves_two_gpu_split_and_allows_one_gpu_colocation() -> None:
     assert _select_cuda_topology(2) == {
         "visible_cuda_device_count": 2,
         "policy_server_cuda_visible_devices": "0",
-        "robolab_cuda_visible_devices": "1",
+        "robolab_cuda_device": "1",
         "shared_cuda_device": False,
     }
     assert _select_cuda_topology(1) == {
         "visible_cuda_device_count": 1,
         "policy_server_cuda_visible_devices": "0",
-        "robolab_cuda_visible_devices": "0",
+        "robolab_cuda_device": "0",
         "shared_cuda_device": True,
     }
     try:

@@ -358,7 +358,7 @@ def _select_cuda_topology(device_count: int) -> dict[str, Any]:
     return {
         "visible_cuda_device_count": device_count,
         "policy_server_cuda_visible_devices": "0",
-        "robolab_cuda_visible_devices": client_device,
+        "robolab_cuda_device": client_device,
         "shared_cuda_device": client_device == "0",
     }
 
@@ -489,7 +489,7 @@ def _run_robolab(
     env: dict[str, str],
     log: Path,
     *,
-    cuda_visible_devices: str,
+    cuda_device: str,
 ) -> Path:
     """Run actual closed-loop RoboLab episodes and retain their native result rows."""
     output_name = f"npa-fastwam-k2-{variant}"
@@ -513,12 +513,17 @@ def _run_robolab(
         request.instruction_type,
         "--video-mode",
         request.video_mode,
+        "--device",
+        f"cuda:{cuda_device}",
         "--output-folder-name",
         output_name,
     ]
-    client_env = dict(
-        _isaac_runtime_env(env), CUDA_VISIBLE_DEVICES=cuda_visible_devices
-    )
+    # Isaac Lab enumerates physical CUDA devices itself. Passing
+    # CUDA_VISIBLE_DEVICES can make its Omniverse and CUDA enumerators disagree;
+    # select the documented AppLauncher device instead while preserving the
+    # policy server's separate CUDA isolation.
+    client_env = _isaac_runtime_env(env)
+    client_env.pop("CUDA_VISIBLE_DEVICES", None)
     _run(argv, cwd=robolab, env=client_env, log=log)
     output = robolab / "output" / output_name
     if not output.is_dir():
@@ -704,7 +709,7 @@ def run_variant(
                     variant,
                     dict(os.environ),
                     root / "robolab.log",
-                    cuda_visible_devices=cuda_topology["robolab_cuda_visible_devices"],
+                    cuda_device=cuda_topology["robolab_cuda_device"],
                 )
             finally:
                 process.terminate()

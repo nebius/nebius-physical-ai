@@ -1923,10 +1923,8 @@ def _assert_fastwam_k2_metrics(report: dict[str, Any]) -> None:
     topology = report["cuda_topology"]
     assert topology["visible_cuda_device_count"] >= 1
     assert topology["policy_server_cuda_visible_devices"] == "0"
-    assert topology["robolab_cuda_visible_devices"] in {"0", "1"}
-    assert topology["shared_cuda_device"] is (
-        topology["robolab_cuda_visible_devices"] == "0"
-    )
+    assert topology["robolab_cuda_device"] in {"0", "1"}
+    assert topology["shared_cuda_device"] is (topology["robolab_cuda_device"] == "0")
     metrics = report["metrics"]
     assert set(metrics["tasks"]) == set(SCREENING_TASKS)
     for task in SCREENING_TASKS:
