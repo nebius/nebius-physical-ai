@@ -38,9 +38,9 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
     if image == "cosmos3":
         # The framework's frozen upstream lock used AnyIO 4.9.0.  The portable
         # overlay must retain the hash-verified TLS/IDN vulnerability repair.
-        assert "anyio==4.15.1" in lock
+        assert "anyio==4.14.2" in lock
         assert (
-            "anyio==4.15.1"
+            "anyio==4.14.2"
             in (directory / "security-upgrades-requirements.in").read_text()
         )
 

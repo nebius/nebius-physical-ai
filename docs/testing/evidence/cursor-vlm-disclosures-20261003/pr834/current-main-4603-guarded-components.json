@@ -1,0 +1,42 @@
+{
+  "schema": "npa.sanitized-vlm-disclosure-guarded-components/v1",
+  "candidate": {
+    "head": "3e5e46bb09ccfe07d1c55d676e0521c63c54deec",
+    "tree": "1fd1f128cd13e0a63ea78ad494061095d43b15b2",
+    "main_parent": "4603e7e1d8ffede505161448fe92368e7c6bda45",
+    "prior_proof_head": "a4de38f6268ade2ff030f52bbd8f48d18c90152a"
+  },
+  "accepted_fixture_files": {
+    "test_main_sha256": "31198f4d79914a118cb2d3b02126914dda8918ddb40b47a673f9300e23d9135d",
+    "test_agent_sha256": "31e08309b76f1324a7f57462eea2d1f3ee10fa24058bb8c82865f46d51c198f6",
+    "test_cleanup_and_drain_sha256": "58a44714d420f5a8cda687af6880270e1bc33c9f84e506bdf3786a89483c0141",
+    "test_configure_fresh_user_sha256": "f49e769d1c0ec9f3cbe4df042a033dcae87c195e1c83e5cda6316c6ef50faada"
+  },
+  "guarded_no_spawn_controls": {
+    "guard_component_manifest_sha256": "80f8c398db17fd4c3f45662e187a72a442b7fdfa235c7e56d7f4ebdf3485822c",
+    "guard_component_source_sha256": "be7ebb05d93daabd6296ec5ea06af9162d820be3382e8953cbb2c3b7370c779e",
+    "native_adapter_sha256": "4c4606bb2952b44479e3e309834b5112ace59e6f91dcf4198da35668ca0092b5",
+    "native_adapter_control_sha256": "0ffb7cea5276217235a96564b99e9a65cd7f1703bdcad9a97a298fd5c2773043",
+    "guarded_fixture_tests": 6,
+    "guarded_fixture_failures": 0,
+    "guarded_fixture_errors": 0,
+    "guarded_fixture_skips": 0,
+    "guarded_fixture_denied_direct_spawns": 0,
+    "native_profile_tests": 4,
+    "native_profile_failures": 0,
+    "native_profile_errors": 0,
+    "native_profile_skips": 0,
+    "native_profile_recorded_cli_commands": 54,
+    "native_profile_denied_direct_spawns": 0,
+    "native_profile_host_mounts_mapped": false,
+    "native_profile_credentials_copied": false,
+    "source_before_after_equal": true
+  },
+  "limits": [
+    "The guard covers configured or bare direct Python subprocess launches only. It is not a shell-grandchild, arbitrary-exec, SDK, HTTP, or network sandbox.",
+    "The native-profile result exercises only the existing four local profile rollback cases in a disposable private chroot. It does not establish cloud access, model quality, GPU behavior, or a full-suite result.",
+    "The original hosted twelve-response protocol is retained from its original execution. No provider request, retry, or Claude review was selected for these controls.",
+    "Earlier runner setup failures and aborted or unknown full-suite artifacts remain private retained failures; they are not converted into passing evidence.",
+    "The local documentation drift check did not reach a terminal result in task isolation and is not claimed here. Exact published-head CI, coverage aggregation, anonymous byte verification, and final PR lifecycle checks remain separate."
+  ]
+}

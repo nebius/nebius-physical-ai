@@ -58,6 +58,7 @@ def test_validated_result_does_not_reach_legacy_clamp(monkeypatch):
         frame_count=1,
         rubric=vlm_eval.DEFAULT_RUBRIC,
         structured=vlm_eval.VlmStructuredResponse(False, 0.74268, "visible"),
+        provider_call_made=False,
     )
     assert result.score == 0.7427
     assert result.passed is False

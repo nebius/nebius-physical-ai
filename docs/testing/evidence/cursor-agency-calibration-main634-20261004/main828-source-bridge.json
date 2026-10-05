@@ -1,0 +1,212 @@
+{
+  "schema": "npa.vlm_agency.landed_completion_bridge/v1",
+  "pr": 829,
+  "source_execution_head": "59250527f81f21a82ad2d8a2c7df8815afe6e4a6",
+  "source_execution_tree": "e8487dc9a012b5b11ce23bee8a0f19366b32fd74",
+  "parents": [
+    "d8d80ad19cca84b50f9a30bc2f1ee9a1517dd86c",
+    "935bc9de16aebd9c08600fdba195781615c15eca"
+  ],
+  "integration_main": "935bc9de16aebd9c08600fdba195781615c15eca",
+  "original_hosted_execution_head": "67ee0e9c6a2a33daa83797ffeea82bb9aa2a437b",
+  "original_frozen_proof": "https://github.com/nebius/nebius-physical-ai/blob/d8d80ad19cca84b50f9a30bc2f1ee9a1517dd86c/docs/testing/evidence/cursor-agency-calibration-main634-20261004/readme.md",
+  "incoming_scope": {
+    "paths": 19,
+    "changed_evaluator_functions": [
+      "_hosted_structured_response",
+      "_strict_comparison_verdict",
+      "_verdict_with_evidence"
+    ],
+    "changed_functions_equal_landed_main": true,
+    "all_other_evaluator_definitions_equal_accepted_parent": true,
+    "prompt_task_content_frame_selection_request_capture_writer_metrics_changed": false,
+    "grade_provider_client_caption_storage_bytes_changed": false,
+    "trusted_live_caller_and_collection_hooks": "Exact landed shared required-live opt-in and restoration contracts; synthetic-key network-blocked tests, no new hosted calls.",
+    "owned_test_fixture_preservation": "Both-class negative fixture and all constructor/rate/metric assertions retain accepted parent ASTs; incoming completion tests preserved."
+  },
+  "original_vs_current_source_hashes": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "current_sha256": "12153a5ffc5e862fe2aedefa8cf765e9a8b3022b53dbaf041373115d40d96a2f",
+      "original67_sha256": "180b731ef276d665825a06154f37bb88bc38497e25d5d27e0b822b0b1089de20",
+      "byte_equal_original67": false
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/agency.py",
+      "current_sha256": "bdfb8f5f89cc15840a20758dc927c29ab6c9252c3dc141736604d5818e30dae5",
+      "original67_sha256": "bdfb8f5f89cc15840a20758dc927c29ab6c9252c3dc141736604d5818e30dae5",
+      "byte_equal_original67": true
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "current_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "original67_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "byte_equal_original67": true
+    },
+    {
+      "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+      "current_sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e",
+      "original67_sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e",
+      "byte_equal_original67": true
+    },
+    {
+      "path": "npa/tests/e2e/test_vlm_agency_calibration_live.py",
+      "current_sha256": "e3e7c4b76b3fb00916b4b145cd0772a8d63e270d37f0395d4a7d4c7a577daaf1",
+      "original67_sha256": "e3e7c4b76b3fb00916b4b145cd0772a8d63e270d37f0395d4a7d4c7a577daaf1",
+      "byte_equal_original67": true
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/fixtures/isaac_agency_calibration_v1/benchmark.json",
+      "current_sha256": "5a6c421be6ef28ca74d4eda4a836a9f940d5ee67ce0731f452775f157791ab68",
+      "original67_sha256": "5a6c421be6ef28ca74d4eda4a836a9f940d5ee67ce0731f452775f157791ab68",
+      "byte_equal_original67": true
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/fixtures/isaac_agency_calibration_v1/frame-manifest.json",
+      "current_sha256": "35f735b7543f44fc26e58830e8c882d74901b6d67513f989e89e6e42ab2e96f0",
+      "original67_sha256": "35f735b7543f44fc26e58830e8c882d74901b6d67513f989e89e6e42ab2e96f0",
+      "byte_equal_original67": true
+    }
+  ],
+  "unchanged_function_AST_bindings": [
+    {
+      "name": "_build_prompt",
+      "sha256": "0b84ed7e1d5d825e86114091153d1eb7c17171d1284dd68d47f1003fec9eb95e"
+    },
+    {
+      "name": "_openai_content",
+      "sha256": "e05871365e60ec078e14e6e25211c12ef304ad722ba52779311b1fe397f1ee36"
+    },
+    {
+      "name": "_common_hosted_request",
+      "sha256": "f91211488efd4b58ea98929d09d787dbe9886d70e317079bece3018271b9cfd5"
+    },
+    {
+      "name": "_comparison_prompt",
+      "sha256": "57db877ec1e81ec0fd69bed5e3753ab72ec5ece61ba6c8874906e8c3cb1ef37b"
+    },
+    {
+      "name": "_resolve_task_text",
+      "sha256": "987601ec536bf87559c52f9b09fa3cf3231f1a0963ed0c0f29d26c98cf1b8110"
+    },
+    {
+      "name": "_post_with_readiness_retry",
+      "sha256": "874a0f33ca0055fdf6652ea6bebe6a9d76ec1ae56cdf876629bfde45f6f5bf3d"
+    },
+    {
+      "name": "_backend_response_from_http",
+      "sha256": "6601f542facefff27d1c25cb382b1dfa418e1d76e1530dd2c53110c570cdf6cb"
+    },
+    {
+      "name": "_captured_http_response",
+      "sha256": "c40a4589872a4045b1982d4b620431457ded2de7471199c990abf17a7d2cc33c"
+    },
+    {
+      "name": "write_result",
+      "sha256": "0f33ff8e95ffcbe43f4cf3389641fd323cab18873410b83baa6e0f0b8b4a1d51"
+    },
+    {
+      "name": "benchmark_vlm_eval",
+      "sha256": "61b812680c31ed82bb4c9f130f2dc6792708f8178dc201d90b98302c1e73b1cf"
+    },
+    {
+      "name": "evaluate_vlm",
+      "sha256": "539939eeaf92d28ac620acce3225790b6f15adbfab9d461e8c76e2b7c5e074dd"
+    },
+    {
+      "name": "VlmBenchmarkMetrics",
+      "sha256": "d8ac6fa7b9194ccf5cc1dcaf45f01c0786d720b40e37be92e405624d754085ee"
+    }
+  ],
+  "fresh_local_supplement": {
+    "execution_head": "59250527f81f21a82ad2d8a2c7df8815afe6e4a6",
+    "affected_passed": 1035,
+    "inherited_opt_in_GPU_skips": 1,
+    "warnings": 8,
+    "seconds": 45.14,
+    "documentation_passed": 1177,
+    "documentation_seconds": 13.12,
+    "precheck_passed": 270,
+    "docs_drift": "PASS",
+    "merge_precheck": "PASS against935 at execution",
+    "aggregate_scans": "PASS built-in confidentiality and unchanged gitleaks rules",
+    "source_module_package_environment_launcher_before_after_stable": true,
+    "source_hash_count": 85,
+    "package_inventory_count": 165,
+    "quiet_skip_identity": [
+      {
+        "classname": "tests.workbench.test_vlm_eval_backend",
+        "name": "test_live_gpu_self_hosted_vlm_eval_returns_structured_score",
+        "time": "0.000"
+      }
+    ],
+    "original_response_CPU_replays": 6,
+    "full_metric_populations_equal": 3,
+    "bad_completion_controls_passed": 180,
+    "rejection_before_scalar_parser": true,
+    "replay_network_calls": 0,
+    "negative_completion_values": [
+      "absent",
+      "null",
+      "length",
+      "content_filter",
+      "tool_calls",
+      "error",
+      "STOP",
+      "empty",
+      "boolean",
+      "integer"
+    ],
+    "negative_backends": [
+      "api",
+      "self-hosted",
+      "paired"
+    ]
+  },
+  "original_raw_response_hashes": [
+    {
+      "request_sha256": "0b426aa0ec5e43a9ec75d938b810aa9ed732cba75c6cecdd16bd3a4471d8219c",
+      "response_sha256": "33961ea926af0e0615c2cfb7cbe61c0a67d70811698c8cdb33f7787ce14daa25"
+    },
+    {
+      "request_sha256": "c1e5019299d6917087c7f4fa383ae0a715c4ab5a421a609b1a753b06bfd82e1d",
+      "response_sha256": "622efbea247767b8b7cf96ada00cf8eba0a25a2e3f20e661122ca40ade3092ad"
+    },
+    {
+      "request_sha256": "dcf2b1d33b2ad57d99fccbdb2ff098feca8c14312493df79295654de253846f4",
+      "response_sha256": "c8c5cf7ce3529429056fd6a2f369159fc7575a14ce93e15585b656e41e3e65ec"
+    },
+    {
+      "request_sha256": "f7983831d7bb2207d751dd320ccaf74f1bc602e799e8805b0d0754dd9f40d0f0",
+      "response_sha256": "c2a271c3beed343d9a04f6cbe2df3d2f3b631982dd592310c6ab9fb6aa2b0661"
+    },
+    {
+      "request_sha256": "0eeeb5189fac6924d8146686b0743bc73cabf777b4c3b6698a2d0847d51dff1b",
+      "response_sha256": "e4cf391f08496baef41c9b3bc4fde43e3d7c737ebd9628b962e012c0ebd36eb3"
+    },
+    {
+      "request_sha256": "b0d6bb3d3b5cffd002b89f3763af69060bedb25d490f2c323cb02fb7d7dfa6b6",
+      "response_sha256": "8679a78efe16b9caed00764c133a99d2ea1c5048b3bf497c6d08b254f027286d"
+    }
+  ],
+  "same_source_live_bridge_limit": "Whole evaluator bytes differ from67 because three response-completion functions equal landed828. Six other hosted source/protocol files are byte-identical67; exact request/prompt/frame/capture/writer/metric ASTs and actual six serialized requests/raw bytes/decoded results/grade/metrics replay unchanged. This is CPU replay, not current-head inference.",
+  "selected_full_bridge": {
+    "execution_head": "31b64fd6150eb5e4925993c80b0ec69330455ddf",
+    "passed": 39905,
+    "skipped": 193,
+    "xpassed": 1,
+    "coverage_percent": 77.56,
+    "unchanged_floor": 60,
+    "limits": "Original execution, not592/publication full; all193 skip identities retained, XPASS attribution reconstructed rather than emitted per-node runtime. Accepted affected supplements preserve their original heads."
+  },
+  "AI_review_scope": "Real first-party Claude Code Opus5 primarya8 and one focused0cb follow-up, material repairs/context independently resolved; later accepted constructor/rubric/4e9 and landed828 scopes compose by exact ASTs. No third review, human approval, Claude pixel inspection or future-head approval.",
+  "quality_limits": [
+    "Gemma positive false negative retained; MiniMax/Gemma inaccurate rationales retained.",
+    "Kimi negative0.4 contradicts zero-on-ambiguous-terminal rubric despite fixed binary agreement. No scores/labels/thresholds changed.",
+    "Stylized drawings and two fixed claims per model are not model calibration, causal grasp, continuous stability, physical robot, whole-episode or safety proof.",
+    "All original failed fulls/launchers/fixtures/native attempts and earlierbc KimiFP/c5FN retain original identities."
+  ],
+  "new_provider_calls": 0,
+  "new_whole_local_fulls": 0,
+  "publication_limit": "Documentation-only successor must preserve whole npa/skills/.github trees. Actual published-head applicable CI/currentmain/signatures/proof/body/lifecycle and sole-coordinator guarded queue remain separate."
+}
