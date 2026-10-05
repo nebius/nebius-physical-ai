@@ -89,6 +89,14 @@ tool's artifact independently; the preflight and renderer share that same map.
 
 ## Inventory
 
+The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
+snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three
+fixable critical findings in the prior CPU builds. EnvGen clears inherited NPA
+source and workflow directories before copying the selected source revision;
+Docker directory copies otherwise preserve files removed from that revision.
+These build changes require new immutable images and fresh validation before
+release promotion.
+
 All first-class images live under `npa/docker/workbench/`:
 
 | Image / role | Dockerfile | Default exposure |

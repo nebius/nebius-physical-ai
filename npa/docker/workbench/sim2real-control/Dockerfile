@@ -3,7 +3,8 @@ FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9
 
 ARG SIM2REAL_CONTROL_VERSION=0.1.2
 ARG NPA_SOURCE_SHA
-ARG DEBIAN_SNAPSHOT=20260801T000000Z
+ARG DEBIAN_SNAPSHOT=20261002T000000Z
+ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1
 
 LABEL npa.tool="sim2real-control" \
       npa.version="${SIM2REAL_CONTROL_VERSION}" \
@@ -45,6 +46,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
       curl netcat-openbsd openssh-client openssh-server procps rsync sudo \
+      "perl-base=${MIN_PERL_BASE_VERSION}" \
     && rm -f /etc/ssh/ssh_host_* \
     && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \
     && printf '%s\n' \

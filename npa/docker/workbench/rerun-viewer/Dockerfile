@@ -3,7 +3,8 @@ FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9
 
 ARG RERUN_SDK_VERSION=0.38.1
 ARG NPA_SOURCE_SHA
-ARG DEBIAN_SNAPSHOT=20260801T000000Z
+ARG DEBIAN_SNAPSHOT=20261002T000000Z
+ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1
 
 LABEL npa.tool="rerun-viewer" \
       npa.version="${RERUN_SDK_VERSION}" \
@@ -46,6 +47,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && apt-get install -y --no-install-recommends \
       ca-certificates curl ffmpeg netcat-openbsd openssh-client openssh-server \
       procps rsync sudo \
+      "perl-base=${MIN_PERL_BASE_VERSION}" \
     && install -d -m 0755 /run/sshd /workspace /opt/npa \
     && rm -f /etc/ssh/ssh_host_* \
     && printf '%s\n' \

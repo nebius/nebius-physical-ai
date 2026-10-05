@@ -57,6 +57,23 @@ def test_cosmos_reason_replaces_parent_npa_metadata_before_pip_check() -> None:
     )
 
 
+def test_sim2real_cpu_images_install_security_fixed_perl() -> None:
+    for relative in ("sim2real-control/Dockerfile", "rerun-viewer/Dockerfile"):
+        text = (WORKBENCH / relative).read_text(encoding="utf-8")
+        assert "ARG DEBIAN_SNAPSHOT=20261002T000000Z" in text, relative
+        assert "ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1" in text, relative
+        assert '"perl-base=${MIN_PERL_BASE_VERSION}"' in text, relative
+
+
+def test_envgen_clears_inherited_source_before_copying_exact_revision() -> None:
+    text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
+    removal = text.index("rm -rf /opt/npa/src /opt/npa/workflows")
+    source_copy = text.index("COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa")
+    catalog_copy = text.index("COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows")
+    assert text.index("test ! -L /opt/npa") < removal < source_copy < catalog_copy
+    assert catalog_copy < text.index("FROM scratch AS runtime")
+
+
 def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
     installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text(
