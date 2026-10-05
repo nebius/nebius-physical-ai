@@ -19,7 +19,7 @@ PAIDF_SPECS = (
     "workflows/main/paidf-cosmos3.yaml",
 )
 REPAIRED_DIGESTS = {
-    "npa-cosmos3": "sha256:f791a4f763aeb903a576f328b666d8f8427a2f98050948c3bbd9310e9033a2ff",
+    "npa-cosmos3": "sha256:1aa6c473d95863709766f02d3e199cf8cf860adbe585b409a23a82bae4a2c37e",
     "npa-cosmos-evaluator": "sha256:5d1335f58d5cc5e11cb0d4ccd0023cafe6e3b0bcc8af405f1f9d18013a17edfa",
     "npa-cosmos-curate": "sha256:11e596bfb2cb46a6435dfe8013484882b1b0d6c7747ead1edb8c32c94a0581ad",
 }

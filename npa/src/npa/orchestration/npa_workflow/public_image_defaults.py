@@ -8,12 +8,12 @@ from npa.deploy.images import (
 # These exact public development builds passed the trusted publication workflow.
 # They replace the quarantined release bytes only in workflow image selection;
 # release promotion and the stale-release quarantine remain independent.
-# Cosmos3: https://github.com/nebius/nebius-physical-ai/actions/runs/37167266124
+# Cosmos3: https://github.com/nebius/nebius-physical-ai/actions/runs/37378387786
 # Evaluator/Curator: https://github.com/nebius/nebius-physical-ai/actions/runs/37271661779
 _PAIDF_CANDIDATES = {
     "cosmos3": (
-        "3b4c29a7e273295165529dbefaec1e04e0f7bc1e",
-        "sha256:f791a4f763aeb903a576f328b666d8f8427a2f98050948c3bbd9310e9033a2ff",
+        "6462f27f98e1ded31d17b00944f943db3381ac35",
+        "sha256:1aa6c473d95863709766f02d3e199cf8cf860adbe585b409a23a82bae4a2c37e",
     ),
     "cosmos-evaluator": (
         "bd6145947145f75f9065707e3f5c53f841fab9d3",
