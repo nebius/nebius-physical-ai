@@ -48,6 +48,33 @@ def _video(path: Path, filter_graph: str) -> None:
     )
 
 
+def _frame_timestamps(path: Path) -> list[float]:
+    """Read decoded presentation timestamps through ffprobe's frame parser."""
+
+    completed = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "frame=best_effort_timestamp_time",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return [
+        float(line.split(",", 1)[0])
+        for line in completed.stdout.splitlines()
+        if line.strip()
+    ]
+
+
 def _controls() -> dict[str, object]:
     """Return a valid minimal native-control sidecar fixture."""
 
@@ -282,6 +309,9 @@ def test_pair_and_rrd_use_decoded_media_not_manifests(
     assert paired["frame_count"] == 4
     assert paired["fps"] == switchworld.PAIR_FRAME_RATE
     assert paired_fps == switchworld.PAIR_FRAME_RATE
+    assert _frame_timestamps(paired_path) == pytest.approx(
+        [index / switchworld.PAIR_FRAME_RATE for index in range(4)]
+    )
     for index, frame in enumerate(paired_frames):
         baseline_error = np.abs(
             frame[:, :64].astype(int) - baseline_frames[index].astype(int)

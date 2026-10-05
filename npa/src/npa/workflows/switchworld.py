@@ -1334,55 +1334,79 @@ def measure(
         return report
 
 
-def _pair_filter() -> str:
-    """Return the frame-index-aligned filter graph for paired model media."""
-
-    # Target media may retain its 40 fps cache presentation rate while model
-    # outputs are emitted at 16 fps.  Pair by decoded frame index, not source PTS.
-    return (
-        f"[0:v]settb=AVTB,setpts=N/({PAIR_FRAME_RATE}*TB)[left];"
-        f"[1:v]settb=AVTB,setpts=N/({PAIR_FRAME_RATE}*TB)[right];"
-        "[left][right]hstack=inputs=2,setsar=1[paired]"
-    )
-
-
 def _pair_videos(left: Path, right: Path, output: Path) -> dict[str, Any]:
     """Produce a frame-index-aligned H.264 side-by-side MP4 from decoded media."""
 
-    left_evidence, right_evidence = _video_evidence(left), _video_evidence(right)
-    if left_evidence["frame_count"] != right_evidence["frame_count"]:
+    import numpy as np
+
+    # Decode both sources first and emit one raw RGB frame per matching source
+    # index.  The target cache is 40 fps while model media is 16 fps, so letting
+    # ffmpeg synchronize their input timestamps can duplicate frames.  A raw
+    # CFR input makes the 16-fps indexed presentation timeline explicit without
+    # combining contradictory output-rate and passthrough flags on FFmpeg 6.
+    left_frames, _ = _decoded_frames(left)
+    right_frames, _ = _decoded_frames(right)
+    if len(left_frames) != len(right_frames):
         raise SwitchWorldError("paired videos must have equal decoded frame counts")
+    left_shape, right_shape = left_frames[0].shape, right_frames[0].shape
+    if left_shape[0] != right_shape[0] or left_shape[2] != right_shape[2]:
+        raise SwitchWorldError(
+            "paired videos must have matching frame height and channels"
+        )
+
+    height, left_width, channels = left_shape
+    _, right_width, _ = right_shape
+    output_width = left_width + right_width
     output.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            "error",
-            "-i",
-            str(left),
-            "-i",
-            str(right),
-            "-filter_complex",
-            _pair_filter(),
-            "-map",
-            "[paired]",
-            "-r",
-            str(PAIR_FRAME_RATE),
-            "-vsync",
-            "0",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
-            str(output),
-        ],
-        check=True,
+    command = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "rawvideo",
+        "-pixel_format",
+        "rgb24",
+        "-video_size",
+        f"{output_width}x{height}",
+        "-framerate",
+        str(PAIR_FRAME_RATE),
+        "-i",
+        "pipe:0",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(output),
+    ]
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    try:
+        assert process.stdin is not None
+        for left_frame, right_frame in zip(left_frames, right_frames, strict=True):
+            paired = np.concatenate((left_frame, right_frame), axis=1)
+            if paired.shape != (height, output_width, channels):
+                raise SwitchWorldError("paired decoded frames changed geometry")
+            process.stdin.write(paired.tobytes())
+        process.stdin.close()
+        assert process.stderr is not None
+        stderr = process.stderr.read()
+        returncode = process.wait()
+    except BaseException:
+        process.kill()
+        process.wait()
+        raise
+    if returncode:
+        raise subprocess.CalledProcessError(returncode, command, stderr=stderr)
+
     evidence = _video_evidence(output)
-    if evidence["frame_count"] != left_evidence["frame_count"]:
+    if evidence["frame_count"] != len(left_frames):
         raise SwitchWorldError("paired MP4 lost decoded frames")
     if evidence["fps"] != PAIR_FRAME_RATE:
         raise SwitchWorldError("paired MP4 did not retain the indexed 16 fps timeline")
