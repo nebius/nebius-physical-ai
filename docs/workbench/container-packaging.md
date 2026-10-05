@@ -113,7 +113,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
-| Base CUDA 13 | `base/cuda13-b300/Dockerfile` | build base only |
+| Base CUDA 13 | `base/cuda13-blackwell/Dockerfile` | build base only |
 | PAIDF AnomalyGen Sky compatibility (restricted) | `paidf-anomalygen-sky/Dockerfile` | operator-built job shell; never public GHCR |
 | PAIDF Qwen Image Edit Sky compatibility (restricted) | `paidf-image-edit-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
 | PAIDF Cosmos3 Super Image2Video Sky compatibility (restricted) | `paidf-event-video-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
@@ -693,7 +693,8 @@ build hook.
    operator build/BYOF destination.
 2. Build from the checked-in Dockerfile (`skills/atomic/build-and-push-image`).
 3. Tag from `npa/pyproject.toml` `[tool.npa.supported-tools]` and
-   `npa/docker/workbench/tags.yaml` (`cuda12` vs `cuda13-b300`).
+   `npa/docker/workbench/tags.yaml` (`cuda12` vs `cuda13-blackwell`, with
+   `cuda13-b300` retained as a legacy alias).
 4. SONIC variants: `npa/src/npa/deploy/sonic_image_manifest.json`.
 5. Blackwell fleet digests: `npa/docker/workbench/sm120-images.json`.
 6. Update golden evals when the image’s “does its job” command changes.

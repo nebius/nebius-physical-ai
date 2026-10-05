@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -12,22 +12,33 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from npa.lifecycle_intent import json_stdout_contract
 from npa.deploy.images import DEFAULT_VLM_IMAGE_ENV, default_vlm_image
 from npa.workbench.vlm_eval import (
     DEFAULT_BENCHMARK_THRESHOLDS,
     DEFAULT_API_KEY_ENV,
     DEFAULT_BACKEND,
     DEFAULT_FRAME_SELECTION,
+    DEFAULT_ISAAC_AGENCY_BENCHMARK_PATH,
     DEFAULT_MAX_FRAMES,
     DEFAULT_MODEL,
     DEFAULT_SAMPLE_BENCHMARK_PATH,
     DEFAULT_RUBRIC,
     DEFAULT_TIMEOUT_S,
+    DEFAULT_VISUAL_REVIEW_RUBRIC,
+    VlmVisualReviewReport,
+    VlmVisualReviewRequest,
+    review_visual as run_visual_review,
     SUPPORTED_BACKENDS,
     SUPPORTED_FRAME_SELECTIONS,
     VlmEvalError,
+    VlmPreferenceComparisonRequest,
+    compare_vlm_preference,
+    write_preference_report,
+    VlmJudgeComparisonRequest,
     benchmark_result_uri_for,
     benchmark_vlm_eval,
+    compare_vlm_judges,
     evaluate_rollout_set,
     evaluate_vlm,
     write_benchmark_report,
@@ -66,6 +77,157 @@ class FrameSelection(str, Enum):
     sequence = "sequence"
 
 
+_FRAME_SELECTION_HELP = (
+    "Frame selection: final; keyframes (terminal-stratified for known-count "
+    "inputs); or sequence (uniform full-span)."
+)
+
+
+@dataclass(frozen=True)
+class _ComparisonCliOptions:
+    input_path: str
+    output_path: str
+    primary_model: str
+    secondary_model: str
+    task: str
+    endpoint_url: str
+    api_key_env: str
+    frame_selection: str
+    max_frames: int
+    rubric: str
+    rubric_path: str
+    success_threshold: float
+    timeout_s: float
+
+
+_COMPARE_INPUT = typer.Option(
+    ..., "--input-path", help="S3 or local artifact path to review."
+)
+_COMPARE_OUTPUT_PATH = typer.Option(
+    ..., "--output-path", help="S3 or local path for the comparison JSON."
+)
+_COMPARE_PRIMARY = typer.Option(
+    ..., "--primary-model", help="First hosted vision model ID."
+)
+_COMPARE_SECONDARY = typer.Option(
+    ..., "--secondary-model", help="Distinct second hosted vision model ID."
+)
+_COMPARE_TASK = typer.Option("sim-to-real", "--task", help="Evaluation task label.")
+_COMPARE_ENDPOINT = typer.Option(
+    "",
+    "--endpoint-url",
+    help="Hosted OpenAI-compatible base URL or /chat/completions URL.",
+)
+_COMPARE_API_KEY = typer.Option(
+    DEFAULT_API_KEY_ENV,
+    "--api-key-env",
+    help="Environment variable containing the hosted API key.",
+)
+_COMPARE_FRAME_SELECTION = typer.Option(
+    FrameSelection.keyframes,
+    "--frame-selection",
+    help="Rollout frame selection: final, keyframes, or sequence.",
+)
+_COMPARE_MAX_FRAMES = typer.Option(
+    DEFAULT_MAX_FRAMES,
+    "--max-frames",
+    help="Maximum shared frames sent to each judge.",
+)
+_COMPARE_RUBRIC = typer.Option(DEFAULT_RUBRIC, "--rubric", help="Scoring rubric text.")
+_COMPARE_RUBRIC_PATH = typer.Option(
+    "", "--rubric-path", help="Path to a scoring rubric text file."
+)
+_COMPARE_THRESHOLD = typer.Option(
+    0.8,
+    "--success-threshold",
+    help="Score threshold used independently for both verdicts.",
+)
+_COMPARE_TIMEOUT = typer.Option(
+    DEFAULT_TIMEOUT_S,
+    "--timeout-s",
+    help="Timeout for each hosted judge request.",
+)
+_COMPARE_DRY_RUN = typer.Option(
+    False, "--dry-run", help="Run both judges without writing the artifact."
+)
+_COMPARE_OUTPUT = typer.Option(OutputFormat.text, "--output", help="Output format.")
+
+
+@dataclass(frozen=True)
+class _VisualReviewCliOptions:
+    input_path: str
+    output_path: str
+    model: str
+    task: str
+    baseline_path: str
+    frame_selection: str
+    max_frames: int
+    endpoint_url: str
+    api_key_env: str
+    rubric: str
+    rubric_path: str
+    objective_evidence_path: str
+    matched_view_map_path: str
+    timeout_s: float
+
+
+_VISUAL_INPUT = typer.Option(
+    ..., "--input-path", help="S3 or local current visual artifact."
+)
+_VISUAL_OUTPUT_PATH = typer.Option(
+    ...,
+    "--output-path",
+    help="Private prefix or exact vlm_visual_review.json destination.",
+)
+_VISUAL_MODEL = typer.Option(..., "--model", help="Exact hosted vision model ID.")
+_VISUAL_TASK = typer.Option(
+    ..., "--task", help="Neutral visible-review task without source-role words."
+)
+_VISUAL_BASELINE = typer.Option(
+    "", "--baseline-path", help="Optional private baseline visual artifact."
+)
+_VISUAL_FRAME_SELECTION = typer.Option(
+    FrameSelection.keyframes,
+    "--frame-selection",
+    help=_FRAME_SELECTION_HELP,
+)
+_VISUAL_MAX_FRAMES = typer.Option(
+    DEFAULT_MAX_FRAMES,
+    "--max-frames",
+    help="Maximum frames selected independently from each source.",
+)
+_VISUAL_ENDPOINT = typer.Option(
+    "", "--endpoint-url", help="Explicit hosted OpenAI-compatible endpoint."
+)
+_VISUAL_API_KEY = typer.Option(
+    DEFAULT_API_KEY_ENV,
+    "--api-key-env",
+    help="Environment variable containing the hosted API key.",
+)
+_VISUAL_RUBRIC = typer.Option(
+    DEFAULT_VISUAL_REVIEW_RUBRIC, "--rubric", help="Rich visual-review rubric."
+)
+_VISUAL_RUBRIC_PATH = typer.Option(
+    "", "--rubric-path", help="Private local rubric file replacing --rubric."
+)
+_VISUAL_OBJECTIVE_PATH = typer.Option(
+    "",
+    "--objective-evidence-path",
+    help="Private JSON file of unverified objective-evidence references.",
+)
+_VISUAL_MATCHED_VIEW_PATH = typer.Option(
+    "",
+    "--matched-view-map-path",
+    help="Private JSON file of unverified matched-view metadata.",
+)
+_VISUAL_TIMEOUT = typer.Option(
+    DEFAULT_TIMEOUT_S, "--timeout-s", help="Timeout for each one-shot hosted request."
+)
+_VISUAL_OUTPUT = typer.Option(
+    "text", "--output-format", "--output", help="Output format: text or json."
+)
+
+
 @app.command("run")
 def run_cmd(
     input_path: str = typer.Option(
@@ -102,7 +264,7 @@ def run_cmd(
     frame_selection: FrameSelection = typer.Option(
         FrameSelection.keyframes,
         "--frame-selection",
-        help="Rollout frame selection: final, keyframes, or sequence.",
+        help=_FRAME_SELECTION_HELP,
     ),
     max_frames: int = typer.Option(
         DEFAULT_MAX_FRAMES,
@@ -171,6 +333,151 @@ def run_cmd(
         _fail(str(exc))
         return
     _emit(payload, output)
+
+
+def _comparison_console_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": payload["schema_version"],
+        "status": payload["status"],
+        "passed": payload["passed"],
+        "escalation_required": payload["escalation_required"],
+        "deployment_status": payload["deployment_status"],
+        "operational_rate_estimated": payload["operational_rate_estimated"],
+        "requests_differ_only_by_model": payload["requests_differ_only_by_model"],
+        "frame_count": payload["frame_count"],
+        "primary": _judge_console_summary(payload["primary"]),
+        "secondary": _judge_console_summary(payload["secondary"]),
+        "artifact_written": "written_uri" in payload,
+        "dry_run": payload["dry_run"],
+    }
+
+
+def _judge_console_summary(outcome: dict[str, Any]) -> dict[str, Any]:
+    result = outcome.get("result")
+    if isinstance(result, dict):
+        return {
+            "model": outcome["model"],
+            "status": result["status"],
+            "score": result["score"],
+            "passed": result["passed"],
+        }
+    error = outcome.get("error") or {}
+    return {
+        "model": outcome["model"],
+        "status": "error",
+        "error_stage": error.get("stage"),
+        "error_type": error.get("error_type"),
+    }
+
+
+@app.command("compare-judges")
+def compare_judges_cmd(
+    input_path: str = _COMPARE_INPUT,
+    output_path: str = _COMPARE_OUTPUT_PATH,
+    primary_model: str = _COMPARE_PRIMARY,
+    secondary_model: str = _COMPARE_SECONDARY,
+    task: str = _COMPARE_TASK,
+    endpoint_url: str = _COMPARE_ENDPOINT,
+    api_key_env: str = _COMPARE_API_KEY,
+    frame_selection: FrameSelection = _COMPARE_FRAME_SELECTION,
+    max_frames: int = _COMPARE_MAX_FRAMES,
+    rubric: str = _COMPARE_RUBRIC,
+    rubric_path: str = _COMPARE_RUBRIC_PATH,
+    success_threshold: float = _COMPARE_THRESHOLD,
+    timeout_s: float = _COMPARE_TIMEOUT,
+    dry_run: bool = _COMPARE_DRY_RUN,
+    output: OutputFormat = _COMPARE_OUTPUT,
+) -> None:
+    """Compare two hosted judges without averaging their outcomes."""
+    options = _ComparisonCliOptions(
+        input_path,
+        output_path,
+        primary_model,
+        secondary_model,
+        task,
+        endpoint_url,
+        api_key_env,
+        _enum_value(frame_selection),
+        max_frames,
+        rubric,
+        rubric_path,
+        success_threshold,
+        timeout_s,
+    )
+    try:
+        payload = _execute_judge_comparison(options, dry_run=dry_run)
+    except VlmEvalError as exc:
+        _fail(str(exc))
+        return
+    _emit(_comparison_console_summary(payload), output)
+
+
+def _execute_judge_comparison(
+    options: _ComparisonCliOptions,
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    report = compare_vlm_judges(VlmJudgeComparisonRequest(**asdict(options)))
+    payload = asdict(report)
+    payload["dry_run"] = dry_run or _env_dry_run()
+    if not payload["dry_run"]:
+        payload["written_uri"] = write_result(
+            payload,
+            result_uri=report.result_uri,
+        )
+    return payload
+
+
+def _parse_output_format(value: str) -> OutputFormat:
+    try:
+        return OutputFormat(value)
+    except ValueError:
+        _fail("--output-format must be text or json")
+        raise AssertionError("unreachable")
+
+
+@app.command("review-visual")
+@json_stdout_contract
+def review_visual_cmd(
+    input_path: str = _VISUAL_INPUT,
+    output_path: str = _VISUAL_OUTPUT_PATH,
+    model: str = _VISUAL_MODEL,
+    task: str = _VISUAL_TASK,
+    baseline_path: str = _VISUAL_BASELINE,
+    frame_selection: FrameSelection = _VISUAL_FRAME_SELECTION,
+    max_frames: int = _VISUAL_MAX_FRAMES,
+    endpoint_url: str = _VISUAL_ENDPOINT,
+    api_key_env: str = _VISUAL_API_KEY,
+    rubric: str = _VISUAL_RUBRIC,
+    rubric_path: str = _VISUAL_RUBRIC_PATH,
+    objective_evidence_path: str = _VISUAL_OBJECTIVE_PATH,
+    matched_view_map_path: str = _VISUAL_MATCHED_VIEW_PATH,
+    timeout_s: float = _VISUAL_TIMEOUT,
+    output_format: str = _VISUAL_OUTPUT,
+) -> None:
+    """Write a separate audit-only rich visual review."""
+    arguments = dict(locals())
+    output = _parse_output_format(arguments.pop("output_format"))
+    arguments["frame_selection"] = _enum_value(frame_selection)
+    options = _VisualReviewCliOptions(**arguments)
+    try:
+        report = run_visual_review(VlmVisualReviewRequest(**asdict(options)))
+    except Exception:  # noqa: BLE001 - sanitize every private CLI failure
+        _fail("Visual review failed; inspect private evidence.")
+        return
+    _emit(_visual_review_console_summary(report), output)
+
+
+def _visual_review_console_summary(
+    report: VlmVisualReviewReport,
+) -> dict[str, Any]:
+    return {
+        "schema_version": report.schema_version,
+        "status": report.status,
+        "escalation_required": report.escalation_required,
+        "attempt_count": report.attempt_count,
+        "model": report.model,
+    }
 
 
 #: How much of a plan to carry into the judge prompt; the retired template used this budget.
@@ -250,7 +557,7 @@ def loop_cmd(
     frame_selection: FrameSelection = typer.Option(
         FrameSelection.keyframes,
         "--frame-selection",
-        help="Rollout frame selection: final, keyframes, or sequence.",
+        help=_FRAME_SELECTION_HELP,
     ),
     max_frames: int = typer.Option(
         DEFAULT_MAX_FRAMES,
@@ -308,7 +615,10 @@ def benchmark_cmd(
     dataset: str = typer.Option(
         str(DEFAULT_SAMPLE_BENCHMARK_PATH),
         "--dataset",
-        help="Benchmark manifest JSON or directory; defaults to the packaged sample fixture.",
+        help=(
+            "Benchmark manifest JSON, directory, or packaged alias "
+            "(sample or isaac-agency)."
+        ),
     ),
     output_path: str = typer.Option(
         ...,
@@ -349,7 +659,7 @@ def benchmark_cmd(
     frame_selection: FrameSelection = typer.Option(
         FrameSelection.keyframes,
         "--frame-selection",
-        help="Rollout frame selection: final, keyframes, or sequence.",
+        help=_FRAME_SELECTION_HELP,
     ),
     max_frames: int = typer.Option(
         DEFAULT_MAX_FRAMES,
@@ -444,6 +754,7 @@ def status_cmd(
             "benchmark_workflow": str(BENCHMARK_WORKFLOW_PATH),
             "token_factory_workflow": str(TOKEN_FACTORY_WORKFLOW_PATH),
             "sample_benchmark_dataset": str(DEFAULT_SAMPLE_BENCHMARK_PATH),
+            "isaac_agency_benchmark_dataset": str(DEFAULT_ISAAC_AGENCY_BENCHMARK_PATH),
         },
         output,
     )
@@ -488,6 +799,10 @@ def _emit_benchmark(payload: dict[str, Any], output: OutputFormat) -> None:
     metrics = best["metrics"]
     typer.echo(f"  dataset: {payload['dataset_path']}")
     typer.echo(f"  items: {payload['item_count']}")
+    typer.echo(f"  dataset_evidence_scope: {payload['dataset_evidence_scope']}")
+    typer.echo("  dataset_limitations:")
+    for limitation in payload["dataset_limitations"]:
+        typer.echo(f"    - {limitation}")
     typer.echo(f"  written_uri: {payload['written_uri']}")
     typer.echo("  best_config:")
     typer.echo(f"    backend: {config['backend']}")
@@ -500,6 +815,10 @@ def _emit_benchmark(payload: dict[str, Any], output: OutputFormat) -> None:
     typer.echo(f"    agreement: {metrics['agreement']}")
     typer.echo(f"    precision: {_format_metric(metrics['precision'])}")
     typer.echo(f"    recall: {_format_metric(metrics['recall'])}")
+    typer.echo(f"    specificity: {_format_metric(metrics.get('specificity'))}")
+    typer.echo(
+        f"    balanced_accuracy: {_format_metric(metrics.get('balanced_accuracy'))}"
+    )
     typer.echo(f"    f1: {_format_metric(metrics['f1'])}")
     typer.echo(
         "    confusion: "
@@ -544,3 +863,190 @@ def _enum_value(value: Any) -> str:
 def _fail(message: str) -> None:
     console.print(f"[red]Error:[/red] {message}")
     raise typer.Exit(1)
+
+
+@dataclass(frozen=True)
+class _PreferenceCliOptions:
+    baseline_path: str
+    candidate_path: str
+    output_path: str
+    model: str
+    task: str
+    endpoint_url: str
+    api_key_env: str
+    rubric: str
+    rubric_path: str
+    timeout_s: float
+
+
+_PREFERENCE_BASELINE = typer.Option(
+    ..., "--baseline-path", help="First matched image path; kept out of provider text."
+)
+
+
+_PREFERENCE_CANDIDATE = typer.Option(
+    ...,
+    "--candidate-path",
+    help="Second matched image path; kept out of provider text.",
+)
+
+
+_PREFERENCE_OUTPUT_PATH = typer.Option(
+    ..., "--output-path", help="Private path for vlm_preference_comparison.json."
+)
+
+
+_PREFERENCE_MODEL = typer.Option(
+    "MiniMaxAI/MiniMax-M3", "--model", help="Hosted vision model ID."
+)
+
+
+_PREFERENCE_TASK = typer.Option(
+    ..., "--task", help="Shared comparison task without source-role words."
+)
+
+
+_PREFERENCE_ENDPOINT = typer.Option(
+    "", "--endpoint-url", help="Explicit hosted OpenAI-compatible endpoint."
+)
+
+
+_PREFERENCE_API_KEY = typer.Option(
+    DEFAULT_API_KEY_ENV,
+    "--api-key-env",
+    help="Environment variable containing the hosted API key.",
+)
+
+
+_PREFERENCE_RUBRIC = typer.Option(
+    "", "--rubric", help="Shared comparison rubric without source-role words."
+)
+
+
+_PREFERENCE_RUBRIC_PATH = typer.Option(
+    "", "--rubric-path", help="Local path to the shared comparison rubric."
+)
+
+
+_PREFERENCE_TIMEOUT = typer.Option(
+    DEFAULT_TIMEOUT_S, "--timeout-s", help="Timeout for each one-shot hosted request."
+)
+
+
+_PREFERENCE_OUTPUT = typer.Option(
+    "text", "--output-format", "--output", help="Output format: text or json."
+)
+
+_PREFERENCE_ROUTING_ERRORS = {
+    "preference_explicit_endpoint_required": (
+        "Set --endpoint-url explicitly to bind the destination to its credential."
+    ),
+    "preference_named_credential_required": (
+        "Set the credential named by --api-key-env for the selected destination."
+    ),
+    "preference_credential_configuration_invalid": (
+        "Repair the local Nebius credential store or supply the named key in the environment."
+    ),
+}
+
+
+@app.command("compare-preference")
+@json_stdout_contract
+def compare_preference_cmd(
+    baseline_path: str = _PREFERENCE_BASELINE,
+    candidate_path: str = _PREFERENCE_CANDIDATE,
+    output_path: str = _PREFERENCE_OUTPUT_PATH,
+    model: str = _PREFERENCE_MODEL,
+    task: str = _PREFERENCE_TASK,
+    endpoint_url: str = _PREFERENCE_ENDPOINT,
+    api_key_env: str = _PREFERENCE_API_KEY,
+    rubric: str = _PREFERENCE_RUBRIC,
+    rubric_path: str = _PREFERENCE_RUBRIC_PATH,
+    timeout_s: float = _PREFERENCE_TIMEOUT,
+    output_format: str = _PREFERENCE_OUTPUT,
+) -> None:
+    """Compare two images under blinded labels in both orders."""
+    output = _parse_output_format(output_format)
+    options = _PreferenceCliOptions(
+        baseline_path,
+        candidate_path,
+        output_path,
+        model,
+        task,
+        endpoint_url,
+        api_key_env,
+        rubric,
+        rubric_path,
+        timeout_s,
+    )
+    try:
+        payload = _execute_preference_comparison(options)
+    except VlmEvalError as error:
+        _fail_preference_comparison(error, output)
+        return
+    _emit(_preference_console_summary(payload), output)
+
+
+def _fail_preference_comparison(error: VlmEvalError, output: OutputFormat) -> None:
+    reason = str(error)
+    guidance = _PREFERENCE_ROUTING_ERRORS.get(reason)
+    if guidance is None:
+        _fail("Blinded preference comparison failed; inspect private evidence.")
+        return
+    # Only exact pre-transport literals may be public; never echo error details.
+    _emit({"result": "error", "reason_code": reason, "message": guidance}, output)
+    raise typer.Exit(1)
+
+
+def _parse_output_format(value: str) -> OutputFormat:
+    try:
+        return OutputFormat(value)
+    except ValueError:
+        _fail("--output-format must be text or json")
+        raise AssertionError("unreachable")
+
+
+def _execute_preference_comparison(
+    options: _PreferenceCliOptions,
+) -> dict[str, Any]:
+    report = compare_vlm_preference(VlmPreferenceComparisonRequest(**asdict(options)))
+    payload = asdict(report)
+    payload["written"] = write_preference_report(
+        payload,
+        result_uri=report.result_uri,
+    )
+    return payload
+
+
+def _preference_console_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": payload["schema_version"],
+        "status": payload["status"],
+        "escalation_required": payload["escalation_required"],
+        "agreement_eligible": payload["agreement_eligible"],
+        "deployment_status": payload["deployment_status"],
+        "operational_rate_estimated": payload["operational_rate_estimated"],
+        "model": payload["model"],
+        "requests_counterbalanced": payload["requests_counterbalanced"],
+        "first_order": _preference_order_summary(payload["first_order"]),
+        "reversed_order": _preference_order_summary(payload["reversed_order"]),
+        "artifact_written": "written" in payload,
+    }
+
+
+def _preference_order_summary(outcome: dict[str, Any]) -> dict[str, Any]:
+    verdict = outcome.get("verdict")
+    if isinstance(verdict, dict):
+        return {
+            "order_id": outcome["order_id"],
+            "status": "completed",
+            "preference": verdict["preference"],
+            "confidence": verdict["confidence"],
+        }
+    error = outcome.get("error") or {}
+    return {
+        "order_id": outcome["order_id"],
+        "status": "error",
+        "error_stage": error.get("stage"),
+        "error_type": error.get("error_type"),
+    }

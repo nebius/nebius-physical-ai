@@ -326,6 +326,50 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
     ),
     CapabilityContract(
+        name="open3d/stage-demo",
+        cli_module="npa.cli.workbench.open3d",
+        cli_callback="stage_demo_cmd",
+        sdk_module="npa.sdk.workbench.open3d",
+        sdk_attr="stage_demo",
+        spec_path=SPECS / "open3d-registration.yaml",
+        tool_ref="workbench.open3d.stage_demo",
+        params=(
+            _p("output_path", "output_path", "--output-path"),
+            _p("voxel_size", "voxel_size", "--voxel-size"),
+            _p("icp_estimation", "icp_estimation", "--icp-estimation"),
+        ),
+    ),
+    CapabilityContract(
+        name="open3d/register",
+        cli_module="npa.cli.workbench.open3d",
+        cli_callback="register_cmd",
+        sdk_module="npa.sdk.workbench.open3d",
+        sdk_attr="register",
+        spec_path=SPECS / "open3d-registration.yaml",
+        tool_ref="workbench.open3d.register",
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("run_id", "run_id", "--run-id"),
+        ),
+    ),
+    CapabilityContract(
+        name="open3d/reconstruct",
+        cli_module="npa.cli.workbench.open3d",
+        cli_callback="reconstruct_cmd",
+        sdk_module="npa.sdk.workbench.open3d",
+        sdk_attr="reconstruct",
+        spec_path=SPECS / "open3d-registration.yaml",
+        tool_ref="workbench.open3d.reconstruct",
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("run_id", "run_id", "--run-id"),
+            _p("poisson_depth", "poisson_depth", "--poisson-depth"),
+            _p("density_quantile", "density_quantile", "--density-quantile"),
+        ),
+    ),
+    CapabilityContract(
         name="alpamayo2-super/infer",
         cli_module="npa.cli.workbench.alpamayo2_super",
         cli_callback="infer_cmd",
@@ -960,6 +1004,9 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # to npa.workflows.sim2real_envgen rather than exposing a service SDK;
         # CLI/toolRef coherence and manifest behavior are covered separately.
         "sim2real-envgen",
+        # Persistent agent coordinator: CLI/SDK/HTTP share SpecialistTeam and
+        # are tested in agent_eval/test_specialists.py. It is not a finite stage.
+        "specialists",
         "token-factory",
         "workflow",
     }

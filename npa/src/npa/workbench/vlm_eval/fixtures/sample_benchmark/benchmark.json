@@ -1,10 +1,16 @@
 {
   "format": "npa_vlm_eval_benchmark_v1",
-  "description": "Illustrative labeled rollout set for validating the vlm-eval benchmark methodology.",
+  "description": "Illustrative wiring-only rollout set for validating the vlm-eval benchmark methodology; fixture scores are not visual evidence.",
+  "evidence_scope": "illustrative_only",
+  "limitations": [
+    "These synthetic fixtures include four 2x2 color-swatch rollouts and a tiny truncated-progress sequence; they do not validate the stated physical tasks.",
+    "The first four caller labels are color-correlated; the additional omitted-terminal label is also a wiring-only fixture.",
+    "Its metrics exercise benchmark wiring and are not task-validation or operational error-rate evidence."
+  ],
   "rollout_base_path": "rollouts",
   "rubrics": {
-    "default": "Score whether the rollout completes the requested physical task. Use 1.0 only for clear task completion, 0.0 for clear failure, and intermediate values for partial progress. Penalize unsafe, incomplete, or ambiguous outcomes.",
-    "strict": "Score only clear, stable task completion as a pass. Penalize near misses, ambiguous end states, unsafe motion, and incomplete placement."
+    "default": "Score whether the rollout completes the requested physical task. Use 1.0 only for clear task completion, 0.0 for clear failure, and intermediate values for partial progress. Penalize unsafe, incomplete, or ambiguous outcomes. Assign score 0.0 and success false when the requested terminal state is missing or ambiguous in the supplied frames. Do not award partial-progress credit in that case. Evidence that stops at intermediate progress without showing the requested terminal state is incomplete, even if the action appears likely to succeed. Do not infer placement, release, stability, or completion from approach, contact, grasp, lift, transfer, or disappearance alone.",
+    "strict": "Score only clear, stable task completion as a pass. Penalize near misses, ambiguous end states, unsafe motion, incomplete placement, and evidence that stops after intermediate progress without showing the requested terminal state."
   },
   "items": [
     {
@@ -27,6 +33,13 @@
       "task": "Place the block in the marked target zone.",
       "expected_label": "fail",
       "fixture_score": 0.65
+    },
+    {
+      "id": "progress-without-terminal-fail",
+      "rollout": "progress-without-terminal-fail",
+      "task": "Place the block in the marked target zone.",
+      "expected_label": "fail",
+      "fixture_score": 0.72
     },
     {
       "id": "unstable-end-state-fail",

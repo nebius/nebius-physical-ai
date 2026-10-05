@@ -19,6 +19,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Final
 
+from npa.literal_values import require_boolean
+
 RTX_PRO_6000_PLATFORM: Final = "gpu-rtx6000"
 RTX_PRO_6000_PCI_DEVICE_ID: Final = "0x2BB5"
 RTX_PRO_6000_PRESET: Final = "1gpu-24vcpu-218gb"
@@ -302,6 +304,36 @@ def _kubectl_env() -> dict[str, str]:
     return env
 
 
+def _node_unschedulable(spec: Any, *, node: str) -> bool:
+    """Read Kubernetes scheduling state without coercing malformed values."""
+
+    if not isinstance(spec, dict):
+        raise MigVerificationError(
+            f"node {node}: Kubernetes spec must be a mapping to determine "
+            "spec.unschedulable"
+        )
+    try:
+        return require_boolean(
+            spec.get("unschedulable", False),
+            field=f"node {node}: Kubernetes spec.unschedulable",
+        )
+    except ValueError as exc:
+        raise MigVerificationError(str(exc)) from exc
+
+
+def _container_statuses_ready(statuses: Any) -> bool:
+    """Accept a non-empty status list only when every readiness value is true."""
+
+    return (
+        isinstance(statuses, list)
+        and bool(statuses)
+        and all(
+            isinstance(status, dict) and status.get("ready") is True
+            for status in statuses
+        )
+    )
+
+
 def inspect_mig_state(
     nodes_payload: dict[str, Any],
     cluster_policy_payload: dict[str, Any],
@@ -364,7 +396,11 @@ def inspect_mig_state(
             and condition.get("status") == "True"
             for condition in conditions
         )
-        schedulable = not bool(spec.get("unschedulable", False))
+        try:
+            schedulable = not _node_unschedulable(spec, node=name)
+        except MigVerificationError as exc:
+            schedulable = False
+            errors.append(str(exc))
         node_statuses.append(
             MigNodeStatus(
                 name=name,
@@ -381,7 +417,7 @@ def inspect_mig_state(
             errors.append(f"node {name}: Kubernetes Ready condition is not True")
         if not schedulable:
             errors.append(f"node {name}: node is cordoned/unschedulable")
-        taints = spec.get("taints") or []
+        taints = (spec.get("taints") or []) if isinstance(spec, dict) else []
         if not isinstance(taints, list):
             errors.append(f"node {name}: Kubernetes taints are malformed")
         elif any(
@@ -1051,6 +1087,52 @@ def _active_gpu_workloads(pods_payload: dict[str, Any]) -> tuple[str, ...]:
     return tuple(sorted(set(active)))
 
 
+def _read_node_unschedulable(
+    kubectl_bin: str,
+    kubeconfig: Path,
+    node: str,
+    *,
+    deadline: float,
+    monotonic_fn: Callable[[], float],
+) -> bool:
+    """Read exact current scheduling evidence for one driver replacement."""
+
+    payload = _kubectl_json(
+        kubectl_bin,
+        kubeconfig,
+        ["get", "node", node],
+        timeout_seconds=_remaining_timeout(deadline, monotonic_fn),
+    )
+    return _node_unschedulable(payload.get("spec"), node=node)
+
+
+def _driver_replacement_plan(
+    driver_pods: list[dict[str, Any]],
+    kubectl_bin: str,
+    kubeconfig: Path,
+    *,
+    deadline: float,
+    monotonic_fn: Callable[[], float],
+) -> list[tuple[str, str, str]]:
+    """Validate every node before allowing a partial driver rollout."""
+
+    replacements = []
+    for pod in sorted(driver_pods, key=lambda item: item["spec"]["nodeName"]):
+        metadata = pod.get("metadata", {})
+        old_name = str(metadata.get("name") or "")
+        old_uid = str(metadata.get("uid") or "")
+        node = str(pod.get("spec", {}).get("nodeName") or "")
+        _read_node_unschedulable(
+            kubectl_bin,
+            kubeconfig,
+            node,
+            deadline=deadline,
+            monotonic_fn=monotonic_fn,
+        )
+        replacements.append((old_name, old_uid, node))
+    return replacements
+
+
 def _reconcile_ondelete_driver(
     kubectl_bin: str,
     kubeconfig: Path,
@@ -1088,18 +1170,22 @@ def _reconcile_ondelete_driver(
         raise MigVerificationError(
             "NVIDIA driver DaemonSet update is pending but no driver pods were found"
         )
-    for pod in sorted(driver_pods, key=lambda item: item["spec"]["nodeName"]):
-        metadata = pod.get("metadata", {})
-        old_name = str(metadata.get("name") or "")
-        old_uid = str(metadata.get("uid") or "")
-        node = str(pod.get("spec", {}).get("nodeName") or "")
-        node_payload = _kubectl_json(
+    replacements = _driver_replacement_plan(
+        driver_pods,
+        kubectl_bin,
+        kubeconfig,
+        deadline=deadline,
+        monotonic_fn=monotonic_fn,
+    )
+    for old_name, old_uid, node in replacements:
+        # Preserve cordons changed by another actor after the global preflight.
+        cordoned_here = not _read_node_unschedulable(
             kubectl_bin,
             kubeconfig,
-            ["get", "node", node],
-            timeout_seconds=_remaining_timeout(deadline, monotonic_fn),
+            node,
+            deadline=deadline,
+            monotonic_fn=monotonic_fn,
         )
-        cordoned_here = not bool(node_payload.get("spec", {}).get("unschedulable"))
         primary_error: BaseException | None = None
         try:
             if cordoned_here:
@@ -1265,11 +1351,8 @@ def _replace_driver_pod(
                 and candidate.get("spec", {}).get("nodeName") == node
                 and str(candidate.get("metadata", {}).get("uid") or "") != pod_uid
                 and candidate.get("status", {}).get("phase") == "Running"
-                and candidate.get("status", {}).get("containerStatuses")
-                and all(
-                    bool(status.get("ready"))
-                    for status in candidate["status"]["containerStatuses"]
-                    if isinstance(status, dict)
+                and _container_statuses_ready(
+                    candidate.get("status", {}).get("containerStatuses")
                 )
             ),
             None,

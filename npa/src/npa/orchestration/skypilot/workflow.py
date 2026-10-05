@@ -1052,10 +1052,10 @@ def _submission_global_config(
                     "LIBERO worker startup hook differs from the signed profile"
                 )
             worker["post_provision_runcmd"] = list(commands)
+        config["allowed_clouds"] = ["kubernetes"]
         if not controller:
-            # Ordinary Kubernetes jobs need Nebius for storage discovery. The
-            # verified LIBERO profile instead requires Kubernetes-only discovery
-            # and controller-only credential transport.
+            # Ordinary Kubernetes workflows need Nebius storage discovery. The
+            # customer controller path above must never transport its credentials.
             config["allowed_clouds"] = ["kubernetes", "nebius"]
             nebius = config.setdefault("nebius", {})
             if not isinstance(nebius, dict):

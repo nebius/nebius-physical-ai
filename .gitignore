@@ -65,6 +65,7 @@ venv/
 /.venv
 /npa/.venv
 .coverage
+.coverage.*
 htmlcov/
 .pytest_cache/
 .mypy_cache/

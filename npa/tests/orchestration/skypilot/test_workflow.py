@@ -2614,6 +2614,45 @@ def test_submit_workflow_allows_declared_nebius_storage_on_kubernetes(
     assert rendered["nebius"]["capabilities"] == ["storage"]
 
 
+def test_customer_controller_does_not_enable_nebius_storage(monkeypatch):
+    from npa.workflows.byof import libero_customer
+
+    monkeypatch.setattr(libero_customer, "selected", lambda _: True)
+    monkeypatch.setattr(libero_customer, "validate_profile", lambda _: None)
+    monkeypatch.setattr(libero_customer, "controller_context", lambda *_: "controller")
+    monkeypatch.setattr(workflow_module, "_load_base_config", lambda _: {})
+    commands = ["true"]
+    documents = [
+        {
+            "resources": {
+                "cloud": "kubernetes",
+                "kubernetes": {
+                    "post_provision_runcmd": commands,
+                },
+            }
+        }
+    ]
+
+    config = workflow_module._submission_global_config(
+        SimpleNamespace(global_config_path=None),
+        "kubernetes",
+        "k8s/worker",
+        documents=documents,
+    )
+
+    assert config["allowed_clouds"] == ["kubernetes"]
+    assert config["nebius"]["remote_identity"] == "NO_UPLOAD"
+    assert config["kubernetes"]["allowed_contexts"] == ["worker", "controller"]
+    assert (
+        config["kubernetes"]["context_configs"]["worker"]["remote_identity"]
+        == "NO_UPLOAD"
+    )
+    assert (
+        config["kubernetes"]["context_configs"]["worker"]["post_provision_runcmd"]
+        == commands
+    )
+
+
 def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
