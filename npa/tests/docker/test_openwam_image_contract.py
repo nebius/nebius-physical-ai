@@ -28,10 +28,20 @@ def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
         "-m npa.workflows.openwam_pipeline" in dockerfile
     )
     assert "sudo -u ubuntu" not in dockerfile
-    # The LIBERO client path is compatibility-probed against this fixed release;
-    # the prior 4.21.1 pin carries a critical fixed vulnerability.
+    # The upstream resolver installs 4.21.1. The final client install must
+    # deliberately replace it with the compatibility-probed fixed release.
     assert "transformers==4.36.0" in dockerfile
     assert "transformers==4.21.1" not in dockerfile
+    libero_requirements = (
+        "/opt/openwam-libero/bin/python -m pip install --no-cache-dir "
+        "-r /opt/openwam-libero-source/requirements.txt"
+    )
+    fixed_transformers = (
+        "/opt/openwam-libero/bin/python -m pip install --no-cache-dir "
+        "--upgrade transformers==4.36.0"
+    )
+    assert dockerfile.index(libero_requirements) < dockerfile.index(fixed_transformers)
+    assert 'm.version("transformers") == "4.36.0"' in dockerfile
 
 
 def test_openwam_recipe_retains_runtime_fetch_and_private_quarantine() -> None:
