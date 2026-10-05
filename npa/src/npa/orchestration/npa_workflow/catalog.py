@@ -3506,6 +3506,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.train_steps}}",
             "--batch-size",
             "{{config.batch_size}}",
+            "--checkpoint-save-freq",
+            "{{config.checkpoint_save_freq}}",
             "--device",
             "{{config.policy_device}}",
         ],

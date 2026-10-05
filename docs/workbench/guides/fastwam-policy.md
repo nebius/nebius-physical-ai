@@ -38,6 +38,17 @@ a run is simulator evidence, not a physical-robot claim. Physical deployment
 requires a separately reviewed robot adapter, safety controls, and an actual
 physical success study.
 
+Training keeps LeRobot 0.6.1's native `save_freq=20000` checkpoint cadence.
+Only a completed upstream checkpoint containing policy weights and config,
+training config, optimizer/scheduler state, RNG state, and the recorded step is
+mirrored to the task-owned training output. A conditional recovery manifest
+advances only after that mirror finishes. A supported retry therefore resumes
+with LeRobot's documented `--resume=true --config_path=<checkpoint>` path; it
+never treats an
+inference-only policy directory as a training checkpoint. This durability path
+does not shorten training, alter the pinned model/data protocol, or publish to
+the Hugging Face Hub.
+
 The FastWAM base, Wan 2.2, Wan Diffusers and UMT5 model cards currently declare
 Apache-2.0, but that does not create a license for an operator-provided robot
 dataset or a new public checkpoint distribution. The authoritative

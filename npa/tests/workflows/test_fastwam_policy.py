@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import inspect
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,7 @@ def _runtime_args() -> argparse.Namespace:
         device="cuda",
         train_steps=300_000,
         batch_size=8,
+        checkpoint_save_freq=20_000,
         environment="libero",
         environment_task="libero_10",
         episode_length=200,
@@ -73,6 +75,13 @@ def test_workflow_has_five_connected_substantive_native_stages() -> None:
     assert (
         spec.resources["gpu"]["accelerators"]
         == "{{config.gpu_type}}:{{config.gpu_count}}"
+    )
+    train = next(step for step in plan.steps if step.state == "train")
+    assert "--checkpoint-save-freq" in train.argv
+    assert "20000" in train.argv
+    assert (
+        spec.states["train"].outputs[-1].uri
+        == "{{config.training_uri}}recovery/latest.json"
     )
 
 
@@ -183,6 +192,8 @@ def test_native_commands_preserve_split_and_direct_action_contract(tmp_path) -> 
     assert "--policy.device=cuda" in train
     assert "--dataset.episodes=[1, 4, 8]" in train
     assert "--env_eval_freq=0" in train
+    assert "--save_checkpoint=true" in train
+    assert "--save_freq=20000" in train
     assert "--policy.push_to_hub=false" in train
     assert rollout[0] == "lerobot-eval"
     assert "--policy.compile_action_infer=true" in rollout
@@ -191,6 +202,181 @@ def test_native_commands_preserve_split_and_direct_action_contract(tmp_path) -> 
     assert "--policy.dtype=float32" in rollout
     assert "--policy.n_action_steps=10" in rollout
     assert all("generate_video" not in item for item in rollout)
+
+
+def _write_resumable_checkpoint(root: Path, step: int = 20_000) -> Path:
+    checkpoint = root / "checkpoints" / f"{step:06d}"
+    pretrained = checkpoint / "pretrained_model"
+    state = checkpoint / "training_state"
+    pretrained.mkdir(parents=True)
+    state.mkdir()
+    (pretrained / "config.json").write_text("{}\n")
+    (pretrained / "model.safetensors").write_bytes(b"policy")
+    (pretrained / "train_config.json").write_text(
+        json.dumps({"scheduler": {"type": "cosine"}})
+    )
+    (state / "training_step.json").write_text(json.dumps({"step": step}))
+    (state / "rng_state.safetensors").write_bytes(b"rng")
+    (state / "optimizer_state.safetensors").write_bytes(b"optimizer")
+    (state / "scheduler_state.json").write_text("{}\n")
+    (checkpoint.parent / "last").symlink_to(checkpoint.name)
+    return checkpoint
+
+
+class _RecoveryStorage:
+    """Minimal in-memory StorageClient contract for recovery publication tests."""
+
+    def __init__(self) -> None:
+        self.directories: dict[str, Path] = {}
+        self.objects: dict[str, tuple[bytes, str]] = {}
+        self.calls: list[tuple[str, str]] = []
+
+    def read_bytes_with_etag(self, uri: str):
+        return self.objects.get(uri)
+
+    def upload_directory(
+        self, source: str, uri: str, *, require_empty: bool = False
+    ) -> str:
+        assert require_empty is True
+        assert uri not in self.directories
+        self.directories[uri] = Path(source)
+        self.calls.append(("directory", uri))
+        return uri
+
+    def put_bytes_conditional(
+        self,
+        payload: bytes,
+        uri: str,
+        *,
+        if_match: str = "",
+        if_none_match: bool = False,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        assert content_type == "application/json"
+        if if_none_match:
+            assert uri not in self.objects
+        elif if_match:
+            assert self.objects[uri][1] == if_match
+        else:  # pragma: no cover - documents the StorageClient contract
+            raise AssertionError("conditional write guard is required")
+        etag = f"etag-{len(self.objects) + 1}"
+        self.objects[uri] = (payload, etag)
+        self.calls.append(("manifest", uri))
+        return etag
+
+    def download_directory(self, uri: str, local_dir: str) -> str:
+        shutil.copytree(self.directories[uri], local_dir, dirs_exist_ok=True)
+        return local_dir
+
+
+def test_recovery_mirror_publishes_only_complete_native_resume_state(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    training = tmp_path / "training"
+    checkpoint = _write_resumable_checkpoint(training)
+    storage = _RecoveryStorage()
+    published: dict[int, dict[str, object]] = {}
+    destination = "s3://task-owned/training/"
+
+    fastwam._sync_recoverable_checkpoints(  # type: ignore[arg-type]
+        storage, training, destination, published
+    )
+
+    assert list(published) == [20_000]
+    assert storage.calls[0][0] == "directory"
+    assert storage.calls[-1] == (
+        "manifest",
+        "s3://task-owned/training/recovery/latest.json",
+    )
+    manifest = json.loads(storage.objects[storage.calls[-1][1]][0])
+    assert manifest["schema"] == fastwam.RECOVERY_MANIFEST_SCHEMA
+    assert manifest["step"] == 20_000
+    assert manifest["checkpoint_sha256"] == fastwam._tree_digest(checkpoint)
+
+    monkeypatch.setattr(fastwam.StorageClient, "from_environment", lambda: storage)
+    restored = fastwam._restore_recoverable_checkpoint(
+        destination, tmp_path / "restored"
+    )
+    assert restored == tmp_path / "restored" / "checkpoints" / "020000" / "pretrained_model"
+    assert (restored / "model.safetensors").read_bytes() == b"policy"
+    assert (restored.parent.parent / "last").resolve() == restored.parent.resolve()
+
+
+def test_recovery_mirror_rejects_policy_only_or_partial_training_state(tmp_path) -> None:
+    checkpoint = _write_resumable_checkpoint(tmp_path / "training")
+    (checkpoint / "training_state" / "optimizer_state.safetensors").unlink()
+
+    assert fastwam._complete_recoverable_checkpoints(tmp_path / "training") == []
+    with pytest.raises(fastwam.FastWAMPolicyError, match="not yet resumable"):
+        fastwam._recoverable_checkpoint_record(checkpoint)
+
+
+def test_recovery_mirror_requires_the_upstream_last_pointer(tmp_path) -> None:
+    checkpoint = _write_resumable_checkpoint(tmp_path / "training")
+    (checkpoint.parent / "last").unlink()
+
+    assert fastwam._complete_recoverable_checkpoints(tmp_path / "training") == []
+
+
+def test_recovery_mirror_never_advances_manifest_after_interrupted_upload(
+    tmp_path,
+) -> None:
+    class InterruptedStorage(_RecoveryStorage):
+        def upload_directory(
+            self, source: str, uri: str, *, require_empty: bool = False
+        ) -> str:
+            super().upload_directory(source, uri, require_empty=require_empty)
+            raise RuntimeError("simulated interrupted upload")
+
+    storage = InterruptedStorage()
+    _write_resumable_checkpoint(tmp_path / "training")
+
+    with pytest.raises(RuntimeError, match="interrupted upload"):
+        fastwam._sync_recoverable_checkpoints(  # type: ignore[arg-type]
+            storage, tmp_path / "training", "s3://task-owned/training/", {}
+        )
+    assert storage.objects == {}
+
+
+def test_recovery_mirror_rejects_corrupt_uploaded_checkpoint(tmp_path) -> None:
+    class CorruptReadbackStorage(_RecoveryStorage):
+        def download_directory(self, uri: str, local_dir: str) -> str:
+            result = super().download_directory(uri, local_dir)
+            (Path(local_dir) / "pretrained_model" / "model.safetensors").write_bytes(
+                b"corrupt"
+            )
+            return result
+
+    storage = CorruptReadbackStorage()
+    _write_resumable_checkpoint(tmp_path / "training")
+
+    with pytest.raises(fastwam.FastWAMPolicyError, match="does not match"):
+        fastwam._sync_recoverable_checkpoints(  # type: ignore[arg-type]
+            storage, tmp_path / "training", "s3://task-owned/training/", {}
+        )
+    assert storage.objects == {}
+
+
+def test_train_command_uses_native_resume_only_with_a_valid_recovery_path(tmp_path) -> None:
+    recipe = {
+        "dataset": {"repo_id": "operator/robot-data", "revision": "f" * 40},
+        "train_episode_indices": [1, 4, 8],
+    }
+    models = {
+        key: tmp_path / key for key in ("fastwam_base", "wan", "wan_diffusers", "umt5")
+    }
+    resumed = fastwam._fastwam_train_command(
+        _runtime_args(),
+        recipe,
+        tmp_path / "data",
+        tmp_path / "out",
+        models,
+        resume_checkpoint=tmp_path / "checkpoint" / "pretrained_model",
+    )
+
+    assert "--save_freq=20000" in resumed
+    assert "--resume=true" in resumed
+    assert f"--config_path={tmp_path / 'checkpoint' / 'pretrained_model'}" in resumed
 
 
 def test_runtime_fetch_requires_distinct_immutable_component_revisions(

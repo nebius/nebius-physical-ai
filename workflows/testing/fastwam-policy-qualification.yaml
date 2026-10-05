@@ -30,6 +30,9 @@ config:
   umt5_revision: "66cb9e7e85526fe440a945569e42c72fb6cbc0ad"
   train_steps: "300000"
   batch_size: "8"
+  # Matches the upstream LeRobot 0.6.1 default. Complete checkpoints are
+  # mirrored to the task-owned training prefix before recovery may advance.
+  checkpoint_save_freq: "20000"
   policy_device: "cuda"
   rollout_environment: "REQUIRED_OPERATOR_SIMULATOR_ENV"
   rollout_task: "REQUIRED_OPERATOR_SIMULATOR_TASK"
@@ -92,6 +95,8 @@ states:
     description: >-
       Fine-tune upstream LeRobot FastWAM with video-world-model training from
       the sealed training episodes and runtime-fetched immutable components.
+      Complete native optimizer/RNG checkpoints are mirrored to the task-owned
+      training output so a supported recovery can resume the same protocol.
     toolRef: workbench.lerobot.fastwam_train
     resources: gpu
     inputs:
@@ -103,6 +108,8 @@ states:
       - uri: "{{config.training_uri}}checkpoint/"
         schema: lerobot.policy.checkpoint.v1
         kind: directory
+      - uri: "{{config.training_uri}}recovery/latest.json"
+        schema: npa.fastwam.recovery.v1
     next: rollout
 
   rollout:

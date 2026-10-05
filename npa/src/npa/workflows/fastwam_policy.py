@@ -23,9 +23,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from npa.clients.storage import StorageClient
 from npa.workflows.lerobot_dataset import (
@@ -41,6 +43,12 @@ FASTWAM_BASE_REPOSITORY = "lerobot/fastwam_base"
 WAN_REPOSITORY = "Wan-AI/Wan2.2-TI2V-5B"
 WAN_DIFFUSERS_REPOSITORY = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
 UMT5_REPOSITORY = "google/umt5-xxl"
+# This is LeRobot 0.6.1's upstream default.  Making it explicit keeps the
+# native protocol unchanged while giving the recovery publisher a concrete,
+# auditable cadence to protect.
+UPSTREAM_CHECKPOINT_SAVE_FREQ = 20_000
+RECOVERY_MANIFEST_SCHEMA = "npa.fastwam.recovery.v1"
+_RECOVERY_MIRROR_POLL_SECONDS = 10.0
 
 
 class FastWAMPolicyError(RuntimeError):
@@ -68,6 +76,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_runtime_model_args(train)
     train.add_argument("--train-steps", type=int, required=True)
     train.add_argument("--batch-size", type=int, required=True)
+    train.add_argument(
+        "--checkpoint-save-freq",
+        type=int,
+        default=UPSTREAM_CHECKPOINT_SAVE_FREQ,
+        help="Native LeRobot checkpoint frequency; defaults to the pinned upstream default.",
+    )
     train.add_argument("--device", default="cuda")
 
     rollout = commands.add_parser("rollout", help="Run direct-action native rollouts.")
@@ -240,6 +254,7 @@ def _train(args: argparse.Namespace, work: Path, output: Path) -> None:
 
     _require_positive(args.train_steps, "train steps")
     _require_positive(args.batch_size, "batch size")
+    _require_positive(args.checkpoint_save_freq, "checkpoint save frequency")
     prepared = _materialize_directory(args.input_path, work / "prepared")
     recipe = _read_recipe(prepared)
     dataset = _materialize_dataset(
@@ -248,10 +263,23 @@ def _train(args: argparse.Namespace, work: Path, output: Path) -> None:
     _assert_dataset_receipt(dataset, recipe)
     models = _fetch_runtime_models(args)
     training = output / "training"
-    command = _fastwam_train_command(args, recipe, dataset, training, models)
+    recovery = _restore_recoverable_checkpoint(args.output_path, work / "recovery")
+    command = _fastwam_train_command(
+        args,
+        recipe,
+        dataset,
+        training,
+        models,
+        resume_checkpoint=recovery,
+    )
     output.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
-    _run_command(command, output / "train.log")
+    recovery_checkpoints = _run_training_with_checkpoint_mirror(
+        command,
+        output / "train.log",
+        training,
+        args.output_path,
+    )
     checkpoint = _final_checkpoint(training)
     _assert_checkpoint(checkpoint)
     shutil.copytree(checkpoint, output / "checkpoint")
@@ -263,6 +291,12 @@ def _train(args: argparse.Namespace, work: Path, output: Path) -> None:
             "checkpoint_sha256": _tree_digest(output / "checkpoint"),
             "duration_seconds": time.monotonic() - started,
             "command": command,
+            "checkpoint_recovery": {
+                "schema": RECOVERY_MANIFEST_SCHEMA,
+                "save_freq": args.checkpoint_save_freq,
+                "resumed_from": recovery.parent.name if recovery is not None else None,
+                "mirrored_checkpoints": recovery_checkpoints,
+            },
             "runtime": _runtime_provenance(),
             "runtime_models": _runtime_model_receipt(models, args),
             "upstream": _upstream_provenance(),
@@ -418,8 +452,10 @@ def _fastwam_train_command(
     dataset: Path,
     output: Path,
     models: dict[str, Path],
+    *,
+    resume_checkpoint: Path | None = None,
 ) -> list[str]:
-    return [
+    command = [
         "lerobot-train",
         f"--dataset.repo_id={recipe['dataset']['repo_id']}",
         f"--dataset.root={dataset}",
@@ -434,6 +470,8 @@ def _fastwam_train_command(
         f"--output_dir={output}",
         f"--steps={args.train_steps}",
         f"--batch_size={args.batch_size}",
+        "--save_checkpoint=true",
+        f"--save_freq={args.checkpoint_save_freq}",
         "--env_eval_freq=0",
         # This qualification keeps checkpoints in run-scoped object storage.
         # LeRobot otherwise attempts an implicit Hub publication and requires a
@@ -441,6 +479,11 @@ def _fastwam_train_command(
         "--policy.push_to_hub=false",
         "--wandb.enable=false",
     ]
+    if resume_checkpoint is not None:
+        # LeRobot 0.6.1 resumes optimizer, scheduler, RNG, and sampler state
+        # from the checkpoint directory selected by this documented CLI pair.
+        command.extend(["--resume=true", f"--config_path={resume_checkpoint}"])
+    return command
 
 
 def _fastwam_eval_command(
@@ -662,6 +705,358 @@ def _publish_directory(source: Path, destination: str) -> None:
     shutil.copytree(source, target)
 
 
+def _recovery_prefix(destination: str) -> str | None:
+    """Return the task-owned recovery prefix for an object-storage output."""
+
+    if not destination.startswith("s3://"):
+        return None
+    return destination.rstrip("/") + "/recovery"
+
+
+def _checkpoint_step(checkpoint: Path) -> int:
+    """Return an upstream checkpoint's numeric step, rejecting ambiguous names."""
+
+    if not checkpoint.name.isdecimal() or int(checkpoint.name) <= 0:
+        raise FastWAMPolicyError(
+            f"LeRobot checkpoint directory does not name a positive step: {checkpoint}"
+        )
+    return int(checkpoint.name)
+
+
+def _missing_recovery_state(checkpoint: Path, pretrained: Path) -> list[str]:
+    """List pinned-LeRobot resume files absent from an otherwise valid checkpoint."""
+
+    train_config = pretrained / "train_config.json"
+    required = (
+        pretrained / "config.json",
+        train_config,
+        checkpoint / "training_state" / "training_step.json",
+        checkpoint / "training_state" / "rng_state.safetensors",
+        checkpoint / "training_state" / "optimizer_state.safetensors",
+    )
+    missing = [
+        path.relative_to(checkpoint).as_posix() for path in required if not path.is_file()
+    ]
+    if missing:
+        return missing
+    train_settings = _read_json(train_config)
+    if train_settings.get("scheduler") is not None:
+        scheduler = checkpoint / "training_state" / "scheduler_state.json"
+        if not scheduler.is_file():
+            missing.append(scheduler.relative_to(checkpoint).as_posix())
+    return missing
+
+
+def _recoverable_checkpoint_record(checkpoint: Path) -> dict[str, Any]:
+    """Validate the exact state LeRobot 0.6.1 needs for a real resume."""
+
+    step = _checkpoint_step(checkpoint)
+    pretrained = checkpoint / "pretrained_model"
+    _assert_checkpoint(pretrained)
+    missing = _missing_recovery_state(checkpoint, pretrained)
+    if missing:
+        raise FastWAMPolicyError(
+            "LeRobot checkpoint is not yet resumable; missing " + ", ".join(missing)
+        )
+    saved_step = _read_json(checkpoint / "training_state" / "training_step.json").get(
+        "step"
+    )
+    if not isinstance(saved_step, int) or saved_step != step:
+        raise FastWAMPolicyError(
+            "LeRobot checkpoint training state does not match its directory step"
+        )
+    return {"step": step, "checkpoint_sha256": _tree_digest(checkpoint)}
+
+
+def _upstream_last_checkpoint(training: Path) -> Path | None:
+    """Resolve LeRobot's atomic ``checkpoints/last`` pointer, if present."""
+
+    root = training / "checkpoints"
+    pointer = root / "last"
+    if not pointer.is_symlink():
+        return None
+    checkpoint = pointer.resolve(strict=False)
+    if not checkpoint.is_relative_to(root.resolve()) or not checkpoint.is_dir():
+        raise FastWAMPolicyError("LeRobot last checkpoint pointer is unsafe or missing")
+    return checkpoint
+
+
+def _complete_recoverable_checkpoints(training: Path) -> list[tuple[Path, dict[str, Any]]]:
+    """Return LeRobot's one complete checkpoint selected by its last pointer."""
+
+    checkpoint = _upstream_last_checkpoint(training)
+    if checkpoint is None:
+        return []
+    try:
+        return [(checkpoint, _recoverable_checkpoint_record(checkpoint))]
+    except FastWAMPolicyError:
+        # ``last`` is only updated after LeRobot saves a checkpoint, but retain
+        # the failure-closed check if its on-disk contract ever changes.
+        return []
+
+
+def _read_recovery_manifest(
+    storage: StorageClient, manifest_uri: str
+) -> tuple[dict[str, Any] | None, str]:
+    """Read an optional recovery manifest and its conditional-write token."""
+
+    stored = storage.read_bytes_with_etag(manifest_uri)
+    if stored is None:
+        return None, ""
+    payload, etag = stored
+    try:
+        value = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise FastWAMPolicyError("recovery manifest is not valid JSON") from exc
+    if not isinstance(value, dict) or value.get("schema") != RECOVERY_MANIFEST_SCHEMA:
+        raise FastWAMPolicyError("recovery manifest has an unexpected schema")
+    return value, etag
+
+
+def _recovery_manifest_state(
+    storage: StorageClient, recovery: str
+) -> tuple[str, str, int]:
+    """Return the recovery manifest URI, ETag, and currently published step."""
+
+    manifest_uri = recovery + "/latest.json"
+    latest, etag = _read_recovery_manifest(storage, manifest_uri)
+    if latest is None:
+        return manifest_uri, etag, -1
+    step = latest.get("step")
+    if not isinstance(step, int) or step <= 0:
+        raise FastWAMPolicyError("recovery manifest has an invalid checkpoint step")
+    return manifest_uri, etag, step
+
+
+def _manifest_for_checkpoint(record: dict[str, Any], relative_path: str) -> bytes:
+    """Encode the durable equivalent of LeRobot's local ``last`` pointer."""
+
+    manifest = {
+        "schema": RECOVERY_MANIFEST_SCHEMA,
+        "step": record["step"],
+        "checkpoint_sha256": record["checkpoint_sha256"],
+        "checkpoint_relative_path": relative_path,
+        "upstream_last_pointer": f"checkpoints/{record['step']:06d}",
+    }
+    return (json.dumps(manifest, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _verify_uploaded_checkpoint(
+    storage: StorageClient,
+    checkpoint_uri: str,
+    source: Path,
+    expected: dict[str, Any],
+) -> None:
+    """Read back an uploaded checkpoint and prove its complete tree digest."""
+
+    with tempfile.TemporaryDirectory(
+        prefix="npa-fastwam-checkpoint-verify-", dir=str(source.parent)
+    ) as temporary:
+        downloaded = Path(temporary) / f"{expected['step']:06d}"
+        storage.download_directory(checkpoint_uri, str(downloaded))
+        observed = _recoverable_checkpoint_record(downloaded)
+    if observed != expected:
+        raise FastWAMPolicyError(
+            "uploaded recovery checkpoint does not match local LeRobot state"
+        )
+
+
+def _publish_recoverable_checkpoint(
+    storage: StorageClient,
+    checkpoint: Path,
+    recovery: str,
+    manifest_uri: str,
+    etag: str,
+    record: dict[str, Any],
+) -> str:
+    """Upload, verify, then conditionally publish one complete checkpoint."""
+
+    relative_path = (
+        f"checkpoints/{record['step']:06d}-{record['checkpoint_sha256']}/"
+        f"{uuid.uuid4().hex}/"
+    )
+    checkpoint_uri = recovery + "/" + relative_path
+    storage.upload_directory(str(checkpoint), checkpoint_uri, require_empty=True)
+    _verify_uploaded_checkpoint(storage, checkpoint_uri, checkpoint, record)
+    payload = _manifest_for_checkpoint(record, relative_path)
+    kwargs: dict[str, Any] = {"content_type": "application/json"}
+    if etag:
+        kwargs["if_match"] = etag
+    else:
+        kwargs["if_none_match"] = True
+    return storage.put_bytes_conditional(payload, manifest_uri, **kwargs)
+
+
+def _sync_recoverable_checkpoints(
+    storage: StorageClient,
+    training: Path,
+    destination: str,
+    published: dict[int, dict[str, Any]],
+) -> None:
+    """Mirror complete native checkpoints before advancing a recovery manifest.
+
+    Each checkpoint is content-addressed under the task-owned output prefix.
+    The mutable manifest is conditional and written last, so a resume never
+    selects a partial directory or lets an older worker move the pointer back.
+    """
+
+    recovery = _recovery_prefix(destination)
+    if recovery is None:
+        return
+    manifest_uri, etag, latest_step = _recovery_manifest_state(storage, recovery)
+    for checkpoint, record in _complete_recoverable_checkpoints(training):
+        step = record["step"]
+        if step in published or step <= latest_step:
+            continue
+        etag = _publish_recoverable_checkpoint(
+            storage, checkpoint, recovery, manifest_uri, etag, record
+        )
+        latest_step = step
+        published[step] = record
+
+
+def _restore_recoverable_checkpoint(destination: str, local_root: Path) -> Path | None:
+    """Restore and revalidate the latest durable checkpoint before a resume."""
+
+    recovery = _recovery_prefix(destination)
+    if recovery is None:
+        return None
+    storage = StorageClient.from_environment()
+    manifest, _etag = _read_recovery_manifest(storage, recovery + "/latest.json")
+    if manifest is None:
+        return None
+    step = manifest.get("step")
+    digest = manifest.get("checkpoint_sha256")
+    relative_path = manifest.get("checkpoint_relative_path")
+    if (
+        not isinstance(step, int)
+        or step <= 0
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or not isinstance(relative_path, str)
+        or not relative_path.startswith("checkpoints/")
+        or not relative_path.endswith("/")
+        or ".." in Path(relative_path).parts
+    ):
+        raise FastWAMPolicyError("recovery manifest has an invalid checkpoint reference")
+    if manifest.get("upstream_last_pointer") != f"checkpoints/{step:06d}":
+        raise FastWAMPolicyError("recovery manifest does not bind LeRobot last pointer")
+    checkpoint = local_root / "checkpoints" / f"{step:06d}"
+    storage.download_directory(recovery + "/" + relative_path, str(checkpoint))
+    record = _recoverable_checkpoint_record(checkpoint)
+    if record["step"] != step or record["checkpoint_sha256"] != digest:
+        raise FastWAMPolicyError(
+            "downloaded recovery checkpoint does not match its durable manifest"
+        )
+    (checkpoint.parent / "last").symlink_to(checkpoint.name)
+    return checkpoint / "pretrained_model"
+
+
+def _checkpoint_mirror_monitor(
+    stopped: threading.Event,
+    mirror_once: Callable[[], None],
+    failures: list[Exception],
+) -> None:
+    """Continue periodic recovery publication until the owning process stops."""
+
+    while not stopped.wait(_RECOVERY_MIRROR_POLL_SECONDS):
+        try:
+            mirror_once()
+        except Exception as exc:
+            failures.append(exc)
+            return
+
+
+def _raise_training_mirror_failure(
+    native_failure: Exception | None, mirror_failures: list[Exception]
+) -> None:
+    """Raise the most useful failure after native training and mirroring finish."""
+
+    if mirror_failures:
+        detail = str(mirror_failures[0])
+        if native_failure is not None:
+            raise FastWAMPolicyError(
+                "native training failed and durable checkpoint mirroring also failed: "
+                + detail
+            ) from native_failure
+        raise FastWAMPolicyError("durable checkpoint mirroring failed: " + detail)
+    if native_failure is not None:
+        raise native_failure
+
+
+def _start_checkpoint_mirror(
+    stopped: threading.Event,
+    mirror_once: Callable[[], None],
+    mirror_failures: list[Exception],
+) -> threading.Thread:
+    """Start the background mirror after its task-owned prefix is verified."""
+
+    mirror_once()
+    worker = threading.Thread(
+        target=_checkpoint_mirror_monitor,
+        args=(stopped, mirror_once, mirror_failures),
+        name="fastwam-checkpoint-mirror",
+        daemon=True,
+    )
+    worker.start()
+    return worker
+
+
+def _finish_checkpoint_mirror(
+    stopped: threading.Event,
+    worker: threading.Thread,
+    mirror_once: Callable[[], None],
+    mirror_failures: list[Exception],
+) -> None:
+    """Stop the monitor and perform one final complete-checkpoint mirror."""
+
+    stopped.set()
+    worker.join()
+    if mirror_failures:
+        return
+    try:
+        mirror_once()
+    except Exception as exc:
+        mirror_failures.append(exc)
+
+
+def _run_training_with_checkpoint_mirror(
+    command: list[str],
+    log_path: Path,
+    training: Path,
+    destination: str,
+) -> list[dict[str, Any]]:
+    """Run native training while durably mirroring complete periodic checkpoints."""
+
+    recovery = _recovery_prefix(destination)
+    if recovery is None:
+        _run_command(command, log_path)
+        return []
+
+    storage = StorageClient.from_environment()
+    published: dict[int, dict[str, Any]] = {}
+    mirror_failures: list[Exception] = []
+    stopped = threading.Event()
+
+    def mirror_once() -> None:
+        _sync_recoverable_checkpoints(storage, training, destination, published)
+
+    worker = _start_checkpoint_mirror(stopped, mirror_once, mirror_failures)
+    native_failure: Exception | None = None
+    try:
+        _run_command(command, log_path)
+    except Exception as exc:
+        native_failure = exc
+    finally:
+        _finish_checkpoint_mirror(stopped, worker, mirror_once, mirror_failures)
+
+    _raise_training_mirror_failure(native_failure, mirror_failures)
+    return [
+        {"step": step, "checkpoint_sha256": record["checkpoint_sha256"]}
+        for step, record in sorted(published.items())
+    ]
+
+
 def _read_recipe(prepared: Path) -> dict[str, Any]:
     recipe = _read_json(prepared / "recipe.json")
     if recipe.get("schema") != "npa.fastwam.recipe.v1":
@@ -686,10 +1081,12 @@ def _assert_dataset_receipt(dataset: Path, recipe: dict[str, Any]) -> None:
 
 
 def _final_checkpoint(training: Path) -> Path:
-    candidates = sorted(training.glob("checkpoints/*/pretrained_model"))
-    if not candidates:
-        raise FastWAMPolicyError("lerobot-train wrote no pretrained_model checkpoint")
-    return candidates[-1]
+    checkpoint = _upstream_last_checkpoint(training)
+    if checkpoint is None:
+        raise FastWAMPolicyError("lerobot-train wrote no last checkpoint pointer")
+    pretrained = checkpoint / "pretrained_model"
+    _assert_checkpoint(pretrained)
+    return pretrained
 
 
 def _assert_checkpoint(checkpoint: Path) -> None:
