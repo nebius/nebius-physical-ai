@@ -93,6 +93,59 @@ def test_first_libero_observation_is_safe_and_uses_ordered_cameras(
     assert list(payload["observation"]["images"]) == ["1", "2"]
 
 
+@pytest.mark.parametrize("escaped_url", ["../outside.jpg", "/tmp/outside.jpg"])
+def test_first_libero_observation_rejects_parent_and_absolute_image_escapes(
+    tmp_path: Path, escaped_url: str
+) -> None:
+    data = tmp_path / "libero"
+    image_root = data / "libero_pi0_all" / "image"
+    jsonl = data / "libero_pi0_all" / "jsonl" / "episode.jsonl"
+    jsonl.parent.mkdir(parents=True)
+    image_root.mkdir(parents=True)
+    (image_root / "wrist.jpg").write_bytes(b"wrist")
+    (image_root.parent / "outside.jpg").write_bytes(b"outside")
+    jsonl.write_text(
+        json.dumps(
+            {
+                "state": [0.0] * 8,
+                "images_1": {"type": "image", "url": escaped_url},
+                "images_2": {"type": "image", "url": "wrist.jpg"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(dm05_opendm.DM05WorkflowError, match="escapes"):
+        dm05_opendm._first_libero_observation(data)
+
+
+def test_first_libero_observation_rejects_a_symlink_image_escape(tmp_path: Path) -> None:
+    data = tmp_path / "libero"
+    image_root = data / "libero_pi0_all" / "image"
+    jsonl = data / "libero_pi0_all" / "jsonl" / "episode.jsonl"
+    jsonl.parent.mkdir(parents=True)
+    image_root.mkdir(parents=True)
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"outside")
+    (image_root / "head.jpg").symlink_to(outside)
+    (image_root / "wrist.jpg").write_bytes(b"wrist")
+    jsonl.write_text(
+        json.dumps(
+            {
+                "state": [0.0] * 8,
+                "images_1": {"type": "image", "url": "head.jpg"},
+                "images_2": {"type": "image", "url": "wrist.jpg"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(dm05_opendm.DM05WorkflowError, match="escapes"):
+        dm05_opendm._first_libero_observation(data)
+
+
 def test_licensed_lerobot_conversion_preserves_camera_state_and_action_contract(
     tmp_path: Path,
 ) -> None:

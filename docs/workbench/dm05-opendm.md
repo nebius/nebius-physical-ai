@@ -34,6 +34,13 @@ normalization settings, input artifact URIs, numeric evaluator metrics, and
 the actual MP4 checksum. It also retains the exact manifests from the four
 prior stages without copying data or model weights again.
 
+The separate [Dexmal/libero](https://huggingface.co/datasets/Dexmal/libero)
+card was inspected at revision `f15a66b3975f8cd210c746991f80adde5ab05ca4`.
+It labels the dataset only as `cc` and provides no root license file, so this
+integration does not treat it as a specific use or redistribution grant and
+does not select it. This is a source-selection decision, not a statement about
+Dexmal's authorship of its data or models.
+
 Use this citation for the base model, without relabeling it as NPA work:
 
 ```bibtex
