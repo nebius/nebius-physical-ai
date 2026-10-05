@@ -12,6 +12,18 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+[FLUX 3 Action SO-101 task LoRA](../docs/workbench/flux3-action-so101-plan.md)
+uses the pinned PickOrange dataset and one H100 through
+`npa workbench lerobot flux3-so101-finetune` or the linked workflow YAML.
+`--steps` (workflow `train_steps`) defaults to 60,000 total microsteps.
+For recovery, the optional `--input-path` (workflow `resume_checkpoint`, empty
+by default) accepts a complete numbered S3 checkpoint. Reconcile and cancel
+the interrupted job, then use a fresh run ID and output prefix. The tool checks
+checkpoint hashes and native training state before resuming to the requested
+total. A checkpoint-resumed H100 run completed all 60,000 microsteps with verified
+artifacts and adapter reload; the guide and readiness record document that
+evidence and the remaining closed-loop quality evaluation.
+
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
 optional `--baseline-path` compares both sources in both A/B orders. See the
@@ -816,6 +828,12 @@ image publication status.
 `eval --video` also publishes `rollout.mp4` and a self-contained `rollout.html`
 page alongside the measured evaluation manifest. The SDK and service expose the
 same behavior with `video=True`.
+
+### FLUX 3 Action full fine-tuning
+
+`npa workbench flux-action finetune` trains the action-pretrained trunk and new
+embodiment heads from an explicit LeRobot contract. See [the guide](../docs/workbench/flux-action.md)
+for recipe, S3 handoffs, and validation status.
 
 ### Live MK8s attachment matching
 

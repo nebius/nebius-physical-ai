@@ -129,6 +129,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.lerobot.transfer_train` | `python3 -m npa.workflows.lerobot_transfer train` | `config.prepared_uri`, `config.arm` | native ACT checkpoint, training log and byte provenance | no |
 | `workbench.lerobot.transfer_evaluate` | `python3 -m npa.workflows.lerobot_transfer evaluate` | prepared recipe and both exact checkpoints | paired native PushT trials and real rollout videos | no |
 | `workbench.lerobot.transfer_report` | `python3 -m npa.workflows.lerobot_transfer report` | `config.evaluation_uri` | held-out comparison, expert-demo queue, PNG and RRD | no |
+| `workbench.lerobot.flux3_so101_finetune` | `npa workbench lerobot flux3-so101-finetune` | pinned SO-101 PickOrange recipe, `config.train_steps`, optional `config.resume_checkpoint` | raw/EMA checkpoints and `COMPLETE.json` under `config.output_uri` | no |
 | `workbench.lerobot.policy_train` | `python -m npa.workbench.lerobot.policy_container train` | `config.lerobot_dataset`, `config.train_steps` | checkpoint + run artifacts under `config.artifacts_uri` | no |
 | `workbench.token_factory.triage` | `python -m npa.workflows.token_factory_triage run` | `config.artifacts_uri` | `<triage_uri>/generations.jsonl` | no |
 | `workbench.cosmos3.text_to_image` | `npa workbench cosmos3 text-to-image` | `config.t2i_prompt`, `config.t2i_output_uri`, `config.cosmos_model_id`, `config.cosmos_source_repo`, `config.cosmos_cache_dir`, `config.t2i_uv_group`, `config.t2i_seed`, `config.t2i_checkpoint_name` | `<t2i_output_uri>success.json`, `<t2i_output_uri>text-to-image.png` | no |
@@ -221,6 +222,8 @@ render with the established effective `augment_control_weight` of `1.0`,
 `augment_guidance` of `3.0`,
 and optional protection/segmentation disabled. Explicit spec config takes
 precedence over these compatibility defaults.
+
+| `workbench.flux_action.finetune` | Native FLUX Action full fine-tuning for a declared LeRobot embodiment; pinned base and verified BF16 export. |
 
 ## Tokens
 

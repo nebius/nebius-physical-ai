@@ -312,6 +312,27 @@ containers:
       timeout_seconds: 1800
       status: gpu-gated
 
+  lerobot-flux3:
+    image: npa-lerobot-flux3
+    dockerfile: npa/docker/workbench/lerobot-flux3/Dockerfile
+    physical_ai:
+      useful: true
+      role: FLUX 3 Action SO-101 task LoRA via pinned LeRobot.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
+      network: none; finite workflow stage only
+      external_fetch: [huggingface-models, huggingface-datasets]
+      notes: BFL model and public dataset fetch at runtime; no weights baked.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_lerobot_flux3_functional
+      command: python -m npa.smoke.test_lerobot_flux3_functional
+      serverless_gpu: h200
+      gpu: required
+      timeout_seconds: 1800
+      status: needs-image-update
+
   lerobot:
     image: npa-lerobot
     dockerfile: npa/docker/workbench/lerobot/Dockerfile
@@ -1611,3 +1632,25 @@ containers:
       gpu: none
       timeout_seconds: 60
       status: ready
+
+  flux-action:
+    image: npa-flux-action
+    dockerfile: npa/docker/workbench/flux-action/Dockerfile
+    physical_ai:
+      useful: true
+      role: Full fine-tuning of FLUX Action on explicitly declared robot controls and LeRobot demonstrations.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12-slim-bookworm
+      network: outbound S3 and Hugging Face only; no service listener
+      external_fetch: ["pinned FLUX Action base and encoders with operator credentials", "operator LeRobot dataset"]
+      notes: Unbuilt candidate; weights and data are runtime-only; publication remains quarantined.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_flux_action_functional
+      command: python -m npa.smoke.test_flux_action_functional
+      gpu: required
+      serverless_gpu: h200
+      serverless_gpu_count: 8
+      timeout_seconds: unlimited
+      status: needs-image-update

@@ -294,6 +294,23 @@ class StorageClient:
             prefix += "/"
         self._s3.list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/", MaxKeys=1)
 
+    def require_empty_prefix(self, bucket_uri: str) -> None:
+        """Reject an occupied output prefix before starting expensive work.
+
+        Args:
+            bucket_uri: Destination S3 directory URI.
+        Returns:
+            None. This is a preflight check, not a concurrent-writer lock.
+        Raises:
+            StorageError: The URI is invalid or the prefix contains objects.
+            ClientError: The provider rejects the listing request.
+        """
+        bucket, prefix = _parse_bucket_uri(bucket_uri)
+        prefix = prefix.rstrip("/") + "/" if prefix else ""
+        existing = self._s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
+        if existing.get("Contents"):
+            raise StorageError(f"Output S3 prefix must be empty: {bucket_uri}")
+
     def list_checkpoints(self, bucket_uri: str) -> list[dict[str, str]]:
         """List checkpoint directories under the given S3 URI."""
         bucket, prefix = _parse_bucket_uri(bucket_uri)
@@ -342,11 +359,7 @@ class StorageClient:
             )
         base_prefix = base_prefix.rstrip("/") + "/" if base_prefix else ""
         if require_empty:
-            existing = self._s3.list_objects_v2(
-                Bucket=bucket, Prefix=base_prefix, MaxKeys=1
-            )
-            if existing.get("Contents"):
-                raise StorageError(f"Output S3 prefix must be empty: {bucket_uri}")
+            self.require_empty_prefix(f"s3://{bucket}/{base_prefix}")
 
         files = _local_upload_entries(local_dir, base_prefix)
         self._upload_directory_entries(files, bucket)

@@ -83,6 +83,7 @@ making architecture, review, or domain judgments.
 - `skills/tools/vlm-eval/SKILL.md`: score rollouts with a VLM and turn the score
  into a gate — `run` vs `loop`, rubric/threshold benchmark sweeps, backend
  selection, and judging against a plan an earlier stage wrote.
+- `skills/tools/flux-action/SKILL.md`: native FLUX 3 Action fine-tuning for declared LeRobot robot embodiments; configurable controls, cameras, and rate, with verified checkpoint/export artifacts.
 - `skills/tools/golden-eval/SKILL.md`: prove a container image actually works —
  per-container hello-world manifest, dry-run/local/serverless tiers, batch runs,
  and the offline manifest validation that gates CI.

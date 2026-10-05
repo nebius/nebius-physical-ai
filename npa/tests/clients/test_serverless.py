@@ -846,6 +846,21 @@ def test_create_job_builds_args_and_masks_extra_env(caplog) -> None:
     assert "HF_TOKEN=<redacted>" in caplog.text
 
 
+def test_create_job_preserves_explicit_disk_and_provider_timeout_default() -> None:
+    calls = []
+
+    def runner(args, **kwargs):
+        calls.append(args)
+        return _result(args, 0, _job_json())
+
+    client = ServerlessClient(nebius_bin="nebius", subprocess_runner=runner)
+    _create_job(client, disk_size="1Ti", timeout="")
+    assert calls[0][calls[0].index("--disk-size") + 1] == "1Ti"
+    assert "--timeout" not in calls[0]
+    _create_job(client)
+    assert "--disk-size" not in calls[1]
+
+
 def test_create_job_adds_explicit_registry_auth(monkeypatch, caplog) -> None:
     calls: list[list[str]] = []
 

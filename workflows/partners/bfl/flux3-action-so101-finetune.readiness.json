@@ -1,0 +1,92 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "8b95ad5aa72969d9779baaeed9e343f3ed0254a24b1e0aa259548f2fe846d38b",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "NPA validate-spec and plan-spec --check-render pass for the one-H100 task. The four-microstep smoke and checkpoint-resumed 60,000-total-microstep run both reached independently verified terminal success.",
+      "evidence": [
+        "validate-spec and plan-spec --check-render PASS, one H100 task",
+        "386 focused workflow/toolRef/readiness tests PASS",
+        "target-cluster image pull with task-owned Secret PASS",
+        "managed H100 smoke reached terminal SUCCEEDED",
+        "recovery validate-spec and plan-spec --check-render PASS, 128 GiB memory and 105 GB disk",
+        "581 scoped runner, catalog, live-matrix, and packaging tests PASS",
+        "full checkpoint-resumed H100 run: live NPA SUCCEEDED and final S3 artifact checks PASS"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "CLI and toolRef are implemented; local help, argv guardrail, validate-spec, and plan-spec --check-render passed.",
+      "evidence": [
+        "focused CLI/catalog tests",
+        "local render one H100 task"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The configured project storage probe and smoke passed. Full-run COMPLETE.json, matching status.json, training diagnostics, and complete checkpoints 055000/060000 were independently read from S3. Both final adapter variants were independently stream-hashed against their checkpoint completion record.",
+      "evidence": [
+        "bucket upload/readback/delete PASS",
+        "smoke checkpoint 000004 raw and EMA adapters independently stream-hashed",
+        "smoke COMPLETE.json and declared result files independently read from S3",
+        "full-run COMPLETE.json equals status.json and matches the pinned recipe",
+        "full checkpoints 055000 and 060000: completion markers and nonempty optimizer/RNG/scheduler/EMA state verified",
+        "final raw and EMA adapters: each 471,775,248 bytes, independently stream-hashed"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The pinned dataset converted all 60 episodes from LeRobot v2.1 to v3 locally and in the live H100 smoke; the trainer opened 48 training episodes and 12 evaluation episodes.",
+      "evidence": [
+        "60 episodes, 36,293 frames, sampled rows 0/18146/36292 verified",
+        "real pinned AV1 clip decoded with PyAV 15.1.0",
+        "live H100 conversion and trainer split 48/12 episodes PASS"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The operator project and kubeconfig Nebius profiles were renewed and independently verified. Pinned HF downloads, S3 publication, and a refreshed task-owned registry pull Secret all passed live checks.",
+      "evidence": [
+        "NPA Nebius identity and token preflight PASS",
+        "target kubeconfig authenticated and listed pods",
+        "fresh task-owned Secret target pull of exact private digest PASS",
+        "smoke pinned HF downloads and S3 publication PASS"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The private recovery overlay adds native checkpoint restoration and verified-upload local checkpoint pruning. Its exact immutable OCI digest passed independent manifest hashing, a complete restricted-payload scan, target-cluster image/bootstrap preflight, and the H100 checkpoint-resumed run through terminal success, adapter reload, and S3 verification. Public publication remains quarantined.",
+      "evidence": [
+        "original smoke digest sha256:ef3fd51f957dfd511aef853b393eee66639cca62bd2a73e3e46157b6f597497d reached SUCCEEDED",
+        "recovery digest sha256:958f1a6c1cef792a55ef30f147f4ef455b7d8a635492a5e21d084af434d162e2",
+        "recovery registry manifest independently hashed and matched OCI index digest",
+        "recovery full image scan: 114314 entries, zero restricted payload/history hits",
+        "recovery target-cluster image pull and bootstrap compatibility preflight PASS",
+        "recovery digest on H100: native PEFT/data-order/EMA restoration and 64 remaining microsteps executed, first three losses finite",
+        "recovery digest on H100: 60,000 total microsteps, native resume, adapter reload, final S3 checks, and live terminal SUCCEEDED"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "The H100 run completed 60,000 total microsteps and 15,000 optimizer updates using native recovery from the verified 50,000-microstep checkpoint. Exact managed job 5 reached live-verified SUCCEEDED. Independent S3 checks confirmed COMPLETE.json, the pinned recipe, all 500 finite resumed loss reports, restored finite checkpoint tensors, a finite six-value adapter reload action, and both final checkpoint SHA-256 hashes. The original attempt was interrupted with exit 137 and reconciled CANCELLED before recovery; its precise signal-9 cause and pre-interruption loss logs are unavailable. This verifies training, recovery, inference loading, and publication; closed-loop policy quality remains unmeasured.",
+      "evidence": [
+        "completion finished_utc: 2026-10-03T23:57:59.064641+00:00",
+        "live NPA managed job 5: SUCCEEDED, live_verified true, automation_may_trust_state true",
+        "independent S3 COMPLETE.json and matching status.json: trained, microsteps 60000, optimizer_updates 15000",
+        "native resume: restored microsteps 50000, optimizer_updates 12500, checkpoint_tensors_finite true",
+        "native trainer restored PEFT adapter, optimizer/scheduler/RNG state, data order epoch 3/sample 17134, and EMA shadow",
+        "remaining training: 10000/10000 microsteps; 500 observed resumed losses, all finite; first 0.117, last 0.123",
+        "adapter reload: six finite action values using pinned base, encoders, and saved processors",
+        "checkpoint 060000 raw SHA-256: f6511a8ea168b328c81aa89503355fc9519128799cd2b50a5815239c4d19c85b",
+        "checkpoint 060000 EMA SHA-256: a135d2a84b6e40eb8c7bda7e8014917cbf86ffa5621ae5b6a9816bfb8bfbba09",
+        "both final adapters independently streamed from S3: 471775248 bytes each",
+        "checkpoints 055000/060000 COMPLETE records and native training-state files independently verified",
+        "original checkpoint 050000 retained; exact managed job 4 independently CANCELLED before successor launch",
+        "full historical loss-log coverage and closed-loop policy quality are not established"
+      ]
+    }
+  }
+}

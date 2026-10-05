@@ -4012,3 +4012,44 @@ def train_student_cmd(
     finally:
         for tmp in temp_dirs:
             tmp.cleanup()
+
+
+@app.command("flux3-so101-finetune")
+def flux3_so101_finetune(
+    input_path: str = typer.Option(
+        "", "--input-path", help="Optional complete numbered S3 checkpoint to resume."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="Run-scoped S3 output prefix."
+    ),
+    run_id: str = typer.Option(..., "--run-id", help="Unique run identifier."),
+    steps: int = typer.Option(
+        60000, "--steps", min=4, help="LeRobot training microsteps."
+    ),
+) -> None:
+    """Fine-tune BFL's prepared SO-101 policy with the pinned PickOrange recipe."""
+    from npa.workbench.lerobot.flux3_so101 import run
+
+    try:
+        output_path = validate_write_path(output_path, tool="lerobot", required=True)
+        record = run(
+            output_path=output_path, run_id=run_id, steps=steps, input_path=input_path
+        )
+    except (
+        PathContractError,
+        ValueError,
+        RuntimeError,
+        FileNotFoundError,
+        FileExistsError,
+    ) as exc:
+        _fail(str(exc))
+    typer.echo(
+        json.dumps(
+            {
+                "status": record["status"],
+                "run_id": run_id,
+                "output_path": output_path,
+                "microsteps": record["microsteps"],
+            }
+        )
+    )

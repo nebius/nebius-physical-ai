@@ -24,6 +24,7 @@ system-info  Collect and display system hardware information from the VM.
 benchmark  Run a benchmark suite: collect system info, train each model at each num_workers value, upload results to S3.
 profile-train  Profile training. Modes: wallclock (throughput), profiler (torch.profiler), or inference.
 train-student  Train a vision-only student policy via LeRobot imitation learning.
+flux3-so101-finetune  Fine-tune BFL's prepared SO-101 policy with the pinned PickOrange recipe.
 ```
 
 ## Options
@@ -50,6 +51,7 @@ train-student  Train a vision-only student policy via LeRobot imitation learning
 | `benchmark` | Run a benchmark suite: collect system info, train each model at each num_workers value, upload results to S3. |
 | `profile-train` | Profile training. Modes: wallclock (throughput), profiler (torch.profiler), or inference. |
 | `train-student` | Train a vision-only student policy via LeRobot imitation learning. |
+| `flux3-so101-finetune` | Train the pinned FLUX 3 Action SO-101 LoRA and publish raw/EMA checkpoints to S3. |
 
 ## Examples
 
@@ -57,5 +59,15 @@ train-student  Train a vision-only student policy via LeRobot imitation learning
 npa workbench lerobot --help
 npa workbench lerobot list --help
 ```
+
+For the one-stage cloud job, start with
+[the FLUX 3 SO-101 workflow](../../workflows/partners/bfl/flux3-action-so101-finetune.yaml).
+Its pinned recipe is under `npa/src/npa/workbench/lerobot/flux3_so101/recipe.json`.
+Supply a real bucket, an immutable reviewed image, and an existing image pull
+Secret through `--var`, then run
+`validate-spec`, `plan-spec --check-render`, and `submit`. The command accepts
+`--steps 16` for a four-update runtime smoke or `--steps 60000` for the full LoRA.
+A training result requires both a successful cloud job and a readback-verified
+`COMPLETE.json`; the marker does not assert closed-loop policy quality.
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `lerobot`.

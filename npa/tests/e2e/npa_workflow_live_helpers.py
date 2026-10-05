@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 
 import httpx
 import pytest
+import yaml
 from typer.testing import Result
 
 from npa.clients.config import resolve_project_storage
@@ -1870,6 +1871,34 @@ def materialize_live_spec(
         text,
         count=1,
     )
+    if name == "flux-action-finetune.yaml":
+        required = {
+            "flux_image": "NPA_E2E_FLUX_ACTION_IMAGE",
+            "image_pull_secret": "NPA_E2E_FLUX_ACTION_PULL_SECRET",
+            "flux_input_uri": "NPA_E2E_FLUX_ACTION_INPUT_URI",
+            "flux_recipe_uri": "NPA_E2E_FLUX_ACTION_RECIPE_URI",
+        }
+        values = {key: os.environ.get(env, "").strip() for key, env in required.items()}
+        if not all(values.values()) or not re.fullmatch(
+            r".+@sha256:[0-9a-f]{64}", values["flux_image"]
+        ):
+            pytest.fail(
+                "FLUX full live validation requires NPA_E2E_FLUX_ACTION_IMAGE at an exact digest, PULL_SECRET, INPUT_URI, and RECIPE_URI"
+            )
+        payload = yaml.safe_load(text)
+        payload["config"].update(values)
+        text = yaml.safe_dump(payload, sort_keys=False)
+    if name == "flux3-action-so101-finetune.yaml":
+        image = os.environ.get("NPA_E2E_FLUX3_IMAGE", "").strip()
+        secret = os.environ.get("NPA_E2E_FLUX3_PULL_SECRET", "").strip()
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image) or not secret:
+            pytest.fail(
+                "FLUX live validation requires NPA_E2E_FLUX3_IMAGE at an exact digest and NPA_E2E_FLUX3_PULL_SECRET"
+            )
+        payload = yaml.safe_load(text)
+        payload["config"]["flux3_image"] = image
+        payload["config"]["image_pull_secret"] = secret
+        text = yaml.safe_dump(payload, sort_keys=False)
     paidf_stem = name.replace(".yaml", "")
     if name in {
         "paidf-image-attribute-augmentation.yaml",

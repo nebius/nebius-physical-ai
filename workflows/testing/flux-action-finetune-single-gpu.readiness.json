@@ -1,0 +1,79 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "4ae624bc2460abb62041d9b1839a282b0477caa25898cbf826e950ba05309e1d",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The four-update single-H100 BF16 workflow passed live end-to-end qualification on 2026-10-04.",
+      "evidence": [
+        "46 scoped FLUX contract/CLI/workflow tests passed on Python 3.12.",
+        "Three built-image native CPU training/inference/index/window checks passed for 3/7/14-channel robots.",
+        "validate-spec, plan-spec --check-render and exact live submission planning passed."
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Pinned native full-weight trunk and robot-head training, native checkpoint/export and a fresh-process held-out reload completed. This is functional qualification, not a policy-quality benchmark.",
+      "evidence": [
+        "SOURCE_REVISION e2dd1d8dbc5977b54315d61f7548c63c043d6d4f",
+        "Full mode; one H100, one native worker, BF16 parameters/compute, no EMA, direct model export.",
+        "6,909,046,016 trainable parameters; four optimizer updates; positive trunk/head learning rates in updates 2 through 4.",
+        "Explicit Euler sampler, four denoising steps, shift 1, video/action guidance 1, seed 0."
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Independent remote checks confirmed the completion receipt, complete native model/optimizer checkpoint, finite metrics and export SHA-256 hashes.",
+      "evidence": [
+        "26 published objects; completed checkpoint state.step=4 and nonempty model/optimizer shards.",
+        "config.json SHA-256 bde55838db1db52afa44026098378cec8cf17a9da3b7777ddd5dae22923b1679",
+        "model.safetensors SHA-256 6b08057378f986a4a2e2bf5a5c51191165f25a6358e115f44c6245d8506bf622",
+        "Recipe, dataset index and statistics SHA-256 values independently matched the receipt."
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Pinned public ALOHA inputs and the explicit inference recipe passed remote byte/hash readback and real native indexing.",
+      "evidence": [
+        "lerobot/aloha_sim_transfer_cube_human revision 6a43d500f101255823a9d2b9dc244eeb01a2cd31",
+        "50 episodes, 20000 frames, 50 Hz, top camera and 14 ordered absolute state/action channels.",
+        "Published normalized recipe SHA-256 fd2efd2919d4daacc4358eecd2d48ee797d28f73deee7532dca071dbc0a832f2"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Live object-storage, Nebius and exact pinned base-model access passed. Private runtime credentials are external to Git and the image; registry pull on the target worker remains part of runtime acceptance.",
+      "evidence": [
+        "S3/HF/Nebius health preflight passed",
+        "authenticated access to the pinned BFL trunk, video VAE and text encoder verified",
+        "private registry login, push and immutable digest resolution passed"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "An exact committed-source private image passed startup, native CPU checks, complete layer inspection, broad security policy checks and actual single-GPU execution.",
+      "evidence": [
+        "NPA source commit 7e56dfb45c3f4cd3822d5b21384909b12c6ba551",
+        "Private immutable image digest sha256:b7d24e21a03fc7e0de8d2a595f045f02dc413bf060eb662d8f5227fa421e55e4",
+        "Built-image nonroot runtime and SSH/CLI startup passed; security report matched all layer DiffIDs and source labels.",
+        "Whole-layer restricted-payload and all-severity secret scans passed.",
+        "Trivy 0.74.0: zero secret findings, zero fixable critical findings, zero library critical findings; 23 unfixed OS critical findings retained under repository trivy.yaml policy.",
+        "SPDX SBOM contains 1508 packages; public image publication remains quarantined."
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "Live NPA and native scheduler both reported SUCCEEDED; the fresh evaluator returned finite held-out metrics for all 14 action channels.",
+      "evidence": [
+        "GPU: one H100; four optimizer updates completed on 2026-10-04.",
+        "Observed finite losses: 1.0902739763259888, 1.3282493352890015, 1.4307128190994263, 1.024110198020935.",
+        "One held-out validation window reloaded in a fresh CUDA evaluator process; recipe/export/reload inference settings agreed.",
+        "Standard NPA status was live_verified and automation_may_trust_state, all stages SUCCEEDED, durable manifest available; submission exit 0.",
+        "Earlier FP32 EMA OOM and BF16 missing-sampler failures were independently reconciled and preserved before retry.",
+        "The 3000-update recipe, default FP32/two-EMA reference, distributed GPU plans, optimizer resume and closed-loop policy quality remain unqualified."
+      ]
+    }
+  }
+}

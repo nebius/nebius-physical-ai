@@ -36,6 +36,7 @@ API_ONLY_VLM_AUDIT_TOOLS = frozenset(
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
+    "workbench.flux_action": "flux-action",
     "workflow.habitat_sim.smoke": "habitat-sim",
     "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
@@ -77,6 +78,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workbench.isaac_lab": "isaac-lab",
     "workbench.isaac_arena": "isaac-arena",
     "workbench.openarm": "openarm",
+    "workbench.lerobot.flux3_so101_finetune": "lerobot-flux3",
     "workbench.lerobot": "lerobot",
     "workbench.sonic": "sonic",
     "workbench.mjlab": "mjlab",
@@ -103,6 +105,7 @@ HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workbench.flux_action": ("HF_TOKEN",),
     "workbench.encord": ("ENCORD_SSH_KEY_B64",),
     "workflow.paidf": (),
     "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
@@ -117,6 +120,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # fetch can exceed the anonymous Hub rate limit. Forward an operator token
     # only through the workflow secret channel when one is available.
     "workbench.flex_pi": ("HF_TOKEN",),
+    "workbench.lerobot.flux3_so101_finetune": ("HF_TOKEN",),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval.compare_preference": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval.compare_judges": ("NEBIUS_TOKEN_FACTORY_KEY",),
@@ -269,6 +273,7 @@ TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
     "workflow.xr1": ("/opt/conda/bin/python",),
     "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
+    "workbench.lerobot.flux3_so101_finetune": ("/opt/lerobot/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),
     # Isaac Lab's simulator packages live in the Omniverse kit environment, not in the image's
     # system python. Live job 267 installed npa into /usr/bin/python3 and the stage died with

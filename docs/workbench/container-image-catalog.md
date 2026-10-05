@@ -74,9 +74,9 @@ complete SDXL generations. The opt-in FA4 inference profile improves selected
 attention calls; complete-model performance is effectively tied with FA2.
 These candidates do not change the accepted images listed below.
 
-The current source inventory has **60 packaging entries** (51 redistribution-eligible
-and nine restricted) and **51 mapped tools**: 26 public-release members, two
-restricted tools, and 23 quarantined tools. These counts come from
+The current source inventory has **63 packaging entries** (54 redistribution-eligible
+and nine restricted) and **54 mapped tools**: 26 public-release members, two
+restricted tools, and 26 quarantined tools. These counts come from
 `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
@@ -907,3 +907,14 @@ Torch and setuptools pins and has separate [trained G1 rollout evidence](validat
 on RTX PRO 6000. Public promotion still requires the exact-image security,
 licensing and bootstrap gates. See [MJLab](mjlab.md) for the measured scope,
 operator builds and workflow overrides.
+
+### FLUX Action candidate
+
+The unpublished `npa-flux-action:0.1.0-cuda12-unbuilt` recipe packages the pinned
+standalone trainer. Base weights, encoders, and operator data are fetched at
+runtime. A private image from committed source `7e56dfb4` passed four-update
+single-H100 BF16/no-EMA qualification, checkpoint/export, fresh held-out reload
+and independent S3 hash verification on 2026-10-04. The public pin remains
+unbuilt and quarantined; this private test does not establish a published GHCR
+release or qualify the default distributed FP32 recipe. See
+[the FLUX Action guide](flux-action.md).

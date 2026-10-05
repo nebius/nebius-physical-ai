@@ -162,6 +162,26 @@ _PAIDF_NATIVE_PIPELINE = ["python3", "-m", "npa.workflows.paidf_native"]
 _HABITAT_SIM_SMOKE = ["python3", "-m", "npa.workflows.habitat_sim_smoke"]
 
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workbench.flux_action.finetune": ToolEntry(
+        name="workbench.flux_action.finetune",
+        description="Fine-tune the pinned FLUX Action base for a declared LeRobot embodiment and export BF16 weights.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "flux-action",
+            "finetune",
+            "--input-path",
+            "{{config.flux_input_uri}}",
+            "--recipe-uri",
+            "{{config.flux_recipe_uri}}",
+            "--output-path",
+            "{{config.flux_output_uri}}",
+            "--processes",
+            "{{config.flux_processes}}",
+            "--output-format",
+            "json",
+        ],
+    ),
     "workflow.habitat_sim.smoke": ToolEntry(
         name="workflow.habitat_sim.smoke",
         description=(
@@ -3532,6 +3552,27 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.report_uri}}",
             "--run-id",
             "{{run.id}}",
+        ],
+    ),
+    "workbench.lerobot.flux3_so101_finetune": ToolEntry(
+        name="workbench.lerobot.flux3_so101_finetune",
+        omit_flags_when_empty=("--input-path",),
+        config_defaults={"resume_checkpoint": ""},
+        access_capabilities=("flux3-so101",),
+        description="Fine-tune the pinned BFL FLUX 3 Action SO-101 policy on calibrated PickOrange demonstrations.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "lerobot",
+            "flux3-so101-finetune",
+            "--input-path",
+            "{{config.resume_checkpoint}}",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--steps",
+            "{{config.train_steps}}",
         ],
     ),
     "workbench.lerobot.policy_train": ToolEntry(

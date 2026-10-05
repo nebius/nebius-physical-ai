@@ -1,0 +1,8 @@
+# Update NPA code on an independently scanned, immutable FLUX validation base.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+USER root
+COPY --chown=ubuntu:ubuntu src/npa/workbench/lerobot/flux3_so101/ /opt/npa/src/npa/workbench/lerobot/flux3_so101/
+COPY --chown=ubuntu:ubuntu src/npa/cli/workbench/lerobot.py /opt/npa/src/npa/cli/workbench/lerobot.py
+COPY --chown=ubuntu:ubuntu src/npa/orchestration/npa_workflow/catalog.py /opt/npa/src/npa/orchestration/npa_workflow/catalog.py
+USER ubuntu

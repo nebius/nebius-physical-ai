@@ -12,6 +12,7 @@ Options
 Commands
 specialists  Self-hosted specialist agents and durable task monitoring.
 antioch  Run Antioch simulations and collect policy-compatible data.
+flux-action  Fine-tune FLUX 3 Action on a declared robot embodiment.
 lerobot  LeRobot policy training, evaluation, serving, and inference.
 cosmos  NVIDIA Cosmos world model serving and inference endpoints.
 cosmos2  Cosmos2 transfer workflow contracts.
@@ -69,6 +70,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | --- | --- |
 | `specialists` | Self-hosted specialist agents and durable task monitoring. |
 | `antioch` | Run Antioch simulations and collect policy-compatible data. |
+| `flux-action` | Fine-tune FLUX 3 Action on a declared robot embodiment. |
 | `lerobot` | LeRobot policy training, evaluation, serving, and inference. |
 | `cosmos` | NVIDIA Cosmos world model serving and inference endpoints. |
 | `cosmos2` | Cosmos2 transfer workflow contracts. |

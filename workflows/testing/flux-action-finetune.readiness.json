@@ -1,0 +1,79 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "9f9fbc107ecb9dbea12578d2672994ec7ea685062f37f7e62a5482abb259bc5c",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Local schema, CLI, catalog, recipe and workflow checks pass. A single-H100 FP32 training attempt reached the native trainer but failed during EMA allocation before any update; full-weight GPU acceptance remains unverified.",
+      "evidence": [
+        "native upstream CPU index/config/window checks passed for 3/7/14-channel contracts",
+        "workflow has explicit private image/pull Secret and S3 dataset/recipe inputs",
+        "1334 scoped repository tests passed on Python 3.12",
+        "validate-spec and plan-spec --check-render passed with one rendered GPU task",
+        "Eight-H200, eight-H100 and four-L40S plans passed; their allocations failed before training. A later single-H100 attempt entered the real native trainer."
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The tool invokes the pinned standalone full-weight trainer, requires positive trunk/head learning rates, exports a native BF16 policy and reloads it in a fresh evaluator process.",
+      "evidence": [
+        "SOURCE_REVISION e2dd1d8dbc5977b54315d61f7548c63c043d6d4f",
+        "full mode counts optimizer updates; no PEFT/LoRA configuration"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Live storage authentication, input upload/readback and fresh output-prefix checks passed. Completion still requires independent remote checkpoint/export/reload evidence.",
+      "evidence": [
+        "corrupted remote export rejection tested",
+        "task-owned fresh output prefix checked before workflow planning"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The pinned public ALOHA dataset and four-update recipe were staged in task-owned object-storage prefixes and metadata matched the 14-channel, 50 Hz contract. GPU video ingestion remains part of runtime acceptance.",
+      "evidence": [
+        "lerobot/aloha_sim_transfer_cube_human revision 6a43d500f101255823a9d2b9dc244eeb01a2cd31",
+        "50 episodes, 20000 frames; nine input objects uploaded",
+        "dataset metadata and smoke recipe independently SHA-256 checked after S3 readback",
+        "full-weight tool dry-run planned four optimizer updates"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Live object-storage, Nebius and exact pinned base-model access passed. Private runtime credentials are external to Git and the image; registry pull on the target worker remains part of runtime acceptance.",
+      "evidence": [
+        "S3/HF/Nebius health preflight passed",
+        "authenticated access to the pinned BFL trunk, video VAE and text encoder verified",
+        "private registry login, push and immutable digest resolution passed"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The exact committed full-weight candidate was built and privately published at an independently resolved digest. Public publication and GPU rotation remain quarantined pending runtime qualification.",
+      "evidence": [
+        "source a69ecbd1a3cd0e86a5ee50d811a1a541bf8c2f89",
+        "image sha256:498359516576e17451b42451317d7f5c0551861b8c90c93ed0950a460d4e7324",
+        "Torch 2.10.0+cu128 and NATTEN 0.21.6+torch2100cu128",
+        "exact image passed SSH service startup, CLI help and three native CPU channel-contract tests",
+        "payload scan passed; Trivy 0.74.0 reported zero secret findings and zero critical vulnerabilities; SPDX SBOM contains 331 packages",
+        "581 scoped client, FLUX workflow and packaging tests passed for the startup and explicit-disk changes"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "The default distributed FP32/two-EMA reference remains unqualified. A separate one-H100 BF16/no-EMA/direct-model recipe completed four updates, checkpoint/export, fresh reload, independent S3 hashes and live NPA/native SUCCEEDED on 2026-10-04.",
+      "evidence": [
+        "typed provider failures preserved privately and exact owned node-group states reconciled",
+        "Single-H100 native training reported 6909046016 trainable parameters; preserved CUDA OOM traceback identifies PowerEMA construction; zero optimizer updates completed.",
+        "Serverless exact-image dry-run also rejected the generated image label length; native VM placement lookup lacked ProjectService.List permission",
+        "closed-loop policy quality and the 3000-update recipe remain unmeasured",
+        "Dataset indexing and pinned weight loading completed in the real GPU attempt.",
+        "A CLI configuration notice caused false controller-failure reports; strict queue parsing regression tests now preserve STARTING/RUNNING and fail closed on malformed responses. Exact native job state is required for reconciliation.",
+        "Qualified single-GPU evidence: flux-action-finetune-single-gpu.readiness.json; this does not qualify the 3000-update or distributed reference recipes."
+      ]
+    }
+  }
+}

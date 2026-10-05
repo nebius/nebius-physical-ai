@@ -7258,3 +7258,51 @@ def test_native_cleanup_rechecks_actual_provider_incarnation(monkeypatch, tmp_pa
     )
     assert result.job_id == "42" and len(checks) == 2
     assert cleanup_check() == "c" * 64 and len(checks) == 3
+
+
+@pytest.mark.parametrize("status", ("PENDING", "STARTING", "RUNNING", "SUCCEEDED"))
+def test_workflow_status_ignores_exact_client_cloud_notice(
+    monkeypatch, tmp_path, status
+):
+    from npa.orchestration.skypilot.json_output import _CLIENT_CLOUD_WARNING
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = json.dumps([{"job_id": 42, "status": status}])
+    output = _CLIENT_CLOUD_WARNING + "\n" + payload
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, output, ""),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == status
+    assert workflow_module.queue_rows_from_output(output) == json.loads(payload)
+
+
+@pytest.mark.parametrize(
+    "output",
+    (
+        '["allowed_clouds"]\n[{"job_id": 42, "status": "RUNNING"}]',
+        '[{"job_id": 42, "status": "RUNNING"}]\n[]',
+        "unparseable queue",
+        'ERROR: access denied\n[{"job_id": 42, "status": "SUCCEEDED"}]',
+    ),
+)
+def test_workflow_status_does_not_invent_terminal_failure_from_invalid_queue(
+    monkeypatch,
+    tmp_path,
+    output,
+):
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, output, ""),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "UNKNOWN"
+    assert "malformed" in result.error

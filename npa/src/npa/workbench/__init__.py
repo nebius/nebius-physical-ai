@@ -13,6 +13,7 @@ __all__ = [
     "encord",
     "fiftyone",
     "flex_pi",
+    "flux_action",
     "genesis",
     "groot",
     "insights",
