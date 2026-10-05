@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -12,6 +13,7 @@ import pytest
 
 from npa.orchestration.npa_workflow.readiness import load_readiness_record
 from npa.workflows import dm05_lerobot_libero as workflow
+from npa.workflows import dm05_opendm_libero_baseline as baseline_workflow
 
 
 WORKFLOW = (
@@ -84,25 +86,58 @@ def _native_eval(path: Path, role: str) -> None:
             container.mux(packet)
 
 
+def _opendm_checkpoint(path: Path) -> Path:
+    path.mkdir()
+    (path / "config.json").write_text(
+        json.dumps({"model_type": "dm05", "chunk_size": 50, "action_dim": 32})
+    )
+    (path / "norm_stats.json").write_text(
+        json.dumps(
+            {
+                "norm_stats": {
+                    "state": {"mean": [0.0] * 8, "std": [1.0] * 8},
+                    "action": {"mean": [0.0] * 7, "std": [1.0] * 7},
+                }
+            }
+        )
+    )
+    return path
+
+
+def _opendm_results(suite: str) -> dict[str, object]:
+    tasks = []
+    for task_id in range(10):
+        successes = [True] * 5
+        if task_id == 0:
+            successes[-1] = False
+        tasks.append(
+            {
+                "task_id": str(task_id),
+                "episode_results": [
+                    {"episode": episode, "success": success}
+                    for episode, success in enumerate(successes)
+                ],
+            }
+        )
+    return {
+        "total_tasks": 10,
+        "total_episodes": 50,
+        "successful_episodes": 49,
+        "success_rate": 0.98,
+        "task_results": tasks,
+        "suite": suite,
+    }
+
+
 def test_five_stage_contract_preserves_action_controller_boundary_and_real_artifacts(
     tmp_path, monkeypatch
 ):
     pytest.importorskip("rerun")
     native_run = workflow.subprocess.run
-    checkpoints = {
-        # This functional test supplies a synthetic, representation-matched
-        # baseline solely to exercise all connected artifact stages.  The
-        # released generic predecessor is tested below and must be rejected
-        # before a live LIBERO comparison.
-        role: _checkpoint(tmp_path / role, "candidate")
-        for role in workflow.MODEL_REPOSITORIES
-    }
+    checkpoints = {"candidate": _checkpoint(tmp_path / "candidate", "candidate")}
     monkeypatch.setattr(
         workflow, "_download_checkpoint", lambda role, _: checkpoints[role]
     )
-    # The release-contract rejection is covered independently below.  This
-    # harness deliberately uses a representation-matched synthetic baseline
-    # to exercise the five connected stages and their real artifact formats.
     monkeypatch.setattr(
         workflow, "_require_libero_checkpoint_contract", lambda role, checkpoint: None
     )
@@ -135,21 +170,54 @@ def test_five_stage_contract_preserves_action_controller_boundary_and_real_artif
         )
 
     monkeypatch.setattr(workflow.subprocess, "run", native)
+    checkpoint = _opendm_checkpoint(tmp_path / "opendm-checkpoint")
+    monkeypatch.setattr(
+        baseline_workflow,
+        "_read_runtime_manifest",
+        lambda: baseline_workflow.OPENDM_IMPLEMENTATION,
+    )
+    monkeypatch.setattr(
+        baseline_workflow,
+        "_runtime_paths",
+        lambda: (
+            tmp_path,
+            tmp_path,
+            tmp_path / "opendm-python",
+            tmp_path / "dexbotic-python",
+        ),
+    )
+    monkeypatch.setattr(baseline_workflow, "_download_checkpoint", lambda _: checkpoint)
+    monkeypatch.setattr(baseline_workflow, "_start_server", lambda *args: object())
+    monkeypatch.setattr(baseline_workflow, "_wait_for_server", lambda _: None)
+    monkeypatch.setattr(baseline_workflow, "_stop_server", lambda _: None)
+
+    def opendm_suite(_, __, suite, output, ___, ____):
+        _native_eval(output, "baseline")
+        video = output / "videos" / "episode.mp4"
+        for index in range(1, 50):
+            shutil.copy2(video, output / "videos" / f"episode-{index}.mp4")
+        result = _opendm_results(suite)
+        (output / "results.json").write_text(json.dumps(result))
+        return result
+
+    monkeypatch.setattr(baseline_workflow, "_run_suite", opendm_suite)
     prepared, baseline, candidate, metrics, report = (
         tmp_path / name
         for name in ("prepared", "baseline-out", "candidate-out", "metrics", "report")
     )
     assert workflow.main(["prepare", "--output-path", str(prepared)]) == 0
     assert (
-        workflow.main(
+        baseline_workflow.main(
             [
                 "rollout",
                 "--input-path",
                 str(prepared),
                 "--output-path",
                 str(baseline),
-                "--checkpoint-role",
-                "baseline",
+                "--server-device",
+                "0",
+                "--evaluator-device",
+                "1",
             ]
         )
         == 0
@@ -218,10 +286,13 @@ def test_five_stage_contract_preserves_action_controller_boundary_and_real_artif
         "metrics/libero_spatial/delta"
         in (report / "comparison.inspection.txt").read_text()
     )
-    for root in (baseline, candidate):
-        rollout = json.loads((root / "rollout.json").read_text())
-        assert rollout["dm05_runtime"] == runtime
-        assert rollout["native_checkpoint_load_verified"] is True
+    baseline_rollout = json.loads((baseline / "rollout.json").read_text())
+    candidate_rollout = json.loads((candidate / "rollout.json").read_text())
+    assert baseline_rollout["opendm_runtime"] == baseline_workflow.OPENDM_IMPLEMENTATION
+    assert baseline_rollout["native_checkpoint_load_verified"] is True
+    assert len(baseline_rollout["videos"]) == 200
+    assert candidate_rollout["dm05_runtime"] == runtime
+    assert candidate_rollout["native_checkpoint_load_verified"] is True
 
 
 def test_metrics_rejects_rollouts_that_do_not_consume_the_same_protocol(tmp_path):
@@ -293,30 +364,77 @@ def test_dm05_runtime_manifest_is_exact_source_bound(tmp_path, monkeypatch):
 def test_checkpoint_download_uses_role_specific_published_contract(
     tmp_path, monkeypatch
 ):
-    baseline = _checkpoint(tmp_path / "published-baseline", "baseline")
+    candidate = _checkpoint(tmp_path / "published-candidate", "candidate")
     monkeypatch.setitem(
         sys.modules,
         "huggingface_hub",
-        types.SimpleNamespace(snapshot_download=lambda **_: str(baseline)),
+        types.SimpleNamespace(snapshot_download=lambda **_: str(candidate)),
     )
 
-    assert workflow._download_checkpoint("baseline", tmp_path) == baseline
+    assert workflow._download_checkpoint("candidate", tmp_path) == candidate
 
-    config_path = baseline / "config.json"
+    config_path = candidate / "config.json"
     config = json.loads(config_path.read_text())
-    config["output_features"]["action"]["shape"] = [7]
+    config["output_features"]["action"]["shape"] = [6]
     config_path.write_text(json.dumps(config))
-    with pytest.raises(ValueError, match="baseline DM05 checkpoint"):
-        workflow._download_checkpoint("baseline", tmp_path)
+    with pytest.raises(ValueError, match="candidate DM05 checkpoint"):
+        workflow._download_checkpoint("candidate", tmp_path)
 
 
 def test_generic_predecessor_is_rejected_without_an_action_state_adapter(tmp_path):
-    baseline = _checkpoint(tmp_path / "baseline", "baseline")
+    baseline = _checkpoint(tmp_path / "baseline", "documented_predecessor")
     candidate = _checkpoint(tmp_path / "candidate", "candidate")
 
     with pytest.raises(ValueError, match="not LIBERO-compatible"):
-        workflow._require_libero_checkpoint_contract("baseline", baseline)
+        workflow._require_libero_checkpoint_contract("documented_predecessor", baseline)
     workflow._require_libero_checkpoint_contract("candidate", candidate)
+
+
+def test_opendm_baseline_invokes_official_overrides_and_rejects_wrong_norm_shape(
+    tmp_path,
+):
+    command = baseline_workflow._server_command(tmp_path / "checkpoint")
+
+    assert command[:6] == [
+        "bash",
+        "script/dm05_launcher.sh",
+        "--exp",
+        "playground/dm05_libero.py",
+        "--task",
+        "inference",
+    ]
+    assert "--model-config.chunk-size" in command
+    assert "--inference-config.output-action-dim" in command
+    checkpoint = _opendm_checkpoint(tmp_path / "checkpoint-contract")
+    assert (
+        baseline_workflow._require_checkpoint_contract(checkpoint)[
+            "effective_chunk_size"
+        ]
+        == 10
+    )
+    normalization = json.loads((checkpoint / "norm_stats.json").read_text())
+    normalization["norm_stats"]["action"]["std"] = [1.0] * 8
+    (checkpoint / "norm_stats.json").write_text(json.dumps(normalization))
+    with pytest.raises(baseline_workflow.OpenDMBaselineError, match="vectors disagree"):
+        baseline_workflow._require_checkpoint_contract(checkpoint)
+
+
+def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
+    docker_root = Path(__file__).resolve().parents[2] / "docker/workbench/lerobot"
+    manifest = json.loads(
+        (docker_root / "dm05-opendm-baseline-runtime-manifest.json").read_text()
+    )
+    instructions = (
+        docker_root / "Dockerfile.dm05-opendm-baseline-validation"
+    ).read_text(encoding="utf-8")
+
+    assert manifest == baseline_workflow.OPENDM_IMPLEMENTATION
+    assert "validation-disposition=\"operator-private-no-publication\"" in instructions
+    assert "checkout --detach 7d52f1591437332cb0157be3303c1c46da811344" in instructions
+    assert "checkout --detach 789b87f50d9fadc7663d2e8bac057941221aab81" in instructions
+    assert "checkout --detach 8f1084e3132a39270c3a13ebe37270a43ece2a01" in instructions
+    assert "/opt/opendm-venv/bin/python -m pip uninstall -y wandb" in instructions
+    assert "NPA_DM05_OPENDM_RUNTIME_MANIFEST=/opt/opendm/dm05-libero-baseline-runtime.json" in instructions
 
 
 def test_libero_config_uses_installed_assets_without_interactive_setup(

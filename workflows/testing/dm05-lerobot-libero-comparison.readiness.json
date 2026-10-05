@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "43a97124680b6f9ca02b0703747fd6c1a1723077174bf76aa0eb2c42775ead11",
+  "workflow_sha256": "ab7cbeb33aa6fc370ae8826675198cae961665edeaf8389d6bbb27fb5304fd71",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Contract tests bind protocol preparation, native LeRobot rollout, numerical metrics, and MP4/RRD reporting without substituting a published score.",
+      "reason": "Contract tests bind protocol preparation, native OpenDM and LeRobot rollout adapters, numerical metrics, and MP4/RRD reporting without substituting a published score.",
       "evidence": [
         "npa/tests/workflows/test_dm05_lerobot_libero.py",
         "docs/workbench/dm05-lerobot-libero.md"
@@ -29,7 +29,7 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "The candidate checkpoint is runtime-fetched and native evaluation is in progress; no five-stage comparison artifact is accepted.",
+      "reason": "Both public checkpoints are runtime-fetched only. The candidate component is independently verified, but the released OpenDM baseline lane and full five-stage comparison remain unexecuted.",
       "evidence": [
         "Private candidate runtime evidence"
       ]
@@ -42,15 +42,15 @@
       ]
     },
     "source_image": {
-      "status": "verified",
-      "reason": "An operator-private exact-source DM05 image passed registration, pull, bootstrap, and telemetry-boundary checks; it is not a public image release.",
+      "status": "unverified",
+      "reason": "The candidate's operator-private exact-source image is qualified, but the separate OpenDM/Dexbotic baseline image has not yet completed build, scan, target pull, bootstrap, and device checks. Neither image is a public release.",
       "evidence": [
         "Private operator image qualification evidence"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The released generic predecessor is a 14-state/14-action, 50-step policy and cannot be silently adapted to the candidate's 8-state/7-action LIBERO contract. Candidate qualification is in progress; no matched five-stage result, benchmark reproduction, or physical-robot claim exists.",
+      "reason": "The released generic predecessor remains rejected as 14-state/14-action. A released OpenDM 8-state/7-action baseline is now pinned, but its private runtime and the full matched five-stage result are not yet independently accepted; no benchmark reproduction or physical-robot claim exists.",
       "evidence": [
         "docs/workbench/dm05-lerobot-libero.md"
       ]

@@ -9,15 +9,21 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "dm05-lerobot-libero/{{run.id}}"
-  # Run submitted checkout adapters inside the exact private DM05 runtime image.
+  # The shared matrix is plan-only. The private route supplies both immutable
+  # runtime images; these invalid defaults deliberately fail closed elsewhere.
   source_overlay: true
+  candidate_runtime_image: "registry.example.invalid/operator/dm05-lerobot-libero@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  baseline_runtime_image: "registry.example.invalid/operator/dm05-opendm-libero@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   seed: "7"
   episodes_per_task: "5"
   policy_device: cuda
-  # B200 is the default headless evaluation target. Operators may select an
-  # equivalently qualified compatible GPU through the normal config override.
-  gpu_type: B200
-  gpu_count: "1"
+  # OpenDM's released benchmark runs inference and simulation on separate GPUs.
+  # The private route resolves this canonical target to its verified product.
+  gpu_type: RTXPRO6000
+  baseline_gpu_count: "2"
+  candidate_gpu_count: "1"
+  opendm_server_device: "0"
+  opendm_evaluator_device: "1"
   protocol_uri: "s3://{{config.bucket}}/{{config.prefix}}/protocol/"
   baseline_uri: "s3://{{config.bucket}}/{{config.prefix}}/baseline/"
   candidate_uri: "s3://{{config.bucket}}/{{config.prefix}}/candidate/"
@@ -28,13 +34,19 @@ resources:
     cloud: kubernetes
     cpus: 4
     memory: 16Gi
-    image: ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
-  gpu:
+    image: "{{config.candidate_runtime_image}}"
+  baseline_gpu:
     cloud: kubernetes
-    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
+    accelerators: "{{config.gpu_type}}:{{config.baseline_gpu_count}}"
+    cpus: 32
+    memory: 256Gi
+    image: "{{config.baseline_runtime_image}}"
+  candidate_gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.candidate_gpu_count}}"
     cpus: 16
     memory: 96Gi
-    image: ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
+    image: "{{config.candidate_runtime_image}}"
 initial: prepare
 states:
   prepare:
@@ -48,12 +60,9 @@ states:
         schema: npa.checksums.sha256.v1
     next: baseline-rollout
   baseline-rollout:
-    description: Run the upstream-native closed-loop LIBERO evaluator on the pinned DM05-Lerobot predecessor.
-    toolRef: workbench.lerobot.dm05_libero_rollout
-    resources: gpu
-    params:
-      checkpoint_role: baseline
-      rollout_uri: "{{config.baseline_uri}}"
+    description: Run released OpenDM DM05-libero with the pinned Dexbotic evaluator on the sealed LIBERO episodes.
+    toolRef: workbench.opendm.dm05_libero_baseline_rollout
+    resources: baseline_gpu
     inputs:
       - uri: "{{config.protocol_uri}}checksums.json"
     outputs:
@@ -63,9 +72,9 @@ states:
         schema: npa.checksums.sha256.v1
     next: candidate-rollout
   candidate-rollout:
-    description: Run the same closed-loop LIBERO evaluator on the pinned DM05-Lerobot-LIBERO checkpoint.
+    description: Run the pinned DM05-Lerobot-LIBERO evaluator on the same sealed LIBERO protocol.
     toolRef: workbench.lerobot.dm05_libero_rollout
-    resources: gpu
+    resources: candidate_gpu
     params:
       checkpoint_role: candidate
       rollout_uri: "{{config.candidate_uri}}"

@@ -31,11 +31,19 @@ from npa.workflows.lerobot_transfer_data import (
 )
 
 MODEL_REPOSITORIES = {
-    "baseline": ("Dexmal/DM05-Lerobot", "716afe317bfd01fa4d7ad7cfb84e3b19b7bd934d"),
     "candidate": (
         "Dexmal/DM05-Lerobot-LIBERO",
         "c22df98af5a69e7b9f6bfc1086d1a6982e647b26",
     ),
+}
+DOCUMENTED_PREDECESSOR = {
+    "repository": "Dexmal/DM05-Lerobot",
+    "revision": "716afe317bfd01fa4d7ad7cfb84e3b19b7bd934d",
+}
+OPENDM_BASELINE = {
+    "repository": "Dexmal/DM05-libero",
+    "revision": "25a8e0d38a8eaeaae41a44d7b4a2378fd8ce1088",
+    "implementation": "npa.workflows.dm05_opendm_libero_baseline",
 }
 # `DM05-Lerobot` is the documented predecessor, but its published checkpoint is
 # a 14-state/14-action, 50-step general policy.  It must be identified as such
@@ -43,7 +51,7 @@ MODEL_REPOSITORIES = {
 # of the enhanced checkpoint.  A rollout rejects that representation mismatch
 # before it can invent an action adapter or call the evaluation comparable.
 CHECKPOINT_CONTRACTS = {
-    "baseline": {
+    "documented_predecessor": {
         "type": "dm05",
         "use_relative_actions": False,
         "add_state": True,
@@ -156,8 +164,12 @@ def _protocol(seed: int, episodes_per_task: int) -> dict[str, Any]:
             "n_action_steps": 10,
         },
         "checkpoint_lineage": {
-            role: {"repository": repo, "revision": revision}
-            for role, (repo, revision) in MODEL_REPOSITORIES.items()
+            "baseline": OPENDM_BASELINE,
+            "candidate": {
+                "repository": MODEL_REPOSITORIES["candidate"][0],
+                "revision": MODEL_REPOSITORIES["candidate"][1],
+            },
+            "documented_incompatible_predecessor": DOCUMENTED_PREDECESSOR,
         },
         "lerobot_release": LEROBOT_RELEASE,
         "dm05_implementation": DM05_IMPLEMENTATION,
@@ -222,10 +234,10 @@ def _download_checkpoint(role: str, workspace: Path) -> Path:
 def _require_libero_checkpoint_contract(role: str, checkpoint: Path) -> None:
     """Reject a published checkpoint whose native representation cannot run LIBERO.
 
-    This is intentionally separate from source identity.  The predecessor is
-    real and provenance-verified, but it is not a valid matched LIBERO baseline
-    without a documented, released representation conversion.  NPA does not
-    manufacture that conversion or relabel an OpenDM checkpoint as LeRobot.
+    This is intentionally separate from source identity. The predecessor is
+    real and provenance-verified, but it is not a valid matched LIBERO baseline.
+    The released OpenDM baseline runs in its own upstream-native adapter; NPA
+    neither manufactures a conversion nor relabels that OpenDM checkpoint.
     """
 
     config = json.loads((checkpoint / "config.json").read_text())

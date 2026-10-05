@@ -243,6 +243,14 @@ Its source manifest, attribution notice, target pull preflight, and native
 workflow evidence are separate required gates; a local build is not a catalog
 entry or an accepted capability.
 
+`lerobot/Dockerfile.dm05-opendm-baseline-validation` is a second unregistered,
+operator-private derivative for the released `Dexmal/DM05-libero` comparison
+baseline. It retains the exact Apache-2.0 OpenDM source, MIT Dexbotic evaluator,
+and MIT LIBERO benchmark source at reviewed revisions, but runtime-fetches the
+Gemma-labeled checkpoint and has no public publication authorization. It is a
+separate evaluator runtime, not a replacement for the LeRobot checkpoint image
+or for the independently owned OpenDM training solution.
+
 Habitat-Sim uses a neutral runtime-fetch bootstrap image with exact corresponding
 Ubuntu package sources. Its public development digest and successful one-RTX
 standard-workflow validation are recorded in the

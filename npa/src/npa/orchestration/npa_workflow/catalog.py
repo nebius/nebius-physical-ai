@@ -3550,6 +3550,27 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.episodes_per_task}}",
         ],
     ),
+    "workbench.opendm.dm05_libero_baseline_rollout": ToolEntry(
+        name="workbench.opendm.dm05_libero_baseline_rollout",
+        description=(
+            "Run Dexmal's pinned OpenDM/Dexbotic LIBERO evaluator for the released "
+            "8-state/7-action DM05-libero baseline."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.dm05_opendm_libero_baseline",
+            "rollout",
+            "--input-path",
+            "{{config.protocol_uri}}",
+            "--output-path",
+            "{{config.baseline_uri}}",
+            "--server-device",
+            "{{config.opendm_server_device}}",
+            "--evaluator-device",
+            "{{config.opendm_evaluator_device}}",
+        ],
+    ),
     "workbench.lerobot.dm05_libero_rollout": ToolEntry(
         name="workbench.lerobot.dm05_libero_rollout",
         description="Run upstream lerobot-eval on one pinned DM05 checkpoint with the sealed LIBERO protocol.",
