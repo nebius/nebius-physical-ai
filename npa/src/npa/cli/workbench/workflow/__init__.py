@@ -7906,11 +7906,13 @@ def status_cmd(
         status_is_terminal,
     )
 
-    # An exact S3 URI or project alias selects the durable resolver. Do not probe
-    # the legacy sim2real prefix first: that probe builds a separate S3 client
-    # from ambient env vars and can fail before the selected project's configured
-    # credentials ever reach the durable reader.
-    exact_durable_uri = bool(run_id.startswith("s3://") or workflow_s3_uri or project)
+    # An exact S3 URI, an explicit generic workflow prefix, or a project alias
+    # selects the durable resolver. Do not probe the legacy sim2real prefix
+    # first: that probe builds a separate S3 client from ambient env vars and
+    # can fail before the selected durable reader receives its storage settings.
+    exact_durable_uri = bool(
+        run_id.startswith("s3://") or workflow_s3_uri or workflow_s3_prefix or project
+    )
     prefix = workflow_s3_prefix or "sim2real-b"
     if not exact_durable_uri and sim2real_run_exists(
         resolved_run_id,
