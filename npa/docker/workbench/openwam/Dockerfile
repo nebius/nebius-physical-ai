@@ -92,7 +92,7 @@ RUN git clone --filter=blob:none --no-checkout "${LIBERO_SOURCE_URL}" /opt/openw
     && /opt/openwam-libero/bin/python -m pip install --no-cache-dir \
       --extra-index-url https://download.pytorch.org/whl/cpu \
       hydra-core==1.2.0 numpy==1.22.4 wandb==0.13.1 easydict==1.9 \
-      transformers==4.21.1 opencv-python==4.6.0.66 robomimic==0.2.0 \
+      transformers==4.36.0 opencv-python==4.6.0.66 robomimic==0.2.0 \
       einops==0.4.1 thop==0.1.1.post2209072238 robosuite==1.4.0 \
       bddl==1.0.1 future==0.18.2 matplotlib==3.5.3 cloudpickle==2.1.0 \
       gym==0.25.2 torch==2.7.1+cpu mujoco==3.3.2 imageio==2.37.4 \

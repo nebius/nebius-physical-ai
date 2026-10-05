@@ -28,6 +28,10 @@ def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
         "-m npa.workflows.openwam_pipeline" in dockerfile
     )
     assert "sudo -u ubuntu" not in dockerfile
+    # The LIBERO client path is compatibility-probed against this fixed release;
+    # the prior 4.21.1 pin carries a critical fixed vulnerability.
+    assert "transformers==4.36.0" in dockerfile
+    assert "transformers==4.21.1" not in dockerfile
 
 
 def test_openwam_recipe_retains_runtime_fetch_and_private_quarantine() -> None:
