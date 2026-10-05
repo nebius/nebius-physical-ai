@@ -15,6 +15,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -26,6 +27,12 @@ LIBERO_DATASET = "allenai/MolmoAct2-LIBERO-Dataset"
 LIBERO_DATASET_REVISION = "fe3ead447f44c0ea950396360b304cc2fb6be8f8"
 BASE_CHECKPOINT = "allenai/MolmoAct2"
 BASE_CHECKPOINT_REVISION = "e432d85f6e039edca44afb93c262f3084ab72a9c"
+
+
+def _default_work_root() -> str:
+    """Use the process-selected temporary filesystem for adapter intermediates."""
+
+    return str(Path(tempfile.gettempdir()) / "npa-molmoact2")
 
 
 class MolmoAct2PipelineError(RuntimeError):
@@ -538,7 +545,7 @@ def visualize(args: argparse.Namespace) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--work-root", default="/tmp/npa-molmoact2")
+    parser.add_argument("--work-root", default=_default_work_root())
     sub = parser.add_subparsers(dest="command", required=True)
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--prepared-dataset-uri", required=True)

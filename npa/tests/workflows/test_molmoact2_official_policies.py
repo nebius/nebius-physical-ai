@@ -229,6 +229,16 @@ def test_finetune_reuses_an_exact_prepared_dataset_symlink_on_retry(
     assert local_dataset.resolve() == data_root.resolve()
 
 
+def test_parser_uses_the_process_selected_temporary_filesystem(monkeypatch, tmp_path):
+    monkeypatch.setattr(pipeline.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    args = pipeline.build_parser().parse_args(
+        ["prepare", "--prepared-dataset-uri", "prepared", "--output-uri", "output"]
+    )
+
+    assert args.work_root == str(tmp_path / "npa-molmoact2")
+
+
 def test_live_matrix_does_not_require_an_optional_hub_token() -> None:
     case = next(
         case
