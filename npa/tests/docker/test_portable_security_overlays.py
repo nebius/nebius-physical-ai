@@ -35,6 +35,14 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
     assert sync < overlay < check
     assert "pillow==12.3.0" in lock
     assert "setuptools==84.0.0" in lock
+    if image == "cosmos3":
+        # The framework's frozen upstream lock used AnyIO 4.9.0.  The portable
+        # overlay must retain the hash-verified TLS/IDN vulnerability repair.
+        assert "anyio==4.15.1" in lock
+        assert (
+            "anyio==4.15.1"
+            in (directory / "security-upgrades-requirements.in").read_text()
+        )
 
 
 def test_hardened_nltk_source_install_contract() -> None:
