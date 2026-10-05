@@ -202,6 +202,7 @@ CONTAINER_IMAGE_NAMES = {
     "ncore": "npa-ncore",
     "robotwin": "npa-robotwin",
     "libero": "npa-libero",
+    "molmoact2": "npa-molmoact2",
 }
 
 # Public-image publication must enforce the digest-bound SkyPilot bootstrap
@@ -317,8 +318,14 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
-NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
-NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
+# Private BYOF candidates can have a Dockerfile without earning either a public
+# release slot or a redistribution classification.  Keep them in the same
+# selector quarantine as other neutral-but-unvalidated candidates until an
+# exact built-byte review establishes the actual class.
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"molmoact2"})
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {
+    "molmoact2": "private-byof-unbuilt",
+}
 # Previously accepted releases whose published bytes no longer satisfy the
 # repository's current security contract. Keep this separate from
 # UNVALIDATED_PUBLICATION_TOOLS: these images were built and capability-tested,

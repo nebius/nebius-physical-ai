@@ -127,6 +127,44 @@ containers:
       gpu: required
       timeout_seconds: 7200
       status: needs-image-update
+
+  molmoact2:
+    image: npa-molmoact2
+    default_tag: private-byof-unbuilt
+    dockerfile: npa/docker/workbench/molmoact2/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Runs the official pinned MolmoAct2 LIBERO policy path: real two-camera
+        dataset preparation, upstream LoRA fine-tuning, closed-loop rollout,
+        held-out action evaluation, and factual RRD/MP4 output.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
+      network: public pinned-source/model/dataset runtime fetch plus operator-scoped artifact storage
+      external_fetch:
+        - allenai-molmoact2-pinned-source
+        - huggingface-public-molmoact2-libero-runtime
+        - operator-artifact-storage
+      notes: >-
+        Private BYOF candidate only. The image contains no checkpoint, dataset,
+        cache, credential, trained adapter, or output. Exact built-byte review,
+        real RTX PRO 6000 execution, final artifact inspection, and a separate
+        B200/B300 assessment remain required; this entry does not claim any of
+        those gates have passed.
+    golden_eval:
+      kind: workflow-smoke
+      command: >-
+        npa workbench workflow submit workflows/testing/molmoact2-official-policies.yaml
+        --run-id molmoact2-golden-eval
+        --var runtime_image=${NPA_MOLMOACT2_IMAGE_DIGEST}
+        --var bucket=${NPA_ARTIFACT_BUCKET}
+        --var prefix=molmoact2/golden-eval/${NPA_RUN_ID}
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: unlimited
+      status: needs-image-update
+
   antioch:
     image: npa-antioch
     dockerfile: npa/docker/workbench/antioch/Dockerfile

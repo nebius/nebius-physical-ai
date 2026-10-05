@@ -117,6 +117,15 @@
       "notes": "The current neutral-bootstrap candidate remains unbuilt, quarantined, and unvalidated. It contains no LIBERO source, GPU runtime, model, demonstration, task asset, cache, checkpoint, credential, or output payload. No datacenter Blackwell compatibility or public acceptance is claimed."
     },
     {
+      "name": "npa-molmoact2",
+      "dockerfile": "molmoact2/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "unvalidated",
+      "smoke": "On one compatible RTX PRO 6000, run the pinned official LIBERO path through real prepare, upstream LoRA fine-tune, closed-loop rollout, held-out action/success evaluation, and factual MP4/RRD provenance with independently inspected artifacts.",
+      "notes": "Private operator BYOF candidate only. Its CUDA base and resolved upstream dependency bytes have not received an exact built-image scan or a real device qualification. RTX PRO 6000 placement must not be inferred as B200/B300 compatibility; no public release or datacenter Blackwell result is claimed."
+    },
+    {
       "name": "npa-cosmos3-nano-video",
       "dockerfile": "cosmos3-nano-video/Dockerfile",
       "verdict": "ready",

@@ -257,7 +257,9 @@ def test_runtime_image_removes_nonruntime_payloads_in_their_creating_layers() ->
 def test_runtime_image_declares_the_verified_skypilot_bootstrap_contract() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
 
-    assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in dockerfile
+    assert (
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in dockerfile
+    )
     # The attestation is backed by the actual non-root worker prerequisites,
     # not used as a substitute for the target-cluster capability check.
     assert "openssh-server" in dockerfile
