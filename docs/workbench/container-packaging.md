@@ -102,6 +102,10 @@ lock, use `urllib3==2.8.0`, and replace pip's vendored MessagePack with the actu
 `msgpack==1.2.1` wheel bytes while retaining its license. Upgrading only the
 viewer virtualenv leaves the system bootstrap vulnerable; installing a newer
 external MessagePack package leaves pip's independent vendor copy unchanged.
+The replacement also updates pip's vendor inventory and CycloneDX dependency
+references to describe the installed bytes. Both builds upgrade inherited
+Debian packages against the same fixed snapshot. This is partial hardening;
+remaining vendored dependency findings still require review before promotion.
 
 All first-class images live under `npa/docker/workbench/`:
 

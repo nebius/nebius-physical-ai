@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 from importlib.metadata import distribution, version
+import json
 from pathlib import Path
 import shutil
 
@@ -48,6 +49,26 @@ def main() -> None:
         raise RuntimeError("pip must declare exactly one MessagePack vendor version")
     lines[matches[0]] = f"msgpack=={fixed_version}"
     vendor_manifest.write_text("\n".join(lines) + "\n")
+    bom_path = vendor / "bom.cdx.json"
+    bom = json.loads(bom_path.read_text())
+    components = [item for item in bom["components"] if item["name"] == "msgpack"]
+    if len(components) != 1:
+        raise RuntimeError("pip must inventory exactly one MessagePack component")
+    component = components[0]
+    previous_ref = component["bom-ref"]
+    fixed_ref = f"pkg:pypi/msgpack@{fixed_version}"
+    component.update(version=fixed_version, purl=fixed_ref)
+    component["bom-ref"] = fixed_ref
+    for dependency in bom["dependencies"]:
+        if dependency["ref"] == previous_ref:
+            dependency["ref"] = fixed_ref
+        if "dependsOn" in dependency:
+            dependency["dependsOn"] = [
+                fixed_ref if item == previous_ref else item
+                for item in dependency["dependsOn"]
+            ]
+    bom["version"] += 1
+    bom_path.write_text(json.dumps(bom, indent=2) + "\n")
     importlib.invalidate_caches()
     vendored = importlib.import_module("pip._vendor.msgpack")
     if vendored.__version__ != fixed_version:
