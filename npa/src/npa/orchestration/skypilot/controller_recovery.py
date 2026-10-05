@@ -13,7 +13,9 @@ import subprocess
 import uuid
 
 from npa.orchestration.skypilot.workflow_state import (
+    discover_workflow_run_state,
     get_json,
+    read_manifest,
     resolve_workflow_s3_config,
 )
 from botocore.exceptions import ClientError
@@ -115,13 +117,17 @@ def verify_ledger(record, manifest, runtime):
 
 
 def _read_ledger(record):
-    state = resolve_workflow_s3_config(
+    state_parent = resolve_workflow_s3_config(
         run_id=record["run_id"],
         project=record["project"],
         workflow_s3_uri=record["workflow_s3_uri"],
     )
+    state = discover_workflow_run_state(
+        state_parent=state_parent, run_id=record["run_id"]
+    )
+    _require(state is not None, "durable workflow manifest is absent or ambiguous")
     verify_ledger(
-        record, get_json(state, "manifest.json"), get_json(state, "runtime.json")
+        record, read_manifest(state), get_json(state, "runtime.json")
     )
     return state
 
