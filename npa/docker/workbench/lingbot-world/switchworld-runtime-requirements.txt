@@ -1,7 +1,8 @@
 # Extra CPU-only requirements for the operator-owned SwitchWorld runtime cache.
 # This file is appended to Wan's hash-locked CUDA closure inside the private
 # image; no package below is an image-layer byte. PyAV is needed to decode the
-# real input/output MP4 frames that the workflow measures.
+# real input/output MP4 frames that the workflow measures. Rerun and its direct
+# closure write and verify the factual RRD emitted from those decoded frames.
 av==17.1.0 \
     --hash=sha256:1284addf3c0dd939887a9722dc30df2241a97471ad52c3c507e31583ae22ff02 \
     --hash=sha256:1370b11a697eb3f2555906f8ab3519b0cfe48425d7830a3996ad42e6bffafda5 \
@@ -33,3 +34,11 @@ av==17.1.0 \
     --hash=sha256:fa64e1f1500d01c4a98e7a41dc1a9a35fb4dfe71f5de0389264ec1192200c76a \
     --hash=sha256:ff457ed419348e5b8e8c811d341389b052c5e4d5839da3794d019b125b9fe830 \
     --hash=sha256:ffbd78d73d2c9bf31e9a007c992faec3991428b2941a3b085b84fb82e8c32d19
+attrs==26.1.0 \
+    --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309
+psutil==7.1.1 \
+    --hash=sha256:92ebc58030fb054fa0f26c3206ef01c31c29d67aee1367e3483c16665c25c8d2
+pyarrow==20.0.0 \
+    --hash=sha256:15aa1b3b2587e74328a730457068dc6c89e6dcbf438d4369f572af9d320a25ee
+rerun-sdk==0.38.1 \
+    --hash=sha256:5f6b16374b1af1ecdb7232ed5c7f02f77e908c7c378ce83321479d2610286c0c
