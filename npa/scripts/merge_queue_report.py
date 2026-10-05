@@ -7,9 +7,16 @@ from datetime import datetime
 import html
 import json
 import os
+from pathlib import Path
 import re
+import runpy
 import subprocess
 
+
+# The trusted scheduled reporter runs with isolated Python, without local imports.
+runner_startup_jobs = runpy.run_path(
+    str(Path(__file__).with_name("ci_runner_startup.py"))
+)["runner_startup_jobs"]
 
 _WORKFLOW = ".github/workflows/security-regression.yml"
 _FAILURES = {"failure", "timed_out", "action_required", "startup_failure", "stale"}
@@ -224,6 +231,10 @@ def _job_rows(repository: str, run: dict, jobs: list[dict], removal: dict) -> li
             for step in job.get("steps", [])
             if step.get("conclusion") in _FAILURES
         ]
+        if job.get("runner_startup_failure"):
+            failed = ["GitHub could not acquire a hosted runner; no steps ran"]
+        elif job.get("runner_startup_unavailable"):
+            failed.append("Runner startup metadata unavailable")
         url = (
             f"https://github.com/{repository}/actions/runs/{run['id']}/job/{job['id']}"
         )
@@ -248,6 +259,14 @@ def _next_step(reason: str, jobs: list[dict]) -> str:
             "`npa/.venv/bin/python npa/scripts/ci_requirements.py --update`, "
             "and commit the reviewed pins. Run `make precheck` and "
             "`make merge-precheck` before requeueing."
+        )
+    if any(job.get("runner_startup_failure") for job in jobs):
+        return (
+            "GitHub failed to assign a hosted runner to the marked jobs. Check "
+            "https://www.githubstatus.com/ and inspect any other failed components. "
+            "After runner service recovers, rerun the complete current PR validation "
+            "before requeueing. A removed queue candidate remains removed; "
+            "rerunning it cannot restore its queue entry."
         )
     if any(job.get("conclusion") in _FAILURES for job in jobs):
         return "Open the failed component and step above, fix or reproduce that failure, then rerun validation before requeueing."
@@ -377,6 +396,7 @@ def _report(repository: str, number: int, candidate: str | None, publish: bool) 
             "jobs",
         )
     )
+    jobs = runner_startup_jobs(repository, jobs, _pages)
     body = _render(repository, removal, run, jobs)
     if publish:
         _publish(repository, number, body)

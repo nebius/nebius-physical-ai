@@ -644,6 +644,7 @@ def test_queue_feedback_cannot_execute_candidate_code_with_write_access() -> Non
     assert job["permissions"] == {
         "contents": "read",
         "actions": "read",
+        "checks": "read",
         "pull-requests": "write",
     }
     checkout = job["steps"][0]
@@ -732,6 +733,27 @@ def test_docs_target_uses_the_console_script_beside_an_explicit_python(
     )
 
 
+def _recipe_runs_coverage(recipe: str) -> bool:
+    return re.search(r"(?:--cov(?:[=\s-]|$)|\bcoverage\b)", recipe) is not None
+
+
+@pytest.mark.parametrize(
+    ("recipe", "expected"),
+    [
+        ("pytest tests/test_ci_recover_validation.py", False),
+        ("pytest --cov=src/npa", True),
+        ("pytest --cov", True),
+        ("pytest --cov-fail-under=60", True),
+        ("python -m coverage run", True),
+    ],
+)
+def test_coverage_detection_distinguishes_recovery_tests_from_coverage(
+    recipe, expected
+):
+    """Recovery filenames do not imply that the local gate collects coverage."""
+    assert _recipe_runs_coverage(recipe) is expected
+
+
 def test_check_target_does_not_claim_the_coverage_floor() -> None:
     """`make check` is the reproducible subset, not a full stand-in for test.yml.
 
@@ -752,7 +774,7 @@ def test_check_target_does_not_claim_the_coverage_floor() -> None:
         for line in _make_recipe(target)
     ]
     assert check_path, "expected `make check` to reach some recipe"
-    assert not any("cov" in line for line in check_path), (
+    assert not any(_recipe_runs_coverage(line) for line in check_path), (
         "`make check` now runs coverage; drop the caveat from CONTRIBUTING instead"
     )
 

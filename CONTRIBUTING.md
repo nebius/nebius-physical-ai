@@ -819,6 +819,37 @@ only to post/update the report. `--scan-open` reconciles open PRs instead of one
 `--pr`. The **Merge queue feedback** manual workflow has
 the same read-only default, with an explicit `publish` input.
 
+#### Recover hosted runner startup failures
+
+A cancelled job with no steps can mean GitHub never assigned it a runner.
+Queue feedback checks GitHub's check-run annotations and labels this cause only
+when the job has no runner, no executed steps, and the known runner-acquisition
+error. It does not publish arbitrary annotation text. Missing annotation access
+is reported explicitly; a cancelled sibling or an executed test failure is not
+classified as a startup failure. The scheduled reporter has `checks: read`
+permission for annotations and retains its existing read-only Actions access.
+
+Check [GitHub Status](https://www.githubstatus.com/) before retrying an outage.
+Diagnose the latest validation for the current PR head with authenticated `gh`:
+
+```bash
+npa/.venv/bin/python -I npa/scripts/ci_recover_validation.py \
+  --repository nebius/nebius-physical-ai --pr '<number>'
+```
+
+This command is read-only by default. Add `--rerun` after runner service recovers
+to request a **complete** new validation attempt. It refuses closed PRs, changed
+bases, active or successful validation, missing startup evidence, and failures
+from any other component. It checks the current PR head and latest run attempt
+again immediately before submitting the rerun. Changed bases require a branch
+update to test the new combined tree.
+
+The rerun uses the original workflow configuration and preserves every required
+check. A complete attempt supplies the merge queue's validation receipt; a
+partial failed-job rerun does not. Wait for required checks to pass before
+requeueing. A removed synthetic candidate stays removed even if its checks later
+pass. The command does not merge, enqueue, post comments, or retry automatically.
+
 If **Check CI dependency pins** fails, bring the current base into your isolated
 branch and run the dependency refresh and check commands above. Commit the
 reviewed pins with the dependency changes before retrying the queue. Requeueing

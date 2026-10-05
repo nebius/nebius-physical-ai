@@ -354,3 +354,53 @@ def test_manual_diagnosis_does_not_publish_without_explicit_flag(
     reporter._main()
     assert "queue deadline" in capsys.readouterr().out
     assert writes == []
+
+
+def test_startup_failure_names_the_cause_and_preserves_queue_removal():
+    """Runner failures need fresh PR validation and a new queue entry."""
+    job = _job(conclusion="cancelled", runner_id=0, runner_startup_failure=True)
+    body = reporter._render(_REPOSITORY, _REMOVAL, _RUN, [job])
+    assert "GitHub could not acquire a hosted runner; no steps ran" in body
+    assert "https://www.githubstatus.com/" in body
+    assert "rerun the complete current PR validation" in body
+    assert "rerunning it cannot restore its queue entry" in body
+
+
+def test_unavailable_annotations_do_not_invent_an_infrastructure_failure():
+    """Missing annotation access remains an explicit metadata limitation."""
+    job = _job(conclusion="cancelled", runner_id=0, runner_startup_unavailable=True)
+    body = reporter._render(_REPOSITORY, _REMOVAL, _RUN, [job])
+    assert "Runner startup metadata unavailable" in body
+    assert "GitHub could not acquire" not in body
+
+
+def test_report_reads_startup_annotations_for_the_exact_rejected_attempt(
+    monkeypatch, capsys
+):
+    """The live report path must wire annotation evidence into its rendered diagnosis."""
+    job = _job(
+        conclusion="cancelled",
+        runner_id=0,
+        check_run_url="https://api.github.com/repos/example/workbench/check-runs/21",
+    )
+    endpoints = []
+
+    def pages(endpoint, key=None):
+        endpoints.append(endpoint)
+        if key == "jobs":
+            return [job]
+        return [
+            {
+                "annotation_level": "failure",
+                "message": "The job was not acquired by Runner of type hosted even after multiple attempts",
+            }
+        ]
+
+    monkeypatch.setattr(reporter, "_diagnosis", lambda *args: (_REMOVAL, _RUN))
+    monkeypatch.setattr(reporter, "_pages", pages)
+    reporter._report(_REPOSITORY, 604, _SHA, False)
+    assert endpoints == [
+        "repos/example/workbench/actions/runs/12/attempts/2/jobs?per_page=100",
+        "repos/example/workbench/check-runs/21/annotations?per_page=100",
+    ]
+    assert "GitHub could not acquire a hosted runner" in capsys.readouterr().out

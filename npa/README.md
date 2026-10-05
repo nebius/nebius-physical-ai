@@ -621,6 +621,12 @@ lets independent jobs use available GitHub runner capacity without shared
 repository-wide job queues. Newer commits still cancel older checks of the same
 PR. The final image-inventory check reports failed scans but stops when a run
 is cancelled, so it cannot hold the replacement run behind an obsolete job.
+For jobs that never acquire a hosted runner, use the
+[guarded validation recovery command](../CONTRIBUTING.md#recover-hosted-runner-startup-failures).
+It diagnoses the current PR head without writes by default; explicit `--rerun`
+requests a complete attempt only for confirmed startup failures, after checking
+for other failures and stale PR state. Required checks remain enforced.
+
 Organization runner limits can cause waiting; already queued runs retain
 their original workflow configuration until their branches are refreshed.
 Full-suite PRs retain smoke coverage in their shards; the early precheck runs
