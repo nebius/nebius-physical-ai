@@ -250,17 +250,26 @@ def test_causal_transition_timing_uses_native_video_frames(tmp_path: Path) -> No
     assert (window["first_frame"], window["last_frame"]) == (12, 14)
 
 
-def test_pair_and_rrd_use_decoded_media_not_manifests(tmp_path: Path) -> None:
+@pytest.mark.parametrize("source_rate", [4, 16])
+def test_pair_and_rrd_use_decoded_media_not_manifests(
+    tmp_path: Path, source_rate: int
+) -> None:
     """Pair real source frames and independently validate the emitted RRD."""
+
+    import numpy as np
 
     baseline = tmp_path / "baseline.mp4"
     adapted = tmp_path / "adapted.mp4"
     target = tmp_path / "target.mp4"
-    _video(baseline, "testsrc=size=64x48:rate=4")
-    _video(adapted, "testsrc2=size=64x48:rate=4")
-    _video(target, "smptebars=size=64x48:rate=4")
+    _video(baseline, f"testsrc=size=64x48:rate={source_rate}")
+    _video(adapted, f"testsrc2=size=64x48:rate={source_rate}")
+    _video(target, f"smptebars=size=64x48:rate={source_rate}")
 
-    paired = switchworld._pair_videos(baseline, adapted, tmp_path / "paired.mp4")
+    baseline_frames, _ = switchworld._decoded_frames(baseline)
+    adapted_frames, _ = switchworld._decoded_frames(adapted)
+    paired_path = tmp_path / "paired.mp4"
+    paired = switchworld._pair_videos(baseline, adapted, paired_path)
+    paired_frames, paired_fps = switchworld._decoded_frames(paired_path)
     rrd = switchworld._build_rrd(
         baseline,
         adapted,
@@ -271,6 +280,17 @@ def test_pair_and_rrd_use_decoded_media_not_manifests(tmp_path: Path) -> None:
     )
 
     assert paired["frame_count"] == 4
+    assert paired["fps"] == switchworld.PAIR_FRAME_RATE
+    assert paired_fps == switchworld.PAIR_FRAME_RATE
+    for index, frame in enumerate(paired_frames):
+        baseline_error = np.abs(
+            frame[:, :64].astype(int) - baseline_frames[index].astype(int)
+        )
+        adapted_error = np.abs(
+            frame[:, 64:].astype(int) - adapted_frames[index].astype(int)
+        )
+        assert float(baseline_error.mean()) < 5
+        assert float(adapted_error.mean()) < 5
     assert paired["width"] == 128
     assert paired["mean_temporal_abs_delta"] > 0
     assert rrd["frame_count"] == 4
@@ -279,6 +299,38 @@ def test_pair_and_rrd_use_decoded_media_not_manifests(tmp_path: Path) -> None:
     rrd_source = inspect.getsource(switchworld._build_rrd)
     assert '"-vv"' not in rrd_source
     assert '"--entity"' in rrd_source
+
+
+def test_pair_videos_aligns_unequal_rates_by_decoded_frame_index(
+    tmp_path: Path,
+) -> None:
+    """Keep each real target/model frame pair once when their source rates differ."""
+
+    import numpy as np
+
+    target = tmp_path / "target-40fps.mp4"
+    adapted = tmp_path / "adapted-16fps.mp4"
+    paired_path = tmp_path / "paired.mp4"
+    _video(target, "testsrc=size=64x48:rate=40")
+    _video(adapted, "testsrc2=size=64x48:rate=16")
+
+    target_frames, _ = switchworld._decoded_frames(target)
+    adapted_frames, _ = switchworld._decoded_frames(adapted)
+    paired = switchworld._pair_videos(target, adapted, paired_path)
+    paired_frames, paired_fps = switchworld._decoded_frames(paired_path)
+
+    assert paired["frame_count"] == 4
+    assert paired_fps == switchworld.PAIR_FRAME_RATE == 16
+    assert len(paired_frames) == len(target_frames) == len(adapted_frames)
+    for index, frame in enumerate(paired_frames):
+        target_error = np.abs(
+            frame[:, :64].astype(int) - target_frames[index].astype(int)
+        )
+        adapted_error = np.abs(
+            frame[:, 64:].astype(int) - adapted_frames[index].astype(int)
+        )
+        assert float(target_error.mean()) < 5
+        assert float(adapted_error.mean()) < 5
 
 
 def test_real_pixel_cross_check_rejects_disconnected_metrics(tmp_path: Path) -> None:

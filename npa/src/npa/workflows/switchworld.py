@@ -45,6 +45,7 @@ PREPARED_FILES = (
     "context_after.png",
     "prepared.json",
 )
+PAIR_FRAME_RATE = 16
 
 
 class SwitchWorldError(RuntimeError):
@@ -1333,8 +1334,20 @@ def measure(
         return report
 
 
+def _pair_filter() -> str:
+    """Return the frame-index-aligned filter graph for paired model media."""
+
+    # Target media may retain its 40 fps cache presentation rate while model
+    # outputs are emitted at 16 fps.  Pair by decoded frame index, not source PTS.
+    return (
+        f"[0:v]settb=AVTB,setpts=N/({PAIR_FRAME_RATE}*TB)[left];"
+        f"[1:v]settb=AVTB,setpts=N/({PAIR_FRAME_RATE}*TB)[right];"
+        "[left][right]hstack=inputs=2,setsar=1[paired]"
+    )
+
+
 def _pair_videos(left: Path, right: Path, output: Path) -> dict[str, Any]:
-    """Produce an H.264 side-by-side MP4 from two fully decoded source videos."""
+    """Produce a frame-index-aligned H.264 side-by-side MP4 from decoded media."""
 
     left_evidence, right_evidence = _video_evidence(left), _video_evidence(right)
     if left_evidence["frame_count"] != right_evidence["frame_count"]:
@@ -1351,7 +1364,13 @@ def _pair_videos(left: Path, right: Path, output: Path) -> dict[str, Any]:
             "-i",
             str(right),
             "-filter_complex",
-            "[0:v][1:v]hstack=inputs=2",
+            _pair_filter(),
+            "-map",
+            "[paired]",
+            "-r",
+            str(PAIR_FRAME_RATE),
+            "-vsync",
+            "0",
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -1365,6 +1384,8 @@ def _pair_videos(left: Path, right: Path, output: Path) -> dict[str, Any]:
     evidence = _video_evidence(output)
     if evidence["frame_count"] != left_evidence["frame_count"]:
         raise SwitchWorldError("paired MP4 lost decoded frames")
+    if evidence["fps"] != PAIR_FRAME_RATE:
+        raise SwitchWorldError("paired MP4 did not retain the indexed 16 fps timeline")
     return evidence
 
 
