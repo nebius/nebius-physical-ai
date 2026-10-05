@@ -470,6 +470,16 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     assert "checkout --detach 7d52f1591437332cb0157be3303c1c46da811344" in instructions
     assert "checkout --detach 789b87f50d9fadc7663d2e8bac057941221aab81" in instructions
     assert "checkout --detach 8f1084e3132a39270c3a13ebe37270a43ece2a01" in instructions
+    assert "apt-get install" not in instructions
+    assert "virtualenv==20.26.6" in instructions
+    assert (
+        "python3.10 -m virtualenv --no-download --python=/usr/bin/python3.10 "
+        "/opt/opendm-venv"
+    ) in instructions
+    assert (
+        "python3.10 -m virtualenv --no-download --python=/usr/bin/python3.10 "
+        "/opt/libero-venv"
+    ) in instructions
     assert "/opt/opendm-venv/bin/python -m pip uninstall -y wandb" in instructions
     assert (
         "NPA_DM05_OPENDM_RUNTIME_MANIFEST=/opt/opendm/dm05-libero-baseline-runtime.json"

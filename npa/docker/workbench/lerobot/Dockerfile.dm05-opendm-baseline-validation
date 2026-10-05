@@ -16,15 +16,17 @@ LABEL org.opencontainers.image.source="https://github.com/dexmal/opendm" \
 
 USER root
 
-# The parent already has the pinned CUDA runtime and SkyPilot bootstrap. These
-# packages supply only the isolated evaluator environment's headless simulator
-# prerequisites; no source, model, or model cache is fetched through APT.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-      libosmesa6-dev \
-      python3.10-venv \
-    && rm -rf /var/lib/apt/lists/* \
-    && install -d -m 0755 -o ubuntu -g ubuntu /opt/opendm /opt/dexbotic-benchmark
+# The parent already has the pinned CUDA runtime, EGL, and Python 3.10 with
+# pip, but its held CUDA packages make its APT resolver unable to install
+# python3.10-venv or OSMesa without changing those pinned bytes.  The evaluator
+# explicitly selects EGL below, so create its isolated Python environments with
+# a pinned virtualenv instead of mutating that resolver transaction.  No source,
+# model, or model cache is fetched here.
+RUN python3.10 -m pip install --no-cache-dir 'virtualenv==20.26.6' \
+    && python3.10 -m virtualenv --no-download --python=/usr/bin/python3.10 /opt/opendm-venv \
+    && python3.10 -m virtualenv --no-download --python=/usr/bin/python3.10 /opt/libero-venv \
+    && install -d -m 0755 -o ubuntu -g ubuntu /opt/opendm /opt/dexbotic-benchmark \
+    && chown -R ubuntu:ubuntu /opt/opendm-venv /opt/libero-venv
 
 USER ubuntu
 WORKDIR /opt/opendm
