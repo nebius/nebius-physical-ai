@@ -1406,27 +1406,36 @@ def _build_rrd(
     )
     if verified.returncode:
         raise SwitchWorldError(f"Rerun verification failed: {verified.stderr[-500:]}")
-    inspected = subprocess.run(
-        # The default RRD summary contains entity paths.  ``-vv`` expands image
-        # payloads into the captured text stream and can make a valid recording
-        # appear wedged before its artifact upload begins.
-        [sys.executable, "-m", "rerun", "rrd", "print", str(output)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
     entities = (
         "switchworld/provenance",
         "switchworld/baseline",
         "switchworld/adapted",
         "switchworld/target",
     )
-    if inspected.returncode or any(
-        entity not in inspected.stdout for entity in entities
-    ):
-        raise SwitchWorldError(
-            "Rerun inspection did not find all decoded media entities"
+    for entity in entities:
+        inspected = subprocess.run(
+            # Inspect one required entity at a time so each captured CLI result
+            # stays bounded to the entity being validated.  The CLI filter is
+            # still an independent RRD parser and proves every decoded-media
+            # entity exists.
+            [
+                sys.executable,
+                "-m",
+                "rerun",
+                "rrd",
+                "print",
+                "--entity",
+                entity,
+                str(output),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
         )
+        if inspected.returncode or entity not in inspected.stdout:
+            raise SwitchWorldError(
+                f"Rerun inspection did not find decoded media entity {entity}"
+            )
     return {
         "sha256": _sha256(output),
         "size_bytes": output.stat().st_size,

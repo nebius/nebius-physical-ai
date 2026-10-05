@@ -276,7 +276,9 @@ def test_pair_and_rrd_use_decoded_media_not_manifests(tmp_path: Path) -> None:
     assert rrd["frame_count"] == 4
     assert rrd["rerun_verify"] == "passed"
     assert rrd["rerun_inspection"] == "passed"
-    assert '"-vv"' not in inspect.getsource(switchworld._build_rrd)
+    rrd_source = inspect.getsource(switchworld._build_rrd)
+    assert '"-vv"' not in rrd_source
+    assert '"--entity"' in rrd_source
 
 
 def test_real_pixel_cross_check_rejects_disconnected_metrics(tmp_path: Path) -> None:
