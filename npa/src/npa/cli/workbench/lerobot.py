@@ -4032,7 +4032,9 @@ def flux3_so101_finetune(
 
     try:
         output_path = validate_write_path(output_path, tool="lerobot", required=True)
-        record = run(output_path=output_path, run_id=run_id, steps=steps, input_path=input_path)
+        record = run(
+            output_path=output_path, run_id=run_id, steps=steps, input_path=input_path
+        )
     except (
         PathContractError,
         ValueError,

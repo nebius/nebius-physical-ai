@@ -209,7 +209,6 @@ def _reload(python: str, root: Path, recipe: Recipe, output: Path) -> None:
         str(output / "reload.json"),
     ]
     _run(args, output, "reload")
-    verify_reload(output / "reload.json", recipe)
 
 
 def _run(argv: list[str], output: Path, stage: str) -> None:

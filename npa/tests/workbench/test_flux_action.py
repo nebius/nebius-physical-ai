@@ -332,6 +332,19 @@ def test_failed_native_stage_preserves_logs_without_success(
     assert f"{stage}.log" in storage.published
 
 
+def test_invalid_reload_prevents_success_receipt(tmp_path, monkeypatch):
+    storage, calls, request = execution_setup(tmp_path, monkeypatch)
+
+    def invalid_reload(path, recipe):
+        raise ValueError("nonfinite reload metrics")
+
+    monkeypatch.setattr(runner, "verify_reload", invalid_reload)
+    with pytest.raises(runner.FluxActionError, match="nonfinite"):
+        runner.finetune(request)
+    assert "failure.json" in storage.published
+    assert "result.json" not in storage.published
+
+
 def test_dry_run_does_not_claim_or_launch(tmp_path, monkeypatch):
     storage, calls, request = execution_setup(tmp_path, monkeypatch)
     result = runner.finetune(request, dry_run=True)

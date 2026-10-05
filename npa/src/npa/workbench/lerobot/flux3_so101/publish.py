@@ -44,13 +44,9 @@ def publish(
         for path in checkpoint.rglob("*"):
             if path.is_symlink():
                 raise ValueError(f"checkpoint contains symlink: {path}")
-            relative = path.relative_to(checkpoint)
-            output = target / relative
-            if path.is_dir():
-                output.mkdir(parents=True, exist_ok=True)
-            elif path.is_file():
-                output.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(path, output)
+        shutil.copytree(
+            checkpoint, target, dirs_exist_ok=True, copy_function=shutil.copyfile
+        )
         adapter = target / "pretrained_model/adapter_model.safetensors"
         config = target / "pretrained_model/adapter_config.json"
         ema_adapter = target / "pretrained_model_ema/adapter_model.safetensors"

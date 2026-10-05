@@ -83,6 +83,23 @@ def test_publish_requires_raw_and_ema_and_checksums(tmp_path):
         == hashlib.sha256(b"pretrained_model_ema").hexdigest()
     )
     assert (result / "checkpoints/000004/COMPLETE.json").is_file()
+    (result / "checkpoints/000004/COMPLETE.json").unlink()
+    (checkpoint / "external").symlink_to(tmp_path)
+    with pytest.raises(ValueError, match="symlink"):
+        publish(source, result, "calibration-v1")
+
+
+def test_occupied_output_is_rejected_before_preparation(monkeypatch):
+    from types import SimpleNamespace
+    from npa.clients.storage import StorageClient
+
+    storage = StorageClient.__new__(StorageClient)
+    storage._s3 = SimpleNamespace(
+        list_objects_v2=lambda **kwargs: {"Contents": [{"Key": "run/existing"}]}
+    )
+    monkeypatch.setattr(StorageClient, "from_environment", lambda: storage)
+    with pytest.raises(FileExistsError, match="must be empty"):
+        run(output_path="s3://example/run/", run_id="smoke", steps=4)
 
 
 def test_cli_invokes_shared_runner(monkeypatch):

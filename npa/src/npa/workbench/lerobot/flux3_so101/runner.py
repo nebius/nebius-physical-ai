@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from npa.clients.storage import StorageClient
+from npa.clients.storage import StorageClient, StorageError
 
 from .calibration import ID as CALIBRATION_ID, check_model_overlap
 from .prepare_dataset import prepare
@@ -210,12 +210,10 @@ def run(*, output_path: str, run_id: str, steps: int, input_path: str = "") -> d
         raise ValueError("output_path must be a run-scoped s3:// URI")
     output_path = output_path.rstrip("/") + "/"
     storage = StorageClient.from_environment()
-    prefix = parsed.path.strip("/") + "/"
-    existing = storage.s3.list_objects_v2(
-        Bucket=parsed.netloc, Prefix=prefix, MaxKeys=1
-    )
-    if existing.get("Contents"):
-        raise FileExistsError(f"run prefix already contains objects: {output_path}")
+    try:
+        storage.require_empty_prefix(output_path)
+    except StorageError as exc:
+        raise FileExistsError(str(exc)) from exc
 
     with tempfile.TemporaryDirectory(prefix="npa-flux3-") as temp:
         work = Path(temp)
