@@ -1,0 +1,62 @@
+apiVersion: manifest/v0.1
+name: pendulum-viz
+version: 0.1.0
+description: >
+  Newton XPBD double-pendulum simulated on GPU and rendered to MP4. A real
+  pre-existing workload (the 2026-09-27 demo sim) onboarded by descriptor
+  only: the image stays the pinned pytorch base, the workload's own
+  dependencies arrive via environment.pip, and the MP4 travels via the
+  artifact store. Zero per-tool code.
+image:
+  repository: pytorch/pytorch
+  tag: 2.8.0-cuda12.8-cudnn9-runtime
+  digest: sha256:417bd75df6365104c283ea4c1651fb3530d9eb5a4c2fafa51943cff2a94e6385
+environment:
+  pip:
+    - newton==1.6.0
+    - matplotlib==3.11.2
+    - imageio-ffmpeg==0.6.0
+artifact_store:
+  type: s3
+  bucket: my-bucket  # operator overrides via MANIFEST_S3_BUCKET
+  prefix: manifest-mvp/pendulum-viz/
+payload_files:
+  - container_path: /work/pendulum_viz.py
+    host_path: workloads/pendulum_viz.py
+commands:
+  run:
+    argv: ["python", "/work/pendulum_viz.py", "--steps", "{{steps}}", "--out-mp4", "{{mp4_path}}", "--out-json", "{{json_path}}"]
+    params:
+      steps:
+        type: integer
+        default: 600
+        min: 60
+      mp4_path:
+        type: string
+        default: /work/pendulum.mp4
+      json_path:
+        type: string
+        default: /work/summary.json
+    outputs:
+      video:
+        path: /work/pendulum.mp4
+        format: binary
+        required: true
+      summary:
+        path: /work/summary.json
+        format: json
+        required: true
+resources:
+  gpu: 1
+  memory_gb: 16
+success:
+  checks:
+    - artifact: summary
+      json_path: device_ok
+      equals: true
+    - artifact: summary
+      json_path: steps
+      equals: 600
+    - artifact: summary
+      json_path: mp4_bytes
+      greater_than: 100000

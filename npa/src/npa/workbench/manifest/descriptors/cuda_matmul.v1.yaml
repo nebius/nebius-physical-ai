@@ -1,0 +1,42 @@
+apiVersion: manifest/v0.1
+name: cuda-matmul
+version: 0.1.0
+description: >
+  Deterministic CUDA matrix multiplication producing a validated JSON
+  artifact. Onboarded by descriptor only — no runtime code changes.
+image:
+  repository: pytorch/pytorch
+  tag: 2.8.0-cuda12.8-cudnn9-runtime
+  digest: sha256:417bd75df6365104c283ea4c1651fb3530d9eb5a4c2fafa51943cff2a94e6385
+payload_files:
+  - container_path: /work/matmul.py
+    host_path: workloads/matmul.py
+commands:
+  run:
+    argv: ["python", "/work/matmul.py", "--size", "{{size}}", "--seed", "{{seed}}", "--out", "{{output_path}}"]
+    params:
+      size:
+        type: integer
+        default: 8192
+        min: 1
+      seed:
+        type: integer
+        default: 0
+      output_path:
+        type: string
+        default: /work/result.json
+    outputs:
+      result:
+        path: /work/result.json
+        format: json
+        required: true
+resources:
+  gpu: 1
+success:
+  checks:
+    - artifact: result
+      json_path: device_ok
+      equals: true
+    - artifact: result
+      json_path: elapsed_s
+      greater_than: 0
