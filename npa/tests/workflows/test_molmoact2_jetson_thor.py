@@ -35,6 +35,9 @@ from npa.workflows.molmoact2_jetson_thor import (
 
 SPEC = Path(__file__).parents[3] / "workflows/testing/molmoact2-jetson-thor-edge.yaml"
 READINESS = SPEC.with_suffix(".readiness.json")
+DOCKERFILE = (
+    Path(__file__).parents[2] / "docker/workbench/molmoact2-jetson-thor/Dockerfile"
+)
 
 
 def _digest(path: Path) -> str:
@@ -295,3 +298,11 @@ def test_workflow_argv_preserves_hostile_config_as_one_argument() -> None:
     first = build_plan(spec, run_id="thor-test").steps[0]
     assert first.argv[first.argv.index("--observations-uri") + 1] == hostile
     assert first.shell == ""
+
+
+def test_evidence_worker_applies_debian_security_updates() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    assert "apt-get update" in dockerfile
+    assert "apt-get upgrade -y --no-install-recommends" in dockerfile
+    assert dockerfile.index("apt-get update") < dockerfile.index("apt-get upgrade")
+    assert dockerfile.index("apt-get upgrade") < dockerfile.index("apt-get install")

@@ -1,4 +1,5 @@
 # Immutable Python base: python:3.11-slim-trixie as resolved on 2026-06-02.
+# Apply current Debian security updates during the private qualification build.
 # This is the CPU-only cloud evidence worker, never the Jetson TensorRT runtime.
 FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
 
@@ -25,6 +26,7 @@ ENV PATH=/opt/venv/bin:$PATH \
 RUN test "${#NPA_SOURCE_SHA}" -eq 40 \
     && case "${NPA_SOURCE_SHA}" in *[!0-9a-f]*) exit 64 ;; esac \
     && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
       openssh-server \
       rsync \
