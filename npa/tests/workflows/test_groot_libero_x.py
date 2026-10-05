@@ -727,6 +727,129 @@ def test_policy_stage_requires_native_results_and_uploads_actual_mp4s(
     )
 
 
+def test_policy_stage_persists_redacted_native_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client = FakeS3()
+    run_id = "groot-libero-x-fixture"
+    _prepare(client, run_id)
+    model = tmp_path / "model"
+    model.mkdir()
+    secret = "operator-private-token-value"
+
+    monkeypatch.setenv("NPA_TEST_TOKEN", secret)
+    monkeypatch.setattr(
+        workflow,
+        "_snapshot_model",
+        lambda *_args: (
+            model,
+            {"repo": workflow.BASELINE_REPO, "revision": workflow.BASELINE_REVISION},
+        ),
+    )
+    monkeypatch.setattr(workflow, "_download_prefix", lambda *_args: None)
+    monkeypatch.setattr(
+        workflow,
+        "_materialize_native_runtime",
+        lambda _root: {"provenance": {"delivery": "runtime-fetch"}},
+    )
+
+    def native_failure(**_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError(f"native evaluator refused payload {secret}")
+
+    monkeypatch.setattr(workflow, "_run_native_evaluator", native_failure)
+    failure_uri = "s3://bucket/run/diagnostics/baseline-failure.json"
+
+    with pytest.raises(RuntimeError, match="native evaluator refused payload"):
+        workflow.run_policy(
+            "s3://bucket/run/prepared/protocol.json",
+            "s3://bucket/run/rollouts/baseline/report.json",
+            "s3://bucket/run/rollouts/baseline/mp4",
+            run_id,
+            policy_name="baseline",
+            model_repo=workflow.BASELINE_REPO,
+            model_revision=workflow.BASELINE_REVISION,
+            model_subdir="libero_10",
+            episodes_per_task=10,
+            n_envs=5,
+            max_episode_steps=720,
+            n_action_steps=8,
+            seed=20261002,
+            failure_uri=failure_uri,
+            s3_client=client,
+        )
+
+    failure = workflow._read_s3_json(client, failure_uri)
+    assert failure["schema"] == workflow.POLICY_FAILURE_SCHEMA
+    assert failure["status"] == "failed"
+    assert failure["policy"] == "baseline"
+    assert failure["phase"] == "native_closed_loop_rollout"
+    assert failure["error"]["type"] == "RuntimeError"
+    assert failure["error"]["redacted"] is True
+    assert secret not in failure["error"]["message"]
+
+
+def test_policy_parser_accepts_failure_uri() -> None:
+    values = workflow.build_parser().parse_args(
+        [
+            "run-policy",
+            "--protocol-uri",
+            "s3://bucket/protocol.json",
+            "--output-uri",
+            "s3://bucket/output.json",
+            "--rollout-media-uri",
+            "s3://bucket/media",
+            "--failure-uri",
+            "s3://bucket/diagnostics/failure.json",
+            "--run-id",
+            "run-id",
+            "--policy-name",
+            "baseline",
+            "--model-repo",
+            workflow.BASELINE_REPO,
+            "--model-revision",
+            workflow.BASELINE_REVISION,
+            "--episodes-per-task",
+            "1",
+            "--n-envs",
+            "1",
+            "--max-episode-steps",
+            "1",
+            "--n-action-steps",
+            "1",
+            "--seed",
+            "1",
+        ]
+    )
+
+    assert values.failure_uri == "s3://bucket/diagnostics/failure.json"
+
+
+def test_runtime_command_retains_redacted_stderr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret = "operator-private-token-value"
+
+    class FailedCommand:
+        returncode = 17
+        stderr = f"native evaluator rejected {secret}"
+
+    monkeypatch.setenv("NPA_TEST_TOKEN", secret)
+    monkeypatch.setattr(
+        workflow.subprocess, "run", lambda *_args, **_kwargs: FailedCommand()
+    )
+
+    with pytest.raises(workflow.GrootVisualizationError) as error:
+        workflow._run_runtime_command(
+            ["native-evaluator", "--config", "config.json"],
+            cwd=tmp_path,
+            env={},
+        )
+
+    assert "exit 17" in str(error.value)
+    assert "native evaluator rejected" in str(error.value)
+    assert secret not in str(error.value)
+
+
 def test_numeric_metrics_rejects_empty_or_nonfinite_native_measurements() -> None:
     with pytest.raises(workflow.GrootVisualizationError, match="at least one sample"):
         workflow._numeric_metrics(

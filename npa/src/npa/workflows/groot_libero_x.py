@@ -25,6 +25,7 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 
+from npa.workflows.artifacts import redact_artifact_text
 from npa.workflows.groot_learning import (
     _download_prefix,
     _set_rerun_time,
@@ -51,6 +52,7 @@ PROTOCOL_SCHEMA = "npa.groot_libero_x.evaluation_protocol.v1"
 ROLLOUT_SCHEMA = "npa.groot_libero_x.closed_loop_rollout.v1"
 COMPARISON_SCHEMA = "npa.groot_libero_x.closed_loop_comparison.v1"
 EVIDENCE_SCHEMA = "npa.groot_libero_x.closed_loop_evidence.v1"
+POLICY_FAILURE_SCHEMA = "npa.groot_libero_x.closed_loop_failure.v1"
 RERUN_APPLICATION_ID = "npa_groot_libero_x_closed_loop"
 RERUN_TIMELINE = "evaluation_task"
 DERIVATIVE_REPO = "rohansiva/gr00t-libero-x"
@@ -80,6 +82,11 @@ TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 LIBERO_X_BDDL_LEVELS = frozenset({"LEVEL1", "LEVEL2", "LEVEL3", "LEVEL4"})
 STRICT_HELD_OUT_MODE = "strict_held_out"
 OBSERVED_PAIRED_MODE = "observed_paired_coverage_unknown"
+_SECRET_ENV_NAME = re.compile(
+    r"(?i)(authorization|cookie|password|passwd|private[_-]?key|secret|token|"
+    r"access[_-]?key|api[_-]?key|client[_-]?secret)"
+)
+_FAILURE_TEXT_LIMIT = 8192
 
 
 # This overlay is appended to the private, runtime-fetched Apache-2.0 Isaac-GR00T
@@ -724,10 +731,20 @@ def _runtime_cache_root(temporary_root: Path) -> Path:
 def _run_runtime_command(
     command: list[str], *, cwd: Path, env: Mapping[str, str]
 ) -> None:
-    completed = subprocess.run(command, cwd=cwd, env=dict(env), check=False)
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        env=dict(env),
+        check=False,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     if completed.returncode:
+        detail = _redact_failure_text(completed.stderr or "")
+        suffix = f": {detail}" if detail else ""
         raise GrootVisualizationError(
-            "pinned native runtime setup failed: " + " ".join(command[:4])
+            "pinned native runtime command failed "
+            f"(exit {completed.returncode}){suffix}"
         )
 
 
@@ -1113,6 +1130,58 @@ def _run_native_evaluator(
     return result
 
 
+def _redact_failure_text(value: str) -> tuple[str, bool]:
+    """Return a bounded failure detail without exposing ambient credentials."""
+
+    bounded = str(value or "")[-_FAILURE_TEXT_LIMIT:]
+    redacted, changed = redact_artifact_text(bounded)
+    secret_values = {
+        secret
+        for name, secret in os.environ.items()
+        if _SECRET_ENV_NAME.search(name) and len(secret) >= 8
+    }
+    for secret in sorted(secret_values, key=len, reverse=True):
+        if secret in redacted:
+            redacted = redacted.replace(secret, "[REDACTED]")
+            changed = True
+    return redacted, changed
+
+
+def _write_policy_failure(
+    client: Any,
+    failure_uri: str | None,
+    *,
+    run_id: str,
+    policy_name: str,
+    model_repo: str,
+    model_revision: str,
+    phase: str,
+    error: Exception,
+) -> None:
+    """Persist a redacted diagnostic without obscuring the original failure."""
+
+    if not failure_uri:
+        return
+    message, redacted = _redact_failure_text(str(error))
+    payload = {
+        "schema": POLICY_FAILURE_SCHEMA,
+        "status": "failed",
+        "run_id": run_id,
+        "policy": policy_name,
+        "phase": phase,
+        "model": {"repo": model_repo, "revision": model_revision},
+        "error": {
+            "type": type(error).__name__,
+            "message": message or "No failure detail was emitted.",
+            "redacted": redacted,
+        },
+    }
+    try:
+        _put_json(client, failure_uri, payload)
+    except Exception:  # noqa: BLE001 - reporting must not hide the root failure
+        return
+
+
 def run_policy(
     protocol_uri: str,
     output_uri: str,
@@ -1128,9 +1197,64 @@ def run_policy(
     max_episode_steps: int,
     n_action_steps: int,
     seed: int,
+    failure_uri: str | None = None,
     s3_client: Any | None = None,
 ) -> dict[str, Any]:
-    """Run real GR00T open-loop forwards and native LIBERO closed-loop rollouts."""
+    """Run native GR00T/LIBERO evaluation and retain a failure-only diagnostic."""
+
+    client = _s3_client(s3_client)
+    phase = {"name": "validate_policy"}
+    try:
+        return _execute_policy(
+            client,
+            protocol_uri,
+            output_uri,
+            rollout_media_uri,
+            run_id,
+            policy_name=policy_name,
+            model_repo=model_repo,
+            model_revision=model_revision,
+            model_subdir=model_subdir,
+            episodes_per_task=episodes_per_task,
+            n_envs=n_envs,
+            max_episode_steps=max_episode_steps,
+            n_action_steps=n_action_steps,
+            seed=seed,
+            phase=phase,
+        )
+    except Exception as exc:
+        _write_policy_failure(
+            client,
+            failure_uri,
+            run_id=run_id,
+            policy_name=policy_name,
+            model_repo=model_repo,
+            model_revision=model_revision,
+            phase=phase["name"],
+            error=exc,
+        )
+        raise
+
+
+def _execute_policy(
+    client: Any,
+    protocol_uri: str,
+    output_uri: str,
+    rollout_media_uri: str,
+    run_id: str,
+    *,
+    policy_name: str,
+    model_repo: str,
+    model_revision: str,
+    model_subdir: str,
+    episodes_per_task: int,
+    n_envs: int,
+    max_episode_steps: int,
+    n_action_steps: int,
+    seed: int,
+    phase: dict[str, str],
+) -> dict[str, Any]:
+    """Execute a policy while naming the current boundary for failure evidence."""
 
     expected = {
         "baseline": (BASELINE_REPO, BASELINE_REVISION, BASELINE_LICENSE, BASELINE_CARD),
@@ -1150,7 +1274,7 @@ def run_policy(
         )
     if min(episodes_per_task, n_envs, max_episode_steps, n_action_steps) < 1:
         raise GrootVisualizationError("rollout settings must be positive")
-    client = _s3_client(s3_client)
+    phase["name"] = "load_prepared_protocol"
     protocol = _load_protocol(client, protocol_uri, run_id)
     rollout_protocol = _validate_policy_rollout_protocol(
         protocol,
@@ -1163,6 +1287,7 @@ def run_policy(
     bootstrap_ref = os.environ.get("GROOT_REPO_REF", "").strip()
     with tempfile.TemporaryDirectory(prefix="npa-groot-libero-x-") as temporary:
         root = Path(temporary)
+        phase["name"] = "snapshot_model"
         model, model_identity = _snapshot_model(
             model_repo, model_revision, model_subdir
         )
@@ -1174,8 +1299,11 @@ def run_policy(
             }
         )
         dataset = root / "evaluation-dataset"
+        phase["name"] = "download_evaluation_dataset"
         _download_prefix(client, protocol["dataset"]["materialized"]["uri"], dataset)
+        phase["name"] = "materialize_native_runtime"
         runtime = _materialize_native_runtime(root)
+        phase["name"] = "native_closed_loop_rollout"
         native = _run_native_evaluator(
             runtime=runtime,
             root=root,
@@ -1188,6 +1316,7 @@ def run_policy(
             n_action_steps=n_action_steps,
             seed=seed,
         )
+        phase["name"] = "validate_native_result"
         action = _numeric_metrics(native.get("open_loop_action_error", {}))
         task_rows: list[dict[str, Any]] = []
         native_tasks = native.get("tasks")
@@ -1227,6 +1356,7 @@ def run_policy(
                 {key: value for key, value in native_task.items() if key != "video_dir"}
                 | {"videos": artifacts}
             )
+    phase["name"] = "publish_rollout_report"
     completed = sum(int(row["completed_episodes"]) for row in task_rows)
     successes = sum(sum(row["successes"]) for row in task_rows)
     result = {
@@ -1578,6 +1708,7 @@ def build_parser() -> argparse.ArgumentParser:
     policy.add_argument("--protocol-uri", required=True)
     policy.add_argument("--output-uri", required=True)
     policy.add_argument("--rollout-media-uri", required=True)
+    policy.add_argument("--failure-uri")
     policy.add_argument("--run-id", required=True)
     policy.add_argument(
         "--policy-name", choices=("baseline", "derivative"), required=True

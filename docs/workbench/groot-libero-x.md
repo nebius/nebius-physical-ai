@@ -81,6 +81,14 @@ atomically published ready marker; without the managed GR00T data mount it is
 private to the workflow pod.  Git LFS filters are disabled for the source-only
 runtime fetch, so an absent `git-lfs` binary cannot silently turn a source
 checkout into a failed or partial cache.
+
+Each policy stage also has a run-scoped private failure-diagnostic URI. On an
+exception, the stage writes a bounded, credential-redacted failure record with
+the policy identity and failing boundary, then still fails the stage. This
+diagnostic is neither a declared successful output nor closed-loop evidence;
+it exists to make a terminal native failure diagnosable without turning it into
+a success claim.
+
 The GPU placement is an NPA workflow configuration input
 (`evaluation_accelerator`), rather than a fixed graph resource.  Resolve it
 against the selected target with `--var evaluation_accelerator=<catalog-name>:1`

@@ -72,6 +72,8 @@ def test_closed_loop_workflow_has_five_connected_substantive_stages() -> None:
     assert configured_plan.steps[2].resources_profile["accelerators"] == "RTXPRO6000:1"
     assert "--policy-name" in baseline.argv and "baseline" in baseline.argv
     assert "--policy-name" in derivative.argv and "derivative" in derivative.argv
+    assert "--failure-uri" in baseline.argv
+    assert "--failure-uri" in derivative.argv
     assert "--model-revision" in baseline.argv
     assert "--model-revision" in derivative.argv
     assert "--episodes-per-task" in baseline.argv
@@ -103,6 +105,10 @@ def test_observed_paired_workflow_has_five_stages_without_held_out_input_claim()
     )
     assert "training_task_manifest_uri" not in spec.config
     assert "observed_task_manifest_uri" in spec.config
+    assert spec.config["baseline_failure_uri"].endswith("baseline-failure.json")
+    assert spec.config["derivative_failure_uri"].endswith("derivative-failure.json")
+    assert "--failure-uri" in plan.steps[1].argv
+    assert "--failure-uri" in plan.steps[2].argv
     assert spec.config["evaluation_accelerator"] == "RTXPRO6000:1"
     assert "held-out" in str(spec.metadata["description"]).lower()
     assert "unknown" in spec.states[plan.steps[3].state].description.lower()
