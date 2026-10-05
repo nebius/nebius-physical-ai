@@ -1382,28 +1382,50 @@ def _pair_videos(left: Path, right: Path, output: Path) -> dict[str, Any]:
         "+faststart",
         str(output),
     ]
-    process = subprocess.Popen(
-        command,
-        stdin=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    try:
-        assert process.stdin is not None
-        for left_frame, right_frame in zip(left_frames, right_frames, strict=True):
-            paired = np.concatenate((left_frame, right_frame), axis=1)
-            if paired.shape != (height, output_width, channels):
-                raise SwitchWorldError("paired decoded frames changed geometry")
-            process.stdin.write(paired.tobytes())
-        process.stdin.close()
-        assert process.stderr is not None
-        stderr = process.stderr.read()
-        returncode = process.wait()
-    except BaseException:
-        process.kill()
-        process.wait()
-        raise
+    # A failing encoder can write enough diagnostics to fill a pipe before it
+    # drains raw stdin.  Keep stderr in a private temporary file while frames
+    # stream, then attach the retained diagnostics to the raised process error.
+    # This avoids a writer/diagnostic-pipe deadlock without suppressing errors.
+    with tempfile.TemporaryFile(mode="w+b") as stderr_file:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stderr=stderr_file,
+        )
+        write_error: BrokenPipeError | None = None
+        try:
+            assert process.stdin is not None
+            try:
+                for left_frame, right_frame in zip(
+                    left_frames, right_frames, strict=True
+                ):
+                    paired = np.concatenate((left_frame, right_frame), axis=1)
+                    if paired.shape != (height, output_width, channels):
+                        raise SwitchWorldError("paired decoded frames changed geometry")
+                    process.stdin.write(paired.tobytes())
+            except BrokenPipeError as exc:
+                # The encoder may already have emitted a useful failure report.
+                # Wait below so that report is retained with its exit status.
+                write_error = exc
+            finally:
+                if not process.stdin.closed:
+                    try:
+                        process.stdin.close()
+                    except BrokenPipeError:
+                        pass
+            returncode = process.wait()
+        except BaseException:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            raise
+        finally:
+            stderr_file.seek(0)
+            stderr = stderr_file.read()
     if returncode:
         raise subprocess.CalledProcessError(returncode, command, stderr=stderr)
+    if write_error is not None:
+        raise write_error
 
     evidence = _video_evidence(output)
     if evidence["frame_count"] != len(left_frames):

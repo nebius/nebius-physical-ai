@@ -7,6 +7,7 @@ import hashlib
 import inspect
 import json
 from pathlib import Path
+import signal
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -361,6 +362,63 @@ def test_pair_videos_aligns_unequal_rates_by_decoded_frame_index(
         )
         assert float(target_error.mean()) < 5
         assert float(adapted_error.mean()) < 5
+
+
+def test_pair_videos_retains_large_failing_encoder_diagnostics_without_deadlock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drain a large failing-child diagnostic while raw input pressures stdin."""
+
+    baseline = tmp_path / "baseline.mp4"
+    adapted = tmp_path / "adapted.mp4"
+    output = tmp_path / "paired.mp4"
+    _video(baseline, "testsrc=size=640x480:rate=16")
+    _video(adapted, "testsrc2=size=640x480:rate=16")
+    failing_child = tmp_path / "failing_encoder.py"
+    failing_child.write_text(
+        """import sys
+sys.stderr.buffer.write(b'failing-child-diagnostic\\n' * 65536)
+sys.stderr.buffer.flush()
+payload = sys.stdin.buffer.read()
+sys.stderr.buffer.write(f'received_bytes={len(payload)}\\n'.encode())
+sys.stderr.buffer.flush()
+raise SystemExit(23)
+""",
+        encoding="utf-8",
+    )
+    original_popen = subprocess.Popen
+    children: list[subprocess.Popen[bytes]] = []
+
+    def failing_encoder(
+        _command: list[str], **kwargs: object
+    ) -> subprocess.Popen[bytes]:
+        child = original_popen([sys.executable, str(failing_child)], **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(switchworld.subprocess, "Popen", failing_encoder)
+    raw_input_bytes = 4 * 640 * 480 * 3 * 2
+    assert raw_input_bytes > 64 * 1024
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def test_harness_timeout(_signum: int, _frame: object) -> None:
+        raise TimeoutError("test harness detected a raw-stdin/stderr deadlock")
+
+    signal.signal(signal.SIGALRM, test_harness_timeout)
+    signal.setitimer(signal.ITIMER_REAL, 15)
+    try:
+        with pytest.raises(subprocess.CalledProcessError) as error:
+            switchworld._pair_videos(baseline, adapted, output)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+    assert error.value.returncode == 23
+    assert b"failing-child-diagnostic" in error.value.stderr
+    assert b"received_bytes=" in error.value.stderr
+    assert len(children) == 1
+    assert children[0].returncode == 23
+    assert children[0].stdin is not None and children[0].stdin.closed
 
 
 def test_real_pixel_cross_check_rejects_disconnected_metrics(tmp_path: Path) -> None:
