@@ -35,11 +35,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
 
+# The pinned CUDA base contains an older linux-libc-dev package. Upgrade only
+# that already-installed package before installing runtime packages; this keeps
+# the base's critical header CVEs out of the private derivative. OpenWAM does
+# not use the profiler bundled in that development base, so remove it rather
+# than retain its vulnerable Go plugin binary in the runtime image.
 RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade linux-libc-dev \
     && apt-get install -y --no-install-recommends \
       build-essential ca-certificates cmake ffmpeg git git-lfs libegl1 libgl1 \
       libglib2.0-0 libgomp1 netcat-openbsd openssh-client openssh-server patch \
       python3 python3-dev python3-pip python3-venv rsync sudo \
+    && rm -rf /opt/nvidia/nsight-compute \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \

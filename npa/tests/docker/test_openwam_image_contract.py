@@ -44,6 +44,20 @@ def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
     assert 'm.version("transformers") == "4.36.0"' in dockerfile
 
 
+def test_openwam_removes_observed_base_image_critical_footprint() -> None:
+    """Keep the exact private-image scan remediation from silently regressing."""
+
+    dockerfile = (
+        ROOT / "npa" / "docker" / "workbench" / "openwam" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "apt-get install -y --no-install-recommends --only-upgrade linux-libc-dev"
+        in dockerfile
+    )
+    assert "rm -rf /opt/nvidia/nsight-compute" in dockerfile
+
+
 def test_openwam_recipe_retains_runtime_fetch_and_private_quarantine() -> None:
     dockerfile = (
         ROOT / "npa" / "docker" / "workbench" / "openwam" / "Dockerfile"
