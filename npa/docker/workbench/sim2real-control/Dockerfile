@@ -63,9 +63,9 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
 
 WORKDIR /workspace
 
-COPY docker/workbench/common/sim2real-cpu-build-requirements.txt \
+COPY --chmod=0644 docker/workbench/common/sim2real-cpu-build-requirements.txt \
     /opt/npa/sim2real-cpu-build-requirements.txt
-COPY docker/workbench/common/update_pip_msgpack_vendor.py \
+COPY --chmod=0644 docker/workbench/common/update_pip_msgpack_vendor.py \
     /opt/npa/update_pip_msgpack_vendor.py
 RUN python -m pip install --no-cache-dir --no-deps --upgrade \
       -r /opt/npa/sim2real-cpu-build-requirements.txt \
