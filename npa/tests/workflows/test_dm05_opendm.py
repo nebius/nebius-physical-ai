@@ -93,9 +93,9 @@ def test_first_libero_observation_is_safe_and_uses_ordered_cameras(
     assert list(payload["observation"]["images"]) == ["1", "2"]
 
 
-@pytest.mark.parametrize("escaped_url", ["../outside.jpg", "/tmp/outside.jpg"])
+@pytest.mark.parametrize("escape_kind", ["parent", "absolute"])
 def test_first_libero_observation_rejects_parent_and_absolute_image_escapes(
-    tmp_path: Path, escaped_url: str
+    tmp_path: Path, escape_kind: str
 ) -> None:
     data = tmp_path / "libero"
     image_root = data / "libero_pi0_all" / "image"
@@ -104,6 +104,9 @@ def test_first_libero_observation_rejects_parent_and_absolute_image_escapes(
     image_root.mkdir(parents=True)
     (image_root / "wrist.jpg").write_bytes(b"wrist")
     (image_root.parent / "outside.jpg").write_bytes(b"outside")
+    absolute_outside = tmp_path / "absolute-outside.jpg"
+    absolute_outside.write_bytes(b"outside")
+    escaped_url = "../outside.jpg" if escape_kind == "parent" else str(absolute_outside)
     jsonl.write_text(
         json.dumps(
             {
@@ -120,7 +123,9 @@ def test_first_libero_observation_rejects_parent_and_absolute_image_escapes(
         dm05_opendm._first_libero_observation(data)
 
 
-def test_first_libero_observation_rejects_a_symlink_image_escape(tmp_path: Path) -> None:
+def test_first_libero_observation_rejects_a_symlink_image_escape(
+    tmp_path: Path,
+) -> None:
     data = tmp_path / "libero"
     image_root = data / "libero_pi0_all" / "image"
     jsonl = data / "libero_pi0_all" / "jsonl" / "episode.jsonl"
