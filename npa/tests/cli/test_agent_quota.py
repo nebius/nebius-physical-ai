@@ -7,7 +7,7 @@ from npa.cli.agent_quota import (
     _agent_whole_path_capacity_result,
 )
 from npa.clients.nebius import NebiusError
-from npa.provisioning_preflight import GIB, PreflightBlockedError
+from npa.provisioning_preflight import GIB, PreflightBlockedError, VPC_POOL_QUOTA
 
 
 REGION = "eu-test1"
@@ -19,6 +19,7 @@ def _allowances(*, instance_limit: int = 20) -> dict:
         "compute.disk.count": 20,
         "compute.disk.size.network-ssd": 4096 * GIB,
         "vpc.ipv4-address.public.count": 20,
+        VPC_POOL_QUOTA: 20,
     }
     return {
         "items": [
@@ -120,6 +121,27 @@ def test_project_quota_denial_is_not_hidden_by_tenant_rbac_fallback(
     with pytest.raises(
         PreflightBlockedError,
         match="Project-scoped quota evidence denies.*compute.instance.count",
+    ):
+        _agent_check_whole_path_capacity(
+            "project-test",
+            "tenant-test",
+            REGION,
+            include_paidf=False,
+        )
+
+
+def test_agent_capacity_rejects_an_exhausted_vpc_pool_quota(monkeypatch) -> None:
+    payload = _allowances()
+    for item in payload["items"]:
+        if item["metadata"]["name"] == VPC_POOL_QUOTA:
+            item["spec"]["limit"] = "100"
+            item["status"]["usage"] = "100"
+
+    _project_scoped_quota_setup(monkeypatch, payload)
+
+    with pytest.raises(
+        PreflightBlockedError,
+        match="Project-scoped quota evidence denies.*vpc.pool.count",
     ):
         _agent_check_whole_path_capacity(
             "project-test",

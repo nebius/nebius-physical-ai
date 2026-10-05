@@ -21,6 +21,7 @@ INSTANCE_QUOTA = "compute.instance.count"
 DISK_QUOTA = "compute.disk.count"
 NETWORK_SSD_BYTES_QUOTA = "compute.disk.size.network-ssd"
 PUBLIC_IP_QUOTA = "vpc.ipv4-address.public.count"
+VPC_POOL_QUOTA = "vpc.pool.count"
 
 GIB = 1024**3
 DEFAULT_AGENT_ROOT_DISK_GIB = 100
@@ -116,6 +117,18 @@ class ResolvedTopology:
         return self.new_agent_instances + node_ips
 
     @property
+    def required_vpc_pools(self) -> int:
+        """Return private VPC pools created for new agent networks.
+
+        Returns:
+            One pool for each new agent VM network, otherwise zero.
+        Raises:
+            None.
+        """
+
+        return self.new_agent_instances
+
+    @property
     def required_gpus(self) -> int:
         return self.new_gpu_nodes * _gpus_per_node(self.gpu_preset)
 
@@ -126,6 +139,8 @@ class ResolvedTopology:
             NETWORK_SSD_BYTES_QUOTA: self.required_network_ssd_bytes,
             PUBLIC_IP_QUOTA: self.required_public_ips,
         }
+        if self.required_vpc_pools:
+            requirements[VPC_POOL_QUOTA] = self.required_vpc_pools
         quota_name = gpu_quota_name(self.gpu_platform)
         # Preemptible capacity can change the GPU capacity pool.  It never
         # changes the hard instance/disk/IP arithmetic above.
@@ -160,6 +175,7 @@ class ResolvedTopology:
                     self.required_network_ssd_bytes
                 ),
                 "required_public_ips": self.required_public_ips,
+                "required_vpc_pools": self.required_vpc_pools,
                 "required_gpus": self.required_gpus,
             }
         )

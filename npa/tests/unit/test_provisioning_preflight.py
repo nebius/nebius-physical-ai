@@ -8,6 +8,7 @@ from npa.provisioning_preflight import (
     INSTANCE_QUOTA,
     NETWORK_SSD_BYTES_QUOTA,
     PUBLIC_IP_QUOTA,
+    VPC_POOL_QUOTA,
     PreflightBlockedError,
     QuotaObservation,
     assess_quota,
@@ -70,10 +71,20 @@ def test_missing_usage_with_limit_is_zero() -> None:
 
 
 @pytest.mark.parametrize(
-    "name", [INSTANCE_QUOTA, DISK_QUOTA, NETWORK_SSD_BYTES_QUOTA, PUBLIC_IP_QUOTA]
+    "name",
+    [
+        INSTANCE_QUOTA,
+        DISK_QUOTA,
+        NETWORK_SSD_BYTES_QUOTA,
+        PUBLIC_IP_QUOTA,
+        VPC_POOL_QUOTA,
+    ],
 )
 def test_each_hard_quota_can_block(name: str) -> None:
-    topology = resolve_topology(public_node_ips=name == PUBLIC_IP_QUOTA)
+    topology = resolve_topology(
+        agent_requested=name == VPC_POOL_QUOTA,
+        public_node_ips=name == PUBLIC_IP_QUOTA,
+    )
     plan = _plan(topology=topology, values={name: (10, 10)})
     assert plan.decision == "blocked"
     assert {item.name for item in plan.quotas if item.status == "blocked"} == {name}

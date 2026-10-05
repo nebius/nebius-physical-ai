@@ -4,16 +4,16 @@ Extracted from ``npa.cli.agent`` (a monolith under a size ratchet) so the two
 cohesive, independently-tested quota helpers live in one small module. They are
 re-exported from ``npa.cli.agent`` for the existing call sites and tests.
 
-The agent VM always needs exactly one public IP, and compute placement follows
-the *project's* region (not the ``--region`` flag). Both helpers therefore
-resolve the project's real region and check the tenant's per-region
-``vpc.ipv4-address.public.count`` allowance. A project-scoped administrator may
-not be allowed to inspect the tenant aggregate, so the whole-path check falls
-back to the same quota catalog under the exact deployment project. A real finite
-project allowance remains a hard gate, and every required project quota must be
-present and readable before a mutation can proceed. Only a fully verified
-project-scoped fallback makes the unavailable tenant-wide view advisory. The
-provider remains authoritative for the tenant aggregate during apply.
+Each new agent VM needs one public IP and creates one VPC pool for its isolated
+network. Compute placement follows the *project's* region (not the ``--region``
+flag), so both helpers resolve the project's real region and check the tenant's
+per-region allowances. A project-scoped administrator may not be allowed to
+inspect the tenant aggregate, so the whole-path check falls back to the same
+quota catalog under the exact deployment project. A real finite project
+allowance remains a hard gate, and every required project quota must be present
+and readable before a mutation can proceed. Only a fully verified project-scoped
+fallback makes the unavailable tenant-wide view advisory. The provider remains
+authoritative for the tenant aggregate during apply.
 """
 
 from __future__ import annotations
@@ -256,7 +256,8 @@ def _agent_whole_path_capacity_result(
             "Whole-path agent capacity is ready: "
             f"instances={topology.required_instances}, disks={topology.required_disks}, "
             f"network_ssd_bytes={topology.required_network_ssd_bytes}, "
-            f"public_ips={topology.required_public_ips}."
+            f"public_ips={topology.required_public_ips}, "
+            f"vpc_pools={topology.required_vpc_pools}."
         ),
     )
 

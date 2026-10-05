@@ -5841,7 +5841,11 @@ def test_agent_only_capacity_skips_cluster_inventory(monkeypatch) -> None:
     cluster inventory ran regardless of the requested topology.
     """
     from npa.cli.agent_quota import _agent_check_whole_path_capacity
-    from npa.provisioning_preflight import GIB, NETWORK_SSD_BYTES_QUOTA
+    from npa.provisioning_preflight import (
+        GIB,
+        NETWORK_SSD_BYTES_QUOTA,
+        VPC_POOL_QUOTA,
+    )
 
     monkeypatch.setattr(
         "npa.clients.nebius.get_project_region", lambda _project: "eu-test1"
@@ -5868,6 +5872,7 @@ def test_agent_only_capacity_skips_cluster_inventory(monkeypatch) -> None:
                     "compute.disk.count": 20,
                     NETWORK_SSD_BYTES_QUOTA: 4096 * GIB,
                     "vpc.ipv4-address.public.count": 20,
+                    VPC_POOL_QUOTA: 20,
                 }.items()
             ]
         },
@@ -5882,6 +5887,7 @@ def test_agent_only_capacity_skips_cluster_inventory(monkeypatch) -> None:
     )
 
     assert plan.topology.required_public_ips == 1
+    assert plan.topology.required_vpc_pools == 1
     assert plan.topology.cpu_nodes == 0
     assert plan.topology.gpu_nodes == 0
 
