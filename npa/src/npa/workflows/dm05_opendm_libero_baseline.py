@@ -262,7 +262,7 @@ def _require_protocol(protocol: dict[str, Any]) -> None:
         protocol: Materialized comparison protocol.
 
     Raises:
-        OpenDMBaselineError: If protocol shape, suites, or controller differs.
+        OpenDMBaselineError: If protocol shape, suites, seed, or controller differs.
     """
     action = protocol.get("action", {})
     observation = protocol.get("observation", {})
@@ -273,6 +273,11 @@ def _require_protocol(protocol: dict[str, Any]) -> None:
     if protocol.get("episodes_per_task") != 5 or protocol.get("tasks_per_suite") != 10:
         raise OpenDMBaselineError(
             "OpenDM baseline requires five trials for every LIBERO task"
+        )
+    seed = protocol.get("seed")
+    if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
+        raise OpenDMBaselineError(
+            "OpenDM baseline requires a nonnegative integer sealed protocol seed"
         )
     if observation.get("state_dimension") != STATE_DIMENSION:
         raise OpenDMBaselineError("OpenDM baseline requires an 8-value LIBERO state")
@@ -409,13 +414,14 @@ def _stop_server(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=30)
 
 
-def _evaluator_command(suite: str, output: Path, trials: int) -> list[str]:
+def _evaluator_command(suite: str, output: Path, trials: int, seed: int) -> list[str]:
     """Build one official Dexbotic evaluation command for a LIBERO suite.
 
     Args:
         suite: LIBERO suite to evaluate.
         output: Native result directory for that suite.
         trials: Trials required for each task.
+        seed: Sealed protocol seed forwarded through Dexbotic's ``--set`` merge.
 
     Returns:
         The native evaluator argv.
@@ -436,6 +442,9 @@ def _evaluator_command(suite: str, output: Path, trials: int) -> list[str]:
         "--set",
         "num_trails_per_task",
         str(trials),
+        "--set",
+        "seed",
+        str(seed),
     ]
 
 
@@ -445,6 +454,7 @@ def _run_suite(
     suite: str,
     output: Path,
     trials: int,
+    seed: int,
     device: str,
 ) -> dict[str, Any]:
     """Run and parse one native Dexbotic suite without replacing its evaluator.
@@ -455,6 +465,7 @@ def _run_suite(
         suite: LIBERO suite name.
         output: Native evaluator result directory.
         trials: Trials per task.
+        seed: Sealed protocol seed passed to Dexbotic's configuration merge.
         device: Worker-local CUDA device visible to the evaluator.
 
     Returns:
@@ -464,7 +475,7 @@ def _run_suite(
     environment.update({"EGL_PLATFORM": "device", "PYOPENGL_PLATFORM": "egl"})
     environment["CUDA_VISIBLE_DEVICES"] = device
     subprocess.run(
-        [str(python), *_evaluator_command(suite, output, trials)],
+        [str(python), *_evaluator_command(suite, output, trials, seed)],
         cwd=root,
         env=environment,
         check=True,
@@ -660,10 +671,15 @@ def _evaluate_suites(
     """
     native = workspace / "canonical-native"
     results: list[tuple[str, dict[str, Any]]] = []
+    seed = protocol["seed"]
+    if not isinstance(seed, int) or isinstance(seed, bool):
+        raise OpenDMBaselineError(
+            "sealed protocol seed was not validated as an integer"
+        )
     for suite in SUITES:
         suite_root = workspace / "dexbotic" / suite
         result = _run_suite(
-            root, python, suite, suite_root, protocol["episodes_per_task"], device
+            root, python, suite, suite_root, protocol["episodes_per_task"], seed, device
         )
         _copy_suite_outputs(native, suite, suite_root)
         results.append((suite, result))

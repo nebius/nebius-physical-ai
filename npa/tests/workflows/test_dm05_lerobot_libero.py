@@ -129,8 +129,9 @@ def _opendm_results(suite: str) -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize("protocol_seed", [7, 11])
 def test_five_stage_contract_preserves_action_controller_boundary_and_real_artifacts(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, protocol_seed
 ):
     pytest.importorskip("rerun")
     native_run = workflow.subprocess.run
@@ -157,6 +158,7 @@ def test_five_stage_contract_preserves_action_controller_boundary_and_real_artif
         if command[0] != "lerobot-eval":
             return native_run(command, *args, **kwargs)
         assert kwargs["check"] is True
+        assert f"--seed={protocol_seed}" in command
         assert "LIBERO_CONFIG_PATH" in kwargs["env"]
         output = Path(
             next(
@@ -191,7 +193,8 @@ def test_five_stage_contract_preserves_action_controller_boundary_and_real_artif
     monkeypatch.setattr(baseline_workflow, "_wait_for_server", lambda _: None)
     monkeypatch.setattr(baseline_workflow, "_stop_server", lambda _: None)
 
-    def opendm_suite(_, __, suite, output, ___, ____):
+    def opendm_suite(_, __, suite, output, ___, seed, ____):
+        assert seed == protocol_seed
         _native_eval(output, "baseline")
         video = output / "videos" / "episode.mp4"
         for index in range(1, 50):
@@ -205,7 +208,12 @@ def test_five_stage_contract_preserves_action_controller_boundary_and_real_artif
         tmp_path / name
         for name in ("prepared", "baseline-out", "candidate-out", "metrics", "report")
     )
-    assert workflow.main(["prepare", "--output-path", str(prepared)]) == 0
+    assert (
+        workflow.main(
+            ["prepare", "--output-path", str(prepared), "--seed", str(protocol_seed)]
+        )
+        == 0
+    )
     assert (
         baseline_workflow.main(
             [
@@ -405,6 +413,26 @@ def test_opendm_baseline_invokes_official_overrides_and_rejects_wrong_norm_shape
     ]
     assert "--model-config.chunk-size" in command
     assert "--inference-config.output-action-dim" in command
+    protocol = workflow._protocol(seed=11, episodes_per_task=5)
+    baseline_workflow._require_protocol(protocol)
+    evaluator = baseline_workflow._evaluator_command(
+        "libero_goal",
+        tmp_path / "native",
+        protocol["episodes_per_task"],
+        protocol["seed"],
+    )
+    overrides = {
+        evaluator[index + 1]: evaluator[index + 2]
+        for index, value in enumerate(evaluator)
+        if value == "--set"
+    }
+    assert overrides == {
+        "benchmark": "libero_goal",
+        "base_url": "http://127.0.0.1:7891",
+        "output_dir": str(tmp_path / "native"),
+        "num_trails_per_task": "5",
+        "seed": "11",
+    }
     checkpoint = _opendm_checkpoint(tmp_path / "checkpoint-contract")
     assert (
         baseline_workflow._require_checkpoint_contract(checkpoint)[
@@ -419,6 +447,15 @@ def test_opendm_baseline_invokes_official_overrides_and_rejects_wrong_norm_shape
         baseline_workflow._require_checkpoint_contract(checkpoint)
 
 
+@pytest.mark.parametrize("invalid_seed", [True, -1, "11", None, 11.0])
+def test_opendm_baseline_rejects_an_invalid_sealed_seed(invalid_seed):
+    protocol = workflow._protocol(seed=7, episodes_per_task=5)
+    protocol["seed"] = invalid_seed
+
+    with pytest.raises(baseline_workflow.OpenDMBaselineError, match="protocol seed"):
+        baseline_workflow._require_protocol(protocol)
+
+
 def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     docker_root = Path(__file__).resolve().parents[2] / "docker/workbench/lerobot"
     manifest = json.loads(
@@ -429,12 +466,15 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     ).read_text(encoding="utf-8")
 
     assert manifest == baseline_workflow.OPENDM_IMPLEMENTATION
-    assert "validation-disposition=\"operator-private-no-publication\"" in instructions
+    assert 'validation-disposition="operator-private-no-publication"' in instructions
     assert "checkout --detach 7d52f1591437332cb0157be3303c1c46da811344" in instructions
     assert "checkout --detach 789b87f50d9fadc7663d2e8bac057941221aab81" in instructions
     assert "checkout --detach 8f1084e3132a39270c3a13ebe37270a43ece2a01" in instructions
     assert "/opt/opendm-venv/bin/python -m pip uninstall -y wandb" in instructions
-    assert "NPA_DM05_OPENDM_RUNTIME_MANIFEST=/opt/opendm/dm05-libero-baseline-runtime.json" in instructions
+    assert (
+        "NPA_DM05_OPENDM_RUNTIME_MANIFEST=/opt/opendm/dm05-libero-baseline-runtime.json"
+        in instructions
+    )
 
 
 def test_libero_config_uses_installed_assets_without_interactive_setup(
