@@ -72,6 +72,8 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown ubuntu:ubuntu /opt/lerobot/.env \
     && chmod 600 /opt/lerobot/.env
 
+COPY --chown=ubuntu:ubuntu docker/workbench/curobo/remove_scikit_image_recipe.py /opt/lerobot/remove_scikit_image_recipe.py
+
 USER ubuntu
 WORKDIR /opt/lerobot
 
@@ -103,6 +105,9 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            "torchvision==0.27.1" \
            "diffusers>=0.38.0"; \
        fi \
+    && /opt/lerobot/venv/bin/python /opt/lerobot/remove_scikit_image_recipe.py \
+      --site-packages "$(/opt/lerobot/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+    && /opt/lerobot/venv/bin/python -m pip check \
     && /opt/lerobot/venv/bin/pip uninstall -y wandb \
     && find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \

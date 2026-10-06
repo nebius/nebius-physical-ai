@@ -116,6 +116,27 @@ def test_fastwam_image_pins_the_stable_le_robot_release_and_feature_extra() -> N
     assert fastwam.LEROBOT_RELEASE_COMMIT == "7e241bd630a3719a56157a497ce5d08f244784f1"
 
 
+def test_fastwam_image_removes_the_known_inert_scikit_image_recipe_in_its_install_layer() -> (
+    None
+):
+    dockerfile = FASTWAM_DOCKERFILE.read_text()
+
+    assert (
+        "docker/workbench/curobo/remove_scikit_image_recipe.py "
+        "/opt/lerobot/remove_scikit_image_recipe.py"
+    ) in dockerfile
+    start = dockerfile.index("RUN python3.12 -m venv /opt/lerobot/venv")
+    end = dockerfile.index("\n\n", start)
+    install_layer = dockerfile[start:end]
+    correction = "python /opt/lerobot/remove_scikit_image_recipe.py"
+    assert correction in install_layer
+    assert install_layer.index(correction) > install_layer.index("pip install")
+    assert install_layer.index(correction) < install_layer.index(
+        "pip uninstall -y wandb"
+    )
+    assert install_layer.index("python -m pip check") > install_layer.index(correction)
+
+
 def test_prepare_seals_disjoint_split_and_upstream_identity(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
