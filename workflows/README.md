@@ -201,6 +201,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`paidf-image-attribute-augmentation.yaml`](testing/paidf-image-attribute-augmentation.yaml) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
 | [`nvidia-paidf-vda-cosmos-transfer25.yaml`](testing/nvidia-paidf-vda-cosmos-transfer25.yaml) | Separately named NVIDIA-derived VDA semantic translation → pinned upstream contract → real Cosmos Transfer 2.5/Evaluator/Curator/FiftyOne → Rerun ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |
 | [`physical-ai-data-factory.yaml`](testing/physical-ai-data-factory.yaml) | Cosmos Transfer 2.5 PAIDF blueprint ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |
+| [`paidf-aloha-cups-fanout.yaml`](testing/paidf-aloha-cups-fanout.yaml) | Fresh pinned LeRobot ALOHA cup opening → twelve full-episode Cosmos3-Nano appearance scenarios → strict quality disposition and terminal Rerun review; no training promotion ([recipe](../docs/workbench/guides/paidf-aloha-cups-fanout.md), [readiness](testing/paidf-aloha-cups-fanout.readiness.json)) |
 
 #### Robot learning and simulation
 
@@ -335,6 +336,13 @@ Set `NPA_E2E_NPA_WORKFLOW_RUNTIME=1` to run its full dynamic pipeline; the
 one-shot test verifies that assumed promotion is refused. Runtime validation
 downloads and fully decodes the source and generated videos, verifies their
 timelines and control hashes, and checks every downstream component report.
+
+For the complete twelve-candidate ALOHA review, select
+`NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=paidf-aloha-cups-fanout.yaml`, enable the
+runtime lane, and set `NPA_E2E_PAIDF_ALOHA_DATASET_URI` to the freshly staged,
+hash-verified dataset directory from the [fanout recipe](../docs/workbench/guides/paidf-aloha-cups-fanout.md).
+This case retains strict quality outcomes and produces terminal review evidence;
+workflow completion does not mean candidates were accepted for training.
 
 ## Further reading
 

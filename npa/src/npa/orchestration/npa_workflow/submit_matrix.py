@@ -1351,6 +1351,28 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "paidf-aloha-cups-fanout.yaml",
+        "gpu",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+        ),
+        requires_token_factory=True,
+        runtime=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Requires a fresh hash-verified pinned ALOHA dataset upload; select "
+            "this case with NPA_E2E_PAIDF_ALOHA_DATASET_URI after source staging."
+        ),
+        notes=(
+            "Twelve full-episode Nano appearance candidates, real evaluation and "
+            "strict terminal review evidence. Public defaults, no refinement or "
+            "training promotion; completed live qualification remains unverified."
+        ),
+    ),
+    SubmitLiveCase(
         "paidf-defect-image-generation.yaml",
         "gpu",
         runtime=True,
