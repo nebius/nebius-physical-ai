@@ -223,6 +223,27 @@ def test_legacy_unprofiled_provision_keeps_operator_values_unset(monkeypatch, tm
     )
 
 
+def test_sky_smoke_rejects_unsupported_host_before_terraform(monkeypatch, tmp_path):
+    from npa.orchestration.skypilot import local_api
+
+    (tmp_path / "terraform.tfvars").write_text('parent_id = "project-test"\n')
+
+    def unsupported_host():
+        raise local_api.IsolatedApiError(
+            "SkyPilot smoke requires a Linux operator host"
+        )
+
+    monkeypatch.setattr(local_api, "_require_linux_host", unsupported_host)
+    monkeypatch.setattr(
+        tf_mod,
+        "_require_bin",
+        lambda _name: pytest.fail("unsupported host reached Terraform prerequisites"),
+    )
+    result = runner.invoke(app, ["up", "--terraform-dir", str(tmp_path), "--sky-smoke"])
+    assert result.exit_code != 0
+    assert "Linux operator host" in result.output
+
+
 def test_run_stream_capture_output_is_visible_and_retained(capsys) -> None:
     result = tf_mod._run_stream(
         [

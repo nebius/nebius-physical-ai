@@ -103,6 +103,12 @@ GPU Operator. Its RTX toolkit configuration reads the containerd file with
 `RUNTIME_CONFIG_SOURCE=file`, preserving the on-disk config schema when
 containerd's command output would migrate it to a newer version.
 
+The default SkyPilot smoke requires a Linux operator host with `/proc` for
+process ownership verification. NPA checks this before provisioning. On another
+host, use `--skip-sky-smoke` for provisioning and run SkyPilot validation from
+the Linux operator host before submitting workflows; the GPU, CUDA, and graphics
+validation gates still run.
+
 ## Change the topology
 
 > **Security note: the Kubernetes API endpoint is public by default.**

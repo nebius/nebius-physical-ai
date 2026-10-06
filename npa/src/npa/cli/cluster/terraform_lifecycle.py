@@ -426,6 +426,14 @@ def up_cmd(
 ) -> None:
     """Create or update the Terraform-managed NPA Kubernetes cluster."""
 
+    if sky_smoke and not mig_enabled:
+        from npa.orchestration.skypilot import local_api
+
+        try:
+            local_api._require_linux_host()
+        except local_api.IsolatedApiError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--sky-smoke") from exc
+
     from npa.cli.cluster.terraform_runtime import (
         isolated_terraform_data_dir,
         record_terraform_inventory,
