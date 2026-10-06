@@ -763,6 +763,53 @@ def test_kubernetes_private_image_references_the_refreshed_pull_secret(
     assert set(authorities.values()) == {()}
 
 
+def test_kubernetes_private_image_binds_explicit_pull_secret_to_render_and_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    plan = build_plan(spec, run_id="explicit-pull-secret")
+    options = SkypilotRenderOptions(
+        registry="registry.example/reg",
+        image_pull_secret_names=("operator-registry",),
+    )
+
+    rendered = render_skypilot_yaml(
+        spec, plan, run_id="explicit-pull-secret", options=options
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+    pod_spec = task["config"]["kubernetes"]["pod_config"]["spec"]
+    assert pod_spec["imagePullSecrets"] == [{"name": "operator-registry"}]
+    requirements = plan_image_pull_requirements(
+        spec, plan.steps, run_id="explicit-pull-secret", options=options
+    )
+    assert {item.pull_secret_name_sets for item in requirements.values()} == {
+        (("operator-registry",),)
+    }
+
+
+def test_explicit_pull_secret_refuses_conflicting_task_authority() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="conflicting-pull-secret").steps[0]
+    step = replace(
+        step,
+        resources_profile={
+            **step.resources_profile,
+            "kubernetes": {
+                "pod_config": {"spec": {"imagePullSecrets": [{"name": "declared"}]}}
+            },
+        },
+    )
+
+    with pytest.raises(NpaWorkflowRenderError, match="conflicts"):
+        plan_image_pull_requirements(
+            spec,
+            [step],
+            run_id="conflicting-pull-secret",
+            options=SkypilotRenderOptions(image_pull_secret_names=("operator",)),
+        )
+
+
 def test_public_plan_has_no_implicit_kubernetes_pull_authority() -> None:
     spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
     plan = build_plan(spec, run_id="demo")

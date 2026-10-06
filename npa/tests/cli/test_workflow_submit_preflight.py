@@ -2654,7 +2654,7 @@ def test_effective_pull_secret_sets_accept_initial_multi_entry_task_list() -> No
         ),
     ],
 )
-def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(
+def test_preflight_images_binds_explicit_pull_secret_to_target_and_bootstrap(
     mocker, timeout_args, pull_timeout, bootstrap_timeout
 ) -> None:
     from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
@@ -2697,10 +2697,14 @@ def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(
     result = runner.invoke(app, args + timeout_args)
 
     assert result.exit_code == 0, result.output
-    assert checks.call_args.kwargs["pull_secrets_by_image"] == {digest_image: ()}
+    assert checks.call_args.kwargs["pull_secrets_by_image"] == {
+        digest_image: ("operator-registry",)
+    }
     assert checks.call_args.kwargs["context"] == "target-context"
     assert checks.call_args.kwargs["namespace"] == "target-namespace"
-    assert checks.call_args.kwargs["pull_secret_sets_by_image"] == {digest_image: ((),)}
+    assert checks.call_args.kwargs["pull_secret_sets_by_image"] == {
+        digest_image: (("operator-registry",),)
+    }
     assert checks.call_args.kwargs["service_account_names_by_image"] == {
         digest_image: ("skypilot-service-account",)
     }
@@ -2846,7 +2850,7 @@ def test_preflight_images_covers_every_decision_branch(mocker) -> None:
     assert any("npa-cosmos-curate:" in image for image in checked_images)
     assert any("npa-fiftyone:" in image for image in checked_images)
     assert checks.call_args.kwargs["pull_secrets_by_image"] == {
-        image: () for image in checked_images
+        image: ("operator-registry",) for image in checked_images
     }
 
 

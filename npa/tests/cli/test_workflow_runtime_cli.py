@@ -557,6 +557,8 @@ def test_submit_runtime_passes_per_tool_image_override(
             "--image-pull-timeout-seconds",
             str(pull_timeout),
             "--runtime",
+            "--image-pull-secret",
+            "operator-registry",
             "--tool-image",
             f"workbench.token_factory.caption={image}",
             "--var",
@@ -570,8 +572,10 @@ def test_submit_runtime_passes_per_tool_image_override(
         "workbench.token_factory.caption": image,
     }
     assert options.image_digest_pins == pins
+    assert options.image_pull_secret_names == ("operator-registry",)
     checked = preflight.call_args.kwargs["options"]
     assert checked.image_overrides == options.image_overrides
+    assert checked.image_pull_secret_names == ("operator-registry",)
     assert preflight.call_args.kwargs["image_pull_timeout_seconds"] == pull_timeout
     wave = tmp_path / "next-wave.yaml"
     wave.write_text("name: next-wave\nrun: echo next\n")
@@ -579,6 +583,10 @@ def test_submit_runtime_passes_per_tool_image_override(
     assert preflight.call_count == 2
     assert all(
         call.kwargs["image_pull_timeout_seconds"] == pull_timeout
+        for call in preflight.call_args_list
+    )
+    assert all(
+        call.kwargs["options"].image_pull_secret_names == ("operator-registry",)
         for call in preflight.call_args_list
     )
 
@@ -599,6 +607,25 @@ def test_submit_rejects_malformed_per_tool_image_override() -> None:
 
     assert result.exit_code == 1
     assert "TOOL_REF=IMAGE" in result.output
+
+
+def test_submit_plan_only_refuses_explicit_pull_secret() -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--plan-only",
+            "--image-pull-secret",
+            "operator-registry",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "cannot be combined with --plan-only" in result.output
+    assert "operator-registry" not in result.output
 
 
 @pytest.mark.parametrize(

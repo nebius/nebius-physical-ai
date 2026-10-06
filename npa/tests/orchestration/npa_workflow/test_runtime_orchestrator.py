@@ -1615,6 +1615,16 @@ def test_image_identity_tracks_effective_override_precedence(selector):
     assert _image_identity(initial) != _image_identity(changed)
 
 
+def test_image_identity_binds_explicit_pull_secret_names() -> None:
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+
+    default = SkypilotRenderOptions()
+    with_secret = SkypilotRenderOptions(image_pull_secret_names=("operator-registry",))
+
+    assert _image_identity(default) == _image_identity(SkypilotRenderOptions())
+    assert _image_identity(default) != _image_identity(with_secret)
+
+
 @pytest.mark.parametrize("field", ["image", "image_id"])
 def test_workflow_identity_binds_resource_image_selection(tmp_path, field):
     from dataclasses import replace

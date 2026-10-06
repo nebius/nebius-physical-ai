@@ -401,6 +401,9 @@ class SkypilotRenderOptions:
     # When False (``--plan-only``), embed placeholders instead of explicit live
     # private-registry credentials in YAML that may be printed to stdout.
     materialize_registry_secrets: bool = True
+    # Existing operator-managed Kubernetes pull Secrets to attach to rendered
+    # Kubernetes tasks and bind into their target-pull preflight path.
+    image_pull_secret_names: tuple[str, ...] = ()
     # Shared scheduler identity for the current runtime wave attempt.  The
     # runtime supplies its durable logical launch id; offline renders derive a
     # deterministic task-local value below.  Cosmos gang workers combine this
@@ -2199,6 +2202,66 @@ def _task_pull_secret_names(
     return tuple(names)
 
 
+def _requested_image_pull_secret_names(
+    options: SkypilotRenderOptions,
+) -> tuple[str, ...]:
+    """Return validated operator-managed pull Secret names from render options."""
+
+    names = tuple(
+        dict.fromkeys(
+            str(name).strip()
+            for name in options.image_pull_secret_names
+            if str(name).strip()
+        )
+    )
+    if any(not _KUBERNETES_NAME_RE.fullmatch(name) for name in names):
+        raise NpaWorkflowRenderError(
+            "--image-pull-secret requires valid Kubernetes Secret names"
+        )
+    return names
+
+
+def _effective_task_pull_secret_names(
+    pod_spec: Mapping[str, Any],
+    options: SkypilotRenderOptions,
+) -> tuple[str, ...] | None:
+    """Resolve one task's pull authority without silently replacing its config."""
+
+    requested = _requested_image_pull_secret_names(options)
+    declared = _task_pull_secret_names(pod_spec)
+    if requested and declared is not None and declared != requested:
+        raise NpaWorkflowRenderError(
+            "--image-pull-secret conflicts with workflow-declared imagePullSecrets"
+        )
+    return requested or declared
+
+
+def _with_requested_image_pull_secrets(
+    task_config: Mapping[str, Any],
+    resources: Mapping[str, Any],
+    options: SkypilotRenderOptions,
+) -> dict[str, Any]:
+    """Attach requested pull Secrets to Kubernetes tasks that lack their own."""
+
+    requested = _requested_image_pull_secret_names(options)
+    cloud = str(resources.get("cloud") or "").strip().casefold()
+    if not requested or cloud not in {"kubernetes", "k8s"}:
+        return dict(task_config)
+    import copy
+
+    rendered = copy.deepcopy(dict(task_config))
+    pod_spec = (
+        rendered.setdefault("kubernetes", {})
+        .setdefault("pod_config", {})
+        .setdefault("spec", {})
+    )
+    declared = _task_pull_secret_names(pod_spec)
+    _effective_task_pull_secret_names(pod_spec, options)
+    if declared is None:
+        pod_spec["imagePullSecrets"] = [{"name": name} for name in requested]
+    return rendered
+
+
 def _task_service_account_name(pod_spec: Mapping[str, Any]) -> str | None:
     """Read a task ServiceAccount override, preserving an absent key."""
 
@@ -2280,10 +2343,10 @@ def plan_image_pull_requirements(
         pod_config = pod_config if isinstance(pod_config, dict) else {}
         pod_spec = pod_config.get("spec")
         pod_spec = pod_spec if isinstance(pod_spec, dict) else {}
-        names = _task_pull_secret_names(pod_spec)
         service_account_name = _task_service_account_name(pod_spec)
         pod_placement_json = _task_pull_placement_json(pod_spec)
         cloud = str(resources.get("cloud") or "").strip().casefold()
+        names = _effective_task_pull_secret_names(pod_spec, options)
         if not cloud:
             paths.setdefault(image, []).append(
                 ("unresolved", names, service_account_name, pod_placement_json)
@@ -2639,7 +2702,11 @@ def _build_skypilot_task_doc(
         envs["JAX_PLATFORMS"] = "cpu"
     if num_nodes > 1:
         doc["num_nodes"] = num_nodes
-    task_config = normalize_task_config(scheduler_task.get("resources") or {})
+    task_config = _with_requested_image_pull_secrets(
+        normalize_task_config(scheduler_task.get("resources") or {}),
+        resources,
+        options,
+    )
     if require_baked and cache_on_kubernetes:
         task_config = _with_writable_bootstrap_cache(task_config)
     if image and task_config:

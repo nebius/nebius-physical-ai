@@ -1196,6 +1196,15 @@ def submit_cmd(
             "leaving workers in ImagePullBackOff."
         ),
     ),
+    image_pull_secret: list[str] = typer.Option(
+        [],
+        "--image-pull-secret",
+        help=(
+            "Existing operator-managed Kubernetes dockerconfigjson Secret to attach "
+            "to selected Kubernetes tasks and verify through every image preflight. "
+            "Repeat only when SkyPilot's effective task configuration permits it."
+        ),
+    ),
     image_bootstrap_timeout_seconds: int = typer.Option(
         1800,
         "--image-bootstrap-timeout-seconds",
@@ -1507,6 +1516,9 @@ def submit_cmd(
         return
 
     substitutions = _parse_submit_vars(var)
+    if plan_only and any(item.strip() for item in image_pull_secret):
+        _fail("--image-pull-secret cannot be combined with --plan-only")
+        return
     try:
         specific_image_overrides = _parse_image_overrides(image_override)
     except ValueError as exc:
@@ -2452,6 +2464,9 @@ def submit_cmd(
 
         # Image reachability and the complete cumulative infrastructure plan are
         # both read before source/input upload or any run/journal state exists.
+        image_pull_secret_names = tuple(
+            dict.fromkeys(item.strip() for item in image_pull_secret if item.strip())
+        )
         image_overrides_for_preflight: dict[str, str] = {}
         image_value_for_preflight = image.strip()
         if image_value_for_preflight.lower() in {"none", "default", "-"}:
@@ -2465,6 +2480,7 @@ def submit_cmd(
             gpu_target=gpu_target,
             image_variant=image_variant,
             materialize_registry_secrets=False,
+            image_pull_secret_names=image_pull_secret_names,
         )
         deferred_target_image_preflight = bool(
             deploy_if_absent and deploy_targets and preflight_images and not plan_only
@@ -2838,6 +2854,7 @@ def submit_cmd(
             image_variant=image_variant,
             # Never mint/print live registry tokens for --plan-only.
             materialize_registry_secrets=not plan_only,
+            image_pull_secret_names=image_pull_secret_names,
             accept_eula=accept_eula,
         )
         # The first discovery starts the isolated API. Bind it to the same
@@ -10179,6 +10196,9 @@ def preflight_images_cmd(
         gpu_target=gpu_target,
         image_variant=image_variant,
         materialize_registry_secrets=False,
+        image_pull_secret_names=tuple(
+            dict.fromkeys(item.strip() for item in image_pull_secret if item.strip())
+        ),
     )
     if resolved_registry:
         typer.echo(f"registry: {resolved_registry}", err=True)
@@ -10194,11 +10214,6 @@ def preflight_images_cmd(
     except (NpaWorkflowError, ValueError) as exc:
         _fail(f"image preflight planning failed: {exc}")
         return
-    explicit_pull_secrets: tuple[str, ...] = ()
-    if image_pull_secret:
-        explicit_pull_secrets = tuple(
-            dict.fromkeys(item.strip() for item in image_pull_secret if item.strip())
-        )
     if not images:
         typer.echo("images: none pinned by this spec")
         return
@@ -10262,12 +10277,6 @@ def preflight_images_cmd(
         selected: (sets[0] if sets else ())
         for selected, sets in pull_secret_sets_by_image.items()
     }
-    bootstrap_pull_secrets_by_image = {
-        selected: tuple(
-            dict.fromkeys((*pull_secrets_by_image[selected], *explicit_pull_secrets))
-        )
-        for selected in pull_secrets_by_image
-    }
     service_accounts_by_image = {
         image: (
             service_account_names[0]
@@ -10303,7 +10312,7 @@ def preflight_images_cmd(
             context=target_context,
             namespace=target_namespace,
             kubeconfig=target_kubeconfig,
-            pull_secrets_by_image=bootstrap_pull_secrets_by_image,
+            pull_secrets_by_image=pull_secrets_by_image,
             service_accounts_by_image=service_accounts_by_image,
             pod_placements_by_image={
                 image: (placements[0] if placements else {})
