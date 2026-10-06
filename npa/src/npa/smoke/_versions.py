@@ -98,6 +98,11 @@ def expected_lerobot_version(start_file: str) -> str:
 
     override = os.environ.get("NPA_LEROBOT_VERSION", "").strip()
     if override:
+        if (
+            override == "0.5.1"
+            and os.environ.get("NPA_LEROBOT_INTEGRATION_PROFILE") == "secure-0.5.1-v1"
+        ):
+            return "0.5.1+npa.secure1"
         return override
     return supported_tool_version("lerobot", start_file)
 

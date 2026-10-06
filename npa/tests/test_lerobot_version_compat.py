@@ -118,3 +118,16 @@ def test_unsupported_version_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.6.0")
     assert resolve_lerobot_version(None) == "0.6.0"
+
+
+def test_smoke_identifies_local_integration_without_changing_upstream_selection(
+    monkeypatch,
+):
+    from npa.smoke._versions import expected_lerobot_version
+
+    monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.5.1")
+    monkeypatch.setenv("NPA_LEROBOT_INTEGRATION_PROFILE", "secure-0.5.1-v1")
+    assert expected_lerobot_version(__file__) == "0.5.1+npa.secure1"
+    assert resolve_lerobot_version(None) == "0.5.1"
+    monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.6.0")
+    assert expected_lerobot_version(__file__) == "0.6.0"
