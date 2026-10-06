@@ -552,6 +552,42 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     )
 
 
+def test_opendm_parent_jwt_sanitizer_executes_the_dockerfile_ere(tmp_path):
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/lerobot/Dockerfile.dm05-opendm-baseline-validation"
+    )
+    instructions = dockerfile.read_text(encoding="utf-8")
+    fetcher = tmp_path / "_fetchers.py"
+    synthetic_token = "eyJmaXh0dXJlIjoxfQ.eyJub25zZWNyZXQiOnRydWV9.signature"
+    fetcher.write_text(f"sample_url = '?token={synthetic_token}'\\n", encoding="utf-8")
+    grep_pattern = r"\?token=eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
+    sed_expression = (
+        r"s#(\?token=)eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
+        r"#\1redacted-static-jwt#"
+    )
+    sanitizer = (
+        f"""test "$(grep -Eoc '{grep_pattern}' "$fetcher")" -eq 1 """
+        f"&& sed -Ei '{sed_expression}' \"$fetcher\" "
+        "&& grep -Fq '?token=redacted-static-jwt' \"$fetcher\""
+    )
+
+    assert grep_pattern in instructions
+    assert sed_expression in instructions
+    completed = subprocess.run(
+        ["sh", "-ceu", sanitizer, "sh"],
+        capture_output=True,
+        check=False,
+        env={**os.environ, "fetcher": str(fetcher)},
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    sanitized = fetcher.read_text(encoding="utf-8")
+    assert "?token=redacted-static-jwt" in sanitized
+    assert synthetic_token not in sanitized
+
+
 def test_opendm_evaluator_environment_supplies_pinned_libero_config_without_stdin(
     tmp_path, monkeypatch
 ):
