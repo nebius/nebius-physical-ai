@@ -87,6 +87,29 @@ never a tag. Image-byte licensing scans remain mandatory before registry push.
 For a multi-tool spec, repeat `--image-override TOOL_REF=IMAGE` to select each
 tool's artifact independently; the preflight and renderer share that same map.
 
+## Cosmos3 Ray payload finding evidence
+
+`scan_image_cosmos3_ray_serve_payload.py` keeps credential findings blocking and
+reports byte identities for investigation. Its JSON includes `archive_sha256`
+and `config_sha256`, plus `credential_members` with each blocked stored file's
+`path`, `kind`, `size`, `sha256`, `layer_index`, `layer_sha256`, and
+`member_index`. `detection_reason` identifies the existing path or
+member-content rule that produced the finding. These fields contain no
+credential content excerpts and do not establish that a value is usable, a key
+is parseable, or a match is harmless.
+
+The scan covers every stored layer. Repeated paths retain separate member
+records, including overwritten or deleted ancestor files; the existing
+`credential_hits` list remains deduplicated. Member hashes cover the complete
+file even when credential detection stops at an early match. Compare a member
+hash with independently obtained exact source or package bytes before
+classifying a finding. Hash equality is evidence of byte identity and does not
+waive any publication gate or establish GPU capability acceptance.
+
+The ordinary publication workflow prints this metadata report. Do not publish
+raw layers, extracted credential bytes, or a failed image archive as public
+Actions artifacts. An unresolved finding still exits nonzero and blocks push.
+
 ## Inventory
 
 All first-class images live under `npa/docker/workbench/`:
