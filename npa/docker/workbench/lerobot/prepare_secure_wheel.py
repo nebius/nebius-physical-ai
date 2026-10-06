@@ -34,6 +34,7 @@ DEPENDENCIES = {
     "torchvision<0.26.0,>=0.22.0": "torchvision<0.29.0,>=0.28.0",
     "torchcodec<0.11.0,>=0.3.0": "torchcodec<0.17.0,>=0.16.0",
     "diffusers<0.36.0,>=0.27.2": "diffusers<0.39.0,>=0.38.0",
+    "wandb<0.25.0,>=0.24.0": "wandb<0.31.0,>=0.30.0",
 }
 ORIGINAL_DIST_INFO = "lerobot-0.5.1.dist-info/"
 DIST_INFO = f"lerobot-{VERSION}.dist-info/"
@@ -141,7 +142,7 @@ def _integration(files: dict[str, bytes]) -> tuple[dict[str, bytes], dict]:
         "package_source_unchanged": True,
         "license_retained": "Apache-2.0",
         "dependency_changes": DEPENDENCIES,
-        "capability_qualification": "pending native ACT, Diffusion and default decoder gates",
+        "capability_qualification": "pending native ACT, Diffusion, default decoder, server and offline logger gates",
     }
     result[DIST_INFO + "npa-source-integration.json"] = json.dumps(
         receipt, indent=2

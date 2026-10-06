@@ -34,13 +34,24 @@ The Torch advisory is LOW; the source comparison rejects newly introduced
 findings at every severity, while ordinary image publication's vulnerability
 gate rejects fixed CRITICAL findings. Those are separate policies.
 
+The first maintained integration passed native decoding, ACT and Diffusion but
+failed its ordinary image vulnerability gate on required W&B 0.24.2's bundled
+Go binary: fixed CRITICAL CVE-2026-33186 in gRPC 1.78.0 and CVE-2025-68121 in
+Go 1.25.6. That attempt published nothing.
+[W&B 0.30.0](https://github.com/wandb/wandb/releases/tag/v0.30.0)'s official Linux wheel
+contains Go 1.27.1 and gRPC 1.83.2; an independent binary scan parsed 144 Go
+packages and found no fixed CRITICAL vulnerability. The full rebuilt image must
+still pass every ordinary gate. W&B remains installed and the build gate exercises
+LeRobot's actual offline logger, learned checkpoint artifact, camera video and
+persisted run record.
+
 The repair builds the explicitly versioned NPA integration
 `0.5.1+npa.secure1` from upstream commit
 `1396b9fab7aecddd10006c33c47a487ffdcb54b4`. It verifies the complete upstream
 wheel and source archive hashes, compares every packaged model/source file to
 that commit, and preserves the Apache-2.0 license. Native model source remains
-unchanged. Four reviewed dependency declarations change to Torch 2.13,
-torchvision 0.28, TorchCodec 0.16 and Diffusers 0.38 ranges; required W&B remains.
+unchanged. Five reviewed dependency declarations change to Torch 2.13,
+torchvision 0.28, TorchCodec 0.16, Diffusers 0.38 and W&B 0.30 ranges.
 The rebuilt wheel has its own version, refreshed RECORD and source-integration
 receipt. Unknown artifacts, changed source or unexpected dependency declarations
 fail before writing a wheel. This is an NPA-maintained integration, not a claim

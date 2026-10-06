@@ -4,4 +4,4 @@ torch==2.13.0
 torchvision==0.28.0
 torchcodec==0.16.0
 diffusers==0.38.0
-wandb==0.24.2
+wandb==0.30.0

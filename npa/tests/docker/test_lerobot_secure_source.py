@@ -43,7 +43,7 @@ def _archive(module, model):
 def _upstream(module, monkeypatch, *, model=b"native model source", wheel_model=None):
     original = (
         "Metadata-Version: 2.4\nName: lerobot\nVersion: 0.5.1\n"
-        "License-File: LICENSE\nRequires-Dist: wandb<0.25.0,>=0.24.0\n"
+        "License-File: LICENSE\nRequires-Dist: requests>=2.0\n"
         + "".join(f"Requires-Dist: {value}\n" for value in module.DEPENDENCIES)
     ).encode()
     output = io.BytesIO()
@@ -84,7 +84,8 @@ def test_versioned_integration_preserves_native_source_notices_and_record(
         )
         metadata = contents.read(integration.DIST_INFO + "METADATA").decode()
         assert f"Version: {integration.VERSION}" in metadata
-        assert "Requires-Dist: wandb<0.25.0,>=0.24.0" in metadata
+        assert "Requires-Dist: wandb<0.31.0,>=0.30.0" in metadata
+        assert "Requires-Dist: requests>=2.0" in metadata
         assert "License-File: LICENSE" in metadata
         receipt = json.loads(
             contents.read(integration.DIST_INFO + "npa-source-integration.json")

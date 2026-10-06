@@ -392,15 +392,76 @@ def _native_diffusion(root: Path) -> dict:
     return {"loss": loss, "changed_parameters": changed, "checkpoint_equal": True}
 
 
+def _wandb_configuration(root: Path):
+    from lerobot.configs.default import DatasetConfig, WandBConfig
+    from lerobot.configs.train import TrainPipelineConfig
+
+    log_dir = root / "offline-logger"
+    log_dir.mkdir()
+    for variable in (
+        "WANDB_CACHE_DIR",
+        "WANDB_DATA_DIR",
+        "WANDB_CONFIG_DIR",
+        "WANDB_DIR",
+    ):
+        directory = root / variable.lower().replace("_", "-")
+        directory.mkdir()
+        os.environ[variable] = str(directory)
+    return TrainPipelineConfig(
+        dataset=DatasetConfig(
+            repo_id="npa/native-cpu-smoke", root=str(root / "dataset")
+        ),
+        policy=_act_configuration(),
+        output_dir=log_dir,
+        job_name="native-cpu-smoke",
+        seed=0,
+        steps=1,
+        batch_size=2,
+        wandb=WandBConfig(enable=True, mode="offline", project="npa-native-cpu-smoke"),
+    )
+
+
+def _native_wandb(root: Path, act_metrics: dict) -> dict:
+    from lerobot.rl.wandb_utils import WandBLogger
+
+    configuration = _wandb_configuration(root)
+    logger = WandBLogger(configuration)
+    try:
+        assert logger._wandb.run.settings.mode == "offline"
+        logger.log_dict(
+            {
+                "loss": act_metrics["loss"],
+                "changed_parameters": act_metrics["changed_parameters"],
+            },
+            step=1,
+        )
+        logger.log_policy(root)
+        camera_video = next((root / "dataset" / "videos").rglob("*.mp4"))
+        logger.log_video(str(camera_video), step=2)
+        assert configuration.wandb.run_id
+    finally:
+        logger._wandb.finish()
+    records = list(root.rglob("*.wandb"))
+    assert len(records) == 1 and records[0].stat().st_size > 0
+    return {
+        "version": metadata.version("wandb"),
+        "native_logger": "passed",
+        "offline_record": True,
+    }
+
+
 def _main() -> None:
     _dependencies()
     with tempfile.TemporaryDirectory(prefix="npa-lerobot-native-cpu-") as directory:
         root = Path(directory)
+        cameras = _native_dataset(root)
+        act = _native_act(root)
         receipt = {
             "version": metadata.version("lerobot"),
-            "default_camera_dataset": _native_dataset(root),
-            "act": _native_act(root),
+            "default_camera_dataset": cameras,
+            "act": act,
             "diffusion": _native_diffusion(root),
+            "wandb": _native_wandb(root, act),
             "gpu_acceptance": False,
         }
     print("LEROBOT_NATIVE_CPU_OK " + json.dumps(receipt))

@@ -431,8 +431,8 @@ images:
       0.5.1+npa.secure1 from hash-verified upstream commit
       1396b9fab7aecddd10006c33c47a487ffdcb54b4. Native model source and the
       Apache-2.0 license are retained; reviewed dependency declarations select
-      the patched Torch/Diffusers stack and matching TorchCodec decoder.
-      Real offline default-camera, ACT and Diffusion CPU gates precede
+      the patched Torch/Diffusers/W&B stack and matching TorchCodec decoder.
+      Real offline default-camera, ACT, Diffusion, server and native logger gates precede
       publication. GPU/default acceptance remains a separate qualification.
       Optional 0.6.0 and the additive B300 recipe retain distinct source scopes.
   lerobot-policy:
