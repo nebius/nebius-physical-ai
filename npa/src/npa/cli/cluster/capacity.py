@@ -77,13 +77,29 @@ def _availability(entry: dict[str, Any], key: str) -> str:
     section = (entry.get("status") or {}).get(key) or {}
     level = str(section.get("availability_level", "") or "").strip()
     level = level.removeprefix("AVAILABILITY_LEVEL_") or "UNKNOWN"
-    # Nebius reports `available` for the preemptible pool and `limit` for
-    # on-demand; conflating them reads as "LIMIT_REACHED (available 2)".
-    available = _int_or_none(section.get("available"))
-    if available is not None:
-        return f"{level} (available {available})"
+    # `available` counts VMs of the preset that can launch now (clipped by
+    # quota) and `limit` is the quota for the preset. Both are proto3 uint32
+    # fields, so JSON output omits a zero. Infer zero only from fresh data at
+    # LOW or LIMIT_REACHED, so a missing value is never read as headroom and a
+    # failed fetch is never read as zero.
+    state = str(section.get("data_state", "") or "").strip()
+    fresh = state == "DATA_STATE_FRESH"
     limit = _int_or_none(section.get("limit"))
-    return f"{level} (limit {limit})" if limit is not None else level
+    if "available" in section:
+        available = _int_or_none(section.get("available"))
+        shown = "unknown" if available is None else str(available)
+    elif limit is not None and fresh and level in {"LOW", "LIMIT_REACHED"}:
+        shown = "0"
+    elif limit is not None:
+        shown = "unknown"
+    else:
+        shown = ""
+    parts = [f"available {shown}"] if shown else []
+    if limit is not None:
+        parts.append(f"limit {limit}")
+    if state and not fresh:
+        parts.append(state.removeprefix("DATA_STATE_").lower())
+    return f"{level} ({', '.join(parts)})" if parts else level
 
 
 def capacity_summary(entry: dict[str, Any]) -> str:
