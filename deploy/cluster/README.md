@@ -97,6 +97,12 @@ npa cluster up --project "$project_alias" --terraform-dir deploy/cluster \
 The reservation uses strict placement. `TF_VAR_capacity_block_group` is the
 equivalent environment setting; an explicit CLI flag takes precedence.
 
+For RTX rendering, add `--gpu-workload-profile rtx-rendering`. Both the shared
+backend and this direct wrapper forward the exact platform and preset to the
+GPU Operator. Its RTX toolkit configuration reads the containerd file with
+`RUNTIME_CONFIG_SOURCE=file`, preserving the on-disk config schema when
+containerd's command output would migrate it to a newer version.
+
 ## Change the topology
 
 > **Security note: the Kubernetes API endpoint is public by default.**
