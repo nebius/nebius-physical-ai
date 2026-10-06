@@ -279,8 +279,11 @@ a complete value before a source reference such as
 baked literal. It recognizes bounded Python references, known type annotations
 without literal defaults, and pure shell variable references. Literal values,
 literal fallback arguments, quoted source text, unknown syntax and values over
-512 bytes remain findings. Label and separator whitespace may span arbitrarily
-many chunks. This policy adds no path exemptions and does not replace the
+512 bytes remain findings. Qualified identifiers carrying an encoded JSON
+token header remain findings, including nested, truncated and malformed token
+forms; a compact JWT must not become a Python attribute exemption. Label and
+separator whitespace may span arbitrarily many chunks. This policy adds no
+path exemptions and does not replace the
 complete-byte, Gitleaks, vulnerability or provenance gates; a source regression
 test does not qualify an image.
 
