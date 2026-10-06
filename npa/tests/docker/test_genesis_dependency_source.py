@@ -52,6 +52,27 @@ def _assert_installation_contract(text, version, site_packages):
 
 
 @pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)
+def test_genesis_ffmpeg_contract_avoids_bundled_wheel_executables(
+    dockerfile, version, site_packages
+):
+    text = (GENESIS / dockerfile).read_text()
+    instructions = _instructions(text)
+    index, installation = next(
+        (index, body)
+        for index, (kind, body) in enumerate(instructions)
+        if kind == "RUN" and '"genesis-world==' in body
+    )
+    assert any(
+        kind == "ENV" and "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in body
+        for kind, body in instructions[:index]
+    )
+    assert "pip install --no-binary imageio-ffmpeg" in installation
+    assert '"imageio-ffmpeg==0.6.0"' in installation
+    assert "imageio_ffmpeg/binaries/ffmpeg*' -print -quit" in installation
+    assert 'imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' in installation
+
+
+@pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)
 def test_genesis_corrects_reviewed_source_before_the_installation_layer_commits(
     dockerfile, version, site_packages
 ):
