@@ -991,12 +991,13 @@ def _publish_variant(
     variables: Mapping[str, Any],
     metadata: Mapping[str, Any],
     storage: Any,
+    publication_prefix: str = "",
 ) -> dict[str, Any]:
     if not _is_s3(output_uri):
         raise PaidfCosmos3Error(
             "PAIDF Cosmos 3 variant publication requires an s3:// output URI"
         )
-    base = output_uri.rstrip("/") + f"/{clip}/"
+    base = publication_prefix or output_uri.rstrip("/") + f"/{clip}/"
     artifact = Path(str(result["output_path"]))
     if not artifact.is_file() or artifact.stat().st_size <= 0:
         raise PaidfCosmos3Error("Cosmos 3 returned an empty video artifact")
@@ -1012,8 +1013,22 @@ def _publish_variant(
             transfer["control_uri"] = storage.upload_file(
                 str(control_path), base + "source_edges.mkv"
             )
+            if transfer.get("rgb_conditioning"):
+                rgb = dict(transfer["rgb_conditioning"])
+                rgb_path = Path(rgb.pop("control_path"))
+                rgb["control_uri"] = storage.upload_file(
+                    str(rgb_path), base + "source_rgb.mkv"
+                )
+                transfer["rgb_conditioning"] = rgb
             _write_json(transfer, base + "transfer.json", storage=storage)
             clip_meta["transfer_uri"] = base + "transfer.json"
+        if result.get("native_model_selection") is not None:
+            from npa.workflows.paidf_variant_recovery import _native_receipt
+
+            _write_json(
+                _native_receipt(result), base + "native_execution.json", storage=storage
+            )
+            clip_meta["native_execution_uri"] = base + "native_execution.json"
         _write_json(clip_meta, base + "metadata.json", storage=storage)
     return {
         "clip": clip,
@@ -1170,9 +1185,10 @@ def generate_variants(
         raise PaidfCosmos3Error(
             "config manifest has fewer augmentation prompts than variant_count"
         )
-    caption = _caption_text(
-        _read_json(captions_uri.rstrip("/") + "/captions.json", storage=client)
+    caption_report = _read_json(
+        captions_uri.rstrip("/") + "/captions.json", storage=client
     )
+    caption = _caption_text(caption_report)
     provenance = _read_json(input_provenance_uri, storage=client)
     if not isinstance(provenance, dict) or provenance.get("status") != "prepared":
         raise PaidfCosmos3Error("input provenance is missing or incomplete")
@@ -1185,6 +1201,45 @@ def generate_variants(
 
     run_generate = generator or generate_and_publish
     local_input = materialize_vision_input(input_video_uri)
+    from npa.workflows.paidf_variant_recovery import recovery_enabled, VariantRecovery
+
+    generation_env = dict(environ if environ is not None else os.environ)
+    recovery = None
+    requests = _variant_requests(
+        combos[:count],
+        prompt,
+        caption,
+        negative_prompt,
+        base_seed + attempt * seed_stride,
+        effective_guidance,
+        effective_steps,
+        transfer,
+    )
+    if recovery_enabled(checkpoint, structural_control, run_id, generation_env):
+        generation_env.setdefault("HF_HOME", str(Path.home() / ".cache/huggingface"))
+        recovery = VariantRecovery(
+            storage=client,
+            output_uri=output_uri,
+            attempt=attempt,
+            identity={
+                "run_id": run_id,
+                "output_uri": output_uri,
+                "input_sha256": _sha256(Path(local_input)),
+                "input_video_uri": input_video_uri,
+                "input_provenance_uri": input_provenance_uri,
+                "captions_uri": captions_uri,
+                "configs_uri": configs_uri,
+                "input_provenance": provenance,
+                "config_manifest": config_manifest,
+                "caption_report": caption_report,
+                "caption": caption,
+                "requests": requests,
+                "parallelism_preset": parallelism_preset,
+                "attempt": attempt,
+            },
+            environ=generation_env,
+        )
+        generation_env = recovery.generation_environ()
     work_root = Path(tempfile.mkdtemp(prefix="npa-paidf-c3-generate-"))
 
     def run_one(index: int) -> tuple[int, dict[str, Any], dict[str, Any], str]:
@@ -1193,7 +1248,7 @@ def generate_variants(
             prompt, caption, str(combo.get("prompt") or "")
         )
         variant_seed = base_seed + attempt * seed_stride + index
-        env = dict(environ if environ is not None else os.environ)
+        env = dict(generation_env)
         with _generation_gpu(available_gpus) as gpu:
             env["CUDA_VISIBLE_DEVICES"] = gpu
             result = run_generate(
@@ -1223,7 +1278,12 @@ def generate_variants(
 
     def publish_one(generated):
         index, result, combo, variant_prompt = generated
-        return _publish_variant(
+        publication = (
+            recovery.publication(index, Path(result["output_path"]))
+            if recovery
+            else None
+        )
+        variant = _publish_variant(
             result=result,
             output_uri=output_uri,
             clip=f"variant-{index:04d}",
@@ -1243,15 +1303,40 @@ def generate_variants(
                     else {}
                 ),
             },
-            storage=client,
+            storage=publication or client,
+            publication_prefix=publication.prefix if publication else "",
         )
+        if recovery:
+            return recovery.complete(
+                index, requests[index], Path(local_input), result, variant, publication
+            )
+        return variant
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
-            futures = {pool.submit(run_one, index): index for index in range(count)}
+            recovered = (
+                {
+                    index: recovery.recover(index, requests[index], Path(local_input))
+                    for index in range(count)
+                }
+                if recovery
+                else {}
+            )
+            futures = {
+                pool.submit(run_one, index): index
+                for index in range(count)
+                if not recovered.get(index)
+            }
+            for index, variant in recovered.items():
+                if variant is not None:
+                    completed = concurrent.futures.Future()
+                    completed.set_result(variant)
+                    futures[completed] = index
             variants = _publish_completed_variants(
                 futures,
-                publish_one,
+                lambda generated: (
+                    generated if isinstance(generated, dict) else publish_one(generated)
+                ),
                 output_uri=output_uri,
                 storage=client,
                 attempt=attempt,
@@ -1281,6 +1366,17 @@ def generate_variants(
         },
         "run_id": run_id,
         "structural_control": structural_control,
+        **(
+            {
+                "verified_variant_recovery": True,
+                "recovered_variant_count": sum(
+                    value is not None for value in recovered.values()
+                ),
+                "recovery_batch_sha256": recovery.batch_sha256,
+            }
+            if recovery
+            else {}
+        ),
         "motion_preservation": {
             "enabled": bool(motion_weight),
             "source_weight": motion_weight,
@@ -1317,6 +1413,51 @@ def generate_variants(
         )
     )
     return manifest
+
+
+def _variant_requests(
+    combos, prompt, caption, negative, seed, guidance, steps, transfer
+):
+    from npa.workflows.data_factory_appearance import generation_prompt
+
+    requests = []
+    for index, combo in enumerate(combos):
+        sample = {
+            "name": f"variant-{index:04d}",
+            "model_mode": VIDEO_MODE,
+            "prompt": generation_prompt(
+                prompt, caption, str(combo.get("prompt") or "")
+            ),
+            "negative_prompt": negative,
+            "seed": seed + index,
+            "num_steps": steps,
+            "guidance": guidance,
+        }
+        if transfer:
+            sample.update(_transfer_sample_controls(transfer))
+        requests.append(
+            {
+                "sample": sample,
+                "variables": dict(combo),
+                "rgb_weight": transfer.rgb_weight if transfer else 0,
+                "edge_threshold": transfer.edge_threshold if transfer else "",
+            }
+        )
+    return requests
+
+
+def _transfer_sample_controls(transfer):
+    from npa.workbench.cosmos.structural_transfer import cfg_normalization_enabled
+
+    return {
+        "fps": transfer.fps,
+        "num_frames": transfer.chunk_frames,
+        "num_video_frames_per_chunk": transfer.chunk_frames,
+        "num_conditional_frames": 5,
+        "control_guidance": transfer.control_guidance,
+        "num_first_chunk_conditional_frames": transfer.first_chunk_conditional_frames,
+        "normalize_cfg": cfg_normalization_enabled(transfer.cfg_normalization),
+    }
 
 
 def reject_quality(disposition_uri: str) -> None:
