@@ -1190,6 +1190,277 @@ def service_account_runtime(local_runtime, request):
 
 
 @pytest.fixture
+def json_service_account_runtime(service_account_runtime):
+    """Select the official JSON credential route with the same RSA identity."""
+    import yaml
+
+    runtime, provider, key, cache = service_account_runtime
+    credentials = key.with_name("service-account-credentials.json")
+    subject = {
+        "type": "JWT",
+        "alg": "RS256",
+        "private-key": key.read_text(),
+        "kid": "fixture-key",
+        "iss": "fixture-account",
+        "sub": "fixture-account",
+    }
+    credentials.write_text(json.dumps({"subject-credentials": subject}))
+    config = provider / "config.yaml"
+    document = yaml.safe_load(config.read_text())
+    selected = document["profiles"]["selected"]
+    for field in ("service-account-id", "public-key-id", "private-key-file-path"):
+        selected.pop(field)
+    selected.update(
+        name="selected", **{"service-account-credentials-file-path": str(credentials)}
+    )
+    config.write_text(yaml.safe_dump(document))
+    return runtime, provider, credentials, key, cache
+
+
+@pytest.mark.parametrize("initial_cache", ["populated", "absent", "empty", "null"])
+@pytest.mark.parametrize("subject_type", ["JWT", "omitted", "empty"])
+def test_json_service_account_cache_rotation_preserves_owned_api(
+    json_service_account_runtime, initial_cache, subject_type
+):
+    runtime, provider, credentials, _, cache = json_service_account_runtime
+    document = json.loads(credentials.read_text())
+    if subject_type == "omitted":
+        document["subject-credentials"].pop("type")
+    elif subject_type == "empty":
+        document["subject-credentials"]["type"] = ""
+    credentials.write_text(json.dumps(document))
+    if initial_cache == "absent":
+        cache.unlink()
+    elif initial_cache == "empty":
+        cache.write_text("tokens: {}\n")
+    elif initial_cache == "null":
+        cache.write_text("tokens: null\n")
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+    cache.write_text(
+        "tokens: {service-account/fixture-account/fixture-key: {token: fixture-refreshed-bearer, expires_at: 200}}\n"
+    )
+    assert api.ensure_isolated_api(**runtime)["healthy"]
+    assert api._process(original)["pid"] == _record(runtime)["pid"] == original["pid"]
+    assert (
+        original["identity_files"][str(credentials)]
+        == hashlib.sha256(credentials.read_bytes()).hexdigest()
+    )
+    assert (
+        original["identity_files"][str(provider / "config.yaml")]
+        == hashlib.sha256((provider / "config.yaml").read_bytes()).hexdigest()
+    )
+    assert original["identity_files"][str(cache)].startswith(
+        "derived-nebius-sa-json-cache-v1:"
+    )
+    assert credentials.read_text() not in json.dumps(original)
+    assert "fixture-refreshed-bearer" not in json.dumps(_record(runtime))
+
+
+@pytest.mark.parametrize("change", ["key", "account", "public-key", "bytes", "missing"])
+def test_json_service_account_durable_change_rejects_adoption(
+    json_service_account_runtime, change
+):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    runtime, _, credentials, _, _ = json_service_account_runtime
+    api.ensure_isolated_api(**runtime)
+    record_path = runtime["isolated_dir"] / "local-api/daemon.json"
+    before = record_path.read_bytes()
+    document = json.loads(credentials.read_text())
+    subject = document["subject-credentials"]
+    if change == "key":
+        subject["private-key"] = (
+            rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            .private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+            .decode()
+        )
+    elif change == "account":
+        subject.update(iss="fixture-other-account", sub="fixture-other-account")
+    elif change == "public-key":
+        subject["kid"] = "fixture-other-key"
+    credentials.write_text(json.dumps(document) + ("\n" if change == "bytes" else ""))
+    if change == "missing":
+        credentials.unlink()
+    with pytest.raises(api.IsolatedApiError):
+        api.ensure_isolated_api(**runtime)
+    assert record_path.read_bytes() == before
+    original = json.loads(before)
+    assert api._process(original, verify_files=False)["pid"] == original["pid"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "algorithm",
+        "type",
+        "issuer",
+        "empty-key-id",
+        "invalid-key",
+        "non-rsa-key",
+        "extra",
+        "missing",
+        "non-string",
+        "duplicate",
+        "invalid-json",
+        "yaml",
+    ],
+)
+def test_json_service_account_malformed_credentials_fail_secret_safely(
+    json_service_account_runtime, change
+):
+    runtime, _, credentials, _, cache = json_service_account_runtime
+    document = json.loads(credentials.read_text())
+    subject = document["subject-credentials"]
+    _invalidate_json_subject(subject, change)
+    serialized = json.dumps(document)
+    if change == "duplicate":
+        serialized = serialized.replace(
+            '"alg": "RS256"', '"alg": "RS256", "alg": "RS256"'
+        )
+    elif change == "invalid-json":
+        serialized = '{"subject-credentials": fixture-private-material'
+    elif change == "yaml":
+        import yaml
+
+        serialized = yaml.safe_dump(document)
+    credentials.write_text(serialized)
+    with pytest.raises(api.IsolatedApiError) as raised:
+        api._identity_files(runtime["environment"])
+    assert "fixture-private-material" not in str(raised.value)
+    assert serialized not in str(raised.value)
+    assert cache.exists()
+
+
+def _invalidate_json_subject(subject, change):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    if change == "non-rsa-key":
+        subject["private-key"] = (
+            ec.generate_private_key(ec.SECP256R1())
+            .private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+            .decode()
+        )
+    changes = {
+        "algorithm": ("alg", "HS256"),
+        "type": ("type", "other"),
+        "issuer": ("iss", "fixture-other-account"),
+        "empty-key-id": ("kid", ""),
+        "invalid-key": ("private-key", "fixture-private-material"),
+        "extra": ("token", "fixture-private-material"),
+        "non-string": ("sub", 123),
+    }
+    if change in changes:
+        field, value = changes[change]
+        subject[field] = value
+    elif change == "missing":
+        subject.pop("kid")
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        "NPA_CONFIG_DIR",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "NEBIUS_IAM_TOKEN_FILE",
+        "native",
+    ],
+)
+def test_json_service_account_explicit_cache_alias_is_byte_strict(
+    json_service_account_runtime, role
+):
+    runtime, provider, _, _, cache = json_service_account_runtime
+    if role == "native":
+        Path(runtime["environment"]["SKYPILOT_GLOBAL_CONFIG"]).write_text(
+            json.dumps(
+                {
+                    "workspaces": {
+                        "default": {"nebius": {"credentials_file_path": str(cache)}}
+                    }
+                }
+            )
+        )
+    else:
+        runtime["environment"][role] = str(
+            provider if role == "NPA_CONFIG_DIR" else cache
+        )
+    before = api._identity_files(runtime["environment"])
+    assert before[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+    cache.write_text("tokens: {}\n")
+    assert api._identity_files(runtime["environment"]) != before
+
+
+@pytest.mark.parametrize(
+    "cache_document",
+    [
+        "tokens: {oauth/fixture: {token: fixture-private-material, expires_at: 200}}\n",
+        "tokens: {service-account/fixture-account/fixture-key: {token: fixture-x, expires_at: true}}\n",
+        "tokens: {}\nextra: fixture-private-material\n",
+    ],
+)
+def test_json_service_account_unknown_cache_is_byte_strict(
+    json_service_account_runtime, cache_document
+):
+    runtime, _, _, _, cache = json_service_account_runtime
+    before = api._identity_files(runtime["environment"])
+    cache.write_text(cache_document)
+    after = api._identity_files(runtime["environment"])
+    assert after[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+    assert before != after
+    assert "fixture-private-material" not in json.dumps(after)
+
+
+@pytest.mark.parametrize("change", ["relative", "mixed", "token-endpoint"])
+def test_json_service_account_unsupported_profile_keeps_cache_strict(
+    json_service_account_runtime, change
+):
+    import yaml
+
+    runtime, provider, _, _, cache = json_service_account_runtime
+    path = provider / "config.yaml"
+    document = yaml.safe_load(path.read_text())
+    subject = document["profiles"]["selected"]
+    if change == "relative":
+        subject["service-account-credentials-file-path"] = "relative-credentials.json"
+    elif change == "mixed":
+        subject["service-account-id"] = "fixture-account"
+    else:
+        subject["token-endpoint"] = "https://fixture.invalid"
+    path.write_text(yaml.safe_dump(document))
+    identity = api._identity_files(runtime["environment"])
+    assert identity[str(cache)] == hashlib.sha256(cache.read_bytes()).hexdigest()
+
+
+def test_json_service_account_legacy_record_is_not_rebound(
+    json_service_account_runtime,
+):
+    runtime, _, credentials, _, cache = json_service_account_runtime
+    api.ensure_isolated_api(**runtime)
+    original = _record(runtime)
+    original["identity_files"].pop(str(credentials))
+    original["identity_files"][str(cache)] = hashlib.sha256(
+        cache.read_bytes()
+    ).hexdigest()
+    record_path = runtime["isolated_dir"] / "local-api/daemon.json"
+    api._write(record_path, original)
+    legacy = record_path.read_bytes()
+    with pytest.raises(api.IsolatedApiError, match="credential configuration changed"):
+        api.ensure_isolated_api(**runtime)
+    assert record_path.read_bytes() == legacy
+    assert api._process(original, verify_files=False)["pid"] == original["pid"]
+
+
+@pytest.fixture
 def metadata_token_runtime(local_runtime, monkeypatch):
     import yaml
 
