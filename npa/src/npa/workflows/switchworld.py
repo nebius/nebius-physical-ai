@@ -15,9 +15,9 @@ import sys
 import tempfile
 import tarfile
 from typing import Any
-import urllib.request
 from urllib.parse import urlsplit
 
+from npa._public_https import PublicDownloadError, download_public_https
 from npa.clients.storage import StorageClient
 
 
@@ -522,34 +522,32 @@ def _download_switchworld_archive(destination: Path) -> None:
 
     digest = hashlib.sha256()
     received = 0
-    request = urllib.request.Request(
-        SWITCHWORLD_ARCHIVE_URL,
-        headers={"Accept": "application/x-gzip"},
-        method="GET",
-    )
+
+    class _PinnedArchiveWriter:
+        """Reject excess bytes while preserving an exact archive digest."""
+
+        def __init__(self, target: Any) -> None:
+            self.target = target
+
+        def write(self, block: bytes) -> int:
+            nonlocal received
+            received += len(block)
+            if received > SWITCHWORLD_ARCHIVE_BYTES:
+                raise SwitchWorldError("pinned source archive exceeds its known size")
+            digest.update(block)
+            return self.target.write(block)
+
     try:
-        with (
-            urllib.request.urlopen(request, timeout=60) as source,
-            destination.open("xb") as target,
-        ):
-            content_length = getattr(source, "headers", {}).get("Content-Length")
-            if (
-                content_length is not None
-                and int(content_length) != SWITCHWORLD_ARCHIVE_BYTES
-            ):
-                raise SwitchWorldError("pinned source archive has an unexpected size")
-            while block := source.read(1024 * 1024):
-                received += len(block)
-                if received > SWITCHWORLD_ARCHIVE_BYTES:
-                    raise SwitchWorldError(
-                        "pinned source archive exceeds its known size"
-                    )
-                digest.update(block)
-                target.write(block)
+        with destination.open("xb") as target:
+            download_public_https(
+                SWITCHWORLD_ARCHIVE_URL,
+                _PinnedArchiveWriter(target),
+                allowed_hosts=frozenset({"codeload.github.com"}),
+            )
     except SwitchWorldError:
         destination.unlink(missing_ok=True)
         raise
-    except (OSError, ValueError) as exc:
+    except (OSError, PublicDownloadError, ValueError) as exc:
         destination.unlink(missing_ok=True)
         raise SwitchWorldError(
             "could not download pinned SwitchWorld source archive"

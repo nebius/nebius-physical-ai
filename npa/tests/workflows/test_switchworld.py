@@ -264,11 +264,19 @@ def test_checkout_source_uses_verified_archive_without_runtime_git(
         "SWITCHWORLD_ARCHIVE_SHA256",
         hashlib.sha256(payload).hexdigest(),
     )
-    monkeypatch.setattr(
-        switchworld.urllib.request,
-        "urlopen",
-        lambda *_args, **_kwargs: BytesIO(payload),
-    )
+    requests: list[tuple[str, frozenset[str], frozenset[str]]] = []
+
+    def download(url: str, output: BytesIO, **kwargs: object) -> None:
+        requests.append(
+            (
+                url,
+                kwargs["allowed_hosts"],  # type: ignore[index]
+                kwargs.get("redirect_hosts", frozenset()),  # type: ignore[union-attr]
+            )
+        )
+        output.write(payload)
+
+    monkeypatch.setattr(switchworld, "download_public_https", download)
     commands: list[list[str]] = []
 
     def install(command: list[str], **_kwargs: object) -> SimpleNamespace:
@@ -292,6 +300,13 @@ def test_checkout_source_uses_verified_archive_without_runtime_git(
             str(checkout),
         ]
     ]
+    assert requests == [
+        (
+            switchworld.SWITCHWORLD_ARCHIVE_URL,
+            frozenset({"codeload.github.com"}),
+            frozenset(),
+        )
+    ]
     assert not (tmp_path / "SwitchWorld.tar.gz").exists()
 
 
@@ -308,9 +323,9 @@ def test_checkout_source_rejects_tampered_or_unsafe_archives(
         "0" * 64,
     )
     monkeypatch.setattr(
-        switchworld.urllib.request,
-        "urlopen",
-        lambda *_args, **_kwargs: BytesIO(payload),
+        switchworld,
+        "download_public_https",
+        lambda _url, output, **_kwargs: output.write(payload),
     )
 
     with pytest.raises(switchworld.SwitchWorldError, match="digest mismatch"):
@@ -326,9 +341,9 @@ def test_checkout_source_rejects_tampered_or_unsafe_archives(
         hashlib.sha256(unsafe_payload).hexdigest(),
     )
     monkeypatch.setattr(
-        switchworld.urllib.request,
-        "urlopen",
-        lambda *_args, **_kwargs: BytesIO(unsafe_payload),
+        switchworld,
+        "download_public_https",
+        lambda _url, output, **_kwargs: output.write(unsafe_payload),
     )
     monkeypatch.setattr(
         switchworld.subprocess,
