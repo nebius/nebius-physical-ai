@@ -711,14 +711,22 @@ def _numeric_metrics(metrics: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _runtime_cache_root(temporary_root: Path) -> Path:
-    """Use the managed data mount when available, otherwise this run's temp root."""
+    """Return the writable, lockable root for the runtime-fetched source cache.
 
-    configured = os.environ.get("NPA_GROOT_LIBERO_X_RUNTIME_CACHE") or os.environ.get(
-        "GROOT_DATA_MOUNT"
-    )
-    if not configured:
+    ``GROOT_DATA_MOUNT`` names the image's mount root, whose direct ownership is
+    not part of the container contract.  The image does guarantee the
+    user-writable ``data_cache`` child, so use that child for the implicit
+    default.  An operator-set ``NPA_GROOT_LIBERO_X_RUNTIME_CACHE`` remains an
+    explicit cache location and therefore retains its strict failure behavior.
+    """
+
+    configured = os.environ.get("NPA_GROOT_LIBERO_X_RUNTIME_CACHE")
+    if configured:
+        root = Path(configured).expanduser().resolve() / "runtime-fetch"
+    elif data_mount := os.environ.get("GROOT_DATA_MOUNT"):
+        root = Path(data_mount).expanduser().resolve() / "data_cache" / "runtime-fetch"
+    else:
         return temporary_root / "runtime-cache"
-    root = Path(configured).expanduser().resolve() / "runtime-fetch"
     try:
         root.mkdir(parents=True, exist_ok=True)
     except OSError as exc:

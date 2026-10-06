@@ -514,6 +514,31 @@ def test_runtime_overlay_and_git_fetch_contract_keep_lfs_bytes_out_of_cache(
     assert target.read_text().endswith(workflow.LIBERO_X_RUNTIME_OVERLAY + "\n")
 
 
+def test_runtime_cache_uses_writable_data_cache_for_implicit_groot_mount(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    mount = tmp_path / "groot-data"
+    (mount / "data_cache").mkdir(parents=True)
+    monkeypatch.delenv("NPA_GROOT_LIBERO_X_RUNTIME_CACHE", raising=False)
+    monkeypatch.setenv("GROOT_DATA_MOUNT", str(mount))
+
+    assert workflow._runtime_cache_root(tmp_path / "temporary") == (
+        mount / "data_cache" / "runtime-fetch"
+    )
+
+
+def test_runtime_cache_preserves_explicit_cache_location(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    configured = tmp_path / "operator-cache"
+    monkeypatch.setenv("NPA_GROOT_LIBERO_X_RUNTIME_CACHE", str(configured))
+    monkeypatch.setenv("GROOT_DATA_MOUNT", str(tmp_path / "ignored-mount"))
+
+    assert workflow._runtime_cache_root(tmp_path / "temporary") == (
+        configured / "runtime-fetch"
+    )
+
+
 def test_compare_and_rrd_evidence_decode_matched_native_rollout_artifacts(
     tmp_path: Path,
 ) -> None:
