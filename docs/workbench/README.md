@@ -10,6 +10,8 @@ PAIDF workflows select repaired public Cosmos3, Evaluator, and Curator
 candidates by immutable digest while the historical releases remain
 quarantined. See the [PAIDF image-selection notes](guides/physical-ai-data-factory.md)
 for validation scope and operator overrides.
+The [public default quarantine audit](validation/public-default-quarantine-impact-20261005.md)
+lists other affected images and shipped workflows, including the Sim2Real seams.
 
 ## Start and operate a run
 

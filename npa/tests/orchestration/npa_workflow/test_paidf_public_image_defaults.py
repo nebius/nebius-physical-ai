@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from npa.deploy.images import container_image_for_tool
+from npa.deploy.images import (
+    CONTAINER_IMAGE_NAMES,
+    container_image_for_tool,
+    public_release_manifest,
+)
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
@@ -18,11 +23,6 @@ PAIDF_SPECS = (
     "workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml",
     "workflows/main/paidf-cosmos3.yaml",
 )
-REPAIRED_DIGESTS = {
-    "npa-cosmos3": "sha256:1aa6c473d95863709766f02d3e199cf8cf860adbe585b409a23a82bae4a2c37e",
-    "npa-cosmos-evaluator": "sha256:5d1335f58d5cc5e11cb0d4ccd0023cafe6e3b0bcc8af405f1f9d18013a17edfa",
-    "npa-cosmos-curate": "sha256:11e596bfb2cb46a6435dfe8013484882b1b0d6c7747ead1edb8c32c94a0581ad",
-}
 
 
 @pytest.mark.parametrize("spec_path", PAIDF_SPECS)
@@ -33,13 +33,19 @@ def test_paidf_plans_repaired_public_images(spec_path: str, decision: str) -> No
     images = plan_images(
         spec, plan.steps, run_id="repaired-images", options=SkypilotRenderOptions()
     )
+    repaired_digests = {
+        CONTAINER_IMAGE_NAMES[tool]: entry["published_digest"]
+        for tool, entry in public_release_manifest()[
+            "workflow_validation_candidates"
+        ].items()
+    }
     selected = {}
     for image in images:
         name = image.rsplit("/", 1)[-1].split(":", 1)[0]
-        if name in REPAIRED_DIGESTS:
+        if name in repaired_digests:
             assert image.startswith("ghcr.io/nebius/nebius-physical-ai/")
             assert ":dev-" in image
-            assert image.endswith("@" + REPAIRED_DIGESTS[name])
+            assert image.endswith("@" + repaired_digests[name])
             selected[name] = image
     assert "npa-cosmos-evaluator" in selected
     if spec_path.endswith("paidf-cosmos3.yaml"):
@@ -69,6 +75,24 @@ def test_paidf_explicit_operator_registry_still_wins(tool_ref: str, tool: str) -
     assert resolve_task_image(
         tool_ref, {}, options=SkypilotRenderOptions(registry=registry)
     ) == container_image_for_tool(tool, registry=registry)
+
+
+@pytest.mark.parametrize("registry", ["quay.io/example/workbench", "docker.io/example"])
+@pytest.mark.parametrize(
+    "tool_ref",
+    [
+        "workbench.cosmos3.generate_variants",
+        "workbench.cosmos_evaluator.evaluate",
+        "workbench.cosmos_curate.curate",
+    ],
+)
+def test_other_public_registries_cannot_select_official_candidates(
+    registry: str, tool_ref: str
+) -> None:
+    with pytest.raises(NpaWorkflowError, match="no consumable public release"):
+        resolve_task_image(
+            tool_ref, {}, options=SkypilotRenderOptions(registry=registry)
+        )
 
 
 @pytest.mark.parametrize(

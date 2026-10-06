@@ -1574,6 +1574,32 @@ def test_paidf_plan_only_uses_repaired_public_defaults(spec_path: Path) -> None:
     assert "no consumable public release" not in result.output
 
 
+def test_plan_only_reports_quarantined_default_as_cli_error() -> None:
+    spec_path = SPEC.parents[2] / "workflows/testing/cosmos3-generate.yaml"
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(spec_path),
+            "--run-id",
+            "quarantined-default",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--no-deploy-if-absent",
+            "--plan-only",
+            "--infra",
+            "k8s/paidf-test",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "Error:" in result.output
+    assert "quarantined" in result.output
+    assert "ValueError" not in result.output
+    assert "Traceback" not in result.output
+
+
 def test_plan_only_without_source_uri_is_read_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:

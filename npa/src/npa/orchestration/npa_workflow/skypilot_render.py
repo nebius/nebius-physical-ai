@@ -872,8 +872,8 @@ def resolve_task_image(
     _validate_image_override_syntax(options)
 
     def resolve_tool(tool: str, **kwargs: Any) -> str:
-        from npa.deploy.images import container_image_for_tool
-        from npa.orchestration.npa_workflow.public_image_defaults import (
+        from npa.deploy.images import (
+            container_image_for_tool,
             public_workflow_image_default,
         )
 
