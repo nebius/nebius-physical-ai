@@ -12,18 +12,18 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused contract tests bind five ordered native stages, exact upstream revisions, task-disjoint train/held-out artifacts, local immutable support-model snapshots, checkpoint-to-rollout lineage, bounded native held-out success, and factual RRD verification. This is structural evidence, not training or simulator-rollout evidence.",
+      "reason": "Focused contract tests bind five ordered native stages, exact upstream revisions, task-disjoint train/held-out artifacts, local immutable support-model snapshots, checkpoint-to-rollout lineage, bounded native held-out success, factual RRD verification, and the selected neutral image-catalog projection. This is structural evidence, not training or simulator-rollout evidence.",
       "evidence": [
         "npa/tests/workflows/test_lerobot_vla_jepa.py",
         "sha256:63cccc779c8a2f50e7032fb0ae9f74c610ee078b93ccd5e79230b7caaed9d377 workflows/testing/lerobot-vla-jepa.yaml",
         "sha256:c8b51e601041170bc7c3070a8778cad0d61dea43894a4248070fdd3f5aee3fcb npa/docker/workbench/lerobot-vla-jepa/Dockerfile",
         "sha256:6fb04352e5deba8ee9836f29e96dd0ae19ba5cb49d2c467c938b268904e0b447 npa/docker/workbench/lerobot-vla-jepa/entrypoint.sh",
         "sha256:b376056407a88745ad114b8de3e03ec8ddf07ba6416f50c295f3e7c6bea8c349 npa/docker/workbench/blackwell-dc-images.json",
-        "sha256:42cef35862ecd1eed8aa11812fbd80f5e826175654c1ff2beb8d7b345327008e npa/src/npa/deploy/images.py",
+        "sha256:3931a5df6d5d9f853b715d31a724861c072c4227629bdf90665f2302d572fcfd npa/src/npa/deploy/images.py::lerobot-vla-jepa-neutral-candidate-projection",
         "sha256:a1002b2b0c0ee813b87370e67bfcbd23e5fed6789a7a7e2cc987b7427b93a3ed npa/src/npa/smoke/golden_evals.yaml",
         "sha256:16eea43a1f3cb47a5a4197cc41098d696b2330d013a6939cadef952f300b63bb npa/src/npa/smoke/capabilities.py",
         "sha256:b3c15412f0a41671ba344fa1231c9182ad100ad64457cb0609b936edff95c0f5 npa/src/npa/workflows/lerobot_vla_jepa.py",
-        "sha256:b92a211fee8e918cd9ae6a5e9fd97e64afa5a717b43bd8b8cce5f232e121f6c3 npa/tests/workflows/test_lerobot_vla_jepa.py"
+        "sha256:99452bb46f6015fd66463dc44c87b0790ef6120e32e9e33aec35c8b0ec012bdd npa/tests/workflows/test_lerobot_vla_jepa.py"
       ]
     }
   },

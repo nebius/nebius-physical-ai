@@ -9,7 +9,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
+from npa.deploy import images
 from npa.orchestration.npa_workflow import load_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
@@ -22,6 +24,28 @@ WORKFLOW = ROOT / "workflows" / "testing" / "lerobot-vla-jepa.yaml"
 READINESS = WORKFLOW.with_suffix(".readiness.json")
 DOCKERFILE = ROOT / "npa" / "docker" / "workbench" / "lerobot-vla-jepa" / "Dockerfile"
 BLACKWELL_MANIFEST = ROOT / "npa" / "docker" / "workbench" / "blackwell-dc-images.json"
+VLA_JEPA_IMAGE_CATALOG_EVIDENCE = (
+    "npa/src/npa/deploy/images.py::lerobot-vla-jepa-neutral-candidate-projection"
+)
+
+
+def _vla_jepa_image_catalog_projection() -> bytes:
+    """Serialize the catalog facts that route only the VLA-JEPA candidate."""
+    tool = "lerobot-vla-jepa"
+    development_tag = f"dev-{'0' * 40}"
+    with pytest.raises(ValueError):
+        images.container_image_for_tool(tool)
+    projection = {
+        "display_tag": images.NEUTRAL_UNBUILT_DISPLAY_TAGS[tool],
+        "image_name": images.NEUTRAL_UNBUILT_IMAGE_NAMES[tool],
+        "neutral_candidates": sorted(images.NEUTRAL_UNBUILT_CANDIDATE_TOOLS),
+        "private_development_reference": images.container_image_for_tool(
+            tool,
+            registry="registry.invalid",
+            tag=development_tag,
+        ),
+    }
+    return json.dumps(projection, sort_keys=True, separators=(",", ":")).encode()
 
 
 def test_workflow_has_five_connected_native_stages() -> None:
@@ -331,7 +355,7 @@ def test_readiness_is_hash_bound_and_does_not_claim_live_acceptance() -> None:
             DOCKERFILE.parent / "entrypoint.sh"
         ),
         "npa/docker/workbench/blackwell-dc-images.json": BLACKWELL_MANIFEST,
-        "npa/src/npa/deploy/images.py": ROOT / "npa/src/npa/deploy/images.py",
+        VLA_JEPA_IMAGE_CATALOG_EVIDENCE: _vla_jepa_image_catalog_projection(),
         "npa/src/npa/smoke/golden_evals.yaml": (
             ROOT / "npa/src/npa/smoke/golden_evals.yaml"
         ),
@@ -349,8 +373,9 @@ def test_readiness_is_hash_bound_and_does_not_claim_live_acceptance() -> None:
         if item.startswith("sha256:")
     }
     assert set(hashes) == set(expected)
-    for relative_path, path in expected.items():
-        assert hashes[relative_path] == hashlib.sha256(path.read_bytes()).hexdigest()
+    for evidence_id, source in expected.items():
+        payload = source if isinstance(source, bytes) else source.read_bytes()
+        assert hashes[evidence_id] == hashlib.sha256(payload).hexdigest()
     assert readiness["planning"]["validation"]["status"] == "verified"
     assert readiness["planning"]["task_fidelity"]["status"] == "verified"
     assert readiness["prerequisites"]["source_image"]["status"] == "unverified"
