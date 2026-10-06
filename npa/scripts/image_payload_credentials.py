@@ -22,7 +22,9 @@ between consecutive chunks.
 
 *Whitespace longer than any window.* Private-key headers and named credential
 assignments can be separated from their values by arbitrarily much whitespace.
-Their matchers retain state across chunks, never the intervening bytes.
+Their matchers retain state across chunks, never the intervening bytes. Named
+values retain at most 513 bytes to distinguish source syntax from literals;
+oversized or ambiguous values remain findings.
 
 Generic quoted assignments are a Dockerfile policy, not proof of a credential
 in arbitrary library bytes: pip and Pydantic contain ordinary password examples.
@@ -34,6 +36,7 @@ plaintext secrets.
 
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass
 from typing import IO
@@ -113,15 +116,14 @@ MARKER_CONTENT: tuple[tuple[str, re.Pattern[bytes]], ...] = (
 )
 
 _WHITESPACE = re.compile(rb"[ \t\r\n\f\v]*")
-_UNTIL_SPACE = re.compile(rb"[^ \t\r\n\f\v]*")
 
 
 @dataclass(frozen=True)
 class AssignmentRule:
     """A ``NAME <ws> SEP <ws> VALUE`` credential, matched across chunks.
 
-    Rules need ``min_value`` non-space bytes, and stop looking once they have
-    them. Whitespace between the name, separator and value has no fixed bound.
+    Rules need ``min_value`` non-space bytes. Source references are checked only
+    after a complete bounded value; label and separator gaps have no size bound.
     """
 
     kind: str
@@ -130,37 +132,54 @@ class AssignmentRule:
     min_value: int = 0
 
 
+class _DeclaredAssignmentPattern:
+    """Describe a whole-input assignment independently of chunk assembly."""
+
+    def __init__(self, rule: AssignmentRule) -> None:
+        self.rule = rule
+        self.pattern = rule.names.pattern + rb"\s*[=:]\s*"
+        self.header = re.compile(
+            rb"(?:" + rule.names.pattern + rb")\s*([=:])\s*", rule.names.flags
+        )
+
+    def search(self, data: bytes) -> re.Match[bytes] | None:
+        """Return the first assignment whose bounded value is credential data."""
+        for header in self.header.finditer(data):
+            value = _AssignmentValue(header.group(1))
+            value.feed(data, header.end())
+            if value.credential(self.rule.min_value):
+                return header
+        return None
+
+
 ASSIGNMENT_RULES: tuple[AssignmentRule, ...] = (
     AssignmentRule(
         kind="credential_assignment",
-        names=re.compile(rb"(?i)aws_secret_access_key|hf_token|ngc_api_key"),
+        names=re.compile(rb"aws_secret_access_key|hf_token|ngc_api_key", re.I),
         separators=b"=:",
         min_value=8,
     ),
 )
 
-# The same rules written as ordinary whole-input regexes. Nothing detects with
-# these — ``content_credential`` streams — but they state what the streaming
-# matcher is supposed to mean, so the two can be compared directly on any input.
+# Whole-input markers and named-value policy describe the streaming verdict.
+# Source expressions require syntax validation beyond a regular expression;
+# chunk assembly remains independent so boundary behavior can be compared.
 # test_image_payload_credentials.py asserts the two agree; a reviewer checking
 # this module should compare against these rather than read the state machine.
-DECLARED_CONTENT_PATTERNS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
-    MARKER_CONTENT
-    + (
-        (
-            "private_key_content",
-            re.compile(
-                rb"-----BEGIN (?:RSA |DSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"
-                rb"[ \t\r\n\f\v]*[A-Za-z0-9+/=]"
-            ),
+DECLARED_CONTENT_PATTERNS: tuple[
+    tuple[str, re.Pattern[bytes] | _DeclaredAssignmentPattern], ...
+] = MARKER_CONTENT + (
+    (
+        "private_key_content",
+        re.compile(
+            rb"-----BEGIN (?:RSA |DSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"
+            rb"[ \t\r\n\f\v]*[A-Za-z0-9+/=]"
         ),
-        (
-            "credential_assignment",
-            re.compile(
-                rb"(?i)(?:aws_secret_access_key|hf_token|ngc_api_key)\s*[=:]\s*[^$<\s][^\s]{7,}"
-            ),
-        ),
-    )
+    ),
+    (
+        "credential_assignment",
+        _DeclaredAssignmentPattern(ASSIGNMENT_RULES[0]),
+    ),
 )
 
 # Retained under its former name: the review lane's reproducers import it.
@@ -236,15 +255,215 @@ class _PrivateKeyMatcher:
 
 
 _SEEK, _GAP_BEFORE_SEP, _GAP_AFTER_SEP, _VALUE = range(4)
+_VALUE_LIMIT = 512
+_SHELL_REFERENCE = re.compile(
+    rb"""(?P<quote>"?)(?:\$[A-Za-z_][A-Za-z0-9_]*|"""
+    rb"""\$\{[A-Za-z_][A-Za-z0-9_]*(?::-)?\})(?P=quote)\Z"""
+)
+_PLACEHOLDER = re.compile(rb"<[A-Za-z_][A-Za-z0-9_]*>\Z")
+_CREDENTIAL_LOOKUP_NAMES = frozenset(
+    {
+        "aws_secret_access_key",
+        "hf_token",
+        "ngc_api_key",
+        "hugging_face_hub_token",
+        "huggingface_hub_token",
+        "hf_access_token",
+    }
+)
+_REFERENCE_NODES = (
+    ast.Name,
+    ast.Load,
+    ast.Attribute,
+    ast.Subscript,
+    ast.Call,
+    ast.keyword,
+    ast.Constant,
+    ast.Tuple,
+    ast.List,
+    ast.BoolOp,
+    ast.And,
+    ast.Or,
+)
+_ANNOTATION_NAMES = frozenset(
+    {
+        "str",
+        "bytes",
+        "bool",
+        "int",
+        "float",
+        "list",
+        "dict",
+        "tuple",
+        "set",
+        "Any",
+        "Optional",
+        "Union",
+        "Mapping",
+        "Sequence",
+        "Literal",
+    }
+)
+
+
+def _source_reference(expression: ast.expr | None) -> bool:
+    """Accept source references only when their literals cannot contain a value."""
+    if expression is None or isinstance(expression, (ast.Name, ast.Constant)):
+        return False
+    literal_bytes = 0
+    for node in ast.walk(expression):
+        if not isinstance(node, _REFERENCE_NODES):
+            return False
+        if (
+            isinstance(node, ast.keyword)
+            and node.arg
+            and node.arg.casefold() in _CREDENTIAL_LOOKUP_NAMES
+        ):
+            # Do not consume a nested named assignment as part of an outer
+            # reference: it needs its own literal/source verdict.
+            return False
+        if isinstance(node, ast.Constant):
+            if node.value is None or isinstance(node.value, bool):
+                continue
+            if isinstance(node.value, str):
+                if node.value.casefold() in _CREDENTIAL_LOOKUP_NAMES:
+                    continue
+                literal_bytes += len(node.value.encode())
+            else:
+                literal_bytes += len(str(node.value))
+    return literal_bytes < 8
+
+
+def _source_annotation(annotation: ast.expr) -> bool:
+    """Recognize finite builtin typing syntax rather than arbitrary bare data."""
+    for node in ast.walk(annotation):
+        if isinstance(node, ast.Name) and node.id not in _ANNOTATION_NAMES | {"typing"}:
+            return False
+        if isinstance(node, ast.Attribute) and node.attr not in _ANNOTATION_NAMES:
+            return False
+        if isinstance(node, ast.Constant) and node.value is not None:
+            return False
+        if not isinstance(
+            node,
+            (
+                ast.Name,
+                ast.Load,
+                ast.Attribute,
+                ast.Subscript,
+                ast.Tuple,
+                ast.Constant,
+                ast.BinOp,
+                ast.BitOr,
+            ),
+        ):
+            return False
+    return True
+
+
+def _annotated_reference(source: str) -> bool:
+    """Accept known annotations with no literal credential default."""
+    statement = ast.parse("value: " + source).body[0]
+    if not isinstance(statement, ast.AnnAssign):
+        return False
+    if not _source_annotation(statement.annotation):
+        return False
+    default = statement.value
+    if default is None:
+        return True
+    if isinstance(default, ast.Constant) and default.value in (None, "", False, True):
+        return True
+    return _source_reference(default)
+
+
+def _nonliteral_value(data: bytes, separator: bytes) -> bool:
+    """Keep literals, unknown expressions and ambiguous syntax blocking."""
+    candidate = data.strip().rstrip(b",;)] ").strip()
+    if _SHELL_REFERENCE.fullmatch(candidate) or _PLACEHOLDER.fullmatch(candidate):
+        return True
+    if b"#" in data:
+        return False
+    # External argument closers are not part of the assigned expression. Try
+    # the complete candidate first so valid subscription/call closers survive.
+    candidate = data.strip().rstrip(b",; ")
+    for _ in range(5):
+        try:
+            source = candidate.decode("utf-8")
+            if separator == b":":
+                if _annotated_reference(source):
+                    return True
+                expression = None
+            else:
+                expression = ast.parse(source, mode="eval").body
+        except (UnicodeDecodeError, SyntaxError, RecursionError):
+            expression = None
+        if _source_reference(expression):
+            return True
+        if not candidate.endswith((b")", b"]", b"}")):
+            return False
+        candidate = candidate[:-1].rstrip()
+    return False
+
+
+class _AssignmentValue:
+    """Retain a bounded source candidate, never an unbounded value or gap."""
+
+    def __init__(self, separator: bytes) -> None:
+        self.separator = separator
+        self.data = bytearray()
+        self.quote = 0
+        self.escaped = False
+        self.depth = 0
+        self.seen = 0
+        self.run = 0
+
+    def feed(self, data: bytes, position: int) -> tuple[int, bool]:
+        """Read through a complete expression or fail closed at the size bound."""
+        while position < len(data):
+            byte = data[position]
+            if byte in b"\r\n" and not self.quote and not self.depth:
+                return position, True
+            self.data.append(byte)
+            self.run = 0 if byte in b" \t\r\n\f\v" else self.run + 1
+            self.seen = max(self.seen, self.run)
+            position += 1
+            if len(self.data) > _VALUE_LIMIT:
+                return position, True
+            if self.quote:
+                self._quoted_byte(byte)
+            elif byte in b"\"'":
+                self.quote = byte
+            elif byte in b"([{":
+                self.depth += 1
+            elif byte in b")]}" and self.depth:
+                self.depth -= 1
+            elif byte in b",;)]}" and not self.depth:
+                return position, True
+        return position, False
+
+    def _quoted_byte(self, byte: int) -> None:
+        if self.escaped:
+            self.escaped = False
+        elif byte == ord("\\"):
+            self.escaped = True
+        elif byte == self.quote:
+            self.quote = 0
+
+    def credential(self, minimum: int) -> bool:
+        """Unknown, literal and oversized values retain the credential verdict."""
+        if len(self.data) > _VALUE_LIMIT:
+            return True
+        if self.seen < minimum:
+            return False
+        return not _nonliteral_value(bytes(self.data), self.separator)
 
 
 class _AssignmentMatcher:
-    """Resumable matcher for one rule. State is a phase and a count, never bytes."""
+    """Resume unbounded label gaps and a bounded literal/source value check."""
 
     def __init__(self, rule: AssignmentRule) -> None:
         self._rule = rule
         self._phase = _SEEK
-        self._seen = 0
+        self._value: _AssignmentValue | None = None
 
     def resume_at(self, carried: int) -> int:
         """Where in the next window this matcher should resume.
@@ -259,50 +478,51 @@ class _AssignmentMatcher:
             return carried
         return max(0, carried - _NAME_CARRY)
 
+    def _label(self, data: bytes, position: int) -> int:
+        """Consume a name or separator without retaining whitespace gaps."""
+        if self._phase == _SEEK:
+            found = self._rule.names.search(data, position)
+            if found is None:
+                return len(data)
+            self._phase = _GAP_BEFORE_SEP
+            return found.end()
+        position = _WHITESPACE.match(data, position).end()
+        if position == len(data):
+            return position
+        if self._phase == _GAP_AFTER_SEP:
+            self._phase = _VALUE
+        elif data[position] in self._rule.separators:
+            self._value = _AssignmentValue(data[position : position + 1])
+            self._phase = _GAP_AFTER_SEP
+            position += 1
+        else:
+            # Revisit this position so an overlapping NAME is not skipped.
+            self._phase = _SEEK
+        return position
+
     def feed(self, data: bytes, start: int) -> bool:
         """Consume ``data`` from ``start``; return True if the rule matched."""
-
-        rule = self._rule
         position = start
-        end = len(data)
-        while position < end:
-            if self._phase == _SEEK:
-                found = rule.names.search(data, position)
-                if found is None:
-                    return False
-                position = found.end()
-                self._phase = _GAP_BEFORE_SEP
-            elif self._phase == _GAP_BEFORE_SEP:
-                position = _WHITESPACE.match(data, position).end()
-                if position == end:
-                    return False
-                if data[position] in rule.separators:
-                    position += 1
-                    self._phase = _GAP_AFTER_SEP
-                else:
-                    # Not an assignment after all. Resume the search here rather
-                    # than after it, so an overlapping NAME is not skipped.
-                    self._phase = _SEEK
-            elif self._phase == _GAP_AFTER_SEP:
-                position = _WHITESPACE.match(data, position).end()
-                if position == end:
-                    return False
-                if data[position : position + 1] in (b"$", b"<"):
-                    # A shell or template reference is not a baked credential.
-                    self._phase = _SEEK
-                else:
-                    self._phase = _VALUE
-                    self._seen = 0
-            else:
-                run = _UNTIL_SPACE.match(data, position)
-                self._seen += run.end() - position
-                position = run.end()
-                if self._seen >= rule.min_value:
-                    return True
-                if position == end:
-                    return False
-                self._phase = _SEEK
+        while position < len(data):
+            if self._phase != _VALUE:
+                position = self._label(data, position)
+                continue
+            assert self._value is not None
+            position, complete = self._value.feed(data, position)
+            if not complete:
+                return False
+            if self._value.credential(self._rule.min_value):
+                return True
+            self._phase = _SEEK
         return False
+
+    def finish(self) -> bool:
+        """Classify the final value when EOF has no following delimiter."""
+        return bool(
+            self._value
+            and self._phase == _VALUE
+            and self._value.credential(self._rule.min_value)
+        )
 
 
 def path_credential(name: str) -> str | None:
@@ -337,6 +557,9 @@ def content_credential(stream: IO[bytes]) -> str | None:
     while True:
         chunk = stream.read(CONTENT_CHUNK)
         if not chunk:
+            for kind, matcher in matchers:
+                if matcher.finish():
+                    return kind
             return None
         window = carry + chunk
         if private_key.feed(window, len(carry)):
