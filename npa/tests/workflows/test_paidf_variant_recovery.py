@@ -28,7 +28,7 @@ class MemoryStorage:
         self.objects = {}
         self.fail_uri = ""
 
-    def get_bytes_with_etag(self, uri):
+    def read_bytes_with_etag(self, uri):
         payload = self.objects.get(uri)
         return (
             None if payload is None else (payload, hashlib.sha256(payload).hexdigest())
