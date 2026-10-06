@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 from botocore.exceptions import ClientError
 
-from npa.clients import conditional_upload
+from npa.clients import storage as conditional_upload
 from npa.clients.storage import StorageClient, StoragePreconditionFailed
 
 
