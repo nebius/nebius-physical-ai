@@ -493,7 +493,7 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
 
 def _parent_reference_guard(dockerfile: str) -> str:
     """Extract the Dockerfile's actual fail-closed parent-reference shell guard."""
-    start = dockerfile.index("RUN [[ \"${NPA_LINGBOT_VA_PARENT_IMAGE}\"")
+    start = dockerfile.index('RUN [[ "${NPA_LINGBOT_VA_PARENT_IMAGE}"')
     end = dockerfile.index("\n\n", start)
     return dockerfile[start + len("RUN ") : end].replace("\\\n", " ")
 
@@ -512,24 +512,20 @@ def test_private_parent_override_is_digest_only_and_fails_closed() -> None:
         canonical_parent,
     )
     assert "FROM ${NPA_LINGBOT_VA_PARENT_IMAGE}" in dockerfile
-    assert (
-        "ARG NPA_LINGBOT_VA_PARENT_IMAGE\n\nARG NPA_SOURCE_SHA=unknown" in dockerfile
-    )
+    assert "ARG NPA_LINGBOT_VA_PARENT_IMAGE\n\nARG NPA_SOURCE_SHA=unknown" in dockerfile
 
     guard = _parent_reference_guard(dockerfile)
     valid_parents = (
         canonical_parent,
         "registry.example.invalid/operator/qualified-parent@sha256:" + "a" * 64,
-        "registry.example.invalid:5000/operator/qualified-parent@sha256:"
-        + "b" * 64,
+        "registry.example.invalid:5000/operator/qualified-parent@sha256:" + "b" * 64,
     )
     invalid_parents = (
         "",
         "registry.example.invalid/operator/qualified-parent:mutable",
         "registry.example.invalid/operator/qualified-parent@sha256:" + "A" * 64,
         "registry.example.invalid/operator/qualified-parent@sha256:" + "a" * 63,
-        "https://registry.example.invalid/operator/qualified-parent@sha256:"
-        + "a" * 64,
+        "https://registry.example.invalid/operator/qualified-parent@sha256:" + "a" * 64,
         "registry.example.invalid//operator/qualified-parent@sha256:" + "a" * 64,
         "user:password@registry.example.invalid/operator/qualified-parent@sha256:"
         + "a" * 64,
