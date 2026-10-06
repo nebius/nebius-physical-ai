@@ -132,7 +132,9 @@ def test_image_independent_checks_do_not_construct_execution_images(
     diagnostic_spies: SimpleNamespace,
     selected: str,
     name: str,
+    tmp_path: Path,
 ) -> None:
+    kubeconfig = str(tmp_path / "kubeconfig.yaml")
     result = runner.invoke(
         app,
         [
@@ -148,7 +150,7 @@ def test_image_independent_checks_do_not_construct_execution_images(
             "--k8s-context",
             "diagnostic-context",
             "--k8s-kubeconfig",
-            "/tmp/example.yaml",
+            kubeconfig,
             "--json",
         ],
     )
@@ -165,7 +167,7 @@ def test_image_independent_checks_do_not_construct_execution_images(
     if selected != "cluster":
         diagnostic_spies.kube.assert_not_called()
     diagnostic_spies.kube_factory.assert_called_once_with(
-        "diagnostic-context", "/tmp/example.yaml"
+        "diagnostic-context", kubeconfig
     )
 
 
@@ -343,6 +345,7 @@ def test_diagnostic_settings_preserve_execution_environment_precedence(
     monkeypatch: pytest.MonkeyPatch,
     level: int,
     explicit: bool,
+    tmp_path: Path,
 ) -> None:
     _diagnostic_environment(monkeypatch, level)
     settings = {"run_id": "diagnostic-run"}
@@ -352,7 +355,7 @@ def test_diagnostic_settings_preserve_execution_environment_precedence(
             s3_endpoint="https://explicit.example.invalid",
             k8s_namespace="explicit-namespace",
             k8s_context="explicit-context",
-            k8s_kubeconfig="/tmp/explicit.yaml",
+            k8s_kubeconfig=str(tmp_path / "explicit.yaml"),
         )
     context = diagnostic_config.build_diagnostic_config_from_env(**settings)
     config = execution_config.build_config_from_env(
