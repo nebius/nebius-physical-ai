@@ -75,6 +75,11 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
 USER ubuntu
 WORKDIR /opt/lerobot
 
+COPY --chown=ubuntu:ubuntu docker/workbench/curobo/remove_scikit_image_recipe.py \
+    /opt/lerobot/remove-scikit-image-recipe.py
+
+ENV PIP_NO_CACHE_DIR=1
+
 # 0.5.1 keeps the historic [pusht,libero] extra bundle + pinned torch upgrades.
 # 0.6.0 uses lean feature extras and must NOT force torch>=2.12 (upstream ceiling).
 # 0.6.0 also moved diffusers/transformers behind extras and enforces them in each
@@ -85,6 +90,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
     && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \
          /opt/lerobot/venv/bin/pip install \
            "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]==${LEROBOT_VERSION}" \
+           "scikit-image==0.26.0" \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
@@ -93,6 +99,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
        else \
          /opt/lerobot/venv/bin/pip install \
            "lerobot[pusht,libero]==${LEROBOT_VERSION}" \
+           "scikit-image==0.26.0" \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
@@ -103,6 +110,9 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            "torchvision==0.27.1" \
            "diffusers>=0.38.0"; \
        fi \
+    && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
+      --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
+      > /opt/lerobot/dependency-source-correction.json \
     && /opt/lerobot/venv/bin/pip uninstall -y wandb \
     && find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
