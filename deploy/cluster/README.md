@@ -108,6 +108,9 @@ process ownership verification. NPA checks this before provisioning. On another
 host, use `--skip-sky-smoke` for provisioning and run SkyPilot validation from
 the Linux operator host before submitting workflows; the GPU, CUDA, and graphics
 validation gates still run.
+`provision-if-absent` makes the same early check when `--accelerator` or
+`--sky-smoke` requests SkyPilot setup. Its `--dry-run` plans and `--skip-k8s`
+storage operations remain usable on other hosts.
 
 The direct RTX release has a read-only live acceptance test. Keep its JSON
 configuration outside Git with `terraform_state_path`, `kubeconfig_path`,

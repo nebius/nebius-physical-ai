@@ -8,11 +8,13 @@ from pathlib import Path
 
 import typer
 
+from npa.cli._error_formatting import format_error_for_user
 from npa.cluster.gpu_health import (
     DEFAULT_CUDA_SMOKE_IMAGE,
     DEFAULT_STABILIZATION_SECONDS,
 )
 from npa.provisioning import provision_if_absent
+from npa.orchestration.skypilot.local_api import IsolatedApiError
 
 app = typer.Typer(
     name="provision-if-absent",
@@ -172,44 +174,51 @@ def provision_if_absent_cmd(
     ),
 ) -> None:
     """Provision S3 and Kubernetes only when they are absent."""
-    result = provision_if_absent(
-        project=project or None,
-        cluster_name=cluster_name,
-        terraform_dir=terraform_dir,
-        kubeconfig=kubeconfig,
-        context_name=context_name,
-        skip_k8s=skip_k8s,
-        skip_s3=skip_s3,
-        validate=validate,
-        sky_smoke=sky_smoke,
-        dry_run=dry_run,
-        timeout=timeout,
-        gpu_nodes=gpu_nodes,
-        cpu_nodes=cpu_nodes,
-        cpu_platform=cpu_platform,
-        cpu_preset=cpu_preset,
-        gpu_platform=gpu_platform,
-        gpu_preset=gpu_preset,
-        gpu_driver_mode=gpu_driver_mode,
-        gpu_workload_profile=gpu_workload_profile,
-        managed_driver_preset=managed_driver_preset,
-        allow_unsafe_nvswitch_operator=allow_unsafe_nvswitch_operator,
-        gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,
-        gpu_health_timeout_minutes=gpu_health_timeout_minutes,
-        gpu_cuda_smoke=gpu_cuda_smoke,
-        gpu_cuda_smoke_image=gpu_cuda_smoke_image,
-        mig_enabled=mig_enabled,
-        mig_strategy=mig_strategy,
-        mig_config=mig_config,
-        capacity_block_group=capacity_block_group,
-        infiniband_fabric=infiniband_fabric,
-        preemptible=preemptible,
-        accelerator=accelerator,
-        gpu_readiness_timeout=gpu_readiness_timeout,
-        gpu_readiness_poll_interval=gpu_readiness_poll_interval,
-        sky_bin=sky_bin,
-        output_format=output_format.value,
-    )
+    try:
+        result = provision_if_absent(
+            project=project or None,
+            cluster_name=cluster_name,
+            terraform_dir=terraform_dir,
+            kubeconfig=kubeconfig,
+            context_name=context_name,
+            skip_k8s=skip_k8s,
+            skip_s3=skip_s3,
+            validate=validate,
+            sky_smoke=sky_smoke,
+            dry_run=dry_run,
+            timeout=timeout,
+            gpu_nodes=gpu_nodes,
+            cpu_nodes=cpu_nodes,
+            cpu_platform=cpu_platform,
+            cpu_preset=cpu_preset,
+            gpu_platform=gpu_platform,
+            gpu_preset=gpu_preset,
+            gpu_driver_mode=gpu_driver_mode,
+            gpu_workload_profile=gpu_workload_profile,
+            managed_driver_preset=managed_driver_preset,
+            allow_unsafe_nvswitch_operator=allow_unsafe_nvswitch_operator,
+            gpu_health_stabilization_seconds=gpu_health_stabilization_seconds,
+            gpu_health_timeout_minutes=gpu_health_timeout_minutes,
+            gpu_cuda_smoke=gpu_cuda_smoke,
+            gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            mig_enabled=mig_enabled,
+            mig_strategy=mig_strategy,
+            mig_config=mig_config,
+            capacity_block_group=capacity_block_group,
+            infiniband_fabric=infiniband_fabric,
+            preemptible=preemptible,
+            accelerator=accelerator,
+            gpu_readiness_timeout=gpu_readiness_timeout,
+            gpu_readiness_poll_interval=gpu_readiness_poll_interval,
+            sky_bin=sky_bin,
+            output_format=output_format.value,
+        )
+    except IsolatedApiError as exc:
+        typer.echo(
+            format_error_for_user(exc, output_format=output_format.value),
+            err=output_format != OutputFormat.json,
+        )
+        raise typer.Exit(code=1) from exc
     payload = result.to_dict()
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
