@@ -14,6 +14,7 @@ import pytest
 from npa.cli.workbench.workflow import _durable_workflow_status
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
 from npa.orchestration.npa_workflow.run_state import (
+    NORMALIZED_COMPLETED_WORKER_POD,
     RunManifest,
     RunStateStore,
     runtime_manifest_view,
@@ -299,6 +300,33 @@ def test_pending_controller_logs_stay_with_their_job_without_mutating_state(
         "11",
         "12",
     ]
+
+
+def test_status_classifies_failure_after_bounded_controller_display_slice(
+    observed_status, mocker
+):
+    resolution, _jobs = observed_status
+    resolution.runtime_state["waves"] = [_wave("train", "12", "pending")]
+    resolution.manifest["steps"] = [{"state": "train", "status": "submitted"}]
+    completed_pod = (
+        "cannot exec into a container in a completed pod; current phase is Failed"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.workflow_controller_logs",
+        return_value=SimpleNamespace(
+            returncode=0,
+            stdout="padding\n" * 1000 + f"{completed_pod}\n{completed_pod}\n",
+            stderr="",
+        ),
+    )
+
+    payload = _durable_workflow_status("run-test")
+
+    train = payload["stages"]["train"]
+    assert payload["status"] == "RETRYING"
+    assert train["state"] == "PENDING"
+    assert train["last_normalized_startup_failure"] == NORMALIZED_COMPLETED_WORKER_POD
+    assert train["startup_failure_evidence"] == 2
 
 
 @pytest.mark.parametrize("returncode", [0, 1])

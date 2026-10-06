@@ -8,6 +8,7 @@ import json
 import pytest
 
 from npa.orchestration.npa_workflow.run_state import (
+    NORMALIZED_COMPLETED_WORKER_POD,
     NORMALIZED_DELETED_RAY_NODE,
     RunManifest,
     build_actionable_run_status,
@@ -120,6 +121,35 @@ def test_repeated_deleted_ray_node_terminalizes_startup_without_cancellation() -
     )
     assert result["stages"]["curate"]["startup_failure_evidence"] == 3
     assert manifest.steps[1]["status"] == "FAILED_STARTUP"
+
+
+def test_completed_worker_pod_is_observed_before_startup_terminalization() -> None:
+    manifest = _manifest()
+    output = "\n".join(
+        [
+            "cannot exec into a container in a completed pod; current phase is Failed",
+            "cannot exec into a container in a completed pod; current phase is Failed",
+        ]
+    )
+
+    result = build_actionable_run_status(
+        manifest,
+        live_status="PENDING",
+        task_rows=[{"task_id": 1, "status": "PENDING"}],
+        controller_output=output,
+        failure_threshold=3,
+        now=NOW,
+    )
+
+    curate = result["stages"]["curate"]
+    assert result["status"] == "RETRYING"
+    assert result["raw_controller_state"] == "PENDING"
+    assert curate["state"] == "PENDING"
+    assert curate["last_normalized_startup_failure"] == (
+        NORMALIZED_COMPLETED_WORKER_POD
+    )
+    assert curate["startup_failure_evidence"] == 2
+    assert manifest.steps[1]["status"] == "SUBMITTED"
 
 
 def test_persisted_startup_failure_does_not_regress_when_logs_are_unavailable() -> None:

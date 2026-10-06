@@ -1201,16 +1201,32 @@ _TASK_STATUS_MAP = {
 TERMINAL_STEP_STATES = frozenset(
     {"SUCCEEDED", "CANCELLED", "FAILED", "FAILED_SETUP", "FAILED_STARTUP", "BLOCKED"}
 )
-_DETERMINISTIC_STARTUP_PATTERNS = (
-    re.compile(
-        r"container\s+not found.*ray-node|ray-node.*container\s+not found",
-        re.IGNORECASE,
-    ),
-    re.compile(r"ray-node.*(?:deleted|not found)", re.IGNORECASE),
-    re.compile(r"cannot exec in a deleted state", re.IGNORECASE),
-)
 NORMALIZED_DELETED_RAY_NODE = (
     "ray-node container deleted before SkyPilot initialization"
+)
+NORMALIZED_COMPLETED_WORKER_POD = "worker pod completed before SkyPilot initialization"
+_DETERMINISTIC_STARTUP_FAILURES = (
+    (
+        NORMALIZED_DELETED_RAY_NODE,
+        (
+            re.compile(
+                r"container\s+not found.*ray-node|ray-node.*container\s+not found",
+                re.IGNORECASE,
+            ),
+            re.compile(r"ray-node.*(?:deleted|not found)", re.IGNORECASE),
+            re.compile(r"cannot exec in a deleted state", re.IGNORECASE),
+        ),
+    ),
+    (
+        NORMALIZED_COMPLETED_WORKER_POD,
+        (
+            re.compile(
+                r"cannot exec into a container in a completed pod;\s*"
+                r"current phase is failed",
+                re.IGNORECASE,
+            ),
+        ),
+    ),
 )
 
 
@@ -1324,14 +1340,27 @@ def _iso(value: datetime | None) -> str:
 
 
 def normalize_startup_failure(controller_output: str) -> tuple[str, int]:
-    """Return a stable startup-failure label and its evidence count."""
+    """Return the stable startup-failure signature and its evidence count.
 
-    matches = sum(
-        1
-        for line in str(controller_output or "").splitlines()
-        if any(pattern.search(line) for pattern in _DETERMINISTIC_STARTUP_PATTERNS)
-    )
-    return (NORMALIZED_DELETED_RAY_NODE, matches) if matches else ("", 0)
+    Args:
+        controller_output: Bounded controller output for one exact managed job.
+
+    Returns:
+        The detected deterministic failure signature and matching-line count, or
+        an empty signature and zero when no supported signature is present.
+
+    Raises:
+        None.
+    """
+
+    lines = str(controller_output or "").splitlines()
+    for signature, patterns in _DETERMINISTIC_STARTUP_FAILURES:
+        matches = sum(
+            1 for line in lines if any(pattern.search(line) for pattern in patterns)
+        )
+        if matches:
+            return signature, matches
+    return "", 0
 
 
 def _job_task_outcomes_conflict(

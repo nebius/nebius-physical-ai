@@ -6569,7 +6569,7 @@ def _durable_workflow_status(
         live_status = ""
         task_rows: list[dict[str, object]] = []
         job_observations: dict[str, dict[str, object]] = {}
-        controller_output = ""
+        startup_failure_output = ""
         diagnostics: list[str] = []
         verification_errors: list[str] = (
             [resolution.runtime_state_error] if resolution.runtime_state_error else []
@@ -6660,11 +6660,11 @@ def _durable_workflow_status(
                         job_observations[managed_job_id]["controller_output"] = output[
                             -4000:
                         ]
-                    output = output[:4000]
                     if output:
-                        controller_output += (
-                            "\n" if controller_output else ""
+                        startup_failure_output += (
+                            "\n" if startup_failure_output else ""
                         ) + output
+                    output = output[:4000]
                     if controller_logs.returncode != 0:
                         diagnostics.append(
                             "SkyPilot controller logs are unavailable; startup failure "
@@ -6708,7 +6708,7 @@ def _durable_workflow_status(
             task_rows=task_rows,
             runtime_waves=runtime_waves,
             job_observations=job_observations,
-            controller_output=controller_output,
+            controller_output=startup_failure_output,
             project=project or state.project,
             isolated_config_dir=str(isolated_config_dir or ""),
             failure_threshold=startup_failure_threshold,
@@ -7064,6 +7064,7 @@ def _manifest_pending_status(
     live_status = ""
     task_rows: list[dict[str, object]] = []
     controller_output = ""
+    startup_failure_output = ""
     blocker_controller_output = ""
     diagnostics = resolution_diagnostics(resolution)
     preview_diagnostic = _preview_failure_diagnostic(workflow_record)
@@ -7185,6 +7186,7 @@ def _manifest_pending_status(
             )
             if controller_logs.returncode == 0:
                 blocker_controller_output = controller_output[-4000:]
+            startup_failure_output = controller_output
             controller_output = controller_output[:4000]
             if controller_logs.returncode != 0:
                 diagnostics.append(
@@ -7215,7 +7217,7 @@ def _manifest_pending_status(
             if job_id
             else {}
         ),
-        controller_output=controller_output,
+        controller_output=startup_failure_output,
         project=project,
         isolated_config_dir=str(isolated_config_dir or ""),
         failure_threshold=startup_failure_threshold,
