@@ -63,6 +63,11 @@ PYPI_JSON = "https://pypi.org/pypi/lerobot/{version}/json"
 # (module, symbol, call-site provenance). symbol=None checks the module only.
 IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
     (
+        "lerobot.policies.factory",
+        "get_policy_class",
+        ("npa/src/npa/server/app.py",),
+    ),
+    (
         "lerobot.envs.configs",
         "PushtEnv",
         ("npa/src/npa/workflows/lerobot_transfer_eval.py",),

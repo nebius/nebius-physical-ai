@@ -432,6 +432,8 @@ images:
       1396b9fab7aecddd10006c33c47a487ffdcb54b4. Native model source and the
       Apache-2.0 license are retained; reviewed dependency declarations select
       the patched Torch/Diffusers/W&B stack and matching TorchCodec decoder.
+      One explicit hash-bound logger patch uses W&B's supported Run.url property;
+      the receipt identifies that changed source file separately from native model code.
       Real offline default-camera, ACT, Diffusion, server and native logger gates precede
       publication. GPU/default acceptance remains a separate qualification.
       Optional 0.6.0 and the additive B300 recipe retain distinct source scopes.

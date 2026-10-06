@@ -91,6 +91,7 @@ def wheel(tmp_path: Path) -> Path:
     # Callables whose parameter names the script asserts on.
     _write(
         root / "lerobot/policies/factory.py",
+        "def get_policy_class(name): ...\n"
         "def make_policy(cfg, ds_meta=None, env_cfg=None, rename_map=None): ...\n"
         "def make_pre_post_processors(policy_cfg, pretrained_path=None, **kwargs): ...\n",
     )
@@ -147,6 +148,17 @@ def test_removed_symbol_is_caught(monkeypatch, wheel):
     path.write_text("def something_else(): ...\n", encoding="utf-8")
     report = _run(monkeypatch, wheel)
     assert _status(report, "import-surface") == "FAIL"
+
+
+def test_removed_checkpoint_policy_loader_is_caught(monkeypatch, wheel):
+    path = wheel / "lerobot/policies/factory.py"
+    path.write_text(
+        path.read_text().replace("def get_policy_class(name): ...\n", ""),
+        encoding="utf-8",
+    )
+    report = _run(monkeypatch, wheel)
+    assert _status(report, "import-surface") == "FAIL"
+    assert any("get_policy_class" in check["detail"] for check in report.failed)
 
 
 def test_symbol_nested_inside_a_function_is_not_a_module_export(monkeypatch, wheel):
@@ -238,6 +250,7 @@ def test_lazy_getattr_export_is_an_unverifiable_warning(monkeypatch, wheel):
 def test_dropped_keyword_parameter_is_caught(monkeypatch, wheel):
     # `env_cfg` is passed by keyword from npa/server/app.py.
     (wheel / "lerobot/policies/factory.py").write_text(
+        "def get_policy_class(name): ...\n"
         "def make_policy(cfg, ds_meta=None): ...\n"
         "def make_pre_post_processors(policy_cfg, pretrained_path=None, **kwargs): ...\n",
         encoding="utf-8",

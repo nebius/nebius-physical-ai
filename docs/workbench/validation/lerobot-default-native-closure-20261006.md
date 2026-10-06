@@ -48,9 +48,13 @@ persisted run record.
 The repair builds the explicitly versioned NPA integration
 `0.5.1+npa.secure1` from upstream commit
 `1396b9fab7aecddd10006c33c47a487ffdcb54b4`. It verifies the complete upstream
-wheel and source archive hashes, compares every packaged model/source file to
+wheel and source archive hashes, compares every original packaged file to
 that commit, and preserves the Apache-2.0 license. Native model source remains
-unchanged. Five reviewed dependency declarations change to Torch 2.13,
+unchanged. One explicit hash-bound logger patch replaces removed W&B
+`Run.get_url()` with its supported `Run.url` property; the native logger gate
+exposed that compatibility error before publication. The receipt identifies
+that changed file and both source hashes rather than claiming all package
+source remains unchanged. Five reviewed dependency declarations change to Torch 2.13,
 torchvision 0.28, TorchCodec 0.16, Diffusers 0.38 and W&B 0.30 ranges.
 The rebuilt wheel has its own version, refreshed RECORD and source-integration
 receipt. Unknown artifacts, changed source or unexpected dependency declarations

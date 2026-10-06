@@ -27,11 +27,12 @@ def integration():
     return module
 
 
-def _archive(module, model):
+def _archive(module, model, logger):
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as archive:
         for path, value in (
             ("src/lerobot/model.py", model),
+            ("src/" + module.LOGGER_PATH, logger),
             ("LICENSE", b"Apache notice"),
         ):
             item = tarfile.TarInfo(f"lerobot-{module.UPSTREAM_COMMIT}/{path}")
@@ -41,6 +42,7 @@ def _archive(module, model):
 
 
 def _upstream(module, monkeypatch, *, model=b"native model source", wheel_model=None):
+    logger = b"logging.info(wandb.run.get_url())\n"
     original = (
         "Metadata-Version: 2.4\nName: lerobot\nVersion: 0.5.1\n"
         "License-File: LICENSE\nRequires-Dist: requests>=2.0\n"
@@ -51,6 +53,7 @@ def _upstream(module, monkeypatch, *, model=b"native model source", wheel_model=
         wheel.writestr(
             "lerobot/model.py", model if wheel_model is None else wheel_model
         )
+        wheel.writestr(module.LOGGER_PATH, logger)
         wheel.writestr(module.ORIGINAL_DIST_INFO + "METADATA", original)
         wheel.writestr(
             module.ORIGINAL_DIST_INFO + "WHEEL",
@@ -58,11 +61,12 @@ def _upstream(module, monkeypatch, *, model=b"native model source", wheel_model=
         )
         wheel.writestr(module.ORIGINAL_DIST_INFO + "licenses/LICENSE", b"Apache notice")
         wheel.writestr(module.ORIGINAL_DIST_INFO + "RECORD", "original record")
-    content, archive = output.getvalue(), _archive(module, model)
+    content, archive = output.getvalue(), _archive(module, model, logger)
     for field, value in (
         ("WHEEL_SHA256", content),
         ("ARCHIVE_SHA256", archive),
         ("METADATA_SHA256", original),
+        ("LOGGER_SHA256", logger),
     ):
         monkeypatch.setattr(module, field, hashlib.sha256(value).hexdigest())
     return content, archive
@@ -79,6 +83,9 @@ def test_versioned_integration_preserves_native_source_notices_and_record(
     with zipfile.ZipFile(built) as contents:
         assert contents.read("lerobot/model.py") == b"native model source"
         assert (
+            contents.read(integration.LOGGER_PATH) == b"logging.info(wandb.run.url)\n"
+        )
+        assert (
             contents.read(integration.DIST_INFO + "licenses/LICENSE")
             == b"Apache notice"
         )
@@ -91,6 +98,9 @@ def test_versioned_integration_preserves_native_source_notices_and_record(
             contents.read(integration.DIST_INFO + "npa-source-integration.json")
         )
         assert receipt["upstream_commit"] == integration.UPSTREAM_COMMIT
+        assert receipt["native_model_source_unchanged"] is True
+        assert receipt["package_source_unchanged"] is False
+        assert list(receipt["source_patches"]) == [integration.LOGGER_PATH]
         assert receipt["capability_qualification"].startswith("pending")
         for name, digest, size in csv.reader(
             contents.read(integration.DIST_INFO + "RECORD").decode().splitlines()
@@ -112,6 +122,16 @@ def test_changed_native_model_fails_before_output_creation(
 ):
     wheel, archive = _upstream(integration, monkeypatch, wheel_model=b"changed model")
     with pytest.raises(RuntimeError, match="pinned upstream commit"):
+        integration._prepare(wheel, archive, tmp_path / "candidate")
+    assert not (tmp_path / "candidate").exists()
+
+
+def test_unreviewed_logger_fails_before_output_creation(
+    integration, monkeypatch, tmp_path
+):
+    wheel, archive = _upstream(integration, monkeypatch)
+    monkeypatch.setattr(integration, "LOGGER_SHA256", "0" * 64)
+    with pytest.raises(RuntimeError, match="unreviewed upstream logger source"):
         integration._prepare(wheel, archive, tmp_path / "candidate")
     assert not (tmp_path / "candidate").exists()
 
