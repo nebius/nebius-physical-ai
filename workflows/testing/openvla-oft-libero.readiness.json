@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "ff857ff8c01f30737b130df6dbc373eb903feee1074da5792b8ba370f5230fd3",
+  "workflow_sha256": "93ec9f3b0524da453bc82bcc17822f71da45ed7fe3cddc35fecfdbe395e017c5",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected; every Kubernetes resource declares SkyPilot's named non-root ray-node task container, preserves seccomp/capability restrictions, and leaves no-new-privileges unset so the platform-required passwordless-sudo bootstrap can run. Its configured RTX PRO train and rollout profiles retain the same GPU product.",
+      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected. Every Kubernetes resource declares SkyPilot's named non-root ray-node task container, retains RuntimeDefault seccomp and privileged=false, and deliberately leaves the set-id capability path available because the platform-required passwordless-sudo bootstrap changes group before payload execution. Its configured RTX PRO train and rollout profiles retain the same GPU product.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/openvla-oft-libero.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/openvla-oft-libero.yaml --waves --check-render --json",
@@ -56,7 +56,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Earlier owned native submissions exposed and repaired the absent ray-node task container, the no-new-privileges/passwordless-sudo conflict, numeric nonroot admission, and an immediately exiting default command. The active controlled prepare attempt then passed target image preflight, GPU readiness, controller launch, named-container admission, and numeric nonroot admission, but is retrying a target Kubernetes exec transport failure before OFT setup. The newer private digest is ready for target preflight once that route is repaired or the active controller is terminal. No simulator metric, benchmark, convergence, or physical-robot claim is made.",
+      "reason": "The original controlled prepare controller is terminally cancelled after its ray-node exec failed before payload. A target diagnostic showed that dropping all container capabilities prevents the required passwordless sudo group change; the workflow now leaves that set-id path available while retaining nonroot, RuntimeDefault seccomp, privileged=false, and no service-account token. Re-run exact target preflight and the full controlled workflow before claiming any OFT setup, simulator metric, benchmark, convergence, or physical-robot result.",
       "evidence": [
         "docs/workbench/openvla-oft.md"
       ]

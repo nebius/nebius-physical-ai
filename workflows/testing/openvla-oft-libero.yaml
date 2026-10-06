@@ -56,10 +56,8 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # Omitted deliberately: SkyPilot's non-root in-pod bootstrap
-                # invokes the image's passwordless sudo contract.
-                capabilities:
-                  drop: [ALL]
+                # Do not drop the set-id capability path: SkyPilot's non-root
+                # bootstrap uses the image's passwordless sudo contract.
   train:
     cloud: kubernetes
     # The configured NPA route resolves this standard alias to its exact RTX PRO
@@ -82,10 +80,8 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # Omitted deliberately: SkyPilot's non-root in-pod bootstrap
-                # invokes the image's passwordless sudo contract.
-                capabilities:
-                  drop: [ALL]
+                # Do not drop the set-id capability path: SkyPilot's non-root
+                # bootstrap uses the image's passwordless sudo contract.
   rollout:
     cloud: kubernetes
     accelerators: RTXPRO6000:1
@@ -105,10 +101,8 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # Omitted deliberately: SkyPilot's non-root in-pod bootstrap
-                # invokes the image's passwordless sudo contract.
-                capabilities:
-                  drop: [ALL]
+                # Do not drop the set-id capability path: SkyPilot's non-root
+                # bootstrap uses the image's passwordless sudo contract.
   evidence:
     cloud: kubernetes
     cpus: 4
@@ -127,10 +121,8 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # Omitted deliberately: SkyPilot's non-root in-pod bootstrap
-                # invokes the image's passwordless sudo contract.
-                capabilities:
-                  drop: [ALL]
+                # Do not drop the set-id capability path: SkyPilot's non-root
+                # bootstrap uses the image's passwordless sudo contract.
 
 initial: prepare
 

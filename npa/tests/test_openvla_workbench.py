@@ -221,13 +221,12 @@ def test_workflow_resources_declare_the_skypilot_task_container() -> None:
         assert pod_spec["automountServiceAccountToken"] is False, resource_name
         container = pod_spec["containers"][0]
         assert container["name"] == "ray-node", resource_name
-        # Kubernetes' no-new-privileges mode would disable the required
-        # passwordless-sudo SkyPilot bootstrap in this otherwise non-root pod.
+        # Dropping every capability prevents sudo from changing group during
+        # SkyPilot's required non-root bootstrap.
         assert "allowPrivilegeEscalation" not in container["securityContext"]
         assert container["securityContext"] == {
             "runAsNonRoot": True,
             "privileged": False,
-            "capabilities": {"drop": ["ALL"]},
         }, resource_name
 
 
