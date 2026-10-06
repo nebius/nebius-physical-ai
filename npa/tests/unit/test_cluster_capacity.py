@@ -427,3 +427,79 @@ def test_summary_never_invents_a_zero() -> None:
     assert "on-demand UNKNOWN (available unknown, limit 8)" in (
         capacity.capacity_summary(missing)
     )
+
+
+def _gpu_advice(*, preemptible: dict, preset: dict | None = None) -> str:
+    return json.dumps(
+        {
+            "items": [
+                {
+                    "spec": {
+                        "region": "us-central1",
+                        "compute_instance": {
+                            "platform": "gpu-h200-sxm",
+                            "preset": preset
+                            or {
+                                "name": "8gpu-128vcpu-1600gb",
+                                "resources": {"gpu_count": 8},
+                            },
+                        },
+                    },
+                    "status": {
+                        "on_demand": _row("LIMIT_REACHED"),
+                        "preemptible": preemptible,
+                    },
+                }
+            ]
+        }
+    )
+
+
+def _h200_quota() -> str:
+    return json.dumps(
+        {
+            "metadata": {"name": "compute.instance.gpu.h200"},
+            "spec": {"limit": "0", "region": "us-central1"},
+            "status": {"unit": "count"},
+        }
+    )
+
+
+def _h200_error(advice: str, required_gpus: int) -> str | None:
+    return capacity.gpu_capacity_error(
+        _capture(_h200_quota(), advice),
+        nebius_bin="nebius",
+        tenant_id="tenant-a",
+        region="us-central1",
+        platform="gpu-h200-sxm",
+        preset="8gpu-128vcpu-1600gb",
+        required_gpus=required_gpus,
+    )
+
+
+_PREEMPTIBLE_REMEDY = "gpu_nodes_preemptible = true` in terraform.tfvars"
+
+
+def test_preemptible_option_counts_gpus_per_vm() -> None:
+    """`available` counts VMs of the preset, and the request counts GPUs."""
+    advice = _gpu_advice(preemptible=_row("LOW", available=1, limit=128))
+
+    assert _PREEMPTIBLE_REMEDY in (_h200_error(advice, 8) or "")
+    assert _PREEMPTIBLE_REMEDY not in (_h200_error(advice, 16) or "")
+
+
+def test_preemptible_option_falls_back_to_the_preset_name() -> None:
+    advice = _gpu_advice(
+        preemptible=_row("LOW", available=1, limit=128),
+        preset={"name": "8gpu-128vcpu-1600gb"},
+    )
+
+    assert _PREEMPTIBLE_REMEDY in (_h200_error(advice, 8) or "")
+
+
+def test_preemptible_option_needs_fresh_advice() -> None:
+    advice = _gpu_advice(
+        preemptible=_row("LOW", state="DATA_STATE_STALE", available=1, limit=128)
+    )
+
+    assert _PREEMPTIBLE_REMEDY not in (_h200_error(advice, 8) or "")

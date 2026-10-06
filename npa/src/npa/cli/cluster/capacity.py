@@ -17,6 +17,7 @@ check rather than blocking a healthy provision.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable, Iterable
 
 CaptureFn = Callable[[list[str]], Any]
@@ -117,8 +118,34 @@ def capacity_summary(entry: dict[str, Any]) -> str:
 
 
 def preemptible_available(entry: dict[str, Any]) -> int:
+    """Return how many preemptible VMs of the entry's preset can launch now."""
     section = ((entry or {}).get("status") or {}).get("preemptible") or {}
     return _int_or_none(section.get("available")) or 0
+
+
+def preemptible_is_fresh(entry: dict[str, Any]) -> bool:
+    section = ((entry or {}).get("status") or {}).get("preemptible") or {}
+    return section.get("data_state") == "DATA_STATE_FRESH"
+
+
+def preset_gpu_count(entry: dict[str, Any]) -> int:
+    """Return GPUs per VM for the entry's preset.
+
+    Uses `preset.resources.gpu_count`, then the preset name's leading
+    `<n>gpu-`, then 1.
+    """
+    instance = ((entry or {}).get("spec") or {}).get("compute_instance") or {}
+    preset = instance.get("preset") or {}
+    count = _int_or_none((preset.get("resources") or {}).get("gpu_count"))
+    if count:
+        return count
+    match = re.match(r"(\d+)gpu-", str(preset.get("name") or ""))
+    return int(match.group(1)) if match else 1
+
+
+def _entry_preset(entry: dict[str, Any]) -> str:
+    instance = ((entry or {}).get("spec") or {}).get("compute_instance") or {}
+    return str((instance.get("preset") or {}).get("name") or "")
 
 
 def _json_payload(capture: CaptureFn, args: list[str]) -> dict[str, Any]:
@@ -379,11 +406,17 @@ def gpu_capacity_error(
     remedies = [
         f"ask a tenant admin to raise the {quota_name} quota for {region}",
     ]
-    if preemptible_available(advice) >= required_gpus:
+    free_vms = preemptible_available(advice)
+    if _entry_preset(advice) == preset:
+        free_gpus = free_vms * preset_gpu_count(advice)
+    else:
+        free_gpus = free_vms
+    if preemptible_is_fresh(advice) and free_gpus >= required_gpus:
         remedies.append(
             "or run the GPU node group as preemptible: "
             "`gpu_nodes_preemptible = true` in terraform.tfvars "
-            "(TF_VAR_gpu_nodes_preemptible=true), which draws on the preemptible pool"
+            "(TF_VAR_gpu_nodes_preemptible=true), which draws on the preemptible "
+            "pool at the current spot price"
         )
     else:
         remedies.append(
