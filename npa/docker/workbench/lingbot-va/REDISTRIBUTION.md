@@ -41,6 +41,12 @@ installs the child runtime. The override does not alter the `restricted`
 classification, the public publication refusal, or the requirement to scan and
 functionally qualify the resulting child digest.
 
+Some exact public upstream library bytes contain key-format parser literals.
+The image scanner recognizes only independently audited byte identities for that
+classification; it does not make a parent security-clean or waive a CVE. Each
+selected parent and resulting child still needs fresh full-byte, vulnerability,
+SBOM, provenance, and license checks before operator-private execution.
+
 Public release is not authorized by this source-only record. The only permitted
 near-term use is operator-private validation after exact image scans, a native
 GPU execution, and independently inspected candidate-digest evidence. See
