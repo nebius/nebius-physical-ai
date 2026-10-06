@@ -164,26 +164,39 @@ def test_fastwam_image_pins_the_stable_le_robot_release_and_feature_extra() -> N
     assert fastwam.LEROBOT_RELEASE_COMMIT == "7e241bd630a3719a56157a497ce5d08f244784f1"
 
 
-def test_fastwam_image_bootstrap_projection_covers_hatch_force_includes() -> None:
-    """Keep the image-local editable install's Hatch metadata inputs complete."""
+def _npa_copy_destinations(dockerfile: str) -> dict[str, str]:
+    """Map NPA Docker COPY sources to their Docker-defined destinations."""
 
-    dockerfile = FASTWAM_DOCKERFILE.read_text(encoding="utf-8").replace("\\\n", " ")
-    copied_sources: set[str] = set()
-    for instruction in dockerfile.splitlines():
+    destinations: dict[str, str] = {}
+    for instruction in dockerfile.replace("\\\n", " ").splitlines():
         if not instruction.startswith("COPY "):
             continue
         fields = shlex.split(instruction)
-        if fields[-1].rstrip("/") != "/opt/npa/src/npa":
-            continue
-        copied_sources.update(
-            field for field in fields[1:-1] if not field.startswith("--")
-        )
+        sources = [field for field in fields[1:-1] if not field.startswith("--")]
+        destination = Path(fields[-1])
+        for source in sources:
+            if not source.startswith("src/npa/"):
+                continue
+            target = destination
+            if len(sources) > 1 or fields[-1].endswith("/"):
+                target /= Path(source).name
+            destinations[source] = target.as_posix()
+    return destinations
+
+
+def test_fastwam_image_bootstrap_projection_covers_hatch_force_includes() -> None:
+    """Keep the image-local editable install's Hatch metadata inputs complete."""
 
     pyproject = tomllib.loads((ROOT / "npa" / "pyproject.toml").read_text())
     force_includes = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"][
         "force-include"
     ]
-    assert set(force_includes) <= copied_sources
+    destinations = _npa_copy_destinations(
+        FASTWAM_DOCKERFILE.read_text(encoding="utf-8")
+    )
+    assert {source: destinations.get(source) for source in force_includes} == {
+        source: f"/opt/npa/{source}" for source in force_includes
+    }
 
 
 def test_fastwam_image_removes_the_known_inert_scikit_image_recipe_in_its_install_layer() -> (

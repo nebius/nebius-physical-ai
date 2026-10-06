@@ -130,21 +130,19 @@ COPY --chown=ubuntu:ubuntu src/npa/smoke /opt/npa/src/npa/smoke
 # staged source overlay is available. Hatch validates every wheel force-include
 # during editable-install metadata generation, so retain those package-data
 # inputs even though this image does not serve the corresponding tool surfaces.
-COPY --chown=ubuntu:ubuntu \
-  src/npa/solutions/solutions.toml \
-  src/npa/deploy/sonic_image_manifest.json \
-  src/npa/deploy/wan2_2_image_manifest.json \
-  src/npa/deploy/content_agents_image_manifest.json \
-  src/npa/deploy/ltx2_image_manifest.json \
-  src/npa/deploy/public_release_manifest.json \
-  src/npa/deploy/lerobot_version_manifest.json \
-  src/npa/deploy/libero_image_manifest.json \
-  src/npa/deploy/terraform/.terraform.lock.hcl \
-  src/npa/deploy/terraform/.terraform.lock.npa.json \
-  src/npa/smoke/golden_evals.yaml \
-  src/npa/cli/agent_ui.html \
-  src/npa/assets/paidf_starter_video.json \
-  /opt/npa/src/npa/
+COPY --chown=ubuntu:ubuntu src/npa/solutions/solutions.toml /opt/npa/src/npa/solutions/solutions.toml
+COPY --chown=ubuntu:ubuntu src/npa/deploy/sonic_image_manifest.json /opt/npa/src/npa/deploy/sonic_image_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/wan2_2_image_manifest.json /opt/npa/src/npa/deploy/wan2_2_image_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/content_agents_image_manifest.json /opt/npa/src/npa/deploy/content_agents_image_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/ltx2_image_manifest.json /opt/npa/src/npa/deploy/ltx2_image_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/public_release_manifest.json /opt/npa/src/npa/deploy/public_release_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/lerobot_version_manifest.json /opt/npa/src/npa/deploy/lerobot_version_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/libero_image_manifest.json /opt/npa/src/npa/deploy/libero_image_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/terraform/.terraform.lock.hcl /opt/npa/src/npa/deploy/terraform/.terraform.lock.hcl
+COPY --chown=ubuntu:ubuntu src/npa/deploy/terraform/.terraform.lock.npa.json /opt/npa/src/npa/deploy/terraform/.terraform.lock.npa.json
+COPY --chown=ubuntu:ubuntu src/npa/smoke/golden_evals.yaml /opt/npa/src/npa/smoke/golden_evals.yaml
+COPY --chown=ubuntu:ubuntu src/npa/cli/agent_ui.html /opt/npa/src/npa/cli/agent_ui.html
+COPY --chown=ubuntu:ubuntu src/npa/assets/paidf_starter_video.json /opt/npa/src/npa/assets/paidf_starter_video.json
 
 RUN python -m npa.smoke.test_lerobot_env
 
