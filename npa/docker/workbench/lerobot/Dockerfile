@@ -144,7 +144,6 @@ COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 
 RUN python -m npa.smoke.test_lerobot_env
-RUN --network=none /opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py
 
 USER root
 
@@ -195,9 +194,12 @@ RUN apt-get update \
 
 USER ubuntu
 
+# Exercise the final hardened environment and the declared server interpreter.
+RUN --network=none /opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)" || exit 1
+  CMD /opt/lerobot/venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)" || exit 1
 
-ENTRYPOINT ["python", "-m", "npa.server.app"]
+ENTRYPOINT ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]

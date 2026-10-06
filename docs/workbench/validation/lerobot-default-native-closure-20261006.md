@@ -57,8 +57,17 @@ The image must run `pip check` and a network-disabled CPU build gate before
 publication. That gate writes and decodes real camera videos through the native
 default backend, executes ACT and Diffusion forward/backward and optimizer
 updates, verifies changed weights, and reloads checkpoints and ACT's saved
-processors. No external
-model, dataset, decoder patch or GPU is involved.
+processors. It also loads that real ACT checkpoint through the NPA policy server
+and compares its two-camera/state prediction with native LeRobot inference,
+including a real server subprocess's `/health`, `/serve` and `/infer` requests.
+The declared server entrypoint and healthcheck use the vendor interpreter
+explicitly, while SkyPilot's bootstrap retains system-first PATH. The gate runs
+after that PATH change and the final OS hardening.
+Checkpoint-only serving preserves saved input/output feature shapes; the training
+factory requires dataset or environment metadata even when a checkpoint already
+has those shapes. An explicitly supplied environment retains the native factory
+path. No environment or robot metadata is invented. No external model, dataset,
+decoder patch or GPU is involved.
 
 The maintained integration still requires fresh ordinary vulnerability, secret,
 license, image and SDK gates. No security exemptions are introduced.

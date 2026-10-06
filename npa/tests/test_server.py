@@ -312,3 +312,71 @@ def test_infer_endpoint_parses_observation_and_returns_actions(
     assert response.status_code == 200
     assert response.json()["actions"] == [0.1, 0.2]
     assert response.json()["checkpoint"] == "/checkpoint"
+
+
+@pytest.mark.parametrize("with_env", [False, True])
+def test_policy_load_preserves_checkpoint_features_without_environment(
+    server_module, monkeypatch, with_env
+):
+    from unittest.mock import Mock
+
+    config = SimpleNamespace(
+        device="cpu",
+        type="act",
+        use_peft=False,
+        input_features={"observation.state": (7,)},
+        output_features={"action": (8,)},
+    )
+    policy = Mock()
+    policy.to.return_value = policy
+    policy.parameters.return_value = []
+    from_pretrained = Mock(return_value=policy)
+    factory = Mock(return_value=policy)
+    get_policy_class = Mock(
+        return_value=SimpleNamespace(from_pretrained=from_pretrained)
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "lerobot.configs.policies",
+        SimpleNamespace(
+            PreTrainedConfig=SimpleNamespace(from_pretrained=lambda _: config)
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "lerobot.policies.factory",
+        SimpleNamespace(
+            get_policy_class=get_policy_class,
+            make_policy=factory,
+            make_pre_post_processors=lambda **_: ("pre", "post"),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "lerobot.utils.device_utils",
+        SimpleNamespace(get_safe_torch_device=FakeDevice),
+    )
+    env = SimpleNamespace(task="saved-task")
+    monkeypatch.setitem(
+        sys.modules,
+        "lerobot.envs.configs",
+        SimpleNamespace(
+            EnvConfig=SimpleNamespace(get_choice_class=lambda _: lambda **__: env)
+        ),
+    )
+
+    state = server_module.PolicyState()
+    state.load("/checkpoint", env_type="aloha" if with_env else None)
+
+    assert state.loaded and state.checkpoint == "/checkpoint"
+    assert state.preprocessor == "pre" and state.postprocessor == "post"
+    policy.to.assert_called_once()
+    policy.eval.assert_called_once()
+    if with_env:
+        factory.assert_called_once_with(config, env_cfg=env)
+        from_pretrained.assert_not_called()
+    else:
+        get_policy_class.assert_called_once_with("act")
+        from_pretrained.assert_called_once_with("/checkpoint", config=config)
+        factory.assert_not_called()
+        assert config.output_features == {"action": (8,)}

@@ -54,6 +54,11 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" in recipe
     assert "prepare-secure-wheel.py" in recipe
     assert "lerobot-0.5.1+npa.secure1-py3-none-any.whl" in recipe
+    assert (
+        'ENTRYPOINT ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]' in recipe
+    )
+    assert 'CMD /opt/lerobot/venv/bin/python -c "' in recipe
+    assert recipe.index("ENV PATH=/usr/bin:$PATH") < recipe.index("RUN --network=none")
 
 
 @pytest.mark.parametrize(
@@ -91,3 +96,16 @@ def test_build_gate_uses_native_default_decoder_without_network_access():
     assert "ACTPolicy.from_pretrained(checkpoint)" in source
     assert "pretrained_path=str(checkpoint)" in source
     assert "from npa.server.app import app" in source
+    assert "from npa.server.app import PolicyState" in source
+    assert "state.load(str(checkpoint))" in source
+    assert "state.predict(" in source
+    assert "torch.testing.assert_close(expected.cpu(), actual)" in source
+    assert '[interpreter, "-m", "npa.server.app"]' in source
+    http_calls = {
+        (call.args[1].value, call.args[2].value)
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "_http_request"
+    }
+    assert {("GET", "/health"), ("POST", "/serve"), ("POST", "/infer")} <= http_calls

@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import http.client
 from importlib import metadata
 import json
 import os
 from pathlib import Path
 import subprocess
+import socket
 import sys
 import tempfile
+import time
 
 import numpy as np
 import torch
@@ -201,7 +205,125 @@ def _native_act(root: Path) -> dict:
         "loss": loss,
         "changed_parameters": changed,
         "checkpoint_processors": "passed",
+        "server_checkpoint_inference": _server_round_trip(checkpoint, observation),
     }
+
+
+def _raw_observation(observation: dict) -> dict:
+    raw = {}
+    for name, value in observation.items():
+        sample = value[0].detach().cpu().numpy()
+        raw[name] = (
+            (sample.transpose(1, 2, 0) * 255).astype(np.uint8)
+            if "image" in name
+            else sample
+        )
+    return raw
+
+
+def _server_round_trip(checkpoint: Path, observation: dict) -> dict:
+    from lerobot.policies.utils import prepare_observation_for_inference
+    from npa.server.app import PolicyState
+
+    raw = _raw_observation(observation)
+    state = PolicyState()
+    state.load(str(checkpoint))
+    assert state.loaded and not state.policy.training
+    assert state.policy.config.output_features["action"].shape == (8,)
+    prepared = prepare_observation_for_inference(
+        {name: value.copy() for name, value in raw.items()}, state.device
+    )
+    with torch.inference_mode():
+        expected = state.postprocessor(
+            state.policy.select_action(state.preprocessor(prepared))
+        ).squeeze(0)
+    state.policy.reset()
+    actual = torch.tensor(
+        state.predict({name: value.copy() for name, value in raw.items()})
+    )
+    assert actual.shape == (8,) and torch.isfinite(actual).all()
+    torch.testing.assert_close(expected.cpu(), actual)
+    state.unload()
+    assert not state.loaded
+    _server_http_round_trip(checkpoint, raw, expected.cpu())
+    return {
+        "saved_shapes_preserved": True,
+        "actions": 8,
+        "prediction_equal": True,
+        "http_health_serve_infer": "passed",
+    }
+
+
+def _http_request(port: int, method: str, path: str, body: dict | None = None):
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+    try:
+        connection.request(
+            method,
+            path,
+            body=json.dumps(body) if body is not None else None,
+            headers={"Content-Type": "application/json"},
+        )
+        response = connection.getresponse()
+        result = json.loads(response.read())
+        assert response.status == 200, result
+        return result
+    finally:
+        connection.close()
+
+
+@contextmanager
+def _server_process(root: Path):
+    interpreter = "/opt/lerobot/venv/bin/python"
+    assert sys.executable == interpreter
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    env = dict(os.environ)
+    env.update(
+        NPA_SERVER_HOST="127.0.0.1",
+        NPA_SERVER_PORT=str(port),
+        NPA_CHECKPOINT_DIR=str(root / "server-checkpoints"),
+        NPA_JOB_STATUS_DIR=str(root / "server-jobs"),
+        NPA_LOG_DIR=str(root / "server-logs"),
+    )
+    with (root / "server-process.log").open("w+") as log:
+        process = subprocess.Popen(
+            [interpreter, "-m", "npa.server.app"], env=env, stdout=log, stderr=log
+        )
+        try:
+            _wait_for_server(process, port, log)
+            yield port
+        finally:
+            process.terminate()
+            process.wait()
+
+
+def _wait_for_server(process, port: int, log) -> None:
+    while process.poll() is None:
+        try:
+            assert _http_request(port, "GET", "/health") == {"status": "ok"}
+            return
+        except ConnectionRefusedError:
+            time.sleep(0.1)
+    log.seek(0)
+    raise RuntimeError("Native server failed to start: " + log.read())
+
+
+def _server_http_round_trip(checkpoint: Path, raw: dict, expected: torch.Tensor):
+    with _server_process(checkpoint.parent) as port:
+        served = _http_request(port, "POST", "/serve", {"checkpoint": str(checkpoint)})
+        assert served["status"] == "serving" and served["device"] == "cpu"
+        status = _http_request(port, "GET", "/status")
+        assert status["policy_server"]["checkpoint"] == str(checkpoint)
+        inferred = _http_request(
+            port,
+            "POST",
+            "/infer",
+            {name: value.tolist() for name, value in raw.items()},
+        )
+        assert inferred["checkpoint"] == str(checkpoint)
+        torch.testing.assert_close(expected, torch.tensor(inferred["actions"]))
+        assert _http_request(port, "DELETE", "/serve") == {"status": "stopped"}
 
 
 def _diffusion_configuration():
