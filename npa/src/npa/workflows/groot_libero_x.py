@@ -90,6 +90,10 @@ _SECRET_ENV_NAME = re.compile(
 )
 _FAILURE_TEXT_LIMIT = 8192
 _GIT_LFS_POINTER_VERSION = "version https://git-lfs.github.com/spec/v1"
+# Bound each external Git LFS HTTP operation so a stalled public endpoint cannot
+# hold the runtime cache lock forever.  This is deliberately a transport bound,
+# not a workload or rollout deadline.
+GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS = 60.0
 # Isaac-GR00T's lock resolves the aarch64 TorchCodec wheel while validating its
 # multi-platform environment, even on an x86_64 worker.  Fetch exactly that
 # upstream LFS object after checking out the reviewed source revision; do not
@@ -815,6 +819,17 @@ def _expected_lfs_pointer(expected_sha256: str, expected_size: int) -> str:
     )
 
 
+def _raise_lfs_transport_error(operation: str, exc: BaseException) -> None:
+    """Raise a bounded, URL-free error for one Git LFS transport operation."""
+
+    reason = getattr(exc, "reason", None)
+    if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError):
+        raise GrootVisualizationError(
+            f"{operation} timed out after {GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS:g} seconds"
+        ) from exc
+    raise GrootVisualizationError(f"could not {operation}") from exc
+
+
 def _github_lfs_download_url(expected_sha256: str, expected_size: int) -> str:
     """Resolve one expected object through the upstream Git LFS batch API."""
 
@@ -835,12 +850,12 @@ def _github_lfs_download_url(expected_sha256: str, expected_size: int) -> str:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(batch_request) as response:
+        with urllib.request.urlopen(
+            batch_request, timeout=GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS
+        ) as response:
             batch = json.loads(response.read().decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise GrootVisualizationError(
-            "could not resolve the required upstream Git LFS object"
-        ) from exc
+        _raise_lfs_transport_error("resolve the required upstream Git LFS object", exc)
     return _lfs_download_url_from_batch(batch, expected_sha256, expected_size)
 
 
@@ -888,15 +903,15 @@ def _download_lfs_bytes(url: str, temporary: Path) -> None:
 
     try:
         with (
-            urllib.request.urlopen(url) as response,
+            urllib.request.urlopen(
+                url, timeout=GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS
+            ) as response,
             temporary.open("xb") as handle,
         ):
             while chunk := response.read(1024 * 1024):
                 handle.write(chunk)
     except OSError as exc:
-        raise GrootVisualizationError(
-            "could not download the required upstream Git LFS object"
-        ) from exc
+        _raise_lfs_transport_error("download the required upstream Git LFS object", exc)
 
 
 def _download_github_lfs_object(

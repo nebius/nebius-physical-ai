@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import subprocess
+import urllib.error
 from pathlib import Path
 from typing import Any
 
@@ -601,9 +604,11 @@ def test_runtime_lfs_download_requires_matching_batch_and_payload_digest(
     download_url = "https://objects.example.invalid/opaque-signed-object"
     calls: list[Any] = []
 
-    def urlopen(request: Any) -> _StreamingResponse:
-        calls.append(request)
+    def urlopen(request: Any, *, timeout: float) -> _StreamingResponse:
+        calls.append((request, timeout))
         if len(calls) == 1:
+            request, timeout = calls[-1]
+            assert timeout == workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS
             assert request.full_url == (
                 f"{workflow.IMAGE_GROOT_REPOSITORY}/info/lfs/objects/batch"
             )
@@ -625,6 +630,8 @@ def test_runtime_lfs_download_requires_matching_batch_and_payload_digest(
                     }
                 ).encode()
             )
+        request, timeout = calls[-1]
+        assert timeout == workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS
         assert request == download_url
         return _StreamingResponse(payload)
 
@@ -636,6 +643,98 @@ def test_runtime_lfs_download_requires_matching_batch_and_payload_digest(
 
     assert destination.read_bytes() == payload
     assert len(calls) == 2
+
+
+def test_lfs_download_timeout_is_actionable_and_releases_runtime_cache_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = b"PK\x03\x04-reviewed-wheel"
+    digest = hashlib.sha256(payload).hexdigest()
+    relative_path = "scripts/deployment/dgpu/wheels/torchcodec.whl"
+    monkeypatch.setattr(
+        workflow,
+        "GROOT_RUNTIME_LFS_OBJECTS",
+        ((relative_path, digest, len(payload)),),
+    )
+    monkeypatch.setattr(workflow.shutil, "which", lambda _name: "tool")
+    monkeypatch.setattr(
+        workflow.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=f"{workflow.IMAGE_GROOT_REF}\n"
+        ),
+    )
+
+    def runtime_command(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
+        if str(command[-2]) == workflow.IMAGE_GROOT_REPOSITORY:
+            source = Path(command[-1])
+            target = source / relative_path
+            target.parent.mkdir(parents=True)
+            target.write_text(workflow._expected_lfs_pointer(digest, len(payload)))
+
+    monkeypatch.setattr(workflow, "_run_runtime_command", runtime_command)
+    calls: list[tuple[Any, float]] = []
+
+    def timeout_after_batch(request: Any, *, timeout: float) -> _StreamingResponse:
+        calls.append((request, timeout))
+        if len(calls) == 1:
+            return _StreamingResponse(
+                json.dumps(
+                    {
+                        "objects": [
+                            {
+                                "oid": digest,
+                                "size": len(payload),
+                                "actions": {
+                                    "download": {
+                                        "href": "https://objects.example.invalid/signed"
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                ).encode()
+            )
+        raise urllib.error.URLError(TimeoutError("stalled transport"))
+
+    monkeypatch.setattr(workflow.urllib.request, "urlopen", timeout_after_batch)
+
+    with pytest.raises(
+        workflow.GrootVisualizationError,
+        match=r"download the required upstream Git LFS object timed out after 60 seconds",
+    ):
+        workflow._materialize_native_runtime(tmp_path)
+
+    assert [timeout for _request, timeout in calls] == [
+        workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS,
+        workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS,
+    ]
+    lock_path = next(workflow._runtime_cache_root(tmp_path).glob("*.lock"))
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def test_lfs_batch_transport_error_is_actionable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_sha256 = "a" * 64
+    calls: list[tuple[Any, float]] = []
+
+    def broken_transport(request: Any, *, timeout: float) -> _StreamingResponse:
+        calls.append((request, timeout))
+        raise urllib.error.URLError("name resolution failed")
+
+    monkeypatch.setattr(workflow.urllib.request, "urlopen", broken_transport)
+
+    with pytest.raises(
+        workflow.GrootVisualizationError,
+        match="could not resolve the required upstream Git LFS object",
+    ):
+        workflow._github_lfs_download_url(expected_sha256, 1)
+
+    assert len(calls) == 1
+    assert calls[0][1] == workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS
 
 
 def test_runtime_lfs_download_rejects_wrong_payload_without_replacing_pointer(
@@ -670,7 +769,7 @@ def test_runtime_lfs_download_rejects_wrong_payload_without_replacing_pointer(
     monkeypatch.setattr(
         workflow.urllib.request,
         "urlopen",
-        lambda _request: _StreamingResponse(next(responses)),
+        lambda _request, *, timeout: _StreamingResponse(next(responses)),
     )
 
     with pytest.raises(workflow.GrootVisualizationError, match="did not match"):
