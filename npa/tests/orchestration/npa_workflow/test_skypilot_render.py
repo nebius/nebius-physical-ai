@@ -408,10 +408,12 @@ def test_task_owned_setup_interpreter_overrides_a_baked_runtime(
     launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
     record = tmp_path / "npa-python"
-    setup = (
-        default_npa_setup()
-        .replace("/tmp/npa-python", str(record))
-        .replace("/usr/local/bin/npa", str(launcher))
+    setup = default_npa_setup()
+    record_marker = 'echo "$npa_python" > '
+    record_start = setup.index(record_marker) + len(record_marker)
+    rendered_record = setup[record_start : setup.index("\n", record_start)]
+    setup = setup.replace(rendered_record, str(record), 1).replace(
+        "/usr/local/bin/npa", str(launcher)
     )
     environment = {
         "HOME": str(tmp_path),
