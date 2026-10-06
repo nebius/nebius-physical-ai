@@ -104,8 +104,9 @@ Resume the exact run using the command NPA prints, or `--resume-run <id>` with
 the original specification and target. See [run identity](../run-lifecycle.md#run-identity).
 
 For runtime orchestration, `--workflow-s3-uri` selects the exact control-state
-run root. `--workflow-s3-prefix` accepts a relative parent key and appends the
-run ID; use `--workflow-s3-uri` when supplying a full S3 URI. A
+run root. Do not append `/npa-workflow`: that is the monitor-only control leaf
+written below the selected root. `--workflow-s3-prefix` accepts a relative parent
+key and appends the run ID; use `--workflow-s3-uri` when supplying a full S3 URI. A
 plan-only submit reports the same resolved `run_prefix_uri` that execution will
 use. Resume keeps the location recorded by the original submit and rejects a
 different explicit destination before updating local or remote run state.

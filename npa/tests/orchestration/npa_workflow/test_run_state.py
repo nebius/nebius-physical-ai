@@ -1429,6 +1429,21 @@ def test_workflow_storage_exact_uri_rejects_a_different_trailing_run() -> None:
         )
 
 
+def test_workflow_storage_exact_uri_rejects_control_prefix() -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_workflow_storage_location,
+    )
+
+    with pytest.raises(ValueError, match="run root"):
+        resolve_workflow_storage_location(
+            {"bucket": "science-bucket", "prefix": "science/output"},
+            run_id="runtime-1",
+            workflow_s3_uri=(
+                "s3://control-bucket/campaign/runtime/runtime-1/npa-workflow"
+            ),
+        )
+
+
 def test_workflow_storage_rejects_conflicting_selectors() -> None:
     from npa.orchestration.npa_workflow.run_state import (
         resolve_workflow_storage_location,

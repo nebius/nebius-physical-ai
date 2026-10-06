@@ -143,7 +143,10 @@ def _exact_workflow_storage(exact_uri: str, run_id: str) -> RunStorageLocation:
     if parts and parts[-1] == "manifest.json":
         parts.pop()
     if parts and parts[-1] == "npa-workflow":
-        parts.pop()
+        raise ValueError(
+            "--workflow-s3-uri for runtime submit must name the run root, "
+            "not its npa-workflow control prefix"
+        )
     if str(run_id or "") not in parts[-2:]:
         raise ValueError(
             "--workflow-s3-uri must identify the requested run in its trailing "
