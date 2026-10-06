@@ -495,7 +495,12 @@ issue that blocked its rebuilt image scan; Transfer's hash-verified security
 override selects the same fix. The controller and viewer use the immutable
 2026-10-01 Debian snapshot with fixed Perl, GLib and Mbed TLS, and both upgrade
 inherited packages. EnvGen and Loop Eval use the 2026-10-01 Ubuntu snapshot with
-the fixed `linux-libc-dev` 5.15.0-194.204 package. These are source repairs:
+the fixed `linux-libc-dev` 5.15.0-194.204 package. EnvGen also applies cuRobo's
+existing exact-source correction to an inert scikit-image recipe containing a
+historical token. The correction preserves executable behavior and removes
+the original source and bytecode before flattening the sanitized filesystem;
+derivatives must be rebuilt from that corrected parent to discard the old
+bytes from their layers. These are source repairs:
 newly built images must still pass all publication scans and real capability
 validation before any public default is restored. Historical releases remain
 quarantined.

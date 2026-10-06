@@ -46,6 +46,7 @@ from npa.workflows.sim2real_health import (
     run_preflight,
 )
 from npa.workflows.sim2real.config import build_config_from_env
+from npa.workflows.sim2real.diagnostic_config import build_diagnostic_config_from_env
 from npa.workbench.model_access import (
     all_capabilities,
     check_workbench_access,
@@ -623,7 +624,7 @@ def sim2real_command(
         )
 
     try:
-        config = build_config_from_env(**overrides)
+        config = _sim2real_preflight_config(selected, overrides)
     except ValueError as exc:
         # Image resolution deliberately fails closed for quarantined public
         # releases. Surface that policy as an actionable CLI error instead of
@@ -670,3 +671,16 @@ def sim2real_command(
 
     if has_failure(results) and not warn_only:
         raise typer.Exit(code=1)
+
+
+def _sim2real_preflight_config(selected, overrides):
+    if "config" in selected or "registry" in selected:
+        return build_config_from_env(**overrides)
+    return build_diagnostic_config_from_env(
+        run_id=str(overrides["run_id"]),
+        s3_bucket=str(overrides["s3_bucket"]),
+        s3_endpoint=str(overrides["s3_endpoint"]),
+        k8s_namespace=str(overrides["k8s_namespace"]),
+        k8s_context=str(overrides["k8s_context"]),
+        k8s_kubeconfig=str(overrides["k8s_kubeconfig"]),
+    )

@@ -110,6 +110,21 @@ def test_envgen_removes_optional_forbidden_and_vulnerable_parent_tools() -> None
     assert "raise RuntimeError(" in compat
 
 
+def test_envgen_corrects_inert_dependency_recipe_before_flattening() -> None:
+    """Discard the original source and bytecode from every published layer."""
+
+    text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
+    assert "COPY docker/workbench/curobo/remove_scikit_image_recipe.py" in text
+    correction = text.index(
+        "&& python /usr/local/lib/npa/remove-scikit-image-recipe.py"
+    )
+    assert text.index("FROM ${BASE_IMAGE} AS sanitized") < correction
+    assert correction < text.index("FROM scratch AS runtime")
+    assert text.index("COPY --from=sanitized / /") > correction
+    assert "--site-packages /opt/npa/venv/lib/python3.11/site-packages" in text
+    assert "/usr/share/doc/npa-envgen/dependency-source-correction.json" in text
+
+
 def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text(
         encoding="utf-8"
