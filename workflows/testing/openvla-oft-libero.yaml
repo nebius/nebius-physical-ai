@@ -56,8 +56,11 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # Do not drop the set-id capability path: SkyPilot's non-root
-                # bootstrap uses the image's passwordless sudo contract.
+                # SkyPilot's passwordless-sudo bootstrap changes uid and gid
+                # before payload execution; retain only those two capabilities.
+                capabilities:
+                  drop: [ALL]
+                  add: [SETGID, SETUID]
   train:
     cloud: kubernetes
     # The configured NPA route resolves this standard alias to its exact RTX PRO
@@ -80,8 +83,11 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # Do not drop the set-id capability path: SkyPilot's non-root
-                # bootstrap uses the image's passwordless sudo contract.
+                # SkyPilot's passwordless-sudo bootstrap changes uid and gid
+                # before payload execution; retain only those two capabilities.
+                capabilities:
+                  drop: [ALL]
+                  add: [SETGID, SETUID]
   rollout:
     cloud: kubernetes
     accelerators: RTXPRO6000:1
@@ -101,8 +107,11 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # Do not drop the set-id capability path: SkyPilot's non-root
-                # bootstrap uses the image's passwordless sudo contract.
+                # SkyPilot's passwordless-sudo bootstrap changes uid and gid
+                # before payload execution; retain only those two capabilities.
+                capabilities:
+                  drop: [ALL]
+                  add: [SETGID, SETUID]
   evidence:
     cloud: kubernetes
     cpus: 4
@@ -121,8 +130,11 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # Do not drop the set-id capability path: SkyPilot's non-root
-                # bootstrap uses the image's passwordless sudo contract.
+                # SkyPilot's passwordless-sudo bootstrap changes uid and gid
+                # before payload execution; retain only those two capabilities.
+                capabilities:
+                  drop: [ALL]
+                  add: [SETGID, SETUID]
 
 initial: prepare
 
