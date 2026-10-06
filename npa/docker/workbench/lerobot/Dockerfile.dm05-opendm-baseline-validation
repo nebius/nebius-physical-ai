@@ -86,6 +86,17 @@ RUN /opt/libero-venv/bin/python --version \
     && /opt/libero-venv/bin/python -m pip install --no-cache-dir -e /opt/dexbotic-benchmark/libero \
     && LIBERO_CONFIG_PATH=/opt/dexbotic-benchmark/libero/libero/libero PYTHONPATH=/opt/dexbotic-benchmark:/opt/dexbotic-benchmark/libero /opt/libero-venv/bin/python -c "from evaluation.evaluator.libero_evaluator import LiberoEvaluator; from libero.libero import benchmark; assert 'libero_spatial' in benchmark.get_benchmark_dict()"
 
+# The pinned parent includes a static, sample-media JWT URL in scikit-image's
+# documentation-only fetcher. It is not used by this baseline; redact that
+# one literal before scanning so the private image carries no token-shaped byte.
+USER root
+RUN fetcher=/opt/lerobot/venv/lib/python3.12/site-packages/skimage/data/_fetchers.py \
+    && test "$(grep -Eoc '\\?token=eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+' "$fetcher")" -eq 1 \
+    && sed -Ei 's#(\\?token=)eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+#\\1redacted-static-jwt#' "$fetcher" \
+    && grep -Fq '?token=redacted-static-jwt' "$fetcher" \
+    && python3.10 -m py_compile "$fetcher"
+USER ubuntu
+
 COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/dm05-opendm-baseline-runtime-manifest.json /opt/opendm/dm05-libero-baseline-runtime.json
 COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/DM05-OPENDM-BASELINE-ATTRIBUTION.md /opt/opendm/DM05-OPENDM-BASELINE-ATTRIBUTION.md
 

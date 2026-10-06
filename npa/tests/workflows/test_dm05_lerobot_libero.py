@@ -521,6 +521,27 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
         "PYTHONPATH=/opt/dexbotic-benchmark:/opt/dexbotic-benchmark/libero "
         "/opt/libero-venv/bin/python"
     ) in instructions
+    parent_jwt_sanitizer = instructions[
+        instructions.index(
+            "# The pinned parent includes a static, sample-media JWT URL"
+        ) : instructions.index(
+            "\n\nCOPY --chown=ubuntu:ubuntu",
+            instructions.index(
+                "# The pinned parent includes a static, sample-media JWT URL"
+            ),
+        )
+    ]
+    assert "USER root" in parent_jwt_sanitizer
+    assert (
+        "/opt/lerobot/venv/lib/python3.12/site-packages/skimage/data/_fetchers.py"
+        in parent_jwt_sanitizer
+    )
+    assert "grep -Eoc" in parent_jwt_sanitizer
+    assert '" -eq 1' in parent_jwt_sanitizer
+    assert "sed -Ei" in parent_jwt_sanitizer
+    assert "?token=redacted-static-jwt" in parent_jwt_sanitizer
+    assert "python3.10 -m py_compile" in parent_jwt_sanitizer
+    assert parent_jwt_sanitizer.rstrip().endswith("USER ubuntu")
     assert (
         "benchmark_root: /opt/dexbotic-benchmark/libero/libero/libero" in instructions
     )
