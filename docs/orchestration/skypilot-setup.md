@@ -173,7 +173,14 @@ default, and the renewable token cache remains `HOME/.nebius/credentials.yaml`.
 retain the incoming CLI home configuration. For a verified RSA service-account
 profile, normal cache refresh, creation, and pruning preserve API identity;
 the effective profile file, account, key, and explicit credential sources remain
-bound. Unsupported or mixed authentication formats remain byte-strict.
+bound. Both split RSA-key profiles and the CLI's
+`service-account-credentials-file-path` profile are supported. The latter binds
+the absolute JSON file path and its complete bytes, verifies the native
+`subject-credentials` RSA/RS256 format, and binds the account and public-key
+identity. An optional profile `name` remains part of the bound configuration.
+No token is fetched to calculate this identity. Unknown cache entries, OAuth,
+mixed authentication settings, relative credential paths, and explicit bearer
+aliases retain full-byte verification.
 The native attached-VM profile is also supported when it contains exactly
 `endpoint`, `parent-id`, `tenant-id`, and the provider's standard metadata
 `token-endpoint`. Its unchanged profile selects the attached identity while
