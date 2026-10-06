@@ -560,17 +560,27 @@ def test_opendm_parent_jwt_sanitizer_executes_the_dockerfile_ere(tmp_path):
     instructions = dockerfile.read_text(encoding="utf-8")
     fetcher = tmp_path / "_fetchers.py"
     synthetic_token = "eyJmaXh0dXJlIjoxfQ.eyJub25zZWNyZXQiOnRydWV9.signature"
-    fetcher.write_text(f"sample_url = '?token={synthetic_token}'\\n", encoding="utf-8")
+    unrelated_before = "before = 'leave-this-content-alone'\n"
+    unrelated_after = "after = 'leave-this-content-alone-too'\n"
+    fetcher.write_text(
+        f"{unrelated_before}sample_url = '?token={synthetic_token}'\n{unrelated_after}",
+        encoding="utf-8",
+    )
     grep_pattern = r"\?token=eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
     sed_expression = (
         r"s#(\?token=)eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
         r"#\1redacted-static-jwt#"
     )
-    sanitizer = (
-        f"""test "$(grep -Eoc '{grep_pattern}' "$fetcher")" -eq 1 """
-        f"&& sed -Ei '{sed_expression}' \"$fetcher\" "
-        "&& grep -Fq '?token=redacted-static-jwt' \"$fetcher\""
+    image_fetcher = (
+        "/opt/lerobot/venv/lib/python3.12/site-packages/skimage/data/_fetchers.py"
     )
+    sanitizer_start = f"RUN fetcher={image_fetcher}"
+    sanitizer_end = "\nUSER ubuntu"
+    sanitizer = instructions[
+        instructions.index(sanitizer_start) + len("RUN ") : instructions.index(
+            sanitizer_end, instructions.index(sanitizer_start)
+        )
+    ].replace(f"fetcher={image_fetcher}", 'fetcher="$fetcher"', 1)
 
     assert grep_pattern in instructions
     assert sed_expression in instructions
@@ -586,6 +596,8 @@ def test_opendm_parent_jwt_sanitizer_executes_the_dockerfile_ere(tmp_path):
     sanitized = fetcher.read_text(encoding="utf-8")
     assert "?token=redacted-static-jwt" in sanitized
     assert synthetic_token not in sanitized
+    assert unrelated_before in sanitized
+    assert unrelated_after in sanitized
 
 
 def test_opendm_evaluator_environment_supplies_pinned_libero_config_without_stdin(
