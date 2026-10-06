@@ -46,7 +46,7 @@ quarantined.
 | Reference Policy and Explore Policy | Replace the stale EnvGen parent and copy the complete child SDK source so the declared revision identifies the code that runs; preserve their action-policy variants. | The actual policy action and schema handoff; delegating an environment smoke is insufficient. |
 | LeRobot VLM RL | Replace the stale EnvGen parent. | Real VLM reward signals, nonzero optimizer and weight changes, and a loadable trained checkpoint. |
 | Loop Eval | Replace the stale EnvGen parent and install the fixed Jammy kernel headers from the October 1 snapshot. | Native Genesis rollouts and joined policy/VLM reports; this legacy tool is separate from canonical Sim2Real. |
-| SONIC / Isaac 2 | Update GitPython, Werkzeug and the fixed Jammy header snapshot. Preserve Isaac Lab 2.3.2.post1 / Isaac Sim 5.1 and runtime-fetched vendor payloads. | Each advertised training, checkpoint, evaluation and export capability, with its exact gated runtime dependencies. |
+| SONIC / Isaac 2 | Update GitPython, Werkzeug and the fixed Jammy header snapshot. Refresh the eight exact Python 3.11.17 Debian artifacts against the signed Deadsnakes index after the old 3.11.15 URLs returned 404. Preserve the Python 3.11 ABI, Isaac Lab 2.3.2.post1 / Isaac Sim 5.1 and runtime-fetched vendor payloads. | Each advertised training, checkpoint, evaluation and export capability, with its exact gated runtime dependencies. |
 
 The stock Genesis CUDA 12.4 / Torch 2.6 recipe does not establish RTX PRO 6000
 support. Its CUDA 13 recipe remains an additive operator-base build, and

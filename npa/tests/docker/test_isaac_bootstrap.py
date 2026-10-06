@@ -1102,7 +1102,7 @@ def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in text
     assert "add-apt-repository" not in text
     assert "sha256sum --check --strict" in text
-    assert text.count("3.11.15-1+jammy1") >= 9
+    assert text.count("3.11.17-1+jammy1") >= 9
     for requirement in (
         "pip==26.2.1",
         "setuptools==84.0.0",
