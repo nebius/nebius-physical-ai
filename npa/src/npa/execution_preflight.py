@@ -63,9 +63,7 @@ LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES = (
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
 )
-_KUBERNETES_SECRET_NAME = re.compile(
-    r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?"
-)
+_KUBERNETES_SECRET_NAME = re.compile(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?")
 
 
 def libero_kubernetes_storage_secret_name(
@@ -1038,13 +1036,11 @@ def verify_worker_environment(
                             bool(kubernetes_storage_secret)
                             and name in LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
                             and isinstance(secret_key_ref, Mapping)
-                            and secret_key_ref.get("name")
-                            == kubernetes_storage_secret
+                            and secret_key_ref.get("name") == kubernetes_storage_secret
                             and secret_key_ref.get("key") == name
                         )
                         if not native_storage_reference and (
-                            "valueFrom" in entry
-                            or entry.get("value") != expected[name]
+                            "valueFrom" in entry or entry.get("value") != expected[name]
                         ):
                             raise ExecutionPreflightError(
                                 "worker_environment",

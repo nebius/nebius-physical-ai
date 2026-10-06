@@ -1426,9 +1426,9 @@ def test_libero_storage_secret_reference_is_complete_and_literal_free() -> None:
     ]
 
     assert libero_kubernetes_storage_secret_name([document]) == secret_name
-    document["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0][
-        "env"
-    ][0]["value"] = "forbidden"
+    document["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]["env"][0][
+        "value"
+    ] = "forbidden"
     with pytest.raises(ExecutionPreflightError, match="literal-free"):
         libero_kubernetes_storage_secret_name([document])
 
