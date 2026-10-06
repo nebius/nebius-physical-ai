@@ -84,7 +84,25 @@ has those shapes. An explicitly supplied environment retains the native factory
 path. No environment or robot metadata is invented. No external model, dataset,
 decoder patch or GPU is involved.
 
-The maintained integration still requires fresh ordinary vulnerability, secret,
-license, image and SDK gates. No security exemptions are introduced.
-Public defaults remain quarantined; exact-source
-rebuild and subsequent GPU qualification are pending.
+The [trusted exact-source rebuild](https://github.com/nebius/nebius-physical-ai/actions/runs/37518609221)
+passed every ordinary publication gate at source
+`764809d9bf35559fc24a89ccdb5476cc49e411fd` and published
+`sha256:127be7c546116c928b0163ecd0e38c07fdcadff3dfa554cfcb3268ae8886bbea`.
+Anonymous manifest/config requests verified the source revision and declared
+vendor interpreter. Official hosted SLSA provenance and SPDX signatures verified
+against that exact source and digest. No security exemptions were introduced.
+
+An independent cloud CPU execution bound its runtime image to that published
+graph, verified the probe source and completed with exit 0:
+
+| Check | Actual result |
+| --- | --- |
+| Native default camera decoding | Passed: four frames decoded through TorchCodec. |
+| ACT optimizer, checkpoint and serving | Passed: 62 changed parameter tensors, saved processor reload and equal native predictions through real HTTP health/serve/infer requests. |
+| Diffusion optimizer and checkpoint | Passed: 100 changed parameter tensors and equal checkpoint predictions. |
+| Native W&B logger | Passed: offline checkpoint artifact, camera video and persisted run record with W&B 0.30.0. |
+
+This qualifies the tested CPU dependency, dataset, optimizer, checkpoint and
+serving paths. RTX ACT/PushT and broader GPU capability qualification remain
+pending. Public defaults remain quarantined; this candidate does not promote a
+release tag or establish GPU acceptance.
