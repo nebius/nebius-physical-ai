@@ -112,7 +112,10 @@ npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" \
   --var bucket="$BUCKET" --var lerobot_dataset_uri="$LEROBOT_URI" \
   --var caption_model="$CAPTION_MODEL" --json || exit 1
 npa/.venv/bin/npa workbench workflow preflight-images "$SPEC" \
-  --project "$PROJECT_ALIAS" || exit 1
+  --project "$PROJECT_ALIAS" --infra "k8s/$KUBE_CONTEXT" \
+  --var bucket="$BUCKET" --var lerobot_dataset_uri="$LEROBOT_URI" \
+  --var caption_model="$CAPTION_MODEL" \
+  --var prefix="paidf-aloha-cups-fanout/$RUN_ID" || exit 1
 npa/.venv/bin/npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" --project "$PROJECT_ALIAS" \
   --var bucket="$BUCKET" --var lerobot_dataset_uri="$LEROBOT_URI" \
@@ -122,6 +125,11 @@ npa/.venv/bin/npa workbench workflow submit "$SPEC" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env HF_TOKEN
 ```
+
+Image preflight uses the exact submission context and configuration. Its CLI
+does not accept `--run-id`; the explicit `prefix` override binds its planned
+artifact references to the reserved run while it performs owned pull and
+bootstrap-attestation probes in the selected Kubernetes context.
 
 The distinct workflow name uses generic configuration overrides, so the canonical
 starter's automatic source selector cannot substitute another video. Do not pass
