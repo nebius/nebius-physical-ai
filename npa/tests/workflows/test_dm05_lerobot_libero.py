@@ -509,6 +509,12 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
         )
     assert "python3.10 -m venv /opt/opendm-venv" not in instructions
     assert "python3.10 -m venv /opt/libero-venv" not in instructions
+    bddl_install = libero_dependencies_block.index("'bddl==1.0.1'")
+    future_install = libero_dependencies_block.index("'future==1.0.0'")
+    editable_libero_install = libero_dependencies_block.index(
+        "-e /opt/dexbotic-benchmark/libero"
+    )
+    assert bddl_install < future_install < editable_libero_install
     assert (
         "LIBERO_CONFIG_PATH=/opt/dexbotic-benchmark/libero/libero/libero "
         "PYTHONPATH=/opt/dexbotic-benchmark:/opt/dexbotic-benchmark/libero "

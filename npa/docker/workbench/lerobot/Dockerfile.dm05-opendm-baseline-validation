@@ -79,7 +79,7 @@ RUN /opt/libero-venv/bin/python --version \
     && /opt/libero-venv/bin/python -m pip install --no-cache-dir \
       'torch==2.11.0' 'torchvision==0.26.0' --index-url https://download.pytorch.org/whl/cu128 \
     && /opt/libero-venv/bin/python -m pip install --no-cache-dir \
-      'bddl==1.0.1' 'cloudpickle==2.1.0' 'easydict==1.9' 'einops==0.4.1' \
+      'bddl==1.0.1' 'cloudpickle==2.1.0' 'easydict==1.9' 'einops==0.4.1' 'future==1.0.0' \
       'gym==0.25.2' 'hydra-core==1.2.0' 'imageio' 'numpy==1.22.4' \
       'omegaconf' 'opencv-python-headless==4.6.0.66' 'Pillow' 'requests' \
       'robomimic==0.2.0' 'robosuite==1.4.0' 'tqdm' \
