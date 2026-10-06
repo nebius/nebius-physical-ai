@@ -58,18 +58,139 @@ LIBERO_SKYPILOT_SECRET_ENV_NAMES = (
     "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256",
     "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
 )
-LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES = (
+KUBERNETES_STORAGE_SECRET_ENV_NAMES = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
 )
+# Keep the LIBERO name as a compatibility alias while the native transport is
+# also used by the separately-scoped OpenVLA workflow below.
+LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES = KUBERNETES_STORAGE_SECRET_ENV_NAMES
+OPENVLA_OFT_WORKFLOW_NAME = "openvla-oft-libero"
+OPENVLA_OFT_STORAGE_SECRET_STATES = frozenset(
+    {"prepare", "train", "rollout", "evaluate", "visualize"}
+)
 _KUBERNETES_SECRET_NAME = re.compile(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?")
+
+
+def _storage_secret_task_container(
+    document: Mapping[str, Any], *, subject: str
+) -> Mapping[str, Any] | None:
+    """Return the named task container when a task declares pod resources."""
+    if not isinstance(document.get("resources"), Mapping):
+        return None
+    pod_spec = _task_kubernetes_pod_spec(document)
+    containers = pod_spec.get("containers") or []
+    task_containers = [
+        item
+        for item in containers
+        if isinstance(item, Mapping) and item.get("name") == "ray-node"
+    ]
+    if not task_containers:
+        return None
+    if len(task_containers) != 1:
+        raise ExecutionPreflightError(
+            "worker_environment",
+            f"{subject} task must declare exactly one ray-node storage-secret container",
+        )
+    return task_containers[0]
+
+
+def _storage_secret_name_from_container(
+    container: Mapping[str, Any], *, subject: str
+) -> str:
+    """Validate one complete literal-free storage Secret reference."""
+    env_entries = container.get("env") or []
+    if not isinstance(env_entries, list):
+        raise ExecutionPreflightError(
+            "worker_environment", f"{subject} pod env must be a list"
+        )
+    by_name = {
+        str(entry.get("name")): entry
+        for entry in env_entries
+        if isinstance(entry, Mapping)
+        and entry.get("name") in KUBERNETES_STORAGE_SECRET_ENV_NAMES
+    }
+    if not by_name:
+        return ""
+    if set(by_name) != set(KUBERNETES_STORAGE_SECRET_ENV_NAMES):
+        raise ExecutionPreflightError(
+            "worker_environment",
+            f"{subject} storage-secret configuration is incomplete",
+        )
+    names: set[str] = set()
+    for env_name, entry in by_name.items():
+        value_from = entry.get("valueFrom")
+        secret_key_ref = (
+            value_from.get("secretKeyRef") if isinstance(value_from, Mapping) else None
+        )
+        if (
+            entry.get("value") not in (None, "")
+            or not isinstance(secret_key_ref, Mapping)
+            or secret_key_ref.get("key") != env_name
+            or not isinstance(secret_key_ref.get("name"), str)
+            or not _KUBERNETES_SECRET_NAME.fullmatch(secret_key_ref["name"])
+        ):
+            raise ExecutionPreflightError(
+                "worker_environment",
+                f"{subject} storage variables require literal-free Kubernetes secretKeyRef entries",
+            )
+        optional = secret_key_ref.get("optional")
+        if env_name == "AWS_SESSION_TOKEN":
+            if optional is not True:
+                raise ExecutionPreflightError(
+                    "worker_environment",
+                    f"{subject} optional session token must use optional Kubernetes secretKeyRef",
+                )
+        elif optional not in (None, False):
+            raise ExecutionPreflightError(
+                "worker_environment",
+                f"{subject} storage credentials may not use optional Kubernetes secretKeyRef",
+            )
+        names.add(secret_key_ref["name"])
+    if len(names) != 1:
+        raise ExecutionPreflightError(
+            "worker_environment",
+            f"{subject} storage variables must reference one Kubernetes Secret",
+        )
+    return names.pop()
+
+
+def _kubernetes_storage_secret_name(
+    documents: Sequence[Mapping[str, Any]],
+    *,
+    subject: str,
+    task_is_allowed: Callable[[Mapping[str, Any]], bool],
+) -> str:
+    """Return the common storage Secret only for an explicitly scoped task."""
+    configured: list[str] = []
+    for document in skypilot_task_documents(documents):
+        container = _storage_secret_task_container(document, subject=subject)
+        if container is None:
+            continue
+        secret_name = _storage_secret_name_from_container(container, subject=subject)
+        if not secret_name:
+            continue
+        if not task_is_allowed(document):
+            raise ExecutionPreflightError(
+                "worker_environment",
+                f"{subject} storage-secret reference is outside the supported task scope",
+            )
+        configured.append(secret_name)
+    if not configured:
+        return ""
+    if len(set(configured)) != 1:
+        raise ExecutionPreflightError(
+            "worker_environment",
+            f"{subject} task stages must reference one shared Kubernetes storage Secret",
+        )
+    return configured[0]
 
 
 def libero_kubernetes_storage_secret_name(
     documents: Sequence[Mapping[str, Any]],
 ) -> str:
-    """Return one validated task-owned storage secret reference, if configured.
+    """Return one validated LIBERO task-owned storage Secret reference.
 
     A LIBERO task normally uses SkyPilot's secret transport.  When the pinned
     SkyPilot client cannot keep that transport out of its client-side task
@@ -77,94 +198,44 @@ def libero_kubernetes_storage_secret_name(
     The reference must be complete and identical for every rendered task; a
     partial or inline declaration is rejected before workload creation.
     """
+    return _kubernetes_storage_secret_name(
+        documents,
+        subject="LIBERO",
+        task_is_allowed=lambda _document: True,
+    )
 
-    configured: list[str] = []
-    partial = False
-    for document in skypilot_task_documents(documents):
-        resources = document.get("resources")
-        if not isinstance(resources, Mapping):
-            continue
-        pod_spec = _task_kubernetes_pod_spec(document)
-        containers = pod_spec.get("containers") or []
-        task_containers = [
-            item
-            for item in containers
-            if isinstance(item, Mapping) and item.get("name") == "ray-node"
-        ]
-        if not task_containers:
-            continue
-        if len(task_containers) != 1:
-            raise ExecutionPreflightError(
-                "worker_environment",
-                "LIBERO task must declare exactly one ray-node storage-secret container",
-            )
-        env_entries = task_containers[0].get("env") or []
-        if not isinstance(env_entries, list):
-            raise ExecutionPreflightError(
-                "worker_environment", "LIBERO pod env must be a list"
-            )
-        by_name = {
-            str(entry.get("name")): entry
-            for entry in env_entries
-            if isinstance(entry, Mapping)
-            and entry.get("name") in LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
-        }
-        if not by_name:
-            continue
-        if set(by_name) != set(LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES):
-            partial = True
-            continue
-        names: set[str] = set()
-        for env_name, entry in by_name.items():
-            value_from = entry.get("valueFrom")
-            secret_key_ref = (
-                value_from.get("secretKeyRef")
-                if isinstance(value_from, Mapping)
-                else None
-            )
-            if (
-                entry.get("value") not in (None, "")
-                or not isinstance(secret_key_ref, Mapping)
-                or secret_key_ref.get("key") != env_name
-                or not isinstance(secret_key_ref.get("name"), str)
-                or not _KUBERNETES_SECRET_NAME.fullmatch(secret_key_ref["name"])
-            ):
-                raise ExecutionPreflightError(
-                    "worker_environment",
-                    "LIBERO storage variables require literal-free Kubernetes secretKeyRef entries",
-                )
-            optional = secret_key_ref.get("optional")
-            if env_name == "AWS_SESSION_TOKEN":
-                if optional is not True:
-                    raise ExecutionPreflightError(
-                        "worker_environment",
-                        "LIBERO optional session token must use optional Kubernetes secretKeyRef",
-                    )
-            elif optional not in (None, False):
-                raise ExecutionPreflightError(
-                    "worker_environment",
-                    "LIBERO storage credentials may not use optional Kubernetes secretKeyRef",
-                )
-            names.add(secret_key_ref["name"])
-        if len(names) != 1:
-            raise ExecutionPreflightError(
-                "worker_environment",
-                "LIBERO storage variables must reference one Kubernetes Secret",
-            )
-        configured.append(names.pop())
-    if partial:
-        raise ExecutionPreflightError(
-            "worker_environment",
-            "LIBERO storage-secret configuration is incomplete",
-        )
-    if not configured:
-        return ""
-    if len(set(configured)) != 1:
-        raise ExecutionPreflightError(
-            "worker_environment",
-            "LIBERO task stages must reference one shared Kubernetes storage Secret",
-        )
-    return configured[0]
+
+def _is_openvla_oft_storage_secret_task(document: Mapping[str, Any]) -> bool:
+    """Return whether a rendered task is one OpenVLA-OFT pipeline stage."""
+    envs = document.get("envs")
+    if not isinstance(envs, Mapping):
+        return False
+    state = str(envs.get("NPA_WORKFLOW_STATE") or "")
+    expected_tool_ref = f"workbench.openvla.{state}"
+    return (
+        envs.get("NPA_WORKFLOW_NAME") == OPENVLA_OFT_WORKFLOW_NAME
+        and state in OPENVLA_OFT_STORAGE_SECRET_STATES
+        and envs.get("NPA_WORKFLOW_TOOL_REF") == expected_tool_ref
+        and f"npa.workflows.byof.openvla_pipeline {state} "
+        in str(document.get("run") or "")
+    )
+
+
+def openvla_oft_kubernetes_storage_secret_name(
+    documents: Sequence[Mapping[str, Any]],
+) -> str:
+    """Return the validated Secret for the rendered OpenVLA-OFT workflow only."""
+    scoped_documents = [
+        document
+        for document in skypilot_task_documents(documents)
+        if isinstance(document.get("envs"), Mapping)
+        and document["envs"].get("NPA_WORKFLOW_NAME") == OPENVLA_OFT_WORKFLOW_NAME
+    ]
+    return _kubernetes_storage_secret_name(
+        scoped_documents,
+        subject="OpenVLA-OFT",
+        task_is_allowed=_is_openvla_oft_storage_secret_task,
+    )
 
 
 def libero_executable_profile_sha256(
@@ -1034,7 +1105,7 @@ def verify_worker_environment(
                         )
                         native_storage_reference = (
                             bool(kubernetes_storage_secret)
-                            and name in LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
+                            and name in KUBERNETES_STORAGE_SECRET_ENV_NAMES
                             and isinstance(secret_key_ref, Mapping)
                             and secret_key_ref.get("name") == kubernetes_storage_secret
                             and secret_key_ref.get("key") == name
@@ -1060,6 +1131,56 @@ def verify_worker_environment(
 
     for document in documents:
         walk(document)
+
+
+def _reject_inline_kubernetes_storage_credentials(
+    documents: Sequence[Mapping[str, Any]],
+    *,
+    storage_secret: str,
+    subject: str,
+) -> None:
+    """Reject storage values outside one validated Kubernetes Secret reference."""
+
+    def is_storage_secret_ref(entry: Mapping[str, Any]) -> bool:
+        value_from = entry.get("valueFrom")
+        secret_key_ref = (
+            value_from.get("secretKeyRef") if isinstance(value_from, Mapping) else None
+        )
+        return (
+            entry.get("name") in KUBERNETES_STORAGE_SECRET_ENV_NAMES
+            and isinstance(secret_key_ref, Mapping)
+            and secret_key_ref.get("name") == storage_secret
+            and secret_key_ref.get("key") == entry.get("name")
+        )
+
+    def walk(value: Any) -> None:
+        if isinstance(value, Mapping):
+            envs = value.get("envs")
+            if isinstance(envs, Mapping) and any(
+                name in envs for name in KUBERNETES_STORAGE_SECRET_ENV_NAMES
+            ):
+                raise ExecutionPreflightError(
+                    "worker_environment",
+                    f"{subject} storage material must use Kubernetes secretKeyRef",
+                )
+            pod_env = value.get("env")
+            if isinstance(pod_env, list) and any(
+                isinstance(entry, Mapping)
+                and entry.get("name") in KUBERNETES_STORAGE_SECRET_ENV_NAMES
+                and not is_storage_secret_ref(entry)
+                for entry in pod_env
+            ):
+                raise ExecutionPreflightError(
+                    "worker_environment",
+                    f"{subject} pod storage material must use its validated Kubernetes Secret",
+                )
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(documents)
 
 
 def skypilot_task_documents(
@@ -1963,6 +2084,11 @@ def preflight_skypilot_submission(
                         "native task placement disagrees with the explicit infrastructure",
                     )
                 resources["zone"] = placement[2]
+    native_storage_secret = (
+        libero_kubernetes_storage_secret_name(documents)
+        if libero_submission
+        else openvla_oft_kubernetes_storage_secret_name(documents)
+    )
     injected = (
         {}
         if customer_run
@@ -1976,17 +2102,12 @@ def preflight_skypilot_submission(
     for document in documents:
         env = document.setdefault("envs", {})
         for name, value in injected.items():
+            uses_native_storage_transport = libero_submission or bool(
+                native_storage_secret
+            )
             if value and (
-                not libero_submission
-                or (
-                    name
-                    not in {
-                        "AWS_ACCESS_KEY_ID",
-                        "AWS_SECRET_ACCESS_KEY",
-                        "AWS_SESSION_TOKEN",
-                    }
-                    and name in env
-                )
+                not uses_native_storage_transport
+                or name not in KUBERNETES_STORAGE_SECRET_ENV_NAMES
             ):
                 env[name] = value
         if libero_submission:
@@ -1998,10 +2119,11 @@ def preflight_skypilot_submission(
             # specification.
             for name in LIBERO_SKYPILOT_SECRET_ENV_NAMES:
                 env.pop(name, None)
+        elif native_storage_secret:
+            for name in KUBERNETES_STORAGE_SECRET_ENV_NAMES:
+                env.pop(name, None)
 
-    native_storage_secret = ""
     if libero_submission:
-        native_storage_secret = libero_kubernetes_storage_secret_name(documents)
 
         def is_native_storage_secret_ref(entry: Mapping[str, Any]) -> bool:
             if entry.get("name") not in LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES:
@@ -2047,6 +2169,12 @@ def preflight_skypilot_submission(
                     reject_inline_storage_secret(child)
 
         reject_inline_storage_secret([*documents, dict(global_config or {})])
+    elif native_storage_secret:
+        _reject_inline_kubernetes_storage_credentials(
+            [*documents, dict(global_config or {})],
+            storage_secret=native_storage_secret,
+            subject="OpenVLA-OFT",
+        )
     # Validate the final in-memory worker documents for every solution at the
     # same stage.  For LIBERO this is deliberately after credential stripping,
     # so the checked document is exactly the one persisted for SkyPilot while
@@ -2191,6 +2319,11 @@ def preflight_skypilot_submission(
         "validated" if libero_submission else "not-required"
     )
     report["checks"]["libero_customer_run"] = customer_run
+    report["checks"]["openvla_oft_kubernetes_storage_secret"] = (
+        "validated"
+        if native_storage_secret and not libero_submission
+        else "not-required"
+    )
     return target, report, {name: value for name, value in injected.items() if value}
 
 

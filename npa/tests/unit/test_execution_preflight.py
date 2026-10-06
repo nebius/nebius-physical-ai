@@ -1109,6 +1109,191 @@ def test_workflow_rendered_gpu_minimum_passes_sdk_preflight(
     assert report["checks"]["gpu"] == "pass"
 
 
+def test_rendered_openvla_oft_template_reaches_native_secret_preflight(
+    provider, configured, monkeypatch
+) -> None:
+    """The shipped OpenVLA workflow reaches the scoped Secret transport unmocked."""
+    import yaml
+
+    from npa.execution_preflight import preflight_skypilot_submission
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_steps_yaml,
+    )
+    from npa.orchestration.npa_workflow.submit import load_spec_for_submit
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuInventory,
+        KubernetesGpuNode,
+    )
+
+    # The actual rendered train stage requests all eight cards.  Keep the
+    # real capacity path while substituting only its external cluster lookup.
+    inventory = KubernetesGpuInventory(
+        "unit-context",
+        8,
+        8,
+        8,
+        8,
+        ("RTXPRO-6000-BLACKWELL-SERVER-EDITION",),
+        {},
+        nodes=(
+            KubernetesGpuNode(
+                "unit-rtxpro6000",
+                True,
+                True,
+                ("RTXPRO-6000-BLACKWELL-SERVER-EDITION",),
+                8,
+                8,
+                0,
+                8,
+                free_cpu_millis=192_000,
+                free_memory_bytes=1_700 * 10**9,
+                free_pod_slots=8,
+                allocatable_cpu_millis=192_000,
+                allocatable_memory_bytes=1_700 * 10**9,
+                allocatable_pods=8,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        lambda **_kwargs: inventory,
+    )
+
+    spec = load_spec_for_submit(
+        Path(__file__).parents[3] / "workflows/testing/openvla-oft-libero.yaml",
+        config_overrides={
+            "bucket": "unit-output",
+            "prefix": "task/openvla-oft",
+            "runtime_image": "registry.example/openvla@sha256:" + "a" * 64,
+            "storage_secret_name": "unit-openvla-storage",
+        },
+    )
+    plan = build_plan(spec, run_id="openvla-native-secret-0001")
+    rendered = render_skypilot_steps_yaml(
+        spec,
+        plan.steps,
+        run_id="openvla-native-secret-0001",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    documents = list(yaml.safe_load_all(rendered))
+    task = next(
+        document
+        for document in documents
+        if document.get("envs", {}).get("NPA_WORKFLOW_STATE") == "prepare"
+    )
+
+    _, report, injected = preflight_skypilot_submission(
+        documents,
+        project="unit",
+        infra="k8s/unit-context",
+        extra_env={"AWS_ENDPOINT_URL": "https://storage.eu-west1.nebius.cloud"},
+    )
+
+    assert report["execution_readiness"] == "pass"
+    assert report["checks"]["openvla_oft_kubernetes_storage_secret"] == "validated"
+    assert task["envs"]["NPA_WORKFLOW_NAME"] == "openvla-oft-libero"
+    assert task["envs"]["NPA_WORKFLOW_TOOL_REF"] == "workbench.openvla.prepare"
+    assert not {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    } & set(task["envs"])
+    persisted = yaml.safe_dump_all(documents, sort_keys=False)
+    assert not any(
+        value in persisted
+        for name, value in injected.items()
+        if name in {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
+    )
+    assert provider.s3.calls
+
+
+def test_openvla_secret_reference_requires_the_rendered_stage_identity() -> None:
+    """Arbitrary Kubernetes tasks cannot opt into OpenVLA's Secret exception."""
+    from npa.execution_preflight import (
+        ExecutionPreflightError,
+        openvla_oft_kubernetes_storage_secret_name,
+    )
+
+    document = raw_task(
+        NPA_WORKFLOW_NAME="openvla-oft-libero",
+        NPA_WORKFLOW_STATE="prepare",
+        NPA_WORKFLOW_TOOL_REF="workbench.openvla.train",
+    )
+    document["run"] = "npa workbench openvla prepare"
+    document["config"] = {
+        "kubernetes": {
+            "pod_config": {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "ray-node",
+                            "env": [
+                                {
+                                    "name": name,
+                                    "valueFrom": {
+                                        "secretKeyRef": {
+                                            "name": "unit-openvla-storage",
+                                            "key": name,
+                                            **(
+                                                {"optional": True}
+                                                if name == "AWS_SESSION_TOKEN"
+                                                else {}
+                                            ),
+                                        }
+                                    },
+                                }
+                                for name in (
+                                    "AWS_ACCESS_KEY_ID",
+                                    "AWS_SECRET_ACCESS_KEY",
+                                    "AWS_SESSION_TOKEN",
+                                )
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+    }
+
+    with pytest.raises(
+        ExecutionPreflightError, match="outside the supported task scope"
+    ):
+        openvla_oft_kubernetes_storage_secret_name([document])
+
+
+def test_openvla_secret_reference_does_not_inspect_other_workflows() -> None:
+    """The OpenVLA exception leaves another workflow's pod env untouched."""
+    from npa.execution_preflight import openvla_oft_kubernetes_storage_secret_name
+
+    document = raw_task(NPA_WORKFLOW_NAME="another-workflow")
+    document["resources"]["kubernetes"] = {
+        "pod_config": {
+            "spec": {
+                "containers": [
+                    {
+                        "name": "ray-node",
+                        "env": [
+                            {
+                                "name": "AWS_ACCESS_KEY_ID",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": "another-workflow-secret",
+                                        "key": "AWS_ACCESS_KEY_ID",
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+    }
+
+    assert openvla_oft_kubernetes_storage_secret_name([document]) == ""
+
+
 def test_pending_gpu_demand_reports_placement_before_storage(
     provider, configured, gpu_inventory, monkeypatch
 ):

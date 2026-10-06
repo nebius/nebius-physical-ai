@@ -2502,6 +2502,10 @@ def _build_skypilot_task_doc(
             separators=(",", ":"),
         ),
     }
+    if spec.name == "openvla-oft-libero":
+        # The execution preflight accepts the template's task-owned storage
+        # Secret only for its exact OpenVLA stage surface.
+        envs["NPA_WORKFLOW_TOOL_REF"] = tool_ref
     from npa.orchestration.npa_workflow.robotwin_preflight import recognize_contract
 
     if recognize_contract(spec):

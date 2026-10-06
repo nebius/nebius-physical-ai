@@ -2028,16 +2028,19 @@ def submit_workflow(
             )
             _chmod_owner_only(prepared_yaml)
         from npa.execution_preflight import (
-            LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES,
+            KUBERNETES_STORAGE_SECRET_ENV_NAMES,
             LIBERO_SKYPILOT_SECRET_ENV_NAMES,
             libero_kubernetes_storage_secret_name,
+            openvla_oft_kubernetes_storage_secret_name,
         )
 
         libero_submission = (
             prepared.libero_submission if robotwin_authorization is None else False
         )
         native_storage_secret = (
-            libero_kubernetes_storage_secret_name(docs) if libero_submission else ""
+            libero_kubernetes_storage_secret_name(docs)
+            if libero_submission
+            else openvla_oft_kubernetes_storage_secret_name(docs)
         )
         workflow_identity = _private_file_identity(prepared_yaml)
         config_identity = _private_file_identity(generated_config_path)
@@ -2061,7 +2064,7 @@ def submit_workflow(
             selected_secret_envs = [
                 name
                 for name in selected_secret_envs
-                if name not in LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
+                if name not in KUBERNETES_STORAGE_SECRET_ENV_NAMES
             ]
         from npa.workflows.byof.libero_customer import (
             selected as customer_selected,
@@ -2088,7 +2091,7 @@ def submit_workflow(
                     for name in LIBERO_SKYPILOT_SECRET_ENV_NAMES
                     if not (
                         native_storage_secret
-                        and name in LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
+                        and name in KUBERNETES_STORAGE_SECRET_ENV_NAMES
                     )
                 ]
             )
