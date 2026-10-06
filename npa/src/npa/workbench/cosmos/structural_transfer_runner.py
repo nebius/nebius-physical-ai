@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -262,6 +263,7 @@ def _save_guarded_output(
     evidence = {
         "schema": "npa.cosmos3.structural-transfer.v1",
         **control,
+        "guarded_output_sha256": video_sha256(destination),
         "text_guardrail_passed": True,
         "video_guardrail_passed": True,
         "guardrail_postprocessing_applied": True,
@@ -323,15 +325,43 @@ def _prepare_controls(input_files: list[Path]) -> dict[str, dict[str, tuple[int,
     return controls
 
 
-def _run_samples(args: Any) -> None:
-    from cosmos_framework.inference.transfer import generate_transfer_sample
-
+def _native_setup(args: Any) -> tuple[Any, dict[str, Any] | None]:
     # Native transfer's NATTEN attention has data-dependent sizes that Dynamo
     # cannot guard. Use the framework's supported eager path for this adapter.
     args.setup.use_torch_compile = False
+    revision = os.environ.get("NPA_COSMOS3_NANO_REVISION", "")
+    preparation = None
+    if revision:
+        from npa.workbench.cosmos.nano_checkpoint_snapshot import prepare_native_setup
+
+        preparation = prepare_native_setup(args.setup, revision)
     setup = args.setup.build_setup()
     if not setup.guardrails:
         raise ValueError("Structural transfer requires guardrails; no model was loaded")
+    return setup, preparation
+
+
+def _create_native_pipe(setup: Any, preparation: dict[str, Any] | None) -> Any:
+    pipe = setup.get_inference_cls().create(setup)
+    if preparation is None:
+        return pipe
+    from npa.workbench.cosmos.nano_checkpoint_snapshot import (
+        record_native_model_selection,
+    )
+
+    record_native_model_selection(
+        setup,
+        pipe,
+        preparation,
+        receipt_path=setup.output_dir / ".npa-cosmos3-model-selection.json",
+    )
+    return pipe
+
+
+def _run_samples(args: Any) -> None:
+    from cosmos_framework.inference.transfer import generate_transfer_sample
+
+    setup, preparation = _native_setup(args)
     controls = _prepare_controls(args.input_files)
     overrides = setup.get_sample_overrides_cls().from_files(
         args.input_files, overrides=setup.sample_overrides
@@ -340,10 +370,11 @@ def _run_samples(args: Any) -> None:
         item.output_dir = setup.output_dir / item.name
         item.output_dir.mkdir(parents=True, exist_ok=True)
         item.download(item.output_dir / "inputs")
-    pipe = setup.get_inference_cls().create(setup)
+    pipe = _create_native_pipe(setup, preparation)
     for item in overrides:
         sample = item.build_sample(model_config=pipe.model_config)
         control = _verify_control(sample, *controls[item.name]["edge"])
+        control["source_video_sha256"] = video_sha256(Path(sample.vision_path))
         if "rgb" in controls[item.name]:
             control["rgb_conditioning"] = _verify_rgb(
                 sample, *controls[item.name]["rgb"]
