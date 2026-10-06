@@ -523,10 +523,11 @@ The [October 6 rebuild follow-up](validation/807-image-rebuild-follow-up-2026100
 replaces stale Isaac and EnvGen parents in the derivative build recipes and fixes
 additional dependency and snapshot inputs. Its parent development builds passed
 their trusted publication jobs and independent anonymous source/config checks.
-Five child jobs also passed trusted publication and independent digest/source
+Six child jobs also passed trusted publication and independent digest/source
 and provenance/SBOM signature verification, as recorded in that follow-up.
-Native capability qualification remains pending; Genesis and the default
-LeRobot family still require successful rebuilt candidates. The
+Native capability qualification remains pending; Genesis still requires a
+successful rebuilt candidate, and default LeRobot still requires a compatible
+policy closure and native execution. The
 [stock public Genesis contract](../../npa/docker/workbench/genesis/README.md)
 documents its retained rigid workload, ACT dependencies and excluded optional
 capabilities. None is added to the accepted-release table by these source changes. Current examples

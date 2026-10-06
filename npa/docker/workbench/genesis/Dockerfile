@@ -73,6 +73,8 @@ COPY --chown=ubuntu:ubuntu docker/workbench/curobo/remove_scikit_image_recipe.py
     /opt/genesis/remove-scikit-image-recipe.py
 COPY --chown=ubuntu:ubuntu docker/workbench/genesis/prepare_public_runtime.py \
     /opt/genesis/prepare-public-runtime.py
+COPY --chown=ubuntu:ubuntu docker/workbench/genesis/prepare_public_policies.py \
+    /opt/genesis/prepare-public-policies.py
 COPY --chown=ubuntu:ubuntu docker/workbench/common/envgen_compat/tetgen.py \
     /opt/genesis/compat/tetgen.py
 
@@ -107,10 +109,15 @@ RUN python3 -m venv /opt/genesis/venv \
     && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "pillow>=12.3.0,<13.0" \
     && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-runtime.py \
       --site-packages /opt/genesis/venv/lib/python3.10/site-packages --check-only \
+    && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-policies.py \
+      --site-packages /opt/genesis/venv/lib/python3.10/site-packages --check-only \
     && /opt/genesis/venv/bin/pip uninstall -y tetgen diffusers wandb torchcodec \
     && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-runtime.py \
       --site-packages /opt/genesis/venv/lib/python3.10/site-packages \
       > /opt/genesis/public-runtime-dependencies.json \
+    && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-policies.py \
+      --site-packages /opt/genesis/venv/lib/python3.10/site-packages \
+      > /opt/genesis/public-policy-source.json \
     && printf '%s\n' /opt/genesis/compat \
       > /opt/genesis/venv/lib/python3.10/site-packages/npa-genesis-compat.pth \
     && /opt/genesis/venv/bin/pip check \

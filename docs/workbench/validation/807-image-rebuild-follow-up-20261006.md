@@ -61,7 +61,11 @@ incompatible TorchCodec decoder in the original installation layer. It binds
 the original Genesis/LeRobot metadata to exact reviewed hashes, refreshes RECORD
 and runs `pip check`. The native CPU build gate must decode real converted camera
 videos through LeRobot's default PyAV backend and round-trip ACT plus its saved
-normalization processors. Source tests and wheel/metadata verification passed;
+normalization processors. The first corrected gate decoded both real camera
+videos, then exposed eager GR00T imports while importing ACT. The public recipe
+now binds ACT-only registration/factory changes to exact upstream hashes while
+retaining native ACT logic and saved-processor loading. Other factory families
+fail closed. Source tests and wheel/metadata verification passed;
 the Linux CPU build and later GPU teacher/export/camera qualification remain
 pending. No license exceptions or incompatible Diffusers metadata widening are
 introduced.
@@ -81,12 +85,14 @@ Genesis and SONIC jobs failed; only its four successful image jobs are credited.
 | Reference Policy | `3478a0748bbd6f021643cbc03ed37f2dcc20f8c2` | `sha256:26f532db2365c4d4bafab8f3ac994e04a754689c9baee1e3b5d2166f828cf40d` | [37417561123](https://github.com/nebius/nebius-physical-ai/actions/runs/37417561123) |
 | LeRobot VLM RL | `3478a0748bbd6f021643cbc03ed37f2dcc20f8c2` | `sha256:5dddf9bd1cae85d19c0e570a3d52ddcf7efae8ebab323092e2cfcb461966008d` | [37417561123](https://github.com/nebius/nebius-physical-ai/actions/runs/37417561123) |
 | SONIC | `540e07bdbcbdba1fb994946aad9a151df6330ad9` | `sha256:efcd93d00940b6ee718aeb5907e02dcc6a576b7d3f4151a6d40607d2c55545ca` | [37418916800](https://github.com/nebius/nebius-physical-ai/actions/runs/37418916800) |
+| Default LeRobot 0.5.1 | `4f77cb3ae430aad96c34705d7219069d7b7c4494` | `sha256:d8cd706592a37b0cff91297ef0aafd543b274b0b795699d015d0d50c04584b17` | [37484670973](https://github.com/nebius/nebius-physical-ai/actions/runs/37484670973) |
 
-All five native capability qualifications remain pending and their tool defaults
+All six native capability qualifications remain pending and their tool defaults
 remain quarantined. SONIC is not currently a SkyPilot-bootstrap-attested tool;
 its successful publication does not establish that independent runtime contract.
-The default LeRobot 0.5.1 source-correction rebuild is also pending, separate
-from the optional 0.6.0 candidate. The generic 0.5.1 recipe's forced Torch and
+The default LeRobot 0.5.1 source-correction rebuild and both digest-bound
+attestation checks succeeded, separate from the optional 0.6.0 candidate.
+The generic 0.5.1 recipe's forced Torch and
 Diffusers upgrades still need a compatible dependency closure and real policy
 execution; a clean image scan cannot prove those runtime dependencies work.
 

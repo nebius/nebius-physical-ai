@@ -35,7 +35,13 @@ caching disabled. `prepare_public_runtime.py` binds both original METADATA
 files to the exact reviewed wheel hashes, removes only the documented optional
 dependency edges, retains licenses/notices, refreshes RECORD hashes and sizes,
 and requires excluded distributions to be absent before writing. `pip check`
-then verifies the retained package graph.
+also verifies the resulting dependency closure. LeRobot 0.4.4 eagerly imports
+GR00T and other optional families while importing ACT. The public recipe binds
+the exact policy registration and factory sources to reviewed hashes, retains
+the native ACT branches and saved-processor loader, and rejects every other
+factory family. It recompiles affected bytecode and updates both source and
+bytecode RECORD entries in the same installation layer;
+an unknown source or original RECORD fails before either file changes.
 
 The CPU build smoke converts real raw demonstration arrays with system FFmpeg,
 reads both cameras through the native dataset reader and its default PyAV
