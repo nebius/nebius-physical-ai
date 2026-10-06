@@ -83,7 +83,7 @@ def _hardware_binding(environ: Mapping[str, str]) -> list[str]:
 
 
 def _read_document(storage: Any, uri: str) -> dict[str, Any] | None:
-    current = storage.get_bytes_with_etag(uri)
+    current = storage.read_bytes_with_etag(uri)
     if current is None:
         return None
     try:
@@ -192,7 +192,7 @@ class ImmutableVariantPublication:
             self.storage.put_bytes_conditional(payload, uri, if_none_match=True)
         except StoragePreconditionFailed:
             pass
-        current = self.storage.get_bytes_with_etag(uri)
+        current = self.storage.read_bytes_with_etag(uri)
         if current is None or current[0] != payload:
             raise VariantRecoveryError("immutable variant object failed byte readback")
         self.objects[relative] = {
@@ -557,7 +557,7 @@ class VariantRecovery:
         for relative, evidence in inventory.items():
             uri = prefix + relative
             _relative_object(uri, prefix)
-            current = self.storage.get_bytes_with_etag(uri)
+            current = self.storage.read_bytes_with_etag(uri)
             if current is None or not isinstance(evidence, dict):
                 raise VariantRecoveryError("completed variant object is absent")
             payload = current[0]

@@ -24,7 +24,7 @@ class _ReadOnlyRunStorage:
         self.run_uri = run_uri
         self.fresh_after = fresh_after
 
-    def get_bytes_with_etag(self, uri):
+    def read_bytes_with_etag(self, uri):
         assert uri.startswith(self.run_uri), "Read escaped the exact selected run"
         parsed = urlsplit(uri)
         try:
@@ -69,7 +69,7 @@ def _config(path):
 
 
 def _read(storage, uri):
-    current = storage.get_bytes_with_etag(uri)
+    current = storage.read_bytes_with_etag(uri)
     assert current is not None, "Required exact run artifact is absent"
     return json.loads(current[0])
 
@@ -120,7 +120,7 @@ def _audit_variants(storage, augment, manifest, config):
     assert identity["input_sha256"] == config["input_sha256"]
     coordinator = recovery.VariantRecovery.for_audit(storage, augment, attempt, batch)
     assert coordinator.batch_sha256 == manifest["recovery_batch_sha256"]
-    source_bytes = storage.get_bytes_with_etag(identity["input_video_uri"])
+    source_bytes = storage.read_bytes_with_etag(identity["input_video_uri"])
     assert source_bytes is not None
     with tempfile.TemporaryDirectory(prefix="npa-paidf-recovery-live-audit-") as tmp:
         source = Path(tmp) / "source.mp4"
