@@ -156,7 +156,8 @@ and B200 products, GPU submission preflight checks the lowercase
 formatter is selected, in addition to native hardware and free capacity.
 An exact supported native GFD/Nebius accelerator name remains usable when no
 SkyPilot label formatter is selected. It checks each GPU wave again, so a
-replacement after CPU stages cannot pass solely on its native product label.
+replacement after CPU stages cannot pass a canonical bridge request solely
+on its native product label.
 Correctly labelled fitting nodes in a mixed pool remain eligible. This gate
 does not label nodes; rerun the exact-context GPU setup above, or explicitly
 invoke `wait_for_kubernetes_accelerators(..., label_known_gpus=True)` through
