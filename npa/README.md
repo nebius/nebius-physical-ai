@@ -393,6 +393,10 @@ SDK; previously published container pins retain their recorded build versions.
 - `npa.server`: FastAPI checkpoint-serving and inference server
 - `npa.adapter`: sim demo -> LeRobotDataset v3 conversion
 - `npa.genesis`: teacher training, demo generation, student evaluation
+  The [public Genesis image contract](docker/workbench/genesis/README.md) explains
+  its rigid workload, ACT dependencies and `NPA_GENESIS_SUPPORTED_STUDENT_POLICIES`
+  capability declaration; additional student policies require a qualified
+  operator image.
 
   Genesis teacher training uses RSL-RL 5.5.1 actor/critic models. The loader
   retains legacy ActorCritic checkpoint support and validates saved dimensions

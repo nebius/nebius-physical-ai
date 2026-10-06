@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from pathlib import Path
@@ -94,35 +95,24 @@ _POLICY_CLASS_MAP = {
 }
 
 
-def _load_student_policy(checkpoint_path: Path) -> tuple[Any, Any, Any]:
-    """Load a LeRobot policy plus its preprocessor and postprocessor.
-
-    Returns (policy, preprocessor, postprocessor) so the eval loop can
-    run observations through the same normalization/device pipeline that
-    training used.
-    """
-    pretrained_dir = _resolve_pretrained_dir(checkpoint_path)
-    logger.info("Resolved pretrained model dir: %s", pretrained_dir)
-
-    try:
-        from lerobot.configs.policies import PreTrainedConfig
-        from lerobot.policies.factory import make_pre_post_processors
-    except ImportError as exc:
+def _require_image_policy_capability(policy_type: str) -> None:
+    """Reject a checkpoint outside the image's declared student policy closure."""
+    configured = os.environ.get("NPA_GENESIS_SUPPORTED_STUDENT_POLICIES", "")
+    if not configured:
+        return
+    supported = {name.strip().lower() for name in configured.split(",")}
+    if not supported <= set(_POLICY_CLASS_MAP):
+        raise EvalError("Genesis image declares an invalid student policy capability")
+    if not any(name in policy_type for name in supported):
         raise EvalError(
-            "LeRobot is required for student evaluation. "
-            "Install with: pip install lerobot"
-        ) from exc
+            f"Student policy {policy_type!r} is unavailable in this Genesis image. "
+            f"This image supports: {', '.join(sorted(supported))}. "
+            "Use a separately qualified operator image for additional policy dependencies."
+        )
 
-    # Read config.json to determine policy type
-    config_path = pretrained_dir / "config.json"
-    with config_path.open() as f:
-        config = json.load(f)
 
-    policy_type = (
-        config.get("type", config.get("_target_", "act")).rsplit(".", 1)[-1].lower()
-    )
-
-    # Resolve concrete policy class — do not fall back to the abstract base
+def _student_policy_class(policy_type: str, config_path: Path) -> Any:
+    """Resolve the concrete checkpoint policy without an abstract fallback."""
     class_path = None
     for key, path in _POLICY_CLASS_MAP.items():
         if key in policy_type:
@@ -144,11 +134,20 @@ def _load_student_policy(checkpoint_path: Path) -> tuple[Any, Any, Any]:
     except (ImportError, AttributeError) as exc:
         raise EvalError(f"Cannot import policy class {class_path}: {exc}") from exc
 
-    policy = policy_cls.from_pretrained(str(pretrained_dir))
-    policy.eval()
+    return policy_cls
 
-    # Load the saved preprocessor/postprocessor pipeline so observations
-    # get the same normalization and actions get unnormalized.
+
+def _load_student_processors(pretrained_dir: Path) -> tuple[Any, Any]:
+    """Load checkpoint normalization pipelines through the native policy factory."""
+    try:
+        from lerobot.configs.policies import PreTrainedConfig
+        from lerobot.policies.factory import make_pre_post_processors
+    except ImportError as exc:
+        raise EvalError(
+            "LeRobot is required for student evaluation. "
+            "Install with: pip install lerobot"
+        ) from exc
+
     try:
         pretrained_cfg = PreTrainedConfig.from_pretrained(str(pretrained_dir))
         preprocessor, postprocessor = make_pre_post_processors(
@@ -165,6 +164,24 @@ def _load_student_policy(checkpoint_path: Path) -> tuple[Any, Any, Any]:
         preprocessor = None
         postprocessor = None
 
+    return preprocessor, postprocessor
+
+
+def _load_student_policy(checkpoint_path: Path) -> tuple[Any, Any, Any]:
+    """Load the declared policy and its saved observation/action processors."""
+    pretrained_dir = _resolve_pretrained_dir(checkpoint_path)
+    logger.info("Resolved pretrained model dir: %s", pretrained_dir)
+    config_path = pretrained_dir / "config.json"
+    with config_path.open() as file:
+        config = json.load(file)
+    policy_type = (
+        config.get("type", config.get("_target_", "act")).rsplit(".", 1)[-1].lower()
+    )
+    _require_image_policy_capability(policy_type)
+    policy_cls = _student_policy_class(policy_type, config_path)
+    policy = policy_cls.from_pretrained(str(pretrained_dir))
+    policy.eval()
+    preprocessor, postprocessor = _load_student_processors(pretrained_dir)
     return policy, preprocessor, postprocessor
 
 

@@ -164,6 +164,39 @@ def test_resolve_pretrained_dir_accepts_lerobot_checkpoint_layouts(
         eval_student._resolve_pretrained_dir(tmp_path / "missing")
 
 
+@pytest.mark.parametrize("policy_type", ["diffusion", "smolvla", "vla"])
+def test_public_image_rejects_unavailable_policies_before_framework_imports(
+    genesis_modules, monkeypatch, tmp_path, policy_type
+):
+    module = genesis_modules["eval_student"]
+    monkeypatch.setenv("NPA_GENESIS_SUPPORTED_STUDENT_POLICIES", "act")
+    (tmp_path / "config.json").write_text(json.dumps({"type": policy_type}))
+    with pytest.raises(module.EvalError, match="separately qualified operator image"):
+        module._load_student_policy(tmp_path)
+
+
+def test_public_image_retains_act_and_operator_images_keep_policy_classes(
+    genesis_modules, monkeypatch
+):
+    module = genesis_modules["eval_student"]
+    monkeypatch.setenv("NPA_GENESIS_SUPPORTED_STUDENT_POLICIES", "act")
+    module._require_image_policy_capability("act")
+    module._require_image_policy_capability("actpolicy")
+    monkeypatch.delenv("NPA_GENESIS_SUPPORTED_STUDENT_POLICIES")
+    for policy_type in module._POLICY_CLASS_MAP:
+        module._require_image_policy_capability(policy_type)
+
+
+@pytest.mark.parametrize("declared", [" , ", "unknown", "act,unknown"])
+def test_invalid_image_policy_declaration_fails_closed(
+    genesis_modules, monkeypatch, declared
+):
+    module = genesis_modules["eval_student"]
+    monkeypatch.setenv("NPA_GENESIS_SUPPORTED_STUDENT_POLICIES", declared)
+    with pytest.raises(module.EvalError, match="invalid student policy capability"):
+        module._require_image_policy_capability("diffusion")
+
+
 def test_tune_serializes_and_writes_env_overrides(genesis_modules, tmp_path):
     tune = genesis_modules["tune"]
 

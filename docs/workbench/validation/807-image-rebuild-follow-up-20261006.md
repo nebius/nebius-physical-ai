@@ -21,6 +21,9 @@ canonical Sim2Real image builds. Its exact source
 for the controller, Transfer, EnvGen, Isaac Lab and viewer. Independent anonymous
 manifest and config requests also verified each immutable digest, source
 revision and current SkyPilot bootstrap label.
+Both digest-bound SLSA provenance and SPDX SBOM attestations were independently
+verified against the official hosted publication workflow and exact source for
+all five images. These checks do not replace native workload qualification.
 
 Two of those built parents are now selected by the derivative recipes:
 
@@ -48,6 +51,44 @@ quarantined.
 | LeRobot VLM RL | Replace the stale EnvGen parent. | Real VLM reward signals, nonzero optimizer and weight changes, and a loadable trained checkpoint. |
 | Loop Eval | Replace the stale EnvGen parent and install the fixed Jammy kernel headers from the October 1 snapshot. | Native Genesis rollouts and joined policy/VLM reports; this legacy tool is separate from canonical Sim2Real. |
 | SONIC / Isaac 2 | Update GitPython, Werkzeug and the fixed Jammy header snapshot. Refresh the eight exact Python 3.11.17 Debian artifacts against the signed Deadsnakes index after the old 3.11.15 URLs returned 404. Preserve the Python 3.11 ABI, Isaac Lab 2.3.2.post1 / Isaac Sim 5.1 and runtime-fetched vendor payloads. | Each advertised training, checkpoint, evaluation and export capability, with its exact gated runtime dependencies. |
+
+The fresh stock Genesis build then failed its unchanged license gate on
+TetGen 0.8.2's AGPL distribution. The
+[public Genesis recipe contract](../../../npa/docker/workbench/genesis/README.md)
+now explicitly retains the rigid Panda/Box workload and ACT dependencies while
+excluding tetrahedralization, Diffusion/SmolVLA dependencies, W&B and the
+incompatible TorchCodec decoder in the original installation layer. It binds
+the original Genesis/LeRobot metadata to exact reviewed hashes, refreshes RECORD
+and runs `pip check`. The native CPU build gate must decode real converted camera
+videos through LeRobot's default PyAV backend and round-trip ACT plus its saved
+normalization processors. Source tests and wheel/metadata verification passed;
+the Linux CPU build and later GPU teacher/export/camera qualification remain
+pending. No license exceptions or incompatible Diffusers metadata widening are
+introduced.
+
+## Trusted child publication evidence
+
+These exact image jobs passed the ordinary publication gates. Independent
+anonymous manifest/config checks bound their bytes and source revision, and
+both provenance and SPDX attestations were cryptographically verified against
+the official hosted workflow. The aggregate first build failed because its
+Genesis and SONIC jobs failed; only its four successful image jobs are credited.
+
+| Child | Source revision | Immutable development digest | Successful publication run |
+| --- | --- | --- | --- |
+| Loop Eval | `3478a0748bbd6f021643cbc03ed37f2dcc20f8c2` | `sha256:84ffb8b34c93281b8efa0dd7c9dfdb8ac88d52cbae88519719faf4796e660582` | [37417561123](https://github.com/nebius/nebius-physical-ai/actions/runs/37417561123) |
+| Isaac Arena | `3478a0748bbd6f021643cbc03ed37f2dcc20f8c2` | `sha256:70fcd46d1655431f9f2a2655f32f1b2e4156bb259291ed0b20e70dacd153c5d5` | [37417561123](https://github.com/nebius/nebius-physical-ai/actions/runs/37417561123) |
+| Reference Policy | `3478a0748bbd6f021643cbc03ed37f2dcc20f8c2` | `sha256:26f532db2365c4d4bafab8f3ac994e04a754689c9baee1e3b5d2166f828cf40d` | [37417561123](https://github.com/nebius/nebius-physical-ai/actions/runs/37417561123) |
+| LeRobot VLM RL | `3478a0748bbd6f021643cbc03ed37f2dcc20f8c2` | `sha256:5dddf9bd1cae85d19c0e570a3d52ddcf7efae8ebab323092e2cfcb461966008d` | [37417561123](https://github.com/nebius/nebius-physical-ai/actions/runs/37417561123) |
+| SONIC | `540e07bdbcbdba1fb994946aad9a151df6330ad9` | `sha256:efcd93d00940b6ee718aeb5907e02dcc6a576b7d3f4151a6d40607d2c55545ca` | [37418916800](https://github.com/nebius/nebius-physical-ai/actions/runs/37418916800) |
+
+All five native capability qualifications remain pending and their tool defaults
+remain quarantined. SONIC is not currently a SkyPilot-bootstrap-attested tool;
+its successful publication does not establish that independent runtime contract.
+The default LeRobot 0.5.1 source-correction rebuild is also pending, separate
+from the optional 0.6.0 candidate. The generic 0.5.1 recipe's forced Torch and
+Diffusers upgrades still need a compatible dependency closure and real policy
+execution; a clean image scan cannot prove those runtime dependencies work.
 
 The stock Genesis CUDA 12.4 / Torch 2.6 recipe does not establish RTX PRO 6000
 support. Its CUDA 13 recipe remains an additive operator-base build, and
