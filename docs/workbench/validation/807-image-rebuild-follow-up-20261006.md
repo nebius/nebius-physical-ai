@@ -65,10 +65,11 @@ normalization processors. The first corrected gate decoded both real camera
 videos, then exposed eager GR00T imports while importing ACT. The public recipe
 now binds ACT-only registration/factory changes to exact upstream hashes while
 retaining native ACT logic and saved-processor loading. Other factory families
-fail closed. Source tests and wheel/metadata verification passed;
-the Linux CPU build and later GPU teacher/export/camera qualification remain
-pending. No license exceptions or incompatible Diffusers metadata widening are
-introduced.
+fail closed. The exact-source Linux build has now passed its native default PyAV
+camera dataset and ACT checkpoint/saved-processor round trip, as well as all
+ordinary publication gates. The signed SBOM does not contain TetGen. GPU
+teacher optimization, export and rendered physics qualification remain pending.
+No license exceptions or incompatible Diffusers metadata widening are introduced.
 
 ## Trusted child publication evidence
 
@@ -86,15 +87,25 @@ Genesis and SONIC jobs failed; only its four successful image jobs are credited.
 | LeRobot VLM RL | `3478a0748bbd6f021643cbc03ed37f2dcc20f8c2` | `sha256:5dddf9bd1cae85d19c0e570a3d52ddcf7efae8ebab323092e2cfcb461966008d` | [37417561123](https://github.com/nebius/nebius-physical-ai/actions/runs/37417561123) |
 | SONIC | `540e07bdbcbdba1fb994946aad9a151df6330ad9` | `sha256:efcd93d00940b6ee718aeb5907e02dcc6a576b7d3f4151a6d40607d2c55545ca` | [37418916800](https://github.com/nebius/nebius-physical-ai/actions/runs/37418916800) |
 | Default LeRobot 0.5.1 | `4f77cb3ae430aad96c34705d7219069d7b7c4494` | `sha256:d8cd706592a37b0cff91297ef0aafd543b274b0b795699d015d0d50c04584b17` | [37484670973](https://github.com/nebius/nebius-physical-ai/actions/runs/37484670973) |
+| Genesis, public rigid/ACT scope | `002bf337dd7e8ac260ea4be09f784a61cd4e0863` | `sha256:4b2f5eebc399d9d463f197542fe146f5c4dfa3cb6e9c32df3802b3aea9d25459` | [37496185473](https://github.com/nebius/nebius-physical-ai/actions/runs/37496185473) |
 
-All six native capability qualifications remain pending and their tool defaults
-remain quarantined. SONIC is not currently a SkyPilot-bootstrap-attested tool;
+These tool defaults remain quarantined. Genesis passed the narrow native CPU
+gate described above; its real GPU teacher/export/rendering workload and the
+other child workload qualifications remain pending. SONIC is not currently a SkyPilot-bootstrap-attested tool;
 its successful publication does not establish that independent runtime contract.
 The default LeRobot 0.5.1 source-correction rebuild and both digest-bound
 attestation checks succeeded, separate from the optional 0.6.0 candidate.
-The generic 0.5.1 recipe's forced Torch and
-Diffusers upgrades still need a compatible dependency closure and real policy
-execution; a clean image scan cannot prove those runtime dependencies work.
+An independent execution of the exact default LeRobot candidate then failed
+`pip check` and native default camera decoding: forced Torch 2.12.1 and
+torchvision 0.27.1 exceeded upstream bounds, TorchCodec 0.10 could not load
+against that Torch ABI, and required W&B was absent. Its ACT optimizer changed
+62 parameter tensors and checkpoint/processors reloaded correctly, but that
+narrow result does not accept the overall image. These older incompatibilities
+came from PR #173, not PR #807. A separate
+[maintained integration repair](https://github.com/nebius/nebius-physical-ai/pull/888)
+binds upstream source/license, declares its own version and requires real native
+decoding, ACT, Diffusion and server gates; its acceptance is independent of this
+Genesis/derivative change.
 
 The stock Genesis CUDA 12.4 / Torch 2.6 recipe does not establish RTX PRO 6000
 support. Its CUDA 13 recipe remains an additive operator-base build, and
