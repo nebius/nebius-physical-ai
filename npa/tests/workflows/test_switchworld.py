@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+from io import BytesIO
 import inspect
 import json
 from pathlib import Path
 import signal
 import subprocess
 import sys
+import tarfile
 from types import SimpleNamespace
 
 import pytest
@@ -223,6 +225,121 @@ def test_adapter_attention_source_overlay_is_scoped_and_recorded(
     assert "output = lingbot_attention(" in patched
     assert modification["upstream_revision"] == switchworld.SWITCHWORLD_REVISION
     assert modification["before_sha256"] != modification["after_sha256"]
+
+
+def _source_archive(*, symlink: bool = False) -> bytes:
+    """Build a tiny archive with the same root shape as the pinned upstream source."""
+
+    root = f"SwitchWorld-{switchworld.SWITCHWORLD_REVISION}"
+    payloads = {
+        "pyproject.toml": b"[build-system]\nrequires = []\n",
+        "models/lingbot_perspective_molora.py": b"# pinned source fixture\n",
+    }
+    output = BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        directory = tarfile.TarInfo(f"{root}/models")
+        directory.type = tarfile.DIRTYPE
+        archive.addfile(directory)
+        for name, payload in payloads.items():
+            member = tarfile.TarInfo(f"{root}/{name}")
+            member.size = len(payload)
+            archive.addfile(member, BytesIO(payload))
+        if symlink:
+            link = tarfile.TarInfo(f"{root}/unsafe-link")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "../../outside"
+            archive.addfile(link)
+    return output.getvalue()
+
+
+def test_checkout_source_uses_verified_archive_without_runtime_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Use only an immutable archive when the final image has no Git runtime."""
+
+    payload = _source_archive()
+    monkeypatch.setattr(switchworld, "SWITCHWORLD_ARCHIVE_BYTES", len(payload))
+    monkeypatch.setattr(
+        switchworld,
+        "SWITCHWORLD_ARCHIVE_SHA256",
+        hashlib.sha256(payload).hexdigest(),
+    )
+    monkeypatch.setattr(
+        switchworld.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: BytesIO(payload),
+    )
+    commands: list[list[str]] = []
+
+    def install(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(switchworld.subprocess, "run", install)
+
+    checkout = switchworld._checkout_source(tmp_path)
+
+    assert (checkout / "pyproject.toml").is_file()
+    assert commands == [
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            "--no-build-isolation",
+            "-e",
+            str(checkout),
+        ]
+    ]
+    assert not (tmp_path / "SwitchWorld.tar.gz").exists()
+
+
+def test_checkout_source_rejects_tampered_or_unsafe_archives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject altered bytes and archive links before an editable install runs."""
+
+    payload = _source_archive()
+    monkeypatch.setattr(switchworld, "SWITCHWORLD_ARCHIVE_BYTES", len(payload))
+    monkeypatch.setattr(
+        switchworld,
+        "SWITCHWORLD_ARCHIVE_SHA256",
+        "0" * 64,
+    )
+    monkeypatch.setattr(
+        switchworld.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: BytesIO(payload),
+    )
+
+    with pytest.raises(switchworld.SwitchWorldError, match="digest mismatch"):
+        switchworld._checkout_source(tmp_path)
+    assert not (tmp_path / "SwitchWorld").exists()
+    assert not (tmp_path / "SwitchWorld.tar.gz").exists()
+
+    unsafe_payload = _source_archive(symlink=True)
+    monkeypatch.setattr(switchworld, "SWITCHWORLD_ARCHIVE_BYTES", len(unsafe_payload))
+    monkeypatch.setattr(
+        switchworld,
+        "SWITCHWORLD_ARCHIVE_SHA256",
+        hashlib.sha256(unsafe_payload).hexdigest(),
+    )
+    monkeypatch.setattr(
+        switchworld.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: BytesIO(unsafe_payload),
+    )
+    monkeypatch.setattr(
+        switchworld.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("editable install must not run"),
+    )
+
+    with pytest.raises(switchworld.SwitchWorldError, match="non-regular"):
+        switchworld._checkout_source(tmp_path)
+    assert not (tmp_path / "SwitchWorld").exists()
+    assert not (tmp_path / "SwitchWorld.tar.gz").exists()
 
 
 def test_adapter_command_explicitly_requires_anchor_only_visual_history(

@@ -42,6 +42,10 @@ def test_private_recipe_uses_audited_snapshot_and_no_easydict_wheel() -> None:
     assert (
         "git git-lfs liberror-perl libperl5.36 perl perl-base perl-modules-5.36" in text
     )
+    switchworld_source = SWITCHWORLD.read_text(encoding="utf-8")
+    assert "codeload.github.com/yizhiqianbi/SwitchWorld/tar.gz/" in switchworld_source
+    assert "SWITCHWORLD_ARCHIVE_SHA256" in switchworld_source
+    assert '["git", "clone"' not in switchworld_source
     assert 'npa.disposition="operator-private-validation-no-publication"' in text
     assert "ACCEPT_" not in text
 

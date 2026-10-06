@@ -8,11 +8,14 @@ import json
 import math
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
 import shutil
 import subprocess
 import sys
 import tempfile
+import tarfile
 from typing import Any
+import urllib.request
 from urllib.parse import urlsplit
 
 from npa.clients.storage import StorageClient
@@ -20,6 +23,14 @@ from npa.clients.storage import StorageClient
 
 SWITCHWORLD_REPOSITORY = "https://github.com/yizhiqianbi/SwitchWorld.git"
 SWITCHWORLD_REVISION = "44d21478f2c15dcccf6423983cb78beee695db1c"
+SWITCHWORLD_ARCHIVE_URL = (
+    f"https://codeload.github.com/yizhiqianbi/SwitchWorld/tar.gz/{SWITCHWORLD_REVISION}"
+)
+SWITCHWORLD_ARCHIVE_SHA256 = (
+    "41a8afbb960a9816b1e0173c2550dc619450a5ed2e354a1bdc4c5f07aebd38be"
+)
+SWITCHWORLD_ARCHIVE_BYTES = 8832151
+SWITCHWORLD_ARCHIVE_ROOT = f"SwitchWorld-{SWITCHWORLD_REVISION}"
 CANONICAL_ADAPTER_REPOSITORY = "PencilHu/SwitchWorld"
 CANONICAL_ADAPTER_REVISION = "5a01361ae1f9c9b1cfe115bef1c4d0377d922c1f"
 ADAPTER_FILES = {
@@ -506,28 +517,121 @@ def _prepared_manifest(
     }
 
 
-def _checkout_source(root: Path) -> Path:
-    """Checkout the immutable upstream source without relying on host paths."""
+def _download_switchworld_archive(destination: Path) -> None:
+    """Fetch the one approved upstream archive and bind it to its known bytes."""
 
-    checkout = root / "SwitchWorld"
-    subprocess.run(
-        ["git", "clone", "--filter=blob:none", SWITCHWORLD_REPOSITORY, str(checkout)],
-        check=True,
+    digest = hashlib.sha256()
+    received = 0
+    request = urllib.request.Request(
+        SWITCHWORLD_ARCHIVE_URL,
+        headers={"Accept": "application/x-gzip"},
+        method="GET",
     )
-    subprocess.run(
-        ["git", "-C", str(checkout), "checkout", "--detach", SWITCHWORLD_REVISION],
-        check=True,
-    )
-    resolved = subprocess.run(
-        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    if resolved != SWITCHWORLD_REVISION:
+    try:
+        with (
+            urllib.request.urlopen(request, timeout=60) as source,
+            destination.open("xb") as target,
+        ):
+            content_length = getattr(source, "headers", {}).get("Content-Length")
+            if (
+                content_length is not None
+                and int(content_length) != SWITCHWORLD_ARCHIVE_BYTES
+            ):
+                raise SwitchWorldError("pinned source archive has an unexpected size")
+            while block := source.read(1024 * 1024):
+                received += len(block)
+                if received > SWITCHWORLD_ARCHIVE_BYTES:
+                    raise SwitchWorldError(
+                        "pinned source archive exceeds its known size"
+                    )
+                digest.update(block)
+                target.write(block)
+    except SwitchWorldError:
+        destination.unlink(missing_ok=True)
+        raise
+    except (OSError, ValueError) as exc:
+        destination.unlink(missing_ok=True)
         raise SwitchWorldError(
-            f"upstream checkout mismatch: expected {SWITCHWORLD_REVISION}, got {resolved}"
-        )
+            "could not download pinned SwitchWorld source archive"
+        ) from exc
+    if received != SWITCHWORLD_ARCHIVE_BYTES:
+        destination.unlink(missing_ok=True)
+        raise SwitchWorldError("pinned source archive has an unexpected size")
+    if digest.hexdigest() != SWITCHWORLD_ARCHIVE_SHA256:
+        destination.unlink(missing_ok=True)
+        raise SwitchWorldError("pinned source archive digest mismatch")
+
+
+def _extract_switchworld_archive(archive_path: Path, checkout: Path) -> None:
+    """Extract only regular files below the expected upstream archive root."""
+
+    if checkout.exists():
+        raise SwitchWorldError("refusing to replace an existing source checkout")
+    seen: set[PurePosixPath] = set()
+    try:
+        with tarfile.open(archive_path, mode="r:gz") as archive:
+            checkout.mkdir(mode=0o755)
+            for member in archive.getmembers():
+                member_path = PurePosixPath(member.name)
+                parts = member_path.parts
+                if (
+                    member_path.is_absolute()
+                    or len(parts) < 1
+                    or parts[0] != SWITCHWORLD_ARCHIVE_ROOT
+                    or ".." in parts
+                ):
+                    raise SwitchWorldError(
+                        "pinned source archive contains an unsafe path"
+                    )
+                if len(parts) == 1:
+                    if not member.isdir():
+                        raise SwitchWorldError(
+                            "pinned source archive has an invalid root"
+                        )
+                    continue
+                relative = PurePosixPath(*parts[1:])
+                if relative in seen:
+                    raise SwitchWorldError(
+                        "pinned source archive contains duplicate paths"
+                    )
+                seen.add(relative)
+                destination = checkout.joinpath(*relative.parts)
+                if member.isdir():
+                    destination.mkdir(parents=True, exist_ok=True, mode=0o755)
+                    continue
+                if not member.isfile():
+                    raise SwitchWorldError(
+                        "pinned source archive contains a non-regular member"
+                    )
+                destination.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+                source = archive.extractfile(member)
+                if source is None:
+                    raise SwitchWorldError(
+                        "pinned source archive member could not be read"
+                    )
+                with source, destination.open("xb") as target:
+                    shutil.copyfileobj(source, target)
+                destination.chmod(member.mode & 0o777)
+        if not (checkout / "pyproject.toml").is_file():
+            raise SwitchWorldError("pinned source archive lacks the project manifest")
+    except (OSError, tarfile.TarError):
+        shutil.rmtree(checkout, ignore_errors=True)
+        raise
+    except SwitchWorldError:
+        shutil.rmtree(checkout, ignore_errors=True)
+        raise
+
+
+def _checkout_source(root: Path) -> Path:
+    """Materialize the immutable upstream source without a runtime Git dependency."""
+
+    archive_path = root / "SwitchWorld.tar.gz"
+    checkout = root / "SwitchWorld"
+    _download_switchworld_archive(archive_path)
+    try:
+        _extract_switchworld_archive(archive_path, checkout)
+    finally:
+        archive_path.unlink(missing_ok=True)
     subprocess.run(
         [
             sys.executable,
