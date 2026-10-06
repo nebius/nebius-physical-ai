@@ -16,6 +16,8 @@ from boto3.s3.transfer import TransferConfig
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
+from npa.clients.conditional_upload import put_object_conditional
+
 # Multi-file directory transfers run this many objects concurrently.
 _DIRECTORY_TRANSFER_WORKERS = 8
 # Total per-file multipart thread budget shared across whatever number of
@@ -432,7 +434,7 @@ class StorageClient:
         else:
             kwargs["IfNoneMatch"] = "*"
         try:
-            response = self._s3.put_object(**kwargs)
+            response = put_object_conditional(self._s3, kwargs)
         except ClientError as exc:
             code = str(exc.response.get("Error", {}).get("Code", ""))
             status = int(

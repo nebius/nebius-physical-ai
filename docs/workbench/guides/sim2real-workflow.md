@@ -665,6 +665,13 @@ policy efficacy; report the measured strict success without weakening it. The
 [architecture/resume contract](../../architecture/sim2real-compositional-workflow.md)
 defines the 14 ComponentRecords and restart audit.
 
+Recordings can exceed the storage endpoint's single-upload object size. NPA's
+conditional storage writer uses multipart upload for payloads of at least 8 MiB,
+enforcing the original create or replace condition when the upload completes.
+It aborts unfinished parts on failure. A publication failure must remain visible
+in its runtime ledger; recover finalization from the sealed evidence and verify
+the published recording bytes before reporting completion.
+
 ## Clean up
 
 Idle GPU clusters keep billing after the run finishes. When you are done,
