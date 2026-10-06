@@ -481,7 +481,15 @@ def _fetch(ssh, selector, role, destination, *, size=None, digest=None):
                     _manifest(payload, selector)
                     output.write(payload)
                 else:
-                    _copy_exact(process.stdout, output, size, digest)
+                    try:
+                        _copy_exact(process.stdout, output, size, digest)
+                    except _QualificationError as error:
+                        # These failures mean stdout reached EOF. An oversized
+                        # sender may still be writing, so never wait for it here.
+                        if error.code in ("transfer_truncated", "transfer_digest"):
+                            if process.wait() != 0:
+                                raise _transfer_failure(errors) from error
+                        raise
             except BaseException:
                 process.kill()
                 raise

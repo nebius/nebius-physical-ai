@@ -804,8 +804,9 @@ def test_ignored_bytecode_is_rejected_before_native_children(private_root, monke
         ("unclassified private diagnostic", "ssh_transfer_failed"),
     ],
 )
-def test_manifest_reports_failed_child_transport_before_digest(
-    private_root, monkeypatch, capsys, diagnostic, code
+@pytest.mark.parametrize("role", ["manifest", "archive"])
+def test_fetch_reports_failed_child_transport_before_digest(
+    private_root, monkeypatch, capsys, diagnostic, code, role
 ):
     command = [
         sys.executable,
@@ -815,7 +816,7 @@ def test_manifest_reports_failed_child_transport_before_digest(
     monkeypatch.setattr(Q, "_remote_command", lambda *_args: command)
     target = private_root / "manifest"
     with pytest.raises(Q._QualificationError) as raised:
-        Q._fetch([], "a" * 64, "manifest", target)
+        Q._fetch([], "a" * 64, role, target, size=3, digest=Q._sha(b"abc"))
     assert raised.value.code == code
     assert "private" not in json.dumps(Q._failure(raised.value, "interface"))
     assert capsys.readouterr() == ("", "")
@@ -858,8 +859,11 @@ def test_successful_manifest_sender_still_requires_matching_digest(
         Q._fetch([], "a" * 64, "manifest", private_root / "wrong-manifest")
 
 
-def test_oversized_manifest_sender_is_reaped_without_waiting_for_full_stream(
-    private_root, monkeypatch
+@pytest.mark.parametrize(
+    "role,code", [("manifest", "manifest_size"), ("archive", "transfer_oversized")]
+)
+def test_oversized_sender_is_reaped_without_waiting_for_full_stream(
+    private_root, monkeypatch, role, code
 ):
     command = [
         sys.executable,
@@ -876,7 +880,37 @@ def test_oversized_manifest_sender_is_reaped_without_waiting_for_full_stream(
         return child
 
     monkeypatch.setattr(Q.subprocess, "Popen", tracked)
-    with pytest.raises(Q._QualificationError, match="manifest_size"):
-        Q._fetch([], "a" * 64, "manifest", private_root / "oversized-manifest")
+    with pytest.raises(Q._QualificationError, match=code):
+        Q._fetch(
+            [],
+            "a" * 64,
+            role,
+            private_root / "oversized-manifest",
+            size=3,
+            digest=Q._sha(b"abc"),
+        )
     assert len(children) == 1
     assert children[0].returncode is not None
+
+
+@pytest.mark.parametrize("payload", [b"a", b"bad"])
+def test_failed_archive_sender_overrides_partial_or_wrong_digest_error(
+    private_root, monkeypatch, payload
+):
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.buffer.write("
+        + repr(payload)
+        + "); sys.stderr.write('Connection refused private-endpoint'); sys.exit(255)",
+    ]
+    monkeypatch.setattr(Q, "_remote_command", lambda *_args: command)
+    with pytest.raises(Q._QualificationError, match="ssh_connection_failed"):
+        Q._fetch(
+            [],
+            "a" * 64,
+            "archive",
+            private_root / "partial-archive",
+            size=3,
+            digest=Q._sha(b"abc"),
+        )
