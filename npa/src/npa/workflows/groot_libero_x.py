@@ -22,6 +22,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.parse
+import urllib.request
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 
@@ -76,7 +78,7 @@ LIBERO_X_EVALUATOR_REPOSITORY = "https://github.com/meituan/LIBERO-X.git"
 LIBERO_X_EVALUATOR_REVISION = "f528726421c7211d8eb05fe48e9e5e2535ccc813"
 LIBERO_X_EVALUATOR_LICENSE = "MIT"
 LIBERO_X_EVALUATOR_SOURCE = "https://github.com/meituan/LIBERO-X"
-RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v2"
+RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v3"
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 LIBERO_X_BDDL_LEVELS = frozenset({"LEVEL1", "LEVEL2", "LEVEL3", "LEVEL4"})
@@ -87,6 +89,18 @@ _SECRET_ENV_NAME = re.compile(
     r"access[_-]?key|api[_-]?key|client[_-]?secret)"
 )
 _FAILURE_TEXT_LIMIT = 8192
+_GIT_LFS_POINTER_VERSION = "version https://git-lfs.github.com/spec/v1"
+# Isaac-GR00T's lock resolves the aarch64 TorchCodec wheel while validating its
+# multi-platform environment, even on an x86_64 worker.  Fetch exactly that
+# upstream LFS object after checking out the reviewed source revision; do not
+# enable broad LFS smudging, which would materialize unrelated media payloads.
+GROOT_RUNTIME_LFS_OBJECTS: tuple[tuple[str, str, int], ...] = (
+    (
+        "scripts/deployment/dgpu/wheels/torchcodec-0.8.0-cp312-cp312-linux_aarch64.whl",
+        "3c5bf377f922d2126041b3c49846504083a015d44979ca594e368ccc8c4c0814",
+        512641,
+    ),
+)
 
 
 # This overlay is appended to the private, runtime-fetched Apache-2.0 Isaac-GR00T
@@ -757,12 +771,13 @@ def _run_runtime_command(
 
 
 def _git_without_lfs(git: str, *arguments: str) -> list[str]:
-    """Return a Git command that cannot invoke an unavailable LFS filter.
+    """Return a Git command that cannot eagerly materialize LFS payloads.
 
     ``GIT_LFS_SKIP_SMUDGE`` is insufficient when a repository's configured LFS
     filter executable is absent: Git can still try to start ``git-lfs`` during
-    checkout.  The runtime only needs source code, never LFS-managed payloads,
-    so disable that filter explicitly for clone and checkout.
+    checkout.  The runtime therefore disables that filter for clone and
+    checkout, then :func:`_hydrate_required_groot_lfs_objects` retrieves only
+    the one lock-required, hash-pinned wheel through the upstream LFS batch API.
     """
 
     return [
@@ -775,6 +790,177 @@ def _git_without_lfs(git: str, *arguments: str) -> list[str]:
         "filter.lfs.required=false",
         *arguments,
     ]
+
+
+def _path_has_digest(path: Path, expected_sha256: str, expected_size: int) -> bool:
+    """Return whether a file is exactly the reviewed object without reading it whole."""
+
+    try:
+        if path.stat().st_size != expected_size:
+            return False
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+    except OSError:
+        return False
+    return digest.hexdigest() == expected_sha256
+
+
+def _expected_lfs_pointer(expected_sha256: str, expected_size: int) -> str:
+    return (
+        f"{_GIT_LFS_POINTER_VERSION}\n"
+        f"oid sha256:{expected_sha256}\n"
+        f"size {expected_size}\n"
+    )
+
+
+def _github_lfs_download_url(expected_sha256: str, expected_size: int) -> str:
+    """Resolve one expected object through the upstream Git LFS batch API."""
+
+    batch_request = urllib.request.Request(
+        f"{IMAGE_GROOT_REPOSITORY}/info/lfs/objects/batch",
+        data=json.dumps(
+            {
+                "operation": "download",
+                "transfers": ["basic"],
+                "objects": [{"oid": expected_sha256, "size": expected_size}],
+            },
+            separators=(",", ":"),
+        ).encode(),
+        headers={
+            "Accept": "application/vnd.git-lfs+json",
+            "Content-Type": "application/vnd.git-lfs+json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(batch_request) as response:
+            batch = json.loads(response.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise GrootVisualizationError(
+            "could not resolve the required upstream Git LFS object"
+        ) from exc
+    return _lfs_download_url_from_batch(batch, expected_sha256, expected_size)
+
+
+def _lfs_download_url_from_batch(
+    batch: object, expected_sha256: str, expected_size: int
+) -> str:
+    """Validate an LFS batch response and return its HTTPS download URL."""
+
+    objects = batch.get("objects") if isinstance(batch, dict) else None
+    if (
+        not isinstance(objects, list)
+        or len(objects) != 1
+        or not isinstance(objects[0], dict)
+    ):
+        raise GrootVisualizationError(
+            "upstream Git LFS response lacks one requested object"
+        )
+    object_record = objects[0]
+    if (
+        object_record.get("oid") != expected_sha256
+        or object_record.get("size") != expected_size
+    ):
+        raise GrootVisualizationError(
+            "upstream Git LFS response changed object identity"
+        )
+    actions = object_record.get("actions")
+    download = actions.get("download") if isinstance(actions, dict) else None
+    href = download.get("href") if isinstance(download, dict) else None
+    parsed = urllib.parse.urlparse(href) if isinstance(href, str) else None
+    if (
+        parsed is None
+        or parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise GrootVisualizationError(
+            "upstream Git LFS response lacks a safe download URL"
+        )
+    return href
+
+
+def _download_lfs_bytes(url: str, temporary: Path) -> None:
+    """Stream an LFS download to an exclusive temporary file."""
+
+    try:
+        with (
+            urllib.request.urlopen(url) as response,
+            temporary.open("xb") as handle,
+        ):
+            while chunk := response.read(1024 * 1024):
+                handle.write(chunk)
+    except OSError as exc:
+        raise GrootVisualizationError(
+            "could not download the required upstream Git LFS object"
+        ) from exc
+
+
+def _download_github_lfs_object(
+    destination: Path, *, expected_sha256: str, expected_size: int
+) -> None:
+    """Download one hash-pinned public Git LFS object without invoking git-lfs."""
+
+    href = _github_lfs_download_url(expected_sha256, expected_size)
+    temporary = destination.with_name(f".{destination.name}.lfs-{os.getpid()}")
+    if temporary.exists():
+        raise GrootVisualizationError(
+            f"native runtime LFS temporary path already exists: {temporary}"
+        )
+    try:
+        _download_lfs_bytes(href, temporary)
+        if not _path_has_digest(temporary, expected_sha256, expected_size):
+            raise GrootVisualizationError(
+                "required upstream Git LFS object did not match its reviewed digest"
+            )
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _hydrate_required_groot_lfs_objects(source: Path) -> None:
+    """Replace only the reviewed LFS pointers needed by Isaac-GR00T's lock."""
+
+    for relative_path, expected_sha256, expected_size in GROOT_RUNTIME_LFS_OBJECTS:
+        destination = source / relative_path
+        if _path_has_digest(destination, expected_sha256, expected_size):
+            continue
+        try:
+            pointer = destination.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise GrootVisualizationError(
+                f"reviewed Isaac-GR00T checkout lacks required LFS object {relative_path}"
+            ) from exc
+        if pointer != _expected_lfs_pointer(expected_sha256, expected_size):
+            raise GrootVisualizationError(
+                f"reviewed Isaac-GR00T LFS pointer changed for {relative_path}"
+            )
+        _download_github_lfs_object(
+            destination,
+            expected_sha256=expected_sha256,
+            expected_size=expected_size,
+        )
+        if not _path_has_digest(destination, expected_sha256, expected_size):
+            raise GrootVisualizationError(
+                f"required Isaac-GR00T LFS object did not materialize for {relative_path}"
+            )
+
+
+def _groot_lfs_provenance() -> list[dict[str, str | int]]:
+    return [
+        {"path": path, "sha256": sha256, "size": size}
+        for path, sha256, size in GROOT_RUNTIME_LFS_OBJECTS
+    ]
+
+
+def _required_groot_lfs_objects_verified(source: Path) -> bool:
+    return all(
+        _path_has_digest(source / path, sha256, size)
+        for path, sha256, size in GROOT_RUNTIME_LFS_OBJECTS
+    )
 
 
 def _overlay_libero_env(source: Path) -> dict[str, str]:
@@ -811,6 +997,8 @@ def _runtime_ready(target: Path) -> dict[str, Any] | None:
         return None
     if payload.get("isaac_groot_revision") != IMAGE_GROOT_REF:
         return None
+    if payload.get("required_groot_lfs_objects") != _groot_lfs_provenance():
+        return None
     evaluator = payload.get("libero_x_evaluator")
     overlay = payload.get("npa_libero_x_overlay")
     if (
@@ -835,6 +1023,8 @@ def _runtime_ready(target: Path) -> dict[str, Any] | None:
         text=True,
     )
     if revision.returncode or revision.stdout.strip() != IMAGE_GROOT_REF:
+        return None
+    if not _required_groot_lfs_objects_verified(source):
         return None
     evaluator_revision = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -875,8 +1065,12 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
     """
 
     cache_root = _runtime_cache_root(temporary_root)
+    lfs_identity = hashlib.sha256(
+        json.dumps(_groot_lfs_provenance(), sort_keys=True).encode()
+    ).hexdigest()[:12]
     cache_identity = (
-        f"isaac-groot-{IMAGE_GROOT_REF}-libero-x-{LIBERO_X_EVALUATOR_REVISION}"
+        f"isaac-groot-{IMAGE_GROOT_REF}-lfs-{lfs_identity}-libero-x-"
+        f"{LIBERO_X_EVALUATOR_REVISION}"
     )
     target = cache_root / cache_identity
     lock_path = cache_root / f"{cache_identity}.lock"
@@ -943,6 +1137,7 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             raise GrootVisualizationError(
                 "runtime-fetched Isaac-GR00T revision differs from reviewed pin"
             )
+        _hydrate_required_groot_lfs_objects(source)
         _run_runtime_command(
             _git_without_lfs(
                 git,
@@ -1006,6 +1201,7 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             "delivery": "runtime-fetch",
             "repository": IMAGE_GROOT_REPOSITORY,
             "isaac_groot_revision": IMAGE_GROOT_REF,
+            "required_groot_lfs_objects": _groot_lfs_provenance(),
             "libero_submodule_revision": libero_revision.stdout.strip(),
             "libero_x_evaluator": {
                 "repository": LIBERO_X_EVALUATOR_REPOSITORY,

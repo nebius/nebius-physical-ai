@@ -23,6 +23,23 @@ class _Body:
         return self.body
 
 
+class _StreamingResponse:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self) -> "_StreamingResponse":
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        return None
+
+    def read(self, size: int = -1) -> bytes:
+        if size < 0:
+            return self.body
+        result, self.body = self.body[:size], self.body[size:]
+        return result
+
+
 class FakeS3:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], tuple[bytes, str]] = {}
@@ -490,7 +507,7 @@ def test_native_evaluator_writes_worker_registration_manifest(
     assert captured["config"]["libero_x_source"] == str(source)
 
 
-def test_runtime_overlay_and_git_fetch_contract_keep_lfs_bytes_out_of_cache(
+def test_runtime_overlay_and_git_fetch_contract_avoid_broad_lfs_smudging(
     tmp_path: Path,
 ) -> None:
     command = workflow._git_without_lfs("git", "checkout", "--detach", "revision")
@@ -512,6 +529,184 @@ def test_runtime_overlay_and_git_fetch_contract_keep_lfs_bytes_out_of_cache(
         == hashlib.sha256(workflow.LIBERO_X_RUNTIME_OVERLAY.encode()).hexdigest()
     )
     assert target.read_text().endswith(workflow.LIBERO_X_RUNTIME_OVERLAY + "\n")
+
+
+def test_runtime_hydrates_only_verified_required_lfs_object(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "Isaac-GR00T"
+    relative_path = "scripts/deployment/dgpu/wheels/torchcodec.whl"
+    payload = b"PK\x03\x04-reviewed-wheel"
+    digest = hashlib.sha256(payload).hexdigest()
+    target = source / relative_path
+    target.parent.mkdir(parents=True)
+    target.write_text(workflow._expected_lfs_pointer(digest, len(payload)))
+    monkeypatch.setattr(
+        workflow,
+        "GROOT_RUNTIME_LFS_OBJECTS",
+        ((relative_path, digest, len(payload)),),
+    )
+    calls: list[tuple[Path, str, int]] = []
+
+    def download(
+        destination: Path, *, expected_sha256: str, expected_size: int
+    ) -> None:
+        calls.append((destination, expected_sha256, expected_size))
+        destination.write_bytes(payload)
+
+    monkeypatch.setattr(workflow, "_download_github_lfs_object", download)
+
+    workflow._hydrate_required_groot_lfs_objects(source)
+
+    assert calls == [(target, digest, len(payload))]
+    assert target.read_bytes() == payload
+    assert workflow._required_groot_lfs_objects_verified(source) is True
+    assert workflow._groot_lfs_provenance() == [
+        {"path": relative_path, "sha256": digest, "size": len(payload)}
+    ]
+
+
+def test_runtime_refuses_changed_required_lfs_pointer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "Isaac-GR00T"
+    relative_path = "scripts/deployment/dgpu/wheels/torchcodec.whl"
+    payload = b"PK\x03\x04-reviewed-wheel"
+    digest = hashlib.sha256(payload).hexdigest()
+    target = source / relative_path
+    target.parent.mkdir(parents=True)
+    target.write_text(workflow._expected_lfs_pointer("0" * 64, len(payload)))
+    monkeypatch.setattr(
+        workflow,
+        "GROOT_RUNTIME_LFS_OBJECTS",
+        ((relative_path, digest, len(payload)),),
+    )
+
+    def unexpected_download(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("changed pointer must fail before download")
+
+    monkeypatch.setattr(workflow, "_download_github_lfs_object", unexpected_download)
+
+    with pytest.raises(workflow.GrootVisualizationError, match="pointer changed"):
+        workflow._hydrate_required_groot_lfs_objects(source)
+
+
+def test_runtime_lfs_download_requires_matching_batch_and_payload_digest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = b"PK\x03\x04-reviewed-wheel"
+    digest = hashlib.sha256(payload).hexdigest()
+    destination = tmp_path / "torchcodec.whl"
+    destination.write_text(workflow._expected_lfs_pointer(digest, len(payload)))
+    download_url = "https://objects.example.invalid/opaque-signed-object"
+    calls: list[Any] = []
+
+    def urlopen(request: Any) -> _StreamingResponse:
+        calls.append(request)
+        if len(calls) == 1:
+            assert request.full_url == (
+                f"{workflow.IMAGE_GROOT_REPOSITORY}/info/lfs/objects/batch"
+            )
+            assert json.loads(request.data) == {
+                "operation": "download",
+                "transfers": ["basic"],
+                "objects": [{"oid": digest, "size": len(payload)}],
+            }
+            return _StreamingResponse(
+                json.dumps(
+                    {
+                        "objects": [
+                            {
+                                "oid": digest,
+                                "size": len(payload),
+                                "actions": {"download": {"href": download_url}},
+                            }
+                        ]
+                    }
+                ).encode()
+            )
+        assert request == download_url
+        return _StreamingResponse(payload)
+
+    monkeypatch.setattr(workflow.urllib.request, "urlopen", urlopen)
+
+    workflow._download_github_lfs_object(
+        destination, expected_sha256=digest, expected_size=len(payload)
+    )
+
+    assert destination.read_bytes() == payload
+    assert len(calls) == 2
+
+
+def test_runtime_lfs_download_rejects_wrong_payload_without_replacing_pointer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = b"PK\x03\x04-reviewed-wheel"
+    digest = hashlib.sha256(payload).hexdigest()
+    pointer = workflow._expected_lfs_pointer(digest, len(payload))
+    destination = tmp_path / "torchcodec.whl"
+    destination.write_text(pointer)
+    responses = iter(
+        [
+            json.dumps(
+                {
+                    "objects": [
+                        {
+                            "oid": digest,
+                            "size": len(payload),
+                            "actions": {
+                                "download": {
+                                    "href": "https://objects.example.invalid/signed"
+                                }
+                            },
+                        }
+                    ]
+                }
+            ).encode(),
+            b"not-the-reviewed-wheel",
+        ]
+    )
+
+    monkeypatch.setattr(
+        workflow.urllib.request,
+        "urlopen",
+        lambda _request: _StreamingResponse(next(responses)),
+    )
+
+    with pytest.raises(workflow.GrootVisualizationError, match="did not match"):
+        workflow._download_github_lfs_object(
+            destination, expected_sha256=digest, expected_size=len(payload)
+        )
+
+    assert destination.read_text() == pointer
+    assert not list(tmp_path.glob(".torchcodec.whl.lfs-*"))
+
+
+def test_runtime_rejects_downloaded_lfs_object_with_wrong_digest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "Isaac-GR00T"
+    relative_path = "scripts/deployment/dgpu/wheels/torchcodec.whl"
+    payload = b"PK\x03\x04-reviewed-wheel"
+    digest = hashlib.sha256(payload).hexdigest()
+    target = source / relative_path
+    target.parent.mkdir(parents=True)
+    target.write_text(workflow._expected_lfs_pointer(digest, len(payload)))
+    monkeypatch.setattr(
+        workflow,
+        "GROOT_RUNTIME_LFS_OBJECTS",
+        ((relative_path, digest, len(payload)),),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_download_github_lfs_object",
+        lambda destination, **_kwargs: destination.write_bytes(
+            b"not-the-reviewed-wheel"
+        ),
+    )
+
+    with pytest.raises(workflow.GrootVisualizationError, match="did not materialize"):
+        workflow._hydrate_required_groot_lfs_objects(source)
 
 
 def test_runtime_cache_uses_writable_data_cache_for_implicit_groot_mount(

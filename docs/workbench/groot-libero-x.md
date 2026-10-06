@@ -17,6 +17,7 @@ that a local smoke is a representative benchmark.
 | Derivative checkpoint | [Rohan Siva's `gr00t-libero-x` model card](https://huggingface.co/rohansiva/gr00t-libero-x) at `b9dfbdcce8da61950db4f34199fff30b286b8f13`; the card identifies it as a fine-tune of NVIDIA `libero_10`. | Model-card label: Apache-2.0. It is runtime-fetched at its immutable revision, never added to public image layers. |
 | Base checkpoint | [NVIDIA `GR00T-N1.7-LIBERO`](https://huggingface.co/nvidia/GR00T-N1.7-LIBERO) `2ea293aa20ba7cf5bbf3ba17a5fbcb1a01cbfe21`, `libero_10`; NVIDIA is the model developer. | NVIDIA Open Model License Agreement. It is runtime-fetched at its immutable revision, never redistributed by this change. |
 | GR00T evaluator | [NVIDIA Isaac-GR00T](https://github.com/NVIDIA/Isaac-GR00T) `51d4c89f72fda44cbf77285c6a8114b52676b8a1`; Apache-2.0, copyright notices retained in the fetched source. | The existing immutable `npa-groot:0.1.0` bootstrap carries an older GR00T ref, so each policy stage fetches this exact public Apache source at runtime, verifies its Git SHA, then creates the upstream Python 3.12 server and LIBERO client environments. No new image is published and no upstream source is relabelled as NPA work. |
+| Locked runtime wheel | Isaac-GR00T's pinned `torchcodec-0.8.0` aarch64 wheel at LFS object `3c5bf377f922d2126041b3c49846504083a015d44979ca594e368ccc8c4c0814`; TorchCodec copyright 2024 Meta/PyTorch. | The embedded wheel notice is BSD-3-Clause. The runtime retrieves only this declared public object through the upstream Git LFS batch API, verifies its full SHA-256 and size before `uv sync`, and records it in private runtime-cache provenance. It is not baked into an NPA image, and no generic LFS media checkout is enabled. |
 | Native simulator | [Lifelong Robot Learning's LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO) submodule `8f1084e3132a39270c3a13ebe37270a43ece2a01`, MIT, copyright 2023 Lifelong Robot Learning. | Materialized only by Isaac-GR00T's documented `setup_libero.sh` inside the run-private/managed cache. It is not baked or redistributed by this workflow. |
 | LIBERO-X evaluator | [Meituan's LIBERO-X source](https://github.com/meituan/LIBERO-X) `f528726421c7211d8eb05fe48e9e5e2535ccc813`; MIT; credit Wang, Zhang, Liu, Zhang, Cai, Liu, and Liu. | Runtime-fetched beside Isaac-GR00T, SHA-verified, and kept in the private cache. A hash-recorded NPA compatibility overlay registers only manifest-selected BDDL tasks in GR00T's existing native LIBERO workers; it does not claim that unmodified Isaac-GR00T supports LIBERO-X. |
 | Evaluation data | [Meituan `LIBERO-X`](https://huggingface.co/datasets/meituan/LIBERO-X) `73053111f932d4dbaee995e3f06c2f42b3ad4adc`, CC-BY-4.0; credit Wang, Zhang, Liu, Zhang, Cai, Liu, and Liu, *LIBERO-X: Robustness Litmus for Vision-Language-Action Models* (2026). | Operator materializes the selected GR00T-format subset under a run-scoped S3 prefix. The workflow retains the card's CC-BY-4.0 attribution/revision in the protocol and does not package dataset bytes. |
@@ -76,11 +77,14 @@ maps the logical task to a stable internal `libero_sim/...` Gym identifier.
 The registration bridge is present in every spawned vector-environment worker,
 so the configured upstream `n_envs` is retained.  The evaluator refuses empty
 episode sets, non-finite action metrics, task/result mismatch, runtime SHA
-mismatch, and absent MP4s.  The runtime cache uses a per-revision lock and an
+mismatch, and absent MP4s. The runtime cache uses a per-revision lock and an
 atomically published ready marker; without the managed GR00T data mount it is
-private to the workflow pod.  Git LFS filters are disabled for the source-only
-runtime fetch, so an absent `git-lfs` binary cannot silently turn a source
-checkout into a failed or partial cache.
+private to the workflow pod. Git LFS filters remain disabled for media and
+other unneeded payloads, so an absent `git-lfs` binary cannot silently
+materialize a broad checkout. The one wheel that Isaac-GR00T's multi-platform
+lock requires is instead fetched from the upstream LFS batch endpoint only
+after its reviewed pointer has been validated; the runtime verifies its exact
+SHA-256 and size before atomic cache publication.
 
 Each policy stage also has a run-scoped private failure-diagnostic URI. On an
 exception, the stage writes a bounded, credential-redacted failure record with
