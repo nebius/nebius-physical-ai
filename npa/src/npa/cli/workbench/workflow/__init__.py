@@ -2897,16 +2897,12 @@ def submit_cmd(
 
                 if execution_target is not None:
                     import yaml
-                    from npa.execution_preflight import (
-                        verify_execution_target,
-                        verify_worker_environment,
-                    )
 
-                    verify_worker_environment(
+                    _refresh_runtime_execution_target_for_wave(
                         execution_target,
                         list(yaml.safe_load_all(_wave_yaml.read_text())),
+                        execution_preflight_report=execution_preflight_report,
                     )
-                    verify_execution_target(execution_target)
 
                 refreshed_pins = _preflight_submit_images(
                     yaml_path,
@@ -3876,6 +3872,46 @@ def _temporary_runtime_environment(environment: Mapping[str, str] | None):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+def _refresh_runtime_execution_target_for_wave(
+    execution_target: Any,
+    documents: Sequence[Mapping[str, Any]],
+    *,
+    execution_preflight_report: Mapping[str, Any],
+) -> None:
+    """Recheck a rendered runtime wave without widening Secret transport scope.
+
+    The initial execution preflight validates the one supported Kubernetes
+    storage Secret transport for either an authorized LIBERO submission or the
+    identified OpenVLA-OFT stages. A runtime wave is re-rendered just before
+    launch, so it must carry that same validated exception into its own worker
+    environment check. All other documents retain the default, literal-free
+    worker-environment policy.
+    """
+    from npa.execution_preflight import (
+        libero_kubernetes_storage_secret_name,
+        openvla_oft_kubernetes_storage_secret_name,
+        verify_execution_target,
+        verify_worker_environment,
+    )
+
+    checks = execution_preflight_report.get("checks")
+    libero_submission = (
+        isinstance(checks, Mapping)
+        and checks.get("libero_customer_authorization_validated") == "validated"
+    )
+    kubernetes_storage_secret = (
+        libero_kubernetes_storage_secret_name(documents)
+        if libero_submission
+        else openvla_oft_kubernetes_storage_secret_name(documents)
+    )
+    verify_worker_environment(
+        execution_target,
+        documents,
+        kubernetes_storage_secret=kubernetes_storage_secret,
+    )
+    verify_execution_target(execution_target)
 
 
 def _run_npa_workflow_runtime(

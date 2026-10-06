@@ -17,6 +17,7 @@ import typer
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.cli.workbench import workflow as workflow_cli
 from npa.cli.workbench.workflow import (
     _execution_target_preflight as REAL_EXECUTION_TARGET_PREFLIGHT,
 )
@@ -208,6 +209,109 @@ def test_runtime_resource_snapshot_preserves_manifest_profile() -> None:
     _merge_runtime_resource_profiles(steps, waves)
 
     assert steps[0]["resources_profile"] == existing
+
+
+def _openvla_runtime_wave_document(
+    *, workflow_name: str = "openvla-oft-libero"
+) -> dict:
+    """Return the rendered OpenVLA wave shape relevant to Secret transport."""
+    storage_secret = "unit-openvla-storage"
+    return {
+        "name": "prepare",
+        "resources": {"cloud": "kubernetes", "region": "unit-context"},
+        "envs": {
+            "NPA_WORKFLOW_NAME": workflow_name,
+            "NPA_WORKFLOW_STATE": "prepare",
+            "NPA_WORKFLOW_TOOL_REF": "workbench.openvla.prepare",
+        },
+        "run": "python -m npa.workflows.byof.openvla_pipeline prepare --input-path input",
+        "config": {
+            "kubernetes": {
+                "pod_config": {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "ray-node",
+                                "env": [
+                                    {
+                                        "name": name,
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "name": storage_secret,
+                                                "key": name,
+                                                **(
+                                                    {"optional": True}
+                                                    if name == "AWS_SESSION_TOKEN"
+                                                    else {}
+                                                ),
+                                            }
+                                        },
+                                    }
+                                    for name in (
+                                        "AWS_ACCESS_KEY_ID",
+                                        "AWS_SECRET_ACCESS_KEY",
+                                        "AWS_SESSION_TOKEN",
+                                    )
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+    }
+
+
+def test_runtime_wave_preflight_reuses_scoped_openvla_storage_secret(mocker) -> None:
+    """The just-in-time wave gate keeps OpenVLA Secret refs in their scope."""
+    target = object()
+    worker_environment = mocker.patch(
+        "npa.execution_preflight.verify_worker_environment"
+    )
+    target_verification = mocker.patch(
+        "npa.execution_preflight.verify_execution_target"
+    )
+    documents = [_openvla_runtime_wave_document()]
+
+    workflow_cli._refresh_runtime_execution_target_for_wave(
+        target,
+        documents,
+        execution_preflight_report={"checks": {}},
+    )
+
+    worker_environment.assert_called_once_with(
+        target,
+        documents,
+        kubernetes_storage_secret="unit-openvla-storage",
+    )
+    target_verification.assert_called_once_with(target)
+
+
+def test_runtime_wave_preflight_keeps_secret_exception_scoped_to_openvla(
+    mocker,
+) -> None:
+    """A lookalike task cannot reuse the OpenVLA Kubernetes Secret exception."""
+    target = object()
+    worker_environment = mocker.patch(
+        "npa.execution_preflight.verify_worker_environment"
+    )
+    target_verification = mocker.patch(
+        "npa.execution_preflight.verify_execution_target"
+    )
+    documents = [_openvla_runtime_wave_document(workflow_name="another-workflow")]
+
+    workflow_cli._refresh_runtime_execution_target_for_wave(
+        target,
+        documents,
+        execution_preflight_report={"checks": {}},
+    )
+
+    worker_environment.assert_called_once_with(
+        target,
+        documents,
+        kubernetes_storage_secret="",
+    )
+    target_verification.assert_called_once_with(target)
 
 
 def test_runtime_submission_receipt_preserves_redacted_preview_failure(
