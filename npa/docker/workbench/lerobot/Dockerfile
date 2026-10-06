@@ -126,6 +126,26 @@ COPY --chown=ubuntu:ubuntu src/npa/__init__.py /opt/npa/src/npa/__init__.py
 COPY --chown=ubuntu:ubuntu src/npa/server /opt/npa/src/npa/server
 COPY --chown=ubuntu:ubuntu src/npa/smoke /opt/npa/src/npa/smoke
 
+# This thin source projection is installed by the SkyPilot bootstrap before a
+# staged source overlay is available. Hatch validates every wheel force-include
+# during editable-install metadata generation, so retain those package-data
+# inputs even though this image does not serve the corresponding tool surfaces.
+COPY --chown=ubuntu:ubuntu \
+  src/npa/solutions/solutions.toml \
+  src/npa/deploy/sonic_image_manifest.json \
+  src/npa/deploy/wan2_2_image_manifest.json \
+  src/npa/deploy/content_agents_image_manifest.json \
+  src/npa/deploy/ltx2_image_manifest.json \
+  src/npa/deploy/public_release_manifest.json \
+  src/npa/deploy/lerobot_version_manifest.json \
+  src/npa/deploy/libero_image_manifest.json \
+  src/npa/deploy/terraform/.terraform.lock.hcl \
+  src/npa/deploy/terraform/.terraform.lock.npa.json \
+  src/npa/smoke/golden_evals.yaml \
+  src/npa/cli/agent_ui.html \
+  src/npa/assets/paidf_starter_video.json \
+  /opt/npa/src/npa/
+
 RUN python -m npa.smoke.test_lerobot_env
 
 USER root
