@@ -660,6 +660,13 @@ scan; archives and temporary scan data are cleaned after each entry. The require
 inventory aggregate fails when any applicable entry fails or does not finish.
 This baseline check does not replace complete image scans before publication.
 
+The Cosmos3 Ray payload scanner reports safe archive/config and blocked-member
+hashes, sizes, layer locations, and rule kinds while preserving blocking
+verdicts. This identifies exact bytes for investigation without printing
+credential contents or publishing a failed archive; see the
+[payload finding evidence](../docs/workbench/container-packaging.md#cosmos3-ray-payload-finding-evidence)
+contract. A metadata report does not accept the image or its GPU capability.
+
 Use an **absolute** interpreter path: the recipes change into `npa/` before
 running. Without an override, Make prefers the contributor environment
 `npa/.venv/bin/python`, then `python3` on `PATH`. Live and GPU tests are
