@@ -272,6 +272,18 @@ Required for all workbench images:
    set `allowPrivilegeEscalation: false`, and use `RuntimeDefault` seccomp
    (detection-training is the reference template).
 
+The shared Alpamayo2, Cosmos3 serving and Cosmos3 Ray payload detector checks
+every regular member in every stored layer. Named credential assignments need
+a complete value before a source reference such as
+`aws_secret_access_key=self.aws_secret_access_key` can be distinguished from a
+baked literal. It recognizes bounded Python references, known type annotations
+without literal defaults, and pure shell variable references. Literal values,
+literal fallback arguments, quoted source text, unknown syntax and values over
+512 bytes remain findings. Label and separator whitespace may span arbitrarily
+many chunks. This policy adds no path exemptions and does not replace the
+complete-byte, Gitleaks, vulnerability or provenance gates; a source regression
+test does not qualify an image.
+
 Do not serialize the build-time base reference into OCI config. In particular,
 the retired `npa.base_image` label exposed operator registry paths when
 `BASE_IMAGE` selected a private or staging parent. A repository-wide guard scans
