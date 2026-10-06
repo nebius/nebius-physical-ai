@@ -17,6 +17,9 @@ config:
   # An operator supplies an immutable private runtime image after it passes the
   # byte/build gates. This deliberately does not infer a registry or credential.
   runtime_image: ""
+  # Task-owned Kubernetes Secret name supplied only by an operator-scoped
+  # submission wrapper. Its values are never rendered into SkyPilot YAML.
+  storage_secret_name: ""
   runtime_root: "/workspace/.cache/npa/openvla-oft/e4287e94541f459edc4feabc4e181f537cd569a8"
   dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/libero-rlds/"
   dataset_name: "libero_spatial_no_noops"
@@ -53,6 +56,23 @@ resources:
               type: RuntimeDefault
           containers:
             - name: ray-node
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.storage_secret_name}}"
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.storage_secret_name}}"
+                      key: AWS_SECRET_ACCESS_KEY
+                - name: AWS_SESSION_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.storage_secret_name}}"
+                      key: AWS_SESSION_TOKEN
+                      optional: true
               securityContext:
                 runAsNonRoot: true
                 privileged: false
@@ -80,6 +100,23 @@ resources:
               type: RuntimeDefault
           containers:
             - name: ray-node
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.storage_secret_name}}"
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.storage_secret_name}}"
+                      key: AWS_SECRET_ACCESS_KEY
+                - name: AWS_SESSION_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.storage_secret_name}}"
+                      key: AWS_SESSION_TOKEN
+                      optional: true
               securityContext:
                 runAsNonRoot: true
                 privileged: false
@@ -104,6 +141,23 @@ resources:
               type: RuntimeDefault
           containers:
             - name: ray-node
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.storage_secret_name}}"
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.storage_secret_name}}"
+                      key: AWS_SECRET_ACCESS_KEY
+                - name: AWS_SESSION_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.storage_secret_name}}"
+                      key: AWS_SESSION_TOKEN
+                      optional: true
               securityContext:
                 runAsNonRoot: true
                 privileged: false
@@ -127,6 +181,23 @@ resources:
               type: RuntimeDefault
           containers:
             - name: ray-node
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.storage_secret_name}}"
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.storage_secret_name}}"
+                      key: AWS_SECRET_ACCESS_KEY
+                - name: AWS_SESSION_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.storage_secret_name}}"
+                      key: AWS_SESSION_TOKEN
+                      optional: true
               securityContext:
                 runAsNonRoot: true
                 privileged: false

@@ -278,11 +278,43 @@ def test_workflow_resources_declare_the_skypilot_task_container() -> None:
         / "workflows/testing/openvla-oft-libero.yaml"
     )
     document = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+    assert document["config"]["storage_secret_name"] == ""
+    expected_storage_env = [
+        {
+            "name": "AWS_ACCESS_KEY_ID",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "{{config.storage_secret_name}}",
+                    "key": "AWS_ACCESS_KEY_ID",
+                }
+            },
+        },
+        {
+            "name": "AWS_SECRET_ACCESS_KEY",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "{{config.storage_secret_name}}",
+                    "key": "AWS_SECRET_ACCESS_KEY",
+                }
+            },
+        },
+        {
+            "name": "AWS_SESSION_TOKEN",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "{{config.storage_secret_name}}",
+                    "key": "AWS_SESSION_TOKEN",
+                    "optional": True,
+                }
+            },
+        },
+    ]
     for resource_name, resource in document["resources"].items():
         pod_spec = resource["kubernetes"]["pod_config"]["spec"]
         assert pod_spec["automountServiceAccountToken"] is False, resource_name
         container = pod_spec["containers"][0]
         assert container["name"] == "ray-node", resource_name
+        assert container["env"] == expected_storage_env, resource_name
         # The bootstrap needs set-id transitions, but no other capability.
         assert "allowPrivilegeEscalation" not in container["securityContext"]
         assert container["securityContext"] == {

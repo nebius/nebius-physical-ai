@@ -1390,6 +1390,94 @@ def test_libero_preflight_accepts_split_payload_and_controller_accounts(
     assert "AWS_SECRET_ACCESS_KEY" not in document["envs"]
 
 
+def test_libero_storage_secret_reference_is_complete_and_literal_free() -> None:
+    from npa.execution_preflight import (
+        ExecutionPreflightError,
+        libero_kubernetes_storage_secret_name,
+    )
+
+    secret_name = "unit-libero-storage"
+    document = libero_task("npa-byof-libero-payload")
+    document["config"]["kubernetes"]["pod_config"]["spec"]["containers"] = [
+        {
+            "name": "ray-node",
+            "env": [
+                {
+                    "name": name,
+                    "valueFrom": {
+                        "secretKeyRef": {
+                            "name": secret_name,
+                            "key": name,
+                            **(
+                                {"optional": True}
+                                if name == "AWS_SESSION_TOKEN"
+                                else {}
+                            ),
+                        }
+                    },
+                }
+                for name in (
+                    "AWS_ACCESS_KEY_ID",
+                    "AWS_SECRET_ACCESS_KEY",
+                    "AWS_SESSION_TOKEN",
+                )
+            ],
+        }
+    ]
+
+    assert libero_kubernetes_storage_secret_name([document]) == secret_name
+    document["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0][
+        "env"
+    ][0]["value"] = "forbidden"
+    with pytest.raises(ExecutionPreflightError, match="literal-free"):
+        libero_kubernetes_storage_secret_name([document])
+
+
+def test_libero_preflight_accepts_kubernetes_storage_secret_reference(
+    provider, configured, libero_authorized
+) -> None:
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = libero_task("npa-byof-libero-payload")
+    document["config"]["kubernetes"]["pod_config"]["spec"]["containers"] = [
+        {
+            "name": "ray-node",
+            "env": [
+                {
+                    "name": name,
+                    "valueFrom": {
+                        "secretKeyRef": {
+                            "name": "unit-libero-storage",
+                            "key": name,
+                            **(
+                                {"optional": True}
+                                if name == "AWS_SESSION_TOKEN"
+                                else {}
+                            ),
+                        }
+                    },
+                }
+                for name in (
+                    "AWS_ACCESS_KEY_ID",
+                    "AWS_SECRET_ACCESS_KEY",
+                    "AWS_SESSION_TOKEN",
+                )
+            ],
+        }
+    ]
+
+    _, report, _ = preflight_skypilot_submission(
+        [document],
+        project="unit",
+        infra="k8s/unit-context",
+        global_config=libero_controller_config(),
+    )
+
+    assert report["execution_readiness"] == "pass"
+    assert "AWS_ACCESS_KEY_ID" not in document["envs"]
+    assert "AWS_SECRET_ACCESS_KEY" not in document["envs"]
+
+
 def test_libero_worker_environment_checks_the_final_stripped_document(
     provider, configured, monkeypatch, libero_authorized
 ) -> None:

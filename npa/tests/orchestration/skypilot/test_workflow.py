@@ -1321,6 +1321,111 @@ def test_submit_uses_shared_libero_classification_for_secret_channel(
     assert not any(value in prepared.read_text() for value in secret_values.values())
 
 
+def test_libero_submit_uses_kubernetes_storage_secret_without_skypilot_values(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.execution_preflight import (
+        LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES,
+        LIBERO_SKYPILOT_SECRET_ENV_NAMES,
+    )
+
+    storage_secret = "unit-libero-storage"
+    yaml_path = tmp_path / "libero-kubernetes-secret.yaml"
+    yaml_path.write_bytes(
+        yaml.safe_dump_all(
+            [
+                {
+                    "name": "renamed",
+                    "resources": {
+                        "cloud": "kubernetes",
+                        "kubernetes": {
+                            "pod_config": {
+                                "spec": {
+                                    "containers": [
+                                        {
+                                            "name": "ray-node",
+                                            "env": [
+                                                {
+                                                    "name": name,
+                                                    "valueFrom": {
+                                                        "secretKeyRef": {
+                                                            "name": storage_secret,
+                                                            "key": name,
+                                                            **(
+                                                                {"optional": True}
+                                                                if name
+                                                                == "AWS_SESSION_TOKEN"
+                                                                else {}
+                                                            ),
+                                                        }
+                                                    },
+                                                }
+                                                for name in LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
+                                            ],
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                    },
+                    "run": "true",
+                }
+            ],
+            sort_keys=False,
+        ).encode()
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        workflow_module,
+        "_execution_preflight",
+        lambda *_args, **_kwargs: (
+            None,
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
+            {},
+        ),
+    )
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Job submitted, ID: 42\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    secret_values = {
+        name: f"unit-{index}"
+        for index, name in enumerate(LIBERO_SKYPILOT_SECRET_ENV_NAMES)
+    }
+
+    submit_workflow(
+        yaml_path,
+        "libero-kubernetes-storage-secret-0001",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=_fake_sky(tmp_path),
+        extra_env=secret_values,
+    )
+
+    launch = next(command for command in calls if "launch" in command)
+    selected = {
+        launch[index + 1] for index, value in enumerate(launch) if value == "--secret"
+    }
+    assert selected == set(LIBERO_SKYPILOT_SECRET_ENV_NAMES) - set(
+        LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
+    )
+    prepared = (
+        tmp_path
+        / "sky-state"
+        / "submissions"
+        / "libero-kubernetes-storage-secret-0001"
+        / "workflow.yaml"
+    )
+    prepared_text = prepared.read_text(encoding="utf-8")
+    assert not any(value in prepared_text for value in secret_values.values())
+    assert f"name: {storage_secret}" in prepared_text
+
+
 def test_load_base_config_distinguishes_omitted_from_explicit_missing(
     tmp_path: Path,
 ) -> None:

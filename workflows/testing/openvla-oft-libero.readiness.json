@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "1bc8a4fc9df64cf6578e838dae6c6df8aee8b4269291703d98bb67fa0deb3e8a",
+  "workflow_sha256": "0e36bce71b3477bd518f2ef9c30f0523c444b22f69b72401fcca89afe0770047",
   "planning": {
     "validation": {
       "status": "verified",
@@ -56,7 +56,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The original controlled prepare controller is terminally cancelled after its ray-node exec failed before payload. A target diagnostic showed that dropping all container capabilities prevents the required passwordless-sudo set-id transition; the workflow now drops all capabilities except explicit SETGID and SETUID while retaining nonroot, RuntimeDefault seccomp, privileged=false, and no service-account token. Re-run exact target preflight and the full controlled workflow before claiming any OFT setup, simulator metric, benchmark, convergence, or physical-robot result.",
+      "reason": "The original controlled prepare controller is terminally cancelled after its ray-node exec failed before payload. A target diagnostic showed that dropping all container capabilities prevents the required passwordless-sudo set-id transition; the workflow now drops all capabilities except explicit SETGID and SETUID while retaining nonroot, RuntimeDefault seccomp, privileged=false, and no service-account token. A later pre-admission audit also found that the pinned SkyPilot secret channel persisted storage values in client task artifacts, so this workflow requires a complete task-owned Kubernetes secretKeyRef instead. Re-run exact target preflight and the full controlled workflow before claiming any OFT setup, simulator metric, benchmark, convergence, or physical-robot result.",
       "evidence": [
         "docs/workbench/openvla-oft.md"
       ]

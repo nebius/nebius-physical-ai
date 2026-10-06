@@ -2027,10 +2027,17 @@ def submit_workflow(
                 yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8"
             )
             _chmod_owner_only(prepared_yaml)
-        from npa.execution_preflight import LIBERO_SKYPILOT_SECRET_ENV_NAMES
+        from npa.execution_preflight import (
+            LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES,
+            LIBERO_SKYPILOT_SECRET_ENV_NAMES,
+            libero_kubernetes_storage_secret_name,
+        )
 
         libero_submission = (
             prepared.libero_submission if robotwin_authorization is None else False
+        )
+        native_storage_secret = (
+            libero_kubernetes_storage_secret_name(docs) if libero_submission else ""
         )
         workflow_identity = _private_file_identity(prepared_yaml)
         config_identity = _private_file_identity(generated_config_path)
@@ -2050,6 +2057,12 @@ def submit_workflow(
         if infra and robotwin_authorization is None:
             cmd[-1:-1] = ["--infra", infra]
         selected_secret_envs = list(secret_envs or ())
+        if native_storage_secret:
+            selected_secret_envs = [
+                name
+                for name in selected_secret_envs
+                if name not in LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
+            ]
         from npa.workflows.byof.libero_customer import (
             selected as customer_selected,
             SECRET_NAMES,
@@ -2064,11 +2077,20 @@ def submit_workflow(
                 launch_attempted=False,
             )
         if libero_submission:
-            # This is mandatory even for direct SDK callers.  The preflight has
-            # removed these values from prepared YAML, so omitting ``--secret``
-            # must never silently launch a credentialless or inline-secret task.
+            # Direct callers either use SkyPilot's secret channel or, when its
+            # actual client artifacts cannot safely carry it, an already
+            # validated Kubernetes secretKeyRef on every task container.
             selected_secret_envs.extend(
-                SECRET_NAMES if customer_run else LIBERO_SKYPILOT_SECRET_ENV_NAMES
+                SECRET_NAMES
+                if customer_run
+                else [
+                    name
+                    for name in LIBERO_SKYPILOT_SECRET_ENV_NAMES
+                    if not (
+                        native_storage_secret
+                        and name in LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
+                    )
+                ]
             )
         for secret_name in dict.fromkeys(selected_secret_envs):
             if env.get(secret_name):
