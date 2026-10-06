@@ -106,6 +106,33 @@ storage = storage_client_for_project(sys.argv[1], allow_host_creds=True)
 storage.upload_directory(sys.argv[2], sys.argv[3], require_empty=True)
 print("Uploaded the verified source into an empty run-scoped dataset prefix")
 PY
+umask 077
+SOURCE_STAGE_LOG="$HOME/.npa/workflow-runs/$RUN_ID/staged-source.txt"
+mkdir -p "$(dirname "$SOURCE_STAGE_LOG")" || exit 1
+unset NPA_SRC_S3_URI NPA_E2E_NPA_SRC_S3_URI
+npa/.venv/bin/npa workbench workflow stage-src \
+  --project "$PROJECT_ALIAS" --bucket "$BUCKET" --run-id "$RUN_ID" \
+  > "$SOURCE_STAGE_LOG" || exit 1
+NPA_SRC_S3_URI="$(npa/.venv/bin/python - "$SOURCE_STAGE_LOG" "$PROJECT_ALIAS" <<'PY'
+import sys
+from pathlib import Path
+from npa.clients.project_credentials import storage_client_for_project
+from npa.orchestration.npa_workflow.src_staging import (
+    find_npa_package_root, source_fingerprint, verify_staged_source,
+)
+
+lines = Path(sys.argv[1]).read_text().splitlines()
+uris = [line.removeprefix("npa_src_s3_uri: ") for line in lines
+        if line.startswith("npa_src_s3_uri: ")]
+if len(uris) != 1:
+    raise SystemExit("Source staging did not return exactly one verified URI")
+fingerprint = source_fingerprint(find_npa_package_root())
+storage = storage_client_for_project(sys.argv[2], allow_host_creds=True)
+verify_staged_source(uris[0], client=storage, expected_fingerprint=fingerprint)
+print(uris[0])
+PY
+)" || exit 1
+export NPA_SRC_S3_URI
 npa/.venv/bin/npa workbench workflow validate-spec "$SPEC" --json || exit 1
 npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" \
   --run-id "$RUN_ID" --check-render \
@@ -120,7 +147,7 @@ npa/.venv/bin/npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" --project "$PROJECT_ALIAS" \
   --var bucket="$BUCKET" --var lerobot_dataset_uri="$LEROBOT_URI" \
   --var caption_model="$CAPTION_MODEL" \
-  --runtime --infra "k8s/$KUBE_CONTEXT" --durable-s3 \
+  --runtime --no-stage-src --infra "k8s/$KUBE_CONTEXT" --durable-s3 \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env HF_TOKEN
@@ -131,11 +158,20 @@ does not accept `--run-id`; the explicit `prefix` override binds its planned
 artifact references to the reserved run while it performs owned pull and
 bootstrap-attestation probes in the selected Kubernetes context.
 
+Explicit source staging makes render checking independent of any older saved
+source setting. The command uploads or reuses only the current checkout's
+content-addressed source and persists its verified reference. The subsequent
+readback checks the remote commit manifest against the current local fingerprint
+using the selected project's storage endpoint and credentials. Keep the staging
+log private, leave the checkout unchanged, and pass the returned URI in this
+shell through plan, preflight and submit. `--no-stage-src` prevents another
+source selection during submission; workers still use `source_overlay: true`.
+
 The distinct workflow name uses generic configuration overrides, so the canonical
 starter's automatic source selector cannot substitute another video. Do not pass
 `--lerobot-uri` or `--input-video`: these submission flags belong to the canonical
-PAIDF workflows. Automatic source staging supplies current NPA adapters to every
-worker. Do not reuse an older prepared source, caption report or generated media.
+PAIDF workflows. The explicitly verified source supplies current NPA adapters to
+every worker. Do not reuse an older prepared source, caption report or generated media.
 
 Preparation retains the full eight-second selected episode and resamples it to
 192 frames at 24 fps, letterboxed to 832×480. The twelve profiles are embedded in
