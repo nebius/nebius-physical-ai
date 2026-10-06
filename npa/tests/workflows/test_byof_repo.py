@@ -3225,6 +3225,9 @@ def _bootstrap_guard_fixture(tmp_path, module, *, missing: str = ""):
         encoding="utf-8",
     )
     real_apt.chmod(0o755)
+    real_sudo = tmp_path / "real-sudo"
+    real_sudo.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    real_sudo.chmod(0o755)
 
     dpkg_query = bin_dir / "dpkg-query"
     dpkg_query.write_text(
@@ -3275,6 +3278,7 @@ esac
     replacements = {
         "/usr/bin/apt-get": str(real_apt),
         "/usr/bin/timeout": shutil.which("timeout") or "/usr/bin/timeout",
+        "/usr/bin/sudo": str(real_sudo),
         "/run/npa-skypilot-bootstrap": str(state_dir),
         "guard_owner_uid=0": f"guard_owner_uid={os.getuid()}",
         str(skypilot_tmp / "npa-skypilot-bootstrap-contract.failed"): str(
@@ -3305,6 +3309,7 @@ esac
         "env": env,
         "guard": guard,
         "legacy_state": legacy_state,
+        "real_sudo": real_sudo,
         "sky_failure": sky_failure,
         "state": state,
         "state_dir": state_dir,
@@ -3648,6 +3653,63 @@ def test_bootstrap_timeout_kills_nonterminating_descendant_and_marks_failure(
             os.kill(descendant_pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+
+def test_bootstrap_timeout_allows_only_skypilot_nonroot_sudo_list_probe(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    fixture = _bootstrap_guard_fixture(tmp_path, module)
+    timeout_guard = fixture["bin_dir"] / "timeout"
+    guard_path = timeout_guard.resolve()
+    guard_path.write_text(
+        guard_path.read_text(encoding="utf-8").replace(
+            f"guard_owner_uid={os.getuid()}", "guard_owner_uid=99999"
+        ),
+        encoding="utf-8",
+    )
+    sudo_calls = tmp_path / "sudo.calls"
+    fixture["real_sudo"].write_text(
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" > "$NPA_TEST_SUDO_CALLS"\n',
+        encoding="utf-8",
+    )
+    fixture["real_sudo"].chmod(0o755)
+    environment = {**fixture["env"], "NPA_TEST_SUDO_CALLS": str(sudo_calls)}
+
+    allowed = subprocess.run(
+        [timeout_guard, "2", "sudo", "-l"],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    rejected = subprocess.run(
+        [timeout_guard, "2", "sudo", "-n", "-l"],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert allowed.returncode == 0
+    assert sudo_calls.read_text(encoding="utf-8") == "-l\n"
+    assert rejected.returncode == 87
+    assert "timeout-requires-root" in rejected.stderr
+
+
+def test_generated_and_libero_guards_share_nonroot_timeout_policy() -> None:
+    module = _load_module()
+    generated = module._skypilot_bootstrap_guard_script()
+    libero = (
+        ROOT / "npa" / "docker" / "workbench" / "libero" / "skypilot-bootstrap-guard.sh"
+    ).read_text(encoding="utf-8")
+
+    def timeout_policy(text: str) -> str:
+        start = text.index("bootstrap_timeout() {")
+        end = text.index("\nbootstrap_ssh_keygen()", start)
+        return text[start:end]
+
+    assert timeout_policy(generated) == timeout_policy(libero)
 
 
 @pytest.mark.parametrize(
