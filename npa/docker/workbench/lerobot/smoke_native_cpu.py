@@ -255,7 +255,10 @@ def _server_round_trip(checkpoint: Path, observation: dict) -> dict:
 
 
 def _http_request(port: int, method: str, path: str, body: dict | None = None):
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+    # Match the declared healthcheck; model loading/inference have no deadline.
+    connection = http.client.HTTPConnection(
+        "127.0.0.1", port, timeout=3 if path == "/health" else None
+    )
     try:
         connection.request(
             method,
@@ -293,6 +296,11 @@ def _server_process(root: Path):
         try:
             _wait_for_server(process, port, log)
             yield port
+        except Exception:
+            log.flush()
+            log.seek(0)
+            print("NATIVE_SERVER_DIAGNOSTICS " + log.read())
+            raise
         finally:
             process.terminate()
             process.wait()
