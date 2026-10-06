@@ -61,6 +61,7 @@ OPENDM_ROOT_ENV = "NPA_DM05_OPENDM_ROOT"
 DEXBOTIC_ROOT_ENV = "NPA_DM05_DEXBOTIC_ROOT"
 OPENDM_PYTHON_ENV = "NPA_DM05_OPENDM_PYTHON"
 DEXBOTIC_PYTHON_ENV = "NPA_DM05_DEXBOTIC_PYTHON"
+LIBERO_CONFIG_PATH_ENV = "LIBERO_CONFIG_PATH"
 SUITES = ("libero_spatial", "libero_object", "libero_goal", "libero_10")
 STATE_DIMENSION = 8
 ACTION_DIMENSION = 7
@@ -297,21 +298,45 @@ def _require_protocol(protocol: dict[str, Any]) -> None:
 
 
 def _native_environment(python: Path, root: Path) -> dict[str, str]:
-    """Construct the environment required by the upstream shell launcher.
+    """Construct the common environment for one native child process.
 
     Args:
         python: Image-owned interpreter for the selected upstream source.
         root: Exact upstream source root.
 
     Returns:
-        The isolated environment for one native child process.
+        The isolated environment without evaluator-only LIBERO configuration.
     """
     environment = os.environ.copy()
+    environment.pop(LIBERO_CONFIG_PATH_ENV, None)
     environment["PATH"] = str(python.parent) + os.pathsep + environment.get("PATH", "")
     environment["PYTHONPATH"] = os.pathsep.join(
         (str(root), str(root / "libero"), environment.get("PYTHONPATH", ""))
     )
     environment["IMAGEIO_FFMPEG_EXE"] = "/usr/bin/ffmpeg"
+    return environment
+
+
+def _evaluator_environment(python: Path, root: Path) -> dict[str, str]:
+    """Bind Dexbotic's child process to the image-created LIBERO configuration.
+
+    Args:
+        python: Image-owned evaluator interpreter.
+        root: Exact Dexbotic source root.
+
+    Returns:
+        The isolated evaluator environment with its noninteractive LIBERO config.
+
+    Raises:
+        OpenDMBaselineError: If the image does not contain the pinned config.
+    """
+    libero_config = root / "libero" / "libero" / "libero" / "config.yaml"
+    if not libero_config.is_file():
+        raise OpenDMBaselineError(
+            f"pinned LIBERO configuration is missing: {libero_config}"
+        )
+    environment = _native_environment(python, root)
+    environment[LIBERO_CONFIG_PATH_ENV] = str(libero_config.parent)
     return environment
 
 
@@ -471,7 +496,7 @@ def _run_suite(
     Returns:
         Parsed upstream ``results.json``.
     """
-    environment = _native_environment(python, root)
+    environment = _evaluator_environment(python, root)
     environment.update({"EGL_PLATFORM": "device", "PYOPENGL_PLATFORM": "egl"})
     environment["CUDA_VISIBLE_DEVICES"] = device
     subprocess.run(

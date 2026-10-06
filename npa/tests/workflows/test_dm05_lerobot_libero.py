@@ -6,6 +6,7 @@ import json
 import hashlib
 import os
 import shutil
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -523,10 +524,16 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     )
 
 
-def test_opendm_native_environment_exposes_pinned_libero_namespace(tmp_path):
+def test_opendm_evaluator_environment_supplies_pinned_libero_config_without_stdin(
+    tmp_path, monkeypatch
+):
     dexbotic_root = tmp_path / "dexbotic-benchmark"
+    config = dexbotic_root / "libero" / "libero" / "libero" / "config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("benchmark_root: pinned\n", encoding="utf-8")
+    monkeypatch.setenv(baseline_workflow.LIBERO_CONFIG_PATH_ENV, "/stale/config")
 
-    environment = baseline_workflow._native_environment(
+    environment = baseline_workflow._evaluator_environment(
         Path("/opt/libero-venv/bin/python"), dexbotic_root
     )
 
@@ -534,6 +541,63 @@ def test_opendm_native_environment_exposes_pinned_libero_namespace(tmp_path):
         str(dexbotic_root),
         str(dexbotic_root / "libero"),
     ]
+    assert environment[baseline_workflow.LIBERO_CONFIG_PATH_ENV] == str(config.parent)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os; from pathlib import Path; "
+                "config = Path(os.environ['LIBERO_CONFIG_PATH']) / 'config.yaml'; "
+                "assert config.read_text(encoding='utf-8') == 'benchmark_root: pinned\\n'; "
+                "print('pinned-config-selected')"
+            ),
+        ],
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "pinned-config-selected\n"
+
+
+def test_opendm_evaluator_environment_rejects_missing_pinned_libero_config(tmp_path):
+    with pytest.raises(
+        baseline_workflow.OpenDMBaselineError, match="configuration is missing"
+    ):
+        baseline_workflow._evaluator_environment(
+            Path("/opt/libero-venv/bin/python"), tmp_path / "dexbotic-benchmark"
+        )
+
+
+def test_opendm_server_start_does_not_require_evaluator_libero_config(
+    tmp_path, monkeypatch
+):
+    opendm_root = tmp_path / "opendm"
+    opendm_root.mkdir()
+    captured: dict[str, object] = {}
+    process = object()
+    monkeypatch.setenv(baseline_workflow.LIBERO_CONFIG_PATH_ENV, "/stale/config")
+
+    def start(command, *, cwd, env):
+        captured.update({"command": command, "cwd": cwd, "env": env})
+        return process
+
+    monkeypatch.setattr(baseline_workflow.subprocess, "Popen", start)
+
+    assert (
+        baseline_workflow._start_server(
+            opendm_root,
+            Path("/opt/opendm-venv/bin/python"),
+            tmp_path / "checkpoint",
+            "0",
+        )
+        is process
+    )
+    assert captured["cwd"] == opendm_root
+    assert baseline_workflow.LIBERO_CONFIG_PATH_ENV not in captured["env"]
 
 
 def test_libero_config_uses_installed_assets_without_interactive_setup(
