@@ -12,6 +12,12 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
+artifacts without resolving execution image defaults. Regeneration therefore
+remains available after an old runtime is quarantined. Executing new workloads,
+including `rerun heldout-only`, still requires qualified component images.
+See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
+
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
 optional `--baseline-path` compares both sources in both A/B orders. See the
@@ -319,6 +325,12 @@ and the original private callback copy/paste helper.
 Managed workbench teardown reuses the saved Terraform backend. See
 [Terraform state](../docs/configuration.md#terraform-state-for-managed-workbenches)
 for its storage path and permissions.
+
+Genesis, Isaac Lab, and LeRobot container deployment resolves the selected image
+before bootstrapping an environment, provisioning a VM, or writing service
+credentials. A quarantined default fails with an actionable CLI error even in
+`--dry-run`; supply `--image` with an independently qualified operator image.
+Infrastructure-only deployment and teardown do not need a runnable app image.
 
 ## SDK examples
 

@@ -1,6 +1,7 @@
 """Keep source rebuilds from inheriting the image bytes withdrawn by #807."""
 
 from pathlib import Path
+import importlib.util
 import re
 
 from packaging.version import Version
@@ -61,6 +62,24 @@ def test_policy_children_bind_the_actual_sdk_source_to_their_revision(child):
     )
     assert "find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx" in text
     assert text.index("USER ubuntu") > text.index("python -m pip check")
+    assert "verify-sim2real-sdk-source.py" in text
+    assert "--source-root /opt/npa/src" in text
+
+
+def test_thin_child_sdk_verification_preserves_image_independent_config(monkeypatch):
+    from npa.deploy import images
+
+    def fail_image_resolution(*args, **kwargs):
+        pytest.fail("Artifact/diagnostic configuration attempted image planning")
+
+    monkeypatch.setattr(images, "container_image_for_tool", fail_image_resolution)
+    source = WORKBENCH / "common/verify_sim2real_sdk_source.py"
+    spec = importlib.util.spec_from_file_location("verify_child_sdk", source)
+    verifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier)
+    verifier.verify(ROOT / "npa/src")
+    with pytest.raises(RuntimeError, match="different SDK source"):
+        verifier.verify(ROOT / "unrelated-source")
 
 
 @pytest.mark.parametrize("name,floor", [("GitPython", "3.1.62"), ("Werkzeug", "3.1.9")])

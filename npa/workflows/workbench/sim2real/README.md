@@ -29,6 +29,20 @@ placement, or customer-data compatibility. Continue with the operator runbook's
 preflight and complete `submit --runtime` command using your verified inputs.
 Keep the returned run ID for status, logs, artifacts, and durable resume.
 
+Health selections containing only `coherence`, `tokens`, `s3`, or `cluster`
+resolve storage and Kubernetes settings without selecting execution images:
+
+```bash
+npa workbench health sim2real --checks coherence --json
+npa workbench health sim2real --checks tokens,s3,cluster --json
+```
+
+These checks remain available when a public execution image is quarantined.
+Selecting `config`, `registry`, or `all` still resolves the legacy execution
+configuration and enforces its image quarantine. Use the canonical workflow's
+`preflight-images` and submit preflight for its five immutable role images;
+the legacy health image fields do not validate that source-image contract.
+
 ## One seam, one value
 
 Every BYO seam is one value addressed four ways. This table is generated from

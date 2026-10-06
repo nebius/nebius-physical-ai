@@ -45,7 +45,7 @@ _GENESIS_PARENT = (
 )
 _ENVGEN_PARENT = (
     "ghcr.io/nebius/nebius-physical-ai/npa-envgen@"
-    "sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422"
+    "sha256:55f1541c1a86e9d865963753cfa38fa1dbf88928c8d28d9ee30e2851a5604b88"
 )
 
 
@@ -121,7 +121,7 @@ def test_envgen_pins_the_real_genesis_parent() -> None:
         ("sim2real-eval/Dockerfile", "npa-loop-eval"),
     ),
 )
-def test_component_images_pin_the_sanitized_envgen_parent(
+def test_component_images_pin_the_rebuilt_envgen_parent(
     relative_path: str, child_image: str
 ) -> None:
     root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
@@ -209,7 +209,7 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     assert "NPA_SOURCE_SHA" in dockerfile
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
-    assert "ARG DEBIAN_SNAPSHOT=20260801T000000Z" in dockerfile
+    assert "ARG DEBIAN_SNAPSHOT=20261001T000000Z" in dockerfile
     assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in dockerfile
     assert "npa-exact-source.pth" in dockerfile
     assert "env -u PYTHONPATH python -c" in dockerfile

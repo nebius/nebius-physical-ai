@@ -18,6 +18,8 @@ USER root
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
+COPY --chown=ubuntu:ubuntu docker/workbench/common/verify_sim2real_sdk_source.py \
+    /opt/npa/bin/verify-sim2real-sdk-source.py
 
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
@@ -25,7 +27,9 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && chmod a+r /opt/npa/pyproject.toml \
     && python -m pip check \
     && env -u PYTHONPATH python -c \
-      'from npa.workflows.sim2real_envgen import main; assert callable(main)'
+      'from npa.workflows.sim2real_envgen import main; assert callable(main)' \
+    && env -u PYTHONPATH python /opt/npa/bin/verify-sim2real-sdk-source.py \
+      --source-root /opt/npa/src
 
 USER ubuntu
 

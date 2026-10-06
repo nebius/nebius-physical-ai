@@ -3,7 +3,7 @@ FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9
 
 ARG SIM2REAL_CONTROL_VERSION=0.1.2
 ARG NPA_SOURCE_SHA
-ARG DEBIAN_SNAPSHOT=20260801T000000Z
+ARG DEBIAN_SNAPSHOT=20261001T000000Z
 
 LABEL npa.tool="sim2real-control" \
       npa.version="${SIM2REAL_CONTROL_VERSION}" \
@@ -43,6 +43,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && printf 'Acquire::Check-Valid-Until "false";\n' \
       > /etc/apt/apt.conf.d/99snapshot \
     && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
       curl netcat-openbsd openssh-client openssh-server procps rsync sudo \
     && rm -f /etc/ssh/ssh_host_* \
