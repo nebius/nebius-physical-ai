@@ -629,6 +629,62 @@ def test_runtime_post_publish_failure_is_actionable_and_path_free(
     assert str(tmp_path) not in str(error.value)
 
 
+def _native_runtime_cache_target(temporary_root: Path) -> Path:
+    cache_root = workflow._runtime_cache_root(temporary_root)
+    lfs_identity = hashlib.sha256(
+        json.dumps(workflow._groot_lfs_provenance(), sort_keys=True).encode()
+    ).hexdigest()[:12]
+    cache_identity = (
+        f"isaac-groot-{workflow.IMAGE_GROOT_REF}-lfs-{lfs_identity}-libero-x-"
+        f"{workflow.LIBERO_X_EVALUATOR_REVISION}"
+    )
+    return cache_root / cache_identity
+
+
+def test_materializer_clears_stale_unready_runtime_before_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("NPA_GROOT_LIBERO_X_RUNTIME_CACHE", raising=False)
+    monkeypatch.delenv("GROOT_DATA_MOUNT", raising=False)
+    target = _native_runtime_cache_target(tmp_path)
+    target.mkdir(parents=True)
+    stale_file = target / "interrupted-build"
+    stale_file.write_text("partial runtime")
+    monkeypatch.setattr(workflow.shutil, "which", lambda _name: None)
+
+    with pytest.raises(
+        workflow.GrootVisualizationError,
+        match="runtime requires git and uv in the image",
+    ):
+        workflow._materialize_native_runtime(tmp_path)
+
+    assert stale_file.exists() is False
+    assert target.exists() is False
+
+
+def test_materializer_refuses_to_clear_a_symlinked_unready_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("NPA_GROOT_LIBERO_X_RUNTIME_CACHE", raising=False)
+    monkeypatch.delenv("GROOT_DATA_MOUNT", raising=False)
+    target = _native_runtime_cache_target(tmp_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside-cache"
+    outside.mkdir()
+    sentinel = outside / "retain"
+    sentinel.write_text("outside cache root")
+    target.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(
+        workflow.GrootVisualizationError,
+        match="cache path is not a removable directory",
+    ):
+        workflow._materialize_native_runtime(tmp_path)
+
+    assert sentinel.read_text() == "outside cache root"
+
+
 def test_runtime_hydrates_only_verified_required_lfs_object(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

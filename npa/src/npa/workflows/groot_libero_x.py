@@ -1139,6 +1139,21 @@ def _verified_runtime_or_raise(target: Path) -> dict[str, Any]:
     )
 
 
+def _clear_unready_native_runtime(target: Path) -> None:
+    """Remove an interrupted runtime build after its readiness check failed."""
+
+    if target.is_symlink() or not target.is_dir():
+        raise GrootVisualizationError(
+            "unverified native Isaac-GR00T cache path is not a removable directory"
+        )
+    try:
+        shutil.rmtree(target)
+    except OSError as exc:
+        raise GrootVisualizationError(
+            "could not clear an unverified native Isaac-GR00T runtime cache"
+        ) from exc
+
+
 def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
     """Fetch, verify, and cache current Apache-2.0 upstream code at runtime.
 
@@ -1164,9 +1179,9 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
         if ready is not None:
             return ready
         if target.exists():
-            raise GrootVisualizationError(
-                "native Isaac-GR00T cache exists without a verified ready marker; refusing to overwrite it"
-            )
+            # The exclusive lock means this can only be an incomplete earlier
+            # build, not a concurrently materializing runtime.
+            _clear_unready_native_runtime(target)
         git = shutil.which("git")
         uv = shutil.which("uv")
         if not git or not uv:
