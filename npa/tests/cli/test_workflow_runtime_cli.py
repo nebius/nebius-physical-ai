@@ -1201,13 +1201,15 @@ def test_submit_without_runtime_uses_the_one_shot_path(
     runtime_driver = mocker.patch(
         "npa.orchestration.npa_workflow.runtime.run_workflow_runtime"
     )
-    submitted: dict[str, object] = {}
+    submitted: dict[str, object] = {"contents": []}
     submit_calls = 0
 
     def fake_submit(path, run_id, **kwargs):
         nonlocal submit_calls
         submit_calls += 1
-        submitted["content"] = Path(path).read_text(encoding="utf-8")
+        content = Path(path).read_text(encoding="utf-8")
+        submitted["content"] = content
+        submitted["contents"].append(content)
         if submit_calls == 1:
             raise SkyPilotSubmitError(
                 "synthetic indeterminate launch", launch_attempted=True
@@ -1234,6 +1236,8 @@ def test_submit_without_runtime_uses_the_one_shot_path(
             "one-shot-1",
             "--image",
             "none",
+            "--image-pull-secret",
+            "operator-pull-reference",
             "--var",
             "bucket=rt-bucket",
         ],
@@ -1253,11 +1257,20 @@ def test_submit_without_runtime_uses_the_one_shot_path(
     assert recovery_argv[recovery_argv.index("--resume-run") + 1] == "one-shot-1"
     assert "--no-runtime" in recovery_argv
     assert recovery_argv[recovery_argv.index("--var") + 1] == "bucket=rt-bucket"
+    assert [
+        value
+        for flag, value in zip(recovery_argv, recovery_argv[1:])
+        if flag == "--image-pull-secret"
+    ] == ["operator-pull-reference"]
 
     resumed = RUNNER.invoke(app, recovery_argv[1:])
     assert resumed.exit_code == 0, resumed.output
     assert "status: SUBMITTED" in resumed.output
     assert submit_mock.call_count == 2
+    assert len(submitted["contents"]) == 2
+    assert all(
+        "operator-pull-reference" in content for content in submitted["contents"]
+    )
     final = json.loads(journal_path.read_text(encoding="utf-8"))
     assert final["phase"] == "committed"
     assert final["resume_count"] == 1

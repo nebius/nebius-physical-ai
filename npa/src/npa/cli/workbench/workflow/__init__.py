@@ -896,6 +896,7 @@ _WORKFLOW_RECOVERY_VALUE_OPTIONS = (
 _WORKFLOW_RECOVERY_REPEATABLE_OPTIONS = (
     ("var", "--var"),
     ("image_override", "--image-override"),
+    ("image_pull_secret", "--image-pull-secret"),
     ("secret_env", "--secret-env"),
 )
 _WORKFLOW_RECOVERY_BOOLEAN_OPTIONS = (
