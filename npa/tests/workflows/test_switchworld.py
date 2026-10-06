@@ -633,10 +633,15 @@ def test_workflow_has_five_connected_real_stages() -> None:
     assert states["measure-real-frames"]["next"] == "emit-paired-artifacts"
     assert states["emit-paired-artifacts"]["terminal"] is True
 
-    for state in states.values():
+    for state_name, state in states.items():
         argv = state["run"]["argv"]
         command = " ".join(argv)
-        assert argv[:3] == ["wan-runtime", "exec", "python3"]
+        runtime = (
+            "switchworld-visualize-runtime"
+            if state_name == "emit-paired-artifacts"
+            else "wan-runtime"
+        )
+        assert argv[:3] == [runtime, "exec", "python3"]
         assert "npa.workflows.switchworld" in command
         assert "echo" not in command
         assert "mock" not in command.lower()
@@ -670,8 +675,13 @@ def test_all_raw_stage_argv_parse_against_switchworld_parser(
 
     raw = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     argv = raw["states"][state]["run"]["argv"]
+    runtime = (
+        "switchworld-visualize-runtime"
+        if state == "emit-paired-artifacts"
+        else "wan-runtime"
+    )
     assert argv[:5] == [
-        "wan-runtime",
+        runtime,
         "exec",
         "python3",
         "-m",

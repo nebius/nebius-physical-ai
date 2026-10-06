@@ -206,7 +206,9 @@ states:
       and the measured metrics.
     run:
       argv:
-        - wan-runtime
+        # Rerun requires NumPy 2, so final visualization uses its own
+        # hash-locked CPU environment without changing the Wan model runtime.
+        - switchworld-visualize-runtime
         - exec
         - python3
         - -m

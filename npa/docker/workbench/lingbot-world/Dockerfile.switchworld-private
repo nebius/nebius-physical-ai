@@ -34,6 +34,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_WAN_BASE_PYTHON=/opt/wan-base/bin/python \
     NPA_WAN_RUNTIME_REQUIREMENTS=/opt/npa/wan2-2/runtime-requirements.txt \
     NPA_WAN_RUNTIME_CACHE=/workspace/.cache/npa/wan2-2/runtime \
+    NPA_SWITCHWORLD_VISUALIZE_REQUIREMENTS=/opt/npa/switchworld-visualize-runtime-requirements.txt \
+    NPA_SWITCHWORLD_VISUALIZE_RUNTIME_CACHE=/workspace/.cache/npa/switchworld/visualize-runtime \
     WAN22_CACHE_DIR=/workspace/model-cache/wan2.2 \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PYTHONUNBUFFERED=1 \
@@ -67,13 +69,18 @@ COPY --from=wan-source /opt/byof /opt/byof
 COPY --from=wan-source /opt/wan-base /opt/wan-base
 COPY --from=wan-source /opt/npa/wan2-2 /opt/npa/wan2-2
 COPY --from=wan-source /usr/local/bin/wan-runtime /usr/local/bin/wan-runtime
-# Keep the real-media and RRD wheel closure runtime-only alongside the existing
-# CUDA closure. The fetch goes through wan-runtime's cache lock and atomic ready
-# marker; no decoder or RRD package is copied into this image layer.
-COPY --chmod=0444 docker/workbench/lingbot-world/switchworld-runtime-requirements.txt /tmp/npa-switchworld-runtime-requirements.txt
+# Keep PyAV in the inherited Wan runtime because stages one through four decode
+# real media there. Rerun has a NumPy 2 requirement, while the source-stage Wan
+# runtime deliberately pins NumPy 1.26.4; it is therefore fetched only by the
+# separate visualization runtime below rather than changing the model ABI.
+COPY --chmod=0444 docker/workbench/lingbot-world/switchworld-wan-runtime-requirements.txt /tmp/npa-switchworld-wan-runtime-requirements.txt
 RUN printf '\n' >> /opt/npa/wan2-2/runtime-requirements.txt \
-    && cat /tmp/npa-switchworld-runtime-requirements.txt >> /opt/npa/wan2-2/runtime-requirements.txt \
-    && rm -f /tmp/npa-switchworld-runtime-requirements.txt
+    && cat /tmp/npa-switchworld-wan-runtime-requirements.txt >> /opt/npa/wan2-2/runtime-requirements.txt \
+    && rm -f /tmp/npa-switchworld-wan-runtime-requirements.txt
+COPY --chmod=0444 docker/workbench/lingbot-world/switchworld-visualize-runtime-requirements.txt \
+     /opt/npa/switchworld-visualize-runtime-requirements.txt
+COPY --chmod=0755 docker/workbench/lingbot-world/switchworld_visualize_runtime.sh \
+     /usr/local/bin/switchworld-visualize-runtime
 
 COPY --chmod=0755 docker/workbench/common/model_source.sh /opt/npa/model_source.sh
 COPY --chmod=0755 docker/workbench/common/model_runtime.sh /usr/local/bin/model-runtime
@@ -116,15 +123,18 @@ RUN /opt/npa/model_source.sh \
 
 RUN install -d -m 0755 -o ubuntu -g ubuntu \
       /workspace /workspace/.cache/npa/wan2-2/runtime \
+      /workspace/.cache/npa/switchworld/visualize-runtime \
       /workspace/model-cache/wan2.2 \
     && chmod 0755 /opt/npa \
     && test -r /opt/byof/LICENSE.txt \
     && test -r /opt/npa/wan2-2/runtime-requirements.txt \
+    && test -r /opt/npa/switchworld-visualize-runtime-requirements.txt \
+    && test -x /usr/local/bin/switchworld-visualize-runtime \
     && test -r /etc/sudoers.d/npa-runtime \
     && grep -Fxq 'ubuntu ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/npa-runtime \
     && su ubuntu -s /bin/bash -c 'model-runtime health && test -w /workspace/.cache/npa/wan2-2/runtime && command -v rsync && test -x /usr/sbin/sshd'
 
-VOLUME ["/workspace/.cache/npa/wan2-2/runtime", "/workspace/model-cache/wan2.2"]
+VOLUME ["/workspace/.cache/npa/wan2-2/runtime", "/workspace/.cache/npa/switchworld/visualize-runtime", "/workspace/model-cache/wan2.2"]
 USER ubuntu
 WORKDIR /opt/byof
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["model-runtime", "health"]
