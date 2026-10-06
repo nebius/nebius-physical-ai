@@ -714,10 +714,16 @@ def prepare(cfg: PrepareConfig) -> dict[str, Any]:
         materialized = _copy_or_download_tree(cfg.dataset_uri, workspace / "dataset")
         inventory = _tree_inventory(materialized)
         rlds_files = [
-            entry for entry in inventory if "tfrecord" in entry["path"].lower()
+            entry
+            for entry in inventory
+            if "tfrecord" in entry["path"].lower()
+            and cfg.dataset_name in Path(entry["path"]).parts
         ]
         if not rlds_files:
-            raise OpenVLAPipelineError("prepared data contains no RLDS TFRecord files")
+            raise OpenVLAPipelineError(
+                "prepared data contains no RLDS TFRecord files for declared dataset "
+                f"{cfg.dataset_name!r}"
+            )
         runtime = bootstrap_runtime(cfg.runtime_root)
         dlimp_rlds_probe = _verify_dlimp_rlds_read(
             runtime / "venv" / "bin" / "python",

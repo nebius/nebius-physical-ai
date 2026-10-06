@@ -66,8 +66,9 @@ def test_prepare_reads_actual_rlds_file_and_publishes_normalization(
     tmp_path: Path,
 ) -> None:
     dataset = tmp_path / "dataset"
-    dataset.mkdir()
-    (dataset / "episode-000.tfrecord").write_bytes(b"not-a-placeholder-rlds-record")
+    selected = dataset / "libero_spatial_no_noops"
+    selected.mkdir(parents=True)
+    (selected / "episode-000.tfrecord").write_bytes(b"not-a-placeholder-rlds-record")
     (dataset / "dataset_statistics.json").write_text('{"action": {"mean": [0]}}')
     output = tmp_path / "prepared"
     runtime = tmp_path / "runtime"
@@ -98,6 +99,67 @@ def test_prepare_reads_actual_rlds_file_and_publishes_normalization(
         "trajectories_read": 1,
         "feature_keys": ["action", "observation"],
     }
+
+
+def test_prepare_selects_only_declared_dataset_tfrecords(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dataset = tmp_path / "dataset"
+    selected = dataset / "libero_spatial_no_noops"
+    sibling = dataset / "libero_object_no_noops"
+    selected.mkdir(parents=True)
+    sibling.mkdir(parents=True)
+    (selected / "episode-000.tfrecord-00000-of-00001").write_bytes(b"selected")
+    (sibling / "episode-000.tfrecord-00000-of-00001").write_bytes(b"sibling")
+    output = tmp_path / "prepared"
+    runtime = tmp_path / "runtime"
+    observed: list[Path] = []
+    monkeypatch.setattr(pipe, "bootstrap_runtime", lambda root: runtime)
+    monkeypatch.setattr(
+        pipe,
+        "_verify_dlimp_rlds_read",
+        lambda python, records: (
+            observed.extend(records)
+            or {"trajectories_read": 1, "feature_keys": ["action"]}
+        ),
+    )
+
+    pipe.prepare(
+        pipe.PrepareConfig(
+            dataset_uri=str(dataset),
+            output_uri=str(output),
+            dataset_name="libero_spatial_no_noops",
+            task_suite="libero_spatial",
+            runtime_root=str(runtime),
+        )
+    )
+
+    assert [record.name for record in observed] == [
+        "episode-000.tfrecord-00000-of-00001"
+    ]
+    assert all("libero_spatial_no_noops" in record.parts for record in observed)
+
+
+def test_prepare_rejects_tfrecords_outside_declared_dataset(tmp_path: Path) -> None:
+    dataset = tmp_path / "dataset"
+    sibling = dataset / "libero_object_no_noops"
+    sibling.mkdir(parents=True)
+    (sibling / "episode-000.tfrecord-00000-of-00001").write_bytes(b"sibling")
+
+    with pytest.raises(
+        pipe.OpenVLAPipelineError,
+        match="no RLDS TFRecord files for declared dataset",
+    ):
+        pipe.prepare(
+            pipe.PrepareConfig(
+                dataset_uri=str(dataset),
+                output_uri=str(tmp_path / "prepared"),
+                dataset_name="libero_spatial_no_noops",
+                task_suite="libero_spatial",
+                runtime_root=str(tmp_path / "runtime"),
+            )
+        )
 
 
 def test_stock_decoder_bundle_is_rejected(tmp_path: Path) -> None:
