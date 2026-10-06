@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import shutil
 import sys
 import types
@@ -507,11 +508,32 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
         )
     assert "python3.10 -m venv /opt/opendm-venv" not in instructions
     assert "python3.10 -m venv /opt/libero-venv" not in instructions
+    assert (
+        "LIBERO_CONFIG_PATH=/opt/dexbotic-benchmark/libero/libero/libero "
+        "PYTHONPATH=/opt/dexbotic-benchmark:/opt/dexbotic-benchmark/libero "
+        "/opt/libero-venv/bin/python"
+    ) in instructions
+    assert (
+        "benchmark_root: /opt/dexbotic-benchmark/libero/libero/libero" in instructions
+    )
     assert "/opt/opendm-venv/bin/python -m pip uninstall -y wandb" in instructions
     assert (
         "NPA_DM05_OPENDM_RUNTIME_MANIFEST=/opt/opendm/dm05-libero-baseline-runtime.json"
         in instructions
     )
+
+
+def test_opendm_native_environment_exposes_pinned_libero_namespace(tmp_path):
+    dexbotic_root = tmp_path / "dexbotic-benchmark"
+
+    environment = baseline_workflow._native_environment(
+        Path("/opt/libero-venv/bin/python"), dexbotic_root
+    )
+
+    assert environment["PYTHONPATH"].split(os.pathsep)[:2] == [
+        str(dexbotic_root),
+        str(dexbotic_root / "libero"),
+    ]
 
 
 def test_libero_config_uses_installed_assets_without_interactive_setup(

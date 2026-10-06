@@ -308,8 +308,8 @@ def _native_environment(python: Path, root: Path) -> dict[str, str]:
     """
     environment = os.environ.copy()
     environment["PATH"] = str(python.parent) + os.pathsep + environment.get("PATH", "")
-    environment["PYTHONPATH"] = (
-        str(root) + os.pathsep + environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        (str(root), str(root / "libero"), environment.get("PYTHONPATH", ""))
     )
     environment["IMAGEIO_FFMPEG_EXE"] = "/usr/bin/ffmpeg"
     return environment

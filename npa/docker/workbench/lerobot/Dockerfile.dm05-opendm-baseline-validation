@@ -52,6 +52,13 @@ RUN git clone --no-checkout https://github.com/dexmal/opendm.git /opt/opendm \
     && git -C /opt/dexbotic-benchmark/libero config filter.lfs.required false \
     && git -C /opt/dexbotic-benchmark/libero checkout --detach 8f1084e3132a39270c3a13ebe37270a43ece2a01 \
     && test -f /opt/dexbotic-benchmark/libero/LICENSE \
+    && printf '%s\n' \
+      'benchmark_root: /opt/dexbotic-benchmark/libero/libero/libero' \
+      'bddl_files: /opt/dexbotic-benchmark/libero/libero/libero/bddl_files' \
+      'init_states: /opt/dexbotic-benchmark/libero/libero/libero/init_files' \
+      'datasets: /opt/dexbotic-benchmark/libero/libero/datasets' \
+      'assets: /opt/dexbotic-benchmark/libero/libero/libero/assets' \
+      > /opt/dexbotic-benchmark/libero/libero/libero/config.yaml \
     && rm -rf /opt/opendm/.git /opt/dexbotic-benchmark/.git /opt/dexbotic-benchmark/libero/.git
 
 # OpenDM declares Python >=3.10 and an inference dependency closure. Keep it
@@ -77,7 +84,7 @@ RUN /opt/libero-venv/bin/python --version \
       'omegaconf' 'opencv-python-headless==4.6.0.66' 'Pillow' 'requests' \
       'robomimic==0.2.0' 'robosuite==1.4.0' 'tqdm' \
     && /opt/libero-venv/bin/python -m pip install --no-cache-dir -e /opt/dexbotic-benchmark/libero \
-    && PYTHONPATH=/opt/dexbotic-benchmark /opt/libero-venv/bin/python -c "from evaluation.evaluator.libero_evaluator import LiberoEvaluator; from libero.libero import benchmark; assert 'libero_spatial' in benchmark.get_benchmark_dict()"
+    && LIBERO_CONFIG_PATH=/opt/dexbotic-benchmark/libero/libero/libero PYTHONPATH=/opt/dexbotic-benchmark:/opt/dexbotic-benchmark/libero /opt/libero-venv/bin/python -c "from evaluation.evaluator.libero_evaluator import LiberoEvaluator; from libero.libero import benchmark; assert 'libero_spatial' in benchmark.get_benchmark_dict()"
 
 COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/dm05-opendm-baseline-runtime-manifest.json /opt/opendm/dm05-libero-baseline-runtime.json
 COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/DM05-OPENDM-BASELINE-ATTRIBUTION.md /opt/opendm/DM05-OPENDM-BASELINE-ATTRIBUTION.md
