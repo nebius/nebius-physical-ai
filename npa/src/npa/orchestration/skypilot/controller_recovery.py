@@ -126,9 +126,7 @@ def _read_ledger(record):
         state_parent=state_parent, run_id=record["run_id"]
     )
     _require(state is not None, "durable workflow manifest is absent or ambiguous")
-    verify_ledger(
-        record, read_manifest(state), get_json(state, "runtime.json")
-    )
+    verify_ledger(record, read_manifest(state), get_json(state, "runtime.json"))
     return state
 
 

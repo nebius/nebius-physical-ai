@@ -193,9 +193,7 @@ def test_ledger_discovery_finds_declarative_state_below_recorded_prefix(
         assert name == "runtime.json"
         return runtime
 
-    monkeypatch.setattr(
-        recovery, "resolve_workflow_s3_config", lambda **kwargs: parent
-    )
+    monkeypatch.setattr(recovery, "resolve_workflow_s3_config", lambda **kwargs: parent)
     monkeypatch.setattr(recovery, "discover_workflow_run_state", discover)
     monkeypatch.setattr(recovery, "read_manifest", lambda actual: manifest)
     monkeypatch.setattr(recovery, "get_json", read_runtime)
@@ -209,9 +207,7 @@ def test_ledger_discovery_refuses_missing_manifest(original, monkeypatch):
     monkeypatch.setattr(
         recovery, "resolve_workflow_s3_config", lambda **kwargs: object()
     )
-    monkeypatch.setattr(
-        recovery, "discover_workflow_run_state", lambda **kwargs: None
-    )
+    monkeypatch.setattr(recovery, "discover_workflow_run_state", lambda **kwargs: None)
 
     with pytest.raises(recovery.ControllerRecoveryError, match="manifest is absent"):
         recovery._read_ledger(record)
