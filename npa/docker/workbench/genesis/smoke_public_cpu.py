@@ -57,7 +57,7 @@ def _native_dataset(root: Path):
     np.save(episode / "obs_workspace.npy", frames)
     np.save(episode / "obs_wrist.npy", frames[:, :, ::-1].copy())
     np.save(episode / "state.npy", np.arange(28, dtype=np.float32).reshape(4, 7) / 28)
-    np.save(episode / "action.npy", np.arange(32, dtype=np.float32).reshape(4, 8) / 32)
+    np.save(episode / "actions.npy", np.arange(32, dtype=np.float32).reshape(4, 8) / 32)
     dataset_root = convert(root / "raw", root / "dataset", fps=10)
     dataset = LeRobotDataset("npa/genesis-cpu-smoke", root=dataset_root)
     assert dataset.video_backend == "pyav"
