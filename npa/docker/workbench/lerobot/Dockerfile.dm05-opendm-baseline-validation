@@ -58,7 +58,7 @@ RUN git clone --no-checkout https://github.com/dexmal/opendm.git /opt/opendm \
 # separate from the evaluator's older LIBERO dependency set. W&B is removed:
 # native inference/evaluation does not use it and this image must not enable
 # optional telemetry.
-RUN python3.10 -m venv /opt/opendm-venv \
+RUN /opt/opendm-venv/bin/python --version \
     && /opt/opendm-venv/bin/python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
     && /opt/opendm-venv/bin/python -m pip install --no-cache-dir -e /opt/opendm \
     && /opt/opendm-venv/bin/python -m pip uninstall -y wandb \
@@ -67,7 +67,7 @@ RUN python3.10 -m venv /opt/opendm-venv \
 # Dexbotic's upstream local LIBERO guide uses a distinct environment. These are
 # the evaluator imports exercised by its native run script; W&B and unrelated
 # benchmark families are deliberately not installed.
-RUN python3.10 -m venv /opt/libero-venv \
+RUN /opt/libero-venv/bin/python --version \
     && /opt/libero-venv/bin/python -m pip install --no-cache-dir --upgrade pip 'setuptools==57.5.0' wheel \
     && /opt/libero-venv/bin/python -m pip install --no-cache-dir \
       'torch==2.11.0' 'torchvision==0.26.0' --index-url https://download.pytorch.org/whl/cu128 \

@@ -480,6 +480,33 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
         "python3.10 -m virtualenv --no-download --python=/usr/bin/python3.10 "
         "/opt/libero-venv"
     ) in instructions
+    bootstrap_block = instructions[
+        instructions.index(
+            "RUN python3.10 -m pip install --no-cache-dir 'virtualenv==20.26.6'"
+        ) : instructions.index("\n\nUSER ubuntu")
+    ]
+    opendm_dependencies_block = instructions[
+        instructions.index(
+            "RUN /opt/opendm-venv/bin/python --version"
+        ) : instructions.index("\n\n# Dexbotic's upstream local LIBERO guide")
+    ]
+    libero_dependencies_block = instructions[
+        instructions.index(
+            "RUN /opt/libero-venv/bin/python --version"
+        ) : instructions.index("\n\nCOPY --chown=ubuntu:ubuntu")
+    ]
+    for environment, dependency_block in (
+        ("/opt/opendm-venv", opendm_dependencies_block),
+        ("/opt/libero-venv", libero_dependencies_block),
+    ):
+        assert f"{environment}/bin/python --version" in dependency_block
+        assert f"{environment}/bin/python -m pip install" in dependency_block
+        assert "python3.10 -m venv" not in dependency_block
+        assert instructions.index(bootstrap_block) < instructions.index(
+            dependency_block
+        )
+    assert "python3.10 -m venv /opt/opendm-venv" not in instructions
+    assert "python3.10 -m venv /opt/libero-venv" not in instructions
     assert "/opt/opendm-venv/bin/python -m pip uninstall -y wandb" in instructions
     assert (
         "NPA_DM05_OPENDM_RUNTIME_MANIFEST=/opt/opendm/dm05-libero-baseline-runtime.json"
