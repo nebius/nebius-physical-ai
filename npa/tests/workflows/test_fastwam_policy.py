@@ -218,6 +218,7 @@ def _write_resumable_checkpoint(root: Path, step: int = 20_000) -> Path:
     (state / "training_step.json").write_text(json.dumps({"step": step}))
     (state / "rng_state.safetensors").write_bytes(b"rng")
     (state / "optimizer_state.safetensors").write_bytes(b"optimizer")
+    (state / "optimizer_param_groups.json").write_text("[]\n")
     (state / "scheduler_state.json").write_text("{}\n")
     (checkpoint.parent / "last").symlink_to(checkpoint.name)
     return checkpoint
@@ -302,13 +303,19 @@ def test_recovery_mirror_publishes_only_complete_native_resume_state(
     assert (restored.parent.parent / "last").resolve() == restored.parent.resolve()
 
 
-def test_recovery_mirror_rejects_policy_only_or_partial_training_state(tmp_path) -> None:
+@pytest.mark.parametrize(
+    "missing_state", ["optimizer_state.safetensors", "optimizer_param_groups.json"]
+)
+def test_recovery_mirror_rejects_incomplete_optimizer_resume_state(
+    tmp_path, missing_state: str
+) -> None:
     checkpoint = _write_resumable_checkpoint(tmp_path / "training")
-    (checkpoint / "training_state" / "optimizer_state.safetensors").unlink()
+    (checkpoint / "training_state" / missing_state).unlink()
 
     assert fastwam._complete_recoverable_checkpoints(tmp_path / "training") == []
-    with pytest.raises(fastwam.FastWAMPolicyError, match="not yet resumable"):
+    with pytest.raises(fastwam.FastWAMPolicyError, match="not yet resumable") as error:
         fastwam._recoverable_checkpoint_record(checkpoint)
+    assert missing_state in str(error.value)
 
 
 def test_recovery_mirror_requires_the_upstream_last_pointer(tmp_path) -> None:

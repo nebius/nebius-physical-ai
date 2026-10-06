@@ -733,6 +733,7 @@ def _missing_recovery_state(checkpoint: Path, pretrained: Path) -> list[str]:
         checkpoint / "training_state" / "training_step.json",
         checkpoint / "training_state" / "rng_state.safetensors",
         checkpoint / "training_state" / "optimizer_state.safetensors",
+        checkpoint / "training_state" / "optimizer_param_groups.json",
     )
     missing = [
         path.relative_to(checkpoint).as_posix() for path in required if not path.is_file()
