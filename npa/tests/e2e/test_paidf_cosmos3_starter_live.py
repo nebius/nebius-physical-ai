@@ -37,6 +37,7 @@ def test_completed_fresh_default_starter_pipeline() -> None:
     _assert_fresh_objects(client, selected.netloc, run_id)
     _assert_paidf_live_artifacts(
         spec="paidf-cosmos3.yaml",
+        run_prefix_uri=uri,
         waves=runtime["waves"],
         bucket=selected.netloc,
         run_id=run_id,

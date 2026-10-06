@@ -7,6 +7,12 @@ This guide covers the **generation** half as a containerized workbench tool —
 image and video synthesis for Physical AI data — through the CLI, the SDK, and a
 declarative `npa.workflow` spec that all share one implementation.
 
+The historical public release is quarantined. The repaired default introduced
+by #869 is scoped to PAIDF video preparation and variant generation;
+`workbench.cosmos3.generate` still needs an explicit independently qualified
+operator image. Earlier execution evidence below does not accept the withdrawn
+public bytes. See the [default-image impact audit](validation/public-default-quarantine-impact-20261005.md).
+
 | Piece | Path |
 | --- | --- |
 | Image | `npa/docker/workbench/cosmos3/Dockerfile` (`npa-cosmos3`) |
