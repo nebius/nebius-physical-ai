@@ -304,6 +304,13 @@ See [runtime modes](../docs/workbench/runtime-modes.md) for direct deploy,
 BYOVM, and serverless examples. A mode supported by one tool does not imply
 support in every other tool.
 
+Genesis teacher training and LeRobot training or profiling reject quarantined
+public images with an actionable `Error:` and exit code 1 before contacting the
+serverless job provider. Pass `--image <reviewed-image@sha256:digest>` to select
+a separately validated replacement. This does not change the public image
+acceptance policy. Isaac Lab can reconnect to an existing job without selecting
+a new image; creating a new job still enforces quarantine.
+
 <a id="config"></a>
 
 ## Configuration

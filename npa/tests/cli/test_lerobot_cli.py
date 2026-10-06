@@ -594,8 +594,9 @@ def test_lerobot_train_serverless_default_public_image_is_quarantined(mocker) ->
     result = runner.invoke(app, args)
 
     assert result.exit_code == 1
-    assert isinstance(result.exception, ValueError)
-    assert "public release metadata is quarantined" in str(result.exception)
+    assert isinstance(result.exception, SystemExit)
+    assert "public release metadata is quarantined" in result.output
+    client.get_job.assert_not_called()
     client.create_job.assert_not_called()
 
 
