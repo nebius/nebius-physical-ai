@@ -6,7 +6,6 @@ import fcntl
 import hashlib
 import json
 import subprocess
-import urllib.error
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +28,7 @@ class _Body:
 class _StreamingResponse:
     def __init__(self, body: bytes) -> None:
         self.body = body
+        self.status = 200
 
     def __enter__(self) -> "_StreamingResponse":
         return self
@@ -41,6 +41,47 @@ class _StreamingResponse:
             return self.body
         result, self.body = self.body[:size], self.body[size:]
         return result
+
+
+def _patch_lfs_https_transport(
+    monkeypatch: pytest.MonkeyPatch, responses: list[object]
+) -> tuple[
+    list[tuple[str, float]],
+    list[tuple[str, str, str, bytes | None, dict[str, str]]],
+]:
+    connections: list[tuple[str, float]] = []
+    requests: list[tuple[str, str, str, bytes | None, dict[str, str]]] = []
+
+    class Connection:
+        def __init__(
+            self, host: str, *, port: int, timeout: float, context: Any
+        ) -> None:
+            assert port == 443
+            assert context.check_hostname is True
+            self.host = host
+            connections.append((host, timeout))
+
+        def request(
+            self,
+            method: str,
+            target: str,
+            body: bytes | None = None,
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            requests.append((self.host, method, target, body, headers or {}))
+
+        def getresponse(self) -> _StreamingResponse:
+            response = responses.pop(0)
+            if isinstance(response, BaseException):
+                raise response
+            assert isinstance(response, _StreamingResponse)
+            return response
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(workflow.http.client, "HTTPSConnection", Connection)
+    return connections, requests
 
 
 class FakeS3:
@@ -601,48 +642,58 @@ def test_runtime_lfs_download_requires_matching_batch_and_payload_digest(
     digest = hashlib.sha256(payload).hexdigest()
     destination = tmp_path / "torchcodec.whl"
     destination.write_text(workflow._expected_lfs_pointer(digest, len(payload)))
-    download_url = "https://objects.example.invalid/opaque-signed-object"
-    calls: list[Any] = []
-
-    def urlopen(request: Any, *, timeout: float) -> _StreamingResponse:
-        calls.append((request, timeout))
-        if len(calls) == 1:
-            request, timeout = calls[-1]
-            assert timeout == workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS
-            assert request.full_url == (
-                f"{workflow.IMAGE_GROOT_REPOSITORY}/info/lfs/objects/batch"
-            )
-            assert json.loads(request.data) == {
-                "operation": "download",
-                "transfers": ["basic"],
-                "objects": [{"oid": digest, "size": len(payload)}],
-            }
-            return _StreamingResponse(
-                json.dumps(
-                    {
-                        "objects": [
-                            {
-                                "oid": digest,
-                                "size": len(payload),
-                                "actions": {"download": {"href": download_url}},
-                            }
-                        ]
-                    }
-                ).encode()
-            )
-        request, timeout = calls[-1]
-        assert timeout == workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS
-        assert request == download_url
-        return _StreamingResponse(payload)
-
-    monkeypatch.setattr(workflow.urllib.request, "urlopen", urlopen)
+    download_url = "https://github-cloud.githubusercontent.com/opaque-signed-object"
+    responses: list[object] = [
+        _StreamingResponse(
+            json.dumps(
+                {
+                    "objects": [
+                        {
+                            "oid": digest,
+                            "size": len(payload),
+                            "actions": {"download": {"href": download_url}},
+                        }
+                    ]
+                }
+            ).encode()
+        ),
+        _StreamingResponse(payload),
+    ]
+    connections, requests = _patch_lfs_https_transport(monkeypatch, responses)
 
     workflow._download_github_lfs_object(
         destination, expected_sha256=digest, expected_size=len(payload)
     )
 
     assert destination.read_bytes() == payload
-    assert len(calls) == 2
+    assert connections == [
+        ("github.com", workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS),
+        (
+            "github-cloud.githubusercontent.com",
+            workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS,
+        ),
+    ]
+    assert requests[0][:3] == (
+        "github.com",
+        "POST",
+        "/NVIDIA/Isaac-GR00T.git/info/lfs/objects/batch",
+    )
+    assert json.loads(requests[0][3]) == {
+        "operation": "download",
+        "transfers": ["basic"],
+        "objects": [{"oid": digest, "size": len(payload)}],
+    }
+    assert requests[0][4] == {
+        "Accept": "application/vnd.git-lfs+json",
+        "Content-Type": "application/vnd.git-lfs+json",
+    }
+    assert requests[1] == (
+        "github-cloud.githubusercontent.com",
+        "GET",
+        "/opaque-signed-object",
+        None,
+        {},
+    )
 
 
 def test_lfs_download_timeout_is_actionable_and_releases_runtime_cache_lock(
@@ -673,31 +724,27 @@ def test_lfs_download_timeout_is_actionable_and_releases_runtime_cache_lock(
             target.write_text(workflow._expected_lfs_pointer(digest, len(payload)))
 
     monkeypatch.setattr(workflow, "_run_runtime_command", runtime_command)
-    calls: list[tuple[Any, float]] = []
-
-    def timeout_after_batch(request: Any, *, timeout: float) -> _StreamingResponse:
-        calls.append((request, timeout))
-        if len(calls) == 1:
-            return _StreamingResponse(
-                json.dumps(
-                    {
-                        "objects": [
-                            {
-                                "oid": digest,
-                                "size": len(payload),
-                                "actions": {
-                                    "download": {
-                                        "href": "https://objects.example.invalid/signed"
-                                    }
-                                },
-                            }
-                        ]
-                    }
-                ).encode()
-            )
-        raise urllib.error.URLError(TimeoutError("stalled transport"))
-
-    monkeypatch.setattr(workflow.urllib.request, "urlopen", timeout_after_batch)
+    responses: list[object] = [
+        _StreamingResponse(
+            json.dumps(
+                {
+                    "objects": [
+                        {
+                            "oid": digest,
+                            "size": len(payload),
+                            "actions": {
+                                "download": {
+                                    "href": "https://github-cloud.githubusercontent.com/signed"
+                                }
+                            },
+                        }
+                    ]
+                }
+            ).encode()
+        ),
+        TimeoutError("stalled transport"),
+    ]
+    connections, _requests = _patch_lfs_https_transport(monkeypatch, responses)
 
     with pytest.raises(
         workflow.GrootVisualizationError,
@@ -705,7 +752,7 @@ def test_lfs_download_timeout_is_actionable_and_releases_runtime_cache_lock(
     ):
         workflow._materialize_native_runtime(tmp_path)
 
-    assert [timeout for _request, timeout in calls] == [
+    assert [timeout for _host, timeout in connections] == [
         workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS,
         workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS,
     ]
@@ -719,13 +766,9 @@ def test_lfs_batch_transport_error_is_actionable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     expected_sha256 = "a" * 64
-    calls: list[tuple[Any, float]] = []
-
-    def broken_transport(request: Any, *, timeout: float) -> _StreamingResponse:
-        calls.append((request, timeout))
-        raise urllib.error.URLError("name resolution failed")
-
-    monkeypatch.setattr(workflow.urllib.request, "urlopen", broken_transport)
+    connections, _requests = _patch_lfs_https_transport(
+        monkeypatch, [OSError("name resolution failed")]
+    )
 
     with pytest.raises(
         workflow.GrootVisualizationError,
@@ -733,8 +776,7 @@ def test_lfs_batch_transport_error_is_actionable(
     ):
         workflow._github_lfs_download_url(expected_sha256, 1)
 
-    assert len(calls) == 1
-    assert calls[0][1] == workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS
+    assert connections == [("github.com", workflow.GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS)]
 
 
 def test_runtime_lfs_download_rejects_wrong_payload_without_replacing_pointer(
@@ -745,8 +787,8 @@ def test_runtime_lfs_download_rejects_wrong_payload_without_replacing_pointer(
     pointer = workflow._expected_lfs_pointer(digest, len(payload))
     destination = tmp_path / "torchcodec.whl"
     destination.write_text(pointer)
-    responses = iter(
-        [
+    responses: list[object] = [
+        _StreamingResponse(
             json.dumps(
                 {
                     "objects": [
@@ -755,22 +797,17 @@ def test_runtime_lfs_download_rejects_wrong_payload_without_replacing_pointer(
                             "size": len(payload),
                             "actions": {
                                 "download": {
-                                    "href": "https://objects.example.invalid/signed"
+                                    "href": "https://github-cloud.githubusercontent.com/signed"
                                 }
                             },
                         }
                     ]
                 }
-            ).encode(),
-            b"not-the-reviewed-wheel",
-        ]
-    )
-
-    monkeypatch.setattr(
-        workflow.urllib.request,
-        "urlopen",
-        lambda _request, *, timeout: _StreamingResponse(next(responses)),
-    )
+            ).encode()
+        ),
+        _StreamingResponse(b"not-the-reviewed-wheel"),
+    ]
+    _patch_lfs_https_transport(monkeypatch, responses)
 
     with pytest.raises(workflow.GrootVisualizationError, match="did not match"):
         workflow._download_github_lfs_object(
@@ -779,6 +816,54 @@ def test_runtime_lfs_download_rejects_wrong_payload_without_replacing_pointer(
 
     assert destination.read_text() == pointer
     assert not list(tmp_path.glob(".torchcodec.whl.lfs-*"))
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
+        "http://github-cloud.githubusercontent.com/signed",
+        "https://unexpected.example/signed",
+    ],
+)
+def test_lfs_batch_rejects_disallowed_download_urls(href: str) -> None:
+    batch = {
+        "objects": [
+            {
+                "oid": "a" * 64,
+                "size": 1,
+                "actions": {"download": {"href": href}},
+            }
+        ]
+    }
+
+    with pytest.raises(
+        workflow.GrootVisualizationError, match="permitted download URL"
+    ):
+        workflow._lfs_download_url_from_batch(batch, "a" * 64, 1)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://github-cloud.githubusercontent.com/signed",
+        "https://unexpected.example/signed",
+    ],
+)
+def test_lfs_transport_rejects_disallowed_url_before_connection(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    def unexpected_connection(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("disallowed URL must fail before connecting")
+
+    monkeypatch.setattr(workflow.http.client, "HTTPSConnection", unexpected_connection)
+
+    with pytest.raises(workflow.GrootVisualizationError, match="URL is not permitted"):
+        with workflow._open_lfs_https_response(
+            url,
+            allowed_hosts=workflow._GITHUB_LFS_DOWNLOAD_HOSTS,
+            method="GET",
+        ):
+            pytest.fail("disallowed URL must not yield a response")
 
 
 def test_runtime_rejects_downloaded_lfs_object_with_wrong_digest(

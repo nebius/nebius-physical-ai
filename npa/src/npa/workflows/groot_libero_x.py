@@ -15,18 +15,20 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import http.client
 import json
 import math
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import tempfile
-import urllib.parse
-import urllib.request
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 
+from npa._public_https import PublicDownloadError, _validate_url
 from npa.workflows.artifacts import redact_artifact_text
 from npa.workflows.groot_learning import (
     _download_prefix,
@@ -94,6 +96,8 @@ _GIT_LFS_POINTER_VERSION = "version https://git-lfs.github.com/spec/v1"
 # hold the runtime cache lock forever.  This is deliberately a transport bound,
 # not a workload or rollout deadline.
 GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS = 60.0
+_GITHUB_LFS_BATCH_HOSTS = frozenset({"github.com"})
+_GITHUB_LFS_DOWNLOAD_HOSTS = frozenset({"github-cloud.githubusercontent.com"})
 # Isaac-GR00T's lock resolves the aarch64 TorchCodec wheel while validating its
 # multi-platform environment, even on an x86_64 worker.  Fetch exactly that
 # upstream LFS object after checking out the reviewed source revision; do not
@@ -830,31 +834,70 @@ def _raise_lfs_transport_error(operation: str, exc: BaseException) -> None:
     raise GrootVisualizationError(f"could not {operation}") from exc
 
 
+@contextmanager
+def _open_lfs_https_response(
+    url: str,
+    *,
+    allowed_hosts: frozenset[str],
+    method: str,
+    body: bytes | None = None,
+    headers: Mapping[str, str] | None = None,
+):
+    """Open one exact-host Git LFS HTTPS request without following redirects."""
+
+    try:
+        host, target = _validate_url(url, allowed_hosts)
+    except PublicDownloadError:
+        raise GrootVisualizationError("upstream Git LFS URL is not permitted") from None
+    connection = http.client.HTTPSConnection(
+        host,
+        port=443,
+        timeout=GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS,
+        context=ssl.create_default_context(),
+    )
+    try:
+        connection.request(method, target, body=body, headers=dict(headers or {}))
+        response = connection.getresponse()
+        if response.status != 200:
+            raise GrootVisualizationError(
+                "upstream Git LFS request returned an unsuccessful HTTP status"
+            )
+        yield response
+    finally:
+        connection.close()
+
+
 def _github_lfs_download_url(expected_sha256: str, expected_size: int) -> str:
     """Resolve one expected object through the upstream Git LFS batch API."""
 
-    batch_request = urllib.request.Request(
-        f"{IMAGE_GROOT_REPOSITORY}/info/lfs/objects/batch",
-        data=json.dumps(
-            {
-                "operation": "download",
-                "transfers": ["basic"],
-                "objects": [{"oid": expected_sha256, "size": expected_size}],
-            },
-            separators=(",", ":"),
-        ).encode(),
-        headers={
-            "Accept": "application/vnd.git-lfs+json",
-            "Content-Type": "application/vnd.git-lfs+json",
+    batch_body = json.dumps(
+        {
+            "operation": "download",
+            "transfers": ["basic"],
+            "objects": [{"oid": expected_sha256, "size": expected_size}],
         },
-        method="POST",
-    )
+        separators=(",", ":"),
+    ).encode()
     try:
-        with urllib.request.urlopen(
-            batch_request, timeout=GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS
+        with _open_lfs_https_response(
+            f"{IMAGE_GROOT_REPOSITORY}/info/lfs/objects/batch",
+            allowed_hosts=_GITHUB_LFS_BATCH_HOSTS,
+            method="POST",
+            body=batch_body,
+            headers={
+                "Accept": "application/vnd.git-lfs+json",
+                "Content-Type": "application/vnd.git-lfs+json",
+            },
         ) as response:
             batch = json.loads(response.read().decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except GrootVisualizationError:
+        raise
+    except (
+        OSError,
+        http.client.HTTPException,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as exc:
         _raise_lfs_transport_error("resolve the required upstream Git LFS object", exc)
     return _lfs_download_url_from_batch(batch, expected_sha256, expected_size)
 
@@ -862,7 +905,7 @@ def _github_lfs_download_url(expected_sha256: str, expected_size: int) -> str:
 def _lfs_download_url_from_batch(
     batch: object, expected_sha256: str, expected_size: int
 ) -> str:
-    """Validate an LFS batch response and return its HTTPS download URL."""
+    """Validate an LFS batch response and return its permitted download URL."""
 
     objects = batch.get("objects") if isinstance(batch, dict) else None
     if (
@@ -884,17 +927,12 @@ def _lfs_download_url_from_batch(
     actions = object_record.get("actions")
     download = actions.get("download") if isinstance(actions, dict) else None
     href = download.get("href") if isinstance(download, dict) else None
-    parsed = urllib.parse.urlparse(href) if isinstance(href, str) else None
-    if (
-        parsed is None
-        or parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-    ):
+    try:
+        _validate_url(href, _GITHUB_LFS_DOWNLOAD_HOSTS)
+    except PublicDownloadError:
         raise GrootVisualizationError(
-            "upstream Git LFS response lacks a safe download URL"
-        )
+            "upstream Git LFS response lacks a permitted download URL"
+        ) from None
     return href
 
 
@@ -903,14 +941,18 @@ def _download_lfs_bytes(url: str, temporary: Path) -> None:
 
     try:
         with (
-            urllib.request.urlopen(
-                url, timeout=GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS
+            _open_lfs_https_response(
+                url,
+                allowed_hosts=_GITHUB_LFS_DOWNLOAD_HOSTS,
+                method="GET",
             ) as response,
             temporary.open("xb") as handle,
         ):
             while chunk := response.read(1024 * 1024):
                 handle.write(chunk)
-    except OSError as exc:
+    except GrootVisualizationError:
+        raise
+    except (OSError, http.client.HTTPException) as exc:
         _raise_lfs_transport_error("download the required upstream Git LFS object", exc)
 
 
