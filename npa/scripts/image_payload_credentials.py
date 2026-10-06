@@ -37,6 +37,7 @@ plaintext secrets.
 from __future__ import annotations
 
 import ast
+import base64
 import re
 from dataclasses import dataclass
 from typing import IO
@@ -261,6 +262,7 @@ _SHELL_REFERENCE = re.compile(
     rb"""\$\{[A-Za-z_][A-Za-z0-9_]*(?::-)?\})(?P=quote)\Z"""
 )
 _PLACEHOLDER = re.compile(rb"<[A-Za-z_][A-Za-z0-9_]*>\Z")
+_COMPACT_TOKEN = re.compile(rb"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*){1,2}\Z")
 _CREDENTIAL_LOOKUP_NAMES = frozenset(
     {
         "aws_secret_access_key",
@@ -306,6 +308,24 @@ _ANNOTATION_NAMES = frozenset(
 )
 
 
+def _compact_token_literal(data: bytes) -> bool:
+    """Keep encoded JSON headers from becoming qualified Python references."""
+    if not _COMPACT_TOKEN.fullmatch(data):
+        return False
+    header = data.split(b".", 1)[0]
+    # An incomplete final base64 quantum must not hide a recognizable header.
+    # This detects a token shape; it does not authenticate or approve a JWT.
+    if len(header) % 4 == 1:
+        header = header[:-1]
+    try:
+        decoded = base64.b64decode(
+            header + b"=" * (-len(header) % 4), altchars=b"-_", validate=True
+        )
+    except ValueError:
+        return False
+    return decoded.lstrip().startswith(b"{")
+
+
 def _source_reference(expression: ast.expr | None) -> bool:
     """Accept source references only when their literals cannot contain a value."""
     if expression is None or isinstance(expression, (ast.Name, ast.Constant)):
@@ -313,6 +333,10 @@ def _source_reference(expression: ast.expr | None) -> bool:
     literal_bytes = 0
     for node in ast.walk(expression):
         if not isinstance(node, _REFERENCE_NODES):
+            return False
+        if isinstance(node, ast.Attribute) and _compact_token_literal(
+            ast.unparse(node).encode()
+        ):
             return False
         if (
             isinstance(node, ast.keyword)
@@ -378,6 +402,8 @@ def _annotated_reference(source: str) -> bool:
 def _nonliteral_value(data: bytes, separator: bytes) -> bool:
     """Keep literals, unknown expressions and ambiguous syntax blocking."""
     candidate = data.strip().rstrip(b",;)] ").strip()
+    if _compact_token_literal(candidate):
+        return False
     if _SHELL_REFERENCE.fullmatch(candidate) or _PLACEHOLDER.fullmatch(candidate):
         return True
     if b"#" in data:

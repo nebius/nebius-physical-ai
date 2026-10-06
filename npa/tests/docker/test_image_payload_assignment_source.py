@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import base64
 import json
 import subprocess
 import sys
@@ -30,6 +31,8 @@ BENIGN_SOURCE = (
     b'hf_token = credentials["hf_token"]',
     b"ngc_api_key=load_credential()",
     b"hf_token = config.hf_token or None",
+    b"hf_token = self.credentials.hf_token",
+    b"ngc_api_key = config.auth.ngc_api_key",
     b'hf_token = (os.getenv(\n    "HF_TOKEN"\n))',
     b"hf_token: Optional[str] = None,",
     b"hf_token: typing.Optional[str] = None)",
@@ -101,6 +104,57 @@ def test_literal_unknown_or_incomplete_values_remain_blocking(
     )
 
 
+def _synthetic_compact_token(header: bytes) -> bytes:
+    """Generate inert encoded identifiers, never use an operator credential."""
+    return b".".join(
+        base64.urlsafe_b64encode(part).rstrip(b"=")
+        for part in (header, b'{"sub":"fixture"}', b"fixture-signature")
+    )
+
+
+@pytest.mark.parametrize("chunk_size", [1, 7, 37, 512, 1024])
+@pytest.mark.parametrize(
+    "header", [b'{"alg":"none"}', b' {"alg":"none"}', b'{"alg":', b"{}"]
+)
+@pytest.mark.parametrize(
+    "shape", ["bare", "quoted", "call", "annotation", "truncated", "extra"]
+)
+def test_encoded_token_identifiers_cannot_become_source_references(
+    monkeypatch: pytest.MonkeyPatch, chunk_size: int, header: bytes, shape: str
+) -> None:
+    token = _synthetic_compact_token(header)
+    values = {
+        "bare": b"ngc_api_key=" + token,
+        "quoted": b'hf_token="' + token + b'"',
+        "call": b"hf_token=load(" + token + b")",
+        "annotation": b"hf_token: Optional[str] = " + token,
+        "truncated": b"ngc_api_key=" + token.rsplit(b".", 1)[0],
+        "extra": b"ngc_api_key=" + token + b".extra",
+    }
+    monkeypatch.setattr(credentials, "CONTENT_CHUNK", chunk_size)
+    payload = values[shape]
+    assert (
+        credentials.content_credential(io.BytesIO(payload)) == "credential_assignment"
+    )
+    assert any(
+        pattern.search(payload) for _, pattern in credentials.DECLARED_CONTENT_PATTERNS
+    )
+
+
+@pytest.mark.parametrize("chunk_size", [1, 7, 37, 512, 1024])
+def test_malformed_base64_quantum_does_not_hide_a_token_header(
+    monkeypatch: pytest.MonkeyPatch, chunk_size: int
+) -> None:
+    header, payload, signature = _synthetic_compact_token(b'{"alg":"none"}').split(b".")
+    header += b"A" * ((1 - len(header)) % 4)
+    token = b".".join((header, payload, signature))
+    monkeypatch.setattr(credentials, "CONTENT_CHUNK", chunk_size)
+    assert (
+        credentials.content_credential(io.BytesIO(b"ngc_api_key=" + token))
+        == "credential_assignment"
+    )
+
+
 @pytest.mark.parametrize("source", BENIGN_SOURCE)
 @pytest.mark.parametrize(
     "suffix", [b"hf_token=SYNTHETICFIXTURE", SYNTHETIC_KEY, b"AKIA" + b"A" * 16]
@@ -142,6 +196,26 @@ def test_native_scanners_apply_source_policy_without_path_exceptions(
     report = json.loads(completed.stdout)
     assert report["scan_complete"] is True
     assert bool(report.get("credential_hits", report.get("findings"))) == literal
+
+
+@pytest.mark.parametrize("scanner", SCANNERS_USING_SHARED_RULES)
+@pytest.mark.parametrize("member", ["opt/npa/client.py", "opt/vendor/config.bin"])
+def test_native_scanners_block_encoded_token_across_a_chunk_boundary(
+    tmp_path: Path, scanner: str, member: str
+) -> None:
+    payload = b"\x00" * (credentials.CONTENT_CHUNK - 5)
+    payload += b"ngc_api_key=" + _synthetic_compact_token(b'{"alg":"none"}')
+    image = _single_layer_archive(tmp_path / "image.tar", member, payload)
+    completed = subprocess.run(
+        [sys.executable, str(_MODULE_PATH.parent / scanner), "--tarball", str(image)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 1, completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["scan_complete"] is True
+    assert report.get("credential_hits", report.get("findings"))
 
 
 def _ancestor_archive(path: Path) -> Path:
