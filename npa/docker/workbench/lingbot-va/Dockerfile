@@ -1,7 +1,16 @@
 # Source-only LingBot-VA runtime.  The parent is pinned for its neutral OS,
 # ffmpeg, and SkyPilot bootstrap only; its CUDA 13 Wan runtime is deliberately
 # not reused because the upstream LingBot-VA recipe pins PyTorch 2.9/CUDA 12.6.
-FROM ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837
+# The canonical public parent remains the default.  An operator-private,
+# already-qualified parent may be supplied only as a digest-pinned build arg;
+# the validation below rejects tags and malformed references before this recipe
+# fetches LingBot source or installs its runtime.
+ARG NPA_LINGBOT_VA_PARENT_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837
+FROM ${NPA_LINGBOT_VA_PARENT_IMAGE}
+
+# Re-declare the global build argument so the fail-closed shell guard can read
+# the exact value selected for this child build without recording it in OCI metadata.
+ARG NPA_LINGBOT_VA_PARENT_IMAGE
 
 ARG NPA_SOURCE_SHA=unknown
 ARG LINGBOT_VA_REF=7c6ffa9bfc4b83582cafc860fab4c82cc7deeeeb
@@ -32,6 +41,14 @@ ENV NPA_LINGBOT_VA_SOURCE=/opt/lingbot-va \
 SHELL ["/bin/bash", "-lc"]
 USER root
 WORKDIR /opt
+
+# Do not permit a mutable or credential-shaped parent override.  Parent byte
+# qualification remains a separate operator-private precondition; this syntax
+# guard keeps the checked-in canonical digest as the normal build path.
+RUN [[ "${NPA_LINGBOT_VA_PARENT_IMAGE}" =~ ^([a-z0-9]+([._]|__|[-]*[a-z0-9]+)*)(:[0-9]+)?(/[a-z0-9]+([._]|__|[-]*[a-z0-9]+)*)*@sha256:[0-9a-f]{64}$ ]] || { \
+        echo "NPA_LINGBOT_VA_PARENT_IMAGE must be a digest-pinned OCI reference" >&2; \
+        exit 64; \
+    }
 
 # Keep only source and project metadata from the exact Apache-2.0 revision.
 # The checkout intentionally has no .git directory, LFS objects, weights, or

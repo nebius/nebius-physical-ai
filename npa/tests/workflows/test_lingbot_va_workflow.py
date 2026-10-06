@@ -6,7 +6,9 @@ import json
 from itertools import accumulate
 import importlib.util
 from pathlib import Path
+import re
 import shutil
+import subprocess
 import sys
 
 import pyarrow as pa
@@ -487,6 +489,76 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
         not in dockerfile
     )
     assert "/usr/share/doc/npa-lingbot-va" in dockerfile
+
+
+def _parent_reference_guard(dockerfile: str) -> str:
+    """Extract the Dockerfile's actual fail-closed parent-reference shell guard."""
+    start = dockerfile.index("RUN [[ \"${NPA_LINGBOT_VA_PARENT_IMAGE}\"")
+    end = dockerfile.index("\n\n", start)
+    return dockerfile[start + len("RUN ") : end].replace("\\\n", " ")
+
+
+def test_private_parent_override_is_digest_only_and_fails_closed() -> None:
+    """Exercise the exact Dockerfile guard, not a duplicated Python policy."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    match = re.search(
+        r"^ARG NPA_LINGBOT_VA_PARENT_IMAGE=(\S+)$", dockerfile, re.MULTILINE
+    )
+    assert match is not None
+    canonical_parent = match.group(1)
+    assert re.fullmatch(
+        r"([a-z0-9]+([._]|__|[-]*[a-z0-9]+)*)(:[0-9]+)?"
+        r"(/[a-z0-9]+([._]|__|[-]*[a-z0-9]+)*)*@sha256:[0-9a-f]{64}",
+        canonical_parent,
+    )
+    assert "FROM ${NPA_LINGBOT_VA_PARENT_IMAGE}" in dockerfile
+    assert (
+        "ARG NPA_LINGBOT_VA_PARENT_IMAGE\n\nARG NPA_SOURCE_SHA=unknown" in dockerfile
+    )
+
+    guard = _parent_reference_guard(dockerfile)
+    valid_parents = (
+        canonical_parent,
+        "registry.example.invalid/operator/qualified-parent@sha256:" + "a" * 64,
+        "registry.example.invalid:5000/operator/qualified-parent@sha256:"
+        + "b" * 64,
+    )
+    invalid_parents = (
+        "",
+        "registry.example.invalid/operator/qualified-parent:mutable",
+        "registry.example.invalid/operator/qualified-parent@sha256:" + "A" * 64,
+        "registry.example.invalid/operator/qualified-parent@sha256:" + "a" * 63,
+        "https://registry.example.invalid/operator/qualified-parent@sha256:"
+        + "a" * 64,
+        "registry.example.invalid//operator/qualified-parent@sha256:" + "a" * 64,
+        "user:password@registry.example.invalid/operator/qualified-parent@sha256:"
+        + "a" * 64,
+    )
+    for parent in valid_parents:
+        result = subprocess.run(
+            ["/bin/bash", "-lc", guard],
+            env={
+                "NPA_LINGBOT_VA_PARENT_IMAGE": parent,
+                "PATH": "/usr/bin:/bin",
+            },
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+    for parent in invalid_parents:
+        result = subprocess.run(
+            ["/bin/bash", "-lc", guard],
+            env={
+                "NPA_LINGBOT_VA_PARENT_IMAGE": parent,
+                "PATH": "/usr/bin:/bin",
+            },
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        assert result.returncode == 64
+        assert "must be a digest-pinned OCI reference" in result.stderr
 
 
 def test_image_storage_facade_uses_runtime_boto_credentials_without_key_literals(

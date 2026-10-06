@@ -30,6 +30,17 @@ upstream project's Torch lower bound. The pinned source has no TorchAudio or
 Accelerate import, so those scanner-blocked unused packages are absent. This
 does not add an EULA, acceptance variable, telemetry consent, or
 vendor-specific attestation.
+
+The Dockerfile's canonical Wan parent remains its checked-in digest-pinned
+default. An operator-private qualification may pass
+`--build-arg NPA_LINGBOT_VA_PARENT_IMAGE=<qualified-oci-reference@sha256:...>`
+to select a separately qualified parent without placing a private registry
+reference in this repository. The Dockerfile rejects a tag, an empty value, or
+a malformed/credential-shaped reference before it fetches LingBot source or
+installs the child runtime. The override does not alter the `restricted`
+classification, the public publication refusal, or the requirement to scan and
+functionally qualify the resulting child digest.
+
 Public release is not authorized by this source-only record. The only permitted
 near-term use is operator-private validation after exact image scans, a native
 GPU execution, and independently inspected candidate-digest evidence. See
