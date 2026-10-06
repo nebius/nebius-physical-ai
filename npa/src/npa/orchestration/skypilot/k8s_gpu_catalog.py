@@ -1395,9 +1395,9 @@ def _known_skypilot_label(labels: dict[str, str]) -> str:
     return ""
 
 
-def _reviewed_native_accelerator(labels: dict[str, str]) -> str:
-    product = labels.get("nvidia.com/gpu.product", "")
-    if product:
+def _reviewed_native_accelerator(labels: dict[str, str], label_key: str) -> str:
+    product = labels.get(label_key, "")
+    if label_key == "nvidia.com/gpu.product":
         # The pinned SkyPilot GFD fallback handles these reviewed product names.
         return (
             product.upper()
@@ -1405,35 +1405,48 @@ def _reviewed_native_accelerator(labels: dict[str, str]) -> str:
             .replace("GEFORCE-", "")
             .replace("RTX-", "RTX")
         )
-    return labels.get("nebius.com/gpu-name", "").upper()
+    return product.upper()
 
 
 def _skypilot_node_label_ready(
-    node: KubernetesGpuNode, accelerator: str, *, sky_labels_selected: bool = True
+    node: KubernetesGpuNode,
+    accelerator: str,
+    *,
+    label_key: str = "skypilot.co/accelerator",
 ) -> bool:
     labels = dict(node.labels)
     if not _known_skypilot_label(labels):
         return True
     requested = parse_accelerator_request(accelerator)
-    sky_label = labels.get("skypilot.co/accelerator", "")
-    if sky_label or sky_labels_selected:
-        return sky_label == requested.name.lower()
-    return _reviewed_native_accelerator(labels) == requested.name.upper()
+    if label_key == "skypilot.co/accelerator":
+        return labels.get(label_key, "") == requested.name.lower()
+    return _reviewed_native_accelerator(labels, label_key) == requested.name.upper()
 
 
 def _skypilot_label_ready_nodes(inventory, accelerator):
     # SkyPilot selects one formatter for the context, preferring valid Sky labels.
-    sky_labels_selected = any(
-        value and value == value.lower()
-        for labels in inventory.node_labels.values()
-        for value in [labels.get("skypilot.co/accelerator", "")]
+    sky_value = next(
+        (
+            value
+            for labels in inventory.node_labels.values()
+            if (value := labels.get("skypilot.co/accelerator", "")).strip()
+        ),
+        "",
     )
+    label_key = "skypilot.co/accelerator"
+    if not sky_value or sky_value != sky_value.lower():
+        label_key = (
+            "nvidia.com/gpu.product"
+            if any(
+                labels.get("nvidia.com/gpu.product", "").strip()
+                for labels in inventory.node_labels.values()
+            )
+            else "nebius.com/gpu-name"
+        )
     return tuple(
         node
         for node in inventory.nodes
-        if _skypilot_node_label_ready(
-            node, accelerator, sky_labels_selected=sky_labels_selected
-        )
+        if _skypilot_node_label_ready(node, accelerator, label_key=label_key)
     )
 
 

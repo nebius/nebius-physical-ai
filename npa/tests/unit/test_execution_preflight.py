@@ -2207,7 +2207,7 @@ def test_sky_gpu_preflight_rejects_replacement_without_effective_label(
 
     nodes = [_replacement_gpu_node("replacement-node", product, sky_label)]
     if accelerator == "B200:1":
-        nodes.append(_replacement_gpu_node("other-product-node", "H100", "h100"))
+        nodes.insert(0, _replacement_gpu_node("other-product-node", "H100", "h100"))
     inventory = _replacement_gpu_inventory(monkeypatch, nodes)
     # Native hardware fits; the rejection must establish SkyPilot label readiness.
     preflight_kubernetes_gpu_gang(
@@ -2239,10 +2239,16 @@ def test_sky_gpu_preflight_rejects_replacement_without_effective_label(
         ("NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition", "RTXPRO6000:1", "rtxpro6000"),
         ("NVIDIA-B200", "B200:1", "b200"),
         ("NVIDIA-B200", "B200:1", None),
+        ("NVIDIA-B200", "B200:1", "B200"),
         (
             "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
             "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
             None,
+        ),
+        (
+            "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
+            "RTXPRO6000",
         ),
         ("H100", "H100:1", None),
         ("NVIDIA-RTX-6000-Ada-Generation", "NVIDIA-RTX-6000-Ada-Generation:1", None),
@@ -2305,6 +2311,47 @@ def test_sky_gpu_preflight_admits_labelled_capacity_in_mixed_pool(
     )
 
     assert report["checks"]["gpu"] == "pass"
+
+
+@pytest.mark.parametrize(
+    "product,accelerator,sky_label,passes",
+    [
+        ("NVIDIA-B200", "B200:1", "b200", True),
+        (
+            "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            "RTXPRO6000:1",
+            "rtxpro6000",
+            False,
+        ),
+    ],
+)
+def test_sky_gpu_preflight_follows_first_invalid_context_label_fallback(
+    provider, configured, monkeypatch, product, accelerator, sky_label, passes
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    _replacement_gpu_inventory(
+        monkeypatch,
+        [
+            _replacement_gpu_node("first-node", "H100", "H100"),
+            _replacement_gpu_node("requested-node", product, sky_label),
+        ],
+    )
+    document = raw_task()
+    document["resources"].update(
+        {"accelerators": accelerator, "cpus": 16, "memory": 128}
+    )
+    if passes:
+        _, report, _ = preflight_skypilot_submission(
+            [document], project="unit", infra="k8s/unit-context"
+        )
+        assert report["checks"]["gpu"] == "pass"
+    else:
+        with pytest.raises(ExecutionPreflightError, match="skypilot.co/accelerator"):
+            preflight_skypilot_submission(
+                [document], project="unit", infra="k8s/unit-context"
+            )
+        assert not provider.s3.calls
 
 
 @pytest.mark.parametrize("location", ["resources", "config"])
