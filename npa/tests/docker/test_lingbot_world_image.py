@@ -34,3 +34,14 @@ def test_lingbot_defaults_to_immutable_public_parent_but_allows_private_requalif
         in dockerfile
     )
     assert "FROM ${WAN_BASE_IMAGE}" in dockerfile
+
+
+def test_lingbot_model_runtime_includes_pyav_for_predecessor_video_validation() -> None:
+    """The CUDA runtime executes both generation stages and decodes their handoff."""
+
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert (
+        "/opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps" in dockerfile
+    )
+    assert "protobuf==6.33.6 scipy==1.15.3 av==17.1.0" in dockerfile
