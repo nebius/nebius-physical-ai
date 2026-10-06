@@ -1173,15 +1173,17 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             raise GrootVisualizationError(
                 "native Isaac-GR00T runtime requires git and uv in the image"
             )
-        build = cache_root / f".{cache_identity}.build-{os.getpid()}"
-        if build.exists():
-            raise GrootVisualizationError(
-                f"native runtime build path already exists: {build}"
-            )
-        build.mkdir(parents=True)
-        source = build / "Isaac-GR00T"
-        libero_x_source = build / "LIBERO-X"
-        home = build / "home"
+        # ``uv`` resolves its managed Python interpreter below ``HOME`` and
+        # records that absolute path in the virtualenv executables.  Building
+        # in a sibling directory and renaming it after ``uv sync`` therefore
+        # leaves both documented Python entry points dangling.  The lock plus
+        # an absent readiness marker already makes an incomplete target
+        # unusable; construct at its stable final path and publish only the
+        # marker atomically after every verification succeeds.
+        target.mkdir(parents=True)
+        source = target / "Isaac-GR00T"
+        libero_x_source = target / "LIBERO-X"
+        home = target / "home"
         home.mkdir()
         environment = dict(os.environ)
         environment.update(
@@ -1201,7 +1203,7 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
                 IMAGE_GROOT_REPOSITORY,
                 str(source),
             ),
-            cwd=build,
+            cwd=target,
             env=environment,
         )
         _run_runtime_command(
@@ -1230,7 +1232,7 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
                 LIBERO_X_EVALUATOR_REPOSITORY,
                 str(libero_x_source),
             ),
-            cwd=build,
+            cwd=target,
             env=environment,
         )
         _run_runtime_command(
@@ -1297,12 +1299,11 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             "python": "3.12",
             "entrypoint": "gr00t.eval.rollout_policy.run_gr00t_sim_policy",
         }
-        marker_temp = build / "runtime-ready.pending.json"
+        marker_temp = target / f".runtime-ready.pending-{os.getpid()}.json"
         marker_temp.write_text(
             json.dumps(ready_marker, indent=2, sort_keys=True) + "\n"
         )
-        marker_temp.replace(build / "runtime-ready.json")
-        build.replace(target)
+        marker_temp.replace(target / "runtime-ready.json")
         return _verified_runtime_or_raise(target)
 
 
