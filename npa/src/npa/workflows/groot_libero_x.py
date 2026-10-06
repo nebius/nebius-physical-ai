@@ -770,7 +770,7 @@ def _run_runtime_command(
         text=True,
     )
     if completed.returncode:
-        detail = _redact_failure_text(completed.stderr or "")
+        detail, _ = _redact_failure_text(completed.stderr or "")
         suffix = f": {detail}" if detail else ""
         raise GrootVisualizationError(
             "pinned native runtime command failed "

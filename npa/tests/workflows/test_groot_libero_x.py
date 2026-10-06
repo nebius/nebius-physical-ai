@@ -1306,6 +1306,8 @@ def test_runtime_command_retains_redacted_stderr(
     assert "exit 17" in str(error.value)
     assert "native evaluator rejected" in str(error.value)
     assert secret not in str(error.value)
+    assert "[REDACTED]" in str(error.value)
+    assert "(\'native evaluator" not in str(error.value)
 
 
 def test_numeric_metrics_rejects_empty_or_nonfinite_native_measurements() -> None:
