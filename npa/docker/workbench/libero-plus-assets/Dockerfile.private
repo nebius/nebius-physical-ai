@@ -68,11 +68,15 @@ RUN set -eux; \
     rm -f \
       /opt/openwam-venv/lib/python3.12/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2 \
       /opt/openwam-libero/lib/python3.10/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2; \
+    install -d -m 0750 -o ubuntu -g ubuntu /workspace/npa-setup-venv; \
+    sudo -u ubuntu /opt/openwam-libero/bin/python -m venv --system-site-packages /workspace/npa-setup-venv; \
+    sudo -u ubuntu /workspace/npa-setup-venv/bin/python -m pip --version; \
     install -d -m 0750 -o ubuntu -g ubuntu /workspace/.cache/npa-model; \
     test ! -e /workspace/.cache/npa-model/libero-plus-assets; \
     ! find /opt/npa -type f \( -iname '*.zip' -o -iname '*.mp4' -o -iname '*.hdf5' -o -iname '*.pth' -o -iname '*.ckpt' \) -print -quit | grep -q .
 
 ENV NPA_BAKED_PYTHON=/opt/openwam-libero/bin/python \
+    NPA_SETUP_PYTHON=/workspace/npa-setup-venv/bin/python \
     NPA_MODEL_CACHE_DIR=/workspace/.cache/npa-model \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1

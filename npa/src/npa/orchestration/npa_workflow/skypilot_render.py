@@ -1448,7 +1448,11 @@ def default_npa_setup() -> str:
         # Prefer the image's declared dependency-complete interpreter. Isaac images put an
         # externally managed system python first on PATH while keeping the supported NPA
         # runtime in NPA_BAKED_PYTHON. Falling back remains necessary for generic images.
-        'npa_setup_python="${NPA_BAKED_PYTHON:-}"\n'
+        # A private image can expose its dependency-complete runtime without making
+        # that environment writable to the worker user.  Prefer an explicitly
+        # declared task-owned setup interpreter for source overlays in that case;
+        # stage commands can still use the immutable runtime they require.
+        'npa_setup_python="${NPA_SETUP_PYTHON:-${NPA_BAKED_PYTHON:-}}"\n'
         'if [ -z "$npa_setup_python" ] || [ ! -x "$npa_setup_python" ] '
         '|| ! "$npa_setup_python" -c "import sys" >/dev/null 2>&1; then\n'
         '  npa_setup_python="$(command -v python3)"\n'

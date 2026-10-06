@@ -6,6 +6,8 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -391,6 +393,35 @@ def test_setup_prefers_the_dependency_complete_baked_npa_interpreter() -> None:
     assert candidate_loop.index('"${NPA_BAKED_PYTHON:-}"') < candidate_loop.index(
         "sys.executable"
     )
+
+
+def test_task_owned_setup_interpreter_overrides_a_baked_runtime(
+    tmp_path: Path,
+) -> None:
+    """A worker records the writable setup interpreter without invoking the baked one."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    launcher = bin_dir / "npa"
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    record = tmp_path / "npa-python"
+    setup = default_npa_setup().replace("/tmp/npa-python", str(record)).replace(
+        "/usr/local/bin/npa", str(launcher)
+    )
+    environment = {
+        "HOME": str(tmp_path),
+        "NPA_BAKED_PYTHON": str(tmp_path / "immutable-python"),
+        "NPA_SETUP_PYTHON": sys.executable,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+    }
+
+    subprocess.run(["/bin/bash", "-c", setup], check=True, env=environment)
+
+    assert record.read_text(encoding="utf-8").strip() == sys.executable
+    assert 'npa_setup_python="${NPA_SETUP_PYTHON:-${NPA_BAKED_PYTHON:-}}"' in setup
 
 
 def test_paidf_dig_keeps_npa_out_of_the_vendor_environment() -> None:

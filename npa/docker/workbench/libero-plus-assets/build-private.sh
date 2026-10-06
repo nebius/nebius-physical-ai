@@ -41,6 +41,7 @@ inputs=(
   npa/docker/workbench/libero-plus-assets/entrypoint.sh
   npa/docker/workbench/libero-plus-assets/smoke.sh
   npa/docker/workbench/libero-plus-assets/native-executor-provenance.json
+  npa/src/npa/orchestration/npa_workflow/skypilot_render.py
   npa/src/npa/workflows/libero_plus_assets.py
 )
 git -C "$repo_root" diff --quiet -- "${inputs[@]}"
@@ -133,6 +134,28 @@ docker run --rm "$image" /bin/bash -c '\
   command -v sudo; sudo -n true; command -v sshd; command -v rsync; command -v service; \
   test -n "$(find /etc/ssh -maxdepth 1 -type f -name "ssh_host_*_key" -print -quit)"; \
   test "$(/bin/sh -c "printf %s forwarded" sentinel)" = forwarded'
+
+# The controller installs its stage source as the non-root worker user.  The
+# original LIBERO runtime remains immutable, so exercise the exact renderer
+# setup against the dedicated task-owned venv rather than masking permissions
+# with a privileged install or a broad ownership change.
+{
+  printf '%s\n' 'set -euo pipefail'
+  PYTHONPATH="$repo_root/npa/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$repo_root/npa/.venv/bin/python" - <<'PY'
+from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+print(default_npa_setup(), end="")
+PY
+  cat <<'SH'
+test "$(id -u)" -eq 1000
+test ! -w /opt/openwam-libero/lib/python3.10/site-packages
+test -x "${NPA_SETUP_PYTHON:?}"
+"$NPA_SETUP_PYTHON" -c 'import npa.cli.main'
+SH
+} | docker run --rm -i --user ubuntu \
+  --mount "type=bind,src=$repo_root/npa,dst=/tmp/npa-src,readonly" \
+  --entrypoint /bin/bash "$image" -s
 
 NPA_ASSETS_IMAGE="$image" \
 NPA_ASSETS_BASE_IMAGE="$base_image" \

@@ -261,6 +261,12 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
     assert "boto3==1.42.91 rerun-sdk==0.38.1" in dockerfile
     assert "import libero, mujoco" in dockerfile
     assert "NPA_BAKED_PYTHON=/opt/openwam-libero/bin/python" in dockerfile
+    assert "NPA_SETUP_PYTHON=/workspace/npa-setup-venv/bin/python" in dockerfile
+    assert "install -d -m 0750 -o ubuntu -g ubuntu /workspace/npa-setup-venv" in dockerfile
+    assert (
+        "sudo -u ubuntu /opt/openwam-libero/bin/python -m venv --system-site-packages "
+        "/workspace/npa-setup-venv"
+    ) in dockerfile
     assert "scanner-quarantined" in dockerfile
     assert "imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2" in dockerfile
     assert "chmod 0444 /opt/npa/src/npa/workflows/libero_plus_assets.py" in dockerfile
@@ -277,12 +283,18 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
     assert "docker import" in build
     assert "refusing to reuse an existing flattened private base" in build
     assert "docker-daemon:$image" in build
+    assert "npa/src/npa/orchestration/npa_workflow/skypilot_render.py" in build
     assert build.index("scan_image_omniverse_payload.py") < build.index(
         "cleanup_flat_base\n"
     )
     assert "ssh_host_*_key" in build
     assert 'docker run --rm "$image" /bin/bash -c' in build
     assert 'docker run --rm "$image" /bin/sh -c' not in build
+    assert 'docker run --rm -i --user ubuntu' in build
+    assert 'src=$repo_root/npa,dst=/tmp/npa-src,readonly' in build
+    assert 'PYTHONPATH="$repo_root/npa/src${PYTHONPATH:+:$PYTHONPATH}"' in build
+    assert 'test ! -w /opt/openwam-libero/lib/python3.10/site-packages' in build
+    assert '"$NPA_SETUP_PYTHON" -c \'import npa.cli.main\'' in build
     assert "built-local-not-pushed" in build
     assert "It is **not**" in notice
     assert "LIBERO-Plus benchmark image" in notice
