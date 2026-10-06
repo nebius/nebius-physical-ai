@@ -149,6 +149,19 @@ Every SkyPilot check, GPU discovery, launch, status poll, and cleanup remains
 scoped to the selected context, and the command succeeds only after the GPU task
 completes and its ephemeral SkyPilot cluster is removed.
 
+Replacement GPU nodes may be Ready and report allocatable GPUs while lacking
+the SkyPilot label installed during setup. For reviewed RTX PRO 6000 Blackwell
+and B200 products, GPU submission preflight checks the lowercase
+`skypilot.co/accelerator` value against the effective task request when that
+formatter is selected, in addition to native hardware and free capacity.
+An exact supported native GFD/Nebius accelerator name remains usable when no
+SkyPilot label formatter is selected. It checks each GPU wave again, so a
+replacement after CPU stages cannot pass solely on its native product label.
+Correctly labelled fitting nodes in a mixed pool remain eligible. This gate
+does not label nodes; rerun the exact-context GPU setup above, or explicitly
+invoke `wait_for_kubernetes_accelerators(..., label_known_gpus=True)` through
+the SDK, before resuming the same workflow.
+
 Cluster validation uses one owned local API session for the credential check,
 GPU discovery, launch, and cleanup. It selects the requested SkyPilot interpreter
 and a durable working directory even when another SkyPilot API is already
