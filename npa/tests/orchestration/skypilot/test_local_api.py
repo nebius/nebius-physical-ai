@@ -207,6 +207,13 @@ def test_darwin_session_keeps_owned_queue_listener_after_leader_exit(monkeypatch
 
 def test_stop_does_not_kill_process_group_after_darwin_pid_reuse(monkeypatch, tmp_path):
     monkeypatch.setattr(api.sys, "platform", "darwin")
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
+
+    def inspect_listeners(argv, **kwargs):
+        assert argv[0] == "lsof"
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(api.subprocess, "run", inspect_listeners)
     isolated = tmp_path / "isolated"
     root = api._isolated_api_root(isolated)
     root.mkdir(parents=True)
