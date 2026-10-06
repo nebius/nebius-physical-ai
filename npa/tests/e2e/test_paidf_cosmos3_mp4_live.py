@@ -100,6 +100,7 @@ def _assert_fresh_objects(client, bucket, run_id) -> None:
 
 def _assert_recording_identity(client, bucket, prefix, run_id) -> None:
     from npa.viz.recordings import load_recording
+    from npa.workflows.data_factory_viz import APPLICATION_ID
 
     with tempfile.TemporaryDirectory(prefix="paidf-mp4-recordings-") as temporary:
         for name in ("quality-evidence.rrd", "sim2real.rrd"):
@@ -107,7 +108,7 @@ def _assert_recording_identity(client, bucket, prefix, run_id) -> None:
             client.download_file(bucket, prefix + "reports/" + name, str(path))
             recording = load_recording(path)
             assert recording.recording_id() == run_id
-            assert recording.application_id() == "neural-reconstruction"
+            assert recording.application_id() == APPLICATION_ID
             text_columns = 0
             for chunk in recording.chunks():
                 batch = chunk.to_record_batch()
