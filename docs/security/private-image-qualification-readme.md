@@ -69,10 +69,88 @@ workflow change. There is no caller-selected runner or hidden archive limit.
 The allowance is a capacity assessment, not a proof that output cannot grow;
 disk exhaustion or an interrupted scan cannot qualify an image.
 
+### Original registry manifest profile
+
+An image registry may serve a single Docker schema-2 or OCI image manifest,
+rather than an OCI index. Such an image uses the separate
+`npa.private-registry-manifest-qualification.v1` export schema. It has the same
+five fields above, but `expected_image_id` is the **independently obtained
+original registry manifest digest**. Config IDs, a Docker-save normalized
+manifest, and a locally generated transport index cannot substitute for that
+digest. The existing `npa.private-image-qualification.v1` index profile and
+its attestation-graph requirements remain unchanged; there is no fallback
+from a failed index verification to this profile.
+
+The manifest profile preserves the original manifest bytes, config and
+compressed layer descriptors, verifies every digest and size, and checks the
+decoded layer diff IDs in order. It supports one Linux/amd64 runtime image,
+OCI tar/gzip layers and Docker schema-2 gzip layers. Foreign URLs, encrypted
+layers, unsupported media types, additional graph nodes, missing or unreferenced
+blobs, duplicate tar entries, links and conflicting descriptors fail closed.
+Repeated references to one valid layer blob retain their original order and
+are decoded and counted for every occurrence.
+
+Its report explicitly records zero attestations **in the bound manifest graph**
+and `external_referrers: not-inspected`. This is not evidence that the registry
+has no external attestations. It provides no provenance/attestation acceptance,
+signature approval, vulnerability waiver, redistribution grant or native
+capability proof. Those gates remain separate. Every original manifest/config
+byte, compressed layer, decoded ancestor file including later deletions,
+history field, archive header and padding still enters the existing complete-byte
+scanner. Incomplete accounting, unresolved findings and unfinished scanner
+children cannot qualify an image.
+
+Prepare original bytes using an existing authenticated registry tool, with the
+source selected by its independently recorded digest. A supported Skopeo
+directory export preserves the original representation:
+
+```bash
+skopeo copy --all --digestfile "$qualification_root/copied-digest.txt" \
+  "docker://$source_image_ref" "dir:$qualification_root/original-source"
+```
+
+Use a fresh destination under qualified private storage; never overwrite a
+retained export. `source_image_ref` must contain the digest-only reference,
+without a redundant tag. Keep credentials in their existing credential store;
+do not put credentials, private references or paths in dispatch inputs. Do not
+request manifest conversion, compression/decompression, platform filtering or
+signature removal. Newer Skopeo releases also provide `--preserve-digests`;
+when available it is useful additional protection, but the checks below remain
+mandatory. Skopeo 1.4.1 does not provide that flag. See the
+[Skopeo copy contract](https://github.com/podman-container-tools/skopeo/blob/main/docs/skopeo-copy.1.md)
+and [directory transport](https://github.com/containers/image/blob/main/directory/directory_dest.go).
+
+Require both the copy's digest receipt and SHA-256 of the raw `manifest.json`
+to equal the independent original digest. A copy that converted bytes is a
+failed export, not a reason to select a new expected digest. Keep the dedicated
+source directory and all its newly created regular files owner-only. The
+exporter accepts only `manifest.json`, the exact directory-transport version
+marker and the uniquely named referenced blobs; detached signature files or
+other entries require a separately reviewed representation and are not discarded.
+
+```bash
+npa/.venv/bin/python npa/scripts/image_byte_scan/registry_manifest_export.py \
+  --analysis-root "$qualification_root" --trusted-root "$PWD" \
+  --source-dir "$qualification_root/original-source" \
+  --expected-image-id "$original_manifest_digest" \
+  --output-dir "$qualification_root/original-export"
+```
+
+This writes a new `image.tar` and structural `export.json` receipt. The tar
+contains the unchanged original manifest and blobs beneath content-addressed
+paths, plus an explicit local transport index referring to that manifest.
+The transport index is never described or used as the original registry
+identity. The exporter verifies original compressed bytes and decoded counts
+without running the image, extracting archive members or rebuilding it.
+Its structural receipt does not qualify confidentiality. Stage the resulting
+archive through the same private export mechanism using the new schema, its
+exact archive hash/size and assessed workspace allowance. The trusted workflow
+independently verifies and scans it again under the configured policy.
+
 ## Source, policy, and evidence boundaries
 
 The interface runs only from the reviewed default-branch workflow. The scanner
-is separately pinned to `551b5da4d9c62297236c103a30040c78e3b50dd6`, which includes
+is separately pinned to `ef7b307212c1335de2e1eb9bef4ba8d6a7c6d41c`, which includes
 the reviewed generic OCI verifier. The helper verifies that checkout is exact
 and clean, including ignored files such as pre-existing Python bytecode, before
 any scanner child starts. A scanner-pin update requires review; callers cannot select code.

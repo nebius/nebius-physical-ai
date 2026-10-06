@@ -18,10 +18,11 @@ import sys
 import tarfile
 import tempfile
 
-SCANNER_REVISION = "551b5da4d9c62297236c103a30040c78e3b50dd6"
+SCANNER_REVISION = "ef7b307212c1335de2e1eb9bef4ba8d6a7c6d41c"
 EXPORT_ROOT = Path(".local/share/npa/private-image-qualification/exports")
 RECEIPT_ROOT = Path(".local/share/npa/private-image-qualification/receipts")
 MANIFEST_SCHEMA = "npa.private-image-qualification.v1"
+REGISTRY_MANIFEST_SCHEMA = "npa.private-registry-manifest-qualification.v1"
 CHUNK = 1024 * 1024
 MANIFEST_BYTES = 16384
 HEX = re.compile(r"[0-9a-f]{64}")
@@ -80,6 +81,7 @@ ERROR_CODES = frozenset(
         "receipt_identity",
         "report_counts",
         "report_identity",
+        "report_graph_scope",
         "report_missing",
         "run_identity",
         "scan_authorization_failed",
@@ -303,7 +305,10 @@ def _manifest(data, selector):
         },
         "manifest_schema",
     )
-    _require(value["schema_version"] == MANIFEST_SCHEMA, "manifest_schema")
+    _require(
+        value["schema_version"] in (MANIFEST_SCHEMA, REGISTRY_MANIFEST_SCHEMA),
+        "manifest_schema",
+    )
     _require(
         type(value["archive_sha256"]) is str and HEX.fullmatch(value["archive_sha256"]),
         "archive_digest",
@@ -555,9 +560,18 @@ def _prepare_scanner(scanner, root):
 
 
 def _scan(scanner, root, manifest):
+    _require(
+        manifest["schema_version"] in (MANIFEST_SCHEMA, REGISTRY_MANIFEST_SCHEMA),
+        "manifest_schema",
+    )
+    verifier = (
+        "registry_manifest_verification.py"
+        if manifest["schema_version"] == REGISTRY_MANIFEST_SCHEMA
+        else "oci_verification.py"
+    )
     graph = _scanner_command(
         scanner,
-        "image_byte_scan/oci_verification.py",
+        "image_byte_scan/" + verifier,
         root,
         archive=root / "image.tar",
         expected_image_id=manifest["expected_image_id"],
@@ -614,6 +628,24 @@ def _policy_summary(report):
     return {key: policy[key] for key in ("policy_sha256", "customer", "infra")}
 
 
+def _graph_scope_summary(report, manifest):
+    if manifest["schema_version"] != REGISTRY_MANIFEST_SCHEMA:
+        return {}
+    graph = report.get("oci_graph", {})
+    attestations = {
+        "manifests_in_bound_graph": 0,
+        "status": "not-present-in-original-manifest-graph",
+        "external_referrers": "not-inspected",
+    }
+    _require(
+        graph.get("identity_kind") == "original-registry-manifest"
+        and graph.get("image_manifest_digest") == manifest["expected_image_id"]
+        and graph.get("attestations") == attestations,
+        "report_graph_scope",
+    )
+    return {"identity_kind": "original-registry-manifest", "attestations": attestations}
+
+
 def _scan_summary(root, manifest, selector, returncode):
     report = _read_scan_report(root)
     policy = _policy_summary(report)
@@ -647,6 +679,7 @@ def _scan_summary(root, manifest, selector, returncode):
         "archive_sha256": manifest["archive_sha256"],
         "scanner_revision": SCANNER_REVISION,
         "confidentiality_policy": policy,
+        **_graph_scope_summary(report, manifest),
         **counts,
     }
 

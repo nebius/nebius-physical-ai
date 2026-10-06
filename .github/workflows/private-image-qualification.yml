@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Generic OCI verification is reviewed here and is not yet on main.
-          ref: 551b5da4d9c62297236c103a30040c78e3b50dd6
+          ref: ef7b307212c1335de2e1eb9bef4ba8d6a7c6d41c
           path: scanner
           persist-credentials: false
 

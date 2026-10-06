@@ -68,6 +68,65 @@ def test_manifest_binds_exact_serialized_bytes(export):
         Q._manifest(data + b" ", selector)
 
 
+def test_registry_manifest_requires_explicit_profile_and_keeps_exact_fields(export):
+    manifest = {**export[2], "schema_version": Q.REGISTRY_MANIFEST_SCHEMA}
+    data = Q._json_bytes(manifest)
+    assert Q._manifest(data, Q._sha(data)) == manifest
+    for extra in ({"identity_kind": "config"}, {"attestations": "verified"}):
+        data = Q._json_bytes({**manifest, **extra})
+        with pytest.raises(Q._QualificationError, match="manifest_schema"):
+            Q._manifest(data, Q._sha(data))
+
+
+@pytest.mark.parametrize(
+    "schema,verifier",
+    [
+        (Q.MANIFEST_SCHEMA, "oci_verification.py"),
+        (Q.REGISTRY_MANIFEST_SCHEMA, "registry_manifest_verification.py"),
+    ],
+)
+def test_qualification_profile_selects_only_its_trusted_verifier(
+    export, private_root, monkeypatch, schema, verifier
+):
+    calls = []
+    monkeypatch.setattr(Q, "_execute", lambda argv, **kwargs: calls.append(argv) or 0)
+    manifest = {**export[2], "schema_version": schema}
+    assert Q._scan(private_root / "trusted", private_root, manifest) == 0
+    assert calls[0][1].endswith("image_byte_scan/" + verifier)
+    assert "--expected-image-id" in calls[0]
+    assert (
+        calls[0][calls[0].index("--expected-image-id") + 1]
+        == manifest["expected_image_id"]
+    )
+    assert calls[1][-2:] == ["--policy-mode", "ci-regex"]
+
+
+def test_registry_manifest_summary_preserves_attestation_boundary(export):
+    manifest = {**export[2], "schema_version": Q.REGISTRY_MANIFEST_SCHEMA}
+    attestations = {
+        "manifests_in_bound_graph": 0,
+        "status": "not-present-in-original-manifest-graph",
+        "external_referrers": "not-inspected",
+    }
+    graph = {
+        "identity_kind": "original-registry-manifest",
+        "image_manifest_digest": manifest["expected_image_id"],
+        "attestations": attestations,
+    }
+    assert Q._graph_scope_summary({"oci_graph": graph}, manifest) == {
+        "identity_kind": "original-registry-manifest",
+        "attestations": attestations,
+    }
+    for changes in (
+        {"attestations": {}},
+        {"identity_kind": "oci-index"},
+        {"image_manifest_digest": "sha256:" + "b" * 64},
+    ):
+        with pytest.raises(Q._QualificationError, match="report_graph_scope"):
+            Q._graph_scope_summary({"oci_graph": {**graph, **changes}}, manifest)
+    assert Q._graph_scope_summary({}, export[2]) == {}
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
