@@ -118,6 +118,9 @@ RUN /opt/npa/model_source.sh \
     && ! /opt/wan-base/bin/python -c 'import easydict' \
     && /opt/wan-base/bin/python -m pip freeze --all > /opt/byof/npa_baked_python_inventory.txt \
     && ! grep -Eiq '^(torch|torchvision|torchaudio|nvidia-|easydict)' /opt/byof/npa_baked_python_inventory.txt \
+    && apt-get purge -y --allow-remove-essential --auto-remove \
+      git git-lfs liberror-perl libperl5.36 perl perl-base perl-modules-5.36 \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \
     && rm -rf /root/.cache /tmp/pip-*
 
