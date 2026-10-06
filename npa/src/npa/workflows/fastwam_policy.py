@@ -26,6 +26,7 @@ import tempfile
 import threading
 import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -263,18 +264,20 @@ def _train(args: argparse.Namespace, work: Path, output: Path) -> None:
     _assert_dataset_receipt(dataset, recipe)
     models = _fetch_runtime_models(args)
     training = output / "training"
-    recovery = _restore_recoverable_checkpoint(args.output_path, work / "recovery")
+    resume_checkpoint = _restore_recoverable_checkpoint(
+        args.output_path, work / "recovery"
+    )
     command = _fastwam_train_command(
         args,
         recipe,
         dataset,
         training,
         models,
-        resume_checkpoint=recovery,
+        resume_checkpoint=resume_checkpoint,
     )
     output.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
-    recovery_checkpoints = _run_training_with_checkpoint_mirror(
+    recovery_receipt = _run_training_with_checkpoint_mirror(
         command,
         output / "train.log",
         training,
@@ -294,8 +297,12 @@ def _train(args: argparse.Namespace, work: Path, output: Path) -> None:
             "checkpoint_recovery": {
                 "schema": RECOVERY_MANIFEST_SCHEMA,
                 "save_freq": args.checkpoint_save_freq,
-                "resumed_from": recovery.parent.name if recovery is not None else None,
-                "mirrored_checkpoints": recovery_checkpoints,
+                "resumed_from": (
+                    resume_checkpoint.parent.name
+                    if resume_checkpoint is not None
+                    else None
+                ),
+                **recovery_receipt,
             },
             "runtime": _runtime_provenance(),
             "runtime_models": _runtime_model_receipt(models, args),
@@ -770,7 +777,7 @@ def _recoverable_checkpoint_record(checkpoint: Path) -> dict[str, Any]:
 
 
 def _upstream_last_checkpoint(training: Path) -> Path | None:
-    """Resolve LeRobot's atomic ``checkpoints/last`` pointer, if present."""
+    """Resolve LeRobot's latest-completed ``checkpoints/last`` pointer, if present."""
 
     root = training / "checkpoints"
     pointer = root / "last"
@@ -791,8 +798,9 @@ def _complete_recoverable_checkpoints(training: Path) -> list[tuple[Path, dict[s
     try:
         return [(checkpoint, _recoverable_checkpoint_record(checkpoint))]
     except FastWAMPolicyError:
-        # ``last`` is only updated after LeRobot saves a checkpoint, but retain
-        # the failure-closed check if its on-disk contract ever changes.
+        # Pinned LeRobot 0.6.1 updates ``last`` after ``save_checkpoint``
+        # returns, but its unlink/symlink update can briefly be absent. Treat
+        # both that race and any changed on-disk contract as not-yet-resumable.
         return []
 
 
@@ -953,49 +961,117 @@ def _restore_recoverable_checkpoint(destination: str, local_root: Path) -> Path 
     return checkpoint / "pretrained_model"
 
 
+@dataclass
+class _CheckpointMirrorState:
+    """Thread-safe, receipt-ready state for one training run's mirror attempts."""
+
+    attempts: int = 0
+    successes: int = 0
+    failures: list[dict[str, str]] = field(default_factory=list)
+    _latest_failure: Exception | None = None
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def record_success(self) -> None:
+        """Record a completed upload/readback attempt and clear transient failure."""
+
+        with self._lock:
+            self.attempts += 1
+            self.successes += 1
+            self._latest_failure = None
+
+    def record_failure(self, failure: Exception) -> None:
+        """Record a failed attempt without preventing a later durable checkpoint."""
+
+        with self._lock:
+            self.attempts += 1
+            self._latest_failure = failure
+            self.failures.append(
+                {"type": type(failure).__name__, "message": str(failure)}
+            )
+
+    def latest_failure(self) -> Exception | None:
+        """Return the currently unresolved mirror error, if any."""
+
+        with self._lock:
+            return self._latest_failure
+
+    def receipt(
+        self,
+        published: dict[int, dict[str, Any]],
+        *,
+        final_mirror_verified: bool,
+    ) -> dict[str, Any]:
+        """Return factual recovery evidence without hiding transient failures."""
+
+        with self._lock:
+            return {
+                "final_mirror_verified": final_mirror_verified,
+                "mirror_attempts": self.attempts,
+                "mirror_successes": self.successes,
+                "mirror_failures": list(self.failures),
+                "mirrored_checkpoints": [
+                    {"step": step, "checkpoint_sha256": record["checkpoint_sha256"]}
+                    for step, record in sorted(published.items())
+                ],
+            }
+
+
+def _attempt_checkpoint_mirror(
+    mirror_once: Callable[[], None], state: _CheckpointMirrorState
+) -> bool:
+    """Run one upload/readback attempt and retain any failure for the receipt."""
+
+    try:
+        mirror_once()
+    except Exception as exc:
+        state.record_failure(exc)
+        return False
+    state.record_success()
+    return True
+
+
 def _checkpoint_mirror_monitor(
     stopped: threading.Event,
     mirror_once: Callable[[], None],
-    failures: list[Exception],
+    state: _CheckpointMirrorState,
 ) -> None:
-    """Continue periodic recovery publication until the owning process stops."""
+    """Keep retrying periodic mirror attempts until the owning process stops."""
 
     while not stopped.wait(_RECOVERY_MIRROR_POLL_SECONDS):
-        try:
-            mirror_once()
-        except Exception as exc:
-            failures.append(exc)
-            return
+        _attempt_checkpoint_mirror(mirror_once, state)
 
 
 def _raise_training_mirror_failure(
-    native_failure: Exception | None, mirror_failures: list[Exception]
+    native_failure: Exception | None, state: _CheckpointMirrorState
 ) -> None:
-    """Raise the most useful failure after native training and mirroring finish."""
+    """Surface native failure, retaining unresolved mirror context when present."""
 
-    if mirror_failures:
-        detail = str(mirror_failures[0])
-        if native_failure is not None:
-            raise FastWAMPolicyError(
-                "native training failed and durable checkpoint mirroring also failed: "
-                + detail
-            ) from native_failure
-        raise FastWAMPolicyError("durable checkpoint mirroring failed: " + detail)
-    if native_failure is not None:
-        raise native_failure
+    if native_failure is None:
+        return
+    mirror_failure = state.latest_failure()
+    if mirror_failure is not None:
+        raise FastWAMPolicyError(
+            "native training failed and the latest durable checkpoint mirror failed: "
+            + str(mirror_failure)
+        ) from native_failure
+    raise native_failure
 
 
 def _start_checkpoint_mirror(
     stopped: threading.Event,
     mirror_once: Callable[[], None],
-    mirror_failures: list[Exception],
+    state: _CheckpointMirrorState,
 ) -> threading.Thread:
-    """Start the background mirror after its task-owned prefix is verified."""
+    """Verify the initial mirror path before starting the native child."""
 
-    mirror_once()
+    if not _attempt_checkpoint_mirror(mirror_once, state):
+        failure = state.latest_failure()
+        raise FastWAMPolicyError(
+            "could not initialize durable checkpoint mirroring: " + str(failure)
+        ) from failure
     worker = threading.Thread(
         target=_checkpoint_mirror_monitor,
-        args=(stopped, mirror_once, mirror_failures),
+        args=(stopped, mirror_once, state),
         name="fastwam-checkpoint-mirror",
         daemon=True,
     )
@@ -1007,18 +1083,13 @@ def _finish_checkpoint_mirror(
     stopped: threading.Event,
     worker: threading.Thread,
     mirror_once: Callable[[], None],
-    mirror_failures: list[Exception],
-) -> None:
-    """Stop the monitor and perform one final complete-checkpoint mirror."""
+    state: _CheckpointMirrorState,
+) -> bool:
+    """Stop the monitor and verify one final complete checkpoint mirror."""
 
     stopped.set()
     worker.join()
-    if mirror_failures:
-        return
-    try:
-        mirror_once()
-    except Exception as exc:
-        mirror_failures.append(exc)
+    return _attempt_checkpoint_mirror(mirror_once, state)
 
 
 def _run_training_with_checkpoint_mirror(
@@ -1026,36 +1097,41 @@ def _run_training_with_checkpoint_mirror(
     log_path: Path,
     training: Path,
     destination: str,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """Run native training while durably mirroring complete periodic checkpoints."""
 
     recovery = _recovery_prefix(destination)
     if recovery is None:
         _run_command(command, log_path)
-        return []
+        return {
+            "final_mirror_verified": False,
+            "mirror_attempts": 0,
+            "mirror_successes": 0,
+            "mirror_failures": [],
+            "mirrored_checkpoints": [],
+        }
 
     storage = StorageClient.from_environment()
     published: dict[int, dict[str, Any]] = {}
-    mirror_failures: list[Exception] = []
+    state = _CheckpointMirrorState()
     stopped = threading.Event()
 
     def mirror_once() -> None:
         _sync_recoverable_checkpoints(storage, training, destination, published)
 
-    worker = _start_checkpoint_mirror(stopped, mirror_once, mirror_failures)
+    worker = _start_checkpoint_mirror(stopped, mirror_once, state)
     native_failure: Exception | None = None
     try:
         _run_command(command, log_path)
     except Exception as exc:
         native_failure = exc
     finally:
-        _finish_checkpoint_mirror(stopped, worker, mirror_once, mirror_failures)
+        final_mirror_verified = _finish_checkpoint_mirror(
+            stopped, worker, mirror_once, state
+        )
 
-    _raise_training_mirror_failure(native_failure, mirror_failures)
-    return [
-        {"step": step, "checkpoint_sha256": record["checkpoint_sha256"]}
-        for step, record in sorted(published.items())
-    ]
+    _raise_training_mirror_failure(native_failure, state)
+    return state.receipt(published, final_mirror_verified=final_mirror_verified)
 
 
 def _read_recipe(prepared: Path) -> dict[str, Any]:

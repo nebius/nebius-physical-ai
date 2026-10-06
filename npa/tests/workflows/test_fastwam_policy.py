@@ -7,10 +7,12 @@ import hashlib
 import inspect
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
 
+from npa.clients.storage import StorageError
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.workflows import fastwam_policy as fastwam
 from npa.workflows.lerobot_dataset import LeRobotDatasetSummary
@@ -362,6 +364,175 @@ def test_recovery_mirror_rejects_corrupt_uploaded_checkpoint(tmp_path) -> None:
             storage, tmp_path / "training", "s3://task-owned/training/", {}
         )
     assert storage.objects == {}
+
+
+def test_recovery_mirror_uses_the_actual_storage_client_contract() -> None:
+    """Keep recovery calls bound to the concrete StorageClient API, not its double."""
+
+    upload = inspect.signature(fastwam.StorageClient.upload_directory).parameters
+    conditional_put = inspect.signature(
+        fastwam.StorageClient.put_bytes_conditional
+    ).parameters
+    assert upload["require_empty"].default is False
+    assert {"if_match", "if_none_match", "content_type"} <= set(conditional_put)
+    assert (
+        "bucket_uri"
+        in inspect.signature(fastwam.StorageClient.read_bytes_with_etag).parameters
+    )
+    assert (
+        "local_dir"
+        in inspect.signature(fastwam.StorageClient.download_directory).parameters
+    )
+
+
+def test_recovery_mirror_storage_preconditions_use_concrete_client_semantics(
+    tmp_path,
+) -> None:
+    """Exercise the actual CAS and empty-prefix behavior, not only a test double."""
+
+    class StorageApi:
+        def __init__(self) -> None:
+            self.puts: list[dict[str, object]] = []
+
+        def put_object(self, **kwargs: object) -> dict[str, str]:
+            self.puts.append(kwargs)
+            return {"ETag": f"etag-{len(self.puts)}"}
+
+        def list_objects_v2(self, **_kwargs: object) -> dict[str, object]:
+            return {"Contents": [{"Key": "recovery/already-there"}]}
+
+    api = StorageApi()
+    client = object.__new__(fastwam.StorageClient)
+    client._s3 = api  # type: ignore[attr-defined]
+
+    assert (
+        client.put_bytes_conditional(
+            b"manifest", "s3://task-owned/recovery/latest.json", if_none_match=True
+        )
+        == "etag-1"
+    )
+    assert api.puts[-1]["IfNoneMatch"] == "*"
+    assert (
+        client.put_bytes_conditional(
+            b"replacement",
+            "s3://task-owned/recovery/latest.json",
+            if_match="etag-1",
+        )
+        == "etag-2"
+    )
+    assert api.puts[-1]["IfMatch"] == "etag-1"
+
+    with pytest.raises(StorageError, match="must be empty"):
+        client.upload_directory(
+            str(tmp_path), "s3://task-owned/recovery", require_empty=True
+        )
+
+
+def test_recovery_mirror_retries_a_transient_failure_while_native_child_runs(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient upload failure must not stop later mirror/readback attempts."""
+
+    attempts: list[int] = []
+
+    def transient_sync(
+        _storage: object,
+        _training: Path,
+        _destination: str,
+        published: dict[int, dict[str, object]],
+    ) -> None:
+        attempts.append(len(attempts) + 1)
+        if len(attempts) == 2:
+            raise RuntimeError("transient object-storage timeout")
+        if len(attempts) >= 3:
+            published[20_000] = {"checkpoint_sha256": "a" * 64}
+
+    monkeypatch.setattr(fastwam.StorageClient, "from_environment", lambda: object())
+    monkeypatch.setattr(fastwam, "_sync_recoverable_checkpoints", transient_sync)
+    monkeypatch.setattr(fastwam, "_RECOVERY_MIRROR_POLL_SECONDS", 0.001)
+
+    receipt = fastwam._run_training_with_checkpoint_mirror(
+        [sys.executable, "-c", "import time; time.sleep(0.05)"],
+        tmp_path / "finite-native-child.log",
+        tmp_path / "training",
+        "s3://task-owned/training/",
+    )
+
+    assert len(attempts) >= 3
+    assert receipt["final_mirror_verified"] is True
+    assert receipt["mirror_failures"] == [
+        {"type": "RuntimeError", "message": "transient object-storage timeout"}
+    ]
+    assert receipt["mirrored_checkpoints"] == [
+        {"step": 20_000, "checkpoint_sha256": "a" * 64}
+    ]
+
+
+def test_train_keeps_successful_local_checkpoint_when_final_mirror_is_unverified(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mirror-only outage must not discard a completed native checkpoint."""
+
+    args = _runtime_args()
+    args.input_path = "prepared"
+    args.output_path = "s3://task-owned/training/"
+    prepared = tmp_path / "prepared"
+    prepared.mkdir()
+    recipe = {
+        "dataset": {"source_uri": "s3://task-owned/dataset/"},
+        "train_episode_indices": [1],
+    }
+    (prepared / "recipe.json").write_text(json.dumps(recipe))
+    output = tmp_path / "output"
+
+    monkeypatch.setattr(
+        fastwam, "_materialize_directory", lambda _source, _destination: prepared
+    )
+    monkeypatch.setattr(fastwam, "_read_recipe", lambda _prepared: recipe)
+    monkeypatch.setattr(
+        fastwam, "_materialize_dataset", lambda *_args, **_kwargs: tmp_path / "dataset"
+    )
+    monkeypatch.setattr(fastwam, "_assert_dataset_receipt", lambda *_args: None)
+    monkeypatch.setattr(
+        fastwam,
+        "_fetch_runtime_models",
+        lambda _args: {
+            name: tmp_path for name in ("fastwam_base", "wan", "wan_diffusers", "umt5")
+        },
+    )
+    monkeypatch.setattr(fastwam, "_restore_recoverable_checkpoint", lambda *_args: None)
+    monkeypatch.setattr(
+        fastwam, "_fastwam_train_command", lambda *_args, **_kwargs: ["native"]
+    )
+
+    def completed_training(
+        _command: list[str], _log: Path, training: Path, _destination: str
+    ) -> dict[str, object]:
+        _write_resumable_checkpoint(training, step=args.train_steps)
+        return {
+            "final_mirror_verified": False,
+            "mirror_attempts": 2,
+            "mirror_successes": 1,
+            "mirror_failures": [
+                {"type": "RuntimeError", "message": "final mirror unavailable"}
+            ],
+            "mirrored_checkpoints": [],
+        }
+
+    monkeypatch.setattr(
+        fastwam, "_run_training_with_checkpoint_mirror", completed_training
+    )
+    monkeypatch.setattr(fastwam, "_runtime_provenance", lambda: {})
+    monkeypatch.setattr(fastwam, "_runtime_model_receipt", lambda *_args: {})
+
+    fastwam._train(args, tmp_path / "work", output)
+
+    assert (output / "checkpoint" / "model.safetensors").read_bytes() == b"policy"
+    training = json.loads((output / "training.json").read_text())
+    assert training["checkpoint_recovery"]["final_mirror_verified"] is False
+    assert training["checkpoint_recovery"]["mirror_failures"] == [
+        {"type": "RuntimeError", "message": "final mirror unavailable"}
+    ]
 
 
 def test_train_command_uses_native_resume_only_with_a_valid_recovery_path(tmp_path) -> None:
