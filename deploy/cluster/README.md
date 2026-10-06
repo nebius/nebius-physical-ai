@@ -109,6 +109,20 @@ host, use `--skip-sky-smoke` for provisioning and run SkyPilot validation from
 the Linux operator host before submitting workflows; the GPU, CUDA, and graphics
 validation gates still run.
 
+The direct RTX release has a read-only live acceptance test. Keep its JSON
+configuration outside Git with `terraform_state_path`, `kubeconfig_path`,
+`kube_context`, `platform`, `preset`, and `gpu_nodes` for the owned cluster:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_CLUSTER_RTX_TOOLKIT_LIVE_CONFIG="$private_verification_config" \
+  npa/.venv/bin/python -m pytest \
+    npa/tests/e2e/test_cluster_rtx_toolkit_live.py -q
+```
+
+It verifies the direct release's configuration revision, the exact RTX driver
+selector, Ready GPU nodes, and Ready toolkit pods using the file schema source.
+
 ## Change the topology
 
 > **Security note: the Kubernetes API endpoint is public by default.**
