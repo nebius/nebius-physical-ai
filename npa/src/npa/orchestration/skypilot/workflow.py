@@ -176,6 +176,31 @@ class ManagedJobEvidence:
     workload_observable: bool = True
     workload_evidence: str = ""
     error: str = ""
+    job_name: str = ""
+
+
+def _is_runtime_wave_job_name(run_id: str, candidate: str) -> bool:
+    """Return whether ``candidate`` is this runtime's canonical wave name.
+
+    Runtime waves append an ordered sequence and state label to the sanitized
+    run ID.  Accepting that shape only with an immutable managed-job ID lets
+    cancellation recover a wave before its durable runtime ledger is written,
+    without accepting an arbitrary similarly prefixed job name.
+    """
+
+    normalized_run_id = (
+        "".join(char if char.isalnum() or char in "-_" else "-" for char in run_id)
+        .strip("-_")
+        .lower()
+    )
+    pattern = rf"{re.escape(normalized_run_id)}-\d{{2,}}-[a-z0-9][a-z0-9_-]*"
+    return bool(re.fullmatch(pattern, candidate))
+
+
+def _job_name_matches_exact_run(run_id: str, candidate: str) -> bool:
+    """Return whether a queue-reported job name belongs to one exact run."""
+
+    return candidate == run_id or _is_runtime_wave_job_name(run_id, candidate)
 
 
 def _managed_job_workload_markers(row: Mapping[str, Any]) -> set[str]:
@@ -3038,7 +3063,14 @@ def lookup_managed_job(
             continue
         if raw_id.isdigit():
             matching_ids.add(int(raw_id))
-    if wanted_id and declared_job_names and job_name not in declared_job_names:
+    if (
+        wanted_id
+        and declared_job_names
+        and not all(
+            _job_name_matches_exact_run(job_name, candidate)
+            for candidate in declared_job_names
+        )
+    ):
         names = ", ".join(sorted(declared_job_names))
         return ManagedJobEvidence(
             "unavailable",
@@ -3071,6 +3103,7 @@ def lookup_managed_job(
     return ManagedJobEvidence(
         "found",
         job_id=selected,
+        job_name=next(iter(declared_job_names), ""),
         status=_status_from_queue_payload(result.stdout, selected) or "UNKNOWN",
         task_rows=rows,
         workload_observable=bool(markers),

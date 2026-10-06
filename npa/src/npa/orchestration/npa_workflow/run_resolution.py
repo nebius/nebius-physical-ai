@@ -776,6 +776,7 @@ def resolve_run(
         result.source = result.source or "managed_job"
         result.manifest_pending = result.manifest is None
         result.job_id = managed.job_id
+        result.job_name = managed.job_name or result.job_name
         result.workflow_name = result.workflow_name or PAIDF_WORKFLOW_NAME
     elif managed_outcome == "unavailable":
         result.verification_unavailable = True

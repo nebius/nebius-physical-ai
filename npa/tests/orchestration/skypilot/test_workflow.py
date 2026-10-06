@@ -6987,6 +6987,57 @@ def test_exact_managed_job_lookup_refuses_ambiguous_name_without_immutable_id(
     assert exact.task_rows[0]["retry_count"] == 2
 
 
+def test_exact_managed_job_lookup_recovers_runtime_wave_name_with_immutable_id(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [
+        {
+            "job_id": 43,
+            "job_name": "exact-run-01-prepare",
+            "task_id": 0,
+            "task_name": "prepare",
+            "status": "PENDING",
+        }
+    ]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", job_id="43", sky_bin=sky_bin)
+
+    assert evidence.outcome == "found"
+    assert evidence.job_id == "43"
+    assert evidence.job_name == "exact-run-01-prepare"
+
+
+def test_exact_managed_job_lookup_rejects_noncanonical_wave_name(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [{"job_id": 43, "job_name": "exact-run-other", "status": "PENDING"}]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", job_id="43", sky_bin=sky_bin)
+
+    assert evidence.outcome == "unavailable"
+    assert "not exact run" in evidence.error
+
+
 def test_verified_job_id_prefers_the_name_lookup(mocker) -> None:
     """A stale scraped id must not win over the queue's view of the job name."""
 
