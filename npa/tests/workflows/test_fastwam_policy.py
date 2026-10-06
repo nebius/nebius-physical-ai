@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
+import importlib.util
 import inspect
 import json
+import py_compile
 import shutil
 import sys
+from types import ModuleType
 from pathlib import Path
 
 import pytest
@@ -23,6 +27,48 @@ WORKFLOW = ROOT / "workflows" / "testing" / "fastwam-policy-qualification.yaml"
 READINESS = WORKFLOW.with_suffix(".readiness.json")
 FASTWAM_DOCKERFILE = ROOT / "npa" / "docker" / "workbench" / "lerobot" / "Dockerfile"
 FASTWAM_NOTICE = FASTWAM_DOCKERFILE.parent / "notices" / "NOTICE-FASTWAM"
+FASTWAM_IMAGE_SANITIZER = (
+    ROOT / "npa" / "docker" / "workbench" / "curobo" / "remove_scikit_image_recipe.py"
+)
+
+
+def _load_fastwam_image_sanitizer() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "fastwam_scikit_image_sanitizer", FASTWAM_IMAGE_SANITIZER
+    )
+    assert spec is not None and spec.loader is not None
+    sanitizer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sanitizer)
+    return sanitizer
+
+
+def _synthetic_scikit_image_installation(
+    site_packages: Path, module_path: str
+) -> tuple[Path, bytes, bytes]:
+    source = (
+        b"# preserved dependency notice\n" * 508
+        + b'def grass():\n    """Primary public documentation."""\n    """\n'
+        + b"    synthetic inert recipe\n" * 23
+        + b'    """\n    return _load("data/grass.png")\n'
+    )
+    sanitized = b"".join(
+        source.splitlines(keepends=True)[:510] + source.splitlines(keepends=True)[535:]
+    )
+    source_path = site_packages / module_path
+    source_path.parent.mkdir(parents=True)
+    source_path.write_bytes(source)
+    py_compile.compile(str(source_path), doraise=True)
+    distribution = site_packages / "scikit_image-0.26.0.dist-info"
+    distribution.mkdir()
+    (distribution / "METADATA").write_text("Name: scikit-image\nVersion: 0.26.0\n")
+    with (distribution / "RECORD").open("w", newline="") as stream:
+        csv.writer(stream).writerows(
+            [
+                [module_path, "", str(len(source))],
+                [str((distribution / "RECORD").relative_to(site_packages)), "", ""],
+            ]
+        )
+    return source_path, source, sanitized
 
 
 def _runtime_args() -> argparse.Namespace:
@@ -135,6 +181,33 @@ def test_fastwam_image_removes_the_known_inert_scikit_image_recipe_in_its_instal
         "pip uninstall -y wandb"
     )
     assert install_layer.index("python -m pip check") > install_layer.index(correction)
+
+
+def test_fastwam_image_sanitizer_executes_against_installed_site_packages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sanitizer = _load_fastwam_image_sanitizer()
+    source_path, source, sanitized = _synthetic_scikit_image_installation(
+        tmp_path, sanitizer.MODULE
+    )
+    monkeypatch.setattr(sanitizer, "SOURCE_SHA256", hashlib.sha256(source).hexdigest())
+    monkeypatch.setattr(
+        sanitizer, "SANITIZED_SHA256", hashlib.sha256(sanitized).hexdigest()
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [str(FASTWAM_IMAGE_SANITIZER), "--site-packages", str(tmp_path)],
+    )
+
+    sanitizer.main()
+
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["module"] == sanitizer.MODULE
+    assert receipt["record_sha256_before"] != receipt["record_sha256_after"]
+    assert source_path.read_bytes() == sanitized
+    assert b"synthetic inert recipe" not in source_path.read_bytes()
+    assert list(source_path.parent.glob("__pycache__/_fetchers.*.pyc"))
 
 
 def test_prepare_seals_disjoint_split_and_upstream_identity(
