@@ -1042,20 +1042,22 @@ def _overlay_libero_env(source: Path) -> dict[str, str]:
     }
 
 
-def _runtime_ready(target: Path) -> dict[str, Any] | None:
+def _runtime_readiness_failure(target: Path) -> str | None:
+    """Return a stable, non-sensitive reason when a cached runtime is unusable."""
+
     marker = target / "runtime-ready.json"
     source = target / "Isaac-GR00T"
     libero_x_source = target / "LIBERO-X"
     try:
         payload = json.loads(marker.read_text())
     except (OSError, json.JSONDecodeError):
-        return None
+        return "ready_marker_unreadable"
     if not isinstance(payload, dict) or payload.get("schema") != RUNTIME_READY_SCHEMA:
-        return None
+        return "ready_marker_schema_mismatch"
     if payload.get("isaac_groot_revision") != IMAGE_GROOT_REF:
-        return None
+        return "ready_marker_groot_revision_mismatch"
     if payload.get("required_groot_lfs_objects") != _groot_lfs_provenance():
-        return None
+        return "ready_marker_lfs_provenance_mismatch"
     evaluator = payload.get("libero_x_evaluator")
     overlay = payload.get("npa_libero_x_overlay")
     if (
@@ -1067,11 +1069,11 @@ def _runtime_ready(target: Path) -> dict[str, Any] | None:
         or overlay.get("sha256")
         != hashlib.sha256(LIBERO_X_RUNTIME_OVERLAY.encode()).hexdigest()
     ):
-        return None
+        return "ready_marker_evaluator_or_overlay_mismatch"
     source_python = source / ".venv/bin/python"
     libero_python = source / "gr00t/eval/sim/LIBERO/libero_uv/.venv/bin/python"
     if not source_python.is_file() or not libero_python.is_file():
-        return None
+        return "documented_python_runtime_missing"
     revision = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=source,
@@ -1080,9 +1082,9 @@ def _runtime_ready(target: Path) -> dict[str, Any] | None:
         text=True,
     )
     if revision.returncode or revision.stdout.strip() != IMAGE_GROOT_REF:
-        return None
+        return "isaac_groot_revision_mismatch"
     if not _required_groot_lfs_objects_verified(source):
-        return None
+        return "required_lfs_object_missing_or_digest_mismatch"
     evaluator_revision = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=libero_x_source,
@@ -1095,12 +1097,26 @@ def _runtime_ready(target: Path) -> dict[str, Any] | None:
         or evaluator_revision.stdout.strip() != LIBERO_X_EVALUATOR_REVISION
         or not (libero_x_source / "libero/libero_x/bddl").is_dir()
     ):
-        return None
+        return "libero_x_evaluator_checkout_invalid"
     try:
         overlay_text = (source / "gr00t/eval/sim/LIBERO/libero_env.py").read_text()
     except OSError:
-        return None
+        return "libero_x_registration_overlay_unreadable"
     if not overlay_text.endswith(LIBERO_X_RUNTIME_OVERLAY + "\n"):
+        return "libero_x_registration_overlay_invalid"
+    return None
+
+
+def _runtime_ready(target: Path) -> dict[str, Any] | None:
+    if _runtime_readiness_failure(target) is not None:
+        return None
+    marker = target / "runtime-ready.json"
+    source = target / "Isaac-GR00T"
+    libero_x_source = target / "LIBERO-X"
+    source_python = source / ".venv/bin/python"
+    libero_python = source / "gr00t/eval/sim/LIBERO/libero_uv/.venv/bin/python"
+    payload = json.loads(marker.read_text())
+    if not isinstance(payload, dict):  # guarded by _runtime_readiness_failure
         return None
     return {
         "root": target,
@@ -1111,6 +1127,16 @@ def _runtime_ready(target: Path) -> dict[str, Any] | None:
         "home": target / "home",
         "provenance": payload,
     }
+
+
+def _verified_runtime_or_raise(target: Path) -> dict[str, Any]:
+    ready = _runtime_ready(target)
+    if ready is not None:
+        return ready
+    failure = _runtime_readiness_failure(target) or "unclassified_readiness_failure"
+    raise GrootVisualizationError(
+        f"atomically materialized native runtime did not verify: {failure}"
+    )
 
 
 def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
@@ -1277,12 +1303,7 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
         )
         marker_temp.replace(build / "runtime-ready.json")
         build.replace(target)
-        ready = _runtime_ready(target)
-        if ready is None:  # pragma: no cover - defensive filesystem invariant
-            raise GrootVisualizationError(
-                "atomically materialized native runtime did not verify"
-            )
-        return ready
+        return _verified_runtime_or_raise(target)
 
 
 def _run_native_evaluator(

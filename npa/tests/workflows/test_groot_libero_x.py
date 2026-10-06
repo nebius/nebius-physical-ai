@@ -575,6 +575,60 @@ def test_runtime_overlay_and_git_fetch_contract_avoid_broad_lfs_smudging(
     assert target.read_text().endswith(workflow.LIBERO_X_RUNTIME_OVERLAY + "\n")
 
 
+def test_runtime_readiness_failure_names_missing_documented_runtime(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "runtime"
+    target.mkdir()
+    (target / "runtime-ready.json").write_text(
+        json.dumps(
+            {
+                "schema": workflow.RUNTIME_READY_SCHEMA,
+                "isaac_groot_revision": workflow.IMAGE_GROOT_REF,
+                "required_groot_lfs_objects": workflow._groot_lfs_provenance(),
+                "libero_x_evaluator": {
+                    "repository": workflow.LIBERO_X_EVALUATOR_REPOSITORY,
+                    "revision": workflow.LIBERO_X_EVALUATOR_REVISION,
+                    "license": workflow.LIBERO_X_EVALUATOR_LICENSE,
+                },
+                "npa_libero_x_overlay": {
+                    "sha256": hashlib.sha256(
+                        workflow.LIBERO_X_RUNTIME_OVERLAY.encode()
+                    ).hexdigest()
+                },
+            }
+        )
+    )
+
+    assert (
+        workflow._runtime_readiness_failure(target)
+        == "documented_python_runtime_missing"
+    )
+    assert workflow._runtime_ready(target) is None
+
+
+def test_runtime_post_publish_failure_is_actionable_and_path_free(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(workflow, "_runtime_ready", lambda _target: None)
+    monkeypatch.setattr(
+        workflow,
+        "_runtime_readiness_failure",
+        lambda _target: "libero_x_registration_overlay_invalid",
+    )
+
+    with pytest.raises(
+        workflow.GrootVisualizationError,
+        match=(
+            "atomically materialized native runtime did not verify: "
+            "libero_x_registration_overlay_invalid"
+        ),
+    ) as error:
+        workflow._verified_runtime_or_raise(tmp_path)
+
+    assert str(tmp_path) not in str(error.value)
+
+
 def test_runtime_hydrates_only_verified_required_lfs_object(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
