@@ -1575,7 +1575,7 @@ def test_paidf_plan_only_uses_repaired_public_defaults(spec_path: Path) -> None:
 
 
 def test_plan_only_reports_quarantined_default_as_cli_error() -> None:
-    spec_path = SPEC.parents[2] / "workflows/testing/cosmos3-generate.yaml"
+    spec_path = SPEC.parents[2] / "workflows/testing/cosmos3-checkpoint-eval.yaml"
     result = runner.invoke(
         app,
         [

@@ -66,6 +66,7 @@ def test_old_paidf_release_defaults_stay_quarantined(tool: str) -> None:
     "tool_ref, tool",
     [
         ("workbench.cosmos3.generate_variants", "cosmos3"),
+        ("workbench.cosmos3.generate", "cosmos3"),
         ("workbench.cosmos_evaluator.evaluate", "cosmos-evaluator"),
         ("workbench.cosmos_curate.curate", "cosmos-curate"),
     ],
@@ -82,6 +83,7 @@ def test_paidf_explicit_operator_registry_still_wins(tool_ref: str, tool: str) -
     "tool_ref",
     [
         "workbench.cosmos3.generate_variants",
+        "workbench.cosmos3.generate",
         "workbench.cosmos_evaluator.evaluate",
         "workbench.cosmos_curate.curate",
     ],

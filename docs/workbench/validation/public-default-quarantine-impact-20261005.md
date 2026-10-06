@@ -11,8 +11,8 @@ It checks image selection; it does not claim GPU execution or acceptance of the
 blocked images. The guardrail compares the table below with actual default
 resolution, so a wildcard image override cannot conceal another regression.
 
-After PAIDF's repaired defaults, 32 workflows still fail default image planning:
-25 select the stale image families withdrawn by #807, and seven require images
+After PAIDF and stock Nano generation's repaired defaults, 31 workflows still fail default image planning:
+24 select the stale image families withdrawn by #807, and seven require images
 without an accepted public release. The audit checks every task, including
 unbuilt and validation candidates outside the stale-image inventory.
 
@@ -23,6 +23,9 @@ PAIDF Cosmos3 variants select the repaired Evaluator and Curator candidates.
 PAIDF Cosmos3 also selects the repaired Cosmos3 candidate for video preparation
 and variant generation. These pins and their qualification scope live in
 `npa/src/npa/deploy/public_release_manifest.json`, beside publication policy.
+The [2026-10-06 stock-generation draft](cosmos3-stock-generation-default-20261006.md)
+also selects this candidate for `workbench.cosmos3.generate`; native acceptance
+is pending and is required before that follow-up is marked ready.
 
 The scope remains explicit because image-byte safety and advertised runtime
 capability are separate claims. Qualifying Nano variant generation does not
@@ -39,7 +42,7 @@ artifact behavior.
 
 ## Still blocked shipped workflows
 
-These 25 workflows need a repaired, scanned and capability-qualified image or an
+These 24 workflows need a repaired, scanned and capability-qualified image or an
 explicit operator-owned image. A repaired parent does not repair the layers of
 an already-published derivative. The table is an outstanding qualification
 inventory, not an instruction to remove quarantine.
@@ -49,7 +52,6 @@ inventory, not an instruction to remove quarantine.
 | `workflows/partners/antioch/antioch-offline-policy-train.yaml` | `lerobot` |
 | `workflows/testing/adversarial-scenario-hardening.yaml` | `isaac-lab` |
 | `workflows/testing/cosmos3-checkpoint-eval.yaml` | `cosmos3` |
-| `workflows/testing/cosmos3-generate.yaml` | `cosmos3` |
 | `workflows/testing/cosmos3-policy-model-factory.yaml` | `cosmos3` |
 | `workflows/testing/cosmos3-ray-batch.yaml` | `cosmos3-ray-serve` |
 | `workflows/testing/hardening-with-insights.yaml` | `isaac-lab` |
