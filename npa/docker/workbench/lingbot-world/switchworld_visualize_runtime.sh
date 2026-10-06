@@ -53,8 +53,9 @@ assert md.version("boto3") == "1.39.11"
 assert md.version("botocore") == "1.39.17"
 assert int(md.version("numpy").split(".", 1)[0]) >= 2
 assert md.version("psutil") == "7.1.1"
-assert md.version("pyarrow") == "20.0.0"
+assert md.version("pyarrow") == "23.0.1"
 assert md.version("rerun-sdk") == "0.38.1"
+assert md.version("urllib3") == "2.8.0"
 assert av is not None and boto3 is not None and numpy is not None and rerun is not None
 PY
   "$tree/venv/bin/python" -m rerun rrd --help >/dev/null

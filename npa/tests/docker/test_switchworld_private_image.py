@@ -38,6 +38,10 @@ def test_private_recipe_uses_audited_snapshot_and_no_easydict_wheel() -> None:
     assert "from wan.utils.easydict import EasyDict" in text
     assert not re.search(r"pip install[^\n]*easydict", text)
     assert "import easydict" in text  # The build proves that it remains absent.
+    assert "apt-get purge -y --allow-remove-essential --auto-remove" in text
+    assert (
+        "git git-lfs liberror-perl libperl5.36 perl perl-base perl-modules-5.36" in text
+    )
     assert 'npa.disposition="operator-private-validation-no-publication"' in text
     assert "ACCEPT_" not in text
 
@@ -68,13 +72,13 @@ def test_private_recipe_runtime_fetches_the_hash_locked_media_and_rrd_closure() 
         "jmespath==1.1.0": "a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64",
         "pillow==12.3.0": "f0606c8bf2cdefea14a43530f7657cbbb7ecf1c4222512492ef4a4434a9501ec",
         "psutil==7.1.1": "92ebc58030fb054fa0f26c3206ef01c31c29d67aee1367e3483c16665c25c8d2",
-        "pyarrow==20.0.0": "15aa1b3b2587e74328a730457068dc6c89e6dcbf438d4369f572af9d320a25ee",
+        "pyarrow==23.0.1": "c33b5bf406284fd0bba436ed6f6c3ebe8e311722b441d89397c54f871c6863a2",
         "python-dateutil==2.9.0.post0": "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427",
         "rerun-sdk==0.38.1": "5f6b16374b1af1ecdb7232ed5c7f02f77e908c7c378ce83321479d2610286c0c",
         "s3transfer==0.13.1": "a981aa7429be23fe6dfc13e80e4020057cbab622b08c0315288758d67cabc724",
         "six==1.17.0": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
         "typing_extensions==4.16.0": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
-        "urllib3==2.7.0": "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897",
+        "urllib3==2.8.0": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
     }.items():
         assert requirement in visualize_requirements
         assert f"--hash=sha256:{digest}" in visualize_requirements
@@ -83,7 +87,9 @@ def test_private_recipe_runtime_fetches_the_hash_locked_media_and_rrd_closure() 
     assert "_npa_switchworld_image_site.pth" not in visualize_runtime
     assert 'int(md.version("numpy").split(".", 1)[0]) >= 2' in visualize_runtime
     assert 'md.version("boto3") == "1.39.11"' in visualize_runtime
+    assert 'md.version("pyarrow") == "23.0.1"' in visualize_runtime
     assert 'md.version("rerun-sdk") == "0.38.1"' in visualize_runtime
+    assert 'md.version("urllib3") == "2.8.0"' in visualize_runtime
     assert "-m rerun rrd --help" in visualize_runtime
     assert "import rerun as rr" in switchworld_source
 
