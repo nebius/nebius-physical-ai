@@ -300,7 +300,10 @@ def test_recovery_mirror_publishes_only_complete_native_resume_state(
     restored = fastwam._restore_recoverable_checkpoint(
         destination, tmp_path / "restored"
     )
-    assert restored == tmp_path / "restored" / "checkpoints" / "020000" / "pretrained_model"
+    assert (
+        restored
+        == tmp_path / "restored" / "checkpoints" / "020000" / "pretrained_model"
+    )
     assert (restored / "model.safetensors").read_bytes() == b"policy"
     assert (restored.parent.parent / "last").resolve() == restored.parent.resolve()
 
@@ -535,7 +538,9 @@ def test_train_keeps_successful_local_checkpoint_when_final_mirror_is_unverified
     ]
 
 
-def test_train_command_uses_native_resume_only_with_a_valid_recovery_path(tmp_path) -> None:
+def test_train_command_uses_native_resume_only_with_a_valid_recovery_path(
+    tmp_path,
+) -> None:
     recipe = {
         "dataset": {"repo_id": "operator/robot-data", "revision": "f" * 40},
         "train_episode_indices": [1, 4, 8],

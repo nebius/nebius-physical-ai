@@ -743,7 +743,9 @@ def _missing_recovery_state(checkpoint: Path, pretrained: Path) -> list[str]:
         checkpoint / "training_state" / "optimizer_param_groups.json",
     )
     missing = [
-        path.relative_to(checkpoint).as_posix() for path in required if not path.is_file()
+        path.relative_to(checkpoint).as_posix()
+        for path in required
+        if not path.is_file()
     ]
     if missing:
         return missing
@@ -789,7 +791,9 @@ def _upstream_last_checkpoint(training: Path) -> Path | None:
     return checkpoint
 
 
-def _complete_recoverable_checkpoints(training: Path) -> list[tuple[Path, dict[str, Any]]]:
+def _complete_recoverable_checkpoints(
+    training: Path,
+) -> list[tuple[Path, dict[str, Any]]]:
     """Return LeRobot's one complete checkpoint selected by its last pointer."""
 
     checkpoint = _upstream_last_checkpoint(training)
@@ -947,7 +951,9 @@ def _restore_recoverable_checkpoint(destination: str, local_root: Path) -> Path 
         or not relative_path.endswith("/")
         or ".." in Path(relative_path).parts
     ):
-        raise FastWAMPolicyError("recovery manifest has an invalid checkpoint reference")
+        raise FastWAMPolicyError(
+            "recovery manifest has an invalid checkpoint reference"
+        )
     if manifest.get("upstream_last_pointer") != f"checkpoints/{step:06d}":
         raise FastWAMPolicyError("recovery manifest does not bind LeRobot last pointer")
     checkpoint = local_root / "checkpoints" / f"{step:06d}"
