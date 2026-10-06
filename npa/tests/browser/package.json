@@ -15,9 +15,9 @@
     "cy:live-access": "cypress run --spec cypress/e2e/agent_access_live.cy.js"
   },
   "devDependencies": {
-    "@foxglove/embed": "0.82.0",
-    "@foxglove/schemas": "2.3.0",
-    "cypress": "^16.1.0",
+    "@foxglove/embed": "0.85.0",
+    "@foxglove/schemas": "2.3.1",
+    "cypress": "^16.1.1",
     "playwright-core": "1.63.0",
     "pngjs": "7.0.0"
   }
