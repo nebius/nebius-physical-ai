@@ -17,6 +17,18 @@ TEST_REGISTRY = "cr.ci.invalid/workbench"
 TEST_BAKED_IMAGE = f"{TEST_REGISTRY}/npa-runtime@sha256:{'0' * 64}"
 
 
+def _catalog_config_inputs(spec, requires_baked_image):
+    # These inert exact inputs exercise preparation and rendering only; the
+    # independent no-override audit still checks actual default denials.
+    inputs = {
+        key: TEST_BAKED_IMAGE
+        for key in spec.config.get("required_immutable_images", [])
+    }
+    if requires_baked_image:
+        inputs["source_sha"] = "0" * 40
+    return inputs
+
+
 def _prepare_catalog_workflow(spec_path):
     spec = load_spec(spec_path)
     requires_baked_image = str(spec.config.get("require_baked_npa") or "").lower() in {
@@ -43,7 +55,7 @@ def _prepare_catalog_workflow(spec_path):
         assume_decision="promote_checkpoint",
         # Immutable baked images bind their NPA package to an exact checkout.
         # Supply the same operator input CI supplies for the digest below.
-        config_overrides=({"source_sha": "0" * 40} if requires_baked_image else None),
+        config_overrides=_catalog_config_inputs(spec, requires_baked_image),
         render_options=SkypilotRenderOptions(
             registry=TEST_REGISTRY,
             # Specs that fail closed on image provenance require the same

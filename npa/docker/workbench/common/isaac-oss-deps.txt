@@ -33,7 +33,7 @@ flatdict==4.0.0
 fonttools==4.63.0
 fsspec==2026.4.0
 gitdb==4.0.12
-GitPython==3.1.57
+GitPython==3.1.62
 grpcio==1.83.0
 gymnasium==1.2.0
 h11==0.16.0
@@ -130,5 +130,5 @@ typing_extensions==4.15.0
 urllib3==2.7.0
 warp-lang==1.15.0
 wcwidth==0.8.2
-Werkzeug==3.1.8
+Werkzeug==3.1.9
 zipp==4.1.0

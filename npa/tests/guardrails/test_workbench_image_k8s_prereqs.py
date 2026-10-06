@@ -394,7 +394,9 @@ def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) ->
     """The two Genesis-derived canonical stages failed identically without sudo."""
 
     dockerfile = (DOCKER_ROOT / tool / "Dockerfile").read_text(encoding="utf-8")
-    assert "ARG UBUNTU_SNAPSHOT=20260820T000000Z" in dockerfile
+    snapshot = re.search(r"^ARG UBUNTU_SNAPSHOT=(\d{8}T\d{6}Z)$", dockerfile, re.M)
+    minimum = "20261001T000000Z" if tool == "sim2real-eval" else "20260820T000000Z"
+    assert snapshot and snapshot.group(1) >= minimum
     assert "install_workflow_runtime_prereqs.sh" in dockerfile
     assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in dockerfile
 

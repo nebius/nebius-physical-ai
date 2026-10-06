@@ -17,6 +17,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     MUJOCO_GL=egl \
     PYOPENGL_PLATFORM=egl \
     PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
     NPA_GENESIS_HOME=/opt/genesis
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -66,6 +67,11 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility
 ENV EGL_PLATFORM=device
 WORKDIR /opt/genesis
 
+COPY --chown=ubuntu:ubuntu docker/workbench/curobo/remove_scikit_image_recipe.py \
+    /opt/genesis/remove-scikit-image-recipe.py
+
+# Jammy's Python 3.10 cannot install scikit-image 0.26. Correct the reviewed
+# 0.25.2 source before this installation becomes an ancestor image layer.
 RUN python3 -m venv /opt/genesis/venv \
     && /opt/genesis/venv/bin/python -m pip install --upgrade pip setuptools wheel \
     && /opt/genesis/venv/bin/pip install \
@@ -74,6 +80,7 @@ RUN python3 -m venv /opt/genesis/venv \
       --index-url https://download.pytorch.org/whl/cu124 \
     && /opt/genesis/venv/bin/pip install \
       "genesis-world==${GENESIS_VERSION}" \
+      "scikit-image==0.25.2" \
       "rsl-rl-lib==${RSL_RL_VERSION}" \
       "moviepy @ https://github.com/Zulko/moviepy/archive/97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9" \
       "pillow>=12.3.0,<13.0" \
@@ -89,7 +96,10 @@ RUN python3 -m venv /opt/genesis/venv \
       "pyarrow==24.0.0" \
     && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "pillow>=12.3.0,<13.0" \
     && /opt/genesis/venv/bin/pip install --no-cache-dir --upgrade "diffusers>=0.38.0" \
-    && /opt/genesis/venv/bin/pip uninstall -y wandb
+    && /opt/genesis/venv/bin/pip uninstall -y wandb \
+    && /opt/genesis/venv/bin/python /opt/genesis/remove-scikit-image-recipe.py \
+      --site-packages /opt/genesis/venv/lib/python3.10/site-packages \
+      > /opt/genesis/dependency-source-correction.json
 
 ENV PATH=/opt/genesis/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \

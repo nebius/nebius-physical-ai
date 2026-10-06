@@ -36,13 +36,24 @@ def _task_tool(task: dict) -> str:
     return tool_image_key(task["tool_ref"]) or ""
 
 
-def _blocked_shipped_defaults() -> set[tuple[str, str]]:
-    blocked = set()
+def _blocked_shipped_defaults() -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    blocked, required = set(), set()
     options = SkypilotRenderOptions()
     for path in iter_npa_workflow_specs():
         spec = load_spec(path)
         for decision in ("promote_checkpoint", "loop_back"):
-            plan = build_plan(spec, run_id="quarantine-audit", assume_decision=decision)
+            try:
+                plan = build_plan(
+                    spec, run_id="quarantine-audit", assume_decision=decision
+                )
+            except NpaWorkflowError as exc:
+                assert "requires an explicit registry-qualified immutable image" in str(
+                    exc
+                )
+                keys = spec.config["required_immutable_images"]
+                assert keys and any(f"config.{key}" in str(exc) for key in keys)
+                required.update((str(path.relative_to(REPO_ROOT)), key) for key in keys)
+                continue
             for step in plan.steps:
                 task = build_scheduler_task(spec, step, run_id="quarantine-audit")
                 try:
@@ -56,17 +67,23 @@ def _blocked_shipped_defaults() -> set[tuple[str, str]]:
                     tool = _task_tool(task)
                     assert tool, "A blocked default must identify its image tool"
                     blocked.add((str(path.relative_to(REPO_ROOT)), tool))
-    return blocked
+    return blocked, required
 
 
 def test_shipped_defaults_match_documented_quarantine_impact(monkeypatch) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "registry.invalid/operator/private")
-    rows = re.findall(
-        r"\| `(workflows/[^`]+\.yaml)` \| `([^`]+)` \|", IMPACT_REPORT.read_text()
-    )
+    current = IMPACT_REPORT.read_text().split("## Current correction, 2026-10-06\n", 1)[
+        1
+    ]
+    images, inputs = current.split("### Required exact operator image inputs\n", 1)
+    rows = re.findall(r"\| `(workflows/[^`]+\.yaml)` \| `([^`]+)` \|", images)
     documented = {(path, tool) for path, tools in rows for tool in tools.split(", ")}
     assert documented
-    assert _blocked_shipped_defaults() == documented
+    required_rows = re.findall(r"\| `(workflows/[^`]+\.yaml)` \| `([^`]+)` \|", inputs)
+    documented_inputs = {
+        (path, key) for path, keys in required_rows for key in keys.split(", ")
+    }
+    assert _blocked_shipped_defaults() == (documented, documented_inputs)
 
 
 @pytest.mark.parametrize(

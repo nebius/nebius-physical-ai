@@ -1,0 +1,91 @@
+# Image rebuild follow-up to PR #807, 2026-10-06
+
+PR #807 withdrew image bytes that exposed SSH host private keys, operator build
+metadata, or the wrong runtime user. Keeping those releases quarantined is
+intentional. Rebuilding a child from an affected parent retains the affected
+layers, even when a later layer removes the files. A source fix or a successful
+import does not qualify a public workload.
+
+This follow-up repairs additional build recipes and current shipped image
+defaults. It does not promote an image, change `publication_pending`, or replace
+archived validation evidence. The
+[original planning inventory](public-default-quarantine-impact-20261005.md)
+remains a dated record of the default resolver audit.
+
+## Repaired parent builds
+
+[PR #877](https://github.com/nebius/nebius-physical-ai/pull/877) repairs the
+canonical Sim2Real image builds. Its exact source
+`127f93d3cf6d10cfb540766578834c50400f8a09` passed the
+[trusted five-image publication job](https://github.com/nebius/nebius-physical-ai/actions/runs/37409328900)
+for the controller, Transfer, EnvGen, Isaac Lab and viewer. Independent anonymous
+manifest and config requests also verified each immutable digest, source
+revision and current SkyPilot bootstrap label.
+
+Two of those built parents are now selected by the derivative recipes:
+
+| Parent | Immutable development digest | Children requiring their own rebuild and qualification |
+| --- | --- | --- |
+| Isaac Lab | `sha256:ef7f4234839852ed7b48ea4b88fd61f1c45a37ca00294c10a0a23fb335807ef4` | Isaac Arena |
+| EnvGen | `sha256:55f1541c1a86e9d865963753cfa38fa1dbf88928c8d28d9ee30e2851a5604b88` | Reference Policy, LeRobot VLM RL, Loop Eval, alternate Explore Policy |
+
+These are build inputs, not public workflow default exemptions. PR #877 must
+land before this source-dependent change is merged, so the parent revision is
+reproducible from `main`. The child image's own published graph, inherited layers,
+config, redistribution gates and native capability must still pass. Canonical
+Sim2Real can independently qualify the five-image set through its existing
+explicit operator-image contract; the legacy automatic defaults remain
+quarantined.
+
+## Additional source repairs
+
+| Family | Source change | Required runtime proof |
+| --- | --- | --- |
+| Genesis | Correct the exact reviewed scikit-image data-recipe text in the dependency install layer, including bytecode and package RECORD. Stock Python 3.10 uses 0.25.2; the additive Python 3.11 CUDA 13 recipe uses 0.26.0. Unknown versions or source hashes fail before mutation. Pip wheel caching is disabled. | A real teacher optimization run, loadable checkpoint, exported actor equivalence and rendered physics evidence on its supported GPU family. |
+| Isaac Arena | Replace the withdrawn Isaac parent; keep the exact Arena source, runtime-fetch licensing and replay evidence patches. | Native reset/action replay, completed episodes, simulator metrics and decoded rendering. |
+| Reference Policy and Explore Policy | Replace the stale EnvGen parent and copy the complete child SDK source so the declared revision identifies the code that runs; preserve their action-policy variants. | The actual policy action and schema handoff; delegating an environment smoke is insufficient. |
+| LeRobot VLM RL | Replace the stale EnvGen parent. | Real VLM reward signals, nonzero optimizer and weight changes, and a loadable trained checkpoint. |
+| Loop Eval | Replace the stale EnvGen parent and install the fixed Jammy kernel headers from the October 1 snapshot. | Native Genesis rollouts and joined policy/VLM reports; this legacy tool is separate from canonical Sim2Real. |
+| SONIC / Isaac 2 | Update GitPython, Werkzeug and the fixed Jammy header snapshot. Preserve Isaac Lab 2.3.2.post1 / Isaac Sim 5.1 and runtime-fetched vendor payloads. | Each advertised training, checkpoint, evaluation and export capability, with its exact gated runtime dependencies. |
+
+The stock Genesis CUDA 12.4 / Torch 2.6 recipe does not establish RTX PRO 6000
+support. Its CUDA 13 recipe remains an additive operator-base build, and
+correcting a child layer cannot sanitize already-published parent layers. These
+limitations must be resolved before making a corresponding release claim.
+
+The distinct Cosmos3 Ray Serve candidate also remains blocked: its trusted
+build's payload gate reported credential-shaped bytes in its dependency closure.
+No filename exclusion or blanket scanner suppression is introduced. Native
+generation and native Ray Serve batching are separate qualification scopes.
+
+## Current specifications and explicit operator inputs
+
+The original resolver inventory did not inspect literal image digests as
+quarantined tool defaults. Current example specs must not automatically select
+withdrawn Isaac or SONIC bytes through that seam. Resource-only consumers use
+governed tool image resolution. Consumers that pass an exact runtime image into
+provenance or child launch requests require explicit immutable operator inputs
+before planning or execution. Archived receipts keep their original digests and
+do not become proof of the rebuilt images.
+
+| Current shipped specification | Image input after the repair |
+| --- | --- |
+| `field-failure-reference-demo.yaml` | Required exact `navigation_image` and `reconstruction_image`; withdrawn Isaac and SONIC defaults removed. |
+| `rgbd-scan-to-policy-demo.yaml` | Required exact `assembly_image`, `reconstruction_image` and `isaac_image`; reconstruction can use the explicitly supplied assembly image. |
+| `rgbd-scan-to-isaac.yaml` | Required exact `isaac_image`, also consumed by runtime-image provenance. |
+| `scan-to-isaac-navigation.yaml` | Required exact `isaac_image`, also consumed by runtime-image provenance. |
+| `multicamera-rgbd-warehouse.yaml` | GPU `isaac_image` uses governed `tool://isaac-lab` resolution. |
+| `franka-rl-transfer.yaml` | GPU `isaac_image` uses governed `tool://isaac-lab` resolution. Its distinct optional LeRobot 0.6 CPU image is unchanged. |
+
+All six specs live under `workflows/testing/`. The exact original specs and
+readiness records are preserved in
+[`docs/workbench/evidence/workflow-defaults-807`](../evidence/workflow-defaults-807/).
+The current readiness records require fresh workload qualification. The demo
+aliases accept the same repeated `--var key=value` inputs as standard workflow
+submission, and missing exact inputs fail before submission.
+
+The optional LeRobot 0.6 training family is a separate version and dependency
+closure from the quarantined default 0.5 family. Fresh image-byte and real
+training qualification are required before selecting a new optional candidate;
+neither a version switch nor historical Diffusion evidence proves ACT training
+or VM deployment on the current GPU.

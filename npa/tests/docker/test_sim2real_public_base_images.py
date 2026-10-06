@@ -124,12 +124,13 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     assert 'linux_libc_dev_version="5.15.0-190.200"' in installer
     assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
-    for relative in (
-        "sim2real-envgen/Dockerfile",
-        "sim2real-eval/Dockerfile",
+    for relative, snapshot in (
+        ("sim2real-envgen/Dockerfile", "20260820T000000Z"),
+        ("sim2real-eval/Dockerfile", "20261001T000000Z"),
     ):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
-        assert "ARG UBUNTU_SNAPSHOT=20260820T000000Z" in text, relative
+        pin = re.search(r"^ARG UBUNTU_SNAPSHOT=(\d{8}T\d{6}Z)$", text, re.MULTILINE)
+        assert pin and pin.group(1) >= snapshot, relative
         assert "configure_ubuntu_snapshot.sh" in text, relative
 
 
