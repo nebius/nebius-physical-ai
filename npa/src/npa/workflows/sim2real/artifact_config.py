@@ -1,0 +1,95 @@
+"""Resolve existing Sim2Real artifact coordinates without execution image defaults."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+from npa.workflows.sim2real.constants import (
+    DEFAULT_OUTER_ITERATIONS,
+    DEFAULT_PREFIX,
+    DEFAULT_S3_ENDPOINT,
+)
+from npa.workflows.sim2real.utils import _split_csv
+
+
+@dataclass(frozen=True)
+class Sim2RealArtifactConfig:
+    """Storage coordinates and visualization metadata for an existing run.
+
+    Args:
+        run_id: Existing run identifier.
+        s3_bucket: Bucket holding the run's artifacts.
+        s3_prefix: Parent prefix containing the run.
+        s3_endpoint: Storage endpoint used for reads and optional publication.
+        outer_iterations: Final outer iteration to discover.
+        k8s_gpu_product: Configured GPU product retained in viewer metadata.
+        k8s_gpu_candidates: Configured placement alternatives retained in reports.
+
+    Returns:
+        None.
+    Raises:
+        None.
+    """
+
+    run_id: str
+    s3_bucket: str
+    s3_prefix: str = DEFAULT_PREFIX
+    s3_endpoint: str = DEFAULT_S3_ENDPOINT
+    outer_iterations: int = DEFAULT_OUTER_ITERATIONS
+    k8s_gpu_product: str = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+    k8s_gpu_candidates: tuple[str, ...] = ()
+
+
+def build_artifact_config_from_env(
+    *,
+    run_id: str,
+    s3_bucket: str = "",
+    s3_prefix: str = DEFAULT_PREFIX,
+    s3_endpoint: str = "",
+) -> Sim2RealArtifactConfig:
+    """Resolve artifact settings while leaving execution image policy untouched.
+
+    Args:
+        run_id: Existing run identifier.
+        s3_bucket: Explicit bucket, or the existing environment fallback.
+        s3_prefix: Parent prefix containing the run.
+        s3_endpoint: Explicit endpoint, or the existing environment fallback.
+    Returns:
+        Image-free settings for artifact download or visualization regeneration.
+    Raises:
+        ValueError: The configured outer iteration count is not an integer.
+    """
+
+    return Sim2RealArtifactConfig(
+        run_id=run_id,
+        s3_bucket=_artifact_bucket(s3_bucket),
+        s3_prefix=s3_prefix,
+        s3_endpoint=_artifact_endpoint(s3_endpoint),
+        outer_iterations=int(
+            os.environ.get("OUTER_ITERATIONS", DEFAULT_OUTER_ITERATIONS)
+        ),
+        k8s_gpu_product=os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT")
+        or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        k8s_gpu_candidates=tuple(
+            _split_csv(os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES", ""))
+        ),
+    )
+
+
+def _artifact_bucket(override: str) -> str:
+    return (
+        override
+        or os.environ.get("NPA_SIM2REAL_BUCKET")
+        or os.environ.get("NPA_S3_BUCKET")
+        or os.environ.get("S3_BUCKET", "")
+    )
+
+
+def _artifact_endpoint(override: str) -> str:
+    return (
+        override
+        or os.environ.get("AWS_ENDPOINT_URL")
+        or os.environ.get("S3_ENDPOINT_URL")
+        or DEFAULT_S3_ENDPOINT
+    )

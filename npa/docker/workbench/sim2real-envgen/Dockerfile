@@ -4,7 +4,7 @@ ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-genesis@sha256:80cd1c4c7f7a
 FROM ${BASE_IMAGE} AS sanitized
 
 ARG NPA_SOURCE_SHA
-ARG UBUNTU_SNAPSHOT=20260820T000000Z
+ARG UBUNTU_SNAPSHOT=20261001T000000Z
 
 WORKDIR /opt/npa
 USER root
@@ -42,7 +42,7 @@ COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
 # constructing this deliberately capability-reduced runtime distribution.
 # The shared Genesis requirements own the GitPython pin; keep its installed-version
 # check aligned with that file rather than installing a second version here.
-RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
+RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" 5.15.0-194.204 \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \

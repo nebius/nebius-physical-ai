@@ -807,6 +807,14 @@ def test_isaac3_image_pins_runtime_source_and_python_contract() -> None:
     assert "read_pin isaac-lab" not in build_script
 
 
+def test_isaac3_dependency_lock_excludes_vulnerable_pyjwt() -> None:
+    """Keep the signature-confusion fix in the immutable Isaac OSS closure."""
+
+    dependencies = ISAAC3_OSS_DEPS.read_text(encoding="utf-8").splitlines()
+    assert "pyjwt==2.14.0" in dependencies
+    assert "pyjwt==2.13.0" not in dependencies
+
+
 def test_base_installer_uses_the_selected_isaac_dependency_lock() -> None:
     """Isaac 3 must not silently install the legacy Isaac dependency closure."""
 

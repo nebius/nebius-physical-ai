@@ -488,6 +488,18 @@ checks all shipped plans without image overrides and records the remaining
 blocked workflows and derivative images. It distinguishes canonical Sim2Real's
 required operator images from legacy automatic public-image selection.
 
+The Ray Serve Dockerfile now derives from PAIDF's repaired Cosmos3 digest rather
+than retaining the withdrawn parent's SSH-key layers. The Isaac 3 OSS dependency
+lock also selects PyJWT 2.14.0, which fixes the critical signature-verification
+issue that blocked its rebuilt image scan; Transfer's hash-verified security
+override selects the same fix. The controller and viewer use the immutable
+2026-10-01 Debian snapshot with fixed Perl, GLib and Mbed TLS, and both upgrade
+inherited packages. EnvGen and Loop Eval use the 2026-10-01 Ubuntu snapshot with
+the fixed `linux-libc-dev` 5.15.0-194.204 package. These are source repairs:
+newly built images must still pass all publication scans and real capability
+validation before any public default is restored. Historical releases remain
+quarantined.
+
 ## 2026-09-24 OCI metadata and runtime-user quarantine
 
 Exact-config inspection found that six more previously accepted releases no

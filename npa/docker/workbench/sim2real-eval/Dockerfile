@@ -3,7 +3,7 @@ FROM ${BASE_IMAGE}
 
 ARG SIM2REAL_EVAL_VERSION=cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 ARG NPA_SOURCE_SHA
-ARG UBUNTU_SNAPSHOT=20260820T000000Z
+ARG UBUNTU_SNAPSHOT=20261001T000000Z
 
 LABEL npa.tool="loop-eval" \
       npa.version="${SIM2REAL_EVAL_VERSION}" \
@@ -36,7 +36,7 @@ COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
 
 USER root
 
-RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
+RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" 5.15.0-194.204 \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \

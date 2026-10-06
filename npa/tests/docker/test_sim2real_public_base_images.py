@@ -129,7 +129,11 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
         "sim2real-eval/Dockerfile",
     ):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
-        assert "ARG UBUNTU_SNAPSHOT=20260820T000000Z" in text, relative
+        assert "ARG UBUNTU_SNAPSHOT=20261001T000000Z" in text, relative
+        assert (
+            'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" 5.15.0-194.204'
+            in text
+        ), relative
         assert "configure_ubuntu_snapshot.sh" in text, relative
 
 
@@ -149,6 +153,27 @@ def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:
         if relative == "sim2real-envgen/Dockerfile":
             assert install < text.index("FROM scratch AS runtime")
             assert f'm.version("GitPython") == "{pin.group(1)}"' in text
+
+
+def test_sim2real_cpu_images_upgrade_inherited_packages_from_fixed_snapshot() -> None:
+    """Exclude the vulnerable Perl, GLib and Mbed TLS snapshot closure."""
+
+    for relative in ("sim2real-control/Dockerfile", "rerun-viewer/Dockerfile"):
+        text = (WORKBENCH / relative).read_text(encoding="utf-8")
+        assert "ARG DEBIAN_SNAPSHOT=20261001T000000Z" in text, relative
+        assert "apt-get upgrade -y --no-install-recommends" in text, relative
+
+
+def test_transfer_uses_the_hash_verified_pyjwt_signature_fix() -> None:
+    """Keep the critical verification fix outside the upstream vulnerable lock."""
+
+    overrides = (WORKBENCH / "cosmos2-transfer/security-overrides.txt").read_text()
+    wheels = [line for line in overrides.splitlines() if "/pyjwt-" in line]
+    assert len(wheels) == 1
+    assert "pyjwt-2.14.0-py3-none-any.whl" in wheels[0]
+    assert wheels[0].endswith(
+        "#sha256=ad0cef71c756a56e74863c2919cf0985f72decbcfcb550ee2f422e7c62b5eedc"
+    )
 
 
 def test_isaac_runtime_uses_system_ffmpeg_without_wheel_bundled_binary() -> None:

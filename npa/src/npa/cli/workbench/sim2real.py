@@ -27,6 +27,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_TRAIN_FRACTION,
 )
 from npa.workflows.sim2real.config import build_config_from_env
+from npa.workflows.sim2real.artifact_config import build_artifact_config_from_env
 from npa.workflows.sim2real.engine import (
     convert_vlm_eval_to_rl_signal,
     run_inner_loop,
@@ -850,18 +851,20 @@ def rerun_serve_command(
             err=True,
         )
     if local_record and not destroy:
-        loop_config = build_config_from_env(
+        artifact_config = build_artifact_config_from_env(
             run_id=run_id,
-            s3_bucket=s3_bucket,
-            s3_prefix=s3_prefix,
-            s3_endpoint=s3_endpoint,
+            s3_bucket=config.s3_bucket,
+            s3_prefix=config.s3_prefix,
+            s3_endpoint=config.s3_endpoint,
         )
         dest = resolve_local_rrd_path(
             run_id,
             override=str(local_rrd_path) if local_rrd_path is not None else "",
         )
         try:
-            download_rrd_from_s3(loop_config, dest_path=dest)
+            download_rrd_from_s3(
+                artifact_config, dest_path=dest, rrd_uri=config.rrd_s3_uri
+            )
         except Sim2RealRerunRegenError as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(1) from exc
@@ -909,7 +912,7 @@ def rerun_regen_command(
 ) -> None:
     """Regenerate reports/sim2real.rrd + sim2real.mcap from S3 artifacts (held-out PNG sync included)."""
     try:
-        config = build_config_from_env(
+        config = build_artifact_config_from_env(
             run_id=run_id,
             s3_bucket=s3_bucket,
             s3_prefix=s3_prefix,

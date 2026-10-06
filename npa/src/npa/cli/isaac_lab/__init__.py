@@ -1925,6 +1925,12 @@ def deploy_cmd(
         )
     if not destroy and not byovm:
         _validate_gpu_selection(gpu_type, gpu_preset)
+    container_image = ""
+    if not destroy and not skip_app and runtime_uses_container(runtime):
+        try:
+            container_image = image.strip() or container_image_for_tool("isaac-lab")
+        except ValueError as exc:
+            _fail(str(exc))
     proj_alias = _project_alias or None
     wb_name = _workbench_name or "isaac-lab"
     use_remote_state = not tf_dir and not byovm
@@ -2447,7 +2453,7 @@ def deploy_cmd(
                     service_env,
                     owner=ssh_user,
                 )
-                image_ref = image.strip() or container_image_for_tool("isaac-lab")
+                image_ref = container_image
                 deploy_workbench_container(
                     ssh,
                     image_ref=image_ref,

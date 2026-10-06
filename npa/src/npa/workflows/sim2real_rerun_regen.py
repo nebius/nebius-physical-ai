@@ -14,8 +14,8 @@ from typing import Any
 
 from npa.clients.storage import StorageClient, StorageError
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
-from npa.workflows.sim2real.utils import _artifact_root_uri
 from npa.workflows.sim2real_viz import (
     Sim2RealVizResult,
     emit_sim2real_mcap_if_enabled,
@@ -83,22 +83,38 @@ def default_regen_local_dir(run_id: str, *, override: str = "") -> Path:
     return DEFAULT_REGEN_ROOT / run_id
 
 
-def run_prefix_uri(config: Sim2RealLoopConfig) -> str:
-    return f"{_artifact_root_uri(config).rstrip('/')}/"
+def run_prefix_uri(config: Sim2RealLoopConfig | Sim2RealArtifactConfig) -> str:
+    """Return the existing run's storage prefix.
+
+    Args:
+        config: Artifact coordinates for the run.
+    Returns:
+        The run's S3 URI with a trailing slash.
+    Raises:
+        None.
+    """
+
+    parts = [part for part in (config.s3_prefix.strip("/"), config.run_id) if part]
+    root = f"s3://{config.s3_bucket}/{'/'.join(parts)}"
+    return f"{root.rstrip('/')}/"
 
 
-def _gold_eval_relative_dir(config: Sim2RealLoopConfig) -> Path:
+def _gold_eval_relative_dir(
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
+) -> Path:
     return Path("eval") / "gold-heldout" / f"outer-{config.outer_iterations:02d}"
 
 
-def _gold_report_path(config: Sim2RealLoopConfig, local_dir: Path) -> Path:
+def _gold_report_path(
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig, local_dir: Path
+) -> Path:
     canonical = Path(local_dir) / _gold_eval_relative_dir(config) / "report.json"
     legacy = Path(local_dir) / "eval" / "heldout" / "report.json"
     return canonical if canonical.is_file() or not legacy.is_file() else legacy
 
 
 def _renders_dir_for_report(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     heldout_report: dict[str, Any] | None,
 ) -> Path:
@@ -124,10 +140,10 @@ def _sibling_uri(uri: str, filename: str) -> str:
     return f"{base.rstrip('/')}/{filename}"
 
 
-def _storage_client_for_config(config: Sim2RealLoopConfig) -> StorageClient:
-    from npa.workflows.sim2real.engine import _storage_client
-
-    return _storage_client(config)
+def _storage_client_for_config(
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
+) -> StorageClient:
+    return StorageClient.from_environment(endpoint_url=config.s3_endpoint)
 
 
 def _list_common_prefixes(client: StorageClient, prefix_uri: str) -> list[str]:
@@ -157,7 +173,7 @@ def _download_if_exists(client: StorageClient, uri: str, local_path: Path) -> bo
 
 
 def sync_regen_inputs(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     *,
     client: StorageClient | None = None,
@@ -239,7 +255,7 @@ def sync_regen_inputs(
 
 
 def sync_heldout_renders(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     *,
     heldout_report: dict[str, Any] | None = None,
@@ -413,7 +429,7 @@ def _render_manifest_from_png_tree(renders_dir: Path) -> dict[str, Any]:
 
 
 def _write_report_render_manifest(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     heldout_report: dict[str, Any] | None,
     manifest: dict[str, Any],
@@ -431,15 +447,27 @@ def _write_report_render_manifest(
 
 
 def download_rrd_from_s3(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     *,
     dest_path: Path,
     client: StorageClient | None = None,
+    rrd_uri: str = "",
 ) -> Path:
-    """Download reports/sim2real.rrd for a run to dest_path."""
+    """Download the selected Rerun recording for an existing run.
+
+    Args:
+        config: Artifact coordinates and storage endpoint.
+        dest_path: Local recording destination.
+        client: Optional existing storage client.
+        rrd_uri: Exact viewer recording URI, or the standard run recording.
+    Returns:
+        The downloaded recording path.
+    Raises:
+        Sim2RealRerunRegenError: The selected recording cannot be downloaded.
+    """
 
     storage = client or _storage_client_for_config(config)
-    uri = f"{run_prefix_uri(config)}reports/sim2real.rrd"
+    uri = rrd_uri or f"{run_prefix_uri(config)}reports/sim2real.rrd"
     dest_path = Path(dest_path)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     if not _download_if_exists(storage, uri, dest_path):
@@ -448,7 +476,7 @@ def download_rrd_from_s3(
 
 
 def publish_regen_outputs(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     *,
     client: StorageClient | None = None,
@@ -498,7 +526,7 @@ def publish_regen_outputs(
 
 
 def publish_regen_mcap(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     *,
     client: StorageClient | None = None,
@@ -514,7 +542,7 @@ def publish_regen_mcap(
 
 
 def regen_sim2real_rrd(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     *,
     local_dir: Path | None = None,
     local_rrd_path: Path | None = None,
@@ -654,7 +682,7 @@ def regen_sim2real_rrd(
 
 
 def _ensure_policy_access_metadata(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     *,
     storage: StorageClient,
