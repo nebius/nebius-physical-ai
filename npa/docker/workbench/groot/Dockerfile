@@ -237,6 +237,7 @@ RUN cd "${GROOT_REPO}" \
       pyyaml==6.0.3 \
       rich==15.0.0 \
       jinja2==3.1.6 \
+      tomli==2.4.1 \
       "mcap>=1.3,<2" \
     && uv pip install --python "${GROOT_VENV}/bin/python" --no-deps --upgrade \
       "GitPython>=3.1.50" \

@@ -1004,6 +1004,11 @@ def test_groot_container_dockerfile_pins_runtime_versions() -> None:
     assert "huggingface-cli download nvidia/GR00T-N1.7-3B" not in dockerfile
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
     assert "NPA_LIGHT_WORKBENCH_TOOL=groot" in dockerfile
+    tomli_install = "      tomli==2.4.1 \\\n"
+    assert tomli_install in dockerfile
+    assert dockerfile.index(tomli_install) < dockerfile.index(
+        'uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa'
+    )
     assert "workbench groot finetune --help >/dev/null" in dockerfile
     assert '"mcap>=1.3,<2"' in dockerfile
     assert "from mcap.writer import Writer" in dockerfile
