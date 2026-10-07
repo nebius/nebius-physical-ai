@@ -300,7 +300,7 @@ def test_impossible_python_prefix_does_not_retain_pem_whitespace_context() -> No
     for chunk in (b"-----BEGIN PRIVATE ", b"KEY-----", b"\n" * 100000):
         source.feed(chunk)
     assert source.invalid and source.data == b""
-    assert not source.allows([0])
+    assert not source.allows({0})
 
 
 def test_impossible_prefix_is_rejected_before_a_large_context_allocation() -> None:
@@ -333,6 +333,35 @@ def test_quotes_and_comments_do_not_discard_valid_python_context(prefix: bytes) 
 def test_pem_in_python_docstrings_is_still_scanned(wrapper: bytes) -> None:
     payload = wrapper + SYNTHETIC_KEY + wrapper + b"\n" + _parameter(BENIGN_OPTIONS[0])
     assert credentials.content_credential(io.BytesIO(payload)) == "private_key_content"
+
+
+def _many_option_parameters(count: int) -> bytes:
+    return b"import typer\n" + b"".join(
+        b"def command_"
+        + str(index).encode()
+        + b"(ngc_api_key: str = typer.Option(None)):\n    pass\n"
+        for index in range(count)
+    )
+
+
+@pytest.mark.parametrize("chunk", [1, 7, 31, 1024])
+@pytest.mark.parametrize("count", [60, 100])
+def test_short_reads_count_actual_declarations_not_revisited_carry_headers(
+    monkeypatch: pytest.MonkeyPatch, chunk: int, count: int
+) -> None:
+    payload = _many_option_parameters(count)
+    assert not _verdict(payload, monkeypatch, chunk)
+
+
+@pytest.mark.parametrize("chunk", [1, 7, 31, 1024])
+@pytest.mark.parametrize("over_limit", [False, True])
+def test_real_unique_declaration_bound_still_applies_with_short_reads(
+    monkeypatch: pytest.MonkeyPatch, chunk: int, over_limit: bool
+) -> None:
+    count = credentials._OPTION_DECLARATION_LIMIT + int(over_limit)
+    payload = _many_option_parameters(count)
+    assert len(payload) < credentials._SOURCE_CONTEXT_LIMIT
+    assert _verdict(payload, monkeypatch, chunk) == over_limit
 
 
 @pytest.mark.parametrize("scanner", SCANNERS_USING_SHARED_RULES)

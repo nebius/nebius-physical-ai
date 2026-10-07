@@ -697,12 +697,12 @@ class _OptionSourceContext:
         else:
             self.data.extend(chunk)
 
-    def allows(self, offsets: list[int]) -> bool:
+    def allows(self, offsets: set[int]) -> bool:
         if not offsets:
             return True
         if self.oversized or self.invalid:
             return False
-        return set(offsets) <= _option_parameter_offsets(bytes(self.data))
+        return offsets <= _option_parameter_offsets(bytes(self.data))
 
 
 def _source_annotation(annotation: ast.expr) -> bool:
@@ -843,7 +843,7 @@ class _AssignmentMatcher:
         self._phase = _SEEK
         self._value: _AssignmentValue | None = None
         self._label_offset = 0
-        self._options: list[int] = []
+        self._options: set[int] = set()
 
     def resume_at(self, carried: int) -> int:
         """Where in the next window this matcher should resume.
@@ -885,11 +885,14 @@ class _AssignmentMatcher:
         assert self._value is not None
         if not self._value.credential(self._rule.min_value):
             return False
-        if (
-            self._value.option_declaration()
-            and len(self._options) < _OPTION_DECLARATION_LIMIT
-        ):
-            self._options.append(self._label_offset)
+        if self._value.option_declaration():
+            # Carry can revisit a completed header. Account for actual absolute
+            # offsets before applying the bound, including at the exact limit.
+            if self._label_offset in self._options:
+                return False
+            if len(self._options) >= _OPTION_DECLARATION_LIMIT:
+                return True
+            self._options.add(self._label_offset)
             return False
         return True
 

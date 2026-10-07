@@ -414,7 +414,7 @@ def test_streaming_state_is_bounded_not_buffered() -> None:
         "_label_offset",
         "_options",
     }
-    assert matcher._options == []
+    assert matcher._options == set()
     assert matcher._value is None
     matcher.feed(b"= " + b" " * 100000, 0)
     assert matcher._value.data == b""
