@@ -24,7 +24,9 @@ between consecutive chunks.
 assignments can be separated from their values by arbitrarily much whitespace.
 Their matchers retain state across chunks, never the intervening bytes. Named
 values retain at most 513 bytes to distinguish source syntax from literals;
-oversized or ambiguous values remain findings.
+oversized or ambiguous values remain findings. Option declarations additionally
+need bounded complete Python source context; a stream fragment cannot establish
+the declaration or its observable module binding.
 
 Generic quoted assignments are a Dockerfile policy, not proof of a credential
 in arbitrary library bytes: pip and Pydantic contain ordinary password examples.
@@ -40,7 +42,7 @@ import ast
 import base64
 import re
 from dataclasses import dataclass
-from typing import IO
+from typing import IO, Iterator
 
 try:
     from re import _parser as _regex_parser
@@ -145,10 +147,20 @@ class _DeclaredAssignmentPattern:
 
     def search(self, data: bytes) -> re.Match[bytes] | None:
         """Return the first assignment whose bounded value is credential data."""
+        options = []
         for header in self.header.finditer(data):
             value = _AssignmentValue(header.group(1))
             value.feed(data, header.end())
             if value.credential(self.rule.min_value):
+                if value.option_declaration():
+                    if len(options) >= _OPTION_DECLARATION_LIMIT:
+                        return header
+                    options.append(header)
+                    continue
+                return header
+        allowed = _option_parameter_offsets(data) if options else set()
+        for header in options:
+            if header.start() not in allowed:
                 return header
         return None
 
@@ -257,12 +269,22 @@ class _PrivateKeyMatcher:
 
 _SEEK, _GAP_BEFORE_SEP, _GAP_AFTER_SEP, _VALUE = range(4)
 _VALUE_LIMIT = 512
+# A complete source context is necessary for Option declarations. Larger or
+# non-Python members keep their finding; ordinary streaming rules do not need it.
+_SOURCE_CONTEXT_LIMIT = 1024 * 1024
+_OPTION_DECLARATION_LIMIT = 1024
 _SHELL_REFERENCE = re.compile(
     rb"""(?P<quote>"?)(?:\$[A-Za-z_][A-Za-z0-9_]*|"""
     rb"""\$\{[A-Za-z_][A-Za-z0-9_]*(?::-)?\})(?P=quote)\Z"""
 )
 _PLACEHOLDER = re.compile(rb"<[A-Za-z_][A-Za-z0-9_]*>\Z")
 _COMPACT_TOKEN = re.compile(rb"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*){1,2}\Z")
+_EMBEDDED_COMPACT_TOKEN = re.compile(rb"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*){1,2}")
+_OPTION_FLAG = re.compile(r"--?[A-Za-z][A-Za-z0-9-]*\Z")
+_OPTION_BOOLEAN_METADATA = frozenset({"hide_input", "show_default", "show_envvar"})
+_TYPER_PUBLIC_ATTRIBUTES = frozenset(
+    {"Typer", "Option", "Argument", "Exit", "echo", "confirm", "prompt", "Context"}
+)
 _CREDENTIAL_LOOKUP_NAMES = frozenset(
     {
         "aws_secret_access_key",
@@ -334,6 +356,10 @@ def _source_reference(expression: ast.expr | None) -> bool:
     for node in ast.walk(expression):
         if not isinstance(node, _REFERENCE_NODES):
             return False
+        if isinstance(node, ast.Call) and _option_callee(node.func):
+            # Constructors need declaration/default-consumption context. The
+            # ordinary reference rule must not accept a shadow or short metadata.
+            return False
         if isinstance(node, ast.Attribute) and _compact_token_literal(
             ast.unparse(node).encode()
         ):
@@ -356,6 +382,327 @@ def _source_reference(expression: ast.expr | None) -> bool:
             else:
                 literal_bytes += len(str(node.value))
     return literal_bytes < 8
+
+
+def _option_callee(expression: ast.expr) -> bool:
+    """Reserve Option-shaped calls for the declaration-specific check."""
+    return (isinstance(expression, ast.Name) and expression.id == "Option") or (
+        isinstance(expression, ast.Attribute) and expression.attr == "Option"
+    )
+
+
+def _option_literals_safe(expression: ast.expr) -> bool:
+    """Scan decoded literals as well as the raw member's declared markers."""
+    for node in ast.walk(expression):
+        if (
+            isinstance(node, ast.keyword)
+            and node.arg
+            and node.arg.casefold() in _CREDENTIAL_LOOKUP_NAMES
+        ):
+            return False
+        if isinstance(node, ast.Attribute) and _compact_token_literal(
+            ast.unparse(node).encode()
+        ):
+            return False
+        if not isinstance(node, ast.Constant) or not isinstance(
+            node.value, (str, bytes)
+        ):
+            continue
+        value = node.value.encode() if isinstance(node.value, str) else node.value
+        if any(pattern.search(value) for _, pattern in DECLARED_CONTENT_PATTERNS):
+            return False
+        if any(
+            _DeclaredAssignmentPattern(rule).header.search(value)
+            for rule in ASSIGNMENT_RULES
+        ):
+            return False
+        if any(
+            _compact_token_literal(match.group())
+            for match in _EMBEDDED_COMPACT_TOKEN.finditer(value)
+        ):
+            return False
+    return True
+
+
+def _empty_option_default(expression: ast.expr) -> bool:
+    return isinstance(expression, ast.Constant) and (
+        expression.value is None
+        or isinstance(expression.value, bool)
+        or isinstance(expression.value, str)
+        and expression.value == ""
+    )
+
+
+def _option_lookup(expression: ast.Call) -> bool:
+    """Constrain optional lookup calls to already supported credential selectors."""
+    if ast.unparse(expression.func) not in {"os.getenv", "os.environ.get"}:
+        return False
+    if expression.keywords or not 1 <= len(expression.args) <= 2:
+        return False
+    selector = expression.args[0]
+    if not isinstance(selector, ast.Constant) or not isinstance(selector.value, str):
+        return False
+    if selector.value.casefold() not in _CREDENTIAL_LOOKUP_NAMES:
+        return False
+    return len(expression.args) == 1 or _empty_option_default(expression.args[1])
+
+
+def _option_default(expression: ast.expr) -> bool:
+    """Allow empty defaults or independently bounded reference syntax only."""
+    if _empty_option_default(expression):
+        return True
+    if not _source_reference(expression):
+        return False
+    return all(
+        _option_lookup(node)
+        for node in ast.walk(expression)
+        if isinstance(node, ast.Call)
+    )
+
+
+def _option_metadata(keyword: ast.keyword) -> bool:
+    """Accept finite Typer metadata structures, never an arbitrary expression."""
+    if not isinstance(keyword.value, ast.Constant):
+        return False
+    value = keyword.value.value
+    if keyword.arg == "help":
+        return isinstance(value, str)
+    if keyword.arg == "envvar":
+        return isinstance(value, str) and value.casefold() in _CREDENTIAL_LOOKUP_NAMES
+    return keyword.arg in _OPTION_BOOLEAN_METADATA and isinstance(value, bool)
+
+
+def _option_call(expression: ast.expr | None) -> bool:
+    """Recognize one constrained default and known metadata on exact typer.Option."""
+    if (
+        not isinstance(expression, ast.Call)
+        or ast.unparse(expression.func) != "typer.Option"
+    ):
+        return False
+    if not _option_literals_safe(expression):
+        return False
+    keywords = {keyword.arg: keyword for keyword in expression.keywords}
+    if None in keywords or len(keywords) != len(expression.keywords):
+        return False
+    if expression.args:
+        if "default" in keywords:
+            return False
+        default, *flags = expression.args
+    elif "default" in keywords:
+        default, flags = keywords.pop("default").value, []
+    else:
+        return False
+    if not _option_default(default):
+        return False
+    if not all(
+        isinstance(flag, ast.Constant)
+        and isinstance(flag.value, str)
+        and _OPTION_FLAG.fullmatch(flag.value)
+        for flag in flags
+    ):
+        return False
+    if len({flag.value for flag in flags}) != len(flags):
+        return False
+    return all(_option_metadata(keyword) for keyword in keywords.values())
+
+
+def _option_value(data: bytes, separator: bytes) -> bool:
+    """Recognize a provisional annotated Option value, pending source context."""
+    if separator != b":" or b"#" in data:
+        return False
+    candidate = data.strip().rstrip(b",; ")
+    for _ in range(5):
+        try:
+            statement = ast.parse("value: " + candidate.decode("utf-8")).body[0]
+            if (
+                isinstance(statement, ast.AnnAssign)
+                and _source_annotation(statement.annotation)
+                and _option_call(statement.value)
+            ):
+                return True
+        except (UnicodeDecodeError, SyntaxError, RecursionError):
+            pass
+        if not candidate.endswith((b")", b"]", b"}")):
+            return False
+        candidate = candidate[:-1].rstrip()
+    return False
+
+
+def _typer_import(tree: ast.Module) -> ast.Import | None:
+    imports = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        and any(alias.name == "typer" and alias.asname is None for alias in node.names)
+    ]
+    if len(imports) != 1:
+        return None
+    bindings = [
+        alias
+        for alias in imports[0].names
+        if alias.asname == "typer" or alias.name.split(".")[0] == "typer"
+    ]
+    if (
+        len(bindings) != 1
+        or bindings[0].name != "typer"
+        or bindings[0].asname is not None
+    ):
+        return None
+    return imports[0]
+
+
+def _typer_shadow(node: ast.AST, canonical: ast.Import) -> bool:
+    """Reject observable rebinding, including imports, parameters and patterns."""
+    if isinstance(node, ast.Name) and node.id == "typer":
+        return isinstance(node.ctx, (ast.Store, ast.Del))
+    if isinstance(node, ast.arg):
+        return node.arg == "typer"
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name == "typer"
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return "typer" in node.names
+    if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+        return node.name == "typer"
+    if isinstance(node, ast.MatchMapping):
+        return node.rest == "typer"
+    if isinstance(node, ast.Import):
+        return node is not canonical and any(
+            alias.asname == "typer" or alias.name.split(".")[0] == "typer"
+            for alias in node.names
+        )
+    if isinstance(node, ast.ImportFrom):
+        return (node.module or "").split(".")[0] == "typer" or any(
+            (alias.asname or alias.name) in {"typer", "*"} for alias in node.names
+        )
+    return False
+
+
+def _typer_mutation(node: ast.AST, parent: ast.AST | None) -> bool:
+    """Reject direct mutations, module escapes and explicit namespace rewriting."""
+    if (
+        isinstance(node, ast.Name)
+        and node.id == "typer"
+        and isinstance(node.ctx, ast.Load)
+    ):
+        return not isinstance(parent, ast.Attribute) or parent.attr.startswith("_")
+    if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
+        node.ctx, (ast.Store, ast.Del)
+    ):
+        root = node.value
+        while isinstance(root, (ast.Attribute, ast.Subscript)):
+            root = root.value
+        return isinstance(root, ast.Name) and root.id == "typer"
+    if (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "typer"
+    ):
+        return node.attr not in _TYPER_PUBLIC_ATTRIBUTES or (
+            node.attr != "Context"
+            and not (isinstance(parent, ast.Call) and parent.func is node)
+        )
+    if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
+        root = node.value
+        while isinstance(root, (ast.Attribute, ast.Subscript)):
+            root = root.value
+        if isinstance(root, ast.Name) and root.id == "typer":
+            return True
+    if isinstance(node, ast.Subscript) and ast.unparse(node.value) == "sys.modules":
+        return isinstance(node.slice, ast.Constant) and node.slice.value == "typer"
+    if isinstance(node, ast.Call):
+        function = ast.unparse(node.func)
+        namespace_calls = {"exec", "eval", "globals", "locals", "vars", "__import__"}
+        return function in namespace_calls | {
+            "builtins." + name for name in namespace_calls
+        } | {"importlib.import_module", "importlib.reload"}
+    return False
+
+
+def _typer_binding(tree: ast.Module) -> ast.Import | None:
+    canonical = _typer_import(tree)
+    if canonical is None:
+        return None
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    for node in ast.walk(tree):
+        if _typer_shadow(node, canonical) or _typer_mutation(node, parents.get(node)):
+            return None
+    return canonical
+
+
+def _parameter_defaults(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> Iterator[tuple[ast.arg, ast.expr | None]]:
+    positional = node.args.posonlyargs + node.args.args
+    defaults = [None] * (len(positional) - len(node.args.defaults)) + node.args.defaults
+    yield from zip(positional, defaults)
+    yield from zip(node.args.kwonlyargs, node.args.kw_defaults)
+
+
+def _option_parameter_offsets(data: bytes) -> set[int]:
+    """Bind pending values to real function parameters in bounded Python source."""
+    if len(data) > _SOURCE_CONTEXT_LIMIT:
+        return set()
+    try:
+        tree = ast.parse(data.decode("utf-8"))
+    except (UnicodeDecodeError, SyntaxError, RecursionError):
+        return set()
+    imported = _typer_binding(tree)
+    if imported is None:
+        return set()
+    lines = data.splitlines(keepends=True)
+    starts, position = [], 0
+    for line in lines:
+        starts.append(position)
+        position += len(line)
+    offsets = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for argument, default in _parameter_defaults(node):
+            if (
+                argument.arg.casefold() in _CREDENTIAL_LOOKUP_NAMES
+                and argument.annotation is not None
+                and _source_annotation(argument.annotation)
+                and argument.lineno > imported.lineno
+                and _option_call(default)
+            ):
+                offsets.add(starts[argument.lineno - 1] + argument.col_offset)
+    return offsets
+
+
+class _OptionSourceContext:
+    """Retain bounded complete source only for deferred Option declarations."""
+
+    def __init__(self) -> None:
+        self.data = bytearray()
+        self.oversized = False
+        self.invalid = False
+
+    def feed(self, chunk: bytes) -> None:
+        if self.oversized or self.invalid:
+            return
+        prefix = bytes(self.data[:_HEADER_CARRY])
+        prefix += chunk[: _HEADER_CARRY - len(prefix)]
+        # An unquoted leading PEM header cannot begin a Python module. Inspect
+        # only its finite prefix before allocating any retained source context.
+        if _PRIVATE_KEY_HEADER.match(prefix.lstrip()):
+            self.data.clear()
+            self.invalid = True
+            return
+        if len(self.data) + len(chunk) > _SOURCE_CONTEXT_LIMIT:
+            self.data.clear()
+            self.oversized = True
+        else:
+            self.data.extend(chunk)
+
+    def allows(self, offsets: list[int]) -> bool:
+        if not offsets:
+            return True
+        if self.oversized or self.invalid:
+            return False
+        return set(offsets) <= _option_parameter_offsets(bytes(self.data))
 
 
 def _source_annotation(annotation: ast.expr) -> bool:
@@ -482,6 +829,11 @@ class _AssignmentValue:
             return False
         return not _nonliteral_value(bytes(self.data), self.separator)
 
+    def option_declaration(self) -> bool:
+        return len(self.data) <= _VALUE_LIMIT and _option_value(
+            bytes(self.data), self.separator
+        )
+
 
 class _AssignmentMatcher:
     """Resume unbounded label gaps and a bounded literal/source value check."""
@@ -490,6 +842,8 @@ class _AssignmentMatcher:
         self._rule = rule
         self._phase = _SEEK
         self._value: _AssignmentValue | None = None
+        self._label_offset = 0
+        self._options: list[int] = []
 
     def resume_at(self, carried: int) -> int:
         """Where in the next window this matcher should resume.
@@ -504,13 +858,14 @@ class _AssignmentMatcher:
             return carried
         return max(0, carried - _NAME_CARRY)
 
-    def _label(self, data: bytes, position: int) -> int:
+    def _label(self, data: bytes, position: int, offset: int) -> int:
         """Consume a name or separator without retaining whitespace gaps."""
         if self._phase == _SEEK:
             found = self._rule.names.search(data, position)
             if found is None:
                 return len(data)
             self._phase = _GAP_BEFORE_SEP
+            self._label_offset = offset + found.start()
             return found.end()
         position = _WHITESPACE.match(data, position).end()
         if position == len(data):
@@ -526,29 +881,39 @@ class _AssignmentMatcher:
             self._phase = _SEEK
         return position
 
-    def feed(self, data: bytes, start: int) -> bool:
+    def _credential(self) -> bool:
+        assert self._value is not None
+        if not self._value.credential(self._rule.min_value):
+            return False
+        if (
+            self._value.option_declaration()
+            and len(self._options) < _OPTION_DECLARATION_LIMIT
+        ):
+            self._options.append(self._label_offset)
+            return False
+        return True
+
+    def feed(self, data: bytes, start: int, offset: int = 0) -> bool:
         """Consume ``data`` from ``start``; return True if the rule matched."""
         position = start
         while position < len(data):
             if self._phase != _VALUE:
-                position = self._label(data, position)
+                position = self._label(data, position, offset)
                 continue
             assert self._value is not None
             position, complete = self._value.feed(data, position)
             if not complete:
                 return False
-            if self._value.credential(self._rule.min_value):
+            if self._credential():
                 return True
             self._phase = _SEEK
         return False
 
-    def finish(self) -> bool:
+    def finish(self, source: _OptionSourceContext) -> bool:
         """Classify the final value when EOF has no following delimiter."""
-        return bool(
-            self._value
-            and self._phase == _VALUE
-            and self._value.credential(self._rule.min_value)
-        )
+        if self._value and self._phase == _VALUE and self._credential():
+            return True
+        return not source.allows(self._options)
 
 
 def path_credential(name: str) -> str | None:
@@ -561,11 +926,29 @@ def path_credential(name: str) -> str | None:
     return None
 
 
+def _window_credential(
+    window: bytes,
+    carried: int,
+    offset: int,
+    private_key: _PrivateKeyMatcher,
+    matchers: list[tuple[str, _AssignmentMatcher]],
+) -> str | None:
+    if private_key.feed(window, carried):
+        return "private_key_content"
+    for kind, pattern in MARKER_CONTENT:
+        if pattern.search(window):
+            return kind
+    for kind, matcher in matchers:
+        if matcher.feed(window, matcher.resume_at(carried), offset):
+            return kind
+    return None
+
+
 def content_credential(stream: IO[bytes]) -> str | None:
     """Return the credential kind found in a member's bytes, or None.
 
     Reads the member in full, in fixed-size chunks. Peak memory is one chunk
-    plus a small overlap regardless of member size or match length. Short reads
+    plus bounded Python source context regardless of member size or match length. Short reads
     are handled: only an empty read ends the scan, because a stream may
     legitimately return fewer bytes than requested.
 
@@ -579,21 +962,22 @@ def content_credential(stream: IO[bytes]) -> str | None:
 
     matchers = [(rule.kind, _AssignmentMatcher(rule)) for rule in ASSIGNMENT_RULES]
     private_key = _PrivateKeyMatcher()
+    source = _OptionSourceContext()
+    position = 0
     carry = b""
     while True:
         chunk = stream.read(CONTENT_CHUNK)
         if not chunk:
             for kind, matcher in matchers:
-                if matcher.finish():
+                if matcher.finish(source):
                     return kind
             return None
+        source.feed(chunk)
         window = carry + chunk
-        if private_key.feed(window, len(carry)):
-            return "private_key_content"
-        for kind, pattern in MARKER_CONTENT:
-            if pattern.search(window):
-                return kind
-        for kind, matcher in matchers:
-            if matcher.feed(window, matcher.resume_at(len(carry))):
-                return kind
+        kind = _window_credential(
+            window, len(carry), position - len(carry), private_key, matchers
+        )
+        if kind:
+            return kind
+        position += len(chunk)
         carry = window[-CARRY:]

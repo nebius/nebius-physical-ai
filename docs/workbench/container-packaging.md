@@ -282,7 +282,23 @@ literal fallback arguments, quoted source text, unknown syntax and values over
 512 bytes remain findings. Qualified identifiers carrying an encoded JSON
 token header remain findings, including nested, truncated and malformed token
 forms; a compact JWT must not become a Python attribute exemption. Label and
-separator whitespace may span arbitrarily many chunks. This policy adds no
+separator whitespace may span arbitrarily many chunks.
+
+An annotated function parameter using `typer.Option` may have an empty, `None`,
+boolean, or independently supported reference default. The detector distinguishes
+that default from finite flag/help/envvar/boolean metadata only after checking
+the complete UTF-8 Python member (at most 1 MiB). It requires a preceding,
+unaliased top-level `import typer` and rejects observable rebinding, module
+escapes, mutations, unknown helpers/metadata, duplicate defaults, and nested
+credential assignments. Decoded string literals are independently checked for
+declared AWS, PEM and encoded-header shapes, including escaped literals. Pending
+declarations and source context have fixed bounds; exceeding either bound retains
+the finding. The stream window remains bounded, with up to 1 MiB of retained
+source and a bounded source parse for deferred declarations. This recognizes
+constrained source syntax; it does not establish imported-callable provenance or
+the absence of arbitrary credential values.
+
+This policy adds no
 path exemptions and does not replace the
 complete-byte, Gitleaks, vulnerability or provenance gates; a source regression
 test does not qualify an image.

@@ -407,7 +407,14 @@ def test_streaming_state_is_bounded_not_buffered() -> None:
     # holding megabytes. Label gaps never populate the bounded value buffer.
     matcher = credentials._AssignmentMatcher(credentials.ASSIGNMENT_RULES[0])
     matcher.feed(b"hf_token" + b" " * 4096, 0)
-    assert matcher.__dict__.keys() == {"_rule", "_phase", "_value"}
+    assert matcher.__dict__.keys() == {
+        "_rule",
+        "_phase",
+        "_value",
+        "_label_offset",
+        "_options",
+    }
+    assert matcher._options == []
     assert matcher._value is None
     matcher.feed(b"= " + b" " * 100000, 0)
     assert matcher._value.data == b""
