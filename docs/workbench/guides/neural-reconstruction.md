@@ -118,6 +118,11 @@ This probes actual **download authorization**, not just visibility — a gated
 Hugging Face repo still answers `200` on its metadata endpoint, so "I can see it"
 is not "I can fetch it".
 
+The four native NRE stages install the NPA adapter in a separate Python virtual
+environment. This keeps source staging and adapter dependency upgrades away from
+the vendor container's Debian packages and native NRE runtime. CPU report stages
+retain their existing image interpreter.
+
 ## Go bigger: the real GPU run
 
 Complete [Workbench setup](../getting-started.md) for your RT-core cluster.
