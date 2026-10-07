@@ -55,9 +55,11 @@ def test_adapter_installs_without_access_to_vendor_site_packages(tmp_path):
     )
     parent.chmod(0o755)
     target = tmp_path / "adapter"
-    setup = render_nurec_adapter_setup("workbench.nurec.check").replace(
-        "/tmp/npa-nurec-venv", str(target)
+    setup = render_nurec_adapter_setup("workbench.nurec.check")
+    venv_command = next(
+        line for line in setup.splitlines() if "-m venv --without-pip" in line
     )
+    setup = setup.replace(shlex.split(venv_command)[-1], str(target))
     probe = 'import json,sys; print(json.dumps({"prefix":sys.prefix,"paths":sys.path}))'
     script = setup + f'"$NPA_BAKED_PYTHON" -c {shlex.quote(probe)}\n'
     environment = dict(os.environ, HOME=str(tmp_path), PATH=str(binary))
