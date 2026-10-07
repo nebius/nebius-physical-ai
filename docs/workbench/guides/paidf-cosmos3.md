@@ -24,6 +24,12 @@ Physical AI Data Factory composition. It does not replace or change
 `physical-ai-data-factory.yaml`, whose augmentation engine remains Cosmos
 Transfer 2.5.
 
+The default Cosmos3, Evaluator, and Curator task images now select repaired,
+digest-pinned public development candidates. See the
+[image-selection contract](physical-ai-data-factory.md#runtime-placement)
+for provenance, validation scope, and explicit image overrides. Historical
+release tags remain quarantined while release qualification is pending.
+
 The pipeline is:
 
 1. select one generic MP4 or one camera from one LeRobot v2/v3 episode;

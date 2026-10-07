@@ -33,6 +33,10 @@ MANUAL_GATES = {
         "local policy contract demo requires FiftyOne, Playwright Chromium, ffmpeg, "
         "and an isolated artifact directory; run the cookbook's documented E2E command"
     ),
+    "NPA_SPECIALISTS_LIVE": (
+        "uses paid Token Factory inference with independent GLM and DeepSeek workers; "
+        "run the restart and workflow-repair proof in docs/workbench/specialists.md"
+    ),
     "NPA_AGENT_PROVISION_BOOLEAN_LIVE_CONFIG": (
         "requires private connection credentials for an operator-selected isolated CPU agent; "
         "run with npa/tests/e2e/README.md"

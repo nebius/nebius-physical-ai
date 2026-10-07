@@ -79,6 +79,7 @@ Always run `validate-spec` on generator output and again with the intended
 | Check | When |
 | --- | --- |
 | Unknown `toolRef` / predicate | `validate-spec` |
+| Undefined `initial`, `next` or transition `goto` state | `validate-spec`, before planning |
 | Unbounded transition cycles | `validate-spec` (loops do **not** whitelist cycles) |
 | Missing `{{config.*}}`, bad loop max | `validate-spec` via token resolution |
 | Null collections, floating-point counts, truthy strings, duplicate states | `validate-spec` |

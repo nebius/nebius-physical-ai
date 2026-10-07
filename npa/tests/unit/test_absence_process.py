@@ -2,7 +2,9 @@
 
 import json
 import os
+import secrets
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -32,20 +34,81 @@ def _assert_stopped(path):
     pytest.fail("owned verification descendant remained alive")
 
 
-def _tree_script(path):
+def _tree_script(path, readiness=None):
+    handshake = ""
+    if readiness is not None:
+        handshake = f"""
+with socket.create_connection({readiness.address!r}, timeout=5) as connection:
+    message = {{'role': 'tree-ready', 'nonce': {readiness.nonce!r}, 'pids': pids}}
+    connection.sendall(json.dumps(message).encode() + b'\\n')
+    assert connection.makefile('rb').readline() == b'ack\\n'
+"""
     return f"""
-import os,subprocess,sys,time,json
+import os,subprocess,sys,time,json,socket
 from pathlib import Path
 child=subprocess.Popen([sys.executable,'-c','import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'])
-Path({str(path)!r}).write_text(json.dumps([os.getpid(),child.pid]))
+pids = [os.getpid(), child.pid]
+temporary = Path({str(path.with_suffix(".tmp"))!r})
+temporary.write_text(json.dumps(pids))
+temporary.replace({str(path)!r})
+{handshake}
 time.sleep(60)
 """
 
 
-def test_real_timeout_kills_descendant_with_inherited_output(tmp_path):
+class _TreeReadiness:
+    def __init__(self, listener):
+        self.listener = listener
+        self.address = listener.getsockname()
+        self.nonce = secrets.token_hex(16)
+
+    def acknowledge(self, path, *, group_leader=None):
+        connection, _ = self.listener.accept()
+        with connection:
+            connection.settimeout(5)
+            with connection.makefile("rb") as stream:
+                message = json.loads(stream.readline(4096))
+            assert message["role"] == "tree-ready"
+            assert message["nonce"] == self.nonce
+            pids = message["pids"]
+            assert len(pids) == 2 and len(set(pids)) == 2
+            assert all(type(pid) is int and pid > 0 for pid in pids)
+            assert pids == json.loads(path.read_text())
+            assert all(_alive(pid) for pid in pids)
+            expected_group = group_leader or pids[0]
+            assert all(os.getpgid(pid) == expected_group for pid in pids)
+            connection.sendall(b"ack\n")
+
+    def arm_deadline_after_ready(self, monkeypatch, path):
+        from npa.cluster import absence_process as module
+
+        wait = module._wait_for_read
+
+        def after_ready(process, streams, limit):
+            self.acknowledge(path, group_leader=process.pid)
+            assert module._TIMEOUT.get() == 0.5
+            return wait(process, streams, limit)
+
+        monkeypatch.setattr(module, "_wait_for_read", after_ready)
+
+
+@pytest.fixture
+def tree_readiness():
+    # Startup/import scheduling is not the cancellation behavior under test.
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(5)
+        yield _TreeReadiness(listener)
+
+
+def test_real_timeout_kills_descendant_with_inherited_output(
+    tmp_path, monkeypatch, tree_readiness
+):
     pids = tmp_path / "pids.json"
+    tree_readiness.arm_deadline_after_ready(monkeypatch, pids)
     with verification_deadline(0.5), pytest.raises(VerificationReadUnavailable):
-        run_read([sys.executable, "-c", _tree_script(pids)])
+        run_read([sys.executable, "-c", _tree_script(pids, tree_readiness)])
     _assert_stopped(pids)
 
 
@@ -65,11 +128,13 @@ def test_invalid_deadline_refuses_before_execution(value):
 
 
 @pytest.mark.parametrize("cancel_signal", [signal.SIGINT, signal.SIGTERM])
-def test_real_parent_cancellation_joins_owned_descendants(tmp_path, cancel_signal):
+def test_real_parent_cancellation_joins_owned_descendants(
+    tmp_path, cancel_signal, tree_readiness
+):
     pids = tmp_path / "pids.json"
     script = (
         "from npa.cluster.absence_process import run_read; import sys; run_read([sys.executable, '-c', "
-        + repr(_tree_script(pids))
+        + repr(_tree_script(pids, tree_readiness))
         + "])"
     )
     process = subprocess.Popen(
@@ -78,29 +143,45 @@ def test_real_parent_cancellation_joins_owned_descendants(tmp_path, cancel_signa
         stderr=subprocess.DEVNULL,
     )
     try:
-        for _ in range(200):
-            if pids.exists():
-                break
-            time.sleep(0.01)
-        assert pids.exists()
+        tree_readiness.acknowledge(pids)
         process.send_signal(cancel_signal)
         assert process.wait(timeout=5) != 0
         _assert_stopped(pids)
     finally:
         if process.poll() is None:
-            process.kill()
-            process.wait()
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
 
 
-def test_nested_reader_helper_does_not_escape_outer_process_group(tmp_path):
+def test_nested_reader_helper_does_not_escape_outer_process_group(
+    tmp_path, monkeypatch, tree_readiness
+):
     pids = tmp_path / "pids.json"
+    tree_readiness.arm_deadline_after_ready(monkeypatch, pids)
     nested = (
         "from npa.cluster.absence_process import run_read,reader_process_group; import sys\nwith reader_process_group(): run_read([sys.executable, '-c', "
-        + repr(_tree_script(pids))
+        + repr(_tree_script(pids, tree_readiness))
         + "])"
     )
     with verification_deadline(0.5), pytest.raises(VerificationReadUnavailable):
         run_read([sys.executable, "-c", nested])
+    _assert_stopped(pids)
+
+
+def test_invalid_readiness_still_cleans_the_actual_owned_tree(
+    tmp_path, monkeypatch, tree_readiness
+):
+    pids = tmp_path / "pids.json"
+    source = _tree_script(pids, tree_readiness)
+    tree_readiness.nonce = "different-from-the-child-token"
+    tree_readiness.arm_deadline_after_ready(monkeypatch, pids)
+    with verification_deadline(0.5), pytest.raises(AssertionError):
+        run_read([sys.executable, "-c", source])
     _assert_stopped(pids)
 
 

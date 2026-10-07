@@ -1,0 +1,38 @@
+{
+  "status": "passed",
+  "checks": [
+    {
+      "scene": "robot-workcell",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "pixel_sha256": "25e965aae6e4ea69adec80e5f2f3baf1cdbfa81426910e920b8bffb0e2680c5d",
+      "identical_to_matched_optimized_run": true,
+      "finite_latents": true,
+      "median_seconds": 2.0046782319996055
+    },
+    {
+      "scene": "warehouse",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "pixel_sha256": "d48375081a6004ef3bbeed6afcda8a54759af3919a5604733867681318a3bfd5",
+      "identical_to_matched_optimized_run": true,
+      "finite_latents": true,
+      "median_seconds": 3.1260481019999133
+    },
+    {
+      "scene": "sensor-rig",
+      "dimensions": [
+        1024,
+        1536
+      ],
+      "pixel_sha256": "cef4335758eaaadcabe643e4226689215bf0a9daceb686a93fd96909248d8649",
+      "identical_to_matched_optimized_run": true,
+      "finite_latents": true,
+      "median_seconds": 3.159743490999972
+    }
+  ]
+}

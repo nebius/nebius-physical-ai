@@ -1,0 +1,51 @@
+{
+  "schema": "npa.vlm_eval.isaac_agency_calibration_frames.v1",
+  "source_revision": "59514b9905c5427a250c2d0d3455b1f8e374b7e5",
+  "source_directory": "docs/assets/hackathon/isaac-franka-lift-cube",
+  "source_kind": "synthetic stylized stand-ins, not Isaac Sim renders",
+  "dimensions": [320, 240],
+  "frames": [
+    {
+      "name": "frame_00.png",
+      "bytes": 2964,
+      "source_sha256": "1f5f98000efd68f0ef909f869cbd945273cdc84b3a5b6aa59f1b9ea658cda1d0",
+      "normalized_png_sha256": "a11e411b701ecace52c4d324a5603435bf6577633be91fcc2f776e16e45a58af",
+      "decoded_rgb_sha256": "883a518a5efbb4369fbd2cd68a283073f3abe47b9ae5ec04078ed00f503ed4cb"
+    },
+    {
+      "name": "frame_01.png",
+      "bytes": 3101,
+      "source_sha256": "78ea93db5d592147a797ba39349bd66173bd77fc9d60810c9f387b9f5e8d882c",
+      "normalized_png_sha256": "b687156a9d606c5410028c9f777387dd69cba0a25497bb03172c872f166fd6d8",
+      "decoded_rgb_sha256": "0dbbbe753251fbdbe63f096b41694f9906374649a04104255fbe8e5b5e890870"
+    },
+    {
+      "name": "frame_02.png",
+      "bytes": 3133,
+      "source_sha256": "fa4a17764d3c01778fed30376613dd6cb6bc0d4d07fee7fd55712b80f397e2b7",
+      "normalized_png_sha256": "48b41db30e7b272617db230aa1594e4d9c2c16ef826651acfcfb132c25e97df9",
+      "decoded_rgb_sha256": "d9be442e439e821f4732db595aa5414205acd0195f00e384c2ce2d47a34304ef"
+    },
+    {
+      "name": "frame_03.png",
+      "bytes": 3223,
+      "source_sha256": "83056e0acf266bfa7821383631f7231e7afd55dd84dd2c8e450e673e1c18aa33",
+      "normalized_png_sha256": "195af3fa11382ae0ce9f519d783cc3f36d7fdbfcf5ff49f4c0235a14793e0d20",
+      "decoded_rgb_sha256": "6195dee34c8bdfb2a62664ef45a56a06d6ecb9edccb5679c10a7ef9f728fd3df"
+    },
+    {
+      "name": "frame_04.png",
+      "bytes": 3225,
+      "source_sha256": "971f4b87dbee7c99b5b45545d701832f5e4678c5127325308b478ed96a5196e7",
+      "normalized_png_sha256": "02fa3ac1b6dcf65f160e67d64073c0f913cf3b30ab55bd10cf0f696185d5bfcc",
+      "decoded_rgb_sha256": "b1adc37d160a96408a51537ee5f5de936ae1a93f1c46af664dddae7370fbd3ce"
+    },
+    {
+      "name": "frame_05.png",
+      "bytes": 3141,
+      "source_sha256": "18bf59b0feddb9b98802533e9188f0171c770d8415d8ffbe39642dceb1537341",
+      "normalized_png_sha256": "bb1fa58e881d0083ffd35bf9461cc16dfdd9b119758f076db18597344de859a3",
+      "decoded_rgb_sha256": "c4f577ba371b9906fdcf5fc21ba3518692396699d572431316d1036f870ef6f5"
+    }
+  ]
+}

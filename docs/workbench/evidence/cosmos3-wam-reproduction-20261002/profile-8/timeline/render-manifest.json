@@ -1,0 +1,7 @@
+{
+  "matplotlib": "3.11.2",
+  "renderer_sha256": "64fe9373688e5d9e6a14da7ee09d3006e491e242744e615a86b601dd79f35027",
+  "numpy": "2.5.3",
+  "evidence_sha256": "946d66286440fdf2d361b96159298a832afea2c274d513a0850f62743d44af9b",
+  "image_sha256": "b2d46c179ebc5692b3ddb6486f28b0653e3bb0fb6236ec2a034b7e6d437c919a"
+}

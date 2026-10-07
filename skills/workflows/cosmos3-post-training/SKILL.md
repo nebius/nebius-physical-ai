@@ -97,8 +97,11 @@ before its first update. Four active B200s subsequently passed NCCL and initial
 optimizer updates on an exclusive eight-GPU VM; see
 `docs/workbench/evidence/cosmos3-wam-live-training-4/README.md`. That attempt was
 cancelled at observed update 535 after the requested topology was clarified as
-four nodes with eight GPUs each: 32 B200s total. Its checkpoint is retained and
-its partial results are excluded from scaling. Two GPUs are untested. The
+four nodes with eight GPUs each: 32 B200s total. Its partial results are excluded
+from scaling. Original private checkpoints and archives were subsequently
+deleted at the operator's request; public numeric and visual evidence remains.
+See the post-merge cleanup receipt linked from the evidence README.
+Two GPUs are untested. The
 32-GPU protocol and original capacity rejection are retained in
 `docs/workbench/evidence/cosmos3-wam-plan-32/README.md`. Capacity subsequently
 became available and the deployment completed. Use the
@@ -106,6 +109,17 @@ existing `npa soperator` lifecycle for this extension; record runtime difference
 from native Slurm and do not treat plan/source checks as deployment proof.
 Current upstream LIBERO already describes two-node training; avoid claiming
 that all public Cosmos3 recipes stop at one node.
+
+The fresh October 2 reproduction is recorded separately in
+`docs/workbench/evidence/cosmos3-wam-reproduction-20261002/README.md`.
+Its six completed timing runs measured 1.9407× eight-to-sixteen-GPU speedup;
+check that record's current status before citing fresh full-schedule or quality
+results. The native bootstrap now excludes MEMLOCK from Slurm's inherited
+submitter limits. An 8 MiB systemd submitter limit otherwise reached both
+workers despite unlimited `slurmd` limits and caused RDMA allocation failures.
+For that failure, verify the limit inside an actual Slurm task on every node
+using the native runbook's probe; checking the SSH shell or daemon alone is
+insufficient. Apply configuration changes only after the queue is empty.
 
 Both bootstraps install FFmpeg and every node decodes both camera streams
 before model loading. Keep the excluded failure and corrected receipts.
