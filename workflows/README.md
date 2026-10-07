@@ -161,6 +161,7 @@ workflow YAMLs remain unchanged from `main`.
 | [`nurec-reconstruct.yaml`](main/nurec-reconstruct.yaml) | Real NCore V4 capture → 3DGUT training on an RT-core GPU → USDZ → rig-offset novel views → Rerun; [guide and measured evidence](../docs/workbench/guides/neural-reconstruction.md#promotion-evidence), [readiness record](main/nurec-reconstruct.readiness.json) |
 | [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Generic LeRobot/video input → prepared timeline → guarded Cosmos 3 full-video edge transfer → aligned evaluator gate/refinement → captions for every accepted variant → real Curator + FiftyOne Brain + Rerun ([guide](guides/paidf-cosmos3.md)) |
 | [`sim2real.yaml`](main/sim2real.yaml) | Canonical 14-stage Sim2Real workflow through the standard SkyPilot runtime ([guide](../docs/workbench/guides/sim2real-workflow.md)) |
+| [`sim2real-pi05.yaml`](testing/sim2real-pi05.yaml) | Separate released-surface Franka pipeline with a physics expert, dense OpenPI/LeRobot export, native pi0.5 LoRA and matched base/adapted gold evaluation ([guide](../docs/workbench/guides/sim2real-pi05.md)) |
 
 ### Partner workflows
 

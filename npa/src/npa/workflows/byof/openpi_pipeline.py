@@ -461,14 +461,50 @@ def _load_dataset(
 
     archive = _read_bytes_uri(dataset_uri)
     manifest = _read_json_uri(manifest_uri)
-    if manifest.get("schema") != "npa.workbench.openpi.mini-franka-dataset.v1":
-        raise OpenPIPipelineError("unexpected OpenPI miniature dataset schema")
+    supported_schemas = {
+        "npa.workbench.openpi.mini-franka-dataset.v1",
+        "npa.workbench.openpi.pi05-surface-pick-place-dataset.v1",
+    }
+    if manifest.get("schema") not in supported_schemas:
+        raise OpenPIPipelineError("unexpected OpenPI dataset schema")
     if manifest.get("archive_sha256") != _sha256_bytes(archive):
         raise OpenPIPipelineError("miniature dataset archive hash mismatch")
     with np.load(io.BytesIO(archive), allow_pickle=False) as loaded:
         arrays = {key: loaded[key].copy() for key in loaded.files}
     _validate_dataset_arrays(arrays, manifest)
+    if (
+        manifest.get("schema")
+        == "npa.workbench.openpi.pi05-surface-pick-place-dataset.v1"
+    ):
+        _validate_pi05_normalization(arrays, manifest)
     return arrays, manifest
+
+
+def _validate_pi05_normalization(
+    arrays: Mapping[str, Any], manifest: Mapping[str, Any]
+) -> None:
+    import numpy as np
+
+    reported = manifest.get("normalization")
+    if not isinstance(reported, Mapping) or reported.get("source_split") != "train":
+        raise OpenPIPipelineError("pi0.5 normalization must come from train only")
+    state = np.concatenate(
+        [arrays["train_joint_position"], arrays["train_gripper_position"]], axis=1
+    ).astype(np.float64)
+    action = np.asarray(arrays["train_actions"], dtype=np.float64).reshape(-1, 8)
+    expected = {
+        "source_split": "train",
+        "state_mean": state.mean(axis=0).tolist(),
+        "state_std": np.maximum(state.std(axis=0), 1.0e-6).tolist(),
+        "action_mean": action.mean(axis=0).tolist(),
+        "action_std": np.maximum(action.std(axis=0), 1.0e-6).tolist(),
+    }
+    digest = _sha256_bytes(_canonical_json(expected))
+    for key in ("state_mean", "state_std", "action_mean", "action_std"):
+        if not np.array_equal(np.asarray(reported.get(key)), np.asarray(expected[key])):
+            raise OpenPIPipelineError(f"pi0.5 normalization {key} is not reproducible")
+    if reported.get("sha256") != digest:
+        raise OpenPIPipelineError("pi0.5 normalization provenance hash is invalid")
 
 
 def _validate_dataset_arrays(
@@ -544,11 +580,15 @@ def _validate_dataset_arrays(
         raise OpenPIPipelineError("dataset split IDs overlap")
     if hash_intersection:
         raise OpenPIPipelineError("dataset split content hashes overlap")
-    if manifest.get("split_isolation") != {
-        "sample_id_intersection": id_intersection,
-        "sample_hash_intersection": hash_intersection,
-        "disjoint": True,
-    }:
+    isolation = manifest.get("split_isolation")
+    if not isinstance(isolation, Mapping) or any(
+        isolation.get(key) != expected
+        for key, expected in {
+            "sample_id_intersection": id_intersection,
+            "sample_hash_intersection": hash_intersection,
+            "disjoint": True,
+        }.items()
+    ):
         raise OpenPIPipelineError(
             "dataset split-isolation evidence does not match verified content"
         )
@@ -1186,6 +1226,25 @@ def _memory_stats(device: Any) -> dict[str, object]:
     return result
 
 
+def _publish_pi05_component(
+    args: argparse.Namespace, stage: int, name: str, evidence: str
+) -> None:
+    root = str(getattr(args, "component_root_uri", "") or "")
+    if not root:
+        return
+    from npa.workflows.sim2real.workflow_io import publish_component_record
+
+    publish_component_record(
+        root_uri=root,
+        stage=stage,
+        name=name,
+        tier="WORKS",
+        require_gpu=True,
+        evidence=evidence,
+        artifacts={"result": args.output_uri, "runtime_image": args.runtime_image},
+    )
+
+
 def _upload_checkpoint(local_root: Path, output_uri: str) -> dict[str, object]:
     bucket, prefix = _parse_s3_uri(output_uri.rstrip("/") + "/")
     prefix = prefix.rstrip("/") + "/"
@@ -1468,6 +1527,12 @@ def _train(args: argparse.Namespace) -> int:
         ],
     }
     _write_json_uri(args.output_uri, result)
+    _publish_pi05_component(
+        args,
+        8,
+        "pi05_lora_training",
+        "Ran upstream-native pi0.5 LoRA optimization and published a reloadable checkpoint.",
+    )
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0
 
@@ -1685,6 +1750,12 @@ def _evaluate(args: argparse.Namespace) -> int:
         ],
     }
     _write_json_uri(args.output_uri, result)
+    _publish_pi05_component(
+        args,
+        9,
+        "pi05_checkpoint_reload",
+        "Reloaded the exact selected checkpoint and measured held-out OpenPI outputs.",
+    )
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0
 
@@ -1755,6 +1826,12 @@ def _negative_gate(args: argparse.Namespace) -> int:
         },
     }
     _write_json_uri(args.output_uri, result)
+    _publish_pi05_component(
+        args,
+        4,
+        "pi05_negative_terms_gate",
+        "Proved that missing Gemma acceptance refuses access before checkpoint fetch.",
+    )
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0
 
@@ -1776,6 +1853,7 @@ def build_parser() -> argparse.ArgumentParser:
     negative.add_argument("--terms-diagnostic-root-uri", default="")
     negative.add_argument("--runtime-image", required=True)
     negative.add_argument("--repo-root", default="/opt/byof")
+    negative.add_argument("--component-root-uri", default="")
     negative.set_defaults(func=_negative_gate)
 
     def add_runtime_args(command: argparse.ArgumentParser) -> None:
@@ -1786,6 +1864,7 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--expected-gpu-type", default="")
         command.add_argument("--expected-gpu-count", type=int, default=1)
         command.add_argument("--expected-compute-capability", default="")
+        command.add_argument("--component-root-uri", default="")
 
     direct = commands.add_parser("direct")
     add_runtime_args(direct)
