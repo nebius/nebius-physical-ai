@@ -669,6 +669,15 @@ def _node_pool_from(
     )
 
 
+def _graphics_smoke_image_from(data: dict[str, Any]) -> str:
+    image = data.get("gpu_graphics_smoke_image")
+    if image is None:
+        return DEFAULT_GRAPHICS_SMOKE_IMAGE
+    if not isinstance(image, str):
+        raise FleetSpecError("gpu_graphics_smoke_image must be a string or null")
+    return image
+
+
 def _cluster_from(
     data: dict[str, Any], *, backend_explicit: bool = False
 ) -> ClusterSpec:
@@ -716,9 +725,7 @@ def _cluster_from(
             or DEFAULT_CUDA_SMOKE_IMAGE
         ),
         gpu_graphics_smoke=_boolean_from(data, "gpu_graphics_smoke", default=False),
-        gpu_graphics_smoke_image=str(
-            data.get("gpu_graphics_smoke_image", DEFAULT_GRAPHICS_SMOKE_IMAGE)
-        ),
+        gpu_graphics_smoke_image=_graphics_smoke_image_from(data),
         gpu_workload_profile=str(data.get("gpu_workload_profile", "") or ""),
         gpu_driver_package_repositories=data.get("gpu_driver_package_repositories", {}),
         mig=mig,

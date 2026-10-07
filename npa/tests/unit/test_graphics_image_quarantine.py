@@ -6,17 +6,16 @@ import yaml
 from npa.cluster.gpu_health import DEFAULT_GRAPHICS_SMOKE_IMAGE
 from npa.cluster_backends.mk8s import MK8sApplyRequest, MK8sBackend, desired_state
 from npa.fleet import lifecycle
-from npa.fleet.spec import ClusterSpec, FleetSpec, ProjectSpec, load_spec
-
-
-@pytest.mark.parametrize(
-    "image",
-    [
-        "registry.example/graphics:operator",
-        "registry.example/graphics@sha256:" + "1" * 64,
-    ],
+from npa.fleet.spec import (
+    ClusterSpec,
+    FleetSpec,
+    FleetSpecError,
+    ProjectSpec,
+    load_spec,
 )
-def test_fleet_yaml_preserves_explicit_graphics_image_through_backend(tmp_path, image):
+
+
+def _graphics_spec(tmp_path, image):
     path = tmp_path / "fleet.yaml"
     path.write_text(
         yaml.safe_dump(
@@ -41,12 +40,58 @@ def test_fleet_yaml_preserves_explicit_graphics_image_through_backend(tmp_path, 
         )
     )
 
-    spec = load_spec(path)
+    return load_spec(path)
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "registry.example/graphics:operator",
+        "registry.example/graphics@sha256:" + "1" * 64,
+    ],
+)
+def test_fleet_yaml_preserves_explicit_graphics_image_through_backend(tmp_path, image):
+    spec = _graphics_spec(tmp_path, image)
     cluster = spec.projects[0].clusters[0]
 
     assert cluster.gpu_graphics_smoke is True
     assert cluster.gpu_graphics_smoke_image == image
     assert desired_state(cluster)["gpu_graphics_smoke_image"] == image
+
+
+def test_fleet_yaml_null_uses_governed_default_before_mutation(tmp_path, monkeypatch):
+    spec = _graphics_spec(tmp_path, None)
+    assert (
+        spec.projects[0].clusters[0].gpu_graphics_smoke_image
+        == DEFAULT_GRAPHICS_SMOKE_IMAGE
+    )
+
+    def unexpected_operation(*_args, **_kwargs):
+        pytest.fail("YAML null must not bypass quarantine before provisioning")
+
+    for name in (
+        "_require_bin",
+        "_run_capture",
+        "resolve_project_id",
+        "ensure_subnet",
+        "_deploy_mk8s_fleet",
+    ):
+        monkeypatch.setattr(lifecycle, name, unexpected_operation)
+    with pytest.raises(ValueError, match="quarantined public release"):
+        lifecycle.deploy_fleet(spec, work_root=tmp_path)
+
+
+@pytest.mark.parametrize("image", [1, True, {}, ["registry.example/graphics:operator"]])
+def test_fleet_yaml_rejects_non_string_graphics_image(tmp_path, image):
+    with pytest.raises(
+        FleetSpecError, match="gpu_graphics_smoke_image must be a string"
+    ):
+        _graphics_spec(tmp_path, image)
+
+
+def test_fleet_yaml_preserves_explicit_empty_image_validation(tmp_path):
+    with pytest.raises(FleetSpecError, match="graphics smoke image cannot be empty"):
+        _graphics_spec(tmp_path, "")
 
 
 def test_fleet_default_refusal_precedes_project_network_and_backend_calls(

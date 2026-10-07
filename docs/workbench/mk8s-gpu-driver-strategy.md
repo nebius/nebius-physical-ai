@@ -96,6 +96,8 @@ health must select a reviewed operator image before provisioning. Use
 YAML, or the matching SDK argument. Existing explicit operator tags remain
 supported; prefer an immutable digest qualified for GLX/EGL/Vulkan. An image
 pull and a hardware health pass do not establish image-byte acceptance.
+An omitted or null Fleet image uses the governed default; other non-string
+values and an empty image for an enabled graphics check are rejected.
 CPU-only or disabled graphics checks do not resolve this default. Read-only
 plans and the existing standalone `--skip-validate` option remain available;
 skipping validation does not establish graphics readiness.
