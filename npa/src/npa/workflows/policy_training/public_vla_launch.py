@@ -176,7 +176,14 @@ def kubernetes_objects(
     if storage_class:
         claim["storageClassName"] = storage_class
     return [
-        {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}},
+        {
+            "apiVersion": "v1",
+            "kind": "Namespace",
+            "metadata": {
+                "name": namespace,
+                "labels": {"npa.nebius.ai/public-vla-run": namespace},
+            },
+        },
         {
             "apiVersion": "v1",
             "kind": "ConfigMap",
@@ -243,6 +250,18 @@ def _submit_kubernetes(args):
         "image": IMAGE,
     }
     (args.output_path / "receipt.json").write_text(json.dumps(receipt, indent=2))
+    _record_namespace_and_report(args.output_path, receipt)
+
+
+def _record_namespace_and_report(output, receipt):
+    kubectl, namespace = receipt["kubectl"], receipt["namespace"]
+    namespace_info = json.loads(
+        subprocess.check_output(
+            kubectl + ["get", "namespace", namespace, "-o", "json"], text=True
+        )
+    )
+    receipt["namespace_uid"] = namespace_info["metadata"]["uid"]
+    (output / "receipt.json").write_text(json.dumps(receipt, indent=2))
     follow = kubectl + ["-n", namespace, "logs", "-f", "job/pipeline"]
     print("Submitted. Follow progress with: " + shlex.join(follow))
     print(

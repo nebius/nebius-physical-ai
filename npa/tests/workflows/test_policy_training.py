@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -77,7 +76,8 @@ def test_invalid_episode_inputs_fail(tmp_path, case):
 def _gate_inputs(tmp_path, phase="pretrain"):
     split_uri = _split(tmp_path)
     candidate = {
-        "checkpoint": {"uri": "s3://example-bucket/checkpoint", "sha256": "a" * 64}
+        "engine": "operator-trainer",
+        "checkpoint": {"uri": "s3://example-bucket/checkpoint", "sha256": "a" * 64},
     }
     candidate_uri = _write(tmp_path / "candidate.json", candidate)
     policy_uri = _write(
@@ -160,97 +160,6 @@ def test_probability_rejects_invalid_thresholds(value):
         probability(value)
 
 
-def _completing_batch_client():
-    commands = []
-
-    def run(command, **kwargs):
-        commands.append(command)
-        request = read_json_uri(command[-1])
-        write_json_uri(
-            request["result_uri"],
-            {
-                "schema": "npa.policy.batch-result.v1",
-                "status": "completed",
-                "request_sha256": digest(request),
-                "checkpoint": {
-                    "uri": "s3://example-bucket/checkpoint",
-                    "sha256": "a" * 64,
-                },
-            },
-        )
-        return SimpleNamespace(returncode=0)
-
-    return run, commands
-
-
-def test_batch_waits_for_completion_and_binds_current_request(tmp_path, monkeypatch):
-    settings = _write(
-        tmp_path / "batch.json",
-        {
-            "transport": "local",
-            "scripts": {"pretrain": "/shared/train.sh"},
-        },
-    )
-    run, commands = _completing_batch_client()
-    monkeypatch.setattr(batch_module.subprocess, "run", run)
-    index = _split(tmp_path)
-    first = str(tmp_path / "train/1/candidate.json")
-    second = str(tmp_path / "train/2/candidate.json")
-    for iteration, output in enumerate((first, second), start=1):
-        batch_module.batch(
-            settings, "pretrain", "train", index, "", output, "test", iteration
-        )
-    assert "--wait" in commands[0]
-    assert "--parsable" in commands[0]
-    assert "checkpoint" not in read_json_uri(first)["request"]
-    assert (
-        read_json_uri(second)["request"]["checkpoint"]
-        == read_json_uri(first)["checkpoint"]
-    )
-    assert (
-        read_json_uri(first)["request_sha256"]
-        != read_json_uri(second)["request_sha256"]
-    )
-
-
-def test_failed_batch_cancels_without_exposing_worker_output(monkeypatch):
-    commands = []
-
-    def run(command, **kwargs):
-        commands.append(command)
-        return SimpleNamespace(
-            returncode=9 if command[0] == "sbatch" else 0,
-            stderr="private-worker-details",
-        )
-
-    monkeypatch.setattr(batch_module.subprocess, "run", run)
-    with pytest.raises(RuntimeError, match="exit code 9") as error:
-        batch_module._submit(
-            {"transport": "local", "scripts": {"pretrain": "/job.sh"}},
-            "pretrain",
-            "request.json",
-        )
-    assert "private-worker-details" not in str(error.value)
-    assert commands[1][0] == "scancel"
-    assert commands[0][3].split("=", 1)[1] == commands[1][1].split("=", 1)[1]
-
-
-def test_soperator_uses_argv_transport_not_a_shell(monkeypatch):
-    settings = {
-        "transport": "soperator",
-        "context": "example-context",
-        "namespace": "slurm",
-        "login_pod": "login-0",
-        "login_container": "sshd",
-    }
-    calls = []
-    monkeypatch.setattr(
-        batch_module, "_pod_execute", lambda config, argv: calls.append(argv) or 0
-    )
-    assert batch_module._execute(settings, ["sbatch", "/job.sh"]) == 0
-    assert calls == [["chroot", "/mnt/jail", "sbatch", "/job.sh"]]
-
-
 @pytest.mark.parametrize("stage", ["pretrain", "finetune"])
 def test_training_cannot_use_holdout(tmp_path, stage):
     with pytest.raises(ValueError, match="partition"):
@@ -279,3 +188,46 @@ def test_stale_batch_result_cannot_be_published(tmp_path, monkeypatch):
             settings, "pretrain", "train", _split(tmp_path), "", output, "test", 1
         )
     assert not Path(output).exists()
+
+
+def test_batch_retry_resumes_prior_weights_and_publishes_changed_candidate(
+    tmp_path, monkeypatch
+):
+    settings = _write(tmp_path / "settings.json", {"transport": "local"})
+    index = _split(tmp_path)
+    outputs = [str(tmp_path / f"train/{i}/candidate.json") for i in (1, 2)]
+
+    def submit(settings, stage, request_uri):
+        request = read_json_uri(request_uri)
+        result = {
+            "schema": "npa.policy.batch-result.v1",
+            "status": "completed",
+            "engine": "operator-trainer",
+            "request_sha256": digest(request),
+            "checkpoint": {
+                "uri": f"/checkpoints/{request['iteration']}",
+                "sha256": str(request["iteration"]) * 64,
+            },
+        }
+        write_json_uri(request["result_uri"], result)
+
+    monkeypatch.setattr(batch_module, "_submit", submit)
+    for iteration, output in enumerate(outputs, start=1):
+        batch_module.batch(
+            settings, "pretrain", "train", index, "", output, "test", iteration
+        )
+    first, second = [read_json_uri(output) for output in outputs]
+    assert "checkpoint" not in first["request"]
+    assert second["request"]["checkpoint"] == first["checkpoint"]
+    assert second["checkpoint"]["sha256"] != first["checkpoint"]["sha256"]
+
+
+@pytest.mark.parametrize("artifact", [0, 1])
+def test_production_gate_rejects_reference_candidate_or_evaluation(tmp_path, artifact):
+    arguments = _gate_inputs(tmp_path)
+    payload = read_json_uri(arguments[artifact])
+    payload["engine"] = "numpy-planar-reference"
+    write_json_uri(arguments[artifact], payload)
+    with pytest.raises(ValueError, match="reference engine"):
+        gate(*arguments)
+    assert not Path(arguments[-1]).exists()

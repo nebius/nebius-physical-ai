@@ -29,7 +29,7 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "The turnkey reference generates complete LeRobot v3 data and includes a Slurm-compatible reference worker; production datasets and model scripts remain operator inputs.",
+      "reason": "The local teaching demo generates LeRobot v3 data. Its planar worker is rejected by production gates; production datasets, actual-engine result metadata and model scripts remain operator inputs.",
       "evidence": [
         "npa/tests/e2e/test_policy_training_live.py::test_real_fiftyone_curation_and_group_split",
         "npa/tests/e2e/test_policy_training_live.py::test_turnkey_reference_demo"

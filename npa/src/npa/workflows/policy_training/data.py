@@ -14,6 +14,7 @@ from PIL import Image
 
 from npa.workbench.dataset.storage import read_bytes_uri, read_json_uri, write_json_uri
 from .contracts import digest, probability
+from .diagnostics import _cleanup
 
 
 def _episodes(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -116,7 +117,7 @@ def curate(input_uri: str, output_uri: str, policy_uri: str) -> None:
                 episodes, selected, policy, output_uri, _measurements(dataset)
             )
     finally:
-        dataset.delete()
+        _cleanup(dataset.delete, output_uri)
 
 
 def _measurements(dataset):

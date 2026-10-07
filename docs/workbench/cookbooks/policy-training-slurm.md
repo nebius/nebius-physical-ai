@@ -35,8 +35,7 @@ On minimal Linux hosts, install Chromium's system dependencies with
 This is a **local CPU reference run** of the pipeline. It executes real FiftyOne,
 LeRobot v3 conversion (Parquet plus camera videos), NumPy behavior cloning,
 checkpoint verification, measured evaluation, and both retry loops. Its
-`reference-local` batch transport launches the supplied worker as a local
-process; it does not invoke Slurm, SkyPilot, a foundation model, or robot hardware.
+separate `demo_stage` entry point runs the supplied local worker; it does not invoke Slurm, SkyPilot, a foundation model, or robot hardware.
 The Slurm workflow and its deployment prerequisites below remain unchanged.
 
 The generated task is analytical Cartesian reaching. Of 132 source episodes,
@@ -68,16 +67,14 @@ The HTML embeds an allowlisted report with no worker paths or request payloads
 and makes no network requests. The setup needs network access to install its
 dependencies; the generated workload needs no cloud credentials or customer data.
 
-For a real Slurm reference run, the supplied
+The planar teaching worker can be submitted manually with
 [`policy_training_reference.sbatch`](../../../npa/scripts/policy_training_reference.sbatch)
-implements all five batch stages. Install `npa` on the worker, set
-`NPA_POLICY_PYTHON` to that Python executable, stage the generated LeRobot dataset
-and manifests in the run's private S3 storage, and map all five `scripts` entries
-to this script's absolute worker path. Rewrite the staged episode manifest's
-dataset and preview URIs to the corresponding S3 locations. Use `transport: local`
-on a Slurm login host, or `soperator` from the Kubernetes workflow. The reference
-worker intentionally rejects datasets whose robot type is not
-`npa_generated_planar_reacher`; production training uses the operator's own scripts.
+for Slurm transport experiments. Its `numpy-planar-reference` results cannot
+pass production batch validation or gates. The production CLI accepts only
+`local` (real Slurm clients) or `soperator` transport settings; copying a demo
+settings file cannot select the teaching trainer. The local demo uses FiftyOne
+1.22.0; the separately qualified workflow image uses 1.21.0. These are distinct
+environments, not a claim of identical dependency versions.
 
 Committed live coverage can reproduce the reference, including MP4 export:
 
@@ -204,10 +201,30 @@ Each script receives `--request-uri URI`. The JSON request supplies `run_id`,
 `stage`, `iteration`, `partition`, a `dataset` manifest URI and digest, an input
 `checkpoint` where applicable, and a unique `result_uri`. Retrieve input data
 explicitly: Slurm does not transfer dataset files for the script. The adapter
-uses [`sbatch --wait`](https://slurm.schedmd.com/sbatch.html) and propagates batch
-failure. An interrupted or failed client requests cancellation of its uniquely
-named job. If the control connection is lost, inspect that job in private Slurm
-evidence and confirm cancellation before retrying or tearing down the cluster.
+uses [`sbatch --parsable`](https://slurm.schedmd.com/sbatch.html) to obtain a job
+ID immediately, then short `squeue` and `sacct` calls to monitor that exact job.
+This requires Slurm accounting and ordinary, non-array jobs on one cluster.
+Each iteration keeps an immutable request and a durable `submission.json` under
+its private `attempts/` directory. The submission reservation uses conditional
+S3 creation (or exclusive local file creation), so another invocation cannot
+submit a duplicate. Resume with the same run and output paths to adopt the job.
+
+A lost connection leaves the job running. When the submission response was lost,
+resume reconciles its unique name against queue and accounting records. Missing,
+ambiguous or changed identity evidence stops without cancellation or resubmission;
+an operator must resolve that uncertainty before starting a replacement run.
+SIGINT/SIGTERM while monitoring requests cancellation of the recorded job ID.
+Cancellation failure preserves the original interruption and private diagnostics.
+Script stdout/stderr belong in the script's private `#SBATCH --output`/`--error`
+files. Client failures, terminal accounting and stage tracebacks are retained in
+private `diagnostics/` JSON artifacts beside the attempt or stage output. Keep
+those prefixes access controlled; never publish their raw contents. If diagnostic
+storage itself fails, the console reports that fact without masking the stage error.
+
+Until-only loops have no default duration, spending or iteration limit. A training
+result that repeats the input checkpoint SHA-256 fails immediately, even if its
+URI changed. This detects unchanged weights, not eventual convergence; operators
+can cancel a run whose changing checkpoints continue to miss the fixed threshold.
 
 Write a result only after the work and artifact uploads complete:
 
@@ -215,6 +232,7 @@ Write a result only after the work and artifact uploads complete:
 {
   "schema": "npa.policy.batch-result.v1",
   "status": "completed",
+  "engine": "operator-trainer",
   "request_sha256": "<canonical-request-sha256>",
   "checkpoint": {"uri": "<private-checkpoint-uri>", "sha256": "<checkpoint-sha256>"},
   "systems": {
@@ -226,6 +244,8 @@ Write a result only after the work and artifact uploads complete:
 
 Compute `request_sha256` with `npa.workflows.policy_training.contracts.digest`.
 The hash binds the full JSON request, including its unique result destination.
+All results must name the actual execution `engine`; missing engines and the
+planar reference engine are rejected by production validation and gates.
 Training results require the checkpoint identity. Evaluation results additionally
 require each configured system's integer task-success counts and must identify
 the exact requested checkpoint. The deployment test additionally requires

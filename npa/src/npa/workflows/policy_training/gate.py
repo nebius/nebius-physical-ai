@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from npa.workbench.dataset.storage import read_json_uri, write_json_uri
-from .contracts import checkpoint, digest, probability
+from .contracts import checkpoint, digest, probability, _validate_engine
 
 
-def gate(evaluation_uri, candidate_uri, split_uri, policy_uri, phase, output_uri):
+def gate(
+    evaluation_uri,
+    candidate_uri,
+    split_uri,
+    policy_uri,
+    phase,
+    output_uri,
+    *,
+    _reference=False,
+):
     """Require all configured evaluation systems to pass their thresholds.
 
     Args:
@@ -16,13 +25,17 @@ def gate(evaluation_uri, candidate_uri, split_uri, policy_uri, phase, output_uri
         policy_uri: Required systems and numeric thresholds by phase.
         phase: Pretrain or finetune.
         output_uri: Measured workflow decision location.
+        _reference: Internal teaching-demo validation, unavailable in production CLI.
     Returns:
         None.
     Raises:
         ValueError: Measurements or provenance are missing or inconsistent.
     """
     evaluation = read_json_uri(evaluation_uri)
-    candidate = checkpoint(read_json_uri(candidate_uri))
+    trained = read_json_uri(candidate_uri)
+    _validate_engine(trained, reference=_reference)
+    _validate_engine(evaluation, reference=_reference)
+    candidate = checkpoint(trained)
     partition = {"pretrain": "holdout_1", "finetune": "holdout_2"}[phase]
     expected = read_json_uri(split_uri)["partitions"][partition]
     _validate_evaluation(evaluation, candidate, expected, phase, partition)
@@ -52,6 +65,7 @@ def _write_gate(evaluation, candidate, expected, phase, thresholds, rates, outpu
         output_uri,
         {
             "schema": "npa.policy.gate.v1",
+            "engine": evaluation["engine"],
             "phase": phase,
             "decision": "promote_checkpoint" if passed else "loop_back",
             "checkpoint": candidate,

@@ -13,6 +13,8 @@ from npa.orchestration.npa_workflow.catalog import (
     drop_empty_optional_flags,
 )
 from npa.orchestration.npa_workflow.decisions import (
+    DECISION_PROMOTE,
+    DECISION_LOOP_BACK,
     load_decision,
     normalize_decision,
     refresh_context_decision,
@@ -703,7 +705,7 @@ def _read_loop_decision(spec, state, ctx, reader, assumption):
         writer = _sequence_decision_writer(spec, state)
         _refresh_decision(ctx, state=writer, reader=reader, read_s3=writer is not None)
     if until_only:
-        if ctx.last_decision not in {"promote_checkpoint", "loop_back_to_inner_loop"}:
+        if ctx.last_decision not in {DECISION_PROMOTE, DECISION_LOOP_BACK}:
             raise NpaWorkflowError("until-only loop requires a valid measured decision")
         return
     if not ctx.last_decision:

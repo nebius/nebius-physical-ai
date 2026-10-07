@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -12,6 +13,7 @@ import time
 import uuid
 
 from .public_vla_launch import IMAGE
+from .diagnostics import _cleanup
 
 
 def main() -> None:
@@ -29,12 +31,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-path", type=Path, required=True)
     parser.add_argument("--output-path", type=Path, required=True)
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="Delete the owned namespace and volume after verifying collected artifacts",
+    )
     args = parser.parse_args()
+    os.umask(0o077)
     receipt = json.loads(args.input_path.read_text())
     kubectl = _kubectl(receipt)
     _wait_for_job(kubectl)
     args.output_path.mkdir(parents=True, exist_ok=False, mode=0o700)
     _download(kubectl, receipt, args.output_path)
+    if args.cleanup:
+        from .public_vla_cleanup import _cleanup_run
+
+        _cleanup_run(receipt, args.output_path)
 
 
 def _kubectl(receipt):
@@ -86,31 +98,42 @@ def _download(kubectl, receipt, output):
             kubectl + ["wait", "--for=condition=Ready", "pod/" + name, "--timeout=-1s"],
             check=True,
         )
-        archive = output / "deliverables.tar.gz"
-        command = kubectl + [
-            "exec",
-            name,
-            "--",
-            "tar",
-            "-czf",
-            "-",
-            "-C",
-            "/work/run",
-            "report",
-            "exported-policy",
-            "completed.json",
-            "selection.json",
-        ]
-        with archive.open("xb") as stream:
-            subprocess.run(command, stdout=stream, check=True)
-        with tarfile.open(archive) as stream:
-            stream.extractall(output, filter="data")
+        _extract_deliverables(kubectl, name, output)
         print(
             "Collected HTML, rollout MP4s and the trained policy: "
             + str(output.resolve())
         )
     finally:
-        subprocess.run(kubectl + ["delete", "pod", name, "--wait=true"], check=True)
+        _cleanup(
+            lambda: subprocess.run(
+                kubectl + ["delete", "pod", name, "--wait=true"],
+                capture_output=True,
+                check=True,
+            ),
+            str(output / "collection.json"),
+        )
+
+
+def _extract_deliverables(kubectl, name, output):
+    archive = output / "deliverables.tar.gz"
+    command = kubectl + [
+        "exec",
+        name,
+        "--",
+        "tar",
+        "-czf",
+        "-",
+        "-C",
+        "/work/run",
+        "report",
+        "exported-policy",
+        "completed.json",
+        "selection.json",
+    ]
+    with archive.open("xb") as stream:
+        subprocess.run(command, stdout=stream, check=True)
+    with tarfile.open(archive) as stream:
+        stream.extractall(output, filter="data")
 
 
 def _reader(name, namespace):

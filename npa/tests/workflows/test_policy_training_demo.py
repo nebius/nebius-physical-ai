@@ -99,23 +99,11 @@ def test_converged_optimizer_fails_instead_of_inventing_a_gate_pass(tmp_path):
         train(request, _training_records(), weights)
 
 
-def test_reference_transport_runs_real_worker_without_impersonating_slurm(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        batch_module.subprocess,
-        "run",
-        lambda argv, **kwargs: calls.append((argv, kwargs)),
-    )
-    batch_module._submit(
-        {"transport": "reference-local"}, "pretrain", "/private/request.json"
-    )
-    assert calls[0][0][1:] == [
-        "-m",
-        "npa.workflows.policy_training.reference",
-        "--request-uri",
-        "/private/request.json",
-    ]
-    assert calls[0][1]["check"] is True
+def test_production_rejects_reference_transport():
+    with pytest.raises(ValueError, match="production transport"):
+        batch_module._submit(
+            {"transport": "reference-local"}, "pretrain", "/private/request.json"
+        )
 
 
 @pytest.mark.parametrize(

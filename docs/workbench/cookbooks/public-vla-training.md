@@ -11,6 +11,15 @@ on LIBERO. This is **continued training and task adaptation**, not from-scratch
 foundation pretraining or an unseen-benchmark result. The complete reference is
 implemented; there are no operator-written training or evaluation script slots.
 
+This is an **out-of-band operator reference**, launched directly through
+Kubernetes or Slurm. It is not an agent-discoverable Workbench `toolRef` or
+`npa.workflow`: it has no SkyPilot submission, Workbench run ledger, or durable
+interpreter resume. Its argparse `--input-path` and `--output-path` options use
+local files, and its console output is human-readable. The separate
+[Slurm policy workflow](policy-training-slurm.md) has Workbench control-plane
+integration but requires operator model and benchmark scripts. The measured
+public reference does not qualify that workflow's two retry loops.
+
 ## Run on Nebius Managed Kubernetes
 
 Start with Workbench installed with its `adapter` extra, a configured `kubectl` context,
@@ -36,8 +45,23 @@ explicit selection. No cluster is created or replaced by this launcher.
 
 Checkpoints, optimizer state and logs remain on the run's persistent volume.
 The GPU allocation ends when the Job exits. Collection removes its temporary
-CPU reader Pod. Retain or delete the run's namespace and volume according to
-your artifact-retention needs; the launcher does not delete saved training state.
+CPU reader Pod. Add `--cleanup` to collection to delete the owned namespace and
+100 GiB volume after verifying completion, downloaded weights against the saved
+checksum, namespace UID and ownership label. This also deletes optimizer state
+and private worker logs, so omit it when those are needed for recovery. Cleanup
+refuses active/failed jobs, unexpected jobs and old receipts without an ownership
+UID. To retry cleanup using an existing collection:
+
+```bash
+npa/.venv/bin/python -m npa.workflows.policy_training.public_vla_cleanup \
+  --input-path ./outputs/public-vla-launch/receipt.json \
+  --output-path ./outputs/public-vla-results
+```
+
+Namespace deletion is verified before writing a private `cleanup.json` receipt.
+A retained persistent volume with a `Retain` reclaim policy remains an
+operator-owned storage resource; namespace deletion does not prove its bytes
+were erased.
 It does not change project-wide storage settings or publish models to the Hub.
 
 For a single 1920×1080 demonstration film, install the existing

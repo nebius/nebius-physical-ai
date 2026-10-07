@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -60,14 +61,19 @@ def main() -> None:
     from .data import curate, split
     from .gate import gate
 
+    _run({"curate": curate, "split": split, "batch": batch, "gate": gate})
+
+
+def _run(handlers):
+    from .diagnostics import _failure
+
+    os.umask(0o077)
     arguments = vars(build_parser().parse_args())
     command = arguments.pop("command")
     try:
-        {"curate": curate, "split": split, "batch": batch, "gate": gate}[command](
-            **arguments
-        )
+        handlers[command](**arguments)
     except Exception as exc:
-        # Worker diagnostics can contain private dataset paths and job output.
+        _failure(arguments["output_uri"], exc)
         raise SystemExit(
             f"policy stage failed ({type(exc).__name__}); inspect private worker evidence"
         ) from None

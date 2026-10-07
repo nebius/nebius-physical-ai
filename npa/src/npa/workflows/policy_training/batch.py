@@ -2,118 +2,23 @@
 
 from __future__ import annotations
 
-import signal
-import subprocess
-import sys
 import uuid
-from pathlib import PurePosixPath
-from typing import Any
 
 from npa.workbench.dataset.storage import read_json_uri, write_json_uri
-from .contracts import approved_checkpoint, checkpoint, digest
+from .contracts import approved_checkpoint, checkpoint, digest, _validate_engine
 from .selection import select_training_data
+from .slurm import _reserve, _submit_slurm
 
 
-def _execute(settings: dict[str, Any], command: list[str]) -> int:
-    if settings["transport"] == "local":
-        return subprocess.run(command, capture_output=True, check=False).returncode
-    if settings["transport"] != "soperator":
-        raise ValueError("transport must be local or soperator")
-    return _pod_execute(settings, ["chroot", "/mnt/jail", *command])
-
-
-def _pod_execute(settings, command):
-    from kubernetes import client, config
-    from kubernetes.stream import stream
-
-    configuration = client.Configuration()
-    if settings.get("context"):
-        config.load_kube_config(
-            context=settings["context"], client_configuration=configuration
-        )
-    else:
-        config.load_incluster_config(client_configuration=configuration)
-    with client.ApiClient(configuration) as api_client:
-        core = client.CoreV1Api(api_client)
-        connection = stream(
-            core.connect_get_namespaced_pod_exec,
-            settings["login_pod"],
-            settings["namespace"],
-            container=settings["login_container"],
-            command=command,
-            stderr=True,
-            stdin=False,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
-        try:
-            while connection.is_open():
-                connection.update(timeout=1)
-                connection.read_stdout()
-                connection.read_stderr()
-            if connection.returncode is None:
-                raise RuntimeError(
-                    "Slurm client connection closed without an exit status"
-                )
-            return connection.returncode
-        finally:
-            connection.close()
-
-
-def _terminate(signum, frame):
-    raise KeyboardInterrupt("Slurm stage interrupted")
-
-
-def _submit(settings: dict[str, Any], stage: str, request_uri: str) -> None:
-    if settings["transport"] == "reference-local":
-        # This explicit reference mode exercises the same result contract without Slurm.
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "npa.workflows.policy_training.reference",
-                "--request-uri",
-                request_uri,
-            ],
-            check=True,
-            capture_output=True,
-        )
-        return
+def _submit(settings, stage, request_uri):
+    if settings.get("transport") not in {"local", "soperator"}:
+        raise ValueError("production transport must be local or soperator")
     _submit_slurm(settings, stage, request_uri)
 
 
-def _submit_slurm(settings: dict[str, Any], stage: str, request_uri: str) -> None:
-    script = settings["scripts"][stage]
-    if not isinstance(script, str) or not PurePosixPath(script).is_absolute():
-        raise ValueError("batch script must be an absolute worker-readable path")
-    name = "npa-policy-" + uuid.uuid4().hex
-    command = [
-        "sbatch",
-        "--wait",
-        "--parsable",
-        f"--job-name={name}",
-        script,
-        "--request-uri",
-        request_uri,
-    ]
-    previous = signal.signal(signal.SIGTERM, _terminate)
-    try:
-        returncode = _execute(settings, command)
-        if returncode:
-            raise RuntimeError(f"Slurm batch failed with exit code {returncode}")
-    except BaseException:
-        # A lost client connection does not cancel a submitted batch job.
-        if _execute(settings, ["scancel", f"--name={name}"]):
-            raise RuntimeError(
-                "Slurm batch failed and its cancellation request failed"
-            ) from None
-        raise
-    finally:
-        signal.signal(signal.SIGTERM, previous)
-
-
-def _request(stage, partition, split_uri, input_uri, run_id, output_uri):
+def _request(
+    stage, partition, split_uri, input_uri, run_id, output_uri, *, _reference=False
+):
     splits = read_json_uri(split_uri)
     selected = splits["partitions"][partition]
     if digest(read_json_uri(selected["uri"])) != selected["sha256"]:
@@ -128,7 +33,7 @@ def _request(stage, partition, split_uri, input_uri, run_id, output_uri):
     }
     if input_uri:
         request["checkpoint"] = (
-            approved_checkpoint(input_uri)
+            approved_checkpoint(input_uri, _reference=_reference)
             if stage in {"finetune", "deploy"}
             else checkpoint(read_json_uri(input_uri))
         )
@@ -157,6 +62,30 @@ def batch(
         ValueError: Partition or output provenance is invalid.
         RuntimeError: Slurm reports a failed batch job.
     """
+    _batch(
+        settings_uri,
+        stage,
+        partition,
+        split_uri,
+        input_uri,
+        output_uri,
+        run_id,
+        iteration,
+    )
+
+
+def _batch(
+    settings_uri,
+    stage,
+    partition,
+    split_uri,
+    input_uri,
+    output_uri,
+    run_id,
+    iteration,
+    *,
+    _reference=False,
+):
     _validate_partition(stage, partition)
     settings = read_json_uri(settings_uri)
     request, request_uri = _prepare_request(
@@ -168,28 +97,61 @@ def batch(
         run_id,
         int(iteration),
         settings,
+        _reference=_reference,
     )
-    write_json_uri(request_uri, request)
-    _submit(settings, stage, request_uri)
+    _complete_request(settings, stage, request, request_uri, output_uri, _reference)
+
+
+def _complete_request(settings, stage, request, request_uri, output_uri, _reference):
+    if _reference:
+        from .reference import run
+
+        write_json_uri(request_uri, request)
+        run(request_uri)
+    else:
+        if not _reserve(request_uri, request) and read_json_uri(request_uri) != request:
+            raise ValueError("saved batch request changed; start a new run")
+        _submit(settings, stage, request_uri)
     result = read_json_uri(request["result_uri"])
-    _validate_result(request, result)
+    _validate_result(request, result, _reference=_reference)
     write_json_uri(output_uri, {**result, "request": request})
 
 
 def _prepare_request(
-    stage, partition, split_uri, input_uri, output_uri, run_id, iteration, settings=None
+    stage,
+    partition,
+    split_uri,
+    input_uri,
+    output_uri,
+    run_id,
+    iteration,
+    settings=None,
+    *,
+    _reference=False,
 ):
     _validate_partition(stage, partition)
     if iteration < 1:
         raise ValueError("iteration must be positive")
-    attempt = output_uri.rsplit("/", 1)[0] + "/attempts/" + uuid.uuid4().hex
+    attempt = (
+        output_uri.rsplit("/", 1)[0]
+        + "/attempts/"
+        + uuid.uuid5(uuid.NAMESPACE_URL, output_uri).hex
+    )
     request = _request(
-        stage, partition, split_uri, input_uri, run_id, attempt + "/result.json"
+        stage,
+        partition,
+        split_uri,
+        input_uri,
+        run_id,
+        attempt + "/result.json",
+        _reference=_reference,
     )
     request["iteration"] = iteration
     select_training_data(request, settings or {})
     if iteration > 1 and stage in {"pretrain", "finetune"}:
-        request["checkpoint"] = _resume_checkpoint(output_uri, request)
+        request["checkpoint"] = _resume_checkpoint(
+            output_uri, request, _reference=_reference
+        )
     return request, attempt + "/request.json"
 
 
@@ -205,14 +167,14 @@ def _validate_partition(stage, partition):
         raise ValueError("stage cannot consume that data partition")
 
 
-def _resume_checkpoint(output_uri, request):
+def _resume_checkpoint(output_uri, request, *, _reference=False):
     root, attempt_number, filename = output_uri.rsplit("/", 2)
     iteration = request["iteration"]
     if attempt_number != str(iteration):
         raise ValueError("training outputs must use an iteration-number directory")
     previous = read_json_uri(f"{root}/{iteration - 1}/{filename}")
     prior_request = previous["request"]
-    _validate_result(prior_request, previous)
+    _validate_result(prior_request, previous, _reference=_reference)
     for key in ("run_id", "stage"):
         if prior_request[key] != request[key]:
             raise ValueError(
@@ -225,14 +187,18 @@ def _resume_checkpoint(output_uri, request):
     return checkpoint(previous)
 
 
-def _validate_result(request, result):
+def _validate_result(request, result, *, _reference=False):
     if result.get("schema") != "npa.policy.batch-result.v1":
         raise ValueError("batch result has an invalid schema")
     if result.get("request_sha256") != digest(request):
         raise ValueError("batch result does not match the current request")
     if result.get("status") != "completed":
         raise ValueError("batch result did not complete")
+    _validate_engine(result, reference=_reference)
     actual = checkpoint(result)
+    if request["stage"] in {"pretrain", "finetune"} and request.get("checkpoint"):
+        if actual["sha256"] == request["checkpoint"]["sha256"]:
+            raise ValueError("training returned unchanged checkpoint bytes")
     if request["stage"] not in {"pretrain", "finetune"}:
         if actual != request["checkpoint"]:
             raise ValueError("evaluation or deployment used the wrong checkpoint")

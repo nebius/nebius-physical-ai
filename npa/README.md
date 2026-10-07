@@ -353,7 +353,12 @@ For a complete public-data GPU training reference, run
 The [public VLA cookbook](../docs/workbench/cookbooks/public-vla-training.md)
 documents the Slurm/Soperator alternative, optional recipe fields, private launch
 receipts, checkpoint recovery, and collection of the trained policy and HTML/MP4
-evaluation report. The reference uses pinned public SmolVLA and LeRobot data.
+evaluation report, plus opt-in `--cleanup` after verified collection. This is an
+out-of-band operator reference with local receipt paths, not an agent-discoverable
+`npa.workflow` or `toolRef`. The reference uses pinned public SmolVLA and LeRobot
+data. The separate [Slurm workflow](../docs/workbench/cookbooks/policy-training-slurm.md)
+uses durable job-ID reconciliation and rejects unchanged checkpoints and planar
+reference results in production gates.
 
 For artifact conversion and sharing, see the
 [CLI / SDK walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md),

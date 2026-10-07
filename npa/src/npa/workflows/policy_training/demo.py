@@ -36,6 +36,12 @@ class _LocalReferenceExecutor:
     def execute(self, step):
         started = time.monotonic()
         command = [sys.executable, *[self.local(arg) for arg in step.argv[1:]]]
+        command = [
+            "npa.workflows.policy_training.demo_stage"
+            if arg == "npa.workflows.policy_training"
+            else arg
+            for arg in command
+        ]
         print(f"Running {step.state}", flush=True)
         with (self.workspace / "workers.log").open("ab") as logs:
             result = subprocess.run(command, stdout=logs, stderr=logs, check=False)

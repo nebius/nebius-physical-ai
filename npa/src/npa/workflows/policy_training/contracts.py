@@ -58,11 +58,12 @@ def checkpoint(payload: dict[str, Any]) -> dict[str, str]:
     return {"uri": value["uri"], "sha256": sha}
 
 
-def approved_checkpoint(uri: str) -> dict[str, str]:
+def approved_checkpoint(uri: str, *, _reference=False) -> dict[str, str]:
     """Load only a checkpoint that passed its measured gate.
 
     Args:
         uri: Gate artifact location.
+        _reference: Internal teaching-demo validation only.
     Returns:
         Approved checkpoint identity.
     Raises:
@@ -73,4 +74,13 @@ def approved_checkpoint(uri: str) -> dict[str, str]:
     gate = read_json_uri(uri)
     if gate.get("decision") != "promote_checkpoint":
         raise ValueError("checkpoint has not passed its evaluation gate")
+    _validate_engine(gate, reference=_reference)
     return checkpoint(gate)
+
+
+def _validate_engine(payload, *, reference=False):
+    engine = payload.get("engine")
+    if not isinstance(engine, str) or not engine.strip():
+        raise ValueError("result requires the actual execution engine")
+    if not reference and engine.strip() == "numpy-planar-reference":
+        raise ValueError("reference engine cannot qualify a production checkpoint")

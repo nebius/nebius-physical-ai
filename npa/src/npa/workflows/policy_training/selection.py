@@ -42,7 +42,10 @@ def select_training_data(request: dict, settings: dict) -> None:
     if not episodes:
         raise ValueError("training selection contains no episodes")
     payload = _mixture(episodes, policy)
-    uri = request["result_uri"].rsplit("/", 1)[0] + "/training-episodes.json"
+    uri = (
+        request["result_uri"].rsplit("/", 1)[0]
+        + f"/training-episodes-{digest(payload)}.json"
+    )
     write_json_uri(uri, payload)
     request["dataset"] = {"uri": uri, "sha256": digest(payload)}
     request["training_selection"] = policy
