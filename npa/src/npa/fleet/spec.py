@@ -715,6 +715,10 @@ def _cluster_from(
             data.get("gpu_cuda_smoke_image", DEFAULT_CUDA_SMOKE_IMAGE)
             or DEFAULT_CUDA_SMOKE_IMAGE
         ),
+        gpu_graphics_smoke=_boolean_from(data, "gpu_graphics_smoke", default=False),
+        gpu_graphics_smoke_image=str(
+            data.get("gpu_graphics_smoke_image", DEFAULT_GRAPHICS_SMOKE_IMAGE)
+        ),
         gpu_workload_profile=str(data.get("gpu_workload_profile", "") or ""),
         gpu_driver_package_repositories=data.get("gpu_driver_package_repositories", {}),
         mig=mig,

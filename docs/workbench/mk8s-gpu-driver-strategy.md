@@ -61,9 +61,11 @@ single explicit profile instead of assembling independent platform, preset, and
 driver flags:
 
 ```bash
-npa cluster up --gpu-workload-profile rtx-rendering
+npa cluster up --gpu-workload-profile rtx-rendering \
+  --gpu-graphics-smoke-image '<reviewed-registry>/graphics@sha256:<64-hex-digest>'
 # or, for additive project setup:
-npa provision-if-absent --gpu-workload-profile rtx-rendering
+npa provision-if-absent --gpu-workload-profile rtx-rendering \
+  --gpu-graphics-smoke-image '<reviewed-registry>/graphics@sha256:<64-hex-digest>'
 ```
 
 The marketplace driver defaults may omit zonal RTX selectors. NPA supplies an
@@ -81,21 +83,37 @@ shapes select the supported NVIDIA GPU Operator mounted-driver path. The
 8-GPU RTX preset is not an SXM/NVL fabric topology, so GPU-cluster/InfiniBand
 settings remain disabled.
 It also makes graphics readiness mandatory. After the ordinary stability and
-per-node CUDA vectorAdd gates, NPA runs an immutable, payload-clean RTX image
+per-node CUDA vectorAdd gates, NPA runs the selected graphics probe image
 with `runtimeClassName: nvidia` and `NVIDIA_DRIVER_CAPABILITIES=all` on every
 requested GPU node. The pod must dynamically load `libGLX_nvidia.so.0` and
 `libEGL_nvidia.so.0`, create a Vulkan instance, and enumerate an NVIDIA physical
 device. A missing runtime class, library mount, ICD, or device fails deployment.
+
+The default `tool://sonic` follows the governed public-release policy. The
+historical SONIC release remains quarantined, so a deployment requiring graphics
+health must select a reviewed operator image before provisioning. Use
+`--gpu-graphics-smoke-image` with either CLI, `gpu_graphics_smoke_image` in Fleet
+YAML, or the matching SDK argument. Existing explicit operator tags remain
+supported; prefer an immutable digest qualified for GLX/EGL/Vulkan. An image
+pull and a hardware health pass do not establish image-byte acceptance.
+CPU-only or disabled graphics checks do not resolve this default. Read-only
+plans and the existing standalone `--skip-validate` option remain available;
+skipping validation does not establish graphics readiness.
 
 Fleet and SDK use the same contract:
 
 ```yaml
 defaults:
   gpu_workload_profile: rtx-rendering
+  gpu_graphics_smoke_image: '<reviewed-registry>/graphics@sha256:<64-hex-digest>'
 ```
 
 ```python
-ClusterSpec(name="render", gpu_workload_profile="rtx-rendering")
+ClusterSpec(
+    name="render",
+    gpu_workload_profile="rtx-rendering",
+    gpu_graphics_smoke_image="<reviewed-registry>/graphics@sha256:<64-hex-digest>",
+)
 ```
 
 The empty profile retains all historical defaults. Conflicting platform,
