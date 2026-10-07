@@ -147,6 +147,94 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "-m",
     "npa.workflows.byof.openpi_full_droid",
 ]
+_OPENPI_SERVICE_LIFECYCLE = [
+    "python3",
+    "-m",
+    "npa.workflows.byof.openpi_service_lifecycle",
+]
+
+
+def _pi05_service_argv(command: str, role: str) -> list[str]:
+    prefix = f"{role}_service"
+    checkpoint = "base_checkpoint_uri" if role == "base" else "trained_checkpoint_uri"
+    return [
+        *_OPENPI_SERVICE_LIFECYCLE,
+        command,
+        "--run-id",
+        f"{{{{run.id}}}}-{role}",
+        "--output-uri",
+        f"{{{{config.{prefix}_{command}_uri}}}}",
+        "--component-root-uri",
+        "{{config.component_root_uri}}",
+        "--terms-diagnostic-root-uri",
+        "{{config.terms_diagnostic_root_uri}}",
+        "--runtime-image",
+        "{{config.runtime_image}}",
+        "--namespace",
+        "{{config.service_namespace}}",
+        "--checkpoint-uri",
+        f"{{{{config.{checkpoint}}}}}",
+        "--checkpoint-role",
+        role,
+        "--config-name",
+        "{{config.base_config_name}}",
+        "--gpu-count",
+        "{{config.gpu_count}}",
+        "--expected-gpu-type",
+        "{{config.expected_gpu_type}}",
+        "--expected-compute-capability",
+        "{{config.expected_compute_capability}}",
+        "--server-cpu",
+        "{{config.service_server_cpus}}",
+        "--server-memory",
+        "{{config.service_server_memory}}",
+        "--gpu-node-selector-key",
+        "{{config.service_gpu_node_selector_key}}",
+        "--gpu-node-selector-value",
+        "{{config.service_gpu_node_selector_value}}",
+        "--service-cache-size",
+        "{{config.service_cache_size}}",
+        "--server-ready-timeout-seconds",
+        "{{config.service_server_ready_timeout_seconds}}",
+        "--cleanup-timeout-seconds",
+        "{{config.service_cleanup_timeout_seconds}}",
+        "--poll-interval-seconds",
+        "{{config.service_poll_interval_seconds}}",
+        "--api-timeout-seconds",
+        "{{config.service_api_timeout_seconds}}",
+        "--http-timeout-seconds",
+        "{{config.service_http_timeout_seconds}}",
+    ]
+
+
+def _pi05_closed_loop_argv(role: str) -> list[str]:
+    return [
+        "/opt/npa/sim/venv/bin/python",
+        "-m",
+        "npa.workflows.sim2real.pi05_closed_loop",
+        "--service-receipt-uri",
+        f"{{{{config.{role}_service_start_uri}}}}",
+        "--gold-collection-uri",
+        "{{config.gold_collection_uri}}",
+        "--output-uri",
+        f"{{{{config.{role}_gold_uri}}}}",
+        "--artifact-root-uri",
+        f"{{{{config.{role}_artifact_root_uri}}}}",
+        "--component-root-uri",
+        "{{config.component_root_uri}}",
+        "--checkpoint-role",
+        role,
+        "--split",
+        "gold",
+        "--episodes",
+        "{{config.gold_episodes}}",
+        "--decisions",
+        "{{config.eval_decisions}}",
+        "--seed",
+        "{{config.gold_seed}}",
+    ]
+
+
 _MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
 _OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
 _NEWTON_PIPELINE = ["python3", "-m", "npa.workflows.byof.newton_pipeline"]
@@ -2236,6 +2324,120 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             ),
         ],
     ),
+    "workbench.sim2real.pi05_collect_all": ToolEntry(
+        name="workbench.sim2real.pi05_collect_all",
+        description=(
+            "Collect physics-verified train/validation/gold demonstrations with "
+            "disjoint object morphologies and scene configurations."
+        ),
+        argv_template=[
+            "/opt/npa/sim/venv/bin/python",
+            "-m",
+            "npa.workflows.sim2real.pi05_collect_all",
+            "--output-root-uri",
+            "{{config.collection_root_uri}}",
+            "--episodes-per-split",
+            "{{config.expert_episodes_per_split}}",
+            "--seed",
+            "{{config.expert_seed}}",
+            "--object-usd",
+            "{{config.object_usd}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+        omit_flags_when_empty=("--object-usd",),
+    ),
+    "workbench.sim2real.pi05_prepare": ToolEntry(
+        name="workbench.sim2real.pi05_prepare",
+        description="Publish the final-byte-bound surface task and prerequisite contract.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.pi05_stage",
+            "prepare",
+            "--run-id",
+            "{{run.id}}",
+            "--output-uri",
+            "{{config.preparation_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
+    "workbench.sim2real.pi05_external_seam": ToolEntry(
+        name="workbench.sim2real.pi05_external_seam",
+        description="Record the honest operator-owned physical robot validation seam.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.pi05_stage",
+            "external-seam",
+            "--run-id",
+            "{{run.id}}",
+            "--output-uri",
+            "{{config.external_seam_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
+    "workbench.sim2real.pi05_finalize": ToolEntry(
+        name="workbench.sim2real.pi05_finalize",
+        description=(
+            "Compare same-protocol baseline/adapted gold metrics and publish "
+            "canonical factual MP4, Rerun, checkpoint, and external-seam lineage."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.pi05_stage",
+            "finalize",
+            "--run-id",
+            "{{run.id}}",
+            "--baseline-uri",
+            "{{config.base_gold_uri}}",
+            "--adapted-uri",
+            "{{config.adapted_gold_uri}}",
+            "--training-uri",
+            "{{config.training_uri}}",
+            "--reload-uri",
+            "{{config.reload_uri}}",
+            "--checkpoint-manifest-uri",
+            "{{config.trained_checkpoint_manifest_uri}}",
+            "--external-seam-uri",
+            "{{config.external_seam_uri}}",
+            "--adapted-artifact-root-uri",
+            "{{config.adapted_artifact_root_uri}}",
+            "--final-mp4-uri",
+            "{{config.final_mp4_uri}}",
+            "--final-rrd-uri",
+            "{{config.final_rrd_uri}}",
+            "--output-uri",
+            "{{config.final_report_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
+    "workbench.sim2real.pi05_export": ToolEntry(
+        name="workbench.sim2real.pi05_export",
+        description=(
+            "Validate physics demonstrations and export dense OpenPI NPZ plus "
+            "native LeRobot v3 data with train-only normalization."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.pi05_data",
+            "--train-uri",
+            "{{config.train_collection_uri}}",
+            "--validation-uri",
+            "{{config.validation_collection_uri}}",
+            "--gold-uri",
+            "{{config.gold_collection_uri}}",
+            "--output-uri",
+            "{{config.dataset_root_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
     "workbench.byof.repo": ToolEntry(
         name="workbench.byof.repo",
         description=(
@@ -2286,7 +2488,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.terms_diagnostic_root_uri}}",
             "--runtime-image",
             "{{config.runtime_image}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
         ],
+        omit_flags_when_empty=("--component-root-uri",),
+        config_defaults={"component_root_uri": ""},
     ),
     "workbench.openpi.direct": ToolEntry(
         name="workbench.openpi.direct",
@@ -2376,6 +2582,36 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.service_http_timeout_seconds}}",
         ],
     ),
+    "workbench.openpi.pi05_base_service_start": ToolEntry(
+        name="workbench.openpi.pi05_base_service_start",
+        description="Start the private base-checkpoint service for declared Isaac gold evaluation.",
+        argv_template=_pi05_service_argv("start", "base"),
+    ),
+    "workbench.openpi.pi05_base_service_cleanup": ToolEntry(
+        name="workbench.openpi.pi05_base_service_cleanup",
+        description="Clean up the exact base-checkpoint private service.",
+        argv_template=_pi05_service_argv("cleanup", "base"),
+    ),
+    "workbench.openpi.pi05_adapted_service_start": ToolEntry(
+        name="workbench.openpi.pi05_adapted_service_start",
+        description="Start the private selected-checkpoint service for declared Isaac gold evaluation.",
+        argv_template=_pi05_service_argv("start", "adapted"),
+    ),
+    "workbench.openpi.pi05_adapted_service_cleanup": ToolEntry(
+        name="workbench.openpi.pi05_adapted_service_cleanup",
+        description="Clean up the exact adapted-checkpoint private service.",
+        argv_template=_pi05_service_argv("cleanup", "adapted"),
+    ),
+    "workbench.sim2real.pi05_base_gold": ToolEntry(
+        name="workbench.sim2real.pi05_base_gold",
+        description="Evaluate base pi0.5 closed-loop on the untouched surface-placement gold split.",
+        argv_template=_pi05_closed_loop_argv("base"),
+    ),
+    "workbench.sim2real.pi05_adapted_gold": ToolEntry(
+        name="workbench.sim2real.pi05_adapted_gold",
+        description="Evaluate selected adapted pi0.5 closed-loop on the identical untouched gold split.",
+        argv_template=_pi05_closed_loop_argv("adapted"),
+    ),
     "workbench.openpi.train": ToolEntry(
         name="workbench.openpi.train",
         description=(
@@ -2413,7 +2649,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.gpu_count}}",
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
         ],
+        omit_flags_when_empty=("--component-root-uri",),
+        config_defaults={"component_root_uri": ""},
     ),
     "workbench.openpi.full_droid_prepare": ToolEntry(
         name="workbench.openpi.full_droid_prepare",
@@ -2549,7 +2789,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.gpu_count}}",
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
         ],
+        omit_flags_when_empty=("--component-root-uri",),
+        config_defaults={"component_root_uri": ""},
     ),
     "workbench.molmoact.finetune": ToolEntry(
         name="workbench.molmoact.finetune",

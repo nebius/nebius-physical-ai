@@ -1,0 +1,328 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: sim2real-pi05
+  description: >
+    Adapt the compositional Sim2Real foundations to a distinct released-on-table
+    Franka task: prove a physics expert, capture dense exterior and moving-wrist
+    observations, export native OpenPI/LeRobot data, measure a real pi0.5
+    closed-loop gold baseline, run upstream-native LoRA, reload the selected
+    checkpoint, repeat the identical gold protocol, emit factual MP4/Rerun
+    evidence, and retain physical robot deployment as an operator seam.
+
+config:
+  bucket: example-bucket
+  prefix: "sim2real-pi05/{{run.id}}"
+  root_uri: "s3://{{config.bucket}}/{{config.prefix}}"
+  component_root_uri: "{{config.root_uri}}"
+  source_sha: ""
+  require_baked_npa: "1"
+  baked_npa_import: npa.workflows.sim2real.pi05_stage
+
+  controller_image: ""
+  isaac_image: ""
+  data_image: ""
+  runtime_image: "registry.example.invalid/openpi@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  viewer_image: ""
+  isaac_cache_pvc: ""
+
+  base_config_name: pi05_droid_jointpos_polaris
+  base_checkpoint_uri: "gs://openpi-assets/checkpoints/polaris/pi05_droid_jointpos_polaris"
+  gpu_type: B200
+  gpu_count: "1"
+  expected_gpu_type: B200
+  expected_compute_capability: "10.0"
+  gpu_cpus: "16"
+  gpu_memory: 96Gi
+  gpu_disk_size: "100"
+  gpu_num_nodes: "1"
+  isaac_gpu_type: RTXPRO6000
+  isaac_cpus: "16"
+  isaac_memory: 128Gi
+  isaac_disk_size: "100"
+  cpu_cpus: "8"
+  cpu_memory: 32Gi
+  cpu_disk_size: "40"
+
+  expert_episodes_per_split: "8"
+  expert_seed: "20261007"
+  object_usd: ""
+  gold_episodes: "8"
+  gold_seed: "20271007"
+  eval_decisions: "24"
+  train_steps: "1000"
+  train_batch_size: "8"
+  train_fsdp_devices: "1"
+  train_seed: "20261007"
+  evaluation_seed: "20261008"
+  evaluation_batch_size: "4"
+
+  service_namespace: default
+  service_account: npa-openpi-pi05-controller
+  service_gpu_node_selector_key: nebius.com/gpu-name
+  service_gpu_node_selector_value: B200
+  service_server_cpus: "16"
+  service_server_memory: 96Gi
+  service_cache_size: 40Gi
+  service_liveness_initial_delay_seconds: "600"
+  service_server_ready_timeout_seconds: "1200"
+  service_cleanup_timeout_seconds: "180"
+  service_poll_interval_seconds: "5"
+  service_api_timeout_seconds: "30"
+  service_http_timeout_seconds: "30"
+
+  preparation_uri: "{{config.root_uri}}/stage_01_prepare/preparation.json"
+  collection_root_uri: "{{config.root_uri}}/stage_02_expert"
+  train_collection_uri: "{{config.collection_root_uri}}/train/"
+  validation_collection_uri: "{{config.collection_root_uri}}/validation/"
+  gold_collection_uri: "{{config.collection_root_uri}}/gold/"
+  dataset_root_uri: "{{config.root_uri}}/stage_03_dataset/"
+  dataset_uri: "{{config.dataset_root_uri}}openpi-dataset.npz"
+  dataset_manifest_uri: "{{config.dataset_root_uri}}openpi-manifest.json"
+  lerobot_uri: "{{config.dataset_root_uri}}lerobot-v3/"
+  terms_diagnostic_root_uri: "{{config.root_uri}}/diagnostics/terms-refusals"
+  negative_gate_uri: "{{config.root_uri}}/stage_04_gate/negative-terms-gate.json"
+
+  base_service_start_uri: "{{config.root_uri}}/stage_05_base_service/start.json"
+  base_service_cleanup_uri: "{{config.root_uri}}/stage_07_base_cleanup/cleanup.json"
+  base_gold_uri: "{{config.root_uri}}/stage_06_base_gold/report.json"
+  base_artifact_root_uri: "{{config.root_uri}}/stage_06_base_gold/"
+
+  trained_checkpoint_uri: "{{config.root_uri}}/stage_08_train/checkpoint"
+  trained_checkpoint_manifest_uri: "{{config.trained_checkpoint_uri}}/manifest.json"
+  training_uri: "{{config.root_uri}}/stage_08_train/training.json"
+  reload_uri: "{{config.root_uri}}/stage_09_reload/validation.json"
+  evaluation_uri: "{{config.reload_uri}}"
+
+  adapted_service_start_uri: "{{config.root_uri}}/stage_10_adapted_service/start.json"
+  adapted_service_cleanup_uri: "{{config.root_uri}}/stage_13_adapted_cleanup/cleanup.json"
+  adapted_gold_uri: "{{config.root_uri}}/stage_11_adapted_gold/report.json"
+  adapted_artifact_root_uri: "{{config.root_uri}}/stage_11_adapted_gold/"
+  external_seam_uri: "{{config.root_uri}}/stage_12_external/seam.json"
+  final_report_uri: "{{config.root_uri}}/reports/sim2real-pi05.json"
+  final_mp4_uri: "{{config.root_uri}}/reports/sim2real-pi05.mp4"
+  final_rrd_uri: "{{config.root_uri}}/reports/sim2real.rrd"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: "{{config.cpu_cpus}}"
+    memory: "{{config.cpu_memory}}"
+    disk_size: "{{config.cpu_disk_size}}"
+    image: "{{config.controller_image}}"
+  data:
+    cloud: kubernetes
+    cpus: "{{config.cpu_cpus}}"
+    memory: "{{config.cpu_memory}}"
+    disk_size: "{{config.cpu_disk_size}}"
+    image: "{{config.data_image}}"
+  openpi:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
+    cpus: "{{config.gpu_cpus}}"
+    memory: "{{config.gpu_memory}}"
+    disk_size: "{{config.gpu_disk_size}}"
+    num_nodes: "{{config.gpu_num_nodes}}"
+    image: "{{config.runtime_image}}"
+  isaac:
+    cloud: kubernetes
+    accelerators: "{{config.isaac_gpu_type}}:1"
+    cpus: "{{config.isaac_cpus}}"
+    memory: "{{config.isaac_memory}}"
+    disk_size: "{{config.isaac_disk_size}}"
+    image: "{{config.isaac_image}}"
+    kubernetes:
+      provision_timeout: 2400
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              env:
+                - {name: NPA_ISAAC_CACHE_DIR, value: /opt/isaac-cache}
+                - {name: NPA_ISAAC_CACHE_READONLY, value: "1"}
+                - {name: NPA_ISAAC_BOOTSTRAP_OFFLINE, value: "1"}
+                - {name: NPA_BAKED_PYTHON, value: /opt/npa/sim/venv/bin/python}
+              volumeMounts:
+                - {name: npa-isaac-runtime-cache, mountPath: /opt/isaac-cache, readOnly: true}
+          volumes:
+            - name: npa-isaac-runtime-cache
+              persistentVolumeClaim: {claimName: "{{config.isaac_cache_pvc}}", readOnly: true}
+  service-control:
+    cloud: kubernetes
+    cpus: "2"
+    memory: 8Gi
+    disk_size: "20"
+    image: "{{config.controller_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          serviceAccountName: "{{config.service_account}}"
+  viewer:
+    cloud: kubernetes
+    cpus: "{{config.cpu_cpus}}"
+    memory: "{{config.cpu_memory}}"
+    disk_size: "{{config.cpu_disk_size}}"
+    image: "{{config.viewer_image}}"
+
+initial: prepare-contract
+
+states:
+  prepare-contract:
+    description: Publish the distinct released-surface task and planning/execution prerequisites.
+    toolRef: workbench.sim2real.pi05_prepare
+    resources: cpu
+    outputs:
+      - {uri: "{{config.preparation_uri}}", schema: npa.sim2real.pi05.preparation.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_01.json", schema: npa.sim2real.component_record.v1}
+    next: collect-expert
+
+  collect-expert:
+    description: >
+      Run the differential-IK expert in real Isaac physics for disjoint object
+      morphologies/scenes; record every causal exterior+wrist/state/action row,
+      bilateral grasp forces, lift, transport, release and table support dwell.
+    needs: [prepare-contract]
+    toolRef: workbench.sim2real.pi05_collect_all
+    resources: isaac
+    outputs:
+      - {uri: "{{config.train_collection_uri}}collection.json", schema: npa.sim2real.pi05.expert_collection.v1}
+      - {uri: "{{config.validation_collection_uri}}collection.json", schema: npa.sim2real.pi05.expert_collection.v1}
+      - {uri: "{{config.gold_collection_uri}}collection.json", schema: npa.sim2real.pi05.expert_collection.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_02.json", schema: npa.sim2real.component_record.v1}
+    next: export-dataset
+
+  export-dataset:
+    description: >
+      Admit successful physics demonstrations only, reject the incompatible
+      7D lift seed, form real within-episode 15-step targets, compute train-only
+      normalization, and independently read back OpenPI and LeRobot v3 outputs.
+    needs: [collect-expert]
+    toolRef: workbench.sim2real.pi05_export
+    resources: data
+    outputs:
+      - {uri: "{{config.dataset_uri}}", schema: numpy.npz}
+      - {uri: "{{config.dataset_manifest_uri}}", schema: npa.workbench.openpi.pi05-surface-pick-place-dataset.v1}
+      - {uri: "{{config.dataset_root_uri}}dataset-report.json", schema: npa.sim2real.pi05.dense_dataset.v1}
+      - {uri: "{{config.lerobot_uri}}meta/info.json", schema: lerobot.dataset.v3.info}
+      - {uri: "{{config.component_root_uri}}/components/stage_03.json", schema: npa.sim2real.component_record.v1}
+    next: negative-terms-gate
+
+  negative-terms-gate:
+    description: Prove the existing product gate refuses checkpoint access when acceptance is removed.
+    needs: [export-dataset]
+    toolRef: workbench.openpi.negative_terms_gate
+    resources: openpi
+    outputs:
+      - {uri: "{{config.negative_gate_uri}}", schema: npa.workbench.openpi.live-negative-terms-gate.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_04.json", schema: npa.sim2real.component_record.v1}
+    next: start-base-service
+
+  start-base-service:
+    description: Start a private digest-pinned base pi0.5 server; the graph owns the later Isaac client and cleanup.
+    needs: [negative-terms-gate]
+    toolRef: workbench.openpi.pi05_base_service_start
+    resources: service-control
+    outputs:
+      - {uri: "{{config.base_service_start_uri}}", schema: npa.workbench.openpi.pi05-service-start.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_05.json", schema: npa.sim2real.component_record.v1}
+    next: evaluate-base-gold
+
+  evaluate-base-gold:
+    description: Run the real base weights receding-horizon on the untouched surface-placement gold split.
+    needs: [start-base-service]
+    toolRef: workbench.sim2real.pi05_base_gold
+    resources: isaac
+    outputs:
+      - {uri: "{{config.base_gold_uri}}", schema: npa.sim2real.pi05.closed_loop_eval.v1}
+      - {uri: "{{config.base_artifact_root_uri}}rollouts.mp4", schema: video/mp4}
+      - {uri: "{{config.base_artifact_root_uri}}rollouts.rrd", schema: application/vnd.rerun.rrd}
+      - {uri: "{{config.component_root_uri}}/components/stage_06.json", schema: npa.sim2real.component_record.v1}
+    next: cleanup-base-service
+
+  cleanup-base-service:
+    description: Remove and verify absence of only the exact base-service resources.
+    needs: [evaluate-base-gold]
+    toolRef: workbench.openpi.pi05_base_service_cleanup
+    resources: service-control
+    outputs:
+      - {uri: "{{config.base_service_cleanup_uri}}", schema: npa.workbench.openpi.pi05-service-cleanup.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_07.json", schema: npa.sim2real.component_record.v1}
+    next: train-lora
+
+  train-lora:
+    description: Run upstream-native pi0.5 LoRA on successful train demonstrations and publish reloadable bytes.
+    needs: [cleanup-base-service]
+    toolRef: workbench.openpi.train
+    resources: openpi
+    outputs:
+      - {uri: "{{config.training_uri}}", schema: npa.workbench.openpi.pi05-training.v1}
+      - {uri: "{{config.trained_checkpoint_manifest_uri}}", schema: npa.workbench.openpi.checkpoint-manifest.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_08.json", schema: npa.sim2real.component_record.v1}
+    next: reload-validation
+
+  reload-validation:
+    description: Reload the exact selected checkpoint and evaluate model loss/action targets on held-out validation data.
+    needs: [train-lora]
+    toolRef: workbench.openpi.evaluate
+    resources: openpi
+    outputs:
+      - {uri: "{{config.reload_uri}}", schema: npa.workbench.openpi.pi05-heldout-evaluation.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_09.json", schema: npa.sim2real.component_record.v1}
+    next: start-adapted-service
+
+  start-adapted-service:
+    description: Start the exact validation-selected private checkpoint with scoped credentials and no public ingress.
+    needs: [reload-validation]
+    toolRef: workbench.openpi.pi05_adapted_service_start
+    resources: service-control
+    outputs:
+      - {uri: "{{config.adapted_service_start_uri}}", schema: npa.workbench.openpi.pi05-service-start.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_10.json", schema: npa.sim2real.component_record.v1}
+    next: evaluate-adapted-gold
+
+  evaluate-adapted-gold:
+    description: Repeat the identical untouched gold task/scenarios/protocol with the selected checkpoint.
+    needs: [start-adapted-service]
+    toolRef: workbench.sim2real.pi05_adapted_gold
+    resources: isaac
+    outputs:
+      - {uri: "{{config.adapted_gold_uri}}", schema: npa.sim2real.pi05.closed_loop_eval.v1}
+      - {uri: "{{config.adapted_artifact_root_uri}}rollouts.mp4", schema: video/mp4}
+      - {uri: "{{config.adapted_artifact_root_uri}}rollouts.rrd", schema: application/vnd.rerun.rrd}
+      - {uri: "{{config.component_root_uri}}/components/stage_11.json", schema: npa.sim2real.component_record.v1}
+    next: physical-robot-seam
+
+  cleanup-adapted-service:
+    description: Remove and verify absence of only the exact adapted-service resources.
+    needs: [physical-robot-seam]
+    toolRef: workbench.openpi.pi05_adapted_service_cleanup
+    resources: service-control
+    outputs:
+      - {uri: "{{config.adapted_service_cleanup_uri}}", schema: npa.workbench.openpi.pi05-service-cleanup.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_13.json", schema: npa.sim2real.component_record.v1}
+    next: finalize
+
+  physical-robot-seam:
+    description: Record that Stage 12-style physical robot work remains operator-owned and was not fabricated.
+    needs: [evaluate-adapted-gold]
+    toolRef: workbench.sim2real.pi05_external_seam
+    resources: cpu
+    outputs:
+      - {uri: "{{config.external_seam_uri}}", schema: npa.sim2real.pi05.external_validation_seam.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_12.json", schema: npa.sim2real.component_record.v1}
+    next: cleanup-adapted-service
+
+  finalize:
+    description: >
+      Compare only identical surface-task gold protocols, never the airborne PPO
+      baseline; publish exact checkpoint lineage and independently decoded factual media.
+    needs: [cleanup-adapted-service]
+    toolRef: workbench.sim2real.pi05_finalize
+    resources: viewer
+    outputs:
+      - {uri: "{{config.final_report_uri}}", schema: npa.sim2real.pi05.final_report.v1}
+      - {uri: "{{config.final_mp4_uri}}", schema: video/mp4}
+      - {uri: "{{config.final_rrd_uri}}", schema: application/vnd.rerun.rrd}
+      - {uri: "{{config.component_root_uri}}/components/stage_14.json", schema: npa.sim2real.component_record.v1}
+    terminal: true

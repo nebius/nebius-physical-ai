@@ -62,6 +62,7 @@ inventory, not an instruction to remove quarantine.
 | `workflows/testing/robocasa-data-policy.yaml` | `lerobot` |
 | `workflows/testing/scan-to-isaac-navigation.yaml` | `isaac-lab` |
 | `workflows/testing/shared-scene-navigation.yaml` | `isaac-lab` |
+| `workflows/testing/sim2real-pi05.yaml` | `lerobot-vlm-rl` |
 | `workflows/testing/sonic-eval.yaml` | `sonic` |
 | `workflows/testing/sonic-export-eval.yaml` | `sonic` |
 | `workflows/testing/sonic-export.yaml` | `sonic` |

@@ -1,0 +1,61 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "8f50fed52bd48786da0798568aae7bd91d311c4ca1c76fe7d457dad6b0d702bf",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The separate 14-state npa.workflow validates, plans, and renders with explicit immutable-image and source placeholders; module argv, live-matrix, schema-chain, and declared-output checks cover the new toolRefs.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/sim2real-pi05.yaml",
+        "npa workbench workflow plan-spec workflows/testing/sim2real-pi05.yaml --json --check-render",
+        "npa/tests/orchestration/npa_workflow/test_sim2real_pi05_workflow.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "unverified",
+      "reason": "Offline contracts and tests prove the absolute-joint/DROID-gripper bridge, dense camera/action alignment, split isolation, and released-support metric, but the differential-IK expert and camera/contact configuration have not completed a real Isaac run on this source revision.",
+      "evidence": [
+        "npa/tests/test_sim2real_pi05_contract.py",
+        "npa/tests/test_sim2real_pi05_pipeline.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The selected operator environment passed Nebius and object-storage credential preflight; each execution must still replace the checked-in example bucket with its owned prefix.",
+      "evidence": [
+        "Sanitized private health-preflight conclusion; no resource identifiers or credentials committed."
+      ]
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "No task-scoped affirmative Gemma terms receipt exists, so real OpenPI weights cannot be fetched. The separately authorized Isaac expert path also has not yet produced physics-qualified demonstrations.",
+      "evidence": [
+        "Explicit operator decision remains pending; prior acceptance and general setup authorization are not reused.",
+        "Sanitized private Isaac submission evidence records no managed job launch."
+      ]
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "Nebius and storage credentials passed, but the distinct operator-owned Gemma terms gate remains unresolved and is mandatory before OpenPI image or weight access.",
+      "evidence": [
+        "NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES is intentionally absent until an explicit task-scoped authorization receipt exists."
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The workflow requires immutable private controller, data, Isaac, viewer, and restricted OpenPI images carrying this exact source; the checked-in values are non-runnable placeholders and no new image was built or qualified.",
+      "evidence": [
+        "workflows/testing/sim2real-pi05.yaml"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "The authorized Isaac image preflight passed, but Kubernetes GPU inventory disappeared during SkyPilot discovery and the repository readiness gate expired before launch. No expert, base-policy, fine-tuning, adapted-policy, MP4, or Rerun live result exists for this revision.",
+      "evidence": [
+        "Sanitized private submit log retained outside Git; no live resource identifiers committed."
+      ]
+    }
+  }
+}
