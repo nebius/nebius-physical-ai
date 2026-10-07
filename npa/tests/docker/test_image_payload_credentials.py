@@ -404,11 +404,22 @@ def test_streaming_matcher_has_negative_controls(sample: bytes) -> None:
 
 def test_streaming_state_is_bounded_not_buffered() -> None:
     # The point of the state machine: a match spanning megabytes must not mean
-    # holding megabytes. The matcher's own state is a phase and a counter.
+    # holding megabytes. Label gaps never populate the bounded value buffer.
     matcher = credentials._AssignmentMatcher(credentials.ASSIGNMENT_RULES[0])
     matcher.feed(b"hf_token" + b" " * 4096, 0)
-    assert matcher.__dict__.keys() == {"_rule", "_phase", "_seen"}
-    assert isinstance(matcher._seen, int)
+    assert matcher.__dict__.keys() == {
+        "_rule",
+        "_phase",
+        "_value",
+        "_label_offset",
+        "_options",
+    }
+    assert matcher._options == set()
+    assert matcher._value is None
+    matcher.feed(b"= " + b" " * 100000, 0)
+    assert matcher._value.data == b""
+    assert matcher.feed(b"x" * 100000, 0)
+    assert len(matcher._value.data) == 513
 
 
 def test_generic_assignment_policy_remains_scoped_to_dockerfiles() -> None:
