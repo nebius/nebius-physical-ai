@@ -44,6 +44,18 @@ The private image scan retained 218 HIGH and six unfixed CRITICAL findings, with
 
 Exact resource identities, private endpoints, registry coordinates and generated artifacts remain in access-controlled runtime storage. This page includes measurements and generic configuration only.
 
+## Measured H200 golden evaluation
+
+On 2026-10-06 the image's shipped golden evaluation ran on one NVIDIA H200 (`sm_90`, 143,771 MiB). The image was built locally from source `34dcf103` plus the configurable device check (`NPA_COSMOS3_NANO_VIDEO_EXPECTED_GPU`, default `B200`), and was not pushed. The run set the variable to `H200` and used Cosmos3-Nano revision `7a312c86`. Before the run, the repository checker (`validate_blackwell_image.sh --target hopper --gpu`) accepted the image on eight H200 devices with Torch 2.11.0+cu130; the same checker with `--target b200` rejected them, as expected.
+
+| Chunk | Requested frames | Decoded frames | Inference (s) | Wall (s) | Peak allocator reserved (MiB) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 297 | 297 | 110.28 | 110.30 | 37450.00 |
+| 2 | 297 | 297 | 110.47 | 111.39 | 37458.00 |
+| 3 | 137 | 137 | 38.45 | 39.27 | 37458.00 |
+
+The stitched 30-second video decoded fully at 832×480, 24 fps and 720 frames. Peak device used was **38,251 MiB** from 511 samples at 0.5-second intervals. This is a single golden rollout on one GPU. The 16-replica serving deployment, concurrent requests and augmentation were not measured on H200, and the [B200 acceptance](#measured-b200-acceptance) above is not inferred for H200.
+
 ## Measured full-source augmentation
 
 Eleven complete variants were generated from the same task-generated warehouse
