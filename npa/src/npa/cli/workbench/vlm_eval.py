@@ -19,6 +19,7 @@ from npa.workbench.vlm_eval import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_BACKEND,
     DEFAULT_FRAME_SELECTION,
+    DEFAULT_ISAAC_AGENCY_BENCHMARK_PATH,
     DEFAULT_MAX_FRAMES,
     DEFAULT_MODEL,
     DEFAULT_SAMPLE_BENCHMARK_PATH,
@@ -74,6 +75,12 @@ class FrameSelection(str, Enum):
     final = "final"
     keyframes = "keyframes"
     sequence = "sequence"
+
+
+_FRAME_SELECTION_HELP = (
+    "Frame selection: final; keyframes (terminal-stratified for known-count "
+    "inputs); or sequence (uniform full-span)."
+)
 
 
 @dataclass(frozen=True)
@@ -182,7 +189,7 @@ _VISUAL_BASELINE = typer.Option(
 _VISUAL_FRAME_SELECTION = typer.Option(
     FrameSelection.keyframes,
     "--frame-selection",
-    help="Frame selection applied independently to each source.",
+    help=_FRAME_SELECTION_HELP,
 )
 _VISUAL_MAX_FRAMES = typer.Option(
     DEFAULT_MAX_FRAMES,
@@ -257,7 +264,7 @@ def run_cmd(
     frame_selection: FrameSelection = typer.Option(
         FrameSelection.keyframes,
         "--frame-selection",
-        help="Rollout frame selection: final, keyframes, or sequence.",
+        help=_FRAME_SELECTION_HELP,
     ),
     max_frames: int = typer.Option(
         DEFAULT_MAX_FRAMES,
@@ -550,7 +557,7 @@ def loop_cmd(
     frame_selection: FrameSelection = typer.Option(
         FrameSelection.keyframes,
         "--frame-selection",
-        help="Rollout frame selection: final, keyframes, or sequence.",
+        help=_FRAME_SELECTION_HELP,
     ),
     max_frames: int = typer.Option(
         DEFAULT_MAX_FRAMES,
@@ -608,7 +615,10 @@ def benchmark_cmd(
     dataset: str = typer.Option(
         str(DEFAULT_SAMPLE_BENCHMARK_PATH),
         "--dataset",
-        help="Benchmark manifest JSON or directory; defaults to the packaged sample fixture.",
+        help=(
+            "Benchmark manifest JSON, directory, or packaged alias "
+            "(sample or isaac-agency)."
+        ),
     ),
     output_path: str = typer.Option(
         ...,
@@ -649,7 +659,7 @@ def benchmark_cmd(
     frame_selection: FrameSelection = typer.Option(
         FrameSelection.keyframes,
         "--frame-selection",
-        help="Rollout frame selection: final, keyframes, or sequence.",
+        help=_FRAME_SELECTION_HELP,
     ),
     max_frames: int = typer.Option(
         DEFAULT_MAX_FRAMES,
@@ -744,6 +754,7 @@ def status_cmd(
             "benchmark_workflow": str(BENCHMARK_WORKFLOW_PATH),
             "token_factory_workflow": str(TOKEN_FACTORY_WORKFLOW_PATH),
             "sample_benchmark_dataset": str(DEFAULT_SAMPLE_BENCHMARK_PATH),
+            "isaac_agency_benchmark_dataset": str(DEFAULT_ISAAC_AGENCY_BENCHMARK_PATH),
         },
         output,
     )
@@ -788,6 +799,10 @@ def _emit_benchmark(payload: dict[str, Any], output: OutputFormat) -> None:
     metrics = best["metrics"]
     typer.echo(f"  dataset: {payload['dataset_path']}")
     typer.echo(f"  items: {payload['item_count']}")
+    typer.echo(f"  dataset_evidence_scope: {payload['dataset_evidence_scope']}")
+    typer.echo("  dataset_limitations:")
+    for limitation in payload["dataset_limitations"]:
+        typer.echo(f"    - {limitation}")
     typer.echo(f"  written_uri: {payload['written_uri']}")
     typer.echo("  best_config:")
     typer.echo(f"    backend: {config['backend']}")
@@ -800,6 +815,10 @@ def _emit_benchmark(payload: dict[str, Any], output: OutputFormat) -> None:
     typer.echo(f"    agreement: {metrics['agreement']}")
     typer.echo(f"    precision: {_format_metric(metrics['precision'])}")
     typer.echo(f"    recall: {_format_metric(metrics['recall'])}")
+    typer.echo(f"    specificity: {_format_metric(metrics.get('specificity'))}")
+    typer.echo(
+        f"    balanced_accuracy: {_format_metric(metrics.get('balanced_accuracy'))}"
+    )
     typer.echo(f"    f1: {_format_metric(metrics['f1'])}")
     typer.echo(
         "    confusion: "

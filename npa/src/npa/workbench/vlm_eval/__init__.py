@@ -6,6 +6,7 @@ import base64
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
+import errno
 import hashlib
 from itertools import product
 from io import BytesIO
@@ -31,6 +32,13 @@ from urllib.parse import urlparse
 from npa.clients.storage import StorageError
 from npa.clients.token_factory import DEFAULT_VISION_MODEL, token_factory_chat_profile
 from npa.literal_values import require_boolean
+from npa.workbench.vlm_eval.agency import (
+    AgencyStructuralCheck,
+    AgencyStructuralError,
+    AgencyStructuralResult,
+    evaluate_agency_structure,
+    parse_agency_structural_check,
+)
 from npa.workbench.vlm_eval.preference_schema import (
     CONFIDENCE_LEVELS,
     PREFERENCE_LABELS,
@@ -88,6 +96,7 @@ JUDGE_COMPARISON_SCHEMA_VERSION = "npa_vlm_judge_comparison_v1"
 HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_hosted_json_v1"
 SELF_HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_compatible_json_v2"
 MARKDOWN_FENCE_PARSER_SUFFIX = "+markdown-fence-v1"
+BENCHMARK_EVIDENCE_SCOPES = frozenset({"unspecified", "illustrative_only"})
 UNPARSED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_unparsed_v1"
 DEFAULT_PRIMARY_JUDGE_MODEL = DEFAULT_VISION_MODEL
 DEFAULT_SECONDARY_JUDGE_MODEL = "openbmb/MiniCPM-V-4_5"
@@ -95,8 +104,54 @@ DEFAULT_BENCHMARK_THRESHOLDS = (0.5, 0.8, 0.9)
 DEFAULT_SAMPLE_BENCHMARK_PATH = (
     Path(__file__).resolve().parent / "fixtures" / "sample_benchmark" / "benchmark.json"
 )
+DEFAULT_ISAAC_AGENCY_BENCHMARK_PATH = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "isaac_agency_calibration_v1"
+    / "benchmark.json"
+)
+BENCHMARK_DATASET_ALIASES = {
+    "default": DEFAULT_SAMPLE_BENCHMARK_PATH,
+    "sample": DEFAULT_SAMPLE_BENCHMARK_PATH,
+    "isaac-agency": DEFAULT_ISAAC_AGENCY_BENCHMARK_PATH,
+    "isaac-agency-calibration-v1": DEFAULT_ISAAC_AGENCY_BENCHMARK_PATH,
+}
 SUPPORTED_BACKENDS = ("self-hosted", "api", "stub")
 SUPPORTED_FRAME_SELECTIONS = ("final", "keyframes", "sequence")
+_DIRECT_RESULT_LIMITATIONS = (
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    "A score from one model, rubric, threshold, and frame sample does not "
+    "establish physical correctness or safety.",
+)
+_DIRECT_NO_CALL_LIMITATION = (
+    "This score is a stub or caller-supplied dry-validation input; no VLM call "
+    "occurred, so it is not model or policy evidence."
+)
+_LOOP_REPORT_LIMITATIONS = (
+    "task_success is a mean-score gate, not a per-rollout success rate.",
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    "The visual gate does not establish physical correctness or safety.",
+)
+_LOOP_STUB_LIMITATION = (
+    "Stub scores are wiring inputs; no VLM call occurred, so they are not model "
+    "or policy evidence."
+)
+_BENCHMARK_REPORT_LIMITATIONS = (
+    "Expected labels are caller-supplied; the manifest does not establish their "
+    "independent-human provenance.",
+    "Accuracy, agreement, precision, recall, F1, and TP/TN/FP/FN describe only "
+    "this caller-labeled dataset and do not establish generalization, physical "
+    "correctness, safety, or an operational error rate.",
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+)
+_BENCHMARK_FIXTURE_LIMITATION = (
+    "Cases with score_source 'fixture' use caller-provided dry-validation inputs; "
+    "those cases are not VLM or policy evidence."
+)
+_BENCHMARK_STUB_LIMITATION = (
+    "Cases with score_source 'stub' use deterministic wiring scores; no VLM call "
+    "occurred for those cases, so they are not model or policy evidence."
+)
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".ppm", ".webp"}
 VIDEO_SUFFIXES = {".avi", ".mov", ".mp4", ".mpeg", ".mpg", ".webm"}
 
@@ -245,6 +300,9 @@ class VlmEvalResult:
     provider_success: bool | None = None
     provider_success_matches_score_gate: bool | None = None
     served_model_match_enforced: bool = False
+    independent_human_label_calibration_established: bool = False
+    limitations: tuple[str, ...] = _DIRECT_RESULT_LIMITATIONS
+    provider_call_made: bool = False
 
 
 @dataclass(frozen=True)
@@ -455,6 +513,7 @@ class VlmBenchmarkItem:
     expected_label: bool
     task: str
     fixture_score: float | None = None
+    structural_check: AgencyStructuralCheck | None = None
 
 
 @dataclass(frozen=True)
@@ -463,6 +522,8 @@ class VlmBenchmarkDataset:
     format: str
     items: list[VlmBenchmarkItem]
     rubrics: dict[str, str]
+    evidence_scope: str = "unspecified"
+    limitations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -516,6 +577,35 @@ class VlmBenchmarkConfusionMatrix:
 
 @dataclass(frozen=True)
 class VlmBenchmarkMetrics:
+    """Retain benchmark counts and metrics without breaking legacy construction.
+
+    Args:
+        total: Number of benchmark cases.
+        correct: Number of predictions matching their expected labels.
+        agreement: Fraction of predictions matching their expected labels.
+        accuracy: Fraction of correct predictions.
+        precision: Positive predictive value, or None when undefined.
+        recall: Positive-class recall, or None when undefined.
+        f1: Harmonic mean of precision and recall, or None when undefined.
+        true_positives: Correct positive predictions.
+        true_negatives: Correct negative predictions.
+        false_positives: Incorrect positive predictions.
+        false_negatives: Incorrect negative predictions.
+        confusion_matrix: Actual-by-predicted counts, or None for legacy construction.
+        false_positive_rate: Fraction of negative cases predicted positive.
+        false_negative_rate: Fraction of positive cases predicted negative.
+        false_positive_item_ids: Ordered identities of incorrectly passing cases.
+        false_negative_item_ids: Ordered identities of incorrectly failing cases.
+        specificity: Negative-class recall, appended after landed positional fields.
+        balanced_accuracy: Mean class recall, appended after landed positional fields.
+
+    Returns:
+        Immutable benchmark metrics. Generated reports measure both classes.
+
+    Raises:
+        None.
+    """
+
     total: int
     correct: int
     agreement: float
@@ -532,6 +622,8 @@ class VlmBenchmarkMetrics:
     false_negative_rate: float | None = None
     false_positive_item_ids: tuple[str, ...] = ()
     false_negative_item_ids: tuple[str, ...] = ()
+    specificity: float | None = None
+    balanced_accuracy: float | None = None
 
 
 @dataclass(frozen=True)
@@ -574,9 +666,15 @@ class VlmBenchmarkReport:
     best_config: VlmBenchmarkConfigResult
     ranked_configs: list[VlmBenchmarkConfigResult]
     schema_version: str = LEGACY_BENCHMARK_REPORT_SCHEMA_VERSION
+    independent_human_label_calibration_established: bool = False
+    limitations: tuple[str, ...] = _BENCHMARK_REPORT_LIMITATIONS
+    dataset_evidence_scope: str = "unspecified"
+    dataset_limitations: tuple[str, ...] = ()
 
 
 __all__ = [
+    "AgencyStructuralCheck",
+    "AgencyStructuralResult",
     "VlmBenchmarkCaseResult",
     "VlmBenchmarkConfig",
     "VlmBenchmarkConfigResult",
@@ -633,19 +731,27 @@ def benchmark_vlm_eval(
 ) -> VlmBenchmarkReport:
     """Run a labeled VLM-eval sweep and rank configs by label agreement."""
 
-    # Resolve the packaged sample fixture from its install location so callers
-    # (and the npa.workflow twin) get a working default regardless of CWD. A
-    # repo-relative path does not exist inside a rendered job; the ``sample``/
-    # ``default`` sentinels (and empty) map to the packaged fixture.
-    if dataset.strip().lower() in {"", "sample", "default"}:
-        dataset = str(DEFAULT_SAMPLE_BENCHMARK_PATH)
-    benchmark_dataset = load_benchmark_dataset(dataset, default_task=task)
+    if max_frames <= 0:
+        raise VlmEvalError("--max-frames must be positive")
+    if timeout_s <= 0:
+        raise VlmEvalError("--timeout-s must be positive")
     threshold_values = _normalize_thresholds(thresholds)
     model_values = _normalize_strings(models, label="models")
+    effective_frame_selection = _normalize_frame_selection(frame_selection)
+    benchmark_dataset = load_benchmark_dataset(
+        _resolve_benchmark_dataset_alias(dataset), default_task=task
+    )
     rubric_values = _resolve_benchmark_rubrics(
         rubrics,
         dataset_rubrics=benchmark_dataset.rubrics,
         dataset_path=benchmark_dataset.path,
+    )
+    preselected_frames, preselected_tasks, structural_results = (
+        _preflight_structural_checks(
+            benchmark_dataset,
+            frame_selection=effective_frame_selection,
+            max_frames=max_frames,
+        )
     )
     effective_backend = _normalize_backend(backend)
     model_values = list(
@@ -654,11 +760,6 @@ def benchmark_vlm_eval(
             for model in model_values
         )
     )
-    effective_frame_selection = _normalize_frame_selection(frame_selection)
-    if max_frames <= 0:
-        raise VlmEvalError("--max-frames must be positive")
-    if timeout_s <= 0:
-        raise VlmEvalError("--timeout-s must be positive")
 
     config_results: list[VlmBenchmarkConfigResult] = []
     for model, (rubric_name, rubric_text), threshold in product(
@@ -683,6 +784,8 @@ def benchmark_vlm_eval(
                 api_key_env=api_key_env,
                 timeout_s=timeout_s,
                 use_fixture_score=use_fixture_scores or effective_backend == "stub",
+                selected_frames=preselected_frames.get(item.id),
+                preselected_task=preselected_tasks.get(item.id),
             )
             for item in benchmark_dataset.items
         ]
@@ -709,25 +812,50 @@ def benchmark_vlm_eval(
     if not ranked:
         raise VlmEvalError("benchmark sweep produced no configurations")
 
+    sweep: dict[str, Any] = {
+        "backend": effective_backend,
+        "models": model_values,
+        "rubrics": [name for name, _text in rubric_values],
+        "thresholds": threshold_values,
+        "frame_selection": effective_frame_selection,
+        "max_frames": max_frames,
+        "fixture_scores": use_fixture_scores or effective_backend == "stub",
+    }
+    if structural_results:
+        sweep["structural_checks"] = {
+            item_id: asdict(result) for item_id, result in structural_results.items()
+        }
+
     return VlmBenchmarkReport(
         status="completed",
         dataset_path=benchmark_dataset.path,
         dataset_format=benchmark_dataset.format,
         item_count=len(benchmark_dataset.items),
         generated_at=datetime.now(timezone.utc).isoformat(),
-        sweep={
-            "backend": effective_backend,
-            "models": model_values,
-            "rubrics": [name for name, _text in rubric_values],
-            "thresholds": threshold_values,
-            "frame_selection": effective_frame_selection,
-            "max_frames": max_frames,
-            "fixture_scores": use_fixture_scores or effective_backend == "stub",
-        },
+        sweep=sweep,
         best_config=ranked[0],
         ranked_configs=ranked,
+        limitations=_benchmark_report_limitations(ranked),
+        dataset_evidence_scope=benchmark_dataset.evidence_scope,
+        dataset_limitations=benchmark_dataset.limitations,
         schema_version=BENCHMARK_REPORT_SCHEMA_VERSION,
     )
+
+
+def _benchmark_report_limitations(
+    ranked: Sequence[VlmBenchmarkConfigResult],
+) -> tuple[str, ...]:
+    """Return report caveats for the score sources that actually occurred."""
+
+    score_sources = {
+        case.score_source for config_result in ranked for case in config_result.results
+    }
+    limitations = list(_BENCHMARK_REPORT_LIMITATIONS)
+    if "fixture" in score_sources:
+        limitations.append(_BENCHMARK_FIXTURE_LIMITATION)
+    if "stub" in score_sources:
+        limitations.append(_BENCHMARK_STUB_LIMITATION)
+    return tuple(limitations)
 
 
 def load_benchmark_dataset(
@@ -737,8 +865,9 @@ def load_benchmark_dataset(
 ) -> VlmBenchmarkDataset:
     """Load a labeled benchmark dataset manifest from a local path or S3 URI."""
 
-    if not dataset:
+    if not dataset or not dataset.strip():
         raise VlmEvalError("--dataset is required")
+    dataset = _resolve_benchmark_dataset_alias(dataset)
     with _materialized_benchmark_manifest(dataset) as local_manifest:
         try:
             payload = json.loads(local_manifest.read_text(encoding="utf-8"))
@@ -752,12 +881,24 @@ def load_benchmark_dataset(
         dataset_format = BENCHMARK_DATASET_FORMAT
         rubrics: dict[str, str] = {}
         rollout_base_path = ""
+        evidence_scope = "unspecified"
+        limitations: tuple[str, ...] = ()
     elif isinstance(payload, dict):
         raw_items = payload.get("items") or payload.get("rollouts")
         dataset_format = str(payload.get("format") or BENCHMARK_DATASET_FORMAT)
         rubrics = _coerce_rubric_map(payload.get("rubrics", {}))
         rollout_base_path = str(
             payload.get("rollout_base_path") or payload.get("base_path") or ""
+        )
+        evidence_scope = (
+            _coerce_benchmark_evidence_scope(payload["evidence_scope"])
+            if "evidence_scope" in payload
+            else "unspecified"
+        )
+        limitations = (
+            _coerce_benchmark_limitations(payload["limitations"])
+            if "limitations" in payload
+            else ()
         )
     else:
         raise VlmEvalError("benchmark dataset JSON must be an object or an item list")
@@ -782,12 +923,140 @@ def load_benchmark_dataset(
         for index, raw_item in enumerate(raw_items, start=1)
     ]
     _require_unique_benchmark_item_ids(items)
+    _validate_benchmark_label_classes(items)
+    _validate_unique_benchmark_item_ids(items)
     return VlmBenchmarkDataset(
         path=dataset,
         format=dataset_format,
         items=items,
         rubrics=rubrics,
+        evidence_scope=evidence_scope,
+        limitations=limitations,
     )
+
+
+def _resolve_benchmark_dataset_alias(dataset: str) -> str:
+    normalized = dataset.strip().lower()
+    if not normalized:
+        return str(DEFAULT_SAMPLE_BENCHMARK_PATH)
+    alias = BENCHMARK_DATASET_ALIASES.get(normalized)
+    return str(alias) if alias is not None else dataset
+
+
+def _validate_benchmark_label_classes(items: Sequence[VlmBenchmarkItem]) -> None:
+    labels = {item.expected_label for item in items}
+    if labels != {False, True}:
+        raise VlmEvalError(
+            "benchmark dataset must include at least one pass and one fail expected_label"
+        )
+
+
+def _validate_unique_benchmark_item_ids(items: Sequence[VlmBenchmarkItem]) -> None:
+    seen: set[str] = set()
+    for item in items:
+        if item.id in seen:
+            raise VlmEvalError(
+                f"duplicate benchmark item id {item.id!r}; "
+                "benchmark item ids must be unique"
+            )
+        seen.add(item.id)
+
+
+def _preflight_structural_checks(
+    dataset: VlmBenchmarkDataset,
+    *,
+    frame_selection: str,
+    max_frames: int,
+) -> tuple[
+    dict[str, tuple[SelectedFrame, ...]],
+    dict[str, str],
+    dict[str, AgencyStructuralResult],
+]:
+    effective_frame_selection = _normalize_frame_selection(frame_selection)
+    selected_by_item: dict[str, tuple[SelectedFrame, ...]] = {}
+    task_by_item: dict[str, str] = {}
+    result_by_item: dict[str, AgencyStructuralResult] = {}
+    selection_cache: dict[
+        tuple[str, str, int], tuple[tuple[SelectedFrame, ...], str]
+    ] = {}
+    for item in dataset.items:
+        if item.structural_check is None:
+            continue
+        frames, effective_task = _select_structural_frames_and_task(
+            item,
+            frame_selection=effective_frame_selection,
+            max_frames=max_frames,
+            selection_cache=selection_cache,
+        )
+        result = _evaluate_structural_item(
+            item,
+            frames,
+            frame_selection=effective_frame_selection,
+            max_frames=max_frames,
+        )
+        selected_by_item[item.id] = frames
+        task_by_item[item.id] = effective_task
+        result_by_item[item.id] = result
+    return selected_by_item, task_by_item, result_by_item
+
+
+def _select_structural_frames_and_task(
+    item: VlmBenchmarkItem,
+    *,
+    frame_selection: str,
+    max_frames: int,
+    selection_cache: dict[tuple[str, str, int], tuple[tuple[SelectedFrame, ...], str]],
+) -> tuple[tuple[SelectedFrame, ...], str]:
+    cache_key = (item.rollout, frame_selection, max_frames)
+    cached = selection_cache.get(cache_key)
+    if cached is None:
+        with _materialized_input(item.rollout) as local_input:
+            frames = tuple(
+                select_rollout_frames(
+                    local_input,
+                    frame_selection=frame_selection,
+                    max_frames=max_frames,
+                )
+            )
+            fallback_task = _resolve_task_text(local_input, "sim-to-real")
+        cached = (frames, fallback_task)
+        selection_cache[cache_key] = cached
+    frames, fallback_task = cached
+    explicit_task = _explicit_task_text(item.task)
+    return frames, fallback_task if explicit_task is None else explicit_task
+
+
+def _evaluate_structural_item(
+    item: VlmBenchmarkItem,
+    frames: tuple[SelectedFrame, ...],
+    *,
+    frame_selection: str,
+    max_frames: int,
+) -> AgencyStructuralResult:
+    assert item.structural_check is not None
+    try:
+        result = evaluate_agency_structure(
+            frames,
+            item.structural_check,
+            frame_selection=frame_selection,
+            max_frames=max_frames,
+        )
+    except AgencyStructuralError as exc:
+        raise VlmEvalError(
+            f"benchmark item {item.id!r} structural preflight failed: {exc}"
+        ) from exc
+    if result.verdict == "inconclusive":
+        raise VlmEvalError(
+            f"benchmark item {item.id!r} structural preflight is inconclusive: "
+            f"{result.reason}"
+        )
+    expected_verdict = "pass" if item.expected_label else "fail"
+    if result.verdict != expected_verdict:
+        raise VlmEvalError(
+            f"benchmark item {item.id!r} structural verdict {result.verdict!r} "
+            f"does not match expected_label {expected_verdict!r}"
+        )
+    return result
 
 
 def evaluate_vlm(
@@ -806,6 +1075,7 @@ def evaluate_vlm(
     rubric_path: str = "",
     timeout_s: float = DEFAULT_TIMEOUT_S,
     score: float | None = None,
+    _selected_frames: tuple[SelectedFrame, ...] | None = None,
 ) -> VlmEvalResult:
     """Evaluate rollout frames with a VLM and return a scalar score in [0, 1]."""
 
@@ -841,6 +1111,21 @@ def evaluate_vlm(
         )
         frame_count = 0
         effective_task = task
+    elif _selected_frames is not None:
+        effective_task = task
+        structured = _evaluate_selected_frames(
+            frames=_selected_frames,
+            task=effective_task,
+            rubric=effective_rubric,
+            frame_selection=frame_selection,
+            max_frames=max_frames,
+            backend=backend,
+            model=effective_model,
+            endpoint_url=endpoint_url,
+            api_key_env=api_key_env,
+            timeout_s=timeout_s,
+        )
+        frame_count = len(_selected_frames)
     else:
         with _materialized_input(input_path) as local_input:
             effective_task = _resolve_task_text(local_input, task)
@@ -849,23 +1134,17 @@ def evaluate_vlm(
                 frame_selection=frame_selection,
                 max_frames=max_frames,
             )
-            prompt = _build_prompt(
+            structured = _evaluate_selected_frames(
+                frames=tuple(frames),
                 task=effective_task,
                 rubric=effective_rubric,
                 frame_selection=frame_selection,
-                frame_count=len(frames),
-            )
-            structured = _call_openai_compatible(
+                max_frames=max_frames,
                 backend=backend,
                 model=effective_model,
                 endpoint_url=endpoint_url,
                 api_key_env=api_key_env,
-                prompt=prompt,
-                rubric=effective_rubric,
-                frames=frames,
                 timeout_s=timeout_s,
-                frame_selection=frame_selection,
-                max_frames=max_frames,
             )
             frame_count = len(frames)
 
@@ -880,6 +1159,40 @@ def evaluate_vlm(
         frame_count=frame_count,
         rubric=effective_rubric,
         structured=structured,
+        provider_call_made=score is None,
+    )
+
+
+def _evaluate_selected_frames(
+    *,
+    frames: tuple[SelectedFrame, ...],
+    task: str,
+    rubric: str,
+    frame_selection: str,
+    max_frames: int,
+    backend: str,
+    model: str,
+    endpoint_url: str,
+    api_key_env: str,
+    timeout_s: float,
+) -> VlmStructuredResponse:
+    prompt = _build_prompt(
+        task=task,
+        rubric=rubric,
+        frame_selection=frame_selection,
+        frame_count=len(frames),
+    )
+    return _call_openai_compatible(
+        backend=backend,
+        model=model,
+        endpoint_url=endpoint_url,
+        api_key_env=api_key_env,
+        prompt=prompt,
+        rubric=rubric,
+        frames=frames,
+        timeout_s=timeout_s,
+        frame_selection=frame_selection,
+        max_frames=max_frames,
     )
 
 
@@ -1268,6 +1581,7 @@ def _comparison_success_outcome(
         frame_selection=context.frame_selection,
         frame_count=len(context.frames),
         structured=structured,
+        provider_call_made=True,
     )
     result = replace(
         result,
@@ -1454,6 +1768,7 @@ def evaluate_stub(
         frame_count=0,
         rationale="Deterministic compatibility score.",
         rubric=rubric,
+        limitations=_direct_result_limitations(provider_call_made=False),
     )
 
 
@@ -1778,6 +2093,7 @@ def evaluate_rollout_set(
         frame_selection=_normalize_frame_selection(frame_selection),
         success_threshold=success_threshold,
         output_dir=output_path,
+        backend=_normalize_backend(backend),
     )
     report["latency_s"] = round(time.monotonic() - started_at, 3)
     report["report_uri"] = write_result(
@@ -1795,6 +2111,7 @@ def aggregate_loop_report(
     frame_selection: str,
     success_threshold: float,
     output_dir: str,
+    backend: str = "",
 ) -> dict[str, Any]:
     """Aggregate per-rollout results exactly as the retired template's `jq -s` did."""
 
@@ -1813,8 +2130,19 @@ def aggregate_loop_report(
         "mean_score": mean_score,
         # The coarse gate is the MEAN score, not the pass rate — same as the template.
         "task_success": mean_score >= success_threshold,
+        "independent_human_label_calibration_established": False,
+        "limitations": _loop_report_limitations(backend),
         "rollouts": [asdict(rollout) for rollout in rollouts],
     }
+
+
+def _loop_report_limitations(backend: str) -> list[str]:
+    """Return a fresh limitations list for one aggregate report."""
+
+    limitations = list(_LOOP_REPORT_LIMITATIONS)
+    if backend == "stub":
+        limitations.append(_LOOP_STUB_LIMITATION)
+    return limitations
 
 
 def _rollout_id_for(rollout_uri: str) -> str:
@@ -1952,6 +2280,7 @@ def _result_from_structured(
     frame_count: int,
     rubric: str,
     structured: VlmStructuredResponse,
+    provider_call_made: bool,
 ) -> VlmEvalResult:
     score = round(structured.score, 4)
     passed = score >= success_threshold
@@ -1982,7 +2311,17 @@ def _result_from_structured(
         provider_success=provider_success,
         provider_success_matches_score_gate=provider_success_matches_score_gate,
         evidence=structured.evidence,
+        limitations=_direct_result_limitations(provider_call_made=provider_call_made),
+        provider_call_made=provider_call_made,
     )
+
+
+def _direct_result_limitations(*, provider_call_made: bool) -> tuple[str, ...]:
+    """Return immutable limitations for a direct result's evidence source."""
+
+    if provider_call_made:
+        return _DIRECT_RESULT_LIMITATIONS
+    return (*_DIRECT_RESULT_LIMITATIONS, _DIRECT_NO_CALL_LIMITATION)
 
 
 def _run_benchmark_case(
@@ -1993,17 +2332,24 @@ def _run_benchmark_case(
     api_key_env: str,
     timeout_s: float,
     use_fixture_score: bool,
+    selected_frames: tuple[SelectedFrame, ...] | None,
+    preselected_task: str | None,
 ) -> VlmBenchmarkCaseResult:
     score = (
         item.fixture_score
         if use_fixture_score and item.fixture_score is not None
         else None
     )
+    task = (
+        preselected_task
+        if preselected_task is not None and score is None and config.backend != "stub"
+        else item.task
+    )
     try:
         result = evaluate_vlm(
             input_path=item.rollout,
             output_path=f"vlm-eval-benchmark://{item.id}",
-            task=item.task,
+            task=task,
             backend=config.backend,
             model=config.model,
             success_threshold=config.success_threshold,
@@ -2014,6 +2360,7 @@ def _run_benchmark_case(
             rubric=config.rubric,
             timeout_s=timeout_s,
             score=score,
+            _selected_frames=selected_frames,
         )
     except VlmEvalError as exc:
         raise VlmEvalError(
@@ -2105,6 +2452,12 @@ def _benchmark_metrics(
     correct = tp + tn
     precision = _safe_ratio(tp, tp + fp)
     recall = _safe_ratio(tp, tp + fn)
+    specificity = _safe_ratio(tn, tn + fp)
+    if recall is None or specificity is None:
+        raise VlmEvalError(
+            "benchmark metrics require both pass and fail expected-label classes"
+        )
+    balanced_accuracy = round((recall + specificity) / 2, 4)
     f1 = _safe_ratio(2 * tp, 2 * tp + fp + fn)
     accuracy = round(correct / total, 4)
     return VlmBenchmarkMetrics(
@@ -2114,6 +2467,8 @@ def _benchmark_metrics(
         accuracy=accuracy,
         precision=precision,
         recall=recall,
+        specificity=specificity,
+        balanced_accuracy=balanced_accuracy,
         f1=f1,
         true_positives=tp,
         true_negatives=tn,
@@ -2140,10 +2495,12 @@ def _safe_ratio(numerator: int, denominator: int) -> float | None:
 
 def _benchmark_rank_key(result: VlmBenchmarkConfigResult) -> tuple[Any, ...]:
     metrics = result.metrics
+    balanced = -1.0 if metrics.balanced_accuracy is None else metrics.balanced_accuracy
     precision = -1.0 if metrics.precision is None else metrics.precision
     recall = -1.0 if metrics.recall is None else metrics.recall
     f1 = -1.0 if metrics.f1 is None else metrics.f1
     return (
+        -balanced,
         -metrics.accuracy,
         -f1,
         -precision,
@@ -2219,12 +2576,36 @@ def _parse_benchmark_item(
     if not item_id:
         item_id = f"item-{index:03d}"
 
+    structural_check = None
+    if "structural_check" in raw_item:
+        try:
+            structural_check = parse_agency_structural_check(
+                raw_item["structural_check"]
+            )
+        except AgencyStructuralError as exc:
+            raise VlmEvalError(
+                f"benchmark item {index} has invalid structural_check: {exc}"
+            ) from exc
+
+    expected_label = _coerce_expected_label(raw_label)
+    if (
+        structural_check is not None
+        and structural_check.claim == "actor_causes_motion"
+        and expected_label
+    ):
+        raise VlmEvalError(
+            f"benchmark item {index} structural_check claim "
+            "actor_causes_motion is refutation-only and requires "
+            "expected_label fail"
+        )
+
     return VlmBenchmarkItem(
         id=item_id,
         rollout=_resolve_relative_path(str(rollout), rollout_base),
-        expected_label=_coerce_expected_label(raw_label),
+        expected_label=expected_label,
         task=str(raw_item.get("task") or raw_item.get("instruction") or default_task),
         fixture_score=fixture_score,
+        structural_check=structural_check,
     )
 
 
@@ -2257,6 +2638,35 @@ def _coerce_expected_label(value: Any) -> bool:
     raise VlmEvalError(
         "expected_label must be a boolean or one of pass/fail, success/failure, true/false"
     )
+
+
+def _coerce_benchmark_evidence_scope(value: Any) -> str:
+    if not isinstance(value, str) or value not in BENCHMARK_EVIDENCE_SCOPES:
+        accepted = ", ".join(sorted(BENCHMARK_EVIDENCE_SCOPES))
+        raise VlmEvalError(
+            f"benchmark dataset evidence_scope must be exactly one of: {accepted}"
+        )
+    return value
+
+
+def _coerce_benchmark_limitations(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise VlmEvalError("benchmark dataset limitations must be an array of strings")
+    limitations: list[str] = []
+    for index, limitation in enumerate(value, start=1):
+        if (
+            not isinstance(limitation, str)
+            or not limitation
+            or limitation.strip() != limitation
+            or any(ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F for char in limitation)
+        ):
+            raise VlmEvalError(
+                "benchmark dataset limitation "
+                f"{index} must be a nonempty string without surrounding whitespace "
+                "or control characters"
+            )
+        limitations.append(limitation)
+    return tuple(limitations)
 
 
 def _coerce_rubric_map(value: Any) -> dict[str, str]:
@@ -2299,8 +2709,19 @@ def _rubric_from_path(raw_name: str, *, dataset_path: str) -> tuple[str, str] | 
         dataset_base = dataset_file.parent if dataset_file.suffix else dataset_file
         paths.insert(0, dataset_base / candidate)
     for path in paths:
-        if path.is_file():
-            return (path.stem, path.read_text(encoding="utf-8").strip())
+        try:
+            if path.is_file():
+                return (path.stem, path.read_text(encoding="utf-8").strip())
+        except (OSError, UnicodeError) as exc:
+            # Inline rubrics can exceed filesystem component limits; explicit
+            # file requests must still report the actual access/read failure.
+            if (
+                isinstance(exc, OSError)
+                and exc.errno == errno.ENAMETOOLONG
+                and not raw_name.startswith("@")
+            ):
+                return None
+            raise VlmEvalError(f"Unable to read rubric file: {candidate}") from exc
     if raw_name.startswith("@"):
         raise VlmEvalError(f"rubric file does not exist: {candidate}")
     return None
@@ -2444,14 +2865,21 @@ def _materialized_input(input_path: str) -> Iterator[Path]:
         yield Path(local)
 
 
+def _explicit_task_text(task: str) -> str | None:
+    """Share operator-task precedence between ordinary and preselected scoring."""
+
+    return task if task and task != "sim-to-real" else None
+
+
 def _resolve_task_text(
     local_input: Path,
     task: str,
     *,
     metadata_reader: Callable[[Path], bytes] | None = None,
 ) -> str:
-    if task and task != "sim-to-real":
-        return task
+    explicit_task = _explicit_task_text(task)
+    if explicit_task is not None:
+        return explicit_task
 
     parquet_task = _task_from_parquet_metadata(local_input, metadata_reader)
     if parquet_task is not None:
@@ -2554,7 +2982,9 @@ def _ready_timeout_s() -> float:
     return value if value > 0 else DEFAULT_READY_TIMEOUT_S
 
 
-def _openai_content(prompt: str, frames: list[SelectedFrame]) -> list[dict[str, Any]]:
+def _openai_content(
+    prompt: str, frames: Sequence[SelectedFrame]
+) -> list[dict[str, Any]]:
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
     for ordinal, frame in enumerate(frames, start=1):
         content.append({"type": "text", "text": _frame_anchor(ordinal)})
@@ -3431,9 +3861,31 @@ def _selected_indices(
     if frame_selection == "final":
         return [count - 1]
     selected = min(max_frames, count)
+    if selected == count:
+        return list(range(count))
     if selected == 1:
         return [count - 1]
+    if frame_selection == "keyframes":
+        return _terminal_stratified_indices(count, selected)
     return sorted({round(i * (count - 1) / (selected - 1)) for i in range(selected)})
+
+
+def _terminal_stratified_indices(count: int, selected: int) -> list[int]:
+    tail_count = math.ceil(selected / 2)
+    broad_count = selected - tail_count
+    tail_span = max(tail_count, math.ceil(count / 10))
+    tail_start = count - tail_span
+    # Avoid placing the final broad sample beside the first terminal sample.
+    broad_indices = [
+        round(i * (tail_start - 1) / broad_count) for i in range(broad_count)
+    ]
+    if tail_count == 1:
+        return broad_indices + [count - 1]
+    tail_indices = [
+        round(tail_start + i * (count - 1 - tail_start) / (tail_count - 1))
+        for i in range(tail_count)
+    ]
+    return broad_indices + tail_indices
 
 
 def _image_file_to_png(path: Path) -> bytes:

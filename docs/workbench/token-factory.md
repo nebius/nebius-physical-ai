@@ -113,18 +113,38 @@ the model's exact stripped answer. Longer answers, mismatched wrappers, code
 wrappers, punctuation outside the wrappers, other punctuation, and paraphrases
 do not match. Any legitimate complete caption that normalizes to the sentinel
 can therefore false-fail, including an image whose only salient text is that
-phrase. The retained hosted evidence observed only the exact punctuated
-sentinel; periodless, wrapped, nested, and emphasis variants are deterministic
-local controls, not observed hosted outputs.
-For a cooperative sentinel response, the command continues through every
-selected image once, writes the complete failed result, and exits 1 if any image
-was unavailable. It does not silently retry the sentinel. This partial-result
-guarantee does not extend to provider/configuration exceptions or storage-write
-failures; those can abort the operation before a result is saved.
+phrase. Earlier hosted evidence observed the punctuated sentinel; the composed
+thinking panel also observed MiniMax's periodless sentinel for a valid blank
+PNG. Both are false unavailability indications, not proof of missing image
+delivery. Wrapped, nested, and emphasis variants remain deterministic local
+controls, not observed hosted outputs.
+The command continues through every selected image once, writes the complete
+failed result, and exits 1 if any image was unavailable. It does not silently
+retry the sentinel. This persistence guarantee is specific to cooperative
+sentinel responses: provider/configuration exceptions and storage-write failures
+can abort before a result is saved.
 
 Reasoning sends the selected images together with the task. Neither command
 reads video files directly; extract frames first. Check saved results against
 the source images:
+
+`caption` leaves thinking control unchanged unless `--thinking` or
+`--no-thinking` is explicit. The built-in Lightning and MiniMax defaults already
+disable thinking with their verified model-specific fields; other selected
+models receive the generic `thinking` field only after an explicit override,
+except known `reasoning_effort` profiles such as Kimi-K3: those reject either
+boolean override before inference, rather than send an unsupported template
+field while silently retaining the existing effort. Omitting the option keeps
+their model-specific defaults; direct client callers may set `reasoning_effort`
+through `extra` explicitly.
+Use `--no-thinking` when a reasoning-capable vision model returns no visible
+caption. Use `--thinking` only deliberately: reasoning can consume the output
+allowance and still leave no visible caption. A provider may reject or ignore a
+control it does not support. Rejected requests and empty or reasoning-only
+answers fail; silently ignored controls that still produce visible text cannot
+be detected, so control compliance is not validated. This option
+is available to direct CLI, workbench, and SDK callers; the existing
+`workbench.token_factory.caption` workflow toolRef does not expose it.
 
 | Artifact | Check |
 | --- | --- |

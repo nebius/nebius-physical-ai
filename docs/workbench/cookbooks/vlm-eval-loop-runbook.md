@@ -6,6 +6,24 @@ For a separate qualitative audit, use [rich visual review](../vlm-visual-review.
 Its private evidence, counterbalanced comparisons, and usefulness hypotheses
 never supply a completion score or pipeline gate.
 
+For known-count inputs, `sequence` remains uniform across the full span and
+`keyframes` allocates half its budget to a terminal window covering at least
+the final 10%, widening when needed for unique frames. Earlier samples span
+the remaining evidence; short inputs return all frames. This is deterministic
+temporal sampling, not content-aware event detection. Both preserve first and
+final frames when at least two are selected. Unknown-count video compatibility
+is unchanged and never invents source indices or timestamps. The original
+[hosted sampling failure](../evidence/vlm-frame-selection-semantics.md) remains
+separate from deterministic sampler correctness.
+
+The default deliberately favors terminal evidence when the budget is small:
+three of 100 frames select `[0, 90, 99]`, and four of 1,000 select
+`[0, 450, 900, 999]`. Only the first frame supplies early evidence in the
+three-frame case; unsampled middle events can be missed. This is not complete
+episode coverage or a demonstrated improvement in model judgment. Use the
+retained selected indices and frame hashes to audit what was actually shown;
+the original SO-100 failure and gray-control rationale errors remain failures.
+
 This runbook runs the sim-to-real VLM-eval loop on the self-hosted serving path:
 serve a VLM with vLLM, score rollout directories with `vlm-eval`, and write a
 task-success report.
@@ -309,7 +327,21 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 - `rollouts/<rollout-id>/vlm_eval.json`: one structured result per rollout.
 - `task_success_report.json`: aggregate report with `total_rollouts`,
   `passed_rollouts`, `success_rate`, `mean_score`, `task_success`, and the
-  per-rollout `{success, score, rationale}` records.
+  per-rollout `rollout_id`, `success`, `score`, `rationale`, `status`,
+  `frame_count`, and `result_uri` records. Each row additionally discloses
+  `requested_model`, `served_model`, and `served_model_match_enforced`. Follow
+  each `result_uri` to its `rollouts/<rollout-id>/vlm_eval.json` for complete
+  provider evidence; that evidence is not inline in aggregate rows. The
+  aggregate `model` names the caller-selected configuration, not a verified
+  provider-served identity. The report also emits
+  `independent_human_label_calibration_established: false` and ordered
+  `limitations` so JSON-only consumers can see that the gate uses the mean
+  score, samples rather than continuous behavior, and does not establish
+  physical correctness or safety. Stub reports state that no VLM call occurred.
+
+Each direct result also emits `provider_call_made`: real backend execution sets
+it to true; stub and caller-supplied score overrides set it to false. Every path
+retains `independent_human_label_calibration_established: false`.
 
 `vlm_eval.json` is backend-neutral; inspect the payload's `backend` and
 `evidence.provider` fields to distinguish real inference from a fixture.
@@ -387,14 +419,19 @@ aws s3 cp "s3://${NPA_S3_BUCKET}/sim-to-real/${RUN_ID}/scores/task_success_repor
 ```
 
 Use `task_success` as the coarse gate, then inspect low-score rollouts and their
-rationales before iterating on policy, simulation, or rubric.
+rationales before iterating on policy, simulation, or rubric. It is a
+mean-score gate, not the per-rollout `success_rate`.
 
 ## Plug In Real Labeled Rollouts
 
 For unlabeled gating, point `rollouts_uri` at the rollout prefix and keep the loop
 spec unchanged. For labeled calibration, create a benchmark manifest that
 points at the same rollout directories and includes `expected_label` for each
-item, then run the sweep below.
+item, then run the sweep below. A benchmark must include at least one pass and
+one fail label, and every resolved item ID must be unique. Invalid class balance
+or duplicate IDs fail before rollout-frame materialization, VLM provider
+credentials, or evaluator/provider activity. An S3-hosted manifest still needs
+storage credentials before its labels and IDs can be parsed.
 
 ## Tune
 
@@ -445,7 +482,72 @@ npa workbench vlm-eval benchmark \
 Use the best threshold and rubric from the benchmark report to update
 `vlm_success_threshold` in the loop spec (or pass `--var` at submit time).
 `workflows/testing/vlm-eval-benchmark.yaml` runs the same sweep as
-a workflow stage.
+a workflow stage. Compare balanced accuracy first; the report also retains
+specificity, accuracy, precision, recall, F1, and all four confusion counts.
+This prevents an all-positive judge from being selected because the calibration
+set contains more positive than negative cases.
+
+## Separate outcome from agency
+
+The packaged `isaac-agency` dataset is a hermetic example of a paired control:
+the same exact six stylized frames support the state claim that the red cube
+becomes elevated, but reject the agency claim that the separated, retracting arm
+grasped and lifted it.
+
+```bash
+npa workbench vlm-eval benchmark \
+  --dataset isaac-agency \
+  --output /tmp/isaac-agency-benchmark.json \
+  --backend stub \
+  --frame-selection sequence \
+  --max-frames 6 \
+  --thresholds 0.5 \
+  --format json
+```
+
+The manifest's optional `structural_check` is deliberately narrow. Before any
+backend work, it validates the configured frame selection, labels, normalized
+PNG hashes, color-mask completeness, motion direction, and expected structural
+verdict for every configured item. The benchmark report records those
+measurements under `sweep.structural_checks`, and real scoring reuses the exact
+selected frame objects rather than reading or encoding the rollout again.
+When an item relies on rollout metadata for its task, preflight freezes that
+resolved task during the same materialization and reuses it for real-backend
+scoring; stub and fixture-score behavior stays unchanged. Datasets without this
+field retain no structural-check key.
+
+The command above uses the stub only to exercise report plumbing; it does not
+qualify a model. The fixture contains synthetic stylized stand-ins, not Isaac
+Sim renders. Its geometry cannot prove contact, grasp, force, dynamics,
+causality, photoreal generalization, policy success, physical correctness, or
+robot safety.
+The frozen measurements, hardware table, and reproduction commands are in the
+[Isaac agency calibration evidence record](../evidence/vlm-isaac-agency-calibration.md).
+
+Benchmark reports also set
+`independent_human_label_calibration_established: false`: the manifest accepts
+caller labels but does not establish their human authorship or independence.
+Accuracy, agreement, precision, recall, F1, and confusion counts describe that
+one labeled dataset; they are not operational error rates or evidence of
+generalization, physical correctness, or safety. Report limitations identify
+cases whose `score_source` is `fixture` or `stub` as dry-validation or wiring
+inputs rather than VLM evidence.
+
+Manifests may also declare `evidence_scope` as exactly `unspecified` or
+`illustrative_only`, plus an ordered `limitations` array. Reports preserve them
+as `dataset_evidence_scope` and `dataset_limitations`. The packaged default is
+`illustrative_only`: four inputs are synthetic 2x2 color swatches with
+color-correlated caller labels; a fifth tiny synthetic sequence omits the
+terminal outcome. These inputs and recorded scores prove benchmark wiring only.
+Custom manifests that omit the metadata remain `unspecified`; omission does not
+certify task validity. Invalid scope or limitation metadata rejects the dataset
+before frame selection or provider calls. Limitations must be nonempty strings
+without surrounding whitespace or control characters; valid order and duplicates
+are retained in JSON.
+
+These disclosure keys are additive. Consumers that reject unknown JSON keys
+must update their schema; consumers that ignore unknown keys retain the previous
+fields and values.
 
 Benchmark report schema `npa_vlm_eval_benchmark_report_v2` makes calibration
 errors explicit for every model/rubric/threshold configuration. Inspect its 2x2
@@ -617,6 +719,11 @@ changed rubric or current commit.
   rollout directories or directly to one rollout directory.
 - Scores are all low or noisy: tighten `RUBRIC`, switch `FRAME_SELECTION`, or run
   `vlm-eval benchmark` on labeled rollouts before using the gate.
+- Simulator axes or debug gizmos appear in submitted frames: disable or crop
+  them. A judge can misclassify overlays as task objects.
+- A qualitative judgment appears to contradict a sealed numeric gate: keep the
+  synchronized simulator or telemetry measurement authoritative. Text such as
+  "a visible gap" does not establish that a predeclared height was crossed.
 - S3 writes fail: verify `AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud`
   and that the storage keys can read `rollouts_uri` and write `scores_uri`.
 

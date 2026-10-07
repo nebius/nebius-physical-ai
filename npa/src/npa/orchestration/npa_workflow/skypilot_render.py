@@ -879,9 +879,17 @@ def resolve_task_image(
     _validate_image_override_syntax(options)
 
     def resolve_tool(tool: str, **kwargs: Any) -> str:
-        from npa.deploy.images import container_image_for_tool
+        from npa.deploy.images import (
+            container_image_for_tool,
+            public_workflow_image_default,
+        )
 
         try:
+            candidate = public_workflow_image_default(
+                tool, tool_ref=tool_ref, registry=kwargs.get("registry")
+            )
+            if candidate:
+                return candidate
             return container_image_for_tool(tool, **kwargs)
         except ValueError as exc:
             # Image quarantine is a workflow-planning failure at this boundary,

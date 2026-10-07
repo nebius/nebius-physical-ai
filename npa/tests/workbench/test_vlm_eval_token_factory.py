@@ -274,6 +274,11 @@ def test_paired_results_preserve_effective_rubric_and_provider_disagreement(
         assert outcome.error is None and outcome.result is not None
         result = outcome.result
         assert result.rubric == rubric
+        assert result.provider_call_made is True
+        assert result.independent_human_label_calibration_established is False
+        assert "This score is a stub or caller-supplied" not in " ".join(
+            result.limitations
+        )
         assert result.passed is passed
         assert result.provider_success is provider_success
         assert result.provider_success_matches_score_gate is False
@@ -1130,10 +1135,10 @@ def test_api_result_retains_image_sequence_sampling_coverage(
 
     assert result.evidence is not None
     frames = result.evidence.request.frames
-    assert [frame.source_index for frame in frames] == [0, 2, 4]
+    assert [frame.source_index for frame in frames] == [0, 3, 4]
     assert [frame.source_count for frame in frames] == [5, 5, 5]
     sampling = result.evidence.request.request_manifest["sampling"]
-    assert sampling["selected_indices"] == [0, 2, 4]
+    assert sampling["selected_indices"] == [0, 3, 4]
     assert sampling["source_count"] == 5
     assert sampling["selected_count"] == 3
     assert sampling["max_frames"] == 3
@@ -1295,7 +1300,13 @@ def test_real_benchmark_case_retains_per_request_evidence(
                         "rollout": str(rollout),
                         "expected_label": True,
                         "task": "Confirm that the frame is green.",
-                    }
+                    },
+                    {
+                        "id": "visible-red-negative",
+                        "rollout": str(rollout),
+                        "expected_label": False,
+                        "task": "Confirm that the frame is red.",
+                    },
                 ],
             }
         )
@@ -1322,6 +1333,13 @@ def test_real_benchmark_case_retains_per_request_evidence(
     assert case.evidence.provider.finish_reason == "stop"
     assert case.provider_success is True
     assert case.provider_success_matches_score_gate is True
+    negative = report.best_config.results[1]
+    assert negative.expected_label is False
+    assert negative.evidence is not None
+    assert negative.evidence.request.frames == case.evidence.request.frames
+    assert (
+        negative.evidence.request.prompt_sha256 != case.evidence.request.prompt_sha256
+    )
 
 
 def test_benchmark_case_retains_pre_provenance_positional_constructor() -> None:
