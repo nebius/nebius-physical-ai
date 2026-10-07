@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import time
 
 from .public_vla_launch import IMAGE
+from .public_vla_export import file_sha256
 
 
 def _verify_collection(output):
@@ -20,8 +20,7 @@ def _verify_collection(output):
     ):
         raise ValueError("collection has no completed training and evaluation proof")
     weights = output / "exported-policy/policy/model.safetensors"
-    with weights.open("rb") as stream:
-        actual = hashlib.file_digest(stream, "sha256").hexdigest()
+    actual = file_sha256(weights)
     if actual != selection.get("checkpoint_sha256"):
         raise ValueError("collected checkpoint checksum does not match selection")
     for relative in (
