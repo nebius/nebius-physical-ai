@@ -635,6 +635,14 @@ GitHub Actions dependencies daily and groups version updates into one
 regenerate CI pins after Python input changes, and validate the combined batch. Reproduce the scan
 with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
 
+Dependabot excludes `ci/**` relative to `/npa`: omitting `/npa/ci` from the
+directory list does not exclude its nested manifests. Generated CI pins must
+still be refreshed with `ci_requirements.py --update` after a Python input
+change; a stale fingerprint intentionally blocks admission. Torch and MuJoCo
+updates require manual qualification. Keep Torch aligned with the CPU security
+gate and supported interpreter wheels, and keep MuJoCo on the tested Gymnasium
+Robotics engine until its enum compatibility issue is resolved.
+
 The base-image scanner uses Docker with Buildx and the checksum-verified Trivy
 binary. From the repository root, `npa/.venv/bin/python
 npa/scripts/scan_base_images.py --inventory

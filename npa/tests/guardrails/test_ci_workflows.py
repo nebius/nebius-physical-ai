@@ -499,6 +499,31 @@ def test_dependabot_does_not_edit_generated_ci_constraints() -> None:
     ]
     assert len(pip_updates) == 1
     assert "/npa/ci" not in pip_updates[0]["directories"]
+    # Omitting /npa/ci alone still lets the parent /npa scan edit these files.
+    assert "ci/**" in pip_updates[0].get("exclude-paths", [])
+
+
+def test_dependabot_preserves_manually_qualified_runtimes() -> None:
+    """Require explicit qualification before changing coupled runtime pins.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Automation can replace a deliberately qualified runtime.
+    """
+    configuration = yaml.safe_load((REPO_ROOT / ".github/dependabot.yml").read_text())
+    for update in configuration["updates"]:
+        directories = update.get("directories", [update.get("directory")])
+        if update["package-ecosystem"] != "pip" or "/npa" not in directories:
+            continue
+        ignored = {
+            item["dependency-name"]
+            for item in update.get("ignore", [])
+            if set(item) == {"dependency-name"}
+        }
+        assert {"torch", "mujoco"} <= ignored
 
 
 def test_compatibility_checks_cannot_be_deferred_until_the_queue() -> None:
