@@ -682,6 +682,7 @@ npa workbench workflow submit "$SPEC" \
   --var bucket="$BUCKET" \
   --var caption_model="$CAPTION_MODEL" \
   --runtime \
+  --max-wait-seconds 0 \
   --infra "k8s/$KUBE_CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
@@ -710,6 +711,10 @@ so even short CPU stages may take several minutes of wall time. Model downloads
 can dominate GPU startup. Inspect stage logs to distinguish setup from payload
 progress, and keep the submit command running so its driver can launch later
 stages. R4 describes recovery if that driver is interrupted.
+
+`--max-wait-seconds 0` waits without a per-stage deadline. The CLI default
+is one hour, which can cancel a healthy generation stage when a video or
+variant batch takes longer. Keep the submit driver running while work proceeds.
 
 `--runtime` lets the orchestrator read evaluator decisions and execute real
 refinement loops. This workflow declares `metadata.executionMode: runtime`, so
@@ -825,6 +830,7 @@ npa workbench workflow submit "$SPEC" \
   --lerobot-episode 1 \
   --require-explicit-lerobot-selection \
   --runtime \
+  --max-wait-seconds 0 \
   --infra "k8s/$KUBE_CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
@@ -941,6 +947,7 @@ npa workbench workflow submit "$SPEC" \
   --var bucket="$BUCKET" \
   --var caption_model="$CAPTION_MODEL" \
   --runtime \
+  --max-wait-seconds 0 \
   --infra "k8s/$KUBE_CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
@@ -1108,6 +1115,14 @@ retaining the project, runtime, inputs, configuration, and secret names.
 work; it does not turn a rejected result into an accepted one. Repeat R2 to
 reserve a fresh run and API directory after changing the experiment. See the
 [run lifecycle](../../docs/run-lifecycle.md).
+
+If an earlier submission hit the default one-hour wait deadline, first verify
+that live status records its exact job as cancelled and all tasks terminal.
+Resume the unchanged run with `--max-wait-seconds 0 --retries 1` added to the
+same command. Ordinary resume preserves a terminal failure; the explicit retry
+reruns the incomplete stage while retaining completed waves and prior evidence.
+Generation restarts the incomplete batch, so archive partial videos before
+recovery; it does not continue from the last published variant.
 
 ### R5. Find and change generation and evaluation settings
 

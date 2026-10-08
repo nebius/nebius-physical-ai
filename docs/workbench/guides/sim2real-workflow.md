@@ -423,6 +423,7 @@ derived from those objects; `dataset-manifest.json` is uploaded last.
 export RUN_ID="sim2real-$(date -u +%Y%m%dT%H%M%SZ)"
 export NPA_BUCKET='<bucket-name>'
 export SOURCE_SHA='<40-hex sha the images in § 5 were built from>'
+export NPA_GPU_CONCURRENCY='<number of schedulable RTX GPUs, at most 8>'
 
 npa/.venv/bin/npa workbench workflow trigger stage-preset \
   --preset public-franka-lift \
@@ -435,20 +436,27 @@ npa/.venv/bin/npa workbench workflow validate-spec "${SPEC}" \
   --preset public-franka-lift --json
 npa/.venv/bin/npa workbench workflow plan-spec "${SPEC}" \
   --preset public-franka-lift --run-id "${RUN_ID}" \
-  --var bucket="${NPA_BUCKET}" --var source_sha="${SOURCE_SHA}" --waves \
+  --var bucket="${NPA_BUCKET}" --var source_sha="${SOURCE_SHA}" \
+  --var gpu_concurrency="${NPA_GPU_CONCURRENCY}" --waves \
   --assume-decision promote_checkpoint
 
 npa/.venv/bin/npa workbench workflow submit "${SPEC}" \
   --preset public-franka-lift --project "${NPA_PROJECT}" \
-  --infra "k8s/${NPA_CLUSTER}" --runtime --run-id "${RUN_ID}" \
+  --infra "k8s/${NPA_CLUSTER}" --runtime --resume --max-wait-seconds 0 \
+  --run-id "${RUN_ID}" \
   --var bucket="${NPA_BUCKET}" \
+  --var gpu_concurrency="${NPA_GPU_CONCURRENCY}" \
   --var source_sha="${SOURCE_SHA}" \
   --var controller_image="${CONTROLLER_IMAGE}" \
   --var transfer_image="${TRANSFER_IMAGE}" \
   --var envgen_image="${ENVGEN_IMAGE}" \
   --var isaac_image="${ISAAC_IMAGE}" \
   --var viewer_image="${VIEWER_IMAGE}" \
-  --var isaac_cache_pvc=npa-isaac-cache
+  --var isaac_cache_pvc=npa-isaac-cache \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY
 ```
 
 `source_sha` is mandatory once `require_baked_npa` is set (the default): the
@@ -468,6 +476,15 @@ silently reused as PPO input, and the strict stable-placement metric remains 5
 cm. For a custom/private dataset, omit `--preset` and continue to use the
 existing `--var dataset_id=...`, `trigger_uri=...`, and `seed_manifest_uri=...`
 path.
+
+Set `NPA_GPU_CONCURRENCY` to the available compatible GPUs, up to the eight
+EnvGen shards. For example, three schedulable GPUs require a value of `3`,
+which runs the eight shards in three batches. This controls placement without
+reducing the scenario counts, training updates, or workflow iterations. Forward
+all four secret names even when their values come from the selected project's
+credential store; the submit preflight rejects missing propagation before launch.
+The runtime waits without a per-wave deadline so the production PPO passes can
+finish. Keep the runtime driver on an always-on operator VM.
 
 The production training default is 2,000 PPO updates per inner pass. The
 canonical workflow resumes the newest checkpoint from the same run, so its
@@ -647,6 +664,13 @@ exact validation/gold lineage. Pipeline completion proves orchestration, not
 policy efficacy; report the measured strict success without weakening it. The
 [architecture/resume contract](../../architecture/sim2real-compositional-workflow.md)
 defines the 14 ComponentRecords and restart audit.
+
+Recordings can exceed the storage endpoint's single-upload object size. NPA's
+conditional storage writer uses multipart upload for payloads of at least 8 MiB,
+enforcing the original create or replace condition when the upload completes.
+It aborts unfinished parts on failure. A publication failure must remain visible
+in its runtime ledger; recover finalization from the sealed evidence and verify
+the published recording bytes before reporting completion.
 
 ## Clean up
 
