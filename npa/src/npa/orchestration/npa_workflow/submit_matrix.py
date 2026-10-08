@@ -72,6 +72,44 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "video-variant-sweep.yaml",
+        "multi",
+        runtime=True,
+        requires_token_factory=True,
+        expected_parallel_tasks=2,
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "NPA_LINEAGE_POSTGRES_DSN",
+            "MLFLOW_TRACKING_URI",
+            "MLFLOW_EXPERIMENT_ID",
+        ),
+        rotation_skip=True,
+        skip_reason="Requires explicit source and variant manifests, an accessible reasoner, and private Postgres/MLflow services.",
+        notes="Real conditioned Transfer workers, paired visual review, and tracked accepted dataset publication.",
+    ),
+    SubmitLiveCase(
+        "video-variant-sweep-cosmos3.yaml",
+        "multi",
+        runtime=True,
+        requires_token_factory=True,
+        expected_parallel_tasks=2,
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "NPA_LINEAGE_POSTGRES_DSN",
+            "MLFLOW_TRACKING_URI",
+            "MLFLOW_EXPERIMENT_ID",
+        ),
+        rotation_skip=True,
+        skip_reason="Requires explicit source and variant manifests, an accessible reasoner, and private Postgres/MLflow services.",
+        notes="Guarded native Cosmos3 full-source transfer workers, paired visual review, and tracked accepted dataset publication.",
+    ),
+    SubmitLiveCase(
         "rgbd-scan-to-policy-demo.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -305,6 +343,24 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="curobo",
         notes="Complete MotionBenchMaker and MPiNets cases, kinematic and 3 kg dynamics modes, verified journal and RRD.",
+    ),
+    SubmitLiveCase(
+        "open3d-registration.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="open3d",
+        rotation_skip=True,
+        skip_reason=(
+            "npa-open3d is a validation candidate that has not been pushed to the "
+            "shared registry, so a rotation submit has no image to pull. The same "
+            "six stages have been run end to end in the built image against real "
+            "S3; re-include this case in the same change that publishes the tag."
+        ),
+        notes=(
+            "Real Open3D RANSAC/FPFH + ICP registration, multiway pose-graph "
+            "optimization, Poisson reconstruction and a decode-verified RRD. "
+            "CPU-only: Open3D's registration and geometry APIs have no CUDA path."
+        ),
     ),
     SubmitLiveCase(
         "newton-train-teacher.yaml",
@@ -1588,11 +1644,39 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "byof-apriltag.yaml",
+        "cpu",
+        plan_only=True,
+        plan_only_justification=(
+            "standard workflow submit would nest the BYOF builder and its inner "
+            "SkyPilot launch inside an outer Kubernetes stage"
+        ),
+        notes=(
+            "The direct BYOF runner owns real build/push/pull execution. This "
+            "operator-built candidate passed retained digest-pinned CPU "
+            "qualification; visual acceptance remains explicitly unclaimed."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-droid-policy-learning.yaml",
         "multi",
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "byof-evo.yaml",
+        "cpu",
+        plan_only=True,
+        plan_only_justification=(
+            "standard workflow submit would nest the BYOF builder and its inner "
+            "SkyPilot launch inside an outer Kubernetes stage"
+        ),
+        notes=(
+            "The direct BYOF runner owns real build/push/pull execution. The "
+            "operator-built GPL candidate passed a retained digest-pinned CPU "
+            "Kubernetes qualification; it is not a published matrix image."
+        ),
     ),
     SubmitLiveCase(
         "byof-robomimic.yaml",

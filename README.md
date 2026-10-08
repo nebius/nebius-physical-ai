@@ -232,6 +232,8 @@ training credit. The older `sim2real/runbook.yaml` is a legacy path.
 | Task | Reference |
 | --- | --- |
 | Discover tools by task | [Workbench docs](docs/workbench/README.md) |
+| Use FA4 in your own RTX PRO 6000 container | [RTX PRO 6000 FA4 adoption guide](docs/workbench/guides/rtx6000-fa4.md) |
+| Compare standalone FA2 and tuned FA4 | [RTX PRO 6000 measurements and actual renders](docs/workbench/fa2-fa4-validation.md) |
 | Find a command or option | [CLI index](docs/cli/README.md), then `npa workbench <tool> --help` |
 | Call a tool from Python or HTTP | [CLI / SDK walkthrough](docs/workbench/cli-sdk-yaml-walkthrough.md) — supported interfaces vary by tool |
 | Develop a native Ray application | [Ray guide](docs/workbench/ray.md) |

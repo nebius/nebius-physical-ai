@@ -8,6 +8,9 @@ ARG UBUNTU_SNAPSHOT=20260820T000000Z
 
 WORKDIR /opt/npa
 USER root
+# COPY merges trees, so removed source files must not survive from the parent.
+RUN test -d /opt/npa && test ! -L /opt/npa \
+    && rm -rf /opt/npa/src /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows

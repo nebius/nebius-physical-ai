@@ -27,15 +27,26 @@ from npa.workbench.model_cache import (
     resolve_model_cache_root,
 )
 
+API_ONLY_VLM_AUDIT_TOOLS = frozenset(
+    {"workbench.vlm_eval.compare_judges", "workbench.vlm_eval.compare_preference"}
+)
+
 # Map toolRef prefixes / exact names onto CONTAINER_IMAGE_NAMES keys.
 # Token Factory is a hosted HTTP API client. Do not pin the heavy cosmos image:
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
-TOOL_REF_IMAGE_TOOL: dict[str, str] = {
+TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
+    "workflow.video_sweep.generate": "cosmos2-transfer",
+    "workflow.video_sweep.generate_cosmos3": "cosmos3",
     "workflow.habitat_sim.smoke": "habitat-sim",
     "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
     "workbench.nurec.visualize": "rerun-viewer",
+    # Blinded preference is API-only, even under a global self-hosted backend.
+    "workbench.vlm_eval.compare_preference": None,
+    # Paired judging is hosted API-only and must not inherit the self-hosted
+    # VLM family's heavy Cosmos image.
+    "workbench.vlm_eval.compare_judges": None,
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
@@ -56,6 +67,10 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.cosmos_evaluator": "cosmos-evaluator",
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
+    # CPU image on purpose: Open3D's registration and geometry pipelines have no
+    # CUDA path, so routing these stages at the CUDA base would hold an
+    # accelerator they cannot use.
+    "workbench.open3d": "open3d",
     "workbench.alpamayo2_super": "alpamayo2-super",
     "workbench.flex_pi": "flex-pi",
     "workbench.curobo": "curobo",
@@ -90,6 +105,15 @@ HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workflow.video_sweep.prepare": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.video_sweep.review": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.video_sweep.generate": ("HF_TOKEN",),
+    "workflow.video_sweep.generate_cosmos3": ("HF_TOKEN",),
+    "workflow.video_sweep.lineage": (
+        "NPA_LINEAGE_POSTGRES_DSN",
+        "MLFLOW_TRACKING_URI",
+        "MLFLOW_EXPERIMENT_ID",
+    ),
     "workbench.encord": ("ENCORD_SSH_KEY_B64",),
     "workflow.paidf": (),
     "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
@@ -105,6 +129,8 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # only through the workflow secret channel when one is available.
     "workbench.flex_pi": ("HF_TOKEN",),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workbench.vlm_eval.compare_preference": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workbench.vlm_eval.compare_judges": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
     "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
@@ -146,6 +172,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # already installs vLLM for self-hosted vlm_eval); it is what lets the npa.workflow
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
+    "workflow.video_sweep.lineage": "video-sweep",
     "workbench.encord": "encord",
     "workbench.token_factory.robot_sdg": "robot-sdg",
     "workbench.sonic": "sonic",
@@ -852,9 +879,17 @@ def resolve_task_image(
     _validate_image_override_syntax(options)
 
     def resolve_tool(tool: str, **kwargs: Any) -> str:
-        from npa.deploy.images import container_image_for_tool
+        from npa.deploy.images import (
+            container_image_for_tool,
+            public_workflow_image_default,
+        )
 
         try:
+            candidate = public_workflow_image_default(
+                tool, tool_ref=tool_ref, registry=kwargs.get("registry")
+            )
+            if candidate:
+                return candidate
             return container_image_for_tool(tool, **kwargs)
         except ValueError as exc:
             # Image quarantine is a workflow-planning failure at this boundary,
@@ -1150,6 +1185,8 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
         # ENV values. Keep the narrow baked adapter importable on CPU stages too,
         # without invoking the render-only runtime bootstrap above.
         return content_agents_pythonpath
+    if tool_ref in API_ONLY_VLM_AUDIT_TOOLS:
+        return ""
     if not tool_ref.startswith("workbench.vlm_eval"):
         return ""
     # #236 skipped the benchmark toolRef here, correctly for the twin it had: a `sample`
@@ -1967,14 +2004,17 @@ def render_setup_for_tool(
         parts.append(render_pip_extra_setup(declared_extra))
     parts.append(render_pip_requirements_setup(tool_pip_requirements(tool_ref)))
     backend = str(config.get("vlm_backend") or "").strip().lower()
-    if tool_ref.startswith("workbench.vlm_eval") and backend in {
-        "self-hosted",
-        "self_hosted",
-    }:
+    if (
+        tool_ref.startswith("workbench.vlm_eval")
+        and tool_ref not in API_ONLY_VLM_AUDIT_TOOLS
+        and backend in {"self-hosted", "self_hosted"}
+    ):
         parts.append(_vllm_install_setup(self_hosted_vlm_model(config)))
     if tool_ref.startswith("workbench.sonic"):
         parts.append(_sonic_deps_setup())
-    if tool_ref.startswith("workbench.token_factory"):
+    if tool_ref.startswith("workbench.token_factory") or (
+        tool_ref in API_ONLY_VLM_AUDIT_TOOLS
+    ):
         # Avoid ${VAR:-} bash forms so SkyPilot placeholder lint stays clean.
         parts.append(
             'if [[ -z "$NEBIUS_TOKEN_FACTORY_KEY" ]]; then\n'

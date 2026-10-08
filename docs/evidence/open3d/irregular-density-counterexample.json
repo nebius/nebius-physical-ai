@@ -1,0 +1,59 @@
+{
+  "what_this_measures": "Whether crop_justification's far reading can fire on a surface with zero error. It can, when the observations cover the surface unevenly, because the distance it reads is distance from the nearest observation and not distance from the truth.",
+  "why_it_matters": "Earlier heads of this lane claimed the reading's error was one-sided and that an area it called invented was invented. That claim is false and is now removed from the source, the operator-facing note, the skill and the tests.",
+  "found_by": "An independent root audit, which reproduced it on extracted functions with a SciPy cKDTree adapter. This record is the lane's own reproduction through the shipped functions and real Open3D, so neither rests on the other.",
+  "geometry": {
+    "shape": "closed triangulated unit cube",
+    "vertices": 9602,
+    "triangles": 19200,
+    "is_its_own_ground_truth": true,
+    "max_vertex_distance_to_analytic_cube": 0.0,
+    "max_triangle_centroid_distance_to_analytic_cube": 0.0,
+    "invented_area_fraction": 0.0,
+    "note": "Every vertex is constructed on a face of the analytic cube, and every observation is drawn on that same cube, so there is nothing anywhere for a fabrication reading to be right about."
+  },
+  "results": [
+    {
+      "case": "even coverage of all six faces",
+      "observations": 24000,
+      "per_face_counts": {
+        "five_faces_each": 4000,
+        "sixth_face": 4000
+      },
+      "median_sample_spacing": 0.007359,
+      "voxel_size": 0.014718,
+      "voxel_rule": "2x global median nearest-neighbour sample spacing (module recommendation)",
+      "unsupported_area_fraction": 0.192187,
+      "unsupported_area_beyond_1_5_voxels": 0.006875,
+      "unsupported_area_beyond_3_voxels": 0.0,
+      "far_band_share_of_unsupported_area": 0.0,
+      "removed_surface_reads_as": "near-threshold surface"
+    },
+    {
+      "case": "dense on five faces, sparse on the sixth",
+      "observations": 20040,
+      "per_face_counts": {
+        "five_faces_each": 4000,
+        "sixth_face": 40
+      },
+      "median_sample_spacing": 0.007436,
+      "voxel_size": 0.014871,
+      "voxel_rule": "2x global median nearest-neighbour sample spacing (module recommendation)",
+      "unsupported_area_fraction": 0.315729,
+      "unsupported_area_beyond_1_5_voxels": 0.169323,
+      "unsupported_area_beyond_3_voxels": 0.131615,
+      "far_band_share_of_unsupported_area": 0.416859,
+      "removed_surface_reads_as": "far from any observation"
+    }
+  ],
+  "conclusion": "Evenness of coverage, not correctness of geometry, decides which side of the threshold this lands on. A high reading therefore cannot establish fabrication, and a low one cannot establish cleanliness. Both are statements about distance from observations.",
+  "superseded_conclusions_kept_immutable": [
+    "evidence/open3d/poisson-procedure-and-overcall-audit.json: twelve zero-error cells all read near-threshold. The measurements stand. The inference that the reading cannot over-call does not: every cell sampled convex geometry evenly."
+  ],
+  "generator": "harness/irregular_density_counterexample.py",
+  "reproduce": "From a repository checkout, feeding the harness over stdin because it is not part of the image's build context:\n  docker run --rm -i --network none --entrypoint python3 sha256:60ecaefc93f0fd369a7811630896d0d2b8e7b3014913ef9a4aae002e0e31451d - < docs/evidence/open3d/harness/irregular_density_counterexample.py",
+  "open3d_version": "0.20.0",
+  "numpy_seed": 7,
+  "reproduce_previous_form_was_broken": "An earlier published form ran `python3 harness/irregular_density_counterexample.py` inside the image and exited 2, because the harness is not in the image. Recorded so the correction is visible rather than silent.",
+  "verified_image": "sha256:60ecaefc93f0fd369a7811630896d0d2b8e7b3014913ef9a4aae002e0e31451d"
+}

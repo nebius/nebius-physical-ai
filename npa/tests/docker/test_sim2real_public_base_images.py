@@ -15,7 +15,7 @@ WORKBENCH = ROOT / "npa" / "docker" / "workbench"
 def test_generic_torch_images_require_patched_versions_and_complete_dependency_checks():
     for relative, floors in (
         (
-            "base/cuda13-b300/Dockerfile",
+            "base/cuda13-blackwell/Dockerfile",
             {
                 "TORCH_VERSION": "2.13.0",
                 "TORCHVISION_VERSION": "0.28.0",
@@ -55,6 +55,41 @@ def test_cosmos_reason_replaces_parent_npa_metadata_before_pip_check() -> None:
     assert text.index("python -m pip uninstall -y npa") < text.index(
         "python -m pip check"
     )
+
+
+def test_sim2real_cpu_images_install_security_fixed_perl() -> None:
+    for relative in ("sim2real-control/Dockerfile", "rerun-viewer/Dockerfile"):
+        text = (WORKBENCH / relative).read_text(encoding="utf-8")
+        assert "ARG DEBIAN_SNAPSHOT=20261002T000000Z" in text, relative
+        assert "ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1" in text, relative
+        assert '"perl-base=${MIN_PERL_BASE_VERSION}"' in text, relative
+
+
+def test_envgen_clears_inherited_source_before_copying_exact_revision() -> None:
+    text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
+    removal = text.index("rm -rf /opt/npa/src /opt/npa/workflows")
+    source_copy = text.index("COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa")
+    catalog_copy = text.index("COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows")
+    assert text.index("test ! -L /opt/npa") < removal < source_copy < catalog_copy
+    assert catalog_copy < text.index("FROM scratch AS runtime")
+
+
+def test_cpu_images_update_system_and_viewer_bootstrap_dependencies() -> None:
+    lock = (WORKBENCH / "common/sim2real-cpu-build-requirements.txt").read_text()
+    assert "pip==26.2.1" in lock
+    assert "setuptools==84.0.0" in lock
+    assert "wheel==0.48.0" in lock
+    assert "msgpack==1.2.1" in lock
+    assert "urllib3==2.8.0" in lock
+    for relative in ("sim2real-control/Dockerfile", "rerun-viewer/Dockerfile"):
+        text = (WORKBENCH / relative).read_text()
+        bootstrap = text.index(
+            "python -m pip install --no-cache-dir --no-deps --upgrade"
+        )
+        assert bootstrap < text.index("USER ubuntu")
+        assert "python /opt/npa/update_pip_vendor.py" in text
+    viewer = (WORKBENCH / "rerun-viewer/Dockerfile").read_text()
+    assert viewer.count("python /opt/npa/update_pip_vendor.py") == 2
 
 
 def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:

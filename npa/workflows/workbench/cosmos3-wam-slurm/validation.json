@@ -337,9 +337,10 @@
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/evidence.json",
     "status": "operator-cancelled-wrong-topology",
     "last_observed_update": 535,
-    "checkpoint_500_retained": true,
+    "checkpoint_500_retained": false,
     "excluded_from_scaling": true,
-    "cancellation_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/cancellation.json"
+    "cancellation_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/cancellation.json",
+    "checkpoint_retention_scope": "Preserved after the original cancellation, then removed during the operator-requested post-merge cleanup on 2026-10-02."
   },
   "thirty_two_gpu_extension": {
     "nodes": 4,
@@ -394,5 +395,11 @@
     "slurm_required_by_model": false,
     "torchrun_only_deployment_validated": false,
     "npa_soperator_deployment_validated": true
+  },
+  "historical_campaign_retention": {
+    "raw_checkpoint_archives_retained": false,
+    "published_evidence_retained": true,
+    "editorial_docx_preserved": true,
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-soperator-32/post-merge-cleanup.json"
   }
 }

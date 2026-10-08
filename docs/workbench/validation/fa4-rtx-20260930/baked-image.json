@@ -1,0 +1,67 @@
+{
+  "Id": "sha256:da0b6eb71c0d36eea037aeb6485e5727c72db212c23ea2a8b710ed54654c25f4",
+  "Created": "2026-09-30T05:00:54.605629028Z",
+  "Architecture": "amd64",
+  "Os": "linux",
+  "RootFS": {
+    "Type": "layers",
+    "Layers": [
+      "sha256:dc6eb6dad5f9e332f00af553440e857b1467db1be43dd910cdb6830ba0898d50",
+      "sha256:e2a50251472b1dae8bd3e8f3c7610b60293462494a6089ce12ec200d0532390e",
+      "sha256:3e1159f70fa8cd9cf23103a830dd3fa91fd5dc5da0c209c43bf4846576cec32e",
+      "sha256:7482e185693edb89761eb19d8f1a24e01c178ead3e5cac251253943f6c1d113e",
+      "sha256:495bbaf4cc5ca53d8286fe305d2fc2fd3ecb2c8791cfdd4473e984d2eb0f3ea1",
+      "sha256:2ffe99f42b731891c85c3b7249112fce1bac841f9c21d3cd95a1071e2c665c34",
+      "sha256:387c0bf6bb44822d4a5123bbe26df1369af5fe9833ca81a3a6ffd0a89ea3bac1",
+      "sha256:b0b2e3d379fcfcc28e5bae3b4c844292ea9434c85a5452c9c28135733dd9df11",
+      "sha256:c7e52185c25bde2aea99fee46514c16a7d4e1c8b366146406a21f590822ceb9c",
+      "sha256:5f375b933267fe41876e824df18003137de6e939b6c8966ec99c855485516cfa",
+      "sha256:57698bf34fb399d1faa00943ff1c863f5dfbe06c1dd284feab37fe78090f3613",
+      "sha256:655efb97157dde23346d7403264f8009ceb52820077f0ff449839b13977df9e8",
+      "sha256:6fa1609f38d6ca6b46a7fea4b421bd35f009a98cc8cef93c9ee404ecb8a28e00",
+      "sha256:ffb77652f8441d5c7903e107413a5224051f161a5df1e6072a463dda9ebb2f5f",
+      "sha256:a42df4e70b5a7e34fa4586107dec1e345d4f2e52fc9f0dfaf084a3ae77deee72",
+      "sha256:cd9f43e974540ba15cb248099d63a96aede9924812b5040e65839b96dfb38234",
+      "sha256:c02256c3552a8635aa417d60f642caee8a6523ee21d534b1417902e5febbc28c",
+      "sha256:8d7826365988687a92de177a5cc5917fec3e2a5ea39cd9584dd61de86aae1f8d",
+      "sha256:ef5006b445b0c4931567012229ac4e92a19bbf6f28ad6bdf7d87708fb3d5c8e8",
+      "sha256:ce17f633c89c09bef0e94e25e421b7bbdadb0c55370a97513d6699bee935e40a",
+      "sha256:55ad58a72b482644e6611dad9fa6a9ad221b6ee0d7b39e2b398060804efac68a",
+      "sha256:f599cf7b35c8dfcae748f63b5f76e2d9e5fbc648ea2253d3918be1193bcad6fc",
+      "sha256:ef39285188730d21fbccd29f1d9db55d18685edd2bfb4ed463c910972e0f6962",
+      "sha256:224e985af39f8e634ca8ab12f5551e19aa5087cd35dcd9810a394b0aecf7d797",
+      "sha256:0e0d277bbac22383e3d580ceec4710f38acf70bdff667a3de851916ee1300755",
+      "sha256:cca68d1e6e6189a8018372a6355504b2a5500ac7fcf1dca8e932bed79e81dfed",
+      "sha256:13bedb4b67560217a52141e5f33e1c15b5b96c81c36c3532664c787fe6745e64"
+    ]
+  },
+  "source_commit": "60d6908f09942e1c76a066ccc05ff15870d1eafb",
+  "image_tag": "npa-base:cuda13-blackwell-dev-60d6908f09942e1c76a066ccc05ff15870d1eafb",
+  "runtime_user": "ubuntu",
+  "packages_changed_since_matched_comparison": {
+    "googleapis-common-protos": [
+      "1.75.4",
+      "1.75.5"
+    ],
+    "boto3": [
+      "1.43.104",
+      "1.43.105"
+    ],
+    "botocore": [
+      "1.43.104",
+      "1.43.105"
+    ],
+    "flash-attn-4": [
+      "4.0.0b33.dev10+geed1971",
+      "4.0.0b33.dev10+geed1971f"
+    ],
+    "platformdirs": [
+      "4.12.1",
+      "4.12.2"
+    ],
+    "charset-normalizer": [
+      "3.5.1",
+      "3.5.2"
+    ]
+  }
+}

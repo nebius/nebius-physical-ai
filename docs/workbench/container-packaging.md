@@ -89,6 +89,26 @@ tool's artifact independently; the preflight and renderer share that same map.
 
 ## Inventory
 
+The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
+snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three
+fixable critical findings in the prior CPU builds. EnvGen clears inherited NPA
+source and workflow directories before copying the selected source revision;
+Docker directory copies otherwise preserve files removed from that revision.
+These build changes require new immutable images and fresh validation before
+release promotion.
+
+Both CPU builds also upgrade the system Python bootstrap from an exact shared
+lock and replace pip's vendored MessagePack and urllib3 with the actual
+`msgpack==1.2.1` and `urllib3==2.8.0` wheel bytes while retaining their licenses. Upgrading only the
+viewer virtualenv leaves the system bootstrap vulnerable; installing a newer
+external MessagePack package leaves pip's independent vendor copy unchanged.
+The replacement also updates pip's vendor inventory and CycloneDX dependency
+references to describe the installed bytes. The pinned Python 3.11 CPU images
+use pip's default importlib metadata backend and remove the unused legacy
+`pkg_resources` subset; opting into that removed backend is unsupported. See
+[pip's metadata backend migration](https://pip.pypa.io/en/stable/news/#v22-1).
+Both builds upgrade inherited Debian packages against the same fixed snapshot.
+
 All first-class images live under `npa/docker/workbench/`:
 
 | Image / role | Dockerfile | Default exposure |
@@ -113,7 +133,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
-| Base CUDA 13 | `base/cuda13-b300/Dockerfile` | build base only |
+| Base CUDA 13 | `base/cuda13-blackwell/Dockerfile` | build base only |
 | PAIDF AnomalyGen Sky compatibility (restricted) | `paidf-anomalygen-sky/Dockerfile` | operator-built job shell; never public GHCR |
 | PAIDF Qwen Image Edit Sky compatibility (restricted) | `paidf-image-edit-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
 | PAIDF Cosmos3 Super Image2Video Sky compatibility (restricted) | `paidf-event-video-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
@@ -693,7 +713,8 @@ build hook.
    operator build/BYOF destination.
 2. Build from the checked-in Dockerfile (`skills/atomic/build-and-push-image`).
 3. Tag from `npa/pyproject.toml` `[tool.npa.supported-tools]` and
-   `npa/docker/workbench/tags.yaml` (`cuda12` vs `cuda13-b300`).
+   `npa/docker/workbench/tags.yaml` (`cuda12` vs `cuda13-blackwell`, with
+   `cuda13-b300` retained as a legacy alias).
 4. SONIC variants: `npa/src/npa/deploy/sonic_image_manifest.json`.
 5. Blackwell fleet digests: `npa/docker/workbench/sm120-images.json`.
 6. Update golden evals when the image’s “does its job” command changes.
