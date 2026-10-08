@@ -18,7 +18,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_JOB_STATUS_DIR=/opt/lerobot/job_status \
     NPA_LOG_DIR=/var/log/npa-lerobot \
     NPA_LEROBOT_VERSION=${LEROBOT_VERSION} \
-    NPA_LEROBOT_INTEGRATION_PROFILE=secure-0.5.1-v1 \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

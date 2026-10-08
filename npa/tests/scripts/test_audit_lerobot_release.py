@@ -96,6 +96,12 @@ def wheel(tmp_path: Path) -> Path:
         "def make_pre_post_processors(policy_cfg, pretrained_path=None, **kwargs): ...\n",
     )
     _write(
+        root / "lerobot/policies/pretrained.py",
+        "class PreTrainedPolicy:\n"
+        "    @classmethod\n"
+        "    def from_pretrained(cls, path, *, config=None): ...\n",
+    )
+    _write(
         root / "lerobot/policies/utils.py",
         "def prepare_observation_for_inference(observation, device, task=None, robot_type=None): ...\n",
     )
@@ -116,7 +122,9 @@ def wheel(tmp_path: Path) -> Path:
     )
     _write(
         root / "lerobot/configs/policies.py",
-        "class PreTrainedConfig:\n    pretrained_path: str | None = None\n",
+        "class PreTrainedConfig:\n"
+        "    pretrained_path: str | None = None\n"
+        "    use_peft: bool = False\n",
     )
     _write(root / "lerobot/configs/parser.py", 'PATH_KEY = "path"\n')
     return root
@@ -259,6 +267,26 @@ def test_dropped_keyword_parameter_is_caught(monkeypatch, wheel):
     assert _status(report, "callable-parameters") == "FAIL"
 
 
+def test_removed_checkpoint_loader_config_keyword_is_caught(monkeypatch, wheel):
+    (wheel / "lerobot/policies/pretrained.py").write_text(
+        "class PreTrainedPolicy:\n"
+        "    @classmethod\n"
+        "    def from_pretrained(cls, path): ...\n",
+        encoding="utf-8",
+    )
+    report = _run(monkeypatch, wheel)
+    assert _status(report, "callable-parameters") == "FAIL"
+
+
+def test_missing_policy_peft_flag_is_caught(monkeypatch, wheel):
+    (wheel / "lerobot/configs/policies.py").write_text(
+        "class PreTrainedConfig:\n    pretrained_path: str | None = None\n",
+        encoding="utf-8",
+    )
+    report = _run(monkeypatch, wheel)
+    assert _status(report, "policy-peft-flag") == "FAIL"
+
+
 def test_kwargs_absorbs_unknown_parameters(monkeypatch, wheel):
     (wheel / "lerobot/optim/factory.py").write_text(
         "def make_optimizer_and_scheduler(**kwargs): ...\n", encoding="utf-8"
@@ -310,6 +338,25 @@ def test_forced_torch_pin_outside_declared_bounds_is_caught(monkeypatch, wheel):
 def test_forced_torch_pin_inside_declared_bounds_passes(monkeypatch, wheel):
     report = _run(monkeypatch, wheel, manifest={"torch_pin": "torch==2.9.0"})
     assert _status(report, "manifest torch pins") == "PASS"
+
+
+def test_secure_integration_pins_are_checked_against_reviewed_constraints(
+    monkeypatch, wheel
+):
+    manifest = {
+        "package_source": "npa-secure-integration",
+        "torch_pin": "torch==2.13.0",
+        "torchvision_pin": "torchvision==0.28.0",
+        "torchcodec_pin": "torchcodec==0.16.0",
+        "diffusers_pin": "diffusers==0.38.0",
+        "wandb_pin": "wandb==0.30.0",
+    }
+    report = _run(monkeypatch, wheel, manifest=manifest)
+    assert _status(report, "manifest torch pins") == "PASS"
+
+    manifest["torchcodec_pin"] = "torchcodec==0.15.0"
+    report = _run(monkeypatch, wheel, manifest=manifest)
+    assert _status(report, "manifest torch pins") == "FAIL"
 
 
 def test_bare_requires_dist_does_not_disable_pin_check(monkeypatch, wheel):

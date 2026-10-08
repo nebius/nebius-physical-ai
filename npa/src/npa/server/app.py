@@ -98,7 +98,10 @@ class PolicyState:
                 env_cfg = env_cls(**kwargs)
 
             device = get_safe_torch_device(policy_cfg.device)
-            if env_cfg is not None or policy_cfg.use_peft:
+            # ``use_peft`` is optional upstream configuration metadata. A
+            # checkpoint without it is a normal non-PEFT checkpoint and must
+            # use the saved-shape loader below rather than failing /serve.
+            if env_cfg is not None or getattr(policy_cfg, "use_peft", False):
                 policy = make_policy(policy_cfg, env_cfg=env_cfg)
             else:
                 # The training factory requires dataset/env metadata and replaces

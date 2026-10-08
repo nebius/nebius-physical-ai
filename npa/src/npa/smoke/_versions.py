@@ -10,6 +10,7 @@ when available purely as a fast path. Image release tags live in
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -72,6 +73,17 @@ def _package_versions(pyproject: Path) -> dict[str, str]:
     return _parse_table(text, "package-versions")
 
 
+def _has_secure_lerobot_integration() -> bool:
+    """Whether this image contains the receipt for the 0.5.1 integration."""
+
+    receipt_path = Path("/opt/lerobot/source-integration.json")
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return receipt.get("integration_version") == "0.5.1+npa.secure1"
+
+
 def supported_tool_version(tool: str, start_file: str) -> str:
     pyproject = _find_pyproject(start_file)
     package_versions = _package_versions(pyproject)
@@ -98,10 +110,7 @@ def expected_lerobot_version(start_file: str) -> str:
 
     override = os.environ.get("NPA_LEROBOT_VERSION", "").strip()
     if override:
-        if (
-            override == "0.5.1"
-            and os.environ.get("NPA_LEROBOT_INTEGRATION_PROFILE") == "secure-0.5.1-v1"
-        ):
+        if override == "0.5.1" and _has_secure_lerobot_integration():
             return "0.5.1+npa.secure1"
         return override
     return supported_tool_version("lerobot", start_file)

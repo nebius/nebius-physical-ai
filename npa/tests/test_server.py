@@ -315,18 +315,21 @@ def test_infer_endpoint_parses_observation_and_returns_actions(
 
 
 @pytest.mark.parametrize("with_env", [False, True])
+@pytest.mark.parametrize("include_use_peft", [False, True])
 def test_policy_load_preserves_checkpoint_features_without_environment(
-    server_module, monkeypatch, with_env
+    server_module, monkeypatch, with_env, include_use_peft
 ):
     from unittest.mock import Mock
 
-    config = SimpleNamespace(
+    config_kwargs = dict(
         device="cpu",
         type="act",
-        use_peft=False,
         input_features={"observation.state": (7,)},
         output_features={"action": (8,)},
     )
+    if include_use_peft:
+        config_kwargs["use_peft"] = False
+    config = SimpleNamespace(**config_kwargs)
     policy = Mock()
     policy.to.return_value = policy
     policy.parameters.return_value = []

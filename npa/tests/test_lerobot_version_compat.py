@@ -50,7 +50,9 @@ def test_eval_checkpoint_and_torch_pins() -> None:
     assert torch_install_pins("0.5.1") == [
         "torch==2.13.0",
         "torchvision==0.28.0",
+        "torchcodec==0.16.0",
         "diffusers==0.38.0",
+        "wandb==0.30.0",
     ]
     assert torch_install_pins("0.6.0") == []
 
@@ -154,11 +156,13 @@ def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_smoke_identifies_local_integration_without_changing_upstream_selection(
     monkeypatch,
 ):
-    from npa.smoke._versions import expected_lerobot_version
+    from npa.smoke import _versions
 
     monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.5.1")
-    monkeypatch.setenv("NPA_LEROBOT_INTEGRATION_PROFILE", "secure-0.5.1-v1")
-    assert expected_lerobot_version(__file__) == "0.5.1+npa.secure1"
+    monkeypatch.setattr(_versions, "_has_secure_lerobot_integration", lambda: True)
+    assert _versions.expected_lerobot_version(__file__) == "0.5.1+npa.secure1"
     assert resolve_lerobot_version(None) == "0.5.1"
+    monkeypatch.setattr(_versions, "_has_secure_lerobot_integration", lambda: False)
+    assert _versions.expected_lerobot_version(__file__) == "0.5.1"
     monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.6.0")
-    assert expected_lerobot_version(__file__) == "0.6.0"
+    assert _versions.expected_lerobot_version(__file__) == "0.6.0"

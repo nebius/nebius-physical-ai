@@ -16,6 +16,7 @@
       "torchcodec_pin": "torchcodec==0.16.0",
       "diffusers_pin": "diffusers==0.38.0",
       "wandb_pin": "wandb==0.30.0",
+      "package_source": "npa-secure-integration",
       "notes": "Default package pin. The maintained 0.5.1+npa.secure1 integration constrains this source closure; its publication remains quarantined. The image_tag selects the separately validated Python 3.12 / torch 2.9 cu130 B300 build."
     },
     "0.6.0": {

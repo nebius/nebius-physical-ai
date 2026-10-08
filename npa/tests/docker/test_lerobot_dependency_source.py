@@ -50,7 +50,10 @@ def _installation(text):
 
 
 def test_default_integration_corrects_the_reviewed_source_in_the_install_layer():
-    _installation(DOCKERFILE.read_text())
+    text = DOCKERFILE.read_text()
+    _installation(text)
+    assert "NPA_LEROBOT_INTEGRATION_PROFILE" not in text
+    assert "/opt/lerobot/source-integration.json" in text
 
 
 @pytest.mark.parametrize(
