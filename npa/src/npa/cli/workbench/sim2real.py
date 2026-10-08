@@ -77,6 +77,30 @@ app = typer.Typer(
 )
 
 
+def _resolve_rerun_storage(
+    *, project: str, s3_bucket: str, s3_endpoint: str
+) -> tuple[str, str]:
+    """Resolve explicit, project, then environment storage for a Rerun command.
+
+    Args:
+        project: Optional project alias whose storage settings take precedence.
+        s3_bucket: Explicit bucket override.
+        s3_endpoint: Explicit endpoint override.
+    Returns:
+        The bucket and endpoint arguments for artifact configuration resolution.
+    Raises:
+        ConfigError: The selected project configuration cannot be read.
+        ProjectCredentialStoreError: The selected project credential record is invalid.
+    """
+
+    if not project:
+        return s3_bucket, s3_endpoint
+    storage = resolve_project_storage(project)
+    if s3_bucket.strip() or storage.checkpoint_bucket:
+        s3_bucket = resolve_storage_bucket(storage, override=s3_bucket)
+    return s3_bucket, s3_endpoint.strip() or storage.endpoint_url or ""
+
+
 @app.command("run")
 def run_command(
     run_id: str = typer.Option(
@@ -723,7 +747,7 @@ def rerun_serve_command(
     rrd_uri: str = typer.Option(
         "",
         "--rrd-uri",
-        help="Explicit s3:// URI for reports/sim2real.rrd (no local download).",
+        help="Explicit s3:// URI for reports/sim2real.rrd; --local-record downloads it locally.",
     ),
     report_uri: str = typer.Option(
         "",
@@ -915,11 +939,9 @@ def rerun_regen_command(
 ) -> None:
     """Regenerate reports/sim2real.rrd + sim2real.mcap from S3 artifacts (held-out PNG sync included)."""
     try:
-        if project:
-            storage = resolve_project_storage(project)
-            if s3_bucket.strip() or storage.checkpoint_bucket:
-                s3_bucket = resolve_storage_bucket(storage, override=s3_bucket)
-            s3_endpoint = s3_endpoint.strip() or storage.endpoint_url or ""
+        s3_bucket, s3_endpoint = _resolve_rerun_storage(
+            project=project, s3_bucket=s3_bucket, s3_endpoint=s3_endpoint
+        )
         config = build_artifact_config_from_env(
             run_id=run_id,
             s3_bucket=s3_bucket,
@@ -991,20 +1013,28 @@ def rerun_heldout_only_command(
 ) -> None:
     """Re-run Isaac held-out eval (stage 10) on cluster for an existing run (~5–15 min)."""
     try:
+        s3_bucket, s3_endpoint = _resolve_rerun_storage(
+            project=project, s3_bucket=s3_bucket, s3_endpoint=s3_endpoint
+        )
         config = build_config_from_env(
             run_id=run_id,
             s3_bucket=s3_bucket,
             s3_prefix=s3_prefix,
             s3_endpoint=s3_endpoint,
         )
-        work_dir = local_dir or default_regen_local_dir(run_id)
+    except (ConfigError, ProjectCredentialStoreError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    work_dir = local_dir or default_regen_local_dir(run_id)
+    try:
         report = rerun_heldout_eval_only(
             config,
             local_dir=work_dir,
             outer_iteration=outer_iteration,
             publish=not no_publish,
         )
-    except (Sim2RealRerunRegenError, ValueError) as exc:
+    except Sim2RealRerunRegenError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 

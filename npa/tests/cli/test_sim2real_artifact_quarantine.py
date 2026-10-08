@@ -171,6 +171,55 @@ def test_heldout_only_reports_quarantined_execution_images_as_cli_errors(
     assert not isinstance(result.exception, ValueError)
 
 
+def test_heldout_only_uses_project_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[object] = []
+    monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example.invalid/operator")
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.resolve_project_storage",
+        lambda _project: SimpleNamespace(
+            checkpoint_bucket="s3://project-bucket",
+            endpoint_url="https://project.example.invalid",
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.rerun_heldout_eval_only",
+        lambda config, **_kwargs: (
+            seen.append(config)
+            or {"success_rate": 1.0, "render_manifest": {}, "sim_backend": "isaac"}
+        ),
+    )
+
+    result = _invoke_rerun(
+        "heldout-only",
+        "--project",
+        "operator-project",
+        "--local-dir",
+        str(tmp_path),
+        "--no-publish",
+    )
+    assert result.exit_code == 0, result.output
+    assert seen[0].s3_bucket == "project-bucket"
+    assert seen[0].s3_endpoint == "https://project.example.invalid"
+
+
+def test_heldout_only_does_not_reclassify_execution_value_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example.invalid/operator")
+
+    def execution_error(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("execution invariant failed")
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.rerun_heldout_eval_only", execution_error
+    )
+    result = _invoke_rerun("heldout-only", "--no-publish")
+    assert isinstance(result.exception, ValueError)
+    assert "Error: execution invariant failed" not in result.output
+
+
 def test_public_execution_defaults_remain_quarantined(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
