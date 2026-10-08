@@ -217,6 +217,53 @@ def _scan_layer(
                 )
 
 
+def _read_manifest_record(outer: tarfile.TarFile) -> tuple[str, list[str]]:
+    """Read the one valid Docker-save record without leaking archive bytes."""
+    try:
+        manifest_member = outer.extractfile("manifest.json")
+    except KeyError as error:
+        raise RuntimeError("missing docker-save manifest") from error
+    if manifest_member is None:
+        raise RuntimeError("docker-save manifest is not a regular file")
+    with manifest_member:
+        try:
+            manifest = json.load(manifest_member)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise RuntimeError("malformed docker-save manifest") from error
+    if not isinstance(manifest, list) or len(manifest) != 1:
+        raise RuntimeError("expected one image in docker-save archive")
+    record = manifest[0]
+    if not isinstance(record, dict):
+        raise RuntimeError("malformed docker-save manifest")
+    config_name = record.get("Config")
+    layer_names = record.get("Layers")
+    if not isinstance(config_name, str) or not (
+        isinstance(layer_names, list)
+        and all(isinstance(layer_name, str) for layer_name in layer_names)
+    ):
+        raise RuntimeError("malformed docker-save manifest")
+    return config_name, layer_names
+
+
+def _read_config(outer: tarfile.TarFile, config_name: str) -> tuple[bytes, dict]:
+    """Read validated image configuration and retain fail-closed error messages."""
+    try:
+        config_member = outer.extractfile(config_name)
+    except KeyError as error:
+        raise RuntimeError("missing image config") from error
+    if config_member is None:
+        raise RuntimeError("image config is not a regular file")
+    with config_member:
+        config_bytes = config_member.read()
+    try:
+        config = json.loads(config_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise RuntimeError("malformed image config") from error
+    if not isinstance(config, dict):
+        raise RuntimeError("malformed image config")
+    return config_bytes, config
+
+
 def scan_tarball(path: Path) -> dict[str, object]:
     """Scan stored layers and identify blocked bytes without exposing their values.
 
@@ -234,44 +281,12 @@ def scan_tarball(path: Path) -> dict[str, object]:
         archive_sha256 = _stream_sha256(archive)
         archive.seek(0)
         with tarfile.open(fileobj=archive) as outer:
-            try:
-                manifest_member = outer.extractfile("manifest.json")
-            except KeyError as error:
-                raise RuntimeError("missing docker-save manifest") from error
-            if manifest_member is None:
-                raise RuntimeError("docker-save manifest is not a regular file")
-            with manifest_member:
-                try:
-                    manifest = json.load(manifest_member)
-                except (json.JSONDecodeError, UnicodeDecodeError) as error:
-                    raise RuntimeError("malformed docker-save manifest") from error
-            if not isinstance(manifest, list) or len(manifest) != 1:
-                raise RuntimeError("expected one image in docker-save archive")
-            record = manifest[0]
-            if not isinstance(record, dict):
-                raise RuntimeError("malformed docker-save manifest")
-            config_name = record.get("Config")
-            layer_names = record.get("Layers")
-            if not isinstance(config_name, str) or not (
-                isinstance(layer_names, list)
-                and all(isinstance(layer_name, str) for layer_name in layer_names)
-            ):
-                raise RuntimeError("malformed docker-save manifest")
-            try:
-                config_member = outer.extractfile(config_name)
-            except KeyError as error:
-                raise RuntimeError("missing image config") from error
-            if config_member is None:
-                raise RuntimeError("image config is not a regular file")
-            with config_member:
-                config_bytes = config_member.read()
-            config_sha256 = hashlib.sha256(config_bytes).hexdigest()
-            try:
-                findings.history = _history_findings(json.loads(config_bytes))
-            except (json.JSONDecodeError, UnicodeDecodeError) as error:
-                raise RuntimeError("malformed image config") from error
+            config_name, layer_names = _read_manifest_record(outer)
+            config_bytes, config = _read_config(outer, config_name)
+            findings.history = _history_findings(config)
             for layer_index, layer_name in enumerate(layer_names):
                 _scan_layer(outer, layer_name, layer_index, findings)
+    config_sha256 = hashlib.sha256(config_bytes).hexdigest()
     return findings.report(archive_sha256, config_sha256)
 
 

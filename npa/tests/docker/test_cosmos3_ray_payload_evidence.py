@@ -274,6 +274,16 @@ def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
         report["credential_members"][0]["sha256"] == hashlib.sha256(payload).hexdigest()
     )
     stdout_report = json.loads(result.stdout)
+    assert SCANNER._PUBLIC_STDOUT_FIELDS == (
+        "format",
+        "scan_complete",
+        "entries_scanned",
+        "payload_hits",
+        "history_hits",
+        "credential_hits",
+        "verdict",
+    )
+    assert set(stdout_report) == set(SCANNER._PUBLIC_STDOUT_FIELDS) | {"report_scope"}
     assert all(
         report[key] == stdout_report[key]
         for key in stdout_report
