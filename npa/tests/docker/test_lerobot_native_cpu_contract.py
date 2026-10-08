@@ -95,7 +95,7 @@ def test_invalid_secure_or_decoder_constraints_are_rejected(original, replacemen
         _check_constraints(text.replace(original, replacement))
 
 
-def test_build_gate_uses_native_default_decoder_without_network_access():
+def test_build_gate_uses_native_default_decoder():
     recipe = (RECIPE / "Dockerfile").read_text()
     assert 'RUN if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then' in recipe
     assert "/opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py" in recipe

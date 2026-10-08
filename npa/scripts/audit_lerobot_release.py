@@ -868,6 +868,10 @@ def check_cli_flags(
         "PreTrainedConfig.use_peft present"
         if "use_peft" in policy_fields
         else "PreTrainedConfig.use_peft missing",
+        # PolicyState treats this as optional metadata and takes the native
+        # saved-shape loader when it is absent. Keep the release audit useful
+        # without contradicting that supported fallback.
+        warn="use_peft" not in policy_fields,
     )
 
     parser = root / "lerobot" / "configs" / "parser.py"

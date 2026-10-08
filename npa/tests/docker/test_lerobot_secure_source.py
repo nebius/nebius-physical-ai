@@ -83,7 +83,8 @@ def test_versioned_integration_preserves_native_source_notices_and_record(
     with zipfile.ZipFile(built) as contents:
         assert contents.read("lerobot/model.py") == b"native model source"
         assert (
-            contents.read(integration.LOGGER_PATH) == b"logging.info(wandb.run.url)\n"
+            contents.read(integration.LOGGER_PATH)
+            == integration.LOGGER_MODIFICATION_NOTICE + b"logging.info(wandb.run.url)\n"
         )
         assert (
             contents.read(integration.DIST_INFO + "licenses/LICENSE")
@@ -101,6 +102,10 @@ def test_versioned_integration_preserves_native_source_notices_and_record(
         assert receipt["native_model_source_unchanged"] is True
         assert receipt["package_source_unchanged"] is False
         assert list(receipt["source_patches"]) == [integration.LOGGER_PATH]
+        assert (
+            "modification notice"
+            in receipt["source_patches"][integration.LOGGER_PATH]["change"]
+        )
         assert receipt["capability_qualification"].startswith("pending")
         for name, digest, size in csv.reader(
             contents.read(integration.DIST_INFO + "RECORD").decode().splitlines()

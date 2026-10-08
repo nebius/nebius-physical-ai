@@ -40,6 +40,9 @@ ORIGINAL_DIST_INFO = "lerobot-0.5.1.dist-info/"
 DIST_INFO = f"lerobot-{VERSION}.dist-info/"
 LOGGER_PATH = "lerobot/rl/wandb_utils.py"
 LOGGER_SHA256 = "9328a2254e840e1447cb2464fa0498102fe640ec8d68edfefae4592ada22591b"
+LOGGER_MODIFICATION_NOTICE = (
+    b"# Modified by Nebius: uses the supported W&B Run.url property.\n"
+)
 
 
 def _download(url: str, expected_hash: str) -> bytes:
@@ -136,7 +139,9 @@ def _logger_source(original: bytes) -> bytes:
         raise RuntimeError("unreviewed upstream logger source")
     if original.count(b"wandb.run.get_url()") != 1:
         raise RuntimeError("reviewed upstream logger API changed")
-    return original.replace(b"wandb.run.get_url()", b"wandb.run.url")
+    return LOGGER_MODIFICATION_NOTICE + original.replace(
+        b"wandb.run.get_url()", b"wandb.run.url"
+    )
 
 
 def _integration(files: dict[str, bytes]) -> tuple[dict[str, bytes], dict]:
@@ -158,7 +163,7 @@ def _integration(files: dict[str, bytes]) -> tuple[dict[str, bytes], dict]:
             LOGGER_PATH: {
                 "original_sha256": LOGGER_SHA256,
                 "patched_sha256": hashlib.sha256(result[LOGGER_PATH]).hexdigest(),
-                "change": "removed W&B Run.get_url() to supported Run.url property",
+                "change": "added modification notice and replaced W&B Run.get_url() with supported Run.url property",
             }
         },
         "license_retained": "Apache-2.0",

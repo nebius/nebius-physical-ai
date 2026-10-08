@@ -105,7 +105,9 @@ A fresh generic 0.5.1 rebuild subsequently failed its independent installed
 dependency and native default camera-decoder checks. Its narrow CPU ACT
 optimizer/checkpoint result does not qualify the image. See the
 [exact-image failure and compatible-closure repair](validation/lerobot-default-native-closure-20261006.md);
-the quarantined default is unchanged until new image and native gates pass.
+a later candidate passed its scoped publication and native CPU gates but remains
+quarantined pending default/GPU capability qualification. It does not add a
+public release row or change the default.
 
 The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
 that optional 0.6.0 image by digest and stages its adapters from the checkout.

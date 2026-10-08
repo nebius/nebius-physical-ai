@@ -285,11 +285,15 @@ def _probe_remote_lerobot_version(ssh: Any, cfg: Any) -> str:
     if code != 0:
         return resolve_lerobot_version(None)
     version = (stdout or "").strip().splitlines()[-1].strip() if stdout else ""
+    # Images built from the secure 0.5.1 closure report a valid PEP 440
+    # local version (for example ``0.5.1+npa.secure1``). Compatibility is
+    # selected from the upstream release line, not the integration label.
+    upstream_version = version.split("+", 1)[0]
     try:
-        return resolve_lerobot_version(version)
+        return resolve_lerobot_version(upstream_version)
     except LeRobotVersionError:
         # Unknown patch/build still maps by major.minor when possible.
-        parts = version.split(".")
+        parts = upstream_version.split(".")
         if len(parts) >= 2:
             candidate = f"{parts[0]}.{parts[1]}.0"
             try:

@@ -278,13 +278,13 @@ def test_removed_checkpoint_loader_config_keyword_is_caught(monkeypatch, wheel):
     assert _status(report, "callable-parameters") == "FAIL"
 
 
-def test_missing_policy_peft_flag_is_caught(monkeypatch, wheel):
+def test_missing_policy_peft_flag_is_reported_as_optional_metadata(monkeypatch, wheel):
     (wheel / "lerobot/configs/policies.py").write_text(
         "class PreTrainedConfig:\n    pretrained_path: str | None = None\n",
         encoding="utf-8",
     )
     report = _run(monkeypatch, wheel)
-    assert _status(report, "policy-peft-flag") == "FAIL"
+    assert _status(report, "policy-peft-flag") == "WARN"
 
 
 def test_kwargs_absorbs_unknown_parameters(monkeypatch, wheel):
