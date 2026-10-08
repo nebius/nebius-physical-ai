@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 
+from packaging.requirements import Requirement
 import pytest
 
 from npa.deploy.images import resolve_lerobot_image_tag
@@ -46,8 +47,38 @@ def test_eval_checkpoint_and_torch_pins() -> None:
         eval_checkpoint_arg("/ckpt", version="0.6.0", style="policy")
         == "--policy.pretrained_path=/ckpt"
     )
-    assert "torch==2.12.1" in torch_install_pins("0.5.1")
+    assert torch_install_pins("0.5.1") == [
+        "torch==2.13.0",
+        "torchvision==0.28.0",
+        "diffusers==0.38.0",
+    ]
     assert torch_install_pins("0.6.0") == []
+
+
+def test_default_secure_integration_manifest_matches_its_constraints() -> None:
+    root = Path(__file__).resolve().parents[2]
+    manifest = json.loads(
+        (root / "npa/src/npa/deploy/lerobot_version_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    constraints = {
+        requirement.name: str(requirement)
+        for line in (
+            root / "npa/docker/workbench/lerobot/default-runtime-requirements.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+        for requirement in [Requirement(line)]
+    }
+    entry = manifest["versions"]["0.5.1"]
+    manifest_pins = {
+        "torch": entry["torch_pin"],
+        "torchvision": entry["torchvision_pin"],
+        "torchcodec": entry["torchcodec_pin"],
+        "diffusers": entry["diffusers_pin"],
+        "wandb": entry["wandb_pin"],
+    }
+    assert manifest_pins == constraints
 
 
 def test_060_requests_the_extras_its_policies_gate_on() -> None:

@@ -11,10 +11,12 @@
       "train_env_eval_flag": "eval_freq",
       "eval_checkpoint_flag": "policy.path",
       "policy_eval_checkpoint_flag": "policy.pretrained_path",
-      "torch_pin": "torch==2.12.1",
-      "torchvision_pin": "torchvision==0.27.1",
-      "diffusers_pin": "diffusers>=0.38.0",
-      "notes": "Default package pin. The image_tag selects the separately validated Python 3.12 / torch 2.9 cu130 B300 build; the VM installer pins below remain the legacy in-place install contract."
+      "torch_pin": "torch==2.13.0",
+      "torchvision_pin": "torchvision==0.28.0",
+      "torchcodec_pin": "torchcodec==0.16.0",
+      "diffusers_pin": "diffusers==0.38.0",
+      "wandb_pin": "wandb==0.30.0",
+      "notes": "Default package pin. The maintained 0.5.1+npa.secure1 integration constrains this source closure; its publication remains quarantined. The image_tag selects the separately validated Python 3.12 / torch 2.9 cu130 B300 build."
     },
     "0.6.0": {
       "image_tag": "0.6.0-d6-extras-20260912",

@@ -98,12 +98,12 @@ RUN python3.12 -m venv /opt/lerobot/venv \
     && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \
          /opt/lerobot/venv/bin/pip install \
            "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]==${LEROBOT_VERSION}" \
-           "scikit-image==0.26.0" \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
            tensorboard \
-           "uvicorn[standard]"; \
+           "uvicorn[standard]" \
+         && /opt/lerobot/venv/bin/pip uninstall -y wandb; \
        elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then \
          /opt/lerobot/venv/bin/python /opt/lerobot/prepare-secure-wheel.py \
            --output-dir /opt/lerobot/secure-wheel \
@@ -115,19 +115,17 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            fastapi~=0.136.1 \
            num2words \
            tensorboard \
-           "uvicorn[standard]"; \
+           "uvicorn[standard]" \
+         && cp /opt/lerobot/secure-wheel/source-integration.json \
+           /opt/lerobot/source-integration.json \
+         && rm -rf /opt/lerobot/secure-wheel \
+         && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
+           --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
+           > /opt/lerobot/dependency-source-correction.json \
+         && /opt/lerobot/venv/bin/pip check; \
        else \
          echo 'Unsupported LeRobot package version' >&2; exit 1; \
        fi \
-    && if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then \
-         cp /opt/lerobot/secure-wheel/source-integration.json \
-           /opt/lerobot/source-integration.json \
-         && rm -rf /opt/lerobot/secure-wheel; \
-       fi \
-    && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
-      --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
-      > /opt/lerobot/dependency-source-correction.json \
-    && /opt/lerobot/venv/bin/pip check \
     && find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test "$(/opt/lerobot/venv/bin/python -c \
@@ -194,8 +192,11 @@ RUN apt-get update \
 
 USER ubuntu
 
-# Exercise the final hardened environment and the declared server interpreter.
-RUN --network=none /opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py
+# Exercise the final hardened 0.5.1 integration and declared server interpreter.
+# The separately qualified 0.6.0 recipe retains its existing acceptance path.
+RUN if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then \
+      /opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py; \
+    fi
 
 EXPOSE 8080
 

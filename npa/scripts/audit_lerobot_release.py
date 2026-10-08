@@ -301,7 +301,9 @@ B300_IMAGE_PINS: dict[str, str] = {
 MANIFEST_PIN_KEYS = {
     "torch_pin": "torch",
     "torchvision_pin": "torchvision",
+    "torchcodec_pin": "torchcodec",
     "diffusers_pin": "diffusers",
+    "wandb_pin": "wandb",
 }
 
 

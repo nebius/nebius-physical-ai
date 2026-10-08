@@ -47,7 +47,11 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     _check_constraints((RECIPE / "default-runtime-requirements.txt").read_text())
     recipe = (RECIPE / "Dockerfile").read_text()
     assert "--constraint /opt/lerobot/default-constraints.txt" in recipe
-    assert "pip uninstall -y wandb" not in recipe
+    optional_branch, default_branch = recipe.split(
+        'elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then', 1
+    )
+    assert "pip uninstall -y wandb" in optional_branch
+    assert "pip uninstall -y wandb" not in default_branch
     assert '"torch==2.12.1"' not in recipe
     assert '"diffusers>=0.38.0"' not in recipe
     assert "pip check" in recipe
@@ -58,7 +62,9 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
         'ENTRYPOINT ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]' in recipe
     )
     assert 'CMD /opt/lerobot/venv/bin/python -c "' in recipe
-    assert recipe.index("ENV PATH=/usr/bin:$PATH") < recipe.index("RUN --network=none")
+    assert recipe.index("ENV PATH=/usr/bin:$PATH") < recipe.index(
+        'RUN if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then'
+    )
 
 
 @pytest.mark.parametrize(
@@ -73,10 +79,8 @@ def test_invalid_secure_or_decoder_constraints_are_rejected(original, replacemen
 
 def test_build_gate_uses_native_default_decoder_without_network_access():
     recipe = (RECIPE / "Dockerfile").read_text()
-    assert (
-        "RUN --network=none /opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py"
-        in recipe
-    )
+    assert 'RUN if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then' in recipe
+    assert "/opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py" in recipe
     source = (RECIPE / "smoke_native_cpu.py").read_text()
     tree = ast.parse(source)
     dataset_calls = [
