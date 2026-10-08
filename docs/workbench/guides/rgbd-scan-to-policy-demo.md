@@ -42,8 +42,8 @@ CUDA availability alone does not establish rendering support: training can finis
 on a compute-only target while the final camera-based evaluation fails.
 
 The current pins select repaired development images for SONIC and Isaac Lab.
-Their publication checks passed; fresh workflow qualification is in progress.
-The historical images used for the results below remain quarantined. These
+Their publication checks and the fresh native qualification below passed.
+The historical images used by the earlier public demo remain quarantined. These
 workflow-specific pins do not promote either image to a supported release.
 
 ## What it runs
@@ -119,10 +119,27 @@ captures; the measured sample reset preset intentionally rejects another scan.
 
 ## Recorded full-run qualification
 
-The [recorded RTX PRO 6000 run](../evidence/public-demos/real-to-sim.json)
-completed 500 PPO updates and 16 million transitions, then passed 3,386 of 4,000
-held-out routes (84.65%) against the unchanged 80% success gate. It verifies the
-complete public-sample pipeline within the reconstructed scene. See the
+The [fresh promotion evidence](../evidence/rgbd-scan-to-policy-promotion.json)
+records 500 PPO updates, 4,000 environments and 16 million transitions, followed
+by 3,386 successful held-out routes out of 4,000 (84.65%). The success gate stayed
+at 80%. Every episode reached its terminal outcome by step 20 within the configured
+300-step maximum. Both training and evaluation passed their four native controls;
+independent process observations bound the running CUDA process and container to
+the selected Isaac image digest.
+
+The first seven stages completed on a CUDA-capable RTX target. Its evaluation
+failed before scoring because Vulkan graphics were unavailable. A separate
+evaluation recovery used the exact sealed checkpoint, recipe and source bundle
+on an RTX target that passed GLX, EGL and NVIDIA Vulkan checks. It wrote fresh
+evaluation/report prefixes and preserved the failed attempt. The promoted spec
+now explicitly selects the NVIDIA graphics runtime. This was a recovered
+pipeline, not a single uninterrupted successful run.
+
+The standalone HTML preserves the native report's measurements and eight frames
+of the scored focal episode. Offline playback, desktop/mobile layout, native
+frame inspection and confidentiality checks passed. It demonstrates held-out
+navigation within this reconstructed scene. The [earlier public demo](../evidence/public-demos/real-to-sim.json)
+is separate historical evidence. See the
 [readiness record](../../../workflows/main/rgbd-scan-to-policy-demo.readiness.json)
 for the source and runtime scope. Each new run still requires current storage,
 credentials, image access, and GPU preflight; local validation and planning do

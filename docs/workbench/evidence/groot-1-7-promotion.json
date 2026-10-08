@@ -251,6 +251,7 @@
     "sampled_comparison_frames": 48,
     "measured_chart_images": 1,
     "sha256": "8b0269698ff22cee815576d8160a79c41351666e9374efba980cd2a5ad034fe5",
-    "privacy_review": "Semantic HTML and evidence scanned; encoded images independently decoded and visually reviewed. Two resource-ID regex matches were confined to JPEG base64 bytes."
+    "privacy_review": "Semantic HTML and evidence scanned; encoded images independently decoded and visually reviewed. Two resource-ID regex matches were confined to JPEG base64 bytes.",
+    "automatic_playback": "passed"
   }
 }

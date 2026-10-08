@@ -10,12 +10,11 @@
       ]
     },
     "task_fidelity": {
-      "status": "unverified",
-      "reason": "The recorded historical run completed 500 PPO updates and passed 3,386/4,000 held-out routes in one reconstructed scene. This spec selects repaired Isaac Lab and SONIC development images; its fresh end-to-end qualification is pending. Historical workload results do not qualify the replacement image bytes or physical-robot transfer.",
+      "status": "verified",
+      "reason": "Fresh native execution completed 500 PPO updates and 16 million transitions, then passed 3,386/4,000 held-out routes (84.65%) against the unchanged 80% gate. The first evaluation failed before scoring on a compute-only target; recovery reused the exact sealed checkpoint, recipe and source on a graphics-qualified RTX target. Eight logical stages completed across the original run and recovery. This qualifies navigation in the reconstructed scene, not unseen-site or physical-robot transfer.",
       "evidence": [
         "docs/workbench/guides/rgbd-scan-to-policy-demo.md",
-        "docs/workbench/evidence/public-demos/real-to-sim.json",
-        "docs/workbench/evidence/public-demos/real-to-sim-visual-review.json"
+        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
       ]
     }
   },
@@ -31,7 +30,8 @@
       "evidence": [
         "npa/tests/workbench/test_nurec_navigation_sample.py",
         "docs/workbench/guides/rgbd-scan-to-policy-demo.md",
-        "docs/workbench/evidence/public-demos/real-to-sim.json"
+        "docs/workbench/evidence/public-demos/real-to-sim.json",
+        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
       ]
     },
     "credentials": {
@@ -41,16 +41,16 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The original Isaac Lab and SONIC pins are quarantined. This spec selects immutable repaired development candidates that passed publication gates; exact-target bootstrap and native workflow qualification are pending. These pins do not promote either image to a supported release.",
+      "reason": "The selected immutable SONIC and Isaac development images were exercised by the fresh pipeline. Independent observations bound both native main CUDA processes and their running containers to the exact Isaac digest. These workflow pins do not promote either image to a supported release; each future run still needs image and source preflight.",
       "evidence": [
-        "docs/workbench/evidence/public-demos/real-to-sim.json"
+        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The full 4,000-robot, 500-update run and 4,000-case evaluation qualified on RTX PRO 6000 Blackwell with sampled device observations bound to the exact pod/container while each sealed native main process was active. Each new target still requires its own GPU/runtime/scratch health checks.",
+      "reason": "The full 4,000-environment, 500-update training and 4,000-case evaluation completed on RTX PRO 6000 Blackwell. Evaluation required a graphics-qualified target; CUDA availability alone was insufficient. Each new target must verify the NVIDIA runtime class, GLX/EGL mounts, NVIDIA Vulkan device and GPU/runtime/scratch health.",
       "evidence": [
-        "docs/workbench/evidence/public-demos/real-to-sim.json"
+        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
       ]
     }
   }
