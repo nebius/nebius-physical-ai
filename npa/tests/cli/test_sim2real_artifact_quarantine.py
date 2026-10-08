@@ -19,7 +19,7 @@ from npa.workflows.sim2real.artifact_config import (
     Sim2RealArtifactConfig,
     build_artifact_config_from_env,
 )
-from npa.workflows.sim2real.config import build_config_from_env
+from npa.workflows.sim2real.config import artifact_uris, build_config_from_env
 from npa.workflows.sim2real_rerun_regen import RegenResult, download_rrd_from_s3
 
 
@@ -245,12 +245,18 @@ def test_serve_local_record_uses_resolved_viewer_storage(
     )
     _mock_viewer_deploy(monkeypatch, config)
     downloads: list[tuple[Sim2RealArtifactConfig, dict[str, object]]] = []
+    storage_client = object()
+    client_settings: list[dict[str, str]] = []
 
     def download(coordinates: Sim2RealArtifactConfig, **kwargs: object) -> Path:
         downloads.append((coordinates, kwargs))
         return tmp_path / "local.rrd"
 
     monkeypatch.setattr("npa.cli.workbench.sim2real.download_rrd_from_s3", download)
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.StorageClient.from_environment",
+        lambda **kwargs: client_settings.append(kwargs) or storage_client,
+    )
     result = _invoke_rerun(
         "serve",
         "--project",
@@ -265,6 +271,14 @@ def test_serve_local_record_uses_resolved_viewer_storage(
     assert downloads[0][0].s3_bucket == config.s3_bucket
     assert downloads[0][0].s3_endpoint == config.s3_endpoint
     assert downloads[0][1]["rrd_uri"] == config.rrd_s3_uri
+    assert downloads[0][1]["client"] is storage_client
+    assert client_settings == [
+        {
+            "endpoint_url": config.s3_endpoint,
+            "aws_access_key_id": "ak",
+            "aws_secret_access_key": "sk",
+        }
+    ]
 
 
 def _mock_viewer_deploy(
@@ -356,6 +370,24 @@ def test_sdk_output_paths_reaches_existing_artifacts_while_images_are_quarantine
     )
     assert paths["root"] == "s3://example-bucket/completed/archived-run/"
     assert paths["stage_10_eval_heldout"].endswith("outer-03/report.json")
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_sdk_output_paths_matches_execution_trigger_dataset_precedence(
+    monkeypatch: pytest.MonkeyPatch, explicit: bool
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example.invalid/operator")
+    monkeypatch.setenv("NPA_SIM2REAL_TRIGGER_DATASET_URI", "s3://environment/trigger")
+    settings: dict[str, object] = {
+        "run_id": "archived-run",
+        "s3_bucket": "example-bucket",
+        "s3_prefix": "completed",
+    }
+    if explicit:
+        settings["trigger_dataset_uri"] = "s3://explicit/trigger"
+    paths = sim2real_sdk.output_paths(**settings)
+    execution = build_config_from_env(**settings)
+    assert paths["trigger_dataset"] == artifact_uris(execution)["trigger_dataset"]
 
 
 def test_recording_download_uses_exact_selected_uri(tmp_path: Path) -> None:

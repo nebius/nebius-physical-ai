@@ -340,7 +340,8 @@ Genesis, Isaac Lab, and LeRobot container deployment resolves the selected image
 before bootstrapping an environment, provisioning a VM, or writing service
 credentials. A quarantined default fails with an actionable CLI error even in
 `--dry-run`; supply `--image` with an independently qualified operator image.
-Infrastructure-only deployment and teardown do not need a runnable app image.
+Isaac Lab and LeRobot infrastructure-only deployment, and all teardown paths,
+do not need a runnable app image.
 
 ## SDK examples
 

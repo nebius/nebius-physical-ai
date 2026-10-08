@@ -13,6 +13,7 @@ import typer
 from npa.clients.config import ConfigError, resolve_project_storage
 from npa.clients.credentials import load_credentials
 from npa.clients.project_credential_store import ProjectCredentialStoreError
+from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_ENVGEN_SHARD_COUNT,
@@ -890,7 +891,14 @@ def rerun_serve_command(
         )
         try:
             download_rrd_from_s3(
-                artifact_config, dest_path=dest, rrd_uri=config.rrd_s3_uri
+                artifact_config,
+                dest_path=dest,
+                rrd_uri=config.rrd_s3_uri,
+                client=StorageClient.from_environment(
+                    endpoint_url=config.s3_endpoint,
+                    aws_access_key_id=access_key,
+                    aws_secret_access_key=secret_key,
+                ),
             )
         except Sim2RealRerunRegenError as exc:
             typer.echo(f"Error: {exc}", err=True)
@@ -960,7 +968,6 @@ def rerun_regen_command(
         ConfigError,
         ProjectCredentialStoreError,
         Sim2RealRerunRegenError,
-        Sim2RealRerunServeError,
     ) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
