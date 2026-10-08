@@ -98,7 +98,9 @@ reports byte identities for investigation. Its full JSON has
 member-content rule that produced the finding. These fields contain no
 credential content excerpts and do not establish that a value is usable, a key
 is parseable, or a match is harmless. A member hash and exact size are still a
-content commitment: someone with a guessed file can confirm it offline.
+content commitment: someone with a guessed file can confirm it offline. The
+v1 report format permits these additive evidence fields; future consumers must
+ignore unknown fields.
 
 The scan covers every stored layer. Repeated paths retain separate member
 records, including overwritten or deleted ancestor files; the existing

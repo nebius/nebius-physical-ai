@@ -188,6 +188,14 @@ def test_hash_failure_cannot_return_clean_report(tmp_path, monkeypatch):
         SCANNER.scan_tarball(path)
 
 
+def test_missing_docker_save_manifest_has_a_consistent_error(tmp_path):
+    path = tmp_path / "missing-manifest.tar"
+    path.write_bytes(_tar_entries([]))
+
+    with pytest.raises(RuntimeError, match="missing docker-save manifest"):
+        SCANNER.scan_tarball(path)
+
+
 def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
     payload = b"hf_token='inert-native-cli-value'\n"
     path, _, _ = _image(tmp_path, [[("source.py", payload)]])

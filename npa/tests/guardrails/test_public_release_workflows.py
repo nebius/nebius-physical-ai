@@ -212,14 +212,20 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
 
 def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
     """Require both public Cosmos3 Ray scans to use their redacted stdout mode."""
-    text = PUBLISH.read_text(encoding="utf-8")
     scanner = "scan_image_cosmos3_ray_serve_payload.py"
-    positions = [index for index in range(len(text)) if text.startswith(scanner, index)]
-    assert len(positions) == 2
-    assert "npa/tests/docker/test_cosmos3_ray_payload_evidence.py" in text
-    for position in positions:
-        branch_end = text.index("\n          fi", position)
-        assert "--json" in text[position:branch_end]
+    scripts = [
+        str(step.get("run") or "")
+        for step in _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    ]
+    scanner_steps = [script for script in scripts if scanner in script]
+    assert len(scanner_steps) == 2
+    for script in scanner_steps:
+        invocation = script[script.index(scanner) :]
+        assert re.search(
+            rf"{re.escape(scanner)} \\\n+\s+--tarball .* \\\n+\s+--json ",
+            invocation,
+        )
+    assert "npa/tests/docker/test_cosmos3_ray_payload_evidence.py" in "\n".join(scripts)
 
 
 def test_public_base_pull_authentication_precedes_local_build() -> None:

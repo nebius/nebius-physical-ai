@@ -106,7 +106,9 @@ def _history_findings(config: dict) -> list[str]:
     ]
 
 
-def _credential_kind(layer: tarfile.TarFile, member: tarfile.TarInfo, name: str):
+def _credential_kind(
+    layer: tarfile.TarFile, member: tarfile.TarInfo, name: str
+) -> str | None:
     """Preserve the path-first and existing member-content credential verdict."""
     kind = path_credential(name)
     if kind is not None:
@@ -119,8 +121,15 @@ def _credential_kind(layer: tarfile.TarFile, member: tarfile.TarInfo, name: str)
 
 
 def _credential_member(
-    layer, member, kind, name, layer_index, layer_sha256, member_index
-):
+    layer: tarfile.TarFile,
+    member: tarfile.TarInfo,
+    kind: str,
+    name: str,
+    *,
+    layer_index: int,
+    layer_sha256: str,
+    member_index: int,
+) -> dict[str, object]:
     """Identify a blocked stored member without returning any content excerpt."""
     payload = layer.extractfile(member)
     if payload is None:
@@ -142,7 +151,15 @@ def _credential_member(
     }
 
 
-def _scan_member(layer, member, member_index, layer_index, layer_sha256, findings):
+def _scan_member(
+    layer: tarfile.TarFile,
+    member: tarfile.TarInfo,
+    *,
+    member_index: int,
+    layer_index: int,
+    layer_sha256: str,
+    findings: _PayloadFindings,
+) -> None:
     """Preserve each existing finding while attaching physical member metadata."""
     findings.entries += 1
     name = normalise_member_name(member.name)
@@ -161,12 +178,23 @@ def _scan_member(layer, member, member_index, layer_index, layer_sha256, finding
         findings.credentials.append(f"{kind}:{name}")
         findings.members.append(
             _credential_member(
-                layer, member, kind, name, layer_index, layer_sha256, member_index
+                layer,
+                member,
+                kind,
+                name,
+                layer_index=layer_index,
+                layer_sha256=layer_sha256,
+                member_index=member_index,
             )
         )
 
 
-def _scan_layer(outer, layer_name, layer_index, findings):
+def _scan_layer(
+    outer: tarfile.TarFile,
+    layer_name: str,
+    layer_index: int,
+    findings: _PayloadFindings,
+) -> None:
     """Scan every stored entry, retaining deleted or overwritten member evidence."""
     layer_member = outer.extractfile(layer_name)
     if layer_member is None:
@@ -176,7 +204,12 @@ def _scan_layer(outer, layer_name, layer_index, findings):
         with tarfile.open(fileobj=layer_bytes) as layer:
             for member_index, member in enumerate(layer):
                 _scan_member(
-                    layer, member, member_index, layer_index, layer_sha256, findings
+                    layer,
+                    member,
+                    member_index=member_index,
+                    layer_index=layer_index,
+                    layer_sha256=layer_sha256,
+                    findings=findings,
                 )
 
 
@@ -197,7 +230,14 @@ def scan_tarball(path: Path) -> dict[str, object]:
         archive_sha256 = _stream_sha256(archive)
         archive.seek(0)
         with tarfile.open(fileobj=archive) as outer:
-            manifest = json.load(outer.extractfile("manifest.json"))  # type: ignore[arg-type]
+            try:
+                manifest_member = outer.extractfile("manifest.json")
+            except KeyError as error:
+                raise RuntimeError("missing docker-save manifest") from error
+            if manifest_member is None:
+                raise RuntimeError("docker-save manifest is not a regular file")
+            with manifest_member:
+                manifest = json.load(manifest_member)
             if len(manifest) != 1:
                 raise RuntimeError("expected one image in docker-save archive")
             record = manifest[0]
@@ -215,7 +255,7 @@ def scan_tarball(path: Path) -> dict[str, object]:
 
 def _stdout_report(report: dict[str, object]) -> dict[str, object]:
     """Keep public logs to the pre-existing blocking-summary fields."""
-    summary = {field: report[field] for field in _PUBLIC_STDOUT_FIELDS}
+    summary = {key: report[key] for key in _PUBLIC_STDOUT_FIELDS}
     summary["report_scope"] = "redacted-summary"
     return summary
 
