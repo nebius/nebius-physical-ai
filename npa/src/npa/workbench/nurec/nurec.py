@@ -832,6 +832,7 @@ class NurecReconstructResult:
     output_uri: str = ""
     errors: tuple[str, ...] = ()
     initialization: dict[str, Any] = field(default_factory=dict)
+    photographic_timeline_path: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -845,6 +846,7 @@ class NurecReconstructResult:
             "metrics_path": self.metrics_path,
             "metrics": dict(self.metrics),
             "initialization": dict(self.initialization),
+            "photographic_timeline_path": self.photographic_timeline_path,
             "gt_dir": self.gt_dir,
             "command": list(self.command),
             "output_uri": self.output_uri,
@@ -1713,7 +1715,14 @@ def reconstruct_scene(
     env = dict(environ if environ is not None else os.environ)
     run = runner or subprocess.run
     out_dir = config.resolved_out_dir
-    args = build_nre_train_args(config, ncore_json=ncore_json, out_dir=str(out_dir))
+    from npa.workbench.nurec.photographic_timeline import prepare_photographic_training
+
+    if not dry_run:
+        initialization = export_initialization(ncore_json, initialization)
+    config, training_json, timeline = prepare_photographic_training(
+        config, ncore_json, dry_run=dry_run
+    )
+    args = build_nre_train_args(config, ncore_json=training_json, out_dir=str(out_dir))
     mounts = _default_mounts(config, ncore_json)
     command = nre_command(
         config, args, mounts=mounts, env_names=[config.ngc_api_key_env, "HF_TOKEN"]
@@ -1731,9 +1740,9 @@ def reconstruct_scene(
             metrics_path="",
             command=tuple(command),
             initialization=initialization,
+            photographic_timeline_path=timeline,
         )
 
-    initialization = export_initialization(ncore_json, initialization)
     out_dir.mkdir(parents=True, exist_ok=True)
     result = _run(command, env=_nre_env(config, env), run=run, timeout=timeout)
     if result.returncode != 0:
@@ -1748,6 +1757,7 @@ def reconstruct_scene(
             metrics_path="",
             command=tuple(command),
             initialization=initialization,
+            photographic_timeline_path=timeline,
             errors=(
                 f"NRE reconstruction failed (exit {result.returncode}): "
                 f"{_sanitize(result, config, env)}",
@@ -1773,7 +1783,7 @@ def reconstruct_scene(
     if usdz is not None and not errors:
         from npa.workbench.nurec.capture_trajectory import attach_capture_trajectory
 
-        attach_capture_trajectory(ncore_json, usdz)
+        attach_capture_trajectory(training_json, usdz)
 
     gt_dir = ""
     if export_gt and not errors:
@@ -1810,6 +1820,7 @@ def reconstruct_scene(
         command=tuple(command),
         errors=tuple(errors),
         initialization=initialization,
+        photographic_timeline_path=timeline,
     )
 
 

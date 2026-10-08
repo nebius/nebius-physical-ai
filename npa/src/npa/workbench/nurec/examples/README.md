@@ -66,3 +66,8 @@ two cameras), source-resolution training and novel-view rendering, and native
 PPISP exposure correction. It retains the native 30,000-step recipe. Portable
 USDZ files preserve independent photographic camera poses for nonzero-offset
 rendering. See the [quality and validation guide](../../../../../../docs/workbench/guides/neural-reconstruction.md).
+
+Multi-camera photographic reconstruction also assigns a separate virtual training
+timestamp to every photo, preserving its exact source pose and image bytes. The
+source capture is unchanged; `reconstruction/photographic-timeline.json` records
+the mapping used by NRE training and validation.

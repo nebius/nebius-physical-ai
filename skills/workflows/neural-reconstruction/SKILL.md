@@ -292,6 +292,21 @@ Pass `--no-derive-rig` for AV-style sequences that already ship a rig edge (the
 derivation short-circuits with `already_present: true` anyway), and
 `--reference-camera <id>` to pin which camera becomes the rig.
 
+
+For derived multi-camera photographic captures, reconstruction prepares a separate
+training input with one unique virtual timestamp per photograph. The virtual rig
+visits each photograph's original camera pose, and camera-to-rig transforms are
+static identities. This matters during training as well as rendering: NRE 26.04
+otherwise interpolates every camera against one reference camera's rig trajectory.
+Original camera images remain byte-identical, intrinsics and sparse-point stores
+are retained, and the fetched or converted source generation is unchanged.
+These timestamps describe photographic ordering, not synchronized capture time.
+The published `reconstruction/photographic-timeline.json` records all source and
+training timestamps, camera poses, image hashes, and retained-store hashes.
+The preparation currently requires instantaneous photographic frames in separate
+camera stores; it rejects incompatible layouts instead of losing source data.
+Native physical rigs and custom recipes retain their own input representation.
+
 ## Recipe Selection
 
 The container resolves `--config-name` against its own `configs/` tree. Pick by
