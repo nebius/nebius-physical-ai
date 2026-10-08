@@ -226,7 +226,7 @@ def scan_tarball(path: Path) -> dict[str, object]:
         Existing verdict and safe hashes, sizes and locations of blocked members.
     Raises:
         OSError: Archive bytes cannot be read.
-        RuntimeError: Required image or layer data is absent.
+        RuntimeError: Docker-save metadata is malformed or required image data is absent.
         tarfile.TarError: An archive is malformed.
     """
     findings = _PayloadFindings()
@@ -241,12 +241,24 @@ def scan_tarball(path: Path) -> dict[str, object]:
             if manifest_member is None:
                 raise RuntimeError("docker-save manifest is not a regular file")
             with manifest_member:
-                manifest = json.load(manifest_member)
-            if len(manifest) != 1:
+                try:
+                    manifest = json.load(manifest_member)
+                except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                    raise RuntimeError("malformed docker-save manifest") from error
+            if not isinstance(manifest, list) or len(manifest) != 1:
                 raise RuntimeError("expected one image in docker-save archive")
             record = manifest[0]
+            if not isinstance(record, dict):
+                raise RuntimeError("malformed docker-save manifest")
+            config_name = record.get("Config")
+            layer_names = record.get("Layers")
+            if not isinstance(config_name, str) or not (
+                isinstance(layer_names, list)
+                and all(isinstance(layer_name, str) for layer_name in layer_names)
+            ):
+                raise RuntimeError("malformed docker-save manifest")
             try:
-                config_member = outer.extractfile(record["Config"])
+                config_member = outer.extractfile(config_name)
             except KeyError as error:
                 raise RuntimeError("missing image config") from error
             if config_member is None:
@@ -254,8 +266,11 @@ def scan_tarball(path: Path) -> dict[str, object]:
             with config_member:
                 config_bytes = config_member.read()
             config_sha256 = hashlib.sha256(config_bytes).hexdigest()
-            findings.history = _history_findings(json.loads(config_bytes))
-            for layer_index, layer_name in enumerate(record["Layers"]):
+            try:
+                findings.history = _history_findings(json.loads(config_bytes))
+            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                raise RuntimeError("malformed image config") from error
+            for layer_index, layer_name in enumerate(layer_names):
                 _scan_layer(outer, layer_name, layer_index, findings)
     return findings.report(archive_sha256, config_sha256)
 
@@ -269,7 +284,7 @@ def _stdout_report(report: dict[str, object]) -> dict[str, object]:
 
 def _write_private_report(path: Path, rendered: str) -> None:
     """Write report metadata without inheriting broad permissions from a prior file."""
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
     with os.fdopen(os.open(path, flags, 0o600), "w", encoding="utf-8") as report:
         os.fchmod(report.fileno(), 0o600)
         report.write(rendered + "\n")

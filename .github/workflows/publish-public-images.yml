@@ -1057,6 +1057,7 @@ jobs:
             save_platform=(--platform linux/amd64)
           fi
           libero_export_container=""
+          payload_report=""
           cleanup_libero_export() {
             primary_status=$?
             trap - EXIT
@@ -1065,6 +1066,10 @@ jobs:
               ! docker container rm "$libero_export_container" >/dev/null; then
               cleanup_status=1
               echo "::error::LIBERO export-container cleanup failed"
+            fi
+            if [ -n "$payload_report" ] && ! rm -f "$payload_report"; then
+              cleanup_status=1
+              echo "::error::Cosmos3 Ray payload report cleanup failed"
             fi
             if [ "$primary_status" -ne 0 ]; then
               exit "$primary_status"

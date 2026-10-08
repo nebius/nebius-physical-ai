@@ -251,6 +251,17 @@ def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
             rf'rm -f "{re.escape(archive)}" \\\n+\s+"{re.escape(report)}"',
             workflow_text,
         )
+    post_push = next(
+        step
+        for step in _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+        if step.get("name")
+        == "Verify pushed bytes, revision, payload, visibility, and anonymous pull"
+    )
+    assert 'payload_report=""' in post_push["run"]
+    assert (
+        'if [ -n "$payload_report" ] && ! rm -f "$payload_report"; then'
+        in post_push["run"]
+    )
 
 
 def test_public_base_pull_authentication_precedes_local_build() -> None:

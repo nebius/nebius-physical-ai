@@ -220,6 +220,35 @@ def test_missing_docker_save_layer_has_a_consistent_error(tmp_path):
         SCANNER.scan_tarball(path)
 
 
+@pytest.mark.parametrize(
+    "manifest, config, error",
+    [
+        (b"not-json", None, "malformed docker-save manifest"),
+        (
+            json.dumps([{"Config": "config.json"}]).encode(),
+            json.dumps({"config": {}, "history": []}).encode(),
+            "malformed docker-save manifest",
+        ),
+        (
+            json.dumps([{"Config": "config.json", "Layers": []}]).encode(),
+            b"not-json",
+            "malformed image config",
+        ),
+    ],
+)
+def test_malformed_docker_save_metadata_has_a_consistent_error(
+    tmp_path, manifest, config, error
+):
+    entries = [("manifest.json", manifest)]
+    if config is not None:
+        entries.append(("config.json", config))
+    path = tmp_path / "malformed-metadata.tar"
+    path.write_bytes(_tar_entries(entries))
+
+    with pytest.raises(RuntimeError, match=error):
+        SCANNER.scan_tarball(path)
+
+
 def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
     payload = b"hf_token='inert-native-cli-value'\n"
     path, _, _ = _image(tmp_path, [[("source.py", payload)]])
@@ -270,3 +299,28 @@ def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
         json.loads(full_result.stdout)["credential_members"][0]["sha256"]
         == hashlib.sha256(payload).hexdigest()
     )
+
+
+def test_private_json_report_does_not_follow_a_symlink(tmp_path):
+    path, _, _ = _image(tmp_path, [[("source.py", b"value = 42\n")]])
+    target = tmp_path / "target.json"
+    target.write_text("unchanged", encoding="utf-8")
+    output = tmp_path / "report.json"
+    output.symlink_to(target)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCANNER_PATH),
+            "--tarball",
+            str(path),
+            "--json",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert output.is_symlink()
+    assert target.read_text(encoding="utf-8") == "unchanged"
