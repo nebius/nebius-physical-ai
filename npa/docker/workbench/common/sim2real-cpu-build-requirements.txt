@@ -1,0 +1,7 @@
+# Exact CPU image bootstrap closure, including the fixed MessagePack vendor copy.
+pip==26.2.1
+setuptools==84.0.0
+wheel==0.48.0
+packaging==26.3
+msgpack==1.2.1
+urllib3==2.8.0

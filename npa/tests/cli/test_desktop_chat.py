@@ -520,8 +520,11 @@ def test_model_catalog_reads_all_pages_without_hardcoded_model_names():
     [
         ({"model": "unavailable"}, "available"),
         ({"model": "example-model", "effort": "unsupported"}, "effort"),
-        ({"model": "example-model", "approvalPolicy": "never"}, "Only model"),
-        ({"model": "example-model", "cwd": "/different/project"}, "Only model"),
+        ({"model": "example-model", "approvalPolicy": "never"}, "supported permission"),
+        (
+            {"model": "example-model", "cwd": "/different/project"},
+            "supported permission",
+        ),
     ],
 )
 def test_model_selection_rejects_unsupported_or_unrelated_overrides(body, message):
