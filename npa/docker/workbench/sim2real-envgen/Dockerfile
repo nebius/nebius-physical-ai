@@ -49,7 +49,7 @@ COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
 # constructing this deliberately capability-reduced runtime distribution.
 # The shared Genesis requirements own the GitPython pin; keep its installed-version
 # check aligned with that file rather than installing a second version here.
-RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" 5.15.0-194.204 \
+RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
@@ -67,7 +67,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" 5.15.0-
       -r /opt/npa/sim2real-genesis-requirements.txt \
     && mkdir -p /usr/share/doc/npa-envgen \
     && python /usr/local/lib/npa/remove-scikit-image-recipe.py \
-      --site-packages /opt/npa/venv/lib/python3.11/site-packages \
+      --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
       --capability envgen \
       > /usr/share/doc/npa-envgen/dependency-source-correction.json \
     && find /opt/npa/venv -type f \

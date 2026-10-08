@@ -823,7 +823,6 @@ def rerun_serve_command(
     ),
 ) -> None:
     """Deploy a hosted Rerun viewer; pod init container pulls reports/sim2real.rrd from S3."""
-    artifact_config = None
     try:
         access_key, secret_key = _rerun_serve_credentials()
         cluster_context = cluster_name.strip() or resolve_cluster_name_from_config()
@@ -852,12 +851,16 @@ def rerun_serve_command(
             report_uri=report_uri,
         )
         if local_record and not destroy:
-            artifact_config = build_artifact_config_from_env(
-                run_id=run_id,
-                s3_bucket=config.s3_bucket,
-                s3_prefix=config.s3_prefix,
-                s3_endpoint=config.s3_endpoint,
-            )
+            try:
+                artifact_config = build_artifact_config_from_env(
+                    run_id=run_id,
+                    s3_bucket=config.s3_bucket,
+                    s3_prefix=config.s3_prefix,
+                    s3_endpoint=config.s3_endpoint,
+                )
+            except ValueError as exc:
+                typer.echo(f"Error: {exc}", err=True)
+                raise typer.Exit(1) from exc
         if dry_run:
             manifest = build_rerun_serve_manifest(config)
             if output == OutputFormat.json:
@@ -885,7 +888,7 @@ def rerun_serve_command(
             )
         else:
             result = apply_rerun_serve(config, kubeconfig=resolved_kubeconfig)
-    except (Sim2RealRerunServeError, ValueError) as exc:
+    except Sim2RealRerunServeError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
@@ -898,7 +901,6 @@ def rerun_serve_command(
             err=True,
         )
     if local_record and not destroy:
-        assert artifact_config is not None
         dest = resolve_local_rrd_path(
             run_id,
             override=str(local_rrd_path) if local_rrd_path is not None else "",
