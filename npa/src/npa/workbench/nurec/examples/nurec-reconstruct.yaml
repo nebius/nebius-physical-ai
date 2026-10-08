@@ -102,7 +102,7 @@ envs:
   # already in NCore V4 - the format NRE consumes.
   NPA_NUREC_DATASET: "nvidia/PhysicalAI-NuRec-PPISP"
   NPA_NUREC_SCENE: "struktur28"
-  NPA_NUREC_VARIANT: "auto"
+  NPA_NUREC_VARIANT: "standard"
 
   # --- Reconstruction --------------------------------------------------------
   # Static, camera-only, object-centric 3DGUT recipe shipped in the container.
@@ -121,7 +121,7 @@ envs:
   # A non-zero rig offset is what makes the rendered views NOVEL.
   NPA_NUREC_RIG_TRANSLATION_OFFSET: "0,0.25,0"
   NPA_NUREC_RIG_ROTATION_OFFSET: "0,0,0"
-  NPA_NUREC_RENDER_IMAGE_SCALE: "0.5"
+  NPA_NUREC_RENDER_IMAGE_SCALE: "1.0"
   NPA_NUREC_RENDER_FRAME_STEP: "1"
   NPA_NUREC_RENDERER: "default"
 

@@ -98,7 +98,7 @@ config:
   dataset_id: "nvidia/PhysicalAI-NuRec-PPISP"
   dataset_revision: "2521064a3af6ab1c1caa2ba1b01ddde7eecded69"
   scene: "struktur28"
-  variant: "auto"
+  variant: "standard"
 
   # --- Reconstruction --------------------------------------------------------
   # Static, camera-only, object-centric 3DGUT recipe shipped in the container. It
@@ -116,7 +116,7 @@ config:
   # replay of the training views.
   rig_translation_offset: "0,0.25,0"
   rig_rotation_offset: "0,0,0"
-  render_image_scale: "0.5"
+  render_image_scale: "1.0"
   renderer: "default"
 
   # --- Local scratch ---------------------------------------------------------

@@ -537,8 +537,24 @@ def build_nre_train_args(
         args.append("dataset.lidar_ids=[]")
     elif config.lidar_ids:
         args.append(f"dataset.lidar_ids={_hydra_list(config.lidar_ids)}")
+    args.extend(_object_capture_quality_overrides(config))
     args.extend(config.extra_overrides)
     return args
+
+
+def _object_capture_quality_overrides(config: NurecConfig) -> list[str]:
+    if config.config_name != DEFAULT_CONFIG_NAME:
+        return []
+    # The inherited AV recipe otherwise trains at quarter image resolution and
+    # fits exposure differences into scene geometry instead of camera response.
+    defaults = {
+        "dataset.n_train_sequential_image_subsample": "1",
+        "model/post_processing@model.post_processing.b": "ppisp",
+    }
+    explicit = {
+        value.partition("=")[0].lstrip("+~") for value in config.extra_overrides
+    }
+    return [f"{key}={value}" for key, value in defaults.items() if key not in explicit]
 
 
 def build_nre_render_args(
