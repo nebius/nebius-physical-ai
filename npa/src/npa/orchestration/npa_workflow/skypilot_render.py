@@ -201,13 +201,13 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "workbench.marble.capture": (
         ("python:gsplat", "gsplat==1.5.3"),
         (
-            'python:spz;assert hasattr(spz, "load_spz")',
+            'python:spz;assert(hasattr(spz,"load_spz"))',
             "spz @ git+https://github.com/nianticlabs/spz.git@affd0ecea7fbb4c265ee119475af7ee5b2997482",
         ),
     ),
     "workbench.marble.scan": (
-        ('python:warp;assert warp.__version__=="1.17.0"', "warp-lang==1.17.0"),
-        ('python:trimesh;assert trimesh.__version__=="4.12.2"', "trimesh==4.12.2"),
+        ('python:warp;assert(warp.__version__=="1.17.0")', "warp-lang==1.17.0"),
+        ('python:trimesh;assert(trimesh.__version__=="4.12.2")', "trimesh==4.12.2"),
     ),
     "workbench.lerobot.transfer_prepare": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),

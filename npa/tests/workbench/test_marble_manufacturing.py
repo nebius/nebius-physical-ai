@@ -48,12 +48,12 @@ def _cutout():
 
 
 @pytest.mark.parametrize("change", ["group", "source_id", "id", "uri"])
-def test_dataset_rejects_overlap_and_non_s3_sources(change):
+def test_dataset_rejects_overlap_and_non_s3_sources(change, tmp_path):
     value = _dataset()
     if change == "source_id":
         value["cutouts"][0][change] = "test"
     elif change == "uri":
-        value["train"][0][change] = "/tmp/worker-invisible.png"
+        value["train"][0][change] = str(tmp_path / "worker-invisible.png")
     else:
         value["evaluation"][0][change] = value["train"][0][change]
     with pytest.raises(ValueError):

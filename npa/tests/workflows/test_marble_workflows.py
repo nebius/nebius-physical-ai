@@ -1,6 +1,7 @@
 """Verify Marble stage contracts and honest live-matrix source selection."""
 
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -48,7 +49,8 @@ def test_writable_marble_environment_retains_baked_libraries(tmp_path):
     marker = Path(site) / "baked_cuda_marker.py"
     marker.write_text("value = 73\n")
     script = _marble_runtime_setup().replace("/opt/npa/venv", str(base))
-    script = script.replace("/tmp/npa-marble-venv", str(writable))
+    venv_command = next(line for line in script.splitlines() if "-m venv " in line)
+    script = script.replace(shlex.split(venv_command)[-1], str(writable))
     script += (
         "python - <<'PY'\n"
         "import baked_cuda_marker, pathlib, sys\n"
