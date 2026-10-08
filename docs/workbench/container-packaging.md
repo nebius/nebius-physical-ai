@@ -90,8 +90,9 @@ tool's artifact independently; the preflight and renderer share that same map.
 ## Cosmos3 Ray payload finding evidence
 
 `scan_image_cosmos3_ray_serve_payload.py` keeps credential findings blocking and
-reports byte identities for investigation. Its JSON includes `archive_sha256`
-and `config_sha256`, plus `credential_members` with each blocked stored file's
+reports byte identities for investigation. Its full JSON has
+`report_scope: full` and includes `archive_sha256` and `config_sha256`, plus
+`credential_members` with each blocked stored file's
 `path`, `kind`, `size`, `sha256`, `layer_index`, `layer_sha256`, and
 `member_index`. `detection_reason` identifies the existing path or
 member-content rule that produced the finding. These fields contain no
@@ -104,16 +105,18 @@ records, including overwritten or deleted ancestor files; the existing
 `credential_hits` list remains deduplicated. Member hashes cover the complete
 file even when credential detection stops at an early match. `layer_sha256` is
 the hash of the stored Docker-save layer entry, not a declared rootfs `diff_id`.
-Compare a member hash with independently obtained exact source or package bytes
-before classifying a finding. Hash equality is evidence of byte identity and
-does not waive any publication gate or establish GPU capability acceptance.
+`archive_sha256` identifies this scan's Docker-save input stream, not a stable
+image identity across independent saves. Compare a member hash with
+independently obtained exact source or package bytes before classifying a
+finding. Hash equality is evidence of byte identity and does not waive any
+publication gate or establish GPU capability acceptance.
 
 When `--json` is supplied, the full metadata report is written only to that
-file and stdout retains the pre-existing blocking summary. The ordinary
-publication workflow uses this mode so public Actions logs do not expose member
-hashes or sizes. Do not publish raw layers, extracted credential bytes, or a
-failed image archive as public Actions artifacts. An unresolved finding still
-exits nonzero and blocks push.
+file and stdout retains the pre-existing blocking summary with
+`report_scope: redacted-summary`. The ordinary publication workflow uses this
+mode so public Actions logs do not expose member hashes or sizes. Do not publish
+raw layers, extracted credential bytes, or a failed image archive as public
+Actions artifacts. An unresolved finding still exits nonzero and blocks push.
 
 ## Inventory
 

@@ -63,6 +63,7 @@ def test_reports_exact_member_and_layer_bytes(tmp_path, name, payload, kind):
     path, layers, config = _image(tmp_path, [[(name, payload)]])
     report = SCANNER.scan_tarball(path)
     assert report["verdict"] == "restricted-payload-detected"
+    assert report["report_scope"] == "full"
     assert report["credential_hits"] == [f"{kind}:{name}"]
     assert report["archive_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert report["config_sha256"] == hashlib.sha256(config).hexdigest()
@@ -209,7 +210,13 @@ def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
         report["credential_members"][0]["sha256"] == hashlib.sha256(payload).hexdigest()
     )
     stdout_report = json.loads(result.stdout)
-    assert all(report[key] == stdout_report[key] for key in stdout_report)
+    assert all(
+        report[key] == stdout_report[key]
+        for key in stdout_report
+        if key != "report_scope"
+    )
+    assert report["report_scope"] == "full"
+    assert stdout_report["report_scope"] == "redacted-summary"
     assert stdout_report["credential_hits"] == report["credential_hits"]
     assert "credential_members" not in stdout_report
     assert "archive_sha256" not in stdout_report

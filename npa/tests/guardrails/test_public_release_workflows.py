@@ -214,10 +214,9 @@ def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
     """Require both public Cosmos3 Ray scans to use their redacted stdout mode."""
     text = PUBLISH.read_text(encoding="utf-8")
     scanner = "scan_image_cosmos3_ray_serve_payload.py"
-    positions = [
-        index for index in range(len(text)) if text.startswith(scanner, index)
-    ]
+    positions = [index for index in range(len(text)) if text.startswith(scanner, index)]
     assert len(positions) == 2
+    assert "npa/tests/docker/test_cosmos3_ray_payload_evidence.py" in text
     for position in positions:
         branch_end = text.index("\n          fi", position)
         assert "--json" in text[position:branch_end]

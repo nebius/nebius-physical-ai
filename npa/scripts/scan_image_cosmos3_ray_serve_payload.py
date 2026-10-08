@@ -67,6 +67,7 @@ class _PayloadFindings:
         """Add byte identities without accepting or exposing credential values."""
         return {
             "format": "npa_cosmos3_ray_serve_payload_scan_v1",
+            "report_scope": "full",
             "scan_complete": True,
             "archive_sha256": archive_sha256,
             "config_sha256": config_sha256,
@@ -214,7 +215,9 @@ def scan_tarball(path: Path) -> dict[str, object]:
 
 def _stdout_report(report: dict[str, object]) -> dict[str, object]:
     """Keep public logs to the pre-existing blocking-summary fields."""
-    return {field: report[field] for field in _PUBLIC_STDOUT_FIELDS}
+    summary = {field: report[field] for field in _PUBLIC_STDOUT_FIELDS}
+    summary["report_scope"] = "redacted-summary"
+    return summary
 
 
 def main() -> int:

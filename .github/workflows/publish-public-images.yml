@@ -283,6 +283,7 @@ jobs:
             npa/tests/docker/test_ltx_image_payload_scan.py \
             npa/tests/docker/test_cosmos3_serving_image_contract.py \
             npa/tests/docker/test_cosmos3_ray_serve_image_contract.py \
+            npa/tests/docker/test_cosmos3_ray_payload_evidence.py \
             npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
             npa/tests/docker/test_fiftyone_image_validation.py \
             npa/tests/docker/test_fiftyone_source_delivery.py \
