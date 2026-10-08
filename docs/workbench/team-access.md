@@ -125,6 +125,17 @@ RBAC. Submissions verify installed resources and selected RBAC denials; missing
 controls reject new work. Admission support and an enforcing CNI are required.
 These checks do not establish that the CNI actually enforces the network policy.
 
+Open the [interactive HTML example](../demos/team-access.html) locally to try
+user switching, workspace and cluster selection, GPU limits, run recovery,
+private artifacts, and offboarding. Its infrastructure is explicitly simulated;
+the evidence tab contains recorded checks from the actual local API and policy.
+Rebuild those receipts without cloud credentials using
+`npa/.venv/bin/python npa/scripts/build_team_demo.py --output-path /private/team-access.html`.
+The example's browser regression runs in `npm run cy:mock` from
+`npa/tests/browser/`. With its dependencies and Chrome installed, run only this
+example using `node --test team_demo.test.cjs` from that directory. It checks
+the desktop interactions, mobile layout, and absence of outgoing HTTP requests.
+
 The exported kubeconfig is **server-only**. Controllers instead use their own
 projected, rotating Kubernetes account token. Never upload operator credentials
 into workload images or shared artifact buckets.

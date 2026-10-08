@@ -9,6 +9,8 @@ Python and HTTP access follow each tool's documented contract.
 [Optional team mode](team-access.md) adds authenticated workspace access, personal
 GPU allocations and artifact storage for shared clusters, with a CPU gateway and
 private SkyPilot service. Its deployment still requires live qualification.
+The [interactive team example](../demos/team-access.html) illustrates the complete
+flow with synthetic infrastructure and recorded local API checks.
 
 PAIDF workflows select repaired public Cosmos3, Evaluator, and Curator
 candidates by immutable digest while the historical releases remain

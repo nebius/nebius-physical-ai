@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 
 from npa.workbench.team.api import create_app
 from npa.workbench.team.service import TeamService
+from npa.workbench.team.models import Grant
+from npa.workbench.team.errors import AuthorizationError
 
 
 @pytest.fixture
@@ -115,3 +117,36 @@ def test_retries_return_same_run_and_actor_list_is_private(
         headers={"Authorization": "Bearer " + tokens.sign("bob")},
     )
     assert response.json() == {"runs": []}
+
+
+def test_downgraded_reader_can_read_owned_outputs_but_cannot_mutate(
+    application, tokens, workflow
+):
+    run_id = _submit(application, tokens, workflow)
+    config = application.policy[0]
+    workspace = config.workspaces["robotics"].model_copy(
+        update={"grants": (Grant(kind="group", value="researchers", role="reader"),)}
+    )
+    application.policy[0] = config.model_copy(
+        update={"workspaces": {"robotics": workspace}}
+    )
+    application.service.backend_factory = lambda *args: SimpleNamespace(
+        logs=lambda: "owned log"
+    )
+    application.service.storage_factory = lambda grant: SimpleNamespace(
+        list=lambda prefix: [{"key": "owned artifact"}]
+    )
+    headers = {"Authorization": "Bearer " + tokens.sign()}
+    for suffix in ("", "/logs", "/artifacts"):
+        response = application.client.get(f"/v1/runs/{run_id}{suffix}", headers=headers)
+        assert response.status_code == 200, response.text
+    for action in ("cancel", "resume"):
+        response = application.client.post(
+            f"/v1/runs/{run_id}/{action}", headers=headers
+        )
+        assert response.status_code == 403
+    with pytest.raises(AuthorizationError, match="not authorized"):
+        application.service._check_running(
+            tokens.verifier.verify(headers["Authorization"]),
+            application.service.ledger.get(run_id),
+        )

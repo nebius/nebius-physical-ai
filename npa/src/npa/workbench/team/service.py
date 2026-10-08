@@ -129,7 +129,7 @@ class TeamService:
         record = self._owned(actor, run_id, "runner")
         if record["status"] in _TERMINAL:
             return public_run(record)
-        binding = self._binding(actor, record)
+        binding = self._binding(actor, record, role="runner")
         self.ledger.transition(
             run_id, ("accepted", "running", "recovery_required"), "cancelling"
         )
@@ -150,7 +150,7 @@ class TeamService:
             TeamError: Access, enrollment, boundary, or lifecycle check fails.
         """
         record = self._owned(actor, run_id, "runner")
-        binding = self._binding(actor, record)
+        binding = self._binding(actor, record, role="runner")
         if record["status"] != "recovery_required":
             raise ConflictError("only an interrupted run can be resumed")
         if self.enrollment_check is None:
@@ -203,9 +203,9 @@ class TeamService:
         authorize(self.config(), actor, record["workspace"], role)
         return record
 
-    def _binding(self, actor, record):
+    def _binding(self, actor, record, *, role="reader"):
         binding = bind_execution(
-            self.config(), actor, record["workspace"], record["cluster"]
+            self.config(), actor, record["workspace"], record["cluster"], role=role
         )
         if binding_snapshot(binding) != json.loads(record["binding"]):
             raise ConflictError(
@@ -253,7 +253,7 @@ class TeamService:
     def _check_running(self, actor, record):
         if self.ledger.get(record["id"])["status"] != "running":
             raise ConflictError("run no longer accepts new work")
-        self._binding(actor, record)
+        self._binding(actor, record, role="runner")
 
 
 def binding_snapshot(binding):

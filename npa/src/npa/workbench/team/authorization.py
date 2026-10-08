@@ -54,18 +54,21 @@ def authorize(config: TeamConfig, actor: Actor, workspace: str, role: str) -> Wo
     return selected
 
 
-def bind_execution(config: TeamConfig, actor: Actor, workspace: str, cluster: str):
+def bind_execution(
+    config: TeamConfig, actor: Actor, workspace: str, cluster: str, *, role="runner"
+):
     """Bind a submitter to their preallocated namespace, identity, and storage.
 
     Args:
         config, actor: Trusted policy and authenticated identity.
         workspace, cluster: Explicit requested execution target.
+        role: Minimum current role; reads can resolve an existing reader allocation.
     Returns:
         ExecutionBinding for this person and target.
     Raises:
         AuthorizationError: Access or an administrator allocation is missing.
     """
-    selected = authorize(config, actor, workspace, "runner")
+    selected = authorize(config, actor, workspace, role)
     allocation = next(
         (a for a in selected.allocations if a.subject == actor.subject), None
     )
