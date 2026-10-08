@@ -255,10 +255,24 @@ def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
     ):
         cleanup_step = next(step for step in steps if step.get("name") == step_name)
         assert 'payload_report=""' in cleanup_step["run"]
+        assert "trap cleanup_libero_export EXIT" in cleanup_step["run"]
         assert (
             'if [ -n "$payload_report" ] && ! rm -f "$payload_report"; then'
             in cleanup_step["run"]
         )
+    for directory in (
+        ROOT / ".github" / "actions",
+        ROOT / "npa" / "docker",
+        ROOT / "npa" / "scripts",
+        ROOT / "npa" / "src",
+        ROOT / "scripts",
+    ):
+        if directory.exists():
+            for path in directory.rglob("*"):
+                if path.suffix in {".py", ".sh", ".yaml", ".yml"}:
+                    assert scanner not in path.read_text(
+                        encoding="utf-8", errors="ignore"
+                    ), path
 
 
 def test_public_base_pull_authentication_precedes_local_build() -> None:
