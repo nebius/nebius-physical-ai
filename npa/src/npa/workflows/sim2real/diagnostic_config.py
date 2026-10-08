@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from npa.workflows.sim2real.artifact_config import _artifact_bucket, _artifact_endpoint
+from npa.workflows.sim2real.artifact_config import (
+    resolve_artifact_bucket,
+    resolve_artifact_endpoint,
+)
 from npa.workflows.sim2real.constants import (
     DEFAULT_K8S_GPU_PRODUCT,
     DEFAULT_K8S_GPU_RESOURCE,
@@ -74,8 +77,8 @@ def build_diagnostic_config_from_env(
 
     return _diagnostic_config(
         run_id or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id(),
-        _artifact_bucket(s3_bucket),
-        _artifact_endpoint(s3_endpoint),
+        resolve_artifact_bucket(s3_bucket),
+        resolve_artifact_endpoint(s3_endpoint),
         k8s_namespace,
         k8s_context,
         k8s_kubeconfig,

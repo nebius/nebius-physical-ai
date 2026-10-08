@@ -72,9 +72,9 @@ def build_artifact_config_from_env(
 
     return Sim2RealArtifactConfig(
         run_id=run_id or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id(),
-        s3_bucket=_artifact_bucket(s3_bucket),
-        s3_prefix=_artifact_prefix(s3_prefix),
-        s3_endpoint=_artifact_endpoint(s3_endpoint),
+        s3_bucket=resolve_artifact_bucket(s3_bucket),
+        s3_prefix=resolve_artifact_prefix(s3_prefix),
+        s3_endpoint=resolve_artifact_endpoint(s3_endpoint),
         outer_iterations=int(
             outer_iterations
             if outer_iterations is not None
@@ -92,7 +92,17 @@ def build_artifact_config_from_env(
     )
 
 
-def _artifact_bucket(override: str) -> str:
+def resolve_artifact_bucket(override: str) -> str:
+    """Resolve an explicit artifact bucket or its supported environment fallbacks.
+
+    Args:
+        override: Explicit bucket name, if any.
+    Returns:
+        The selected bucket name, or an empty string when none is configured.
+    Raises:
+        None.
+    """
+
     return (
         override
         or os.environ.get("NPA_SIM2REAL_BUCKET")
@@ -101,13 +111,33 @@ def _artifact_bucket(override: str) -> str:
     )
 
 
-def _artifact_prefix(override: str | None) -> str:
+def resolve_artifact_prefix(override: str | None) -> str:
+    """Resolve an explicit artifact prefix or its supported environment fallback.
+
+    Args:
+        override: Explicit prefix; ``None`` permits the environment fallback.
+    Returns:
+        The selected artifact prefix.
+    Raises:
+        None.
+    """
+
     if override is not None:
         return override
     return os.environ.get("NPA_SIM2REAL_PREFIX", DEFAULT_PREFIX)
 
 
-def _artifact_endpoint(override: str) -> str:
+def resolve_artifact_endpoint(override: str) -> str:
+    """Resolve an explicit artifact endpoint or its supported environment fallbacks.
+
+    Args:
+        override: Explicit endpoint URL, if any.
+    Returns:
+        The selected endpoint URL, or the configured default.
+    Raises:
+        None.
+    """
+
     return (
         override
         or os.environ.get("AWS_ENDPOINT_URL")

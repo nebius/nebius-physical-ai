@@ -19,12 +19,10 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_LEROBOT_DATASET_ID,
     DEFAULT_LOOP_OF_LOOPS_ITERATIONS,
     DEFAULT_OUTER_ITERATIONS,
-    DEFAULT_PREFIX,
     DEFAULT_REFERENCE_VLM_MODEL,
     DEFAULT_REASON2_MODEL,
     DEFAULT_COSMOS3_MODEL,
     DEFAULT_ROLLOUT_COUNT,
-    DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
     DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
     DEFAULT_STEPS_PER_ROLLOUT,
@@ -32,6 +30,11 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_TRAIN_FRACTION,
     DEFAULT_HELDOUT_ENVS,
     DEFAULT_VALIDATION_ENVS,
+)
+from npa.workflows.sim2real.artifact_config import (
+    resolve_artifact_bucket,
+    resolve_artifact_endpoint,
+    resolve_artifact_prefix,
 )
 from npa.workflows.sim2real.models import (
     Sim2RealLoopConfig,
@@ -57,22 +60,13 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
     run_id = str(
         overrides.get("run_id") or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id()
     )
-    bucket = str(
-        overrides.get("s3_bucket")
-        or os.environ.get("NPA_SIM2REAL_BUCKET")
-        or os.environ.get("NPA_S3_BUCKET")
-        or os.environ.get("S3_BUCKET")
-        or ""
-    )
+    bucket = resolve_artifact_bucket(str(overrides.get("s3_bucket") or ""))
     registry = str(
         overrides.get("registry") or os.environ.get("NPA_SIM2REAL_REGISTRY") or ""
     ).strip()
-    if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
-        s3_prefix = str(overrides["s3_prefix"])
-    elif "NPA_SIM2REAL_PREFIX" in os.environ:
-        s3_prefix = os.environ.get("NPA_SIM2REAL_PREFIX", "")
-    else:
-        s3_prefix = DEFAULT_PREFIX
+    s3_prefix = resolve_artifact_prefix(
+        str(overrides["s3_prefix"]) if overrides.get("s3_prefix") is not None else None
+    )
     action_rollouts_uri = str(
         overrides.get("action_rollouts_uri")
         or os.environ.get("ACTION_ROLLOUTS_URI")
@@ -85,12 +79,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         else None,
         s3_bucket=bucket,
         s3_prefix=s3_prefix,
-        s3_endpoint=str(
-            overrides.get("s3_endpoint")
-            or os.environ.get("AWS_ENDPOINT_URL")
-            or os.environ.get("S3_ENDPOINT_URL")
-            or DEFAULT_S3_ENDPOINT
-        ),
+        s3_endpoint=resolve_artifact_endpoint(str(overrides.get("s3_endpoint") or "")),
         trigger_dataset_uri=str(
             overrides.get("trigger_dataset_uri")
             or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_URI")

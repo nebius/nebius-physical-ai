@@ -47,7 +47,11 @@ from npa.workflows.sim2real_health import (
     run_preflight,
 )
 from npa.workflows.sim2real.config import build_config_from_env
-from npa.workflows.sim2real.diagnostic_config import build_diagnostic_config_from_env
+from npa.workflows.sim2real.diagnostic_config import (
+    Sim2RealDiagnosticConfig,
+    build_diagnostic_config_from_env,
+)
+from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workbench.model_access import (
     all_capabilities,
     check_workbench_access,
@@ -674,7 +678,21 @@ def sim2real_command(
         raise typer.Exit(code=1)
 
 
-def _sim2real_preflight_config(selected, overrides):
+def _sim2real_preflight_config(
+    selected: list[str], overrides: dict[str, object]
+) -> Sim2RealLoopConfig | Sim2RealDiagnosticConfig:
+    """Build the configuration shape required by the selected health checks.
+
+    Args:
+        selected: Validated Sim2Real health-check names.
+        overrides: CLI values to apply before environment fallbacks.
+    Returns:
+        An execution configuration for image-dependent checks or an image-free
+        diagnostic configuration for every other selection.
+    Raises:
+        ValueError: Execution image resolution fails for an image-dependent check.
+    """
+
     if any(name in IMAGE_DEPENDENT_CHECKS for name in selected):
         return build_config_from_env(**overrides)
     return build_diagnostic_config_from_env(

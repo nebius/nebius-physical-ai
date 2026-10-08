@@ -14,6 +14,7 @@ from npa.clients.config import ConfigError
 from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.cli.main import app
 from npa.sdk.workbench import sim2real as sim2real_sdk
+from npa.workflows.sim2real import config as execution_config
 from npa.workflows.rerun_serve import RerunServeConfig
 from npa.workflows.sim2real.artifact_config import (
     Sim2RealArtifactConfig,
@@ -402,6 +403,44 @@ def test_artifact_config_default_gpu_settings_match_execution(
     execution = build_config_from_env(**settings)
     assert artifact.k8s_gpu_product == execution.k8s_gpu_product
     assert artifact.k8s_gpu_candidates == execution.k8s_gpu_candidates
+
+
+def test_execution_config_uses_shared_artifact_storage_resolvers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example.invalid/operator")
+    monkeypatch.setattr(
+        execution_config,
+        "resolve_artifact_bucket",
+        lambda value: calls.append(("bucket", value)) or "shared-bucket",
+    )
+    monkeypatch.setattr(
+        execution_config,
+        "resolve_artifact_prefix",
+        lambda value: calls.append(("prefix", value)) or "shared-prefix",
+    )
+    monkeypatch.setattr(
+        execution_config,
+        "resolve_artifact_endpoint",
+        lambda value: calls.append(("endpoint", value)) or "https://shared.invalid",
+    )
+    config = execution_config.build_config_from_env(
+        run_id="shared-settings-run",
+        s3_bucket="explicit-bucket",
+        s3_prefix="explicit-prefix",
+        s3_endpoint="https://explicit.invalid",
+    )
+    assert calls == [
+        ("bucket", "explicit-bucket"),
+        ("prefix", "explicit-prefix"),
+        ("endpoint", "https://explicit.invalid"),
+    ]
+    assert (config.s3_bucket, config.s3_prefix, config.s3_endpoint) == (
+        "shared-bucket",
+        "shared-prefix",
+        "https://shared.invalid",
+    )
 
 
 def test_sdk_output_paths_reaches_existing_artifacts_while_images_are_quarantined(

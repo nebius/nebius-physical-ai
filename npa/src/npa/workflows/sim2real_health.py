@@ -874,6 +874,7 @@ __all__ = [
     "CheckResult",
     "DoctorProbes",
     "IMAGE_FIELDS",
+    "IMAGE_DEPENDENT_CHECKS",
     "KubeResult",
     "SIM2REAL_SEAMS",
     "Seam",
