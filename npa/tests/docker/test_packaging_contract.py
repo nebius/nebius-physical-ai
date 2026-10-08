@@ -594,8 +594,8 @@ def test_groot_uses_a_fixed_consistent_linux_headers_snapshot() -> None:
     """GR00T must fix inherited headers without leaving dpkg inconsistent."""
     text = (WORKBENCH_DOCKER / "groot" / "Dockerfile").read_text(encoding="utf-8")
 
-    assert "ARG GROOT_UBUNTU_SNAPSHOT=20260827T000000Z" in text
-    assert "ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-190.200" in text
+    assert "ARG GROOT_UBUNTU_SNAPSHOT=20261001T000000Z" in text
+    assert "ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-194.204" in text
     assert "NPA_UBUNTU_SNAPSHOT=${GROOT_UBUNTU_SNAPSHOT}" in text
     assert "NPA_LINUX_LIBC_DEV_VERSION=${GROOT_LINUX_LIBC_DEV_VERSION}" in text
     assert '"linux-libc-dev=${GROOT_LINUX_LIBC_DEV_VERSION}"' in text
