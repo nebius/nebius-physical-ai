@@ -161,6 +161,16 @@ def test_regen_project_configuration_errors_are_cli_errors(
     assert "Traceback" not in result.output
 
 
+def test_heldout_only_reports_quarantined_execution_images_as_cli_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reject_execution_images(monkeypatch)
+    result = _invoke_rerun("heldout-only", "--no-publish")
+    assert result.exit_code == 1
+    assert "Error: public execution image remains quarantined" in result.output
+    assert not isinstance(result.exception, ValueError)
+
+
 def test_public_execution_defaults_remain_quarantined(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

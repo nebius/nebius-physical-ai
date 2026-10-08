@@ -1004,7 +1004,7 @@ def rerun_heldout_only_command(
             outer_iteration=outer_iteration,
             publish=not no_publish,
         )
-    except Sim2RealRerunRegenError as exc:
+    except (Sim2RealRerunRegenError, ValueError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
