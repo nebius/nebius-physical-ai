@@ -1,0 +1,48 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "c0955cab0fa374734c5dedc50ecb49af7fac9e177db11494ed274c89a0271510",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Canonical YAML schema validation and all 111 compositional workflow tests passed.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/main/sim2real.yaml --json",
+        "npa/tests/workflows/test_sim2real_compositional_workflow.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Rendered Stage 11 and Stage 14 commands use the same configured threshold and early-exit setting, including non-default overrides.",
+      "evidence": [
+        "test_finalization_uses_the_decision_gate_configuration"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Operator storage must be verified for each target; this portable record contains no infrastructure identity.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Task-aligned seed and worker-readable input staging depend on the selected operator run.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Exact model and infrastructure access depend on the selected operator credentials.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "New PR image builds still require coherent five-image release qualification; existing immutable images were used for the private run.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Placement and runtime health must be checked against the selected target.",
+      "evidence": []
+    }
+  }
+}

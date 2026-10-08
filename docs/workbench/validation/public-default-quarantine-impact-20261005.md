@@ -4,15 +4,15 @@ PR #807 intentionally quarantined published images that violate the current
 image contract. PR #869 supplies repaired, digest-bound development defaults for
 the PAIDF actions. Historical release tags remain quarantined.
 
-This audit examines both planning dispositions in all 131 shipped declarative
+This audit examines both planning dispositions in all 133 shipped declarative
 workflows, using their real resource profiles and no image or registry overrides.
 It includes shell states whose resource profile selects a quarantined tool.
 It checks image selection; it does not claim GPU execution or acceptance of the
 blocked images. The guardrail compares the table below with actual default
 resolution, so a wildcard image override cannot conceal another regression.
 
-After PAIDF and stock Nano generation's repaired defaults, 31 workflows still fail default image planning:
-24 select the stale image families withdrawn by #807, and seven require images
+After PAIDF and stock Nano generation's repaired defaults, 32 workflows still fail default image planning:
+25 select the stale image families withdrawn by #807, and seven require images
 without an accepted public release. The audit checks every task, including
 unbuilt and validation candidates outside the stale-image inventory.
 
@@ -42,7 +42,7 @@ artifact behavior.
 
 ## Still blocked shipped workflows
 
-These 24 workflows need a repaired, scanned and capability-qualified image or an
+These 25 workflows need a repaired, scanned and capability-qualified image or an
 explicit operator-owned image. A repaired parent does not repair the layers of
 an already-published derivative. The table is an outstanding qualification
 inventory, not an instruction to remove quarantine.
@@ -73,6 +73,12 @@ inventory, not an instruction to remove quarantine.
 | `workflows/testing/tokenfactory-rollout-judge-combo.yaml` | `lerobot` |
 | `workflows/testing/tokenfactory-scene-to-rollout-judge.yaml` | `lerobot` |
 | `workflows/testing/tokenfactory-train-triage.yaml` | `lerobot` |
+| `workflows/testing/video-variant-sweep-cosmos3.yaml` | `cosmos3` |
+
+The [video variant sweep guide](../../../workflows/guides/video-variant-sweep.md)
+provides the explicit immutable image override used for its completed B200
+validation. That run qualifies the documented override and workload; it does
+not accept the quarantined catalog default.
 
 ## Other quarantined images and Sim2Real
 
