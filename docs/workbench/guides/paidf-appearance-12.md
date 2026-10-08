@@ -91,6 +91,26 @@ Every generated clip must pass the gate. A high average score does not override
 a failed profile. Increasing the count adds more clips that must pass.
 An accepted gate does not certify motion, contacts or training suitability.
 
+New Cosmos 3 runs record the scene rectangle in `source_content_region` during
+reference preparation. The evaluator verifies its source hash and complete
+video alignment, then uses lossless scene crops for all four checks. Artificial
+letterbox or pillarbox pixels cannot lower the scene score or satisfy a
+requested appearance change. Real black objects remain in the scene. Explicit
+metric regions keep their full-canvas coordinates and are intersected with the
+scene; a padding-only region is an error.
+
+Each clip's `spatial_evidence` reports the full-video and crop hashes, rectangle,
+excluded pixel fraction and a separate padding diagnostic. The diagnostic
+reports mean RGB error and the fraction of padding pixels differing from the
+source by more than 8 RGB levels in any channel. It is advisory, has no quality
+pass threshold, and does not change the scene score. Review padding changes as
+output artifacts; generated videos are preserved unchanged.
+
+No recipe setting is needed. Older variants without preparation provenance
+retain full-frame scoring; the evaluator never guesses padding from dark
+pixels. Start a fresh run to record the rectangle automatically. Invalid or
+stale provenance fails evaluation instead of silently selecting another crop.
+
 Compare source/output frames at contacts, generation-window joins and the final
 state. Check that the requested material or lighting is visibly present inside
 the original camera area, and inspect added padding separately. Preserve raw
@@ -124,6 +144,19 @@ The canonical workflow deliberately finishes a rejected batch with a failed
 requires that exact rejection path, a valid rejected disposition and successful
 preceding stages; other workflow failures do not qualify.
 
+To audit padding-aware scoring on retained outputs, use the same private case
+file with `NPA_PAIDF_PADDING_CASES`, set `NPA_PAIDF_PADDING_EVIDENCE_DIR` to a
+private local directory, and run
+`npa/tests/e2e/test_paidf_padding_evaluation_live.py`. This audit downloads the
+videos and makes real Token Factory calls. It requires the same hallucination
+engine as the retained grades; for production Cosmos Evaluator runs, use its
+pinned NVIDIA checkout and dependencies (`NPA_COSMOS_EVALUATOR_SRC`). Legacy
+rectangles are reconstructed only from the retained normalization recipe and
+the hash-verified original and prepared videos. Reports are written locally;
+retained videos and original grades are not overwritten. The audit also measures
+a fresh full-frame hallucination baseline with the same engine to isolate the
+effect of padding removal on that metric.
+
 ## Public reference measurement
 
 The unchanged recipe was run on episode 0, camera
@@ -131,7 +164,8 @@ The unchanged recipe was run on episode 0, camera
 [`lerobot/aloha_static_cups_open`](https://huggingface.co/datasets/lerobot/aloha_static_cups_open/tree/d793c969cf716001dcca18a0842c3d7e9de9e41b).
 The prepared reference and each output contain 192 frames at 24 fps. Both
 generation passes produced all twelve separate videos, with full decoding and
-timestamp alignment verified. Results recorded on October 7–8, 2026:
+timestamp alignment verified. Results recorded on October 7–8, 2026 using the
+original full-frame evaluator:
 
 | Generation pass | Guidance / steps | Mean score | Clips passing gate | Temporal advisory passes | Appearance advisory passes | Batch decision |
 |---|---|---|---|---|---|---|

@@ -695,6 +695,7 @@ def prepare_input(
                 if key != "timestamps"
             }
             payload["conditioning_fps"] = conditioning_fps
+            payload["source_content_region"] = timeline["source_content_region"]
         payload["written_uri"] = _write_json(payload, provenance_uri, storage=client)
     print(
         json.dumps(
@@ -980,6 +981,8 @@ def _variant_metadata(
     if metadata.get("temporal_alignment") is not None:
         payload["temporal_alignment"] = metadata["temporal_alignment"]
         payload["structural_control"] = "edge"
+    if metadata.get("source_content_region") is not None:
+        payload["source_content_region"] = metadata["source_content_region"]
     return payload
 
 
@@ -1237,6 +1240,11 @@ def generate_variants(
                 "guardrails": True,
                 "attempt": attempt,
                 "input_provenance_uri": input_provenance_uri,
+                **(
+                    {"source_content_region": provenance["source_content_region"]}
+                    if "source_content_region" in provenance
+                    else {}
+                ),
                 **(
                     {"temporal_alignment": result["temporal_alignment"]}
                     if transfer is not None
