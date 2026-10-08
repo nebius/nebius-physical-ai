@@ -160,6 +160,19 @@ placeholder simulation panels. The point preview uses relative model coordinates
 and does not claim metric collision accuracy or executed robot actions. The
 separate native Gaussian video is produced by upstream Lyra's rasterizer.
 
+The B200 reference run reconstructed 128 views from a 320-frame public capture,
+exported 8,658,944 Gaussians and rendered all 320 frames at 640×480 and 30 FPS.
+The standalone HTML contains 176,128 sampled depth points. Desktop and mobile
+Chromium checks verified offline playback, orbit/zoom controls, confidence
+coloring and no external asset requests. The HTML publication step was replayed
+against the retained native outputs after the GPU run completed.
+
+Separately, metric extraction produced 679,534 triangles. Camera registration
+RMS was 7.3 mm; independent measured-depth comparison found 97.74% coverage,
+85.17% inliers and 7.67 cm mean absolute error. These passed the capture's
+preselected coarse thresholds, not manipulation contact tolerances. Imported
+scene physics and wrist rendering still require native RTX qualification.
+
 ## Combined reconstruction and action HTML
 
 ```bash
