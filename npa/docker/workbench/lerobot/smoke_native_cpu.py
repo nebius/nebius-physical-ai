@@ -306,12 +306,16 @@ def _server_process(root: Path):
             process.wait()
 
 
+SERVER_START_TIMEOUT_SECONDS = 20
+
+
 def _wait_for_server(process, port: int, log) -> None:
-    while process.poll() is None:
+    deadline = time.monotonic() + SERVER_START_TIMEOUT_SECONDS
+    while process.poll() is None and time.monotonic() < deadline:
         try:
             assert _http_request(port, "GET", "/health") == {"status": "ok"}
             return
-        except ConnectionRefusedError:
+        except OSError:
             time.sleep(0.1)
     log.seek(0)
     raise RuntimeError("Native server failed to start: " + log.read())

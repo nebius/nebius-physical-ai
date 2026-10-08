@@ -55,7 +55,13 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     assert '"torch==2.12.1"' not in recipe
     assert '"diffusers>=0.38.0"' not in recipe
     assert "pip check" in recipe
-    assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" in recipe
+    assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" not in recipe
+    for copied_path in ("__init__.py", "clients", "server", "smoke"):
+        assert (
+            f"COPY --chown=ubuntu:ubuntu src/npa/{copied_path} /opt/npa/src/npa/"
+            in recipe
+        )
+    assert "shipping npa.workbench here would make that" in recipe
     assert "prepare-secure-wheel.py" in recipe
     assert "lerobot-0.5.1+npa.secure1-py3-none-any.whl" in recipe
     assert (
@@ -113,3 +119,11 @@ def test_build_gate_uses_native_default_decoder_without_network_access():
         and call.func.id == "_http_request"
     }
     assert {("GET", "/health"), ("POST", "/serve"), ("POST", "/infer")} <= http_calls
+
+
+def test_native_server_startup_has_a_bounded_wait():
+    source = (RECIPE / "smoke_native_cpu.py").read_text()
+    assert "SERVER_START_TIMEOUT_SECONDS = 20" in source
+    assert "deadline = time.monotonic() + SERVER_START_TIMEOUT_SECONDS" in source
+    assert "process.poll() is None and time.monotonic() < deadline" in source
+    assert "except OSError:" in source

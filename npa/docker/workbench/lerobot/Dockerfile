@@ -138,7 +138,13 @@ ENV PATH=/opt/lerobot/venv/bin:$PATH \
     NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
-COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
+# Keep this image-local SDK intentionally partial. Workbench stages install the
+# checkout into the vendor venv; shipping npa.workbench here would make that
+# repair's import probe pass before the checkout is installed.
+COPY --chown=ubuntu:ubuntu src/npa/__init__.py /opt/npa/src/npa/__init__.py
+COPY --chown=ubuntu:ubuntu src/npa/clients /opt/npa/src/npa/clients
+COPY --chown=ubuntu:ubuntu src/npa/server /opt/npa/src/npa/server
+COPY --chown=ubuntu:ubuntu src/npa/smoke /opt/npa/src/npa/smoke
 
 RUN python -m npa.smoke.test_lerobot_env
 
