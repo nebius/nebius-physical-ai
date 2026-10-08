@@ -87,6 +87,8 @@ rejection does not turn generated candidates into accepted dataset entries.
 The recipe requires timestamp alignment, grade threshold 0.75 and appearance
 attribute threshold 1.0. Temporal and appearance-fidelity diagnostics retain the
 canonical advisory policy; show their results alongside the gate decision.
+Every generated clip must pass the gate. A high average score does not override
+a failed profile. Increasing the count adds more clips that must pass.
 An accepted gate does not certify motion, contacts or training suitability.
 
 Compare source/output frames at contacts, generation-window joins and the final
@@ -102,7 +104,8 @@ must remain in private storage for private recordings.
 
 The retained-run audit checks workflow completion, all twelve profiles,
 complete video decoding, source/output alignment, native control receipts and
-evaluator accounting.
+evaluator accounting. It verifies that the evaluator's video hashes match the
+retained outputs, so an earlier pass cannot stand in for the final results.
 Create a private JSON array with `run_uri` and `expected_frames` for each proof,
 then run:
 
@@ -116,3 +119,24 @@ NPA_PAIDF_APPEARANCE_CASES="$PRIVATE_RUN_DIR/proof-cases.json" \
 
 This audit makes read-only storage calls and downloads actual videos. It does
 not generate more candidates or reinterpret a rejection as acceptance.
+
+## Public reference measurement
+
+The unchanged recipe was run on episode 0, camera
+`observation.images.cam_high`, seconds 0–8 of
+[`lerobot/aloha_static_cups_open`](https://huggingface.co/datasets/lerobot/aloha_static_cups_open/tree/d793c969cf716001dcca18a0842c3d7e9de9e41b).
+The prepared reference and each output contain 192 frames at 24 fps. Both
+generation passes produced all twelve separate videos, with full decoding and
+timestamp alignment verified. Results recorded on October 7–8, 2026:
+
+| Generation pass | Guidance / steps | Mean score | Clips passing gate | Temporal advisory passes | Appearance advisory passes | Batch decision |
+|---|---|---|---|---|---|---|
+| Initial | 5.0 / 35 | 0.722930 | 2/12 | 0/12 | 3/12 | Rejected |
+| Canonical refinement | 4.5 / 39 | 0.708905 | 2/12 | 0/12 | 3/12 | Rejected |
+
+This demonstrates twelve-profile execution, not an accepted training dataset.
+Refinement did not improve this batch's measured result. Matched-frame review
+found visible lighting and material variation, but also incomplete surface
+coverage, artificial material boundaries, color spill onto robot parts and
+changes to small task details. More profiles increase requested diversity;
+they do not guarantee realism, preservation or a higher acceptance rate.

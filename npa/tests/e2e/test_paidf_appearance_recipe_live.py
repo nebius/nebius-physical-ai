@@ -102,12 +102,16 @@ def _audit_variant(client, root, clip, source, destination, recipe, frames):
     return alignment["generated_sha256"]
 
 
-def _audit_completion(client, root, clips):
+def _audit_completion(client, root, hashes):
     assert _read(client, root, "npa-workflow/runtime.json")["status"] == "succeeded"
     evaluation = _read(client, root, "grade/cosmos_evaluator.json")
     disposition = _read(client, root, "grade/quality_disposition.json")
     assert evaluation["status"] == "completed"
-    assert {item["clip_id"] for item in evaluation["clips"]} == clips
+    evaluated = {
+        item["clip_id"]: item["temporal_alignment"]["generated_sha256"]
+        for item in evaluation["clips"]
+    }
+    assert evaluated == hashes
     assert disposition["score"] == pytest.approx(evaluation["score"])
     assert disposition["threshold"] == evaluation["threshold"] == 0.75
     assert evaluation["attribute_threshold"] == 1.0
@@ -142,7 +146,7 @@ def test_twelve_profile_outputs_and_quality_accounting(case, tmp_path):
     assert clips == {f"variant-{index:04d}" for index in range(12)}
     source = _download(client, root, "input/source.mp4", tmp_path / "source.mp4")
     hashes = {
-        _audit_variant(
+        clip: _audit_variant(
             client,
             root,
             clip,
@@ -153,5 +157,5 @@ def test_twelve_profile_outputs_and_quality_accounting(case, tmp_path):
         )
         for clip in sorted(clips)
     }
-    assert len(hashes) == 12
-    _audit_completion(client, root, clips)
+    assert len(set(hashes.values())) == 12
+    _audit_completion(client, root, hashes)
