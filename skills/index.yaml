@@ -340,7 +340,7 @@ skills:
           - workflows/testing/bdd100k-pipeline.yaml
   - name: teardown-and-cost
     category: atomic
-    when_to_use: "Stop spend safely and audit orphaned resources: the mandatory cancel-before-destroy ordering, which commands touch cloud versus local state, finding leaked clusters/agent VMs/controllers/buckets, and choosing the cheapest tier that proves the point."
+    when_to_use: "Stop spend safely and audit orphaned resources: cancel-before-destroy ordering, cloud versus local state, retained project configuration, leaked clusters/agent VMs/controllers/buckets, and choosing the cheapest tier that proves the point."
     path: skills/atomic/teardown-and-cost/SKILL.md
     smoke:
       - type: cli_help
@@ -762,7 +762,7 @@ skills:
         contains: "public-ip"
   - name: nebius-infra
     category: tools
-    when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, credentials, retained-backup checksum verification and VM maintenance pauses across reboot."
+    when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, credentials, preemptible pricing, retained-backup checksum verification and VM maintenance pauses across reboot."
     path: skills/tools/nebius-infra/SKILL.md
     smoke:
       - type: configure_provision_dry_run
