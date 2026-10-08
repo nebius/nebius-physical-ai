@@ -43,6 +43,13 @@ is retained. Novel views render at source resolution, and the offline report
 embeds previews up to 1600 pixels wide. Explicit Hydra overrides still take
 precedence, and custom recipes retain their own settings.
 
+For independent photographic cameras, the USDZ also carries a checked capture
+trajectory. Rendering uses each photograph's exact camera pose, preserves its
+intrinsics and timestamps, and applies the novel-view offset in that camera's
+local frame. This avoids treating independent COLMAP cameras as a rigid vehicle
+rig. Native model bytes and original rig metadata are retained. Explicit custom
+trajectories and native rigid-rig captures keep their original rendering path.
+
 ## Ingredients
 
 | | |

@@ -1770,6 +1770,11 @@ def reconstruct_scene(
             "checkpoint.artifact.enabled must be true"
         )
 
+    if usdz is not None and not errors:
+        from npa.workbench.nurec.capture_trajectory import attach_capture_trajectory
+
+        attach_capture_trajectory(ncore_json, usdz)
+
     gt_dir = ""
     if export_gt and not errors:
         gt_target = run_dir / "gt"
@@ -2020,6 +2025,14 @@ def render_novel_views(
         video_fps=video_fps,
         video_crf=video_crf,
     )
+    if not replicate_training_views and not custom_rig_trajectory:
+        from npa.workbench.nurec.capture_trajectory import prepare_capture_render
+
+        trajectory = prepare_capture_render(artifact_path, output_dir, dry_run=dry_run)
+        if trajectory:
+            args.extend(["--custom-rig-trajectory", trajectory])
+            args.extend(["--calib-source", "training-rig-poses-per-frame"])
+
     mounts = (
         [
             (str(Path(artifact_path).parent), str(Path(artifact_path).parent)),

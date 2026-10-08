@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "10fec3b0eac920781ddc9a79e047e78a669284844bbb157a662f264658f0ad62",
+  "workflow_sha256": "7669f0878e53ea7b7d729624127e30f626c18783c2720ca577723afb9a2e24ac",
   "planning": {
     "validation": {
       "status": "verified",
@@ -11,12 +11,9 @@
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "The full public demo completed at source 39a662651f6b46db0ce57dbff5fb9828c9d22643: pinned NCore input, 30,000 checkpoint steps, USDZ, 38 rig-offset novel views, native metrics and decoded Rerun. All 216 published objects passed independent readback; actual demo view fetched byte-identical canonical native HTML with no presentation repair. Collision geometry and navigation readiness are outside this Gaussian reconstruction qualification.",
-      "evidence": [
-        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
-        "docs/workbench/evidence/public-demos/nurec.json"
-      ]
+      "status": "unverified",
+      "reason": "The default now uses the full standard capture, source-resolution training with PPISP and pose-preserving novel views. End-to-end quality validation for this revision is in progress; prior smaller-capture results do not qualify these defaults.",
+      "evidence": []
     }
   },
   "prerequisites": {
