@@ -779,16 +779,16 @@ this chart is generated from that table and the publishing plan:
 
 ![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
 
-All 26 currently accepted release references resolved anonymously to their
-recorded digests again on 2026-09-29. Twelve previously accepted tags remain pullable
+All 27 currently accepted release references resolved anonymously to their
+recorded digests again on 2026-10-08. Twelve previously accepted tags remain pullable
 but are excluded by the two security quarantines above. The chart groups
 the current publishing plan three ways:
 
-- **14 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
+- **15 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
   `npa-cosmos3-reason`,
   `npa-detection-training`, `npa-envgen`, `npa-flex-pi`, `npa-groot`,
   `npa-lancedb`, `npa-lerobot-policy`,
-  `npa-ltx2`, `npa-sonic-mujoco`,
+  `npa-ltx2`, `npa-lyra2`, `npa-sonic-mujoco`,
   `npa-wan2-2`, `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2`. This band does not mean every cell has a current-release run:
   the matrix distinguishes verified, historical, supported, and unverified
   cells.
