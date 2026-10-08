@@ -6,6 +6,10 @@ Use `npa workbench <tool> <command>` for a capability and
 `npa workbench workflow` for a pipeline. Tools exchange artifacts through S3;
 Python and HTTP access follow each tool's documented contract.
 
+[Optional team mode](team-access.md) adds authenticated workspace access, personal
+GPU allocations and artifact storage for shared clusters, with a CPU gateway and
+private SkyPilot service. Its deployment still requires live qualification.
+
 PAIDF workflows select repaired public Cosmos3, Evaluator, and Curator
 candidates by immutable digest while the historical releases remain
 quarantined. See the [PAIDF image-selection notes](guides/physical-ai-data-factory.md)

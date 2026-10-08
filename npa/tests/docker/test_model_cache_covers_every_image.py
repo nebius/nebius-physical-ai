@@ -118,6 +118,7 @@ def test_no_variable_is_both_redirected_and_excused(name: str) -> None:
 # that dies with the pod. Each one still in the tree has to say why it is not
 # runtime-fetched model weights.
 EXCUSED_EMPTY_DIRS = {
+    "team-configuration": "memory-backed owner-only team credentials copied from Secrets",
     "rrd-data": "Rerun recordings written by the run, not downloaded weights",
     "fiftyone-data": "dataset app state",
     "openpi-cache": "fallback when no durable cache is configured; redirected when one is",

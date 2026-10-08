@@ -12,6 +12,12 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+Optional [team mode](../docs/workbench/team-access.md) adds authenticated shared
+execution through `npa workbench team` and `npa.sdk.workbench.team`. Existing users
+and groups receive workspace grants, personal namespaces, explicit GPU quotas,
+and scoped artifact storage. The guide covers configuration, credentials, CPU
+service deployment, and the live qualification required before production.
+
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
 optional `--baseline-path` compares both sources in both A/B orders. See the
