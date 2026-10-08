@@ -264,6 +264,16 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
         True,
         "test-run",
     )
+    if with_content_region is None:
+        with pytest.raises(c3.PaidfCosmos3Error, match="provenance is null"):
+            c3.generate_variants(
+                *args,
+                storage=storage,
+                environ={"CUDA_VISIBLE_DEVICES": "0"},
+                generator=fake_generator,
+            )
+        assert not calls
+        return
     first = c3.generate_variants(
         *args,
         storage=storage,
@@ -292,8 +302,12 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     assert metadata["conditioned_input"] == "source.mp4"
     assert metadata["weights_baked"] is False
     assert metadata["motion_preservation"] is None
-    assert metadata.get("source_content_region") == region
-    assert ("source_content_region" in metadata) is (with_content_region is not False)
+    detected = metadata["source_content_region"]
+    assert detected["bounds"] == [0, 0, 64, 64]
+    assert detected["origin"] == "source-padding-detection"
+    assert detected["padding_detection"]["status"] == "no-additional-padding"
+    if region:
+        assert detected["source_sha256"] == region["source_sha256"]
     generated_bytes = generated_video.read_bytes()
     assert generated_bytes != paths["source"].read_bytes()
     for variant in first["variants"]:

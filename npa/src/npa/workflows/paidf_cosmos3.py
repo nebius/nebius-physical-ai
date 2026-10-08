@@ -983,7 +983,52 @@ def _variant_metadata(
         payload["structural_control"] = "edge"
     if "source_content_region" in metadata:
         payload["source_content_region"] = metadata["source_content_region"]
+    if "padding_preservation" in metadata:
+        payload["padding_preservation"] = metadata["padding_preservation"]
     return payload
+
+
+def _retain_raw_metadata(artifact, record, metadata, base, storage):
+    _write_json(
+        {
+            "schema": "npa.video.raw-model-output.v1",
+            "status": "retained",
+            "sha256": _sha256(artifact),
+            "source_sha256": record["source_sha256"],
+            "temporal_alignment": metadata.get("temporal_alignment"),
+            "guardrails": metadata["guardrails"],
+        },
+        base + "raw_model_metadata.json",
+        storage=storage,
+    )
+
+
+def _preserve_publication_padding(artifact, source, metadata, base, storage, root):
+    from npa.workflows.video_padding_preservation import preserve_source_padding
+    from npa.workflows.paidf_cosmos3_media import verify_pair
+
+    record = metadata.get("source_content_region")
+    if record is None:
+        return artifact, metadata
+    width, height = record["canvas"]
+    if record["bounds"] == [0, 0, width, height]:
+        return artifact, metadata
+    if source is None:
+        raise PaidfCosmos3Error("Padding preservation requires the prepared source")
+    raw_uri = base + "raw_model_video.mp4"
+    storage.upload_file(str(artifact), raw_uri)
+    _retain_raw_metadata(artifact, record, metadata, base, storage)
+    destination = root / "padding_preserved.mp4"
+    receipt = preserve_source_padding(source, artifact, destination, record)
+    updated = {
+        **metadata,
+        "padding_preservation": {**receipt, "raw_model_video_uri": raw_uri},
+    }
+    if metadata.get("temporal_alignment") is not None:
+        updated["temporal_alignment"] = verify_pair(
+            source, destination, metadata["temporal_alignment"]["fps"]
+        )
+    return destination, updated
 
 
 def _publish_variant(
@@ -994,6 +1039,7 @@ def _publish_variant(
     variables: Mapping[str, Any],
     metadata: Mapping[str, Any],
     storage: Any,
+    source_video: Path | None = None,
 ) -> dict[str, Any]:
     if not _is_s3(output_uri):
         raise PaidfCosmos3Error(
@@ -1003,8 +1049,11 @@ def _publish_variant(
     artifact = Path(str(result["output_path"]))
     if not artifact.is_file() or artifact.stat().st_size <= 0:
         raise PaidfCosmos3Error("Cosmos 3 returned an empty video artifact")
-    storage.upload_file(str(artifact), base + "augmented_video.mp4")
     with tempfile.TemporaryDirectory(prefix="npa-paidf-c3-publish-") as tmp:
+        artifact, metadata = _preserve_publication_padding(
+            artifact, source_video, metadata, base, storage, Path(tmp)
+        )
+        storage.upload_file(str(artifact), base + "augmented_video.mp4")
         frames = _extract_frames(artifact, Path(tmp) / "frames")
         for frame in frames:
             storage.upload_file(str(frame), base + frame.name)
@@ -1021,13 +1070,18 @@ def _publish_variant(
     return {
         "clip": clip,
         "augmented_video_uri": base + "augmented_video.mp4",
-        "video_bytes": artifact.stat().st_size,
+        "video_bytes": clip_meta["video_bytes"],
         "frame_count": clip_meta["frame_count"],
         "seed": clip_meta["seed"],
         "guidance": clip_meta["guidance"],
         "steps": clip_meta["steps"],
         "variables": dict(variables),
         "motion_preservation": None,
+        **(
+            {"padding_preservation": clip_meta["padding_preservation"]}
+            if "padding_preservation" in clip_meta
+            else {}
+        ),
         **(
             {"temporal_alignment": metadata["temporal_alignment"]}
             if "temporal_alignment" in metadata
@@ -1140,7 +1194,7 @@ def generate_variants(
     if motion_weight != 0.0:
         raise PaidfCosmos3Error(
             "source_motion_weight must be 0: source/model blending creates "
-            "ghosting and does not preserve motion; publish unmodified model output"
+            "ghosting and does not preserve motion; preserve generated scene pixels"
         )
     client = storage or _storage()
     attempt, prior = _load_attempt(attempt_uri, scores_uri, storage=client)
@@ -1188,6 +1242,16 @@ def generate_variants(
 
     run_generate = generator or generate_and_publish
     local_input = materialize_vision_input(input_video_uri)
+    from npa.workflows.video_padding_preservation import resolve_source_content_region
+
+    if (
+        "source_content_region" in provenance
+        and provenance["source_content_region"] is None
+    ):
+        raise PaidfCosmos3Error("Recorded content-region provenance is null")
+    content_region = resolve_source_content_region(
+        Path(local_input), provenance.get("source_content_region")
+    )
     work_root = Path(tempfile.mkdtemp(prefix="npa-paidf-c3-generate-"))
 
     def run_one(index: int) -> tuple[int, dict[str, Any], dict[str, Any], str]:
@@ -1240,11 +1304,7 @@ def generate_variants(
                 "guardrails": True,
                 "attempt": attempt,
                 "input_provenance_uri": input_provenance_uri,
-                **(
-                    {"source_content_region": provenance["source_content_region"]}
-                    if "source_content_region" in provenance
-                    else {}
-                ),
+                "source_content_region": content_region,
                 **(
                     {"temporal_alignment": result["temporal_alignment"]}
                     if transfer is not None
@@ -1252,6 +1312,7 @@ def generate_variants(
                 ),
             },
             storage=client,
+            source_video=Path(local_input),
         )
 
     try:

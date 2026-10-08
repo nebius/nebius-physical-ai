@@ -192,10 +192,12 @@ The [PAIDF starter guide](../workflows/guides/paidf-cosmos3.md#audit-a-completed
 also provides a read-only live audit using the selected run URI, project, and
 saved pre-submission UTC timestamp. Its test settings are scoped to the audit
 shell and do not submit work. New Cosmos 3 preparation records the original
-scene rectangle: evaluator checks exclude only preparation-added padding and
-report border changes separately in `spatial_evidence.padding`. Generated videos
-remain unchanged. Legacy variants without that provenance use full-frame
-scoring. See the [appearance recipe guide](../docs/workbench/guides/paidf-appearance-12.md#review-the-evidence).
+scene rectangle and detects persistent paired black edge bands across the full
+source clip. Publication restores known and detected borders from the source,
+verifies every generated scene pixel survives lossless encoding, and retains
+`raw_model_video.mp4` separately. Evaluator checks exclude verified padding and
+report border changes in `spatial_evidence.padding`. Older outputs without
+region provenance retain full-frame scoring. See the [appearance recipe guide](../docs/workbench/guides/paidf-appearance-12.md#review-the-evidence).
 For task-specific augmentation, set the optional
 `appearance_profiles_json` workflow config to a JSON array of coherent lighting,
 background, color-grade and surface-finish profiles; its empty default retains

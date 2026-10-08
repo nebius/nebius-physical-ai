@@ -181,9 +181,9 @@ def prepare_reference(
             "conditioning_fps must be an integer from 10 through 30"
         )
     from npa.workflows.video_content_region import (
-        content_region_record,
         measure_scaled_size,
     )
+    from npa.workflows.video_padding_detection import detect_source_padding
 
     original = probe_video(source)
     scale_filter = f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease:force_divisible_by=2"
@@ -231,8 +231,10 @@ def prepare_reference(
         "ffmpeg_filter": filters,
         "original": original,
         "prepared": prepared,
-        "source_content_region": content_region_record(
-            prepared, [left, top, left + content_width, top + content_height]
+        "source_content_region": detect_source_padding(
+            destination,
+            prepared,
+            [left, top, left + content_width, top + content_height],
         ),
         "time_origin": "selected-source-start",
         "time_stretch": False,

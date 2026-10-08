@@ -1,4 +1,4 @@
-"""Track and crop the scene rectangle introduced by reference-video padding."""
+"""Validate scene bounds from preparation geometry or source-padding detection."""
 
 from __future__ import annotations
 
@@ -90,6 +90,9 @@ def validate_content_region(
     original, generated = probe_video(source), probe_video(video)
     if record["source_sha256"] != original["sha256"]:
         raise ValueError("Content region does not match the reference video hash")
+    detection = record.get("padding_detection")
+    if detection and detection["decoded_frames"] != original["decoded_frames"]:
+        raise ValueError("Padding detection does not cover the complete reference")
     for media in (original, generated):
         if record["canvas"] != [media["width"], media["height"]]:
             raise ValueError("Content region canvas differs from video dimensions")
@@ -108,6 +111,9 @@ def validate_content_region(
 def _validate_record(record: Any) -> None:
     if not isinstance(record, dict) or record.get("schema") != SCHEMA:
         raise ValueError("Invalid content-region schema")
+    if record.get("origin") == "source-padding-detection":
+        _validate_detection_record(record)
+        return
     if record.get("origin") != ORIGIN:
         raise ValueError("Content region must originate in reference preparation")
     digest = record.get("source_sha256")
@@ -135,6 +141,56 @@ def _validate_record(record: Any) -> None:
         or (right - left != width and bottom - top != height)
     ):
         raise ValueError("Content region is not an aspect-ratio padding rectangle")
+
+
+def _validate_detection_record(record):
+    known = {**record, "origin": ORIGIN, "bounds": record.get("normalization_bounds")}
+    _validate_record(known)
+    evidence = record.get("padding_detection")
+    bounds = record.get("bounds")
+    if (
+        not isinstance(evidence, dict)
+        or not isinstance(bounds, list)
+        or len(bounds) != 4
+    ):
+        raise ValueError("Detected padding requires measured rectangular evidence")
+    if any(type(value) is not int or value % 2 for value in bounds):
+        raise ValueError("Detected padding bounds must be even pixel coordinates")
+    left, top, right, bottom = bounds
+    x0, y0, x1, y1 = known["bounds"]
+    if not (x0 <= left < right <= x1 and y0 <= top < bottom <= y1):
+        raise ValueError("Detected padding falls outside the prepared scene")
+    if (
+        evidence.get("algorithm") != "persistent-paired-black-bands-v1"
+        or evidence.get("source_sha256") != record["source_sha256"]
+        or evidence.get("bounds") != bounds
+        or type(evidence.get("decoded_frames")) is not int
+        or evidence["decoded_frames"] < 1
+        or evidence.get("black_level") != 12
+        or evidence.get("boundary_level") != 24
+        or evidence.get("boundary_transition_pixels") != 4
+        or evidence.get("status")
+        not in {"detected", "no-additional-padding", "ambiguous", "insufficient-frames"}
+    ):
+        raise ValueError("Detected padding evidence is invalid")
+    if evidence["status"] == "detected":
+        _validate_detected_bands(bounds, known["bounds"], evidence["decoded_frames"])
+    if evidence["status"] != "detected" and bounds != known["bounds"]:
+        raise ValueError("Uncertain padding cannot reduce the scene rectangle")
+
+
+def _validate_detected_bands(bounds, known, frames):
+    if frames < 6 or bounds == known:
+        raise ValueError("Detected padding requires persistent additional bands")
+    for axis in (0, 1):
+        before = bounds[axis] - known[axis]
+        after = known[axis + 2] - bounds[axis + 2]
+        retained = bounds[axis + 2] - bounds[axis]
+        extent = known[axis + 2] - known[axis]
+        if before == after == 0:
+            continue
+        if min(before, after) < 2 or abs(before - after) > 2 or retained < extent / 4:
+            raise ValueError("Detected padding requires conservative paired bands")
 
 
 def crop_content(source: Path, destination: Path, bounds: list[int]) -> str:
