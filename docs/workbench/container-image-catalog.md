@@ -876,6 +876,12 @@ table. The independently rebuilt `sonic-mujoco:0.2.0-runtime` and zero-payload
 
 ## Verification scope
 
+`npa-lyra2` is a dedicated reconstruction image candidate, excluded from the
+public release table until its exact-image security and real GPU gates pass.
+Its CUDA compiler and hash-locked NPA environment are independent of Isaac Lab;
+Lyra source, inference dependencies and model weights are fetched at runtime.
+See the [Lyra packaging record](../../npa/docker/workbench/lyra2/REDISTRIBUTION.md).
+
 The earlier catalog inspections checked tag spelling, anonymous manifest and
 config access, content hashes, platform metadata, selected OCI labels, exposed
 ports, entrypoints, and build timestamps. The 2026-09-17 check above verifies

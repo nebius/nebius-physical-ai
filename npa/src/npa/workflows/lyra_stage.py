@@ -62,7 +62,7 @@ def _source(destination):
 
 
 def _torch_environment(workspace):
-    interpreter = "/opt/npa/sim/venv/bin/python"
+    interpreter = os.environ.get("NPA_LYRA_BASE_PYTHON", "/opt/npa/sim/venv/bin/python")
     environment = workspace / "environment"
     subprocess.run(
         [interpreter, "-m", "venv", str(environment)],

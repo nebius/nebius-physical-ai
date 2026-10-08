@@ -150,6 +150,7 @@ LIBERO_SIGSTORE_PUBLICATION_REFERRERS = (
 )
 
 CONTAINER_IMAGE_NAMES = {
+    "lyra2": "npa-lyra2",
     "antioch": "npa-antioch",
     "openpi": "npa-openpi",
     "habitat-sim": "npa-habitat-sim",
@@ -211,6 +212,7 @@ CONTAINER_IMAGE_NAMES = {
 # npa/tests/docker/test_packaging_contract.py locks the two inventories together.
 SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
+        "lyra2",
         "paidf-anomalygen-sky",
         "paidf-attribute-search-sky",
         "paidf-detection-sky",
@@ -304,7 +306,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Independent OSS catalog additions stay quarantined as soon as their image
 # names are registered. An absent tool is not added to the publication inventory.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore", "libero", "sam3"}
+    {"openpi", "curobo", "ncore", "libero", "sam3", "lyra2"}
 ) | frozenset({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset(
     {"antioch", "mjlab", "robocasa", "open3d"}

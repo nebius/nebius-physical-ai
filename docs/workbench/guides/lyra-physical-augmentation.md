@@ -16,6 +16,15 @@ quality remain separate validation work.
 
 ## Prepare captured video
 
+The dedicated `npa-lyra2` image recipe packages the CUDA compiler, Python and
+hash-locked NPA dependencies independently of Isaac Lab. The pinned Lyra/DA3
+source, inference dependencies and reconstruction checkpoint are fetched into
+a private temporary environment on each job. The image contains no weights or
+capture data. Its release is a validation candidate; the existing workflow pin
+stays on the previously tested image until the dedicated digest passes the
+security and real GPU gates. See its
+[packaging record](../../../npa/docker/workbench/lyra2/REDISTRIBUTION.md).
+
 Use a configured Workbench project with private object storage and an RTX PRO
 6000 execution context. Reconstruction can target a B200 independently; native
 Isaac camera rendering still requires RTX. The workflow defaults to
