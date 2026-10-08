@@ -146,7 +146,9 @@ def test_missing_image_fails_before_runtime_store_or_executor(tmp_path, monkeypa
     executor.assert_not_called()
 
 
-def test_missing_image_fails_before_runtime_tier_store_or_executor(tmp_path, monkeypatch):
+def test_missing_image_fails_before_runtime_tier_store_or_executor(
+    tmp_path, monkeypatch
+):
     spec = _spec(tmp_path, {"required_immutable_images": ["runtime"], "runtime": ""})
     store_factory = Mock(return_value=None)
     executor_factory = Mock()
