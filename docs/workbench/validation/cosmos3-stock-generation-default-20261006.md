@@ -20,11 +20,12 @@ selection keep their existing precedence.
 
 Native stock generation qualification is pending. Before treating this candidate
 selection as ready, the exact candidate must complete the stock Cosmos3-Nano
-text-to-image workload on Nebius RTX PRO 6000, including its enabled guardrails
-and published artifact.
+text-to-image workload with the stock workflow's declared `H100:1` accelerator,
+including its enabled guardrails and published artifact.
 Preserve the stock prompt, seed, guidance, steps, CPU and memory requests;
-the operator selects the target GPU and storage locations. An explicit immutable
-override is required for qualification against main.
+an accelerator override qualifies only that override, not the stock default.
+The operator selects storage locations. An explicit immutable override is
+required for qualification against main.
 
 The tests exercise actual image planning, submit's plan-only route, and
 `preflight-images` with mocked external probes. They prove selection and probe

@@ -10,9 +10,9 @@ declarative `npa.workflow` spec that all share one implementation.
 The historical public release is quarantined. A digest-pinned validation
 candidate is selected for PAIDF video preparation and variant generation and for
 `workbench.cosmos3.generate` when the official default registry is used. It is
-not a supported public release, and every other Cosmos3 action still needs an
-explicit independently qualified operator image. Earlier execution evidence
-below does not accept the withdrawn public bytes. See the
+not a supported public release, and every other action routed to `npa-cosmos3`
+still needs an explicit independently qualified operator image. Earlier
+execution evidence below does not accept the withdrawn public bytes. See the
 [default-image impact audit](validation/public-default-quarantine-impact-20261005.md).
 
 | Piece | Path |
