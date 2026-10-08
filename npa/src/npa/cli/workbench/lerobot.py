@@ -2006,7 +2006,9 @@ def serve(
     # Deprecated path alias: keep --checkpoint working for existing scripts.
     checkpoint: str = typer.Option("", "--checkpoint", hidden=True),
     env_type: str = typer.Option(
-        "", "--env-type", help="Environment type (needed for shape resolution)."
+        "",
+        "--env-type",
+        help="Environment type for environment-shaped or PEFT checkpoints.",
     ),
     env_task: str = typer.Option("", "--env-task", help="Environment task."),
     port: int = typer.Option(8080, "--port", help="Server port."),

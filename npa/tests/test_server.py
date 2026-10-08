@@ -341,9 +341,9 @@ def test_infer_endpoint_parses_observation_and_returns_actions(
 
 
 @pytest.mark.parametrize("with_env", [False, True])
-@pytest.mark.parametrize("include_use_peft", [False, True])
+@pytest.mark.parametrize("use_peft", [None, False, True])
 def test_policy_load_preserves_checkpoint_features_without_environment(
-    server_module, monkeypatch, with_env, include_use_peft
+    server_module, monkeypatch, with_env, use_peft
 ):
     from unittest.mock import Mock
 
@@ -353,8 +353,8 @@ def test_policy_load_preserves_checkpoint_features_without_environment(
         input_features={"observation.state": (7,)},
         output_features={"action": (8,)},
     )
-    if include_use_peft:
-        config_kwargs["use_peft"] = False
+    if use_peft is not None:
+        config_kwargs["use_peft"] = use_peft
     config = SimpleNamespace(**config_kwargs)
     policy = Mock()
     policy.to.return_value = policy
@@ -401,11 +401,57 @@ def test_policy_load_preserves_checkpoint_features_without_environment(
     assert state.preprocessor == "pre" and state.postprocessor == "post"
     policy.to.assert_called_once()
     policy.eval.assert_called_once()
-    if with_env:
-        factory.assert_called_once_with(config, env_cfg=env)
+    if with_env or use_peft:
+        factory.assert_called_once_with(config, env_cfg=env if with_env else None)
         from_pretrained.assert_not_called()
     else:
         get_policy_class.assert_called_once_with("act")
         from_pretrained.assert_called_once_with("/checkpoint", config=config)
         factory.assert_not_called()
         assert config.output_features == {"action": (8,)}
+
+
+def test_policy_load_rejects_checkpoint_without_saved_features(
+    server_module, monkeypatch
+):
+    from unittest.mock import Mock
+
+    config = SimpleNamespace(
+        device="cpu", type="act", input_features={}, output_features={}
+    )
+    factory = Mock()
+    from_pretrained = Mock()
+    monkeypatch.setitem(
+        sys.modules,
+        "lerobot.configs.policies",
+        SimpleNamespace(
+            PreTrainedConfig=SimpleNamespace(from_pretrained=lambda _: config)
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "lerobot.policies.factory",
+        SimpleNamespace(
+            get_policy_class=Mock(
+                return_value=SimpleNamespace(from_pretrained=from_pretrained)
+            ),
+            make_policy=factory,
+            make_pre_post_processors=Mock(),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "lerobot.utils.device_utils",
+        SimpleNamespace(get_safe_torch_device=FakeDevice),
+    )
+
+    state = server_module.PolicyState()
+    with pytest.raises(
+        server_module.CheckpointContractError,
+        match="Checkpoint must contain input and output features",
+    ):
+        state.load("/checkpoint")
+
+    assert not state.loaded
+    factory.assert_not_called()
+    from_pretrained.assert_not_called()
