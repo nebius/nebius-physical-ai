@@ -60,3 +60,19 @@ Inspect all six stages and the final S3 outputs: reconstruction USDZ, novel-view
 renders, `reports/sim2real.rrd`, and `reports/final.json`. The pod's `/tmp` data
 is temporary; preserve outputs before following the
 [cleanup procedure](../../../../../../docs/teardown.md).
+
+The default reconstruction example uses all of `struktur28_auto` (59 photos,
+two cameras), source-resolution training and novel-view rendering, and native
+PPISP exposure correction. It retains the native 30,000-step recipe. Portable
+USDZ files preserve independent photographic camera poses for nonzero-offset
+rendering. See the [quality and validation guide](../../../../../../docs/workbench/guides/neural-reconstruction.md).
+
+Multi-camera photographic reconstruction also assigns a separate virtual training
+timestamp to every photo, preserving its exact source pose and image bytes. The
+source capture is unchanged; `reconstruction/photographic-timeline.json` records
+the mapping used by NRE training and validation.
+
+The default object recipe allows two million Gaussians
+(`model.strategy.add.max_n_gaussians=2000000`) to retain detail across both
+full-resolution photographic cameras. The native 30,000-step training recipe
+still applies. An explicit Hydra override selects a different model capacity.

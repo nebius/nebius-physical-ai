@@ -233,8 +233,13 @@ def read_ply(path):
 
 
 def test_real_export_preserves_all_xyz_rgb_and_inventory_before_launch(
-    capture, tmp_path
+    capture, tmp_path, monkeypatch
 ):
+    from npa.workbench.nurec import capture_trajectory
+
+    monkeypatch.setattr(
+        capture_trajectory, "attach_capture_trajectory", lambda *args: None
+    )
     meta, readers = capture
     before = {p.name: p.read_bytes() for p in meta.parent.iterdir()}
     out = tmp_path / "out"

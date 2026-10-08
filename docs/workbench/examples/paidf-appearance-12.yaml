@@ -1,5 +1,7 @@
 # Opt-in config overlay for workflows/main/paidf-cosmos3.yaml.
 # Apply to a copy of that workflow; this file is not a standalone workflow.
+# Copy-paste run instructions: ../guides/paidf-appearance-12.md
+# Current main detects and preserves verified padding automatically; no extra key.
 config:
   variant_count: '12'
   variant_parallelism: '1'
