@@ -300,7 +300,7 @@ def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
     assert result.stderr == ""
 
     full_result = subprocess.run(
-        [sys.executable, str(SCANNER_PATH), "--tarball", str(path)],
+        [sys.executable, str(SCANNER_PATH), "--tarball", str(path), "--full-stdout"],
         capture_output=True,
         text=True,
     )
@@ -309,6 +309,16 @@ def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
         json.loads(full_result.stdout)["credential_members"][0]["sha256"]
         == hashlib.sha256(payload).hexdigest()
     )
+
+    default_result = subprocess.run(
+        [sys.executable, str(SCANNER_PATH), "--tarball", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    assert default_result.returncode == 1
+    assert set(json.loads(default_result.stdout)) == set(
+        SCANNER._PUBLIC_STDOUT_FIELDS
+    ) | {"report_scope"}
 
 
 def test_private_json_report_does_not_follow_a_symlink(tmp_path):
@@ -331,6 +341,10 @@ def test_private_json_report_does_not_follow_a_symlink(tmp_path):
         text=True,
     )
 
-    assert result.returncode != 0
+    assert result.returncode == 2
     assert output.is_symlink()
     assert target.read_text(encoding="utf-8") == "unchanged"
+    assert json.loads(result.stderr) == {"error": "report-write-failed"}
+    assert set(json.loads(result.stdout)) == set(SCANNER._PUBLIC_STDOUT_FIELDS) | {
+        "report_scope"
+    }

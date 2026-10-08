@@ -310,6 +310,7 @@ def main() -> int:
     parser.add_argument("image", nargs="?")
     parser.add_argument("--tarball", type=Path)
     parser.add_argument("--json", type=Path)
+    parser.add_argument("--full-stdout", action="store_true")
     args = parser.parse_args()
     if bool(args.image) == bool(args.tarball):
         parser.error("provide exactly one of IMAGE or --tarball")
@@ -325,7 +326,13 @@ def main() -> int:
             report = scan_tarball(saved)
     rendered = json.dumps(report, indent=2, sort_keys=True)
     if args.json:
-        _write_private_report(args.json, rendered)
+        try:
+            _write_private_report(args.json, rendered)
+        except OSError:
+            print(json.dumps({"error": "report-write-failed"}), file=sys.stderr)
+            print(json.dumps(_stdout_report(report), indent=2, sort_keys=True))
+            return 2
+    if not args.full_stdout:
         rendered = json.dumps(_stdout_report(report), indent=2, sort_keys=True)
     print(rendered)
     return 0 if report["verdict"] == "clean" else 1

@@ -669,8 +669,9 @@ This baseline check does not replace complete image scans before publication.
 
 The Cosmos3 Ray payload scanner records archive/config and blocked-member
 hashes, sizes, layer locations, and rule kinds in its JSON report while
-preserving blocking verdicts. With `--json`, stdout retains only the blocking
-summary so a publication log cannot expose member commitments; see the
+preserving blocking verdicts. Stdout is redacted by default, and `--json` writes
+the full report to the requested file, so a publication log cannot expose member
+commitments; `--full-stdout` is only for local operator attribution. See the
 [payload finding evidence](../docs/workbench/container-packaging.md#cosmos3-ray-payload-finding-evidence)
 contract. A metadata report does not accept the image or its GPU capability.
 

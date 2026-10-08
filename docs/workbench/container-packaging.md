@@ -113,15 +113,15 @@ independently obtained exact source or package bytes before classifying a
 finding. Hash equality is evidence of byte identity and does not waive any
 publication gate or establish GPU capability acceptance.
 
-When `--json` is supplied, the full metadata report is written only to that
-file and stdout retains the pre-existing blocking summary with
-`report_scope: redacted-summary`. The ordinary publication workflow uses this
-mode so public Actions logs do not expose member hashes or sizes. Do not publish
-raw layers, extracted credential bytes, or a failed image archive as public
-Actions artifacts. The workflow writes the full report as a private temporary
-runner file and removes it with the scanned archive; rerun the scanner against
-an operator-controlled archive when later attribution is needed. An unresolved
-finding still exits nonzero and blocks push.
+Stdout is redacted by default with `report_scope: redacted-summary`; `--json`
+writes the full metadata report only to its requested file. Use
+`--full-stdout` only for local operator attribution, never a public log. The
+ordinary publication workflow keeps member hashes and sizes out of Actions logs.
+Do not publish raw layers, extracted credential bytes, or a failed image archive
+as public Actions artifacts. The workflow writes the full report as a private
+temporary runner file and removes it with the scanned archive; rerun the scanner
+against an operator-controlled archive when later attribution is needed. An
+unresolved finding still exits nonzero and blocks push.
 
 ## Inventory
 
