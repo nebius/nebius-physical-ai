@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
+from npa.clients.config import ConfigError
+from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.cli.main import app
 from npa.sdk.workbench import sim2real as sim2real_sdk
 from npa.workflows.rerun_serve import RerunServeConfig
@@ -110,6 +112,53 @@ def test_regen_project_resolves_storage_without_execution_images(
     assert result.exit_code == 0, result.output
     assert seen[0].s3_bucket == "project-bucket"
     assert seen[0].s3_endpoint == "https://project.example.invalid"
+
+
+def test_regen_project_keeps_sim2real_bucket_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _reject_execution_images(monkeypatch)
+    seen: list[Sim2RealArtifactConfig] = []
+    monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "environment-bucket")
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.resolve_project_storage",
+        lambda _project: SimpleNamespace(checkpoint_bucket="", endpoint_url=""),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.regen_sim2real_rrd",
+        lambda config, **_kwargs: (
+            seen.append(config)
+            or RegenResult(config.run_id, str(tmp_path), "review.rrd", "", 4, 1, 4)
+        ),
+    )
+
+    result = _invoke_rerun(
+        "regen",
+        "--project",
+        "operator-project",
+        "--local-dir",
+        str(tmp_path),
+        "--no-sync",
+        "--no-upload",
+    )
+    assert result.exit_code == 0, result.output
+    assert seen[0].s3_bucket == "environment-bucket"
+
+
+@pytest.mark.parametrize("error_type", [ConfigError, ProjectCredentialStoreError])
+def test_regen_project_configuration_errors_are_cli_errors(
+    monkeypatch: pytest.MonkeyPatch, error_type: type[Exception]
+) -> None:
+    def reject_storage(_project: str):
+        raise error_type("invalid project storage")
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.resolve_project_storage", reject_storage
+    )
+    result = _invoke_rerun("regen", "--project", "operator-project")
+    assert result.exit_code == 1
+    assert "Error: invalid project storage" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_public_execution_defaults_remain_quarantined(

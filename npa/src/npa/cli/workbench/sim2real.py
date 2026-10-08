@@ -10,8 +10,9 @@ from typing import Optional
 
 import typer
 
-from npa.clients.config import resolve_project_storage
+from npa.clients.config import ConfigError, resolve_project_storage
 from npa.clients.credentials import load_credentials
+from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_ENVGEN_SHARD_COUNT,
@@ -916,7 +917,8 @@ def rerun_regen_command(
     try:
         if project:
             storage = resolve_project_storage(project)
-            s3_bucket = resolve_storage_bucket(storage, override=s3_bucket)
+            if s3_bucket.strip() or storage.checkpoint_bucket:
+                s3_bucket = resolve_storage_bucket(storage, override=s3_bucket)
             s3_endpoint = s3_endpoint.strip() or storage.endpoint_url or ""
         config = build_artifact_config_from_env(
             run_id=run_id,
@@ -932,7 +934,12 @@ def rerun_regen_command(
             upload=upload,
             sync_inputs=not no_sync,
         )
-    except (Sim2RealRerunRegenError, Sim2RealRerunServeError) as exc:
+    except (
+        ConfigError,
+        ProjectCredentialStoreError,
+        Sim2RealRerunRegenError,
+        Sim2RealRerunServeError,
+    ) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
