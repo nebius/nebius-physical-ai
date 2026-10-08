@@ -61,8 +61,8 @@ renders, `reports/sim2real.rrd`, and `reports/final.json`. The pod's `/tmp` data
 is temporary; preserve outputs before following the
 [cleanup procedure](../../../../../../docs/teardown.md).
 
-The default reconstruction example uses the full `struktur28` capture
-(`standard`), source-resolution training and novel-view rendering, and native
+The default reconstruction example uses all of `struktur28_auto` (59 photos,
+two cameras), source-resolution training and novel-view rendering, and native
 PPISP exposure correction. It retains the native 30,000-step recipe. Portable
 USDZ files preserve independent photographic camera poses for nonzero-offset
 rendering. See the [quality and validation guide](../../../../../../docs/workbench/guides/neural-reconstruction.md).

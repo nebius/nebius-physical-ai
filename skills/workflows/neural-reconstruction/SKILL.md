@@ -132,10 +132,12 @@ npa workbench nurec status      # what a run prefix holds, stage by stage
 
 Default: **`nvidia/PhysicalAI-NuRec-PPISP`** — ungated, CC-BY-4.0, real
 photographic captures of four outdoor object-centric scenes shipped **already in
-NCore V4**, which is what NRE consumes. The main demo and single-pod example
-select scene `struktur28`, variant `standard`, for the complete capture. The
-standalone `fetch` command retains `auto` as its small-capture default; pass
-`--variant standard` to match the workflow. Both variants share the ~1.1 GB archive.
+NCore V4**, which is what NRE consumes. The main demo, single-pod example and
+standalone fetch select scene `struktur28`, variant `auto`: all 59 images across
+two cameras. The `standard` variant has 518 HDR exposure-bracketed photographs
+across three cameras. It is an opt-in photometric calibration input, not simply
+a denser version of the default. Both variants share the ~1.1 GB archive.
+See [NVIDIA's dataset description](https://arxiv.org/html/2601.18336v1).
 
 The `nvidia/PhysicalAI-Autonomous-Vehicles*` family (raw clips, `-NCore`, and the
 pre-built `-NuRec` USDZ scenes) is **gated**: the account that owns `HF_TOKEN`
@@ -587,7 +589,7 @@ SkyPilot job taking 26m10s and reporting `test/psnr 31.19`, `test/ssim 0.833`,
 
 ### Default quality readback
 
-After the standard main demo completes, independently read its metrics and
+After the main demo completes, independently read its metrics and
 effective settings from S3:
 
 ```bash
@@ -599,7 +601,7 @@ NPA_NUREC_QUALITY_RUN_URI=s3://<bucket>/<prefix>/neural-reconstruction/<run-id> 
 ```
 
 Supply the same AWS credentials and endpoint as other live readback tests. This
-requires the complete capture, native 30,000-step recipe, full-resolution
+requires the default auto-exposure capture, native 30,000-step recipe, full-resolution
 training and rendering, PPISP, photographic poses and the nonzero offset. It
 rejects metrics below PSNR 28 / SSIM 0.8 or above LPIPS 0.3. These checks
 supplement visual inspection of multiple cameras; they do not prove unseen

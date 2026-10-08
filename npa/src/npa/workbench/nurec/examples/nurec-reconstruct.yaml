@@ -102,7 +102,7 @@ envs:
   # already in NCore V4 - the format NRE consumes.
   NPA_NUREC_DATASET: "nvidia/PhysicalAI-NuRec-PPISP"
   NPA_NUREC_SCENE: "struktur28"
-  NPA_NUREC_VARIANT: "standard"
+  NPA_NUREC_VARIANT: "auto"
 
   # --- Reconstruction --------------------------------------------------------
   # Static, camera-only, object-centric 3DGUT recipe shipped in the container.

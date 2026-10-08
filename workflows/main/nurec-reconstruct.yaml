@@ -98,7 +98,7 @@ config:
   dataset_id: "nvidia/PhysicalAI-NuRec-PPISP"
   dataset_revision: "2521064a3af6ab1c1caa2ba1b01ddde7eecded69"
   scene: "struktur28"
-  variant: "standard"
+  variant: "auto"
 
   # --- Reconstruction --------------------------------------------------------
   # Static, camera-only, object-centric 3DGUT recipe shipped in the container. It

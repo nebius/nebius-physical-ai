@@ -422,7 +422,7 @@ def _assert_default_quality(paths):
     from npa.workbench.nurec.nurec import parse_metrics_yaml
 
     manifest = json.loads(paths["ncore/manifest.json"].read_text())
-    assert manifest["observed_variant"] == "standard"
+    assert manifest["observed_variant"] == "auto"
     metrics = parse_metrics_yaml(paths["reconstruction/metrics.yaml"])
     assert metrics["test/psnr"] >= 28.0, metrics
     assert metrics["test/ssim"] >= 0.8, metrics

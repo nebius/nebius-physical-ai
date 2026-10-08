@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "7669f0878e53ea7b7d729624127e30f626c18783c2720ca577723afb9a2e24ac",
+  "workflow_sha256": "366f6ef22133c50a1124aee2c98d9d57984a50f8205e7bff3a62757f89e8e1c4",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The default now uses the full standard capture, source-resolution training with PPISP and pose-preserving novel views. End-to-end quality validation for this revision is in progress; prior smaller-capture results do not qualify these defaults.",
+      "reason": "The default retains the normalized auto-exposure capture with source-resolution training, PPISP and pose-preserving novel views. End-to-end quality validation for this revision is in progress; the larger HDR capture and prior low-resolution results do not qualify these defaults.",
       "evidence": []
     }
   },

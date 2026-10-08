@@ -36,8 +36,11 @@ digest of the decoded source fields, and binds it to the exported PLY. Export
 rejects source geometry changed after planning. CPU round trips prove this
 conversion; they do not establish reconstruction quality or training coverage.
 
-The main demo and single-pod example select the full `struktur28` capture
-(`variant: standard`). The object-centric recipe trains at source resolution
+The main demo and single-pod example select `struktur28_auto`: all 59
+photographs from its two cameras. The separate `standard` variant contains
+518 HDR exposure-bracketed photographs; it remains an explicit input choice
+for photometric calibration work, rather than the default viewing sample.
+The object-centric recipe trains at source resolution
 and enables NVIDIA's PPISP camera-response model; the native 30,000-step budget
 is retained. Novel views render at source resolution, and the offline report
 embeds previews up to 1600 pixels wide. Explicit Hydra overrides still take
