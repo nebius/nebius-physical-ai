@@ -107,12 +107,13 @@ reinterpret an unsafe result.
 
 ## Build
 
-The supported/default image release is `npa-cosmos3:1.2.2-cu130-r7`. It is an
-additive successor to the historical rollback tag `npa-cosmos3:1.2.2-cu130`,
-which is retained for provenance and must never be
-overwritten or deleted. Pre-merge validation builds use a branch-specific
-candidate tag in a private registry; the official `1.2.2-cu130-r7` tag was promoted
-only from the exact source commit whose bytes passed the secure publishing gates.
+The configured release tag is `npa-cosmos3:1.2.2-cu130-r7`. It is an additive
+successor to the historical rollback tag `npa-cosmos3:1.2.2-cu130`, which is
+retained for provenance and must never be overwritten or deleted. The r7 tag is
+quarantined and is not selected by default workflow planning. Pre-merge
+validation builds use a branch-specific candidate tag in a private registry; the
+official `1.2.2-cu130-r7` tag was promoted only from the exact source commit
+whose bytes passed the secure publishing gates.
 
 ```bash
 # Defaults to the pinned framework commit and the supported-tools tag.
