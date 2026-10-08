@@ -7,11 +7,13 @@ This guide covers the **generation** half as a containerized workbench tool —
 image and video synthesis for Physical AI data — through the CLI, the SDK, and a
 declarative `npa.workflow` spec that all share one implementation.
 
-The historical public release is quarantined. The repaired default introduced
-by #869 is scoped to PAIDF video preparation and variant generation;
-`workbench.cosmos3.generate` still needs an explicit independently qualified
-operator image. Earlier execution evidence below does not accept the withdrawn
-public bytes. See the [default-image impact audit](validation/public-default-quarantine-impact-20261005.md).
+The historical public release is quarantined. A digest-pinned validation
+candidate is selected for PAIDF video preparation and variant generation and for
+`workbench.cosmos3.generate` when the official default registry is used. It is
+not a supported public release, and every other Cosmos3 action still needs an
+explicit independently qualified operator image. Earlier execution evidence
+below does not accept the withdrawn public bytes. See the
+[default-image impact audit](validation/public-default-quarantine-impact-20261005.md).
 
 | Piece | Path |
 | --- | --- |
@@ -180,9 +182,10 @@ print(result["output_kind"], result["artifact_uri"])
 
 ### Workflow
 
-`workflows/testing/cosmos3-generate.yaml` runs the same stage
-through the `workbench.cosmos3.generate` toolRef, which resolves to the
-supported public `npa-cosmos3` image automatically. Complete
+`workflows/testing/cosmos3-generate.yaml` runs the same stage through the
+`workbench.cosmos3.generate` toolRef, which resolves automatically to the
+digest-pinned Cosmos3 validation candidate. That candidate is not a supported
+public release. Complete
 [Workbench Getting Started](getting-started.md), including access checks,
 planning, exact-cluster verification, and image preflight. Submit with the same
 project, cluster, bucket, and config overrides:

@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.deploy.images import public_release_manifest
 from npa.orchestration.npa_workflow import build_plan, load_spec
+from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     plan_images,
@@ -92,12 +93,20 @@ def test_stock_generate_preflight_probes_the_governed_image(mocker):
     assert bootstrap.called
 
 
-@pytest.mark.parametrize("action", ["checkpoint_eval", "policy_eval", "policy_train"])
-def test_other_cosmos3_capabilities_keep_the_quarantine(action):
+@pytest.mark.parametrize(
+    "tool_ref",
+    [
+        "workbench.cosmos3.checkpoint_eval",
+        "workbench.cosmos3.policy_eval",
+        "workbench.cosmos3.policy_train",
+    ],
+)
+def test_other_cosmos3_capabilities_keep_the_quarantine(tool_ref):
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
 
+    assert tool_ref in TOOL_CATALOG
     with pytest.raises(NpaWorkflowError, match="no consumable public release"):
         resolve_task_image(
-            "workbench.cosmos3." + action, {}, options=SkypilotRenderOptions()
+            tool_ref, {}, options=SkypilotRenderOptions()
         )
