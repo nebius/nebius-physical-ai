@@ -33,6 +33,7 @@ PLACEHOLDER = re.compile(r"\{\{[^}]+\}\}")
 #: listed here so adding a module toolRef without an entry point is a visible choice.
 PARSER_FACTORIES = {
     "npa.workflows.policy_training": "build_parser",
+    "npa.workflows.video_sweep": "build_parser",
     "npa.workflows.xr1_antioch.training": "build_parser",
     "npa.workflows.lerobot_transfer": "build_parser",
     "npa.workflows.habitat_sim_smoke": "build_parser",
