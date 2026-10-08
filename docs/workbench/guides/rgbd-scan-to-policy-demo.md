@@ -1,6 +1,6 @@
 # Run the public scan-to-policy demo
 
-The [sample workflow](../../../workflows/testing/rgbd-scan-to-policy-demo.yaml)
+The [sample workflow](../../../workflows/main/rgbd-scan-to-policy-demo.yaml)
 downloads the complete public TUM `fr3/long_office_household` RGB-D sequence,
 reconstructs its measured surfaces, packages matching Isaac collision geometry,
 measures valid navigation resets, trains a policy, evaluates held-out goals, and
@@ -19,10 +19,10 @@ The shared demo launcher performs normal workflow preflight and stages this
 checkout. The underlying workflow can also be submitted directly:
 
 ```bash
-npa workbench workflow validate-spec workflows/testing/rgbd-scan-to-policy-demo.yaml
-npa workbench workflow plan-spec workflows/testing/rgbd-scan-to-policy-demo.yaml \
+npa workbench workflow validate-spec workflows/main/rgbd-scan-to-policy-demo.yaml
+npa workbench workflow plan-spec workflows/main/rgbd-scan-to-policy-demo.yaml \
   --run-id preview
-npa workbench workflow submit workflows/testing/rgbd-scan-to-policy-demo.yaml \
+npa workbench workflow submit workflows/main/rgbd-scan-to-policy-demo.yaml \
   --run-id '<unique-run-id>' --project '<project-alias>' --runtime \
   --infra 'k8s/<rtx-context>' --stage-src --var 'bucket=<your-bucket>' \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
@@ -106,10 +106,16 @@ transfer, four-camera policy learning, or physical-robot performance. Use the
 [generic calibrated capture workflow](rgbd-scan-to-isaac.md) for other sensor
 captures; the measured sample reset preset intentionally rejects another scan.
 
-The prior component GPU evidence is described in that guide. A new combined
-workflow's qualification is recorded separately in its
-[readiness record](../../../workflows/testing/rgbd-scan-to-policy-demo.readiness.json);
-validating or planning the workflow does not establish native execution success.
+## Recorded full-run qualification
+
+The [recorded RTX PRO 6000 run](../evidence/public-demos/real-to-sim.json)
+completed 500 PPO updates and 16 million transitions, then passed 3,386 of 4,000
+held-out routes (84.65%) against the unchanged 80% success gate. It verifies the
+complete public-sample pipeline within the reconstructed scene. See the
+[readiness record](../../../workflows/main/rgbd-scan-to-policy-demo.readiness.json)
+for the source and runtime scope. Each new run still requires current storage,
+credentials, image access, and GPU preflight; local validation and planning do
+not establish those prerequisites.
 
 ## Sample attribution
 

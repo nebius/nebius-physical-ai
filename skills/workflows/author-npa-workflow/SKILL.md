@@ -12,8 +12,10 @@ Load when creating or editing **NPA workflow YAML** under
 transitions, or when helping agents/users convert SkyPilot bash pipelines into
 specs.
 
-Keep `workflows/main/` limited to `sim2real.yaml`, `paidf-cosmos3.yaml`, and
-`nurec-reconstruct.yaml`.
+Keep promoted principal pipelines in `workflows/main/`; the
+[main catalog](../../../workflows/README.md#main-workflows) records the selection
+and validation scope. Promotion must retain the adjacent readiness record and
+update catalog discovery tests, guides, and skill references together.
 Add partner integrations under `workflows/partners/<partner>/` and other
 reference specs under `workflows/testing/`; keep catalog documentation in
 `workflows/README.md`.

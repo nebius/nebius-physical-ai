@@ -720,7 +720,7 @@ skills:
     smoke:
       - type: npa_workflow_yaml
         paths:
-          - workflows/testing/lerobot-transfer.yaml
+          - workflows/main/lerobot-transfer.yaml
       - type: cli_help
         args: ["workbench", "lerobot", "train", "--help"]
         contains: "policy"

@@ -12,8 +12,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 from npa.orchestration.npa_workflow.spec import load_spec
 
 _SPEC = (
-    Path(__file__).resolve().parents[4]
-    / "workflows/testing/rgbd-scan-to-policy-demo.yaml"
+    Path(__file__).resolve().parents[4] / "workflows/main/rgbd-scan-to-policy-demo.yaml"
 )
 
 

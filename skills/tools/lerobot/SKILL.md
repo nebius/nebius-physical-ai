@@ -81,7 +81,7 @@ decoding and action alignment. The scripted teacher uses simulator state; this
 does not prove physical robot transfer or learned-policy performance.
 
 For a reproducible demonstration-first transfer experiment, use
-`workflows/testing/lerobot-transfer.yaml` and
+`workflows/main/lerobot-transfer.yaml` and
 `docs/workbench/guides/lerobot-transfer.md`. The standard runtime owns four waves:
 prepare, paired ACT training, paired native PushT evaluation, and reporting.
 The recipe pins LeRobot 0.6.0 and public PushT data, excludes reserved episodes from training and

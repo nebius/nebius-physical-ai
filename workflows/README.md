@@ -26,6 +26,8 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 | Generate an image or video | [Cosmos 3](../docs/workbench/cosmos3-generate.md) |
 | Compare Cosmos3-Super serving topologies | [Benchmark results and workflows](../benchmark/cosmos3-super/README.md) |
 | Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [native and operator adapter runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — sealed data/runtime required; GPU acceptance pending |
+| Train navigation from a public RGB-D capture | [Scan-to-policy](main/rgbd-scan-to-policy-demo.yaml) · [runbook](../docs/workbench/guides/rgbd-scan-to-policy-demo.md) — automatic sample setup through held-out evaluation |
+| Compare imitation policies and prioritize expert demos | [LeRobot transfer](main/lerobot-transfer.yaml) · [runbook](../docs/workbench/guides/lerobot-transfer.md) — paired ACT training and measured PushT stress tests |
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Prepare a reconstructed scene for Isaac navigation | [Scan-to-Isaac handoff](../docs/workbench/guides/scan-to-isaac-navigation.md) — supplied collision mesh, portable USDZ, and native PhysX probes |
 | Reconstruct metric RGB-D into a collision scene | [RGB-D scan to Isaac](../docs/workbench/guides/rgbd-scan-to-isaac.md) — measured TSDF surface, held-out depth qualification, colored USDZ, native PhysX; [explicit native-training handoff](../docs/workbench/guides/rgbd-scan-to-isaac.md#continue-into-native-navigation-training) requires the companion navigation implementation |
@@ -137,7 +139,7 @@ and nonregular files are rejected, while parent directories are trusted.
 
 | Directory | Contents |
 | --- | --- |
-| `main/` | The three principal pipelines listed below |
+| `main/` | The principal pipelines listed below |
 | `testing/` | General reference specs, component tests, and fixtures |
 | `partners/<partner>/` | Partner integration workflows and their runbooks |
 | [`guides/`](guides/README.md) | Setup and operation runbooks |
@@ -158,9 +160,24 @@ workflow YAMLs remain unchanged from `main`.
 
 | Spec | Notes |
 | --- | --- |
+| [`lerobot-transfer.yaml`](main/lerobot-transfer.yaml) | Sealed demonstrations → parallel ACT training → paired native PushT stress tests → uncertainty report and next expert-demo requests; full B200 execution verified, candidate below the success gate ([guide and measured results](../docs/workbench/guides/lerobot-transfer.md#measured-b200-results), [readiness](main/lerobot-transfer.readiness.json)) |
 | [`nurec-reconstruct.yaml`](main/nurec-reconstruct.yaml) | Real NCore V4 capture → 3DGUT training on an RT-core GPU → USDZ → rig-offset novel views → Rerun; [guide and measured evidence](../docs/workbench/guides/neural-reconstruction.md#promotion-evidence), [readiness record](main/nurec-reconstruct.readiness.json) |
 | [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Generic LeRobot/video input → prepared timeline → guarded Cosmos 3 full-video edge transfer → aligned evaluator gate/refinement → captions for every accepted variant → real Curator + FiftyOne Brain + Rerun ([guide](guides/paidf-cosmos3.md)) |
+| [`rgbd-scan-to-policy-demo.yaml`](main/rgbd-scan-to-policy-demo.yaml) | Public metric RGB-D → measured collision scene and native PhysX checks → PPO training → held-out navigation and offline HTML; 3,386/4,000 routes passed in the reconstructed scene ([guide](../docs/workbench/guides/rgbd-scan-to-policy-demo.md), [readiness](main/rgbd-scan-to-policy-demo.readiness.json)) |
 | [`sim2real.yaml`](main/sim2real.yaml) | Canonical 14-stage Sim2Real workflow through the standard SkyPilot runtime ([guide](../docs/workbench/guides/sim2real-workflow.md)) |
+
+The scan-to-policy and LeRobot transfer workflows are promoted because they
+connect real data preparation, learning, independent evaluation, and inspectable
+outputs. They offer two reusable experiment designs: learning navigation in a
+measured scene and comparing imitation policies to prioritize demonstration
+collection. Both have complete recorded GPU execution; their guides retain the
+exact qualification scope and current operator prerequisites.
+
+Promotion describes their place in the catalog. The scan-to-policy result covers
+held-out goals in one reconstructed scene. LeRobot's candidate failed its absolute
+success gate, and neither workflow establishes physical-robot transfer. Their
+workflow bytes and readiness records are unchanged by this move; historical
+evidence retains the original submission paths.
 
 ### Partner workflows
 
@@ -197,7 +214,6 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |
 | [`scan-to-isaac-navigation.yaml`](testing/scan-to-isaac-navigation.yaml) | Existing NuRec visual scene + operator collision USD mesh and measured transforms → portable USDZ/provenance → actual Isaac PhysX ray probes; live qualification pending, no navigation-policy claim ([guide](../docs/workbench/guides/scan-to-isaac-navigation.md), [readiness](testing/scan-to-isaac-navigation.readiness.json)) |
 | [`rgbd-scan-to-isaac.yaml`](testing/rgbd-scan-to-isaac.yaml) | Metric RGB-D with poses → real Open3D TSDF and held-out depth gate → derived colored USDZ and exact triangle colliders → native Isaac PhysX; complete managed public capture qualified, with a verified navigation-input handoff ([guide](../docs/workbench/guides/rgbd-scan-to-isaac.md)) |
-| [`rgbd-scan-to-policy-demo.yaml`](testing/rgbd-scan-to-policy-demo.yaml) | Automatic public RGB-D sample → measured collision scene → native navigation training → held-out goals and offline HTML ([guide](../docs/workbench/guides/public-workflow-demos.md)) |
 | [`paidf-defect-image-generation.yaml`](testing/paidf-defect-image-generation.yaml) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
 | [`paidf-event-video-generation.yaml`](testing/paidf-event-video-generation.yaml) | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
 | [`paidf-image-attribute-augmentation.yaml`](testing/paidf-image-attribute-augmentation.yaml) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
@@ -229,7 +245,6 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`retargeting.yaml`](testing/retargeting.yaml) | Motion retargeting |
 | [`rl-policy-training-sim-success.yaml`](testing/rl-policy-training-sim-success.yaml) | Isaac Lab RL train (partial) |
 | [`robocasa-data-policy.yaml`](testing/robocasa-data-policy.yaml) | Native multi-task PandaOmron trajectories → LeRobotDataset v3 → real ACT training → exact-checkpoint evaluation on disjoint RoboCasa tasks → insights |
-| [`lerobot-transfer.yaml`](testing/lerobot-transfer.yaml) | Four-phase LeRobot demonstration experiment: paired ACT training → native PushT transfer stress tests → measured comparison and next-expert-demo queue. [Runbook](../docs/workbench/guides/lerobot-transfer.md). |
 | [`franka-rl-transfer.yaml`](testing/franka-rl-transfer.yaml) | PPO with selectable Franka, UR10e/Robotiq, or Kinova JACO2 embodiment, bounded learned targets and exploration, stable-hold rewards, and an outcome-driven curriculum (`learning_recipe=adaptive-bounded-exploration`). Measured-state checks reject invalid simulation before learning; sealed USD parts, paired physics tests, Token Factory evaluation, and actual LeRobot/Rerun rollouts retain the evidence. Latest native UR diagnostic **failed**; physics remains unqualified despite passing CPU checks. One RTX GPU plus a hosted VLM credential. [Runbook](../docs/workbench/guides/franka-rl-transfer.md). |
 | [`robocasa-smoke.yaml`](testing/robocasa-smoke.yaml) | Native RoboCasa workbench: task registration, asset availability, headless EGL reset, and a real random rollout with video through the npa-robocasa service |
 | [`sonic-eval.yaml`](testing/sonic-eval.yaml) | SONIC eval |
