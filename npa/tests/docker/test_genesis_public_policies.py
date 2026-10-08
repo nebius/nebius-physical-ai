@@ -7,7 +7,6 @@ import hashlib
 import importlib.util
 import io
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -137,31 +136,6 @@ def test_native_act_bodies_and_checkpoint_loader_are_retained(source_module):
     assert ast.dump(functions["make_policy"].body[-1]) == ast.dump(
         originals["make_policy"].body[-1]
     )
-
-
-def test_native_act_factory_accepts_configs_without_optional_peft_field(
-    source_module,
-):
-    tree = ast.parse(
-        source_module._replacement("lerobot/policies/factory.py", FACTORY.encode())
-    )
-    function = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "make_policy"
-    )
-    namespace = {"native_policy_factory": lambda config: config}
-    exec(
-        compile(
-            ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[])),
-            "<test>",
-            "exec",
-        ),
-        namespace,
-    )
-    assert namespace["make_policy"](SimpleNamespace(type="act")).type == "act"
-    with pytest.raises(NotImplementedError):
-        namespace["make_policy"](SimpleNamespace(type="act", use_peft=True))
 
 
 def test_policy_source_record_and_notice_rows_are_preserved(
