@@ -940,6 +940,11 @@ def resolve_task_image(
     return str(options.image_digest_pins.get(resolved, resolved)).strip()
 
 
+WORKFLOW_VALIDATION_CANDIDATE_RELEASE_STATUS = "workflow_validation_candidate"
+WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_PLANNED_STEPS = "planned_steps"
+WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES = "reachable_branches"
+
+
 @dataclass(frozen=True)
 class WorkflowValidationCandidateSelection:
     """One planned toolRef that resolves to a non-accepted image candidate."""
@@ -964,7 +969,7 @@ class WorkflowValidationCandidateSelection:
         return {
             "tool_ref": self.tool_ref,
             "image": self.image,
-            "release_status": "workflow_validation_candidate",
+            "release_status": WORKFLOW_VALIDATION_CANDIDATE_RELEASE_STATUS,
             "selection_scope": self.selection_scope,
         }
 
@@ -975,7 +980,7 @@ def workflow_validation_candidate_selections(
     *,
     run_id: str,
     options: SkypilotRenderOptions,
-    selection_scope: str = "planned_steps",
+    selection_scope: str = WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_PLANNED_STEPS,
 ) -> tuple[WorkflowValidationCandidateSelection, ...]:
     """Report candidate defaults selected after all image-override precedence.
 

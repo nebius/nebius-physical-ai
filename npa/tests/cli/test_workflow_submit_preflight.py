@@ -2946,6 +2946,41 @@ def test_preflight_images_reports_planning_failure_before_pull_checks(
     contracts.assert_not_called()
 
 
+@pytest.mark.parametrize("error_type", [ValueError, NpaWorkflowError])
+def test_preflight_images_reports_candidate_disclosure_failure_before_pull_checks(
+    mocker,
+    error_type,
+) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._workflow_validation_candidate_payload",
+        side_effect=error_type("synthetic candidate disclosure failure"),
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials"
+    )
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.output == (
+        "Error: image preflight planning failed: "
+        "synthetic candidate disclosure failure\n"
+    )
+    pulls.assert_not_called()
+    contracts.assert_not_called()
+
+
 def test_preflight_images_uses_selected_cluster_context_for_pull_authority(
     mocker,
 ) -> None:

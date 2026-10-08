@@ -597,6 +597,8 @@ def test_workbench_workflow_submit_json_exposes_run_id(mocker, tmp_path) -> None
     payload = json.loads(result.output)
     assert payload["run_id"] == "json-run-1"
     assert payload["status"] == "SUBMITTED"
+    assert payload["workflow_validation_candidates"] == []
+    assert payload["workflow_validation_candidates_status"] == "not_applicable"
 
 
 def test_workbench_workflow_submit_json_removes_stdout_progress(

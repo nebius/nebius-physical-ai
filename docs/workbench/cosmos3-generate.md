@@ -198,7 +198,7 @@ npa workbench workflow submit workflows/testing/cosmos3-generate.yaml \
   --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-Successful JSON output from every workflow `submit` includes
+Successful JSON output from every `npa.workflow` `submit` includes
 `workflow_validation_candidates`; each selection carries
 `release_status: workflow_validation_candidate` and either
 `selection_scope: planned_steps` or `selection_scope: reachable_branches`. A
@@ -214,6 +214,8 @@ Runtime submit JSON also reports `workflow_validation_candidates_status`:
 `available` means the list was computed, while `unavailable` means the runtime
 will select images per wave and the list cannot establish provenance. Agent
 control planes must treat this as validation provenance, not release approval.
+Raw SkyPilot YAML submits report `not_applicable`, because they do not have
+`npa.workflow` candidate selection to compute.
 
 `--runtime` supervises the workflow to its terminal state. Secret values resolve
 from the private environment or selected project's NPA credential store; only
@@ -275,7 +277,7 @@ successfully evaluated 1/1 generated-media inputs; RetinaFace postprocessing
 ran. The native receipt reported effective guardrail execution. The nonblank
 960×960 JPEG was 183,829 bytes with SHA-256
 `d80f7d11c49d66b12d3c896a9aa55a6d79b02de5a8ca24041a0e15b8efb4f2fd`.
-The accepted r7 image digest is recorded in the
+The GPU-accepted r7 capability digest is recorded in the
 [`GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES`](../../npa/src/npa/deploy/images.py)
 inventory. The Cosmos3 entry in
 [`public_release_manifest.json`](../../npa/src/npa/deploy/public_release_manifest.json)

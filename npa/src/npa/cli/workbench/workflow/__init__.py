@@ -64,6 +64,9 @@ logger = logging.getLogger(__name__)
 _PLACEHOLDER_RE = re.compile(r"\$\{([^}]+)\}")
 DEFAULT_LOG_OUTPUT_CHARS = 32_768
 MAX_LOG_OUTPUT_CHARS = 262_144
+WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE = "available"
+WORKFLOW_VALIDATION_CANDIDATES_STATUS_NOT_APPLICABLE = "not_applicable"
+WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE = "unavailable"
 _SUBMIT_PRIVATE_REDACTIONS: ContextVar[tuple[str, ...]] = ContextVar(
     "npa_submit_private_redactions", default=()
 )
@@ -1477,6 +1480,7 @@ def submit_cmd(
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import (
         SkypilotRenderOptions,
+        WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES,
         validate_image_override_selectors,
     )
     from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
@@ -1987,7 +1991,11 @@ def submit_cmd(
 
     prepared_npa = None
     workflow_validation_candidates: list[dict[str, str]] = []
-    workflow_validation_candidates_status = "available"
+    workflow_validation_candidates_status = (
+        WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE
+        if is_npa_spec
+        else WORKFLOW_VALIDATION_CANDIDATES_STATUS_NOT_APPLICABLE
+    )
     execution_target = None
     execution_preflight_report: dict[str, Any] = {}
     deploy_targets = []
@@ -2896,14 +2904,18 @@ def submit_cmd(
                     runtime_candidate_steps,
                     run_id=resolved_run_id,
                     options=npa_render_options,
-                    selection_scope="reachable_branches",
+                    selection_scope=(
+                        WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES
+                    ),
                 )
             except NpaWorkflowError:
                 # Candidate disclosure is observational. The runtime retains its
                 # established per-wave planner and error behavior when the
                 # conservative reachability view is not currently available.
                 workflow_validation_candidates = []
-                workflow_validation_candidates_status = "unavailable"
+                workflow_validation_candidates_status = (
+                    WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE
+                )
                 typer.echo(
                     "warning: workflow validation candidate disclosure is unavailable; "
                     "runtime image selection will proceed per wave",
@@ -3946,7 +3958,9 @@ def _run_npa_workflow_runtime(
     pre_submit_hook: Callable[[Path], None] | None,
     output_format: "OutputFormat",
     workflow_validation_candidates: Sequence[Mapping[str, str]] = (),
-    workflow_validation_candidates_status: str = "available",
+    workflow_validation_candidates_status: str = (
+        WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE
+    ),
     project: str = "",
     auto_load: bool = True,
     agent_name: str = "",
@@ -4553,11 +4567,12 @@ def _workflow_validation_candidate_payload(
     *,
     run_id: str,
     options: "SkypilotRenderOptions",
-    selection_scope: str = "planned_steps",
+    selection_scope: str | None = None,
 ) -> list[dict[str, str]]:
     """Return non-release image selections for agent and operator control planes."""
 
     from npa.orchestration.npa_workflow.skypilot_render import (
+        WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_PLANNED_STEPS,
         workflow_validation_candidate_selections,
     )
 
@@ -4568,7 +4583,10 @@ def _workflow_validation_candidate_payload(
             steps,
             run_id=run_id,
             options=options,
-            selection_scope=selection_scope,
+            selection_scope=(
+                selection_scope
+                or WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_PLANNED_STEPS
+            ),
         )
     ]
 
@@ -10017,7 +10035,9 @@ def plan_spec_cmd(
                 payload["workflow_validation_candidates"] = (
                     workflow_validation_candidates
                 )
-                payload["workflow_validation_candidates_status"] = "available"
+                payload["workflow_validation_candidates_status"] = (
+                    WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE
+                )
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
             return
         typer.echo(f"workflow: {wave_plan.workflow}")
@@ -10043,7 +10063,9 @@ def plan_spec_cmd(
         if render_check is not None:
             payload["render_check"] = render_check
             payload["workflow_validation_candidates"] = workflow_validation_candidates
-            payload["workflow_validation_candidates_status"] = "available"
+            payload["workflow_validation_candidates_status"] = (
+                WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE
+            )
         # The human warning is suppressed under --json to keep the document clean,
         # which made a placeholder plan look valid. Say it in the document instead.
         if _is_placeholder_bucket(str(spec.config.get("bucket", "") or "")):
@@ -10286,7 +10308,10 @@ def preflight_images_cmd(
 
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
-    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES,
+    )
     from npa.orchestration.skypilot._bin import resolve_global_config_path
     from npa.orchestration.skypilot.registry_preflight import (
         RegistryPreflightError,
@@ -10329,20 +10354,22 @@ def preflight_images_cmd(
             infra=infra,
             steps=steps,
         )
+        workflow_validation_candidates = [
+            candidate
+            for candidate in _workflow_validation_candidate_payload(
+                spec,
+                steps,
+                run_id=run_id,
+                options=options,
+                selection_scope=(
+                    WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES
+                ),
+            )
+            if candidate["image"] in images
+        ]
     except (NpaWorkflowError, ValueError) as exc:
         _fail(f"image preflight planning failed: {exc}")
         return
-    workflow_validation_candidates = [
-        candidate
-        for candidate in _workflow_validation_candidate_payload(
-            spec,
-            steps,
-            run_id=run_id,
-            options=options,
-            selection_scope="reachable_branches",
-        )
-        if candidate["image"] in images
-    ]
     _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
     candidate_metadata = {
         candidate["image"]: {

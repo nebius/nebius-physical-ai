@@ -266,7 +266,7 @@ def test_other_cosmos3_capabilities_keep_the_quarantine(tool_ref: str) -> None:
         resolve_task_image(tool_ref, {}, options=SkypilotRenderOptions())
 
 
-def test_every_non_candidate_cosmos3_catalog_ref_is_quarantined() -> None:
+def test_non_candidate_cosmos3_catalog_ref_parametrization_is_not_empty() -> None:
     """Keep candidate scope tied to the catalog rather than a hand-curated list."""
 
     assert QUARANTINED_COSMOS3_TOOL_REFS
