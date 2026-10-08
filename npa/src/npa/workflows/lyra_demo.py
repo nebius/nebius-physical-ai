@@ -208,6 +208,27 @@ npa workbench workflow submit workflows/testing/lyra-scene-actions.yaml \\
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY"""
 
 
+def _require_complete(payload):
+    evidence = payload["evidence"]
+    missing = [
+        name for name in ("reconstruction", "geometry", "actions") if not evidence[name]
+    ]
+    if missing:
+        raise ValueError(
+            "Complete review requires artifacts for: " + ", ".join(missing)
+        )
+    if not payload["source_video"] or not payload["reconstruction_video"]:
+        raise ValueError(
+            "Complete review requires both recorded and reconstructed video"
+        )
+    if not payload["mesh"] or not payload["trials"]:
+        raise ValueError(
+            "Complete review requires a collision mesh and executed trials"
+        )
+    if evidence["actions"]["attempted"] <= 0:
+        raise ValueError("Complete review requires at least one native action attempt")
+
+
 def main():
     """Generate an offline HTML file without inventing unavailable stage results.
 
@@ -224,11 +245,15 @@ def main():
     parser.add_argument("--reconstruction-path", type=Path)
     parser.add_argument("--geometry-path", type=Path)
     parser.add_argument("--actions-path", type=Path)
+    parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--output-path", type=Path, required=True)
     args = parser.parse_args()
-    payload = json.dumps(
-        _payload(args), separators=(",", ":"), allow_nan=False
-    ).replace("<", "\\u003c")
+    data = _payload(args)
+    if args.require_complete:
+        _require_complete(data)
+    payload = json.dumps(data, separators=(",", ":"), allow_nan=False).replace(
+        "<", "\\u003c"
+    )
     template = Path(__file__).with_suffix(".html").read_text()
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
     args.output_path.write_text(template.replace("__LYRA_DEMO_DATA__", payload))

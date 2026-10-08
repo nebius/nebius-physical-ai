@@ -142,20 +142,41 @@ demonstrations export to LeRobot/Rerun. The imported-scene path also records a
 320×240 native wrist camera for close inspection; it does not establish the
 quality of a particular real wrist reconstruction.
 
-## Review the HTML
+## Standalone Lyra HTML
+
+Reconstruction can be reviewed independently of the collision and Isaac action
+workflow. Its completed output bundle includes `index.html`, a single offline
+file. To regenerate the viewer from a downloaded bundle:
+
+```bash
+npa/.venv/bin/python -m npa.workflows.lyra_reconstruction_demo \
+  --input-path ./reconstruction --output-path ./lyra-standalone.html
+```
+
+This viewer verifies native artifact hashes, embeds captured and rendered videos,
+and backprojects sampled model depth into an orbitable point preview with relative
+confidence coloring. It requires complete reconstruction outputs; there are no
+placeholder simulation panels. The point preview uses relative model coordinates
+and does not claim metric collision accuracy or executed robot actions. The
+separate native Gaussian video is produced by upstream Lyra's rasterizer.
+
+## Combined reconstruction and action HTML
 
 ```bash
 npa/.venv/bin/python -m npa.workflows.lyra_demo \
   --input-path ./lyra-input --reconstruction-path ./reconstruction \
   --geometry-path ./geometry --actions-path ./reports \
-  --output-path ./lyra-demo/index.html
+  --output-path ./lyra-demo/index.html --require-complete
 ```
 
 The file works offline. It includes source/reconstruction playback, an orbitable
 collision mesh, physical-condition replays and actual action/outcome telemetry.
 The report checks that the reconstruction belongs to the input video, geometry
 belongs to that reconstruction, and robot replay belongs to that geometry.
-Omitting a stage produces a visible pending state, never a success claim.
+`--require-complete` refuses to write a finished review when reconstruction,
+collision geometry, videos or executed trials are missing. The scene action
+workflow enables this check automatically. Without this flag, an intentionally
+partial diagnostic review labels missing stages as pending.
 
 ## Wrist reconstruction quality
 

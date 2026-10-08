@@ -33,4 +33,6 @@ states:
       - uri: '{{config.output_uri}}reconstructed_scene.ply'
       - uri: '{{config.output_uri}}gs_trajectory.mp4'
       - uri: '{{config.output_uri}}geometry.npz'
+      - uri: '{{config.output_uri}}index.html'
+        schema: text/html
     terminal: true

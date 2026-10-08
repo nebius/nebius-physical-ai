@@ -39,6 +39,7 @@ def main():
         output = root / "review"
         argv.extend(["--input-path", str(inputs["reconstruction"])])
         argv.extend(["--output-path", str(output / "index.html")])
+        argv.append("--require-complete")
         subprocess.run(argv, check=True)
         publish(output, args.output_path)
 

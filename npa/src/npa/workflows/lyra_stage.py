@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 import requests
@@ -103,11 +104,18 @@ def _environment(workspace, source):
             "ninja==1.13.0",
             "jaxtyping==0.3.2",
             "beartype==0.21.0",
-            "setuptools==84.0.0",
+            "addict==2.4.0",
+            "setuptools==81.0.0",
             "wheel==0.47.0",
         ],
         check=True,
     )
+    _install_gsplat(python)
+    _verify_environment(python)
+    return python
+
+
+def _install_gsplat(python):
     subprocess.run(
         [
             python,
@@ -120,7 +128,23 @@ def _environment(workspace, source):
         ],
         check=True,
     )
-    return python
+
+
+def _verify_environment(python):
+    subprocess.run(
+        [
+            python,
+            "-c",
+            "from depth_anything_3.api import DepthAnything3; "
+            "import torch; import gsplat; "
+            "assert torch.cuda.is_available(), 'Lyra requires a CUDA GPU'; "
+            "value = torch.ones(1, device='cuda') + 1; "
+            "assert value.item() == 2; "
+            "print('Lyra imports and CUDA kernel verified:', "
+            "torch.cuda.get_device_name())",
+        ],
+        check=True,
+    )
 
 
 def _reconstruct(args, workspace):
@@ -131,6 +155,11 @@ def _reconstruct(args, workspace):
     _fetch_checkpoint(checkpoint)
     incoming = materialize(args.input_path, workspace / "input")
     output = workspace / "output"
+    _run_inference(args, python, source, checkpoint, incoming, output)
+    _publish_reconstruction(args, incoming, output)
+
+
+def _run_inference(args, python, source, checkpoint, incoming, output):
     environment = dict(os.environ, CUDA_HOME="/usr/local/cuda")
     subprocess.run(
         [
@@ -153,6 +182,9 @@ def _reconstruct(args, workspace):
         env=environment,
         check=True,
     )
+
+
+def _publish_reconstruction(args, incoming, output):
     for name in (
         "capture.mp4",
         "capture.json",
@@ -161,6 +193,18 @@ def _reconstruct(args, workspace):
     ):
         if (incoming / name).is_file():
             shutil.copy2(incoming / name, output / name)
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "npa.workflows.lyra_reconstruction_demo",
+            "--input-path",
+            str(output),
+            "--output-path",
+            str(output / "index.html"),
+        ],
+        check=True,
+    )
     publish(output, args.output_path)
 
 
