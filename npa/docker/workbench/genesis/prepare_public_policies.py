@@ -83,7 +83,9 @@ def _factory(tree: ast.Module) -> ast.Module:
             elif node.name == "make_pre_post_processors":
                 node.body = _processor_body(node)
             elif node.name == "make_policy":
-                node.body.insert(1, _reject("cfg.type != 'act' or cfg.use_peft"))
+                node.body.insert(
+                    1, _reject("cfg.type != 'act' or getattr(cfg, 'use_peft', False)")
+                )
         kept.append(node)
     tree.body = kept
     return tree

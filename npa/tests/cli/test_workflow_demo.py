@@ -300,3 +300,25 @@ def test_demo_vars_preserve_standard_parser_and_report_storage(
         app, ["demo", "run", "synthetic-data", "--var", variable]
     )
     assert result.exit_code == 1 and message in result.output
+
+
+@pytest.mark.parametrize("variable", ["missing-equals", "=no-key"])
+def test_demo_invalid_vars_emit_actionable_json_errors(monkeypatch, variable):
+    _real_plan_selection(monkeypatch, "synthetic-data")
+    monkeypatch.setattr(demo, "_submit", lambda *args: pytest.fail("must not submit"))
+    result = CliRunner().invoke(
+        app,
+        [
+            "demo",
+            "run",
+            "synthetic-data",
+            "--output-format",
+            "json",
+            "--var",
+            variable,
+        ],
+    )
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == {
+        "error": "Invalid --var format. Use KEY=VALUE."
+    }

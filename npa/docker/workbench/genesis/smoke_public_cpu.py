@@ -103,12 +103,14 @@ def _act_configuration():
 
 def _act_round_trip(root: Path, dataset) -> None:
     from lerobot.policies.act.modeling_act import ACTPolicy
-    from lerobot.policies.factory import make_pre_post_processors
+    from lerobot.policies.factory import make_policy, make_pre_post_processors
     from npa.genesis.eval_student import _load_student_policy
 
     torch.manual_seed(0)
     configuration = _act_configuration()
-    policy = ACTPolicy(configuration).eval()
+    policy = make_policy(configuration)
+    assert isinstance(policy, ACTPolicy)
+    policy = policy.eval()
     preprocessor, postprocessor = make_pre_post_processors(
         configuration, dataset_stats=dataset.meta.stats
     )

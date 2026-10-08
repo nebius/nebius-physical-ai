@@ -110,3 +110,9 @@ def test_stock_recipe_enforces_reduced_closure_in_the_install_layer():
     assert "pip check" in installation
     assert "diffusers>=0.38.0" not in text
     assert "RUN python /opt/npa/docker/workbench/genesis/smoke_public_cpu.py" in text
+    smoke = (RECIPE / "smoke_public_cpu.py").read_text()
+    assert (
+        "from lerobot.policies.factory import make_policy, make_pre_post_processors"
+        in smoke
+    )
+    assert "policy = make_policy(configuration)" in smoke

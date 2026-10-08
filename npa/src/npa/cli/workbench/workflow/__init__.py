@@ -5475,13 +5475,19 @@ def _record_unentered_workflow_submit_failure(operation, exc: BaseException) -> 
     )
 
 
-def _parse_submit_vars(var: list[str]) -> dict[str, str]:
+def _parse_submit_vars(
+    var: list[str], *, error_type: type[Exception] | None = None
+) -> dict[str, str]:
     substitutions: dict[str, str] = {}
     for item in var:
         if "=" not in item:
+            if error_type is not None:
+                raise error_type("Invalid --var format. Use KEY=VALUE.")
             _fail("Invalid --var format. Use KEY=VALUE.")
         key, value = item.split("=", 1)
         if not key:
+            if error_type is not None:
+                raise error_type("Invalid --var format. Use KEY=VALUE.")
             _fail("Invalid --var format. Use KEY=VALUE.")
         substitutions[key] = value
     return substitutions

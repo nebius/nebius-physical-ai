@@ -116,7 +116,7 @@ def _run_demo(name, project, infra, run_id, resume_run, plan_only, var, output_f
 def _validate_demo_plan(selection, variables):
     from npa.cli.workbench.workflow import _parse_submit_vars
 
-    overrides = _parse_submit_vars(variables)
+    overrides = _parse_submit_vars(variables, error_type=NpaWorkflowError)
     if {"bucket", "prefix"} & overrides.keys():
         raise NpaWorkflowError(
             "Demo storage is selected by --project. Use workflow submit for "
@@ -125,7 +125,9 @@ def _validate_demo_plan(selection, variables):
     selection["var"] = [*selection.get("var", []), *variables]
     spec = load_spec_for_submit(
         selection["yaml_path"],
-        config_overrides=_parse_submit_vars(selection["var"]),
+        config_overrides=_parse_submit_vars(
+            selection["var"], error_type=NpaWorkflowError
+        ),
     )
     build_plan(spec, run_id=selection["run_id"])
 
