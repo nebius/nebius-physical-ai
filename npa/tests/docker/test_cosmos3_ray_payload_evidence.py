@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import stat
 import subprocess
 import sys
 import tarfile
@@ -223,6 +224,8 @@ def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
     payload = b"hf_token='inert-native-cli-value'\n"
     path, _, _ = _image(tmp_path, [[("source.py", payload)]])
     output = tmp_path / "report.json"
+    output.write_text("previous report", encoding="utf-8")
+    output.chmod(0o644)
     result = subprocess.run(
         [
             sys.executable,
@@ -237,6 +240,7 @@ def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
     )
     assert result.returncode == 1
     report = json.loads(output.read_text())
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
     assert (
         report["credential_members"][0]["sha256"] == hashlib.sha256(payload).hexdigest()
     )

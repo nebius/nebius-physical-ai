@@ -118,7 +118,10 @@ file and stdout retains the pre-existing blocking summary with
 `report_scope: redacted-summary`. The ordinary publication workflow uses this
 mode so public Actions logs do not expose member hashes or sizes. Do not publish
 raw layers, extracted credential bytes, or a failed image archive as public
-Actions artifacts. An unresolved finding still exits nonzero and blocks push.
+Actions artifacts. The workflow writes the full report as a private temporary
+runner file and removes it with the scanned archive; rerun the scanner against
+an operator-controlled archive when later attribution is needed. An unresolved
+finding still exits nonzero and blocks push.
 
 ## Inventory
 

@@ -219,11 +219,14 @@ def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
     scanner_steps = [
         script
         for path in workflow_paths
-        for job in _spec(path)["jobs"].values()
+        for job in _spec(path).get("jobs", {}).values()
         for step in job.get("steps", [])
         if scanner in (script := str(step.get("run") or ""))
     ]
-    assert len(scanner_steps) == 2
+    assert len(scanner_steps) == 2, (
+        "both pre- and post-push scans must stay redacted; review any new scanner call "
+        "site before updating this count"
+    )
     for script in scanner_steps:
         invocation = script[script.index(scanner) :]
         assert re.search(
@@ -231,6 +234,23 @@ def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
             invocation,
         )
     assert "npa/tests/docker/test_cosmos3_ray_payload_evidence.py" in _runs(PUBLISH)
+    workflow_text = PUBLISH.read_text(encoding="utf-8")
+    for archive, report in (
+        (
+            "$RUNNER_TEMP/${TOOL}.tar",
+            "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json",
+        ),
+        (
+            "$RUNNER_TEMP/${TOOL}-pushed.tar",
+            "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json",
+        ),
+    ):
+        assert f'payload_report="{report}"' in workflow_text
+        assert f'rm -f "{archive}" "$payload_report"' in workflow_text
+        assert re.search(
+            rf'rm -f "{re.escape(archive)}" \\\n+\s+"{re.escape(report)}"',
+            workflow_text,
+        )
 
 
 def test_public_base_pull_authentication_precedes_local_build() -> None:

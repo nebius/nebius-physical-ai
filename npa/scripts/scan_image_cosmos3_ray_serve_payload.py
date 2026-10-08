@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -266,6 +267,14 @@ def _stdout_report(report: dict[str, object]) -> dict[str, object]:
     return summary
 
 
+def _write_private_report(path: Path, rendered: str) -> None:
+    """Write report metadata without inheriting broad permissions from a prior file."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    with os.fdopen(os.open(path, flags, 0o600), "w", encoding="utf-8") as report:
+        os.fchmod(report.fileno(), 0o600)
+        report.write(rendered + "\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("image", nargs="?")
@@ -286,7 +295,7 @@ def main() -> int:
             report = scan_tarball(saved)
     rendered = json.dumps(report, indent=2, sort_keys=True)
     if args.json:
-        args.json.write_text(rendered + "\n", encoding="utf-8")
+        _write_private_report(args.json, rendered)
         rendered = json.dumps(_stdout_report(report), indent=2, sort_keys=True)
     print(rendered)
     return 0 if report["verdict"] == "clean" else 1

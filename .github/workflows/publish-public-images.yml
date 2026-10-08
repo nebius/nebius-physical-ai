@@ -777,15 +777,20 @@ jobs:
               --json "$RUNNER_TEMP/${TOOL}-cosmos3-serving-payload.json"
           fi
           if [ "$TOOL" = cosmos3-ray-serve ]; then
-            npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
+            payload_report="$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
+            if ! npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
-              --json "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
+              --json "$payload_report"; then
+              rm -f "$RUNNER_TEMP/${TOOL}.tar" "$payload_report"
+              exit 1
+            fi
           fi
           if [ "$TOOL" = sonic-mujoco ]; then
             docker run --rm --entrypoint /opt/npa/venv/bin/python "$IMAGE" \
               /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
           fi
-          rm -f "$RUNNER_TEMP/${TOOL}.tar"
+          rm -f "$RUNNER_TEMP/${TOOL}.tar" \
+            "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
 
       # CUDA/AI images can exceed 25 GB. Once the exact loaded image passes its
       # contract, BuildKit's duplicate cache is no longer evidence and can be
@@ -1245,9 +1250,13 @@ jobs:
               --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-serving-payload.json"
           fi
           if [ "$TOOL" = cosmos3-ray-serve ]; then
-            npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
+            payload_report="$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json"
+            if ! npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
-              --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json"
+              --json "$payload_report"; then
+              rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar" "$payload_report"
+              exit 1
+            fi
           fi
           if [ "$TOOL" = sonic-mujoco ]; then
             docker pull "$exact"
@@ -1295,7 +1304,8 @@ jobs:
             test -s "$RUNNER_TEMP/libero-anonymous.oci/index.json"
             rm -rf -- "$RUNNER_TEMP/libero-anonymous.oci"
           fi
-          rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
+          rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+            "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json"
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
 
