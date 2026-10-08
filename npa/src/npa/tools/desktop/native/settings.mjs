@@ -12,6 +12,8 @@ export function threadSettings(live, own, row) {
     effort: settings.effort ?? collaboration?.settings?.reasoning_effort ?? live?.latestReasoningEffort ?? row?.reasoning_effort ?? null,
     serviceTier: settings.serviceTier ?? null,
     mode: collaboration?.mode ?? 'default',
+    ...(settings.approvalPolicy !== undefined ? {approvalPolicy: settings.approvalPolicy} : {}),
+    ...(settings.sandboxPolicy !== undefined ? {sandboxPolicy: settings.sandboxPolicy} : {}),
   };
 }
 
@@ -29,7 +31,17 @@ export function validateSettings(request, models, modes) {
   if (serviceTier !== null && serviceTier !== 'default' && !model.serviceTiers?.some(tier => tier.id === serviceTier))
     throw new Error('This model does not support that speed');
   if (!modes.some(mode => mode.mode === request.mode)) throw new Error('Choose an available chat mode');
-  return {model: model.model, effort: request.effort, serviceTier};
+  return {model: model.model, effort: request.effort, serviceTier, ...permissionSettings(request)};
+}
+
+function permissionSettings(request) {
+  if (request.approvalPolicy === undefined && request.sandboxPolicy === undefined) return {};
+  const sandbox = request.sandboxPolicy;
+  const approvals = {readOnly: 'on-request', workspaceWrite: 'on-request', dangerFullAccess: 'never'};
+  if (!sandbox || Object.keys(sandbox).length !== 1 ||
+      !Object.hasOwn(approvals, sandbox.type) || request.approvalPolicy !== approvals[sandbox.type])
+    throw new Error('Choose a supported permission option');
+  return {approvalPolicy: request.approvalPolicy, sandboxPolicy: {...sandbox}};
 }
 
 /** Find a browser send identity in the native conversation view.

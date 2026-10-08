@@ -54,6 +54,7 @@ def _chat_assets():
         "chat_proxy.py",
         "chat_history.py",
         "chat_models.py",
+        "chat_permissions.py",
         "chat_delivery.py",
         "chat_session.py",
         "chat_pwa.py",
