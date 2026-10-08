@@ -62,5 +62,10 @@ def test_sample_render_preserves_cpu_geometry_and_rtx_native_runtime(monkeypatch
     for index in gpu_indices:
         assert tasks[index]["resources"]["accelerators"] == "RTXPRO6000:1"
         assert "@sha256:" in tasks[index]["resources"]["image_id"]
+        pod = tasks[index]["config"]["kubernetes"]["pod_config"]["spec"]
+        assert pod["runtimeClassName"] == "nvidia"
+        assert {"name": "NVIDIA_DRIVER_CAPABILITIES", "value": "all"} in pod[
+            "containers"
+        ][0]["env"]
     assert "usd-core==26.8" in tasks[2]["run"]
     assert all(task["envs"]["NPA_SRC_OVERLAY"] == "1" for task in tasks)

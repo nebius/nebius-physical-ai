@@ -159,7 +159,7 @@ workflow YAMLs remain unchanged from `main`.
 
 | Spec | Notes |
 | --- | --- |
-| [`groot-1-7-finetune.yaml`](main/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
+| [`groot-1-7-finetune.yaml`](main/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer API handoff; no rollout or statistical-learning claim |
 | [`nurec-reconstruct.yaml`](main/nurec-reconstruct.yaml) | Real NCore V4 capture → 3DGUT training on an RT-core GPU → USDZ → rig-offset novel views → Rerun; [guide and measured evidence](../docs/workbench/guides/neural-reconstruction.md#promotion-evidence), [readiness record](main/nurec-reconstruct.readiness.json) |
 | [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Generic LeRobot/video input → prepared timeline → guarded Cosmos 3 full-video edge transfer → aligned evaluator gate/refinement → captions for every accepted variant → real Curator + FiftyOne Brain + Rerun ([guide](guides/paidf-cosmos3.md)) |
 | [`rgbd-scan-to-policy-demo.yaml`](main/rgbd-scan-to-policy-demo.yaml) | Public metric RGB-D → measured collision scene and native PhysX checks → PPO training → held-out navigation and offline HTML; 3,386/4,000 routes passed in the reconstructed scene ([guide](../docs/workbench/guides/rgbd-scan-to-policy-demo.md), [readiness](main/rgbd-scan-to-policy-demo.readiness.json)) |

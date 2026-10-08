@@ -5,7 +5,7 @@
 Use `groot-1-7-finetune.yaml` to validate the complete real-data path from a
 GR00T-format LeRobot dataset through distributed optimizer work, an immutable
 checkpoint, aligned offline inference, synchronized RRD/MCAP diagnostics, S3
-publication, and the deployed NPA agent viewers.
+publication, and the deployed NPA agent viewer APIs.
 
 This reference is deliberately a short plumbing validation. It does not claim
 statistically meaningful learning, a closed-loop rollout, or physical-robot

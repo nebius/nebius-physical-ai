@@ -8,7 +8,7 @@ writes an offline HTML report. There is no manual capture conversion, case JSON,
 checkpoint preparation, or cross-branch assembly.
 
 Use an existing configured Workbench project with writable object storage and
-an RTX PRO 6000 Kubernetes execution target:
+an RTX PRO 6000 Kubernetes execution target with the NVIDIA graphics runtime:
 
 ```bash
 npa workbench workflow demo run real-to-sim --project '<project-alias>' \
@@ -34,6 +34,12 @@ no Hugging Face token. Its CPU stages use the digest-pinned SONIC image's
 Open3D/SciPy stack. USD assembly adds `usd-core==26.8` into an isolated temporary
 site directory. Native physics, training, and rendering use the pinned Isaac
 image. Source overlay staging supplies this checkout's adapters.
+
+Provision new targets with `--gpu-workload-profile rtx-rendering`, or verify an
+existing target's GLX/EGL library mounts and NVIDIA Vulkan device before running.
+The GPU pods select `runtimeClassName: nvidia` and request all driver capabilities.
+CUDA availability alone does not establish rendering support: training can finish
+on a compute-only target while the final camera-based evaluation fails.
 
 The current pins select repaired development images for SONIC and Isaac Lab.
 Their publication checks passed; fresh workflow qualification is in progress.
