@@ -550,6 +550,7 @@ def _object_capture_quality_overrides(config: NurecConfig) -> list[str]:
     defaults = {
         "dataset.n_train_sequential_image_subsample": "1",
         "model/post_processing@model.post_processing.b": "ppisp",
+        "model.strategy.add.max_n_gaussians": "2000000",
     }
     explicit = {
         value.partition("=")[0].lstrip("+~") for value in config.extra_overrides

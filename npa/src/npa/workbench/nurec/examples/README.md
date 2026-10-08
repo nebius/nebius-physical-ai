@@ -71,3 +71,8 @@ Multi-camera photographic reconstruction also assigns a separate virtual trainin
 timestamp to every photo, preserving its exact source pose and image bytes. The
 source capture is unchanged; `reconstruction/photographic-timeline.json` records
 the mapping used by NRE training and validation.
+
+The default object recipe allows two million Gaussians
+(`model.strategy.add.max_n_gaussians=2000000`) to retain detail across both
+full-resolution photographic cameras. The native 30,000-step training recipe
+still applies. An explicit Hydra override selects a different model capacity.

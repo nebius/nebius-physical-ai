@@ -438,6 +438,7 @@ def _assert_default_quality(paths):
     assert config["dataset"]["poses_component_group"] == "npa_photographic"
     assert config["dataset"]["n_train_sequential_image_subsample"] == 1
     assert config["model"]["post_processing"]["b"]["name"] == "ppisp-post-processing"
+    assert config["model"]["strategy"]["add"]["max_n_gaussians"] == 2000000
     assert config["dataset"]["n_samples_per_epoch"] == 30000
     assert config["trainer"]["max_epochs"] == 1
     rendering = json.loads(paths["novel_views/render_cli_args.json"].read_text())[

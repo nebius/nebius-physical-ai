@@ -211,16 +211,21 @@ def test_object_capture_training_preserves_detail_and_models_camera_response():
     args = build_nre_train_args(NurecConfig(), ncore_json="/data/scene.json")
     assert "dataset.n_train_sequential_image_subsample=1" in args
     assert "model/post_processing@model.post_processing.b=ppisp" in args
+    assert "model.strategy.add.max_n_gaussians=2000000" in args
     assert not any(arg.startswith("trainer.max_epochs=") for arg in args)
 
 
 def test_capture_quality_defaults_preserve_custom_recipe_and_explicit_overrides():
     custom = NurecConfig(config_name="configs/custom.yaml")
     args = build_nre_train_args(custom, ncore_json="/data/scene.json")
-    assert not any("subsample" in arg or "post_processing" in arg for arg in args)
+    assert not any(
+        "subsample" in arg or "post_processing" in arg or "strategy.add" in arg
+        for arg in args
+    )
     overrides = (
         "dataset.n_train_sequential_image_subsample=2",
         "model/post_processing@model.post_processing.b=null",
+        "model.strategy.add.max_n_gaussians=500000",
     )
     args = build_nre_train_args(
         NurecConfig(extra_overrides=overrides), ncore_json="/data/scene.json"

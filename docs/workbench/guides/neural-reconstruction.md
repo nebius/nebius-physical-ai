@@ -349,3 +349,8 @@ training timestamps, camera poses, image hashes, and retained-store hashes.
 The preparation currently requires instantaneous photographic frames in separate
 camera stores; it rejects incompatible layouts instead of losing source data.
 Native physical rigs and custom recipes retain their own input representation.
+
+The default object recipe allows two million Gaussians
+(`model.strategy.add.max_n_gaussians=2000000`) to retain detail across both
+full-resolution photographic cameras. The native 30,000-step training recipe
+still applies. An explicit Hydra override selects a different model capacity.

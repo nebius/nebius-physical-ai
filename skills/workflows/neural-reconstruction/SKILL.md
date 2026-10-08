@@ -662,3 +662,8 @@ GPU with no H100/H200 reference, every stage in the YAML is a real
   NRE's inline `--enable-difix` are both unwired and unverified here.
 - **COLMAP ingestion is not yet live validated.** Other source-format converters
   and novel sensor-rig integrations remain upstream `ncore` work.
+
+The default object recipe allows two million Gaussians
+(`model.strategy.add.max_n_gaussians=2000000`) to retain detail across both
+full-resolution photographic cameras. The native 30,000-step training recipe
+still applies. An explicit Hydra override selects a different model capacity.
