@@ -25,17 +25,17 @@ provider "registry.terraform.io/hashicorp/null" {
 }
 
 provider "terraform-provider.storage.eu-north1.nebius.cloud/nebius/nebius" {
-  version     = "0.5.251"
-  constraints = "~> 0.5.201"
+  version     = "0.5.282"
+  constraints = "~> 0.5.273"
   hashes = [
-    "h1:Bhrlg1CjrV88Uycg5tgHECzEAS+XJBLtA4/AVJ3M9oE=",
-    "h1:HsCZAgcxL2t8li7Hey1aYMXPBBBdQ6K10YDzJKfRyME=",
-    "h1:fptX9lB5PZq80z255W80QC5fV40UJDJaco9UYuS3w+o=",
-    "h1:oGYk7v1LlYVl/JZpvwoQOx6ZnJD9l9CKzkqHFNRjBdg=",
-    "zh:58d165a5e9a6dbbf0ef07864442a7e8941578a461e45bef2055876fb5e263690",
-    "zh:592f9d17899e9642f48921bacbb97aefa0bbda62d29909cdd0d6a43e459145b7",
-    "zh:aba2d249fa73049ecbb021eb909f993529489c8e830659a7962a1f3ea3f254d8",
-    "zh:b8ceaeaf1e9c9886074a02db91b690e6c9375534e591c0bd4051eda5b7a3e5a3",
-    "zh:ee2d21e9f10a88dd576238eccdd4892a4e59b9c211f96d4cba4ad5d47b9d6f1c",
+    "h1:BkcgAQjudMPbeCTcZ+EE3KaI3TGzyAa8f0f+lukihE8=",
+    "h1:O6S+H4QwEmLw4lv6vATiNdxOuDM8gZgkRWJIVQSMh/k=",
+    "h1:p3/MGM4zsrSoNsEgkaNjBJ/a+pzd8w3NNS1D3W81Kc4=",
+    "h1:z4qTvygKVI9U95zuxdT2asXEhF23Im+WHd0VJzapjlo=",
+    "zh:40412e9d64b47f9eaa26f0ca126874c5010398d1a1c146983acf809f96678f7e",
+    "zh:5eaed6ed19fa2989dc92e59be291249a7bee8a3f8a14be99c228e21310e5b8c0",
+    "zh:89abbabb90dc619ba42acd4456d762323281c1c7b4231f1a4663b093f680ea93",
+    "zh:a5218a114f4f42a45eea0ad7c3090faf8492778ae3a1a1f99927de0a860c8459",
+    "zh:c2818ebf418783a291f180dd6c313630f72aebbf0409aa2895e0508d8ba0d4c1",
   ]
 }

@@ -2,15 +2,16 @@
 
 Run:
 
-    NPA_PREEMPTIBLE_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_preemptible_live_e2e.py -q
+    NPA_INTEGRATION_E2E=1 NPA_PREEMPTIBLE_E2E=1 npa/.venv/bin/python -m pytest npa/tests/e2e/test_preemptible_live_e2e.py -q
 
 Requires IAM/compute permissions to bootstrap a workbench VM, plus a configured
 ``~/.npa/config.yaml`` project alias (default: ``rtxpro``).
+Set ``NPA_PREEMPTIBLE_E2E_JOB_NAME`` to also verify a completed Workbench job
+in that project. The job check is read-only; its submitter owns cleanup.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import time
@@ -20,6 +21,9 @@ import pytest
 
 from npa.clients import config as config_module
 from npa.clients import nebius
+from npa.clients.serverless import ServerlessClient
+
+pytestmark = pytest.mark.e2e
 
 
 @pytest.fixture(scope="module")
@@ -54,11 +58,6 @@ def _run_npa(args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _nebius_json(args: list[str]) -> dict:
-    raw = subprocess.check_output(["nebius", *args, "--format", "json"], text=True)
-    return json.loads(raw) if raw.strip() else {}
-
-
 def test_live_preemptible_lerobot_deploy_and_destroy(
     live_project_alias, live_workbench_name
 ) -> None:
@@ -87,6 +86,8 @@ def test_live_preemptible_lerobot_deploy_and_destroy(
         "--preemptible",
         "--skip-app",
         "-v",
+        "wait_for_ssh=false",
+        "-v",
         f"image_family={image_family}",
     ]
     try:
@@ -104,7 +105,7 @@ def test_live_preemptible_lerobot_deploy_and_destroy(
         assert deploy.returncode == 0, output
 
         instance_name = f"lerobot-{live_project_alias}-{live_workbench_name}"
-        listed = _nebius_json(
+        listed = nebius._run_json(
             [
                 "compute",
                 "instance",
@@ -127,6 +128,8 @@ def test_live_preemptible_lerobot_deploy_and_destroy(
             "preemptible"
         )
         assert preemptible, f"expected preemptible spec, got: {preemptible!r}"
+        assert preemptible["on_preemption"] == "STOP"
+        assert match["spec"]["recovery_policy"] == "FAIL"
     finally:
         destroy = _run_npa(
             [
@@ -142,6 +145,19 @@ def test_live_preemptible_lerobot_deploy_and_destroy(
             ]
         )
         assert destroy.returncode == 0, destroy.stdout
+
+
+def test_live_preemptible_job_uses_spot_pricing(live_project_alias) -> None:
+    name = os.environ.get("NPA_PREEMPTIBLE_E2E_JOB_NAME", "").strip()
+    if not name:
+        pytest.skip("Set NPA_PREEMPTIBLE_E2E_JOB_NAME to a completed Workbench job")
+    environment = config_module.resolve_environment(live_project_alias)
+    assert environment is not None
+    job = ServerlessClient().get_job(name, environment.project_id)
+    assert job.project_id == environment.project_id
+    assert job.status == "succeeded"
+    assert job.raw["spec"]["preemptible"] is True
+    assert job.raw["spec"]["pricing_model"] == {"follows_spot_price": {}}
 
 
 def test_live_bootstrap_reuses_restricted_iam_profile() -> None:
