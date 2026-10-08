@@ -77,6 +77,7 @@ def test_reference_workflow_rejects_dangling_next_before_planning(tmp_path, name
     "name",
     [
         "video-variant-sweep.yaml",
+        "marble-manufacturing-pallet-detection.yaml",
         "vlm-eval-single.yaml",
         "tokenfactory-rollout-judge.yaml",
         "sim2real.yaml",

@@ -1,0 +1,65 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "1ba307d9e97a69c2b6516584a8f8f6473365ec4540c5de70aed0ecc615db01bd",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec passed for the final YAML, including the explicit sample-hobbit override.",
+      "evidence": [
+        "npa/tests/workflows/test_marble_workflows.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Native CPU acquisition, real CUDA consumer, and verified HTML report; imported-world provenance remains explicit.",
+      "evidence": [
+        "docs/workbench/marble.md",
+        "npa/tests/workflows/test_marble_workflows.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The scoped project credential read and wrote run artifacts; every published artifact was read back and SHA-256 checked.",
+      "evidence": [
+        "docs/workbench/marble.md",
+        "docs/workbench/validation/marble-cuda-validation.json"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The pinned MIT-licensed sample SPZ and collision GLB were downloaded and hashed by a native acquisition stage. Hosted generation is separately unverified.",
+      "evidence": [
+        "docs/workbench/marble.md",
+        "npa/tests/workflows/test_marble_workflows.py",
+        "docs/workbench/validation/marble-cuda-validation.json"
+      ]
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "Nebius and S3 credentials passed scoped preflight. Default world_source=generate still requires an operator-owned funded World API key; sample-hobbit needs no World API key.",
+      "evidence": [
+        "docs/workbench/marble.md",
+        "npa/tests/workflows/test_marble_workflows.py"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "EnvGen image bootstrap and writable CUDA-inheriting environment executed staged Marble code with source_overlay enabled.",
+      "evidence": [
+        "docs/workbench/marble.md",
+        "npa/tests/workflows/test_marble_workflows.py",
+        "docs/workbench/validation/marble-cuda-validation.json"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "Actual RTX PRO 6000 Warp CUDA scan completed: 15,552,000 rays against 50,000 triangles, yielding 12,934,026 hits. This is historical consumer evidence; the integration rebased onto current main has not been resubmitted.",
+      "evidence": [
+        "docs/workbench/marble.md",
+        "docs/workbench/validation/marble-cuda-validation.json"
+      ]
+    }
+  }
+}

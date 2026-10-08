@@ -72,6 +72,29 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "marble-manufacturing-pallet-detection.yaml",
+        "gpu",
+        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-provided, group-disjoint real pallet dataset and training-only RGBA cutouts.",
+        notes="Real World API generation, gsplat CUDA rendering, and matched-budget Faster R-CNN real-test comparison. No sample-world override.",
+    ),
+    SubmitLiveCase(
+        "marble-world-capture.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        config_vars=(("world_source", "sample-hobbit"),),
+        notes="Real imported Marble example rendered by gsplat CUDA; generation mode separately requires WLT_API_KEY.",
+    ),
+    SubmitLiveCase(
+        "marble-spatial-scan.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        config_vars=(("world_source", "sample-hobbit"),),
+        notes="Real imported Marble collider raycast by NVIDIA Warp CUDA with depth and interactive HTML artifacts.",
+    ),
+    SubmitLiveCase(
         "video-variant-sweep.yaml",
         "multi",
         runtime=True,

@@ -20,6 +20,7 @@ def _spec(name: str) -> Path:
     "name",
     [
         "video-variant-sweep.yaml",
+        "marble-manufacturing-pallet-detection.yaml",
         "vlm-eval-single.yaml",
         "tokenfactory-rollout-judge.yaml",
         "sim2real.yaml",

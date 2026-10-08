@@ -1817,6 +1817,11 @@ def submit_cmd(
     try:
         required_secret_env = list(secret_env)
         if merged_npa_spec is not None and not plan_only:
+            from npa.orchestration.npa_workflow.marble_credentials import (
+                marble_secret_names,
+            )
+
+            required_secret_env.extend(marble_secret_names(merged_npa_spec))
             selected_access = _workflow_access_requirements(merged_npa_spec)
             if any(item.provider == "huggingface" for item in selected_access):
                 workflow_access_secret_names.add("HF_TOKEN")

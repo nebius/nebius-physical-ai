@@ -1,0 +1,58 @@
+---
+name: marble
+description: Generate or import World Labs Marble worlds into NPA and run native CUDA capture or spatial-scan workflows with factual interactive HTML reports.
+---
+
+# Marble
+
+For a straightforward user walkthrough, use
+`docs/workbench/guides/marble-to-nebius.md`: World Labs generates the scene,
+the CPU acquisition stage downloads files to S3, and a Nebius GPU worker loads
+those files for rendering or scanning. The report replays completed outputs.
+
+For manufacturing, use `workflows/testing/marble-manufacturing-pallet-detection.yaml`.
+It requires `WLT_API_KEY` and a real pallet dataset manifest, fails before
+generation on missing auth or invalid/overlapping data, and never substitutes
+the sample world. Native submit automatically resolves and forwards this token
+from the environment or private NPA credentials. See
+`docs/workbench/marble-manufacturing.md` for the fully headless command.
+The experiment renders factory backgrounds on CUDA, composites training-only
+RGBA pallet cutouts, and invokes the existing Faster R-CNN trainer/evaluator
+on CUDA. Both arms receive matched optimizer-update counts and use the same
+held-out real evaluation partition. Report negative AP changes honestly.
+This is a 2D background-augmentation experiment, not a physics simulation or
+production accuracy claim. New manufacturing execution is unverified until a
+funded API credential and the operator's real dataset are supplied.
+
+Use the native specs `workflows/testing/marble-world-capture.yaml` and
+`workflows/testing/marble-spatial-scan.yaml`. Their stages are acquisition on
+CPU, gsplat rendering or Warp raycasting on CUDA, and report publication on CPU.
+Submit through `npa workbench workflow submit --stage-src --runtime` with the
+operator's explicit project, exact context, and S3 destination.
+
+Marble generation is hosted by World Labs; do not claim its weights run on
+Nebius. `WLT_API_KEY` plus API credit is required for `world_source=generate`.
+Pass the key as a secret environment variable, never in YAML or browser code.
+The web subscription does not fund API requests.
+
+For an explicitly disclosed existing-world demo, use
+`--var world_source=sample-hobbit`. This downloads a pinned, MIT-licensed real
+Marble example. Reports must retain `generated_this_run: false`, source
+revision, file hashes, and `license.txt`. It proves the GPU consumer, not a new
+generation request. Never switch to this mode while claiming prompt generation.
+
+The consumers reuse the EnvGen CUDA/compiler image and its attested SkyPilot bootstrap without invoking Genesis.
+Capture requires upstream Niantic SPZ decoding and gsplat; scan uses NVIDIA
+Warp. Both fail without CUDA and record real device identity and CUDA events.
+Reports reject incomplete frame sets and hash mismatches. Do not replace absent
+GPU output with illustrative imagery or invented metrics.
+
+SPZ scale and coordinate conversion are explicit in `world.json`. The sample
+uses upstream scene units; do not call those calibrated meters. The sweep is
+not a robot policy rollout or a proven navigable route. Collision meshes remain
+approximate geometry requiring calibration before simulation use.
+
+See `docs/workbench/marble.md` for CLI/SDK examples, artifact contracts, and
+provider links. Serve the complete downloaded report prefix over HTTP; Spark
+and Three.js are loaded from pinned CDN URLs. Check frame playback, world
+exploration, and scan point-cloud controls in a real browser before handoff.
