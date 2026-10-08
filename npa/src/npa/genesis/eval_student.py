@@ -131,7 +131,12 @@ def _student_policy_class(policy_type: str, config_path: Path) -> Any:
 
         mod = importlib.import_module(module_path)
         policy_cls = getattr(mod, class_name)
-    except (ImportError, AttributeError) as exc:
+    except ImportError as exc:
+        raise EvalError(
+            "LeRobot is required for student evaluation. "
+            "Install with: pip install lerobot"
+        ) from exc
+    except AttributeError as exc:
         raise EvalError(f"Cannot import policy class {class_path}: {exc}") from exc
 
     return policy_cls

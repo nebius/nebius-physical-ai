@@ -676,6 +676,25 @@ def sim2real_command(
 def _sim2real_preflight_config(selected, overrides):
     if "config" in selected or "registry" in selected:
         return build_config_from_env(**overrides)
+    diagnostic_keys = {
+        "run_id",
+        "s3_bucket",
+        "s3_endpoint",
+        "k8s_namespace",
+        "k8s_context",
+        "k8s_kubeconfig",
+    }
+    ignored = sorted(
+        key
+        for key, value in overrides.items()
+        if key not in diagnostic_keys and value not in {"", None}
+    )
+    if ignored:
+        options = ", ".join(f"--{key.replace('_', '-')}" for key in ignored)
+        raise ValueError(
+            f"{options} are not used by the selected image-independent checks. "
+            "Include --checks config or registry to validate execution settings."
+        )
     return build_diagnostic_config_from_env(
         run_id=str(overrides["run_id"]),
         s3_bucket=str(overrides["s3_bucket"]),

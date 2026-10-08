@@ -210,7 +210,7 @@ def test_sim2real_cpu_images_upgrade_inherited_packages_from_fixed_snapshot() ->
 
     for relative in ("sim2real-control/Dockerfile", "rerun-viewer/Dockerfile"):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
-        assert "ARG DEBIAN_SNAPSHOT=20261001T000000Z" in text, relative
+        assert "ARG DEBIAN_SNAPSHOT=20261002T000000Z" in text, relative
         assert "apt-get upgrade -y --no-install-recommends" in text, relative
 
 

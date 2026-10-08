@@ -187,6 +187,23 @@ def test_public_image_retains_act_and_operator_images_keep_policy_classes(
         module._require_image_policy_capability(policy_type)
 
 
+def test_missing_lerobot_keeps_actionable_student_evaluation_guidance(
+    genesis_modules, monkeypatch, tmp_path
+):
+    module = genesis_modules["eval_student"]
+    (tmp_path / "config.json").write_text(json.dumps({"type": "act"}))
+    real_import_module = importlib.import_module
+
+    def missing_lerobot(name, package=None):
+        if name.startswith("lerobot."):
+            raise ModuleNotFoundError("No module named 'lerobot'", name="lerobot")
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", missing_lerobot)
+    with pytest.raises(module.EvalError, match="Install with: pip install lerobot"):
+        module._load_student_policy(tmp_path)
+
+
 @pytest.mark.parametrize("declared", [" , ", "unknown", "act,unknown"])
 def test_invalid_image_policy_declaration_fails_closed(
     genesis_modules, monkeypatch, declared
