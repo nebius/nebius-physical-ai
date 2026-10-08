@@ -129,8 +129,8 @@ access and workload acceptance requirements continue to apply.
 The preceding tables preserve the original dated resolver observation. That
 audit missed literal Isaac and SONIC digests, which bypassed tool-default
 quarantine. The follow-up removes those automatic selections. All 133 shipped
-specs now have **40 blocked defaults**: 33 workflows deny quarantined tool-image
-selection, and seven deny missing exact operator image inputs before task
+specs now have **40 blocked defaults**: 32 workflows deny quarantined tool-image
+selection, and eight deny missing exact operator image inputs before task
 expansion. These categories are disjoint in this default audit; supplying exact
 operator inputs may reveal additional quarantined resource defaults. This is
 planning evidence only, not fresh image or GPU acceptance.
@@ -157,7 +157,6 @@ planning evidence only, not fresh image or GPU acceptance.
 | `workflows/testing/mjlab-render.yaml` | `mjlab` |
 | `workflows/testing/mjlab-train-eval.yaml` | `mjlab` |
 | `workflows/testing/multicamera-rgbd-capture.yaml` | `isaac-lab` |
-| `workflows/testing/multicamera-rgbd-warehouse.yaml` | `isaac-lab` |
 | `workflows/testing/nurec-colmap-reconstruct.yaml` | `ncore` |
 | `workflows/testing/open3d-registration.yaml` | `open3d` |
 | `workflows/testing/rl-policy-training-sim-success.yaml` | `isaac-lab` |
@@ -183,13 +182,16 @@ still required for the operator-selected bytes.
 | Workflow | Required config keys |
 | --- | --- |
 | `workflows/testing/field-failure-reference-demo.yaml` | `navigation_image, reconstruction_image` |
+| `workflows/testing/multicamera-rgbd-warehouse.yaml` | `isaac_image` |
 | `workflows/testing/rgbd-scan-to-policy-demo.yaml` | `assembly_image, reconstruction_image, isaac_image` |
 | `workflows/testing/rgbd-scan-to-isaac.yaml` | `isaac_image` |
 | `workflows/testing/scan-to-isaac-navigation.yaml` | `isaac_image` |
 
-Warehouse and Franka GPU profiles instead default to governed
-`tool://isaac-lab`, with an operator `--var isaac_image=...` override. Their
-resource-only use does not require a separate provenance string. The optional
-LeRobot 0.6 image in Franka and LeRobot transfer remains a distinct exact-version
-qualification scope; the default LeRobot 0.5 quarantine is unchanged. Repaired
-explicit development candidates are not accepted public defaults.
+Warehouse records native MDL runtime-material provenance, so it requires an
+exact operator `isaac_image` before planning. Franka GPU profiles instead
+default to governed `tool://isaac-lab`, with an operator
+`--var isaac_image=...` override; their resource-only use does not require a
+separate provenance string. The optional LeRobot 0.6 image in Franka and
+LeRobot transfer remains a distinct exact-version qualification scope; the
+default LeRobot 0.5 quarantine is unchanged. Repaired explicit development
+candidates are not accepted public defaults.

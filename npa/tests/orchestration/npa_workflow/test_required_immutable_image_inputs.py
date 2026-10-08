@@ -21,11 +21,12 @@ ISAAC = "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
 CPU = "registry.example.invalid/npa-sonic@sha256:" + "b" * 64
 EXACT_INPUT_SPECS = (
     "field-failure-reference-demo.yaml",
+    "multicamera-rgbd-warehouse.yaml",
     "rgbd-scan-to-policy-demo.yaml",
     "rgbd-scan-to-isaac.yaml",
     "scan-to-isaac-navigation.yaml",
 )
-GOVERNED_SPECS = ("multicamera-rgbd-warehouse.yaml", "franka-rl-transfer.yaml")
+GOVERNED_SPECS = ("franka-rl-transfer.yaml",)
 
 
 def _spec(tmp_path, config):
