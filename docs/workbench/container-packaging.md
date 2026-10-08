@@ -96,7 +96,8 @@ and `config_sha256`, plus `credential_members` with each blocked stored file's
 `member_index`. `detection_reason` identifies the existing path or
 member-content rule that produced the finding. These fields contain no
 credential content excerpts and do not establish that a value is usable, a key
-is parseable, or a match is harmless.
+is parseable, or a match is harmless. A member hash and exact size are still a
+content commitment: someone with a guessed file can confirm it offline.
 
 The scan covers every stored layer. Repeated paths retain separate member
 records, including overwritten or deleted ancestor files; the existing
@@ -107,9 +108,12 @@ Compare a member hash with independently obtained exact source or package bytes
 before classifying a finding. Hash equality is evidence of byte identity and
 does not waive any publication gate or establish GPU capability acceptance.
 
-The ordinary publication workflow prints this metadata report. Do not publish
-raw layers, extracted credential bytes, or a failed image archive as public
-Actions artifacts. An unresolved finding still exits nonzero and blocks push.
+When `--json` is supplied, the full metadata report is written only to that
+file and stdout retains the pre-existing blocking summary. The ordinary
+publication workflow uses this mode so public Actions logs do not expose member
+hashes or sizes. Do not publish raw layers, extracted credential bytes, or a
+failed image archive as public Actions artifacts. An unresolved finding still
+exits nonzero and blocks push.
 
 ## Inventory
 

@@ -204,10 +204,27 @@ def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
         text=True,
     )
     assert result.returncode == 1
-    report = json.loads(result.stdout)
+    report = json.loads(output.read_text())
     assert json.loads(output.read_text()) == report
     assert (
         report["credential_members"][0]["sha256"] == hashlib.sha256(payload).hexdigest()
     )
+    stdout_report = json.loads(result.stdout)
+    assert stdout_report["credential_hits"] == report["credential_hits"]
+    assert "credential_members" not in stdout_report
+    assert "archive_sha256" not in stdout_report
+    assert "config_sha256" not in stdout_report
+    assert hashlib.sha256(payload).hexdigest() not in result.stdout
     assert "inert-native-cli-value" not in result.stdout
     assert result.stderr == ""
+
+    full_result = subprocess.run(
+        [sys.executable, str(SCANNER_PATH), "--tarball", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    assert full_result.returncode == 1
+    assert (
+        json.loads(full_result.stdout)["credential_members"][0]["sha256"]
+        == hashlib.sha256(payload).hexdigest()
+    )

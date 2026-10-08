@@ -667,10 +667,10 @@ scan; archives and temporary scan data are cleaned after each entry. The require
 inventory aggregate fails when any applicable entry fails or does not finish.
 This baseline check does not replace complete image scans before publication.
 
-The Cosmos3 Ray payload scanner reports safe archive/config and blocked-member
-hashes, sizes, layer locations, and rule kinds while preserving blocking
-verdicts. This identifies exact bytes for investigation without printing
-credential contents or publishing a failed archive; see the
+The Cosmos3 Ray payload scanner records archive/config and blocked-member
+hashes, sizes, layer locations, and rule kinds in its JSON report while
+preserving blocking verdicts. With `--json`, stdout retains only the blocking
+summary so a publication log cannot expose member commitments; see the
 [payload finding evidence](../docs/workbench/container-packaging.md#cosmos3-ray-payload-finding-evidence)
 contract. A metadata report does not accept the image or its GPU capability.
 

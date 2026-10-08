@@ -42,6 +42,15 @@ FORBIDDEN_HISTORY = (
     re.compile(r"(?i)(huggingface-cli|hf)\s+download\s+nvidia/"),
 )
 MODEL_SUFFIXES = (".safetensors", ".ckpt", ".pth", ".pt", ".gguf")
+_PUBLIC_STDOUT_FIELDS = (
+    "format",
+    "scan_complete",
+    "entries_scanned",
+    "payload_hits",
+    "history_hits",
+    "credential_hits",
+    "verdict",
+)
 
 
 @dataclass
@@ -203,6 +212,11 @@ def scan_tarball(path: Path) -> dict[str, object]:
     return findings.report(archive_sha256, config_sha256)
 
 
+def _stdout_report(report: dict[str, object]) -> dict[str, object]:
+    """Keep public logs to the pre-existing blocking-summary fields."""
+    return {field: report[field] for field in _PUBLIC_STDOUT_FIELDS}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("image", nargs="?")
@@ -224,6 +238,7 @@ def main() -> int:
     rendered = json.dumps(report, indent=2, sort_keys=True)
     if args.json:
         args.json.write_text(rendered + "\n", encoding="utf-8")
+        rendered = json.dumps(_stdout_report(report), indent=2, sort_keys=True)
     print(rendered)
     return 0 if report["verdict"] == "clean" else 1
 
