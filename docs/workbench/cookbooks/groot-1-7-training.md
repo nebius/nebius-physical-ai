@@ -59,6 +59,10 @@ MCAP production are CPU artifact conversions and no stage renders with RT cores.
 
 Supply the bucket, real source dataset, deployed agent URL, and
 runtime secrets at submission time; do not commit tenant or customer values.
+Configure the agent's artifact sources and isolated read-only storage identity
+for the output bucket and run prefix before submission. The final stage must
+reach the authenticated agent from the worker and discover those exact outputs;
+agent health alone does not prove artifact access.
 
 ```bash
 npa/.venv/bin/npa workbench workflow submit "$SPEC" \
@@ -131,6 +135,16 @@ report labels them **OFFLINE EVALUATION / NOT A ROBOT ROLLOUT**.
 The terminal stage exercises run discovery, inventory association, Rerun and
 Lichtblick loads, and byte-range endpoints through the deployed agent API.
 Pixel-level nonblank rendering and “Describe this” remain browser E2E gates.
+
+The [promotion run](../evidence/groot-1-7-promotion.json) completed all eleven
+logical stages on two B200 GPUs, including real optimizer work and authenticated
+viewer API checks. Its four updates changed the checkpoint but increased
+held-out action MSE from 3079.199463 to 3083.461914; `learning_outcome` was
+`not_improved` and `candidate_promoted` remained false. The offline HTML report
+passed desktop, mobile, playback, and no-network checks. Rerun painted the actual
+recording in the agent. Lichtblick's browser frontend was blocked by the deployed
+Content Security Policy despite successful MCAP parsing and API checks; this run
+does not qualify Lichtblick browser rendering or “Describe this.”
 
 ## Kubernetes image prerequisites
 
