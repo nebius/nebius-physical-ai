@@ -290,6 +290,32 @@ def test_serve_and_stop_endpoints_use_policy_state(server_module, monkeypatch) -
     assert state.unloaded is True
 
 
+def test_serve_reports_invalid_checkpoint_contract_as_bad_request(
+    server_module, monkeypatch
+) -> None:
+    class RejectingPolicyState:
+        def load(self, *_args, **_kwargs) -> None:
+            raise server_module.CheckpointContractError(
+                "Checkpoint must contain input and output features"
+            )
+
+        def unload(self) -> None:
+            return None
+
+    monkeypatch.setattr(server_module, "policy_state", RejectingPolicyState())
+    monkeypatch.setattr(
+        server_module, "_resolve_checkpoint", lambda checkpoint: "/resolved"
+    )
+
+    with TestClient(server_module.app) as client:
+        response = client.post("/serve", json={"checkpoint": "s3://bucket/model"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Invalid checkpoint: Checkpoint must contain input and output features"
+    )
+
+
 def test_infer_endpoint_parses_observation_and_returns_actions(
     server_module, monkeypatch
 ) -> None:

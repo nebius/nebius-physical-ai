@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 from pathlib import Path
 
 from packaging.requirements import Requirement
@@ -12,14 +13,24 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 RECIPE = ROOT / "npa/docker/workbench/lerobot"
-# The explicitly versioned integration bounds; stock upstream bounds differ.
-INTEGRATION = {
-    "torch": ">=2.13.0,<2.14.0",
-    "torchvision": ">=0.28.0,<0.29.0",
-    "torchcodec": ">=0.16.0,<0.17.0",
-    "diffusers": ">=0.38.0,<0.39.0",
-    "wandb": ">=0.30.0,<0.31.0",
-}
+
+
+def _integration_bounds() -> dict[str, str]:
+    path = RECIPE / "prepare_secure_wheel.py"
+    spec = importlib.util.spec_from_file_location("secure_lerobot", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return {
+        Requirement(rewritten).name: rewritten
+        for rewritten in module.DEPENDENCIES.values()
+    }
+
+
+# The wheel's rewritten bounds are the source of truth; stock upstream bounds
+# differ. Reading them here prevents the test fixture from drifting from the
+# wheel metadata it is meant to validate.
+INTEGRATION = _integration_bounds()
 
 
 def _check_constraints(text):
@@ -34,7 +45,7 @@ def _check_constraints(text):
         specifiers = list(requirement.specifier)
         assert len(specifiers) == 1 and specifiers[0].operator == "=="
         version = Version(specifiers[0].version)
-        assert version in Requirement(name + INTEGRATION[name]).specifier
+        assert version in Requirement(INTEGRATION[name]).specifier
     assert Version(list(requirements["torch"].specifier)[0].version) == Version(
         "2.13.0"
     )

@@ -42,6 +42,10 @@ AWS_ENDPOINT_URL = os.environ.get(
 )
 
 
+class CheckpointContractError(ValueError):
+    """A checkpoint omits metadata required for the saved-shape load path."""
+
+
 # ── In-process policy state ───────────────────────────────────────────────
 
 
@@ -107,7 +111,7 @@ class PolicyState:
                 # The training factory requires dataset/env metadata and replaces
                 # action shapes. A saved checkpoint already owns those shapes.
                 if not policy_cfg.input_features or not policy_cfg.output_features:
-                    raise ValueError(
+                    raise CheckpointContractError(
                         "Checkpoint must contain input and output features"
                     )
                 policy = get_policy_class(policy_cfg.type).from_pretrained(
@@ -385,6 +389,8 @@ async def start_serve(req: ServeRequest):
 
     try:
         policy_state.load(local_path, env_type=req.env_type, env_task=req.env_task)
+    except CheckpointContractError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid checkpoint: {exc}")
     except Exception as exc:
         logger.exception("Failed to load policy from %s", local_path)
         raise HTTPException(status_code=500, detail=f"Failed to load policy: {exc}")
