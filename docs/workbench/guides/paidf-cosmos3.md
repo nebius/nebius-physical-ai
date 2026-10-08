@@ -7,6 +7,8 @@ For a complete manual setup and run, start with the
 project setup, new or existing Kubernetes clusters, credential-file formats,
 Token Factory key creation, Python and CLI installation checks, submission, and
 artifact inspection.
+For twelve separate appearance videos with automatic padding preservation, use
+the [copy-paste recipe guide](paidf-appearance-12.md#apply-the-recipe).
 Use this page for the workflow's input, generation, and acceptance contracts.
 For the configuration keys and timing contract, see the setup guide's
 [generation and evaluation settings](../../../workflows/guides/paidf-cosmos3.md#r5-find-and-change-generation-and-evaluation-settings).
@@ -98,12 +100,19 @@ new appearance experiments. Quality and retries use
 `grade_threshold`, `attribute_threshold`, `refinement_iterations`, `retry_seed_stride`,
 `retry_guidance_delta`, and `retry_steps_delta`. `source_motion_weight` is a
 compatibility setting that must be `0.0` (the default). Nonzero values fail
-before generation. Publication copies the model output bytes without blending,
-resizing, or changing the frame rate, and records their SHA-256 digest.
+before generation. Publication preserves every generated scene pixel without
+source/model blending, resizing or changing the frame rate. When verified
+padding exists, it restores those borders from the prepared source and writes
+a lossless `augmented_video.mp4`, retaining `raw_model_video.mp4` separately.
+The preservation receipt records the raw and published hashes and exact pixel
+checks. Without verified padding, the model bytes pass through unchanged.
+See [padding behavior and output checks](paidf-appearance-12.md#5-download-the-videos-and-verify-padding-preservation).
 The check lives in the shared generation implementation, so custom workflows
 using `workbench.cosmos3.generate_variants` and direct CLI callers receive the
-same protection for any dataset. Existing deployed images need the updated code;
-setting the workflow value to zero also disables blending in the older publisher.
+same protection for any dataset. New submissions of the canonical workflow use
+the current checkout through `source_overlay: true`; custom or direct deployments
+must also use the updated NPA code. The older publisher's `source_motion_weight=0`
+disables blending but does not add automatic padding detection or preservation.
 The composition requires
 `video2video`: selecting a text-to-video or image-to-video mode fails before GPU
 inference rather than producing a misleading source-conditioned claim.

@@ -2059,7 +2059,9 @@ def render_setup_for_tool(
             "  printf '%s\\n' \"$npa_baked_pythonpath\" > /tmp/npa-baked-pythonpath\n"
             "fi\n"
         )
-    parts = [default_npa_setup()]
+    from npa.orchestration.npa_workflow.nurec_setup import render_nurec_adapter_setup
+
+    parts = [render_nurec_adapter_setup(tool_ref), default_npa_setup()]
     if tool_ref == "workbench.token_factory.robot_sdg":
         parts.append(
             'if [ "$(id -u)" = 0 ]; then\n'
