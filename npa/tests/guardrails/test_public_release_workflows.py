@@ -271,7 +271,7 @@ def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
             for path in directory.rglob("*"):
                 if path.suffix in {".py", ".sh", ".yaml", ".yml"}:
                     assert not re.search(
-                        rf"(?:^|[;\n])\s*[^\s]*/python(?:[0-9.]+)?\s+"
+                        rf"(?:^|[;\n])\s*(?:[^\s]*/)?python(?:[0-9.]+)?\s+"
                         rf"(?:[^\s]+/)?{re.escape(scanner)}\b",
                         path.read_text(encoding="utf-8", errors="ignore"),
                     ), f"unreviewed non-workflow scanner invocation in {path}"

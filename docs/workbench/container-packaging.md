@@ -119,6 +119,8 @@ writes the full metadata report only to its requested file. Use
 ordinary publication workflow keeps member hashes and sizes out of Actions logs.
 The scanner exits 0 for a clean archive, 1 for a blocked finding, and 2 when a
 requested private report cannot be written; it refuses a symlink report target.
+Treat every nonzero exit as blocking: a report-write failure returns 2 even when
+the completed scan verdict is itself blocking.
 Its stderr JSON identifies only the portable errno class (for example, `ELOOP`)
 so an operator can distinguish a refusal from runner capacity without exposing a
 path or report content.
