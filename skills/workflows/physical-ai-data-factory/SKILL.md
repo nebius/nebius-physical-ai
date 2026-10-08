@@ -261,6 +261,15 @@ existing output attribute check does not enforce minimum augmentation strength.
 Keep per-run storage/API/config isolation and report the actual concurrency;
 single-GPU evidence does not qualify multi-GPU fan-out.
 
+For a complete opt-in twelve-profile configuration, use
+`docs/workbench/examples/paidf-appearance-12.yaml` and its guide at
+`docs/workbench/guides/paidf-appearance-12.md`. Apply its `config` overlay to the
+canonical workflow or pass the values through existing `--var` arguments.
+Submit with `--max-wait-seconds 0`: the CLI's default one-hour per-wave deadline
+can cancel a healthy twelve-variant generation stage.
+The recipe is scoped to visible stationary work surfaces and emits separate
+MP4s; keep task-specific adaptations and private proof media outside Git.
+
 For operator setup, verify `command -v nebius` and `nebius version` after selecting
 `PATH` and after any environment activation. Health preflight proves profile
 authentication, while configure also enforces NPA's supported CLI version.
