@@ -313,7 +313,39 @@ def _write_private_report(path: Path, rendered: str) -> None:
         report.write(rendered + "\n")
 
 
+def _emit_report(
+    report: dict[str, object], rendered: str, json_path: Path | None, full_stdout: bool
+) -> int:
+    """Write optional private evidence and emit the requested safe report view."""
+    if json_path:
+        try:
+            _write_private_report(json_path, rendered)
+        except OSError as error:
+            print(
+                json.dumps(
+                    {
+                        "error": "report-write-failed",
+                        "errno": errno.errorcode.get(error.errno, "unknown"),
+                    }
+                ),
+                file=sys.stderr,
+            )
+            print(
+                rendered
+                if full_stdout
+                else json.dumps(_stdout_report(report), indent=2, sort_keys=True)
+            )
+            return 2
+    print(
+        rendered
+        if full_stdout
+        else json.dumps(_stdout_report(report), indent=2, sort_keys=True)
+    )
+    return 0 if report["verdict"] == "clean" else 1
+
+
 def main() -> int:
+    """Run the Cosmos3 Ray payload scanner as a command-line program."""
     parser = argparse.ArgumentParser()
     parser.add_argument("image", nargs="?")
     parser.add_argument("--tarball", type=Path)
@@ -332,29 +364,12 @@ def main() -> int:
                 ["docker", "save", "--output", saved, args.image], check=True
             )
             report = scan_tarball(saved)
-    rendered = json.dumps(report, indent=2, sort_keys=True)
-    if args.json:
-        try:
-            _write_private_report(args.json, rendered)
-        except OSError as error:
-            print(
-                json.dumps(
-                    {
-                        "error": "report-write-failed",
-                        "errno": errno.errorcode.get(error.errno, "unknown"),
-                    }
-                ),
-                file=sys.stderr,
-            )
-            if args.full_stdout:
-                print(rendered)
-            else:
-                print(json.dumps(_stdout_report(report), indent=2, sort_keys=True))
-            return 2
-    if not args.full_stdout:
-        rendered = json.dumps(_stdout_report(report), indent=2, sort_keys=True)
-    print(rendered)
-    return 0 if report["verdict"] == "clean" else 1
+    return _emit_report(
+        report,
+        json.dumps(report, indent=2, sort_keys=True),
+        args.json,
+        args.full_stdout,
+    )
 
 
 if __name__ == "__main__":

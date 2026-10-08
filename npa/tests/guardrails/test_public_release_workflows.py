@@ -269,12 +269,17 @@ def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
     ):
         if directory.exists():
             for path in directory.rglob("*"):
-                if path.suffix in {".py", ".sh", ".yaml", ".yml"}:
+                if path.is_file() and path.suffix in {".py", ".sh", ".yaml", ".yml"}:
                     assert not re.search(
                         rf"(?:^|[;\n])\s*(?:[^\s]*/)?python(?:[0-9.]+)?\s+"
                         rf"(?:[^\s]+/)?{re.escape(scanner)}\b",
                         path.read_text(encoding="utf-8", errors="ignore"),
                     ), f"unreviewed non-workflow scanner invocation in {path}"
+    for path in (ROOT / "Makefile", ROOT / "npa" / "Makefile"):
+        if path.is_file():
+            assert scanner not in path.read_text(encoding="utf-8", errors="ignore"), (
+                path
+            )
 
 
 def test_public_base_pull_authentication_precedes_local_build() -> None:

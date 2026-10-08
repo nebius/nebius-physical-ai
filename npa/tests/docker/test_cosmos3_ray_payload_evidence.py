@@ -345,7 +345,9 @@ def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
 
 
 def test_private_json_report_does_not_follow_a_symlink(tmp_path):
-    path, _, _ = _image(tmp_path, [[("source.py", b"value = 42\n")]])
+    path, _, _ = _image(
+        tmp_path, [[("source.py", b"hf_token='inert-write-failure'\n")]]
+    )
     target = tmp_path / "target.json"
     target.write_text("unchanged", encoding="utf-8")
     output = tmp_path / "report.json"
