@@ -1,5 +1,8 @@
 # Generate twelve appearance videos with preserved padding
 
+[Main workflows](../../../workflows/main/README.md) ·
+[Workflow YAML](../../../workflows/main/paidf-cosmos3.yaml)
+
 The [twelve-profile recipe](../examples/paidf-appearance-12.yaml) supplies a
 complete, opt-in configuration for `workflows/main/paidf-cosmos3.yaml`. It
 generates twelve separate videos from one source using oak, walnut, aluminum,
