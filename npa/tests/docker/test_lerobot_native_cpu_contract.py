@@ -72,7 +72,8 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
             f"COPY --chown=ubuntu:ubuntu src/npa/{copied_path} /opt/npa/src/npa/"
             in recipe
         )
-    assert "shipping npa.workbench here would make that" in recipe
+    assert "stage's own NPA install" in recipe
+    assert "shipping it here would make the repair's import" in recipe
     assert "prepare-secure-wheel.py" in recipe
     assert "lerobot-0.5.1+npa.secure1-py3-none-any.whl" in recipe
     assert (

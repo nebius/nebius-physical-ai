@@ -68,9 +68,10 @@ and the original package bounds remain visible in
 The optional 0.6 resolver, VM installer pins and additive B300 recipe retain
 their separate scope; this integration does not qualify them.
 
-The image must run `pip check` and a network-disabled CPU build gate before
-publication. That gate writes and decodes real camera videos through the native
-default backend, executes ACT and Diffusion forward/backward and optimizer
+The image must run `pip check` and an offline-configured CPU build gate before
+publication (HF/Transformers offline, W&B disabled, and no external model,
+dataset, or decoder fetch). That gate writes and decodes real camera videos
+through the native default backend, executes ACT and Diffusion forward/backward and optimizer
 updates, verifies changed weights, and reloads checkpoints and ACT's saved
 processors. It also loads that real ACT checkpoint through the NPA policy server
 and compares its two-camera/state prediction with native LeRobot inference,
