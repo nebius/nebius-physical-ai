@@ -63,6 +63,9 @@ def test_live_preemptible_lerobot_deploy_and_destroy(
 ) -> None:
     env = config_module.resolve_environment(live_project_alias)
     assert env is not None, f"Unknown project alias {live_project_alias!r}"
+    storage_before = config_module.resolve_project_storage(
+        live_project_alias, include_shared_credentials=False, include_environment=False
+    )
 
     # rtxpro / us-central1 exposes gpu-rtx6000 (not L40S); CUDA13 image has driver 580.x.
     gpu_type = os.environ.get("NPA_PREEMPTIBLE_E2E_GPU_TYPE", "gpu-rtx6000")
@@ -145,6 +148,14 @@ def test_live_preemptible_lerobot_deploy_and_destroy(
             ]
         )
         assert destroy.returncode == 0, destroy.stdout
+    assert config_module.resolve_environment(live_project_alias) == env
+    storage_after = config_module.resolve_project_storage(
+        live_project_alias, include_shared_credentials=False, include_environment=False
+    )
+    assert all(
+        getattr(storage_after, key) == value
+        for key, value in vars(storage_before).items()
+    ), "Workbench teardown changed project storage selection"
 
 
 def test_live_preemptible_job_uses_spot_pricing(live_project_alias) -> None:

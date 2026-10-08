@@ -317,6 +317,8 @@ bundled Terraform provider lock includes the required spot-pricing fields;
 without automatic restart. See [Nebius preemptible VMs](https://docs.nebius.com/compute/virtual-machines/preemptible).
 Preemptible serverless jobs and endpoints also explicitly follow the current
 spot price and require Nebius CLI 0.12.278 or newer for that pricing flag.
+Destroying a workbench retains its project's identity and storage configuration
+so subsequent jobs can continue using the configured project.
 
 <a id="config"></a>
 
