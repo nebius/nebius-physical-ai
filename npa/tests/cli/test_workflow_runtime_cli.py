@@ -499,6 +499,7 @@ def test_submit_runtime_passes_options_and_emits_json(
     assert payload["status"] == "succeeded"
     assert payload["wave_count"] == 2
     assert payload["runtime_state_uri"].endswith("/npa-workflow/runtime.json")
+    assert payload["workflow_validation_candidates"] == []
 
 
 @pytest.mark.parametrize("selected", ["", "review"])
@@ -1098,10 +1099,13 @@ def test_non_runtime_submit_records_the_exact_controller_route(
             "--no-runtime",
             "--var",
             "bucket=rt-bucket",
+            "--output-format",
+            "json",
         ],
     )
 
     assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["workflow_validation_candidates"] == []
     receipt = load_submission_state("unit", "non-runtime-controller-route")
     assert receipt["controller"] == {
         "schema": "npa.workflow.controller-route.v1",

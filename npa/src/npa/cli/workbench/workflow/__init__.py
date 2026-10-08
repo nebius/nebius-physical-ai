@@ -3640,9 +3640,11 @@ def submit_cmd(
             prepared_npa.temp_dir.cleanup()
 
     if output_format == OutputFormat.json:
-        payload = {**result.__dict__, "run_id": resolved_run_id}
-        if workflow_validation_candidates:
-            payload["workflow_validation_candidates"] = workflow_validation_candidates
+        payload = {
+            **result.__dict__,
+            "run_id": resolved_run_id,
+            "workflow_validation_candidates": workflow_validation_candidates,
+        }
         if submission_warnings:
             payload["submission_warnings"] = submission_warnings
         typer.echo(
@@ -4066,8 +4068,7 @@ def _run_npa_workflow_runtime(
             agent_name=agent_name,
         )
     payload = report.to_dict()
-    if workflow_validation_candidates:
-        payload["workflow_validation_candidates"] = list(workflow_validation_candidates)
+    payload["workflow_validation_candidates"] = list(workflow_validation_candidates)
     if artifact_load is not None:
         payload["artifact_load"] = artifact_load
     if output_format == OutputFormat.json:

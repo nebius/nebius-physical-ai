@@ -191,18 +191,22 @@ public release. Complete
 planning, exact-cluster verification, and image preflight. Submit with the same
 project, cluster, bucket, and config overrides:
 
-JSON output from both `npa workbench workflow submit --plan-only` and runtime
-`submit` reports the selected candidate under `workflow_validation_candidates`,
-with `release_status: workflow_validation_candidate`. The matching
-`preflight-images --json` image check carries the same `release_status`. Agent
-control planes must treat this as validation provenance, not release approval.
-
 ```bash
 npa workbench workflow submit workflows/testing/cosmos3-generate.yaml \
   --project '<project-alias>' --infra 'k8s/<context>' \
   --var 'bucket=<bucket>' --runtime \
   --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
+
+Successful JSON output from every workflow `submit` includes
+`workflow_validation_candidates`; each selection carries
+`release_status: workflow_validation_candidate`. A plan-only or non-runtime
+submit lists its planned steps. A runtime submit lists candidate defaults across
+every reachable branch before decisions execute, so it can include a candidate
+from a branch that the completed run does not take. The matching
+`preflight-images --json` check adds `release_status` only when that checked
+image is a validation candidate. Agent control planes must treat this as
+validation provenance, not release approval.
 
 `--runtime` supervises the workflow to its terminal state. Secret values resolve
 from the private environment or selected project's NPA credential store; only
