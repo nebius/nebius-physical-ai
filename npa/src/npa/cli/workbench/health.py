@@ -37,6 +37,7 @@ from npa.workflows.sim2real_health import (
     CheckResult,
     DoctorProbes,
     FAIL,
+    IMAGE_DEPENDENT_CHECKS,
     KubeResult,
     PASS,
     SKIP,
@@ -674,7 +675,7 @@ def sim2real_command(
 
 
 def _sim2real_preflight_config(selected, overrides):
-    if "config" in selected or "registry" in selected:
+    if any(name in IMAGE_DEPENDENT_CHECKS for name in selected):
         return build_config_from_env(**overrides)
     return build_diagnostic_config_from_env(
         run_id=str(overrides["run_id"]),

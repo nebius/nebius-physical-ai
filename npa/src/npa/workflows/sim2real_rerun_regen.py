@@ -16,6 +16,7 @@ from npa.clients.storage import StorageClient, StorageError
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
+from npa.workflows.sim2real.utils import _artifact_root_uri
 from npa.workflows.sim2real_viz import (
     Sim2RealVizResult,
     emit_sim2real_mcap_if_enabled,
@@ -94,9 +95,7 @@ def run_prefix_uri(config: Sim2RealLoopConfig | Sim2RealArtifactConfig) -> str:
         None.
     """
 
-    parts = [part for part in (config.s3_prefix.strip("/"), config.run_id) if part]
-    root = f"s3://{config.s3_bucket}/{'/'.join(parts)}"
-    return f"{root.rstrip('/')}/"
+    return f"{_artifact_root_uri(config).rstrip('/')}/"
 
 
 def _gold_eval_relative_dir(

@@ -19,6 +19,7 @@ from npa.workflows.sim2real import config as execution_config
 from npa.workflows.sim2real import diagnostic_config, models
 from npa.workflows.sim2real_health import (
     IMAGE_FIELDS,
+    IMAGE_DEPENDENT_CHECKS,
     DoctorProbes,
     KubeResult,
     run_preflight,
@@ -212,7 +213,10 @@ def test_tokens_and_s3_use_explicit_storage_without_image_resolution(
     diagnostic_spies.writes.assert_not_called()
 
 
-@pytest.mark.parametrize("selected", ["config", "registry", "all", "config,coherence"])
+@pytest.mark.parametrize(
+    "selected",
+    [*IMAGE_DEPENDENT_CHECKS, "all", f"{IMAGE_DEPENDENT_CHECKS[0]},coherence"],
+)
 def test_execution_image_checks_keep_quarantine_as_a_cli_error(
     diagnostic_spies: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
@@ -264,6 +268,27 @@ def test_explicit_images_remain_selected_for_registry_check(
         call.args[0] for call in diagnostic_spies.image_inspector.call_args_list
     } == {f"registry.example.invalid/{field}:accepted" for field in IMAGE_FIELDS}
     diagnostic_spies.defaults.assert_not_called()
+
+
+def test_preflight_config_uses_the_canonical_image_dependent_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution = object()
+    diagnostic = object()
+    monkeypatch.setattr(health, "IMAGE_DEPENDENT_CHECKS", ("tokens",))
+    monkeypatch.setattr(health, "build_config_from_env", lambda **_kwargs: execution)
+    monkeypatch.setattr(
+        health, "build_diagnostic_config_from_env", lambda **_kwargs: diagnostic
+    )
+    overrides = {
+        "run_id": "diagnostic-run",
+        "s3_bucket": "example-bucket",
+        "s3_endpoint": "https://storage.example.invalid",
+        "k8s_namespace": "",
+        "k8s_context": "",
+        "k8s_kubeconfig": "",
+    }
+    assert health._sim2real_preflight_config(["tokens"], overrides) is execution
 
 
 def test_unknown_checks_fail_before_any_config_or_credentials(
@@ -423,7 +448,9 @@ def test_empty_run_id_uses_existing_environment_fallback(
     )
 
 
-@pytest.mark.parametrize("checks", [("config",), ("registry",), None])
+@pytest.mark.parametrize(
+    "checks", [*((name,) for name in IMAGE_DEPENDENT_CHECKS), None]
+)
 def test_image_free_context_cannot_satisfy_execution_image_checks(checks) -> None:
     context = diagnostic_config.build_diagnostic_config_from_env(
         run_id="diagnostic-run"

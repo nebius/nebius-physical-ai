@@ -717,6 +717,7 @@ ALL_CHECKS: tuple[str, ...] = (
     "tokens",
     "cluster",
 )
+IMAGE_DEPENDENT_CHECKS: tuple[str, ...] = ("config", "registry")
 
 
 def run_checks_concurrently(
@@ -762,7 +763,7 @@ def _preflight_thunks(
     """Build the zero-argument callable for each selected check, in order."""
 
     if isinstance(config, Sim2RealDiagnosticConfig) and any(
-        name in selected for name in ("config", "registry")
+        name in selected for name in IMAGE_DEPENDENT_CHECKS
     ):
         raise ValueError("config and registry checks require resolved execution images")
     candidates: list[tuple[str, Callable[[], CheckResult]]] = [

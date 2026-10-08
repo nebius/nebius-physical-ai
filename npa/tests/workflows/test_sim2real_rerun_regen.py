@@ -8,11 +8,13 @@ import pytest
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
+from npa.workflows.sim2real.utils import _artifact_root_uri
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
     _ensure_policy_access_metadata,
     regen_sim2real_rrd,
     resolve_local_rrd_path,
+    run_prefix_uri,
     sync_heldout_renders,
 )
 
@@ -47,6 +49,19 @@ def test_resolve_local_rrd_path_env_override(
         resolve_local_rrd_path("sim2real-staged-20260616t093101z")
         == tmp_path / "custom.rrd"
     )
+
+
+@pytest.mark.parametrize("config_factory", [_config, _artifact_config])
+def test_run_prefix_uri_delegates_to_the_shared_artifact_root(
+    monkeypatch: pytest.MonkeyPatch, config_factory
+) -> None:
+    config = config_factory()
+    root = _artifact_root_uri(config)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen._artifact_root_uri",
+        lambda _config: root + "/",
+    )
+    assert run_prefix_uri(config) == f"{root}/"
 
 
 def test_regen_sim2real_rrd_requires_heldout_frames(
