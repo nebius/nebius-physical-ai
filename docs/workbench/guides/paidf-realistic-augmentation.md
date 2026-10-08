@@ -339,6 +339,11 @@ hold the first-frame setting fixed and change only `transfer_rgb_weight`.
 
 ## Fan out a reviewed recipe
 
+For a complete opt-in configuration, use the
+[generic twelve-profile recipe](paidf-appearance-12.md). It combines explicit
+material and lighting profiles with generation settings and source-preservation
+instructions, and outputs one MP4 per variant through the canonical workflow.
+
 Separate the number of desired outputs from their execution concurrency:
 
 | Setting | What it expands |
