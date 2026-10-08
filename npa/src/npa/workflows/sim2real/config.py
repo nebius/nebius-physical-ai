@@ -35,6 +35,8 @@ from npa.workflows.sim2real.artifact_config import (
     resolve_artifact_bucket,
     resolve_artifact_endpoint,
     resolve_artifact_prefix,
+    resolve_run_id,
+    resolve_trigger_dataset_uri,
 )
 from npa.workflows.sim2real.models import (
     Sim2RealLoopConfig,
@@ -45,7 +47,6 @@ from npa.workflows.sim2real.models import (
     default_policy_image,
     default_trainer_image,
     default_vlm_image,
-    new_run_id,
 )
 from npa.workflows.sim2real.utils import (
     _bool_value,
@@ -57,9 +58,7 @@ from npa.workflows.sim2real.utils import (
 def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
     """Build a Sim2Real loop config from explicit values and env fallbacks."""
 
-    run_id = str(
-        overrides.get("run_id") or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id()
-    )
+    run_id = resolve_run_id(str(overrides.get("run_id") or ""))
     bucket = resolve_artifact_bucket(str(overrides.get("s3_bucket") or ""))
     registry = str(
         overrides.get("registry") or os.environ.get("NPA_SIM2REAL_REGISTRY") or ""
@@ -80,11 +79,10 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         s3_bucket=bucket,
         s3_prefix=s3_prefix,
         s3_endpoint=resolve_artifact_endpoint(str(overrides.get("s3_endpoint") or "")),
-        trigger_dataset_uri=str(
-            overrides.get("trigger_dataset_uri")
-            or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_URI")
-            or os.environ.get("TRIGGER_DATASET_URI")
-            or (f"s3://{bucket}/sim2real-triggers/{run_id}/" if bucket else "")
+        trigger_dataset_uri=resolve_trigger_dataset_uri(
+            str(overrides.get("trigger_dataset_uri") or ""),
+            s3_bucket=bucket,
+            run_id=run_id,
         ),
         trigger_dataset_id=str(
             overrides.get("trigger_dataset_id")

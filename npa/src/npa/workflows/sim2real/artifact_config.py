@@ -71,7 +71,7 @@ def build_artifact_config_from_env(
     """
 
     return Sim2RealArtifactConfig(
-        run_id=run_id or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id(),
+        run_id=resolve_run_id(run_id),
         s3_bucket=resolve_artifact_bucket(s3_bucket),
         s3_prefix=resolve_artifact_prefix(s3_prefix),
         s3_endpoint=resolve_artifact_endpoint(s3_endpoint),
@@ -89,6 +89,41 @@ def build_artifact_config_from_env(
                 or os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES", "")
             )
         ),
+    )
+
+
+def resolve_run_id(override: str) -> str:
+    """Resolve an explicit run identifier or create one when none is configured.
+
+    Args:
+        override: Explicit run identifier, if any.
+    Returns:
+        The selected run identifier.
+    Raises:
+        None.
+    """
+
+    return override or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id()
+
+
+def resolve_trigger_dataset_uri(override: str, *, s3_bucket: str, run_id: str) -> str:
+    """Resolve the trigger dataset URI from the shared Sim2Real precedence policy.
+
+    Args:
+        override: Explicit trigger dataset URI, if any.
+        s3_bucket: Resolved artifact bucket used by the generated default.
+        run_id: Resolved run identifier used by the generated default.
+    Returns:
+        The selected trigger dataset URI, or an empty string without a bucket.
+    Raises:
+        None.
+    """
+
+    return (
+        override
+        or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_URI")
+        or os.environ.get("TRIGGER_DATASET_URI")
+        or (f"s3://{s3_bucket}/sim2real-triggers/{run_id}/" if s3_bucket else "")
     )
 
 

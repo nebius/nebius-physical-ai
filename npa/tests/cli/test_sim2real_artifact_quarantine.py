@@ -443,6 +443,40 @@ def test_execution_config_uses_shared_artifact_storage_resolvers(
     )
 
 
+def test_execution_config_uses_shared_artifact_run_and_trigger_resolvers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example.invalid/operator")
+    monkeypatch.setattr(
+        execution_config,
+        "resolve_run_id",
+        lambda value: calls.append(("run_id", value)) or "shared-run",
+    )
+    monkeypatch.setattr(
+        execution_config,
+        "resolve_trigger_dataset_uri",
+        lambda value, *, s3_bucket, run_id: (
+            calls.append(("trigger", value, s3_bucket, run_id)) or "s3://shared/trigger"
+        ),
+    )
+
+    config = execution_config.build_config_from_env(
+        run_id="explicit-run",
+        s3_bucket="explicit-bucket",
+        trigger_dataset_uri="s3://explicit/trigger",
+    )
+
+    assert calls == [
+        ("run_id", "explicit-run"),
+        ("trigger", "s3://explicit/trigger", "explicit-bucket", "shared-run"),
+    ]
+    assert (config.run_id, config.trigger_dataset_uri) == (
+        "shared-run",
+        "s3://shared/trigger",
+    )
+
+
 def test_sdk_output_paths_reaches_existing_artifacts_while_images_are_quarantined(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -455,6 +489,37 @@ def test_sdk_output_paths_reaches_existing_artifacts_while_images_are_quarantine
     )
     assert paths["root"] == "s3://example-bucket/completed/archived-run/"
     assert paths["stage_10_eval_heldout"].endswith("outer-03/report.json")
+
+
+def test_sdk_output_paths_uses_shared_artifact_run_and_trigger_resolvers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        sim2real_sdk,
+        "resolve_run_id",
+        lambda value: calls.append(("run_id", value)) or "shared-run",
+    )
+    monkeypatch.setattr(
+        sim2real_sdk,
+        "resolve_trigger_dataset_uri",
+        lambda value, *, s3_bucket, run_id: (
+            calls.append(("trigger", value, s3_bucket, run_id)) or "s3://shared/trigger"
+        ),
+    )
+
+    paths = sim2real_sdk.output_paths(
+        run_id="explicit-run",
+        s3_bucket="explicit-bucket",
+        trigger_dataset_uri="s3://explicit/trigger",
+    )
+
+    assert calls == [
+        ("run_id", "explicit-run"),
+        ("trigger", "s3://explicit/trigger", "explicit-bucket", "shared-run"),
+    ]
+    assert paths["root"] == "s3://explicit-bucket/sim2real-b/shared-run/"
+    assert paths["trigger_dataset"] == "s3://shared/trigger"
 
 
 @pytest.mark.parametrize("explicit", [False, True])
