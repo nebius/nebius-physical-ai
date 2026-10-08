@@ -54,7 +54,42 @@ On 2026-10-06 the image's shipped golden evaluation ran on one NVIDIA H200 (`sm_
 | 2 | 297 | 297 | 110.47 | 111.39 | 37458.00 |
 | 3 | 137 | 137 | 38.45 | 39.27 | 37458.00 |
 
-The stitched 30-second video decoded fully at 832×480, 24 fps and 720 frames. Peak device used was **38,251 MiB** from 511 samples at 0.5-second intervals. This is a single golden rollout on one GPU. The 16-replica serving deployment, concurrent requests and augmentation were not measured on H200, and the [B200 acceptance](#measured-b200-acceptance) above is not inferred for H200.
+The stitched 30-second video decoded fully at 832×480, 24 fps and 720 frames. Peak device used was **38,251 MiB** from 511 samples at 0.5-second intervals. This is a single golden rollout on one GPU. The [H200 serving deployment](#measured-h200-serving-deployment) below was measured separately; augmentation was not measured on H200.
+
+## Measured H200 serving deployment
+
+On 2026-10-07 the same locally built image (`sha256:cd0f1aa06eae…`) ran as the RayService in this directory on one node with eight NVIDIA H200 GPUs (143,771 MiB each, 700 W power limit) and an Intel Xeon Platinum 8468 host: eight model replicas, one per GPU, with Cosmos3-Nano revision `7a312c86`. The cluster was single-node k3s v1.36.5+k3s1 with containerd's default runtime set to `nvidia`, the NVIDIA device plugin v0.17.3 and the KubeRay operator 1.7.0 watching `workbench`. It was set up with kubectl and Helm directly; NPA's cluster provisioning and GPU health checks were not part of this run.
+
+The repository manifests were rendered into private copies with these changes for a single node, for H200 and for a locally imported image:
+
+- replicas reduced from 16 to 8 in the serve config and worker group;
+- the head's affinity for nodes without GPUs removed, with the head still at zero Ray GPUs;
+- the worker GPU product selector set to H200;
+- `NPA_COSMOS3_NANO_VIDEO_EXPECTED_GPU=H200` added to the worker container;
+- the managed CSI storage class replaced by a 200Gi hostPath persistent volume (the repository claim requests 512Gi);
+- the image set to the local tag, with the registry pull secret removed.
+
+The rendered manifests are not in this repository, so the run cannot be reproduced from the repository files alone. Unauthenticated requests to the API and to the Ray dashboard both returned 401. The weights Job staged the model and all replicas were initialized before timing.
+
+Acceptance used the B200 shape: one full 30-second continuation video through the SDK (S1), then eight concurrent requests through the CLI (C1 to C8). All nine clips passed full decoding at 832×480, 24 fps and 720 frames. The two batches published 13 and 97 objects to S3-compatible storage with read-after-write hash verification. The single-request batch took **276.91 s** and the eight-request batch **281.76 s**. The client ran from the same source as the image. The B200 client predates that source, so the timing boundaries match by field definition; they were not compared run to run.
+
+| Request | Chunk 1 (s) | Chunk 2 (s) | Chunk 3 (s) | Server total (s) | Client total (s) | Peak allocator reserved (MiB) | Peak device used (MiB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| S1 | 111.08 | 112.42 | 39.50 | 273.64 | 276.87 | 37458.00 | 38251.00 |
+| C1 | 112.32 | 113.65 | 40.14 | 277.92 | 281.29 | 37458.00 | 38251.00 |
+| C2 | 112.40 | 113.92 | 40.37 | 277.38 | 280.55 | 37458.00 | 38251.00 |
+| C3 | 111.21 | 112.40 | 39.66 | 274.35 | 277.79 | 37458.00 | 38251.00 |
+| C4 | 112.99 | 114.15 | 40.37 | 278.42 | 281.57 | 37458.00 | 38251.00 |
+| C5 | 111.21 | 112.65 | 39.77 | 274.28 | 277.68 | 37458.00 | 38251.00 |
+| C6 | 112.41 | 112.96 | 40.02 | 275.35 | 278.38 | 37458.00 | 38251.00 |
+| C7 | 112.66 | 114.03 | 40.26 | 277.67 | 280.68 | 37458.00 | 38251.00 |
+| C8 | 111.14 | 112.41 | 39.81 | 273.06 | 276.23 | 37458.00 | 38251.00 |
+
+Columns follow the B200 table's definitions: chunk time is the synchronous diffusion HTTP round trip, server total runs from generation through GPU sampler teardown, and client total adds routing, artifact downloads and client validation. Device usage was sampled every 0.5 seconds on each request's assigned H200. All nine requests reported the same two memory values, which also match the H200 golden evaluation; device used exceeds allocator reserved by 793 MiB in each. The B200 table's higher C1 row has no H200 counterpart.
+
+The eight-request batch completed **8/8** videos, with all eight replicas serving one request each at the same time: eight overlapping rollout intervals and eight overlapping diffusion chunk requests.
+
+For the single request, H200 took 1.85×, 1.87× and 1.76× as long as B200 for the three chunks (111.08 s against 59.89 s, 112.42 s against 60.04 s, 39.50 s against 22.46 s) and 1.82× as long in server total (273.64 s against 149.99 s). End to end, the H200 batches took 1.78× (276.91 s against 155.85 s) and 1.75× (281.76 s against 161.23 s) as long. These runs are unpaired. They also differ in host, cluster, storage, replica count (8 against 16), image build and date, and kernel selection on `sm_90` against `sm_100` was not examined. Each platform has one batch of each shape and no repeat runs. Sustained throughput, augmentation and the 16-replica managed-Kubernetes topology were not measured on H200.
 
 ## Measured full-source augmentation
 

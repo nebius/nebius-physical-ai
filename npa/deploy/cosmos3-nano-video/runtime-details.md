@@ -141,11 +141,13 @@ count before applying the manifest. Worker device visibility stays under the
 Kubernetes device plugin and Ray's one-GPU assignment.
 
 Each replica's device-memory sampler refuses to start generation unless its one
-assigned GPU's name contains `B200`. `NPA_COSMOS3_NANO_VIDEO_EXPECTED_GPU`
-changes that expected name for qualification on another GPU family; the supplied
-manifests keep the `B200` default. The only non-B200 run on record is the
-[H200 golden evaluation](measurements.md#measured-h200-golden-evaluation), which
-does not qualify an H200 serving deployment.
+assigned GPU's name contains the expected name, `B200` by default.
+`NPA_COSMOS3_NANO_VIDEO_EXPECTED_GPU` changes that expected name for
+qualification on another GPU family; the supplied manifests keep the default. The non-B200 runs on record are the
+[H200 golden evaluation](measurements.md#measured-h200-golden-evaluation) and an
+[eight-replica H200 serving deployment](measurements.md#measured-h200-serving-deployment)
+on one node, which used privately rendered manifests that are not in this
+repository.
 
 For a mixed cluster, declare the planned per-node GPU counts through
 `GpuHealthConfig.expected_gpu_counts`. Its optional `nvswitch_gpu_counts` subset
