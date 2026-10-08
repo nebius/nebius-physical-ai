@@ -257,8 +257,12 @@ successfully evaluated 1/1 generated-media inputs; RetinaFace postprocessing
 ran. The native receipt reported effective guardrail execution. The nonblank
 960×960 JPEG was 183,829 bytes with SHA-256
 `d80f7d11c49d66b12d3c896a9aa55a6d79b02de5a8ca24041a0e15b8efb4f2fd`.
-The accepted image digest is recorded in
-[`public_release_manifest.json`](../../npa/src/npa/deploy/public_release_manifest.json).
+The accepted r7 image digest is recorded in the
+[`GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES`](../../npa/src/npa/deploy/images.py)
+inventory. The Cosmos3 entry in
+[`public_release_manifest.json`](../../npa/src/npa/deploy/public_release_manifest.json)
+is instead a current workflow-validation candidate and is not an accepted
+release.
 This is text-to-image guardrail evidence; other generation modes require their
 own workload validation.
 
