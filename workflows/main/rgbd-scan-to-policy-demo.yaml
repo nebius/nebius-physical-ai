@@ -51,7 +51,7 @@ states:
     resources: cpu
     run:
       argv:
-      - /opt/npa/venv/bin/python
+      - /opt/npa/sim/venv/bin/python
       - -m
       - npa.workbench.nurec.navigation_sample
       - --output-path
@@ -65,7 +65,7 @@ states:
     resources: reconstruction
     run:
       argv:
-      - /opt/npa/venv/bin/python
+      - /opt/npa/sim/venv/bin/python
       - -m
       - npa.workbench.nurec.navigation_sample_stages
       - reconstruct
@@ -91,14 +91,14 @@ states:
 
         trap ''rm -rf "$usd_site"'' EXIT
 
-        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        /opt/npa/sim/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
 
         export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
 
-        /opt/npa/venv/bin/python -c ''from pxr import Usd; assert Usd.GetVersion() == (0, 26, 8);
+        /opt/npa/sim/venv/bin/python -c ''from pxr import Usd; assert Usd.GetVersion() == (0, 26, 8);
         print("OpenUSD:", Usd.GetVersion())''
 
-        /opt/npa/venv/bin/python "$@"
+        /opt/npa/sim/venv/bin/python "$@"
 
         '
       - scan-assemble
@@ -122,7 +122,7 @@ states:
     resources: cpu
     run:
       argv:
-      - /opt/npa/venv/bin/python
+      - /opt/npa/sim/venv/bin/python
       - -m
       - npa.workbench.nurec.navigation_sample_stages
       - cases
@@ -164,7 +164,7 @@ states:
     resources: cpu
     run:
       argv:
-      - /opt/npa/venv/bin/python
+      - /opt/npa/sim/venv/bin/python
       - -m
       - npa.workbench.nurec.navigation_sample_stages
       - policy
