@@ -1465,6 +1465,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "sim2real-pi05.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "Execution requires explicit task-scoped Gemma terms acceptance, "
+            "immutable private OpenPI and Isaac images, scoped service RBAC, a "
+            "prewarmed Isaac cache, and simultaneously healthy B200 and RTX capacity."
+        ),
+        runtime=True,
+        notes=(
+            "Released-surface Franka expert collection, dense OpenPI/LeRobot export, "
+            "base and adapted pi0.5 closed-loop gold evaluation, and factual MP4/RRD."
+        ),
+    ),
+    SubmitLiveCase(
         "byof.yaml",
         "multi",
         plan_only=True,
