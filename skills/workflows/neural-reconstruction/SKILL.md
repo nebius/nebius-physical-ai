@@ -132,8 +132,10 @@ npa workbench nurec status      # what a run prefix holds, stage by stage
 
 Default: **`nvidia/PhysicalAI-NuRec-PPISP`** — ungated, CC-BY-4.0, real
 photographic captures of four outdoor object-centric scenes shipped **already in
-NCore V4**, which is what NRE consumes. Scene `struktur28`, variant `auto`, is
-the small default (59 images across two cameras, ~1.1 GB archive).
+NCore V4**, which is what NRE consumes. The main demo and single-pod example
+select scene `struktur28`, variant `standard`, for the complete capture. The
+standalone `fetch` command retains `auto` as its small-capture default; pass
+`--variant standard` to match the workflow. Both variants share the ~1.1 GB archive.
 
 The `nvidia/PhysicalAI-Autonomous-Vehicles*` family (raw clips, `-NCore`, and the
 pre-built `-NuRec` USDZ scenes) is **gated**: the account that owns `HF_TOKEN`
@@ -326,6 +328,12 @@ before claiming that every source image participated in training. The COLMAP
 multi-camera path still requires a real full RTX run after integration; offline
 PLY tests do not validate native reconstruction quality.
 
+The default object-centric recipe uses full-resolution training
+(`dataset.n_train_sequential_image_subsample=1`) and native PPISP camera-response
+correction (`model/post_processing@model.post_processing.b=ppisp`). Explicit
+Hydra overrides take precedence. Custom recipes keep their own defaults. The
+native 30,000-step budget remains unchanged.
+
 Enumerate what a given release actually ships with:
 
 ```bash
@@ -347,6 +355,16 @@ model was trained on. That is **not** a novel view. The tool therefore emits
 - `--renderer default` (the artifact's own trained renderer) is the default.
   `nrend` is faster but needs the nrend model dictionary embedded in the USDZ,
   which the object-centric recipe disables.
+
+Independent photographic cameras do not form a rigid sensor rig. NPA embeds
+`npa-capture-trajectory.json` in their USDZ after training, preserving every
+camera's exact source pose and the original native archive entries. Rendering
+selects native `training-rig-poses-per-frame` calibration with that trajectory,
+identity camera-to-rig transforms, and the requested offset in each camera's
+local frame. Intrinsics, frame times and world coordinates must match the native
+artifact; missing exact source poses fail before publishing the reconstruction.
+Explicit custom trajectories, training-view replication and native rigid-rig
+captures retain their existing paths.
 
 ## Artifact Layout
 
@@ -566,6 +584,26 @@ required only for a gated/private dataset override. Budget ~30 min end to end (i
 7200) for a slower cluster. Measured: **1 passed in 28m47s**, with the underlying
 SkyPilot job taking 26m10s and reporting `test/psnr 31.19`, `test/ssim 0.833`,
 `test/lpips 0.267`.
+
+### Default quality readback
+
+After the standard main demo completes, independently read its metrics and
+effective settings from S3:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_NUREC_QUALITY_RUN_URI=s3://<bucket>/<prefix>/neural-reconstruction/<run-id> \
+  npa/.venv/bin/python -m pytest \
+    npa/tests/e2e/test_nurec_reconstruct_live_e2e.py \
+    -k default_quality_readback -q
+```
+
+Supply the same AWS credentials and endpoint as other live readback tests. This
+requires the complete capture, native 30,000-step recipe, full-resolution
+training and rendering, PPISP, photographic poses and the nonzero offset. It
+rejects metrics below PSNR 28 / SSIM 0.8 or above LPIPS 0.3. These checks
+supplement visual inspection of multiple cameras; they do not prove unseen
+surface quality.
 
 ### Offline verification
 

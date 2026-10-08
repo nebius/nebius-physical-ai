@@ -387,3 +387,55 @@ def test_nurec_declarative_spec_runs_multi_step_on_real_gpus(tmp_path: Path) -> 
     data = local_rrd.read_bytes()
     assert recording_has_run_entities(data) is True
     assert is_stock_demo_recording(data) is False
+
+
+def test_nurec_default_quality_readback(tmp_path: Path) -> None:
+    """Reject the old blurry default using independently downloaded native metrics."""
+    if os.environ.get("NPA_INTEGRATION_E2E", "") != "1":
+        pytest.skip("set NPA_INTEGRATION_E2E=1 for independent artifact readback")
+    from urllib.parse import urlsplit
+
+    uri = urlsplit(_require("NPA_NUREC_QUALITY_RUN_URI"))
+    assert uri.scheme == "s3" and uri.netloc and uri.path.strip("/")
+    client = _s3_client()
+    paths = _download_quality_artifacts(client, uri, tmp_path)
+    _assert_default_quality(paths)
+
+
+def _download_quality_artifacts(client, uri, tmp_path):
+    paths = {}
+    for name in (
+        "ncore/manifest.json",
+        "reconstruction/metrics.yaml",
+        "reconstruction/parsed.yaml",
+        "novel_views/render_cli_args.json",
+    ):
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        client.download_file(uri.netloc, uri.path.strip("/") + "/" + name, str(target))
+        paths[name] = target
+    return paths
+
+
+def _assert_default_quality(paths):
+    import yaml
+    from npa.workbench.nurec.nurec import parse_metrics_yaml
+
+    manifest = json.loads(paths["ncore/manifest.json"].read_text())
+    assert manifest["observed_variant"] == "standard"
+    metrics = parse_metrics_yaml(paths["reconstruction/metrics.yaml"])
+    assert metrics["test/psnr"] >= 28.0, metrics
+    assert metrics["test/ssim"] >= 0.8, metrics
+    assert metrics["test/lpips"] <= 0.3, metrics
+    config = yaml.safe_load(paths["reconstruction/parsed.yaml"].read_text())
+    assert config["dataset"]["n_train_sequential_image_subsample"] == 1
+    assert config["model"]["post_processing"]["b"]["name"] == "ppisp-post-processing"
+    assert config["dataset"]["n_samples_per_epoch"] == 30000
+    assert config["trainer"]["max_epochs"] == 1
+    rendering = json.loads(paths["novel_views/render_cli_args.json"].read_text())[
+        "args"
+    ]
+    assert rendering["image_scale"] == 1.0
+    assert rendering["calib_source"] == "training-rig-poses-per-frame"
+    assert rendering["replicate_training_views"] is False
+    assert rendering["rig_translation_offset"] == [0.0, 0.25, 0.0]

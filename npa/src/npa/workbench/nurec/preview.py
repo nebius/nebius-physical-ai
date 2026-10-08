@@ -30,7 +30,9 @@ def _group(title: str, images: list[Path], note: str) -> dict:
             frames.append(
                 {
                     "label": f"Image {index + 1} of {len(images)}",
-                    "images": [{"label": title, "data": image_preview(image, width=1600)}],
+                    "images": [
+                        {"label": title, "data": image_preview(image, width=1600)}
+                    ],
                 }
             )
     return {"title": title, "note": note, "frames": frames}

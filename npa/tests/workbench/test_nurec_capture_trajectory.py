@@ -20,7 +20,24 @@ def _capture(tmp_path, monkeypatch):
     second = first.copy()
     second[:, 1, 3] = [5, 7, 9]
     poses = {"camera1": (first, times), "camera2": (second, times)}
-    native = {
+    native = _native_trajectory(poses, times, first)
+    artifact = tmp_path / "last.usdz"
+    with ZipFile(artifact, "w") as archive:
+        archive.writestr("rig_trajectories.json", json.dumps(native))
+        archive.writestr("checkpoint.ckpt", b"unchanged native model")
+    meta = tmp_path / "sequence.json"
+    meta.write_text("{}")
+    monkeypatch.setattr(
+        capture, "read_rig_sidecar", lambda path: {"reference_camera": "camera1"}
+    )
+    monkeypatch.setattr(
+        "npa.workbench.nurec.ncore_rig.camera_world_trajectories", lambda path: poses
+    )
+    return artifact, meta, native, poses
+
+
+def _native_trajectory(poses, times, first):
+    return {
         "world_to_nre": {"matrix": np.eye(4).tolist()},
         "camera_calibrations": {
             camera: {
@@ -41,19 +58,6 @@ def _capture(tmp_path, monkeypatch):
             }
         ],
     }
-    artifact = tmp_path / "last.usdz"
-    with ZipFile(artifact, "w") as archive:
-        archive.writestr("rig_trajectories.json", json.dumps(native))
-        archive.writestr("checkpoint.ckpt", b"unchanged native model")
-    meta = tmp_path / "sequence.json"
-    meta.write_text("{}")
-    monkeypatch.setattr(
-        capture, "read_rig_sidecar", lambda path: {"reference_camera": "camera1"}
-    )
-    monkeypatch.setattr(
-        "npa.workbench.nurec.ncore_rig.camera_world_trajectories", lambda path: poses
-    )
-    return artifact, meta, native, poses
 
 
 def test_each_camera_preserves_its_actual_pose_and_native_model(tmp_path, monkeypatch):
