@@ -1986,6 +1986,7 @@ def submit_cmd(
         return
 
     prepared_npa = None
+    workflow_validation_candidates: list[dict[str, str]] = []
     execution_target = None
     execution_preflight_report: dict[str, Any] = {}
     deploy_targets = []
@@ -3006,6 +3007,15 @@ def submit_cmd(
             _fail(str(exc), secrets=submission_redaction_secrets)
             return
 
+        workflow_validation_candidates = _workflow_validation_candidate_payload(
+            prepared_npa.spec,
+            prepared_npa.plan.steps,
+            run_id=resolved_run_id,
+            options=npa_render_options,
+        )
+        if output_format != OutputFormat.json:
+            _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
+
         if plan_only:
             rendered = prepared_npa.skypilot_yaml_path.read_text(encoding="utf-8")
             infrastructure = {
@@ -3083,6 +3093,7 @@ def submit_cmd(
                 "infrastructure": infrastructure,
                 "plan": prepared_npa.plan.to_dict(),
                 "skypilot_yaml": rendered,
+                "workflow_validation_candidates": workflow_validation_candidates,
             }
             if runtime:
                 planned_payload["run_prefix_uri"] = (
@@ -3610,6 +3621,8 @@ def submit_cmd(
 
     if output_format == OutputFormat.json:
         payload = {**result.__dict__, "run_id": resolved_run_id}
+        if workflow_validation_candidates:
+            payload["workflow_validation_candidates"] = workflow_validation_candidates
         if submission_warnings:
             payload["submission_warnings"] = submission_warnings
         typer.echo(
@@ -4480,6 +4493,41 @@ def _plan_preflight_image_requirements(
             spec, execution_steps, run_id=run_id, options=options
         ),
     )
+
+
+def _workflow_validation_candidate_payload(
+    spec: "NpaWorkflowSpec",
+    steps: Sequence["PlanStep"],
+    *,
+    run_id: str,
+    options: "SkypilotRenderOptions",
+) -> list[dict[str, str]]:
+    """Return non-release image selections for agent and operator control planes."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        workflow_validation_candidate_selections,
+    )
+
+    return [
+        selection.to_dict()
+        for selection in workflow_validation_candidate_selections(
+            spec, steps, run_id=run_id, options=options
+        )
+    ]
+
+
+def _emit_workflow_validation_candidate_notices(
+    candidates: Sequence[Mapping[str, str]],
+) -> None:
+    """Tell human CLI callers that a governed candidate is not an accepted release."""
+
+    for candidate in candidates:
+        typer.echo(
+            "warning: "
+            f"{candidate['tool_ref']} selected {candidate['image']} as a "
+            "workflow validation candidate, not an accepted release",
+            err=True,
+        )
 
 
 def _image_preflight_execution_steps(
@@ -10184,6 +10232,9 @@ def preflight_images_cmd(
         typer.echo(f"registry: {resolved_registry}", err=True)
     run_id = f"{spec.name}-preflight"
     try:
+        steps = _image_preflight_steps(
+            spec, run_id=run_id, assume_decision=assume_decision
+        )
         images, pull_requirements = _plan_preflight_image_requirements(
             spec,
             run_id=run_id,
@@ -10194,6 +10245,18 @@ def preflight_images_cmd(
     except (NpaWorkflowError, ValueError) as exc:
         _fail(f"image preflight planning failed: {exc}")
         return
+    _emit_workflow_validation_candidate_notices(
+        [
+            candidate
+            for candidate in _workflow_validation_candidate_payload(
+                spec,
+                steps,
+                run_id=run_id,
+                options=options,
+            )
+            if candidate["image"] in images
+        ]
+    )
     explicit_pull_secrets: tuple[str, ...] = ()
     if image_pull_secret:
         explicit_pull_secrets = tuple(

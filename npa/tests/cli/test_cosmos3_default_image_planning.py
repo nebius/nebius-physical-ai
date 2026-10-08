@@ -1,5 +1,6 @@
 """Exercise stock Cosmos3 image selection through real CLI planning paths."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,12 @@ from npa.cli.main import app
 from npa.deploy.images import public_release_manifest
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     plan_images,
+    resolve_task_image,
+    workflow_validation_candidate_selections,
 )
 from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
 
@@ -20,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "workflows/testing/cosmos3-generate.yaml"
 
 
-def _candidate_image():
+def _candidate_image() -> str:
     candidate = public_release_manifest()["workflow_validation_candidates"]["cosmos3"]
     return (
         "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3:dev-"
@@ -30,16 +34,38 @@ def _candidate_image():
     )
 
 
-def test_stock_generate_plans_the_exact_governed_image_without_overrides():
+def test_stock_generate_plans_the_exact_governed_image_without_overrides() -> None:
     spec = load_spec(SPEC)
     plan = build_plan(spec, run_id="stock-cosmos3")
     images = plan_images(
         spec, plan.steps, run_id="stock-cosmos3", options=SkypilotRenderOptions()
     )
     assert images == [_candidate_image()]
+    assert [
+        selection.to_dict()
+        for selection in workflow_validation_candidate_selections(
+            spec, plan.steps, run_id="stock-cosmos3", options=SkypilotRenderOptions()
+        )
+    ] == [
+        {
+            "tool_ref": "workbench.cosmos3.generate",
+            "image": _candidate_image(),
+            "release_status": "workflow_validation_candidate",
+        }
+    ]
+    assert not workflow_validation_candidate_selections(
+        spec,
+        plan.steps,
+        run_id="stock-cosmos3",
+        options=SkypilotRenderOptions(
+            image_overrides={
+                "*": "registry.example.invalid/operator/custom@sha256:" + "a" * 64
+            }
+        ),
+    )
 
 
-def test_stock_generate_submit_plan_uses_image_resolution():
+def test_stock_generate_submit_plan_uses_image_resolution() -> None:
     result = CliRunner().invoke(
         app,
         [
@@ -60,9 +86,40 @@ def test_stock_generate_submit_plan_uses_image_resolution():
     assert result.exit_code == 0, result.output
     assert "status: PLANNED" in result.output
     assert "no consumable public release" not in result.output
+    assert "workflow validation candidate, not an accepted release" in result.output
 
 
-def test_stock_generate_preflight_probes_the_governed_image(mocker):
+def test_stock_generate_submit_plan_json_reports_candidate_status() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SPEC),
+            "--plan-only",
+            "--no-deploy-if-absent",
+            "--infra",
+            "k8s/stock-test",
+            "--run-id",
+            "stock-cosmos3-json",
+            "--var",
+            "bucket=stock-test-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["workflow_validation_candidates"] == [
+        {
+            "tool_ref": "workbench.cosmos3.generate",
+            "image": _candidate_image(),
+            "release_status": "workflow_validation_candidate",
+        }
+    ]
+
+
+def test_stock_generate_preflight_probes_the_governed_image(mocker) -> None:
     checks = mocker.patch(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         return_value=[],
@@ -91,6 +148,7 @@ def test_stock_generate_preflight_probes_the_governed_image(mocker):
     assert result.exit_code == 0, result.output
     assert set(checks.call_args.args[0]) == {_candidate_image()}
     assert bootstrap.called
+    assert "workflow validation candidate, not an accepted release" in result.output
 
 
 @pytest.mark.parametrize(
@@ -101,10 +159,7 @@ def test_stock_generate_preflight_probes_the_governed_image(mocker):
         "workbench.cosmos3.policy_train",
     ],
 )
-def test_other_cosmos3_capabilities_keep_the_quarantine(tool_ref):
-    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
-
+def test_other_cosmos3_capabilities_keep_the_quarantine(tool_ref: str) -> None:
     assert tool_ref in TOOL_CATALOG
     with pytest.raises(NpaWorkflowError, match="no consumable public release"):
         resolve_task_image(tool_ref, {}, options=SkypilotRenderOptions())

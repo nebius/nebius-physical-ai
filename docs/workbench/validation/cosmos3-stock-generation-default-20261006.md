@@ -25,7 +25,9 @@ including its enabled guardrails and published artifact.
 Preserve the stock prompt, seed, guidance, steps, CPU and memory requests;
 an accelerator override qualifies only that override, not the stock default.
 The operator selects storage locations. An explicit immutable override is
-required for qualification against main.
+required for qualification against main. Leave `source_overlay` unset and do
+not set `NPA_SRC_OVERLAY`: the qualification must exercise the candidate's
+baked CLI, which is what the stock default submit runs.
 
 The tests exercise actual image planning, submit's plan-only route, and
 `preflight-images` with mocked external probes. They prove selection and probe

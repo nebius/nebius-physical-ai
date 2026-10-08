@@ -940,6 +940,71 @@ def resolve_task_image(
     return str(options.image_digest_pins.get(resolved, resolved)).strip()
 
 
+@dataclass(frozen=True)
+class WorkflowValidationCandidateSelection:
+    """One planned toolRef that resolves to a non-accepted image candidate."""
+
+    tool_ref: str
+    image: str
+
+    def to_dict(self) -> dict[str, str]:
+        """Return the stable control-plane representation for CLI output."""
+
+        return {
+            "tool_ref": self.tool_ref,
+            "image": self.image,
+            "release_status": "workflow_validation_candidate",
+        }
+
+
+def workflow_validation_candidate_selections(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+) -> tuple[WorkflowValidationCandidateSelection, ...]:
+    """Report candidate defaults selected after all image-override precedence.
+
+    The image reference is digest-pinned, but that does not mean it is in the
+    accepted-release inventory. Keep this provenance signal at the same rendering
+    boundary that applies exact, family, wildcard, resource, registry, and
+    digest-pin precedence.
+    """
+
+    from npa.deploy.images import public_workflow_image_default
+
+    selections: list[WorkflowValidationCandidateSelection] = []
+    seen: set[tuple[str, str]] = set()
+    for step in steps:
+        task = build_scheduler_task(spec, step, run_id=run_id)
+        tool_ref = str(task.get("tool_ref") or "")
+        tool = tool_image_key(tool_ref)
+        if not tool:
+            continue
+        candidate = public_workflow_image_default(
+            tool, tool_ref=tool_ref, registry=options.registry or None
+        )
+        if not candidate:
+            continue
+        image = resolve_task_image(
+            tool_ref, task.get("resources") or {}, options=options
+        )
+        selected_image = str(
+            options.image_digest_pins.get(candidate, candidate)
+        ).strip()
+        selection = (tool_ref, selected_image)
+        if image == selected_image and selection not in seen:
+            seen.add(selection)
+            selections.append(
+                WorkflowValidationCandidateSelection(
+                    tool_ref=tool_ref,
+                    image=selected_image,
+                )
+            )
+    return tuple(selections)
+
+
 #: How long to wait for a self-hosted model server to answer /health, and how often to ask.
 #: The server has to download a multi-GB checkpoint and load it onto the GPU first. The
 #: retired ``vlm-eval.yaml`` allowed 120 x 5 s = 600 s; a *cold* HF download of a 7B
