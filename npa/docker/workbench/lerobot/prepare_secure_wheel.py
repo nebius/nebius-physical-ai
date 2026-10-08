@@ -46,7 +46,7 @@ def _download(url: str, expected_hash: str) -> bytes:
     if url not in {WHEEL_URL, ARCHIVE_URL}:
         raise RuntimeError("unreviewed upstream download URL")
     parsed = urlsplit(url)
-    with closing(http.client.HTTPSConnection(parsed.hostname)) as connection:
+    with closing(http.client.HTTPSConnection(parsed.hostname, timeout=60)) as connection:
         connection.request("GET", parsed.path)
         response = connection.getresponse()
         if response.status != 200:

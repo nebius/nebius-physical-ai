@@ -169,3 +169,39 @@ def test_download_refuses_unreviewed_url_before_network(integration, monkeypatch
     monkeypatch.setattr(integration.http.client, "HTTPSConnection", unexpected_network)
     with pytest.raises(RuntimeError, match="unreviewed upstream download URL"):
         integration._download("https://example.invalid/unreviewed", "unused")
+
+
+def test_download_uses_a_bounded_https_connection(integration, monkeypatch):
+    content = b"pinned source bytes"
+    url = "https://files.pythonhosted.org/lerobot.whl"
+    calls = {}
+
+    class Response:
+        status = 200
+
+        def read(self):
+            return content
+
+    class Connection:
+        def __init__(self, host, timeout):
+            calls["connection"] = (host, timeout)
+
+        def request(self, method, path):
+            calls["request"] = (method, path)
+
+        def getresponse(self):
+            return Response()
+
+        def close(self):
+            calls["closed"] = True
+
+    monkeypatch.setattr(integration, "WHEEL_URL", url)
+    monkeypatch.setattr(integration, "WHEEL_SHA256", hashlib.sha256(content).hexdigest())
+    monkeypatch.setattr(integration.http.client, "HTTPSConnection", Connection)
+
+    assert integration._download(url, integration.WHEEL_SHA256) == content
+    assert calls == {
+        "connection": ("files.pythonhosted.org", 60),
+        "request": ("GET", "/lerobot.whl"),
+        "closed": True,
+    }
