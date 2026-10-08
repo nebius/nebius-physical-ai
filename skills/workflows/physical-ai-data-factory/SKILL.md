@@ -202,6 +202,17 @@ For pinned cup, coffee and cube-lift source selections and matched experiments,
 use `docs/workbench/guides/paidf-lerobot-realism.md`. Preserve the baseline's
 captions and appearance manifest when changing a sampling parameter, and review
 transparent objects, small contacts and generated padding separately.
+New Cosmos 3 preparation records `source_content_region` in input provenance
+and variant metadata. Source analysis also detects persistent paired black edge
+bands across every frame, including embedded source bars; ambiguous boundaries
+remain in the scene. Publication restores only known or detected padding from
+the source and verifies exact generated-scene pixel preservation after lossless
+encoding. Keep `raw_model_video.mp4` and the `padding_preservation` receipt.
+Evaluation validates the reference hash, keeps full-frame alignment checks, and
+excludes verified padding from all four scene checks. `spatial_evidence.padding`
+is a separate advisory diagnostic. Legacy outputs without region provenance keep
+full-frame scoring; malformed or stale provenance fails closed. Interior dark
+objects must remain in the scene. No additional recipe setting is needed. See `docs/workbench/guides/paidf-appearance-12.md` for details.
 `transfer_cfg_normalization` accepts `disabled` (default) or `enabled` with
 edge transfer and forwards native `normalize_cfg` sampling. Compare matched
 sources, captions, profiles and seeds; inspect the receipt's effective boolean
