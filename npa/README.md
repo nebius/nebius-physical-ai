@@ -17,6 +17,11 @@ execution through `npa workbench team` and `npa.sdk.workbench.team`. Existing us
 and groups receive workspace grants, personal namespaces, explicit GPU quotas,
 and scoped artifact storage. The guide covers configuration, credentials, CPU
 service deployment, and the live qualification required before production.
+Optional `browser_login` configuration adds real company sign-in and a live
+access portal without requiring personal Nebius accounts. Users and groups stay
+in the chosen identity provider. `npa workbench team whoami` and
+`TeamClient.whoami()` report the same personal permissions; see the
+[identity setup and session guide](../docs/workbench/team-identity.md).
 
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;

@@ -17,13 +17,21 @@ against an administrator-configured HTTPS JWKS endpoint. It requires `iss`,
 `aud`, `sub`, `iat`, and `exp`. Groups must be a list of strings. RS256 and ES256
 are supported. Proxy email headers and request-body identities confer no access.
 Obtain a token for the Workbench audience through the organization's existing
-login flow; this version has no separate login screen or password directory.
+login flow. Optional browser sign-in uses that same identity provider; Workbench
+does not maintain passwords or a separate people/group directory. Follow the
+[guide for users without Nebius accounts](team-identity.md) to connect company
+SSO or a self-hosted Keycloak installation and use the live access portal.
 
 A workspace can span clusters in different projects or clouds. Users need
 workspace access, not a Nebius account. Membership in one workspace grants
 nothing in another. A compatible Nebius issuer can be configured after verifying
 its tokens and claims; Nebius IAM roles and SAML assertions are not automatically
 translated. There is no automatic Nebius membership synchronization.
+
+`GET /v1/me`, `npa workbench team whoami`, and `TeamClient.whoami()` report the
+verified external identity and its current workspace permissions. Only the
+person's own allocations are returned. Membership without an allocation is
+reported explicitly and does not authorize job submission.
 
 Keep configuration and credentials private, and use absolute file paths. Example GPU values below are
 illustrative administrator choices, not defaults.

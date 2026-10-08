@@ -61,7 +61,13 @@ class TeamService:
             TeamError: Configuration is invalid or installation identity changed.
         """
         config = self.configuration()
-        fields = ("identity", "state_dir", "sky_endpoint", "sky_python")
+        fields = (
+            "identity",
+            "browser_login",
+            "state_dir",
+            "sky_endpoint",
+            "sky_python",
+        )
         if any(getattr(config, key) != getattr(self.initial, key) for key in fields):
             raise ConflictError("installation settings changed; restart the service")
         return config

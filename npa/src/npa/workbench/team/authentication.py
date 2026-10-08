@@ -47,6 +47,18 @@ class TokenVerifier:
         Raises:
             AuthenticationError: Token, signature, issuer, audience, or claims are invalid.
         """
+        return self._actor(self.claims(authorization))
+
+    def claims(self, authorization: str) -> dict:
+        """Return claims only after full signature and identity-provider validation.
+
+        Args:
+            authorization: Bearer authorization value.
+        Returns:
+            Verified claims for authentication and browser nonce validation.
+        Raises:
+            AuthenticationError: Token or required claims are invalid.
+        """
         import jwt
 
         scheme, separator, token = authorization.partition(" ")
@@ -63,7 +75,8 @@ class TokenVerifier:
                 issuer=self.provider.issuer,
                 options={"require": ["exp", "iat", "iss", "aud", "sub"]},
             )
-            return self._actor(claims)
+            self._actor(claims)
+            return claims
         except (jwt.PyJWTError, ValueError, TypeError) as exc:
             raise AuthenticationError("bearer token could not be verified") from exc
 

@@ -87,6 +87,50 @@ class IdentityProvider(Contract):
         return self
 
 
+class BrowserLogin(Contract):
+    """Configure optional browser sign-in against the installation's identity provider.
+
+    Args:
+        **data: Public HTTPS origin, client ID, optional private secret, and scopes.
+    Returns:
+        A validated browser login configuration.
+    Raises:
+        ValidationError: The origin or requested scopes are invalid.
+    """
+
+    public_url: str
+    client_id: str = Field(min_length=1)
+    client_secret_file: AbsolutePath | None = None
+    scopes: tuple[str, ...] = ("openid", "profile", "email", "groups")
+
+    @model_validator(mode="after")
+    def validate_browser(self):
+        """Require one explicit HTTPS origin and the OpenID Connect scope.
+
+        Args:
+            None.
+        Returns:
+            Validated browser configuration.
+        Raises:
+            ValueError: The origin or scopes cannot be used safely.
+        """
+        parsed = urlsplit(self.public_url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in ("", "/")
+        ):
+            raise ValueError("browser public_url must be an HTTPS origin")
+        if "openid" not in self.scopes or any(
+            not scope or any(char.isspace() for char in scope) for scope in self.scopes
+        ):
+            raise ValueError("browser scopes must include openid and contain no spaces")
+        return self
+
+
 class Grant(Contract):
     """Assign a workspace role to an external subject or group.
 
@@ -276,6 +320,7 @@ class TeamConfig(Contract):
 
     api_version: Literal["npa.team/v1"] = "npa.team/v1"
     identity: IdentityProvider
+    browser_login: BrowserLogin | None = None
     clusters: dict[Name, Cluster]
     workspaces: dict[Name, Workspace]
     state_dir: AbsolutePath
@@ -294,6 +339,13 @@ class TeamConfig(Contract):
         Raises:
             ValueError: A policy constraint is violated.
         """
+        if (
+            self.browser_login
+            and self.browser_login.client_id != self.identity.audience
+        ):
+            raise ValueError(
+                "browser client ID must equal the configured token audience"
+            )
         for workspace in self.workspaces.values():
             if set(workspace.gpu_limits) - self.clusters.keys():
                 raise ValueError("workspace names an unenrolled cluster")

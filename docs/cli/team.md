@@ -15,6 +15,7 @@ render  Render cluster boundaries and private SkyPilot configuration for review.
 enroll  Apply and verify one administrator-selected personal cluster allocation.
 export-kubeconfig  Export selected cluster credentials to a new private server-only file.
 serve  Run one private team supervisor behind the administrator's HTTPS ingress.
+whoami  Show verified identity and workspace access without a personal cloud account.
 submit  Submit an NPA workflow through the authenticated team execution boundary.
 run  Inspect, cancel, or resume an owned run using the authenticated team API.
 list  List the authenticated person's runs in one workspace.
@@ -37,6 +38,7 @@ render-service  Render a CPU-only gateway and private SkyPilot sidecar into a ne
 | `enroll` | Apply and verify one administrator-selected personal cluster allocation. |
 | `export-kubeconfig` | Export selected cluster credentials to a new private server-only file. |
 | `serve` | Run one private team supervisor behind the administrator's HTTPS ingress. |
+| `whoami` | Show verified identity and workspace access without a personal cloud account. |
 | `submit` | Submit an NPA workflow through the authenticated team execution boundary. |
 | `run` | Inspect, cancel, or resume an owned run using the authenticated team API. |
 | `list` | List the authenticated person's runs in one workspace. |

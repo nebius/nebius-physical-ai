@@ -6,11 +6,13 @@ import fcntl
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .authentication import TokenVerifier
+from .access_profile import access_profile
+from .browser import create_browser, install_browser, secure_response
 from .enrollment import verify_enrollment
 from .errors import TeamError
 from .models import SubmitRequest, load_config
@@ -32,26 +34,62 @@ def create_app(config_path: Path, *, service=None, verifier=None):
         lambda: load_config(config_path), enrollment_check=verify_enrollment
     )
     verifier = verifier or TokenVerifier(service.config().identity)
+    browser = create_browser(service.initial, verifier)
 
+    app = FastAPI(
+        title="Workbench team API",
+        lifespan=_lifespan(service, browser),
+        docs_url=None,
+        redoc_url=None,
+    )
+    actor = _authentication(service, verifier, browser)
+    _errors(app)
+    _run_routes(app, service, actor)
+    _artifact_routes(app, service, actor)
+    _access_routes(app, service, actor, browser)
+    return app
+
+
+def _lifespan(service, browser):
     @asynccontextmanager
     async def lifespan(app):
         with (service.initial.state_dir / "server.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             service.ledger.recover()
-            yield
+            try:
+                yield
+            finally:
+                if browser:
+                    browser.provider.close()
 
-    app = FastAPI(
-        title="Workbench team API", lifespan=lifespan, docs_url=None, redoc_url=None
-    )
+    return lifespan
 
-    def actor(authorization: str = Header(default="")):
+
+def _authentication(service, verifier, browser):
+    def actor(request: Request):
         service.config()
+        authorization = request.headers.get("authorization", "")
+        if not authorization and browser:
+            authorization = browser.authorization(request)
         return verifier.verify(authorization)
 
-    _errors(app)
-    _run_routes(app, service, actor)
-    _artifact_routes(app, service, actor)
-    return app
+    return actor
+
+
+def _access_routes(app, service, actor, browser):
+    @app.middleware("http")
+    async def privacy(request, call_next):
+        return secure_response(await call_next(request))
+
+    @app.get("/v1/me")
+    def me(request: Request, identity=Depends(actor)):
+        profile = access_profile(service.config(), identity)
+        if browser and not request.headers.get("authorization"):
+            profile.update(browser.details(request))
+        return profile
+
+    if browser:
+        install_browser(app, browser, actor)
 
 
 def _errors(app):

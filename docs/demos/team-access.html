@@ -1060,8 +1060,8 @@ finally:
                     <td>Identity + groups</td>
                     <td>Verified external tokens mapped to workspaces</td>
                     <td>
-                      No login UI, directory sync, or automatic personal
-                      provisioning
+                      Optional live login portal; no directory sync or automatic
+                      personal provisioning
                     </td>
                   </tr>
                   <tr>
@@ -1127,7 +1127,8 @@ finally:
                     <td>Identity and group access</td>
                     <td>Switch Alice, Casey, Dana, Eve</td>
                     <td>
-                      Recorded real JWT/API policy checks; no real SSO login
+                      Recorded JWT/API policy checks; this offline page does not
+                      perform SSO login
                     </td>
                   </tr>
                   <tr>
@@ -1357,7 +1358,7 @@ finally:
       "detail": "The actual service checks the current denylist. Already issued cloud keys are not revoked by this check."
     }
   ],
-  "source_sha256": "2e60ec0c5e34632695b70647787929b171fc27b4d9f8e7631108a9abd9442bef",
+  "source_sha256": "10792d81756a9069c6b77bee761aa4f7ea3debc47d2b06788c26429684be68e6",
   "scope": "20 real local API and policy checks passed. Synthetic JWT issuer; simulated execution and enrollment. No Kubernetes or cloud-storage calls."
 }</script>
     <script>

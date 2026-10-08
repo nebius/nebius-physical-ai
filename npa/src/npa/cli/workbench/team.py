@@ -148,6 +148,31 @@ def serve_cmd(
     serve(config.resolve(), host=host, port=port)
 
 
+@app.command("whoami")
+@json_stdout_contract
+def whoami_cmd(
+    endpoint: str = typer.Option(..., "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
+    token_env: str = typer.Option("NPA_TEAM_TOKEN", "--token-env"),
+    output_format: str = typer.Option("json", "--output-format"),
+):
+    """Show verified identity and workspace access without a personal cloud account.
+
+    Args:
+        endpoint, token_env: HTTPS gateway and external bearer-token variable.
+        output_format: Required JSON response format.
+    Returns:
+        None; emits JSON to standard output.
+    Raises:
+        TeamError: Authentication, authorization, or transport fails.
+    """
+    _json_only(output_format)
+    client = TeamClient(endpoint, os.environ.get(token_env, ""))
+    try:
+        typer.echo(json.dumps(client.whoami()))
+    finally:
+        client.close()
+
+
 @app.command("submit")
 @json_stdout_contract
 def submit_cmd(

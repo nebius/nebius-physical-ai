@@ -66,6 +66,18 @@ class TeamClient:
         """
         return self._request("POST", "v1/runs", json=request.model_dump(mode="json"))
 
+    def whoami(self):
+        """Read verified identity and current personal workspace permissions.
+
+        Args:
+            None.
+        Returns:
+            External identity, groups, and authorized workspaces.
+        Raises:
+            TeamError: Authentication or transport fails.
+        """
+        return self._request("GET", "v1/me")
+
     def list(self, workspace: str):
         """List the authenticated person's own runs in a workspace.
 

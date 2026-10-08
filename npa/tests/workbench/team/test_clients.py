@@ -115,6 +115,28 @@ def test_cli_and_sdk_share_the_submission_contract(tmp_path, workflow, monkeypat
     assert "test-token" not in result.output
 
 
+def test_cli_whoami_uses_the_authenticated_client(monkeypatch):
+    class Client:
+        def __init__(self, endpoint, token):
+            assert endpoint == "https://team.example.test"
+            assert token == "external-token"
+
+        def whoami(self):
+            return {"subject": "verified", "workspaces": []}
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(cli, "TeamClient", Client)
+    monkeypatch.setenv("NPA_TEAM_TOKEN", "external-token")
+    result = CliRunner().invoke(
+        cli.app, ["whoami", "--endpoint", "https://team.example.test"]
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["subject"] == "verified"
+    assert "external-token" not in result.output
+
+
 def test_render_cli_writes_private_files(config, tmp_path):
     source = tmp_path / "team.yaml"
     source.write_text(yaml.safe_dump(config.model_dump(mode="json")))
