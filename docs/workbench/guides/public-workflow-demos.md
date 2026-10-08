@@ -144,6 +144,21 @@ put storage credentials in a browser URL. Use `--no-open` on a remote terminal
 to print the local report path. Preserve the full S3 artifacts for training and
 independent review; the HTML is a visual summary.
 
+Reports offer a **Walkthrough** view with key measurements and an **Engineering**
+view that expands all measurements and the recorded evidence. Both show the
+same results and scope. Select a camera or output channel to inspect it at a
+larger size, step through frames with the previous/next controls or the focused
+timeline's arrow keys, and choose a slideshow speed. Only one timeline plays
+at a time; scrubbing or leaving the browser tab pauses playback. These controls
+do not alter simulation time or synchronize independent evaluation episodes.
+For sensor reports, drag the sampled point cloud or focus it and use arrow
+keys to rotate; **Reset view** restores its initial orientation.
+
+The report embeds its renderer and media, so the controls work offline on
+desktop and mobile. A new report uses the viewer shipped in its staged source;
+an already downloaded report retains its original viewer. Display thumbnails
+and sampled points remain distinct from the full-resolution artifacts.
+
 Keep the original installed checkout until each run finishes. Resume with that
 checkout, the same project and runtime target, and the exact recorded run ID.
 A newer driver may reject the previous run's saved source or image identity.

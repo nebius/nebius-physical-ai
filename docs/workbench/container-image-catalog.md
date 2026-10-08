@@ -354,6 +354,12 @@ require EnvGen's installed-version assertion to match that shared pin.
 Historical image digests retain their original dependency bytes. This source
 update does not change the accepted release pins above.
 
+Current source also moves the controller and viewer to the October 2 Debian
+snapshot with fixed `perl-base` bytes, and clears inherited EnvGen source before
+copying the selected revision. These changes are build prerequisites for new
+images; the accepted public digests above retain their earlier bytes until a
+new image set passes qualification and release promotion.
+
 ## 2026-09-02 private-registry isolation audit
 
 All 31 accepted release tags and recorded digests resolved through anonymous

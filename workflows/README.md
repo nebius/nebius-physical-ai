@@ -1,5 +1,7 @@
 # NPA workflow catalog
 
+The [video variant sweep](guides/video-variant-sweep.md) combines timed VLM source descriptions and user hints into structured LLM-enhanced prompts, then pairs each shared prompt with every configured parameter combination. Cosmos3 full-source edge transfer (or the compatible Transfer 2.5 reference), paired visual review and Postgres/MLflow lineage complete the dataset path. Its operator kit previews the prompt-augmentation flow, prompt reuse, every parameter combination and worker assignment before submission. Direct prompts explicitly bypass augmentation. Completed candidates have verified recovery receipts; native runs export actual controls, a matrix of recorded outcomes, an offline HTML comparison viewer and an MP4 walkthrough.
+
 [Docs](../docs/README.md) · [Authoring guide](../docs/workbench/npa-workflow-guide.md)
 
 These `npa.workflow/v0.0.1` YAML files compose Workbench operations into a state

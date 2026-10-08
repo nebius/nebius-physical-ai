@@ -3,7 +3,8 @@ FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9
 
 ARG RERUN_SDK_VERSION=0.38.1
 ARG NPA_SOURCE_SHA
-ARG DEBIAN_SNAPSHOT=20261001T000000Z
+ARG DEBIAN_SNAPSHOT=20261002T000000Z
+ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1
 
 LABEL npa.tool="rerun-viewer" \
       npa.version="${RERUN_SDK_VERSION}" \
@@ -46,6 +47,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && apt-get install -y --no-install-recommends \
       ca-certificates curl ffmpeg netcat-openbsd openssh-client openssh-server \
       procps rsync sudo \
+      "perl-base=${MIN_PERL_BASE_VERSION}" \
     && install -d -m 0755 /run/sshd /workspace /opt/npa \
     && rm -f /etc/ssh/ssh_host_* \
     && printf '%s\n' \
@@ -64,6 +66,15 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
       /opt/rerun/venv \
     && chown ubuntu:ubuntu /workspace
 
+COPY --chmod=0644 docker/workbench/common/sim2real-cpu-build-requirements.txt \
+    /opt/npa/sim2real-cpu-build-requirements.txt
+COPY --chmod=0644 docker/workbench/common/update_pip_vendor.py \
+    /opt/npa/update_pip_vendor.py
+RUN /usr/local/bin/python -m pip install --no-cache-dir --no-deps --upgrade \
+      -r /opt/npa/sim2real-cpu-build-requirements.txt \
+    && /usr/local/bin/python /opt/npa/update_pip_vendor.py \
+    && /usr/local/bin/python -m pip check
+
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
@@ -81,7 +92,9 @@ WORKDIR /opt/rerun
 
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m venv /opt/rerun/venv \
-    && python -m pip install --upgrade pip setuptools wheel \
+    && python -m pip install --no-cache-dir --no-deps --upgrade \
+      -r /opt/npa/sim2real-cpu-build-requirements.txt \
+    && python /opt/npa/update_pip_vendor.py \
     && python -m pip install --no-cache-dir "rerun-sdk==${RERUN_SDK_VERSION}" \
     && python -m pip install --no-cache-dir --no-deps \
       -r /opt/npa/sim2real-viewer-requirements.txt \
