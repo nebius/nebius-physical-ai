@@ -53,6 +53,15 @@
   },
   "images": [
     {
+      "name": "npa-lyra2",
+      "dockerfile": "lyra2/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "smoke": "Native Lyra 2 reconstruction of a checksummed RGB capture, with Gaussian PLY, predicted geometry, decoded rendered MP4 and offline HTML.",
+      "notes": "Dedicated CUDA bootstrap fetches pinned source, inference runtime and checkpoint at execution. The separate reconstruction-code result does not qualify this image; exact published-image byte scans and native GPU inference remain required."
+    },
+    {
       "name": "npa-mjlab",
       "dockerfile": "mjlab/Dockerfile",
       "build_script": "mjlab/build.sh",

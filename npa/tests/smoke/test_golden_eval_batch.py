@@ -66,6 +66,7 @@ def test_needs_image_update_exclusions_can_only_shrink() -> None:
         "lerobot-vlm-rl",
         "libero",
         "loop-eval",
+        "lyra2",  # New image remains excluded until its exact GPU gate passes.
         "ncore",
         "openpi",
         "reference-policy",
