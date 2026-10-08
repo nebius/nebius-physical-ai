@@ -16,19 +16,25 @@ quality remain separate validation work.
 
 ## Prepare captured video
 
-The dedicated `npa-lyra2` image recipe packages the CUDA compiler, Python and
+The public `npa-lyra2:2.0-rtfetch1` image packages the CUDA compiler, Python and
 hash-locked NPA dependencies independently of Isaac Lab. The pinned Lyra/DA3
 source, inference dependencies and reconstruction checkpoint are fetched into
 a private temporary environment on each job. The image contains no weights or
-capture data. Its release is a validation candidate; the existing workflow pin
-stays on the previously tested image until the dedicated digest passes the
-security and real GPU gates. See its
+capture data. The workflow pins the accepted image digest and baked NPA source;
+it does not overlay local payload code. The exact image passed native B200
+reconstruction and artifact verification. See its
+[qualification record](../validation/lyra2-b200-20261008.json) and
 [packaging record](../../../npa/docker/workbench/lyra2/REDISTRIBUTION.md).
 
-Use a configured Workbench project with private object storage and an RTX PRO
-6000 execution context. Reconstruction can target a B200 independently; native
-Isaac camera rendering still requires RTX. The workflow defaults to
-`RTXPRO6000:1`; `--var accelerator=B200:1` changes only reconstruction placement.
+Use a configured Workbench project with private object storage and a B200
+execution context. The standalone workflow defaults to `B200:1`. Native Isaac
+camera rendering uses the separate RTX workflow. Reconstruction can be placed
+on RTX with `--var accelerator=RTXPRO6000:1`, but this image's RTX path has not
+been qualified.
+
+```bash
+docker pull ghcr.io/nebius/nebius-physical-ai/npa-lyra2:2.0-rtfetch1
+```
 
 ```bash
 npa/.venv/bin/python -m npa.workflows.lyra_capture \
@@ -169,12 +175,14 @@ placeholder simulation panels. The point preview uses relative model coordinates
 and does not claim metric collision accuracy or executed robot actions. The
 separate native Gaussian video is produced by upstream Lyra's rasterizer.
 
-The B200 reference run reconstructed 128 views from a 320-frame public capture,
+The dedicated GHCR image reconstructed 128 views from a 320-frame public capture,
 exported 8,658,944 Gaussians and rendered all 320 frames at 640×480 and 30 FPS.
 The standalone HTML contains 176,128 sampled depth points. Desktop and mobile
 Chromium checks verified offline playback, orbit/zoom controls, confidence
-coloring and no external asset requests. The HTML publication step was replayed
-against the retained native outputs after the GPU run completed.
+coloring and no external asset requests. The cold-start workflow completed
+dependency installation, checkpoint verification, inference, HTML generation
+and S3 publication without intervention. All 11 output files were independently
+downloaded and hash-verified; both videos fully decoded.
 
 Separately, metric extraction produced 679,534 triangles. Camera registration
 RMS was 7.3 mm; independent measured-depth comparison found 97.74% coverage,
@@ -217,7 +225,7 @@ surfaces, scale or occluded geometry.
 | Boundary | Delivery and scope |
 | --- | --- |
 | Source | Upstream Apache-2.0 code and pinned submodule are fetched at runtime; source attribution remains upstream. |
-| Baked runtime | Existing digest-pinned Workbench CUDA/Isaac bootstrap image; no Lyra payload is added to image layers. |
+| Baked runtime | Dedicated digest-pinned CUDA/Python/NPA bootstrap, independent of Isaac; Lyra source, inference dependencies and checkpoint remain runtime fetches. |
 | Weights | Exact Lyra reconstruction checkpoint is fetched anonymously from its official immutable URL and SHA-256 verified. |
 | Input data | Operator-owned private capture, or separately attributed public TUM sample; no customer capture is committed. |
 | Cache | Ephemeral per-stage source/environment/checkpoint directory; model bytes are not exported in run artifacts or an image. |

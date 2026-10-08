@@ -802,8 +802,8 @@ images:
       model cache. Lyra and DA3 source, PyTorch cu128, gsplat and the exact Lyra
       reconstruction checkpoint are fetched into a private per-job temporary
       environment. The model remains subject to NVIDIA's Internal Scientific
-      Research and Development Model License. Release promotion is quarantined
-      until exact-digest GPU capability and publication checks pass.
+      Research and Development Model License. Exact release bytes passed the
+      publication gates and native B200 reconstruction; RTX is not qualified.
   cosmos3:
     dockerfile: cosmos3/Dockerfile
     tier: job

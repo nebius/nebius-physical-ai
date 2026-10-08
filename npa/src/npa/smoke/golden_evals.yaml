@@ -1401,7 +1401,11 @@ containers:
       serverless_gpu: b200
       gpu: required
       timeout_seconds: unlimited
-      status: needs-image-update
+      status: gpu-gated
+      notes: >-
+        Exact published digest qualified with native B200 reconstruction,
+        full video decode, S3 artifact readback and offline HTML. Operator input
+        and applicable Lyra internal R&D model rights remain required.
   alpamayo2-super:
     image: npa-alpamayo2-super
     dockerfile: npa/docker/workbench/alpamayo2-super/Dockerfile

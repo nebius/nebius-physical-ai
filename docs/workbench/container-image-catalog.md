@@ -26,7 +26,7 @@ cache in its layers. It has no accepted release build and remains release
 quarantined; it has no public image row, but now has a truthful immutable
 development-build path for byte and capability validation.
 
-The accepted-release manifest contains **38 release references**, including
+The September 18 accepted-release manifest contained **38 release references**, including
 Flex-Pi r2, Isaac Arena and OpenArm. The incoming Flex-Pi qualification records
 an anonymous digest audit on **2026-09-18** and retained `linux/amd64` runtime
 metadata. Flex-Pi r2 was independently built, scanned and run on both required
@@ -74,9 +74,9 @@ complete SDXL generations. The opt-in FA4 inference profile improves selected
 attention calls; complete-model performance is effectively tied with FA2.
 These candidates do not change the accepted images listed below.
 
-The current source inventory has **60 packaging entries** (51 redistribution-eligible
-and nine restricted) and **51 mapped tools**: 26 public-release members, two
-restricted tools, and 23 quarantined tools. These counts come from
+The current source inventory has **62 packaging entries** (53 redistribution-eligible
+and nine restricted) and **53 mapped tools**: 27 public-release members, two
+restricted tools, and 24 quarantined tools. These counts come from
 `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
@@ -536,6 +536,7 @@ image scanning, and capability evaluation before re-entering this table.
 | LingBot World v1 | `npa-lingbot-world` | `a43bec7-rtfetch-20260916` | 2026-09-16 | Camera-conditioned video generation, qualified on four B200s with positive attention/all-to-all execution on every rank and 161 decoded frames. Authored camera poses; no robot-action or calibrated-geometry claim. |
 | SAM 2.1 Small | `npa-sam2` | `2.1-rtfetch-20260916` | 2026-09-16 | Native CUDA video-mask propagation from a first-frame box; raw arrays and color-preserving visualization qualified on B200. Predicted masks are not ground truth. |
 | Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus upstream OpenArm Isaac Lab reach rollout and RSL-RL training. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches after the operator's EULA decision. The exact release digest passed byte/supply-chain gates and a complete RTX PRO 6000 dual-simulator workflow with independently checked traces, rendered video, checkpoint, and qualification report. See [OpenArm](openarm.md). |
+| Lyra 2 reconstruction | `npa-lyra2` | `2.0-rtfetch1` | 2026-10-08 | Dedicated CUDA/Python/NPA bootstrap with runtime-fetched Lyra source, inference dependencies and weights. Exact-digest native B200 reconstruction produced Gaussians, predicted geometry, fully decoded video and offline HTML. See the [guide](guides/lyra-physical-augmentation.md) and [qualification](validation/lyra2-b200-20261008.json). |
 
 ## External PAIDF runtime images
 
@@ -876,8 +877,9 @@ table. The independently rebuilt `sonic-mujoco:0.2.0-runtime` and zero-payload
 
 ## Verification scope
 
-`npa-lyra2` is a dedicated reconstruction image candidate, excluded from the
-public release table until its exact-image security and real GPU gates pass.
+`npa-lyra2:2.0-rtfetch1` promotes the exact scanned development digest that
+completed native reconstruction on one B200, with independent artifact readback
+and offline desktop/mobile HTML checks. RTX reconstruction is unverified.
 Its CUDA compiler and hash-locked NPA environment are independent of Isaac Lab;
 Lyra source, inference dependencies and model weights are fetched at runtime.
 See the [Lyra packaging record](../../npa/docker/workbench/lyra2/REDISTRIBUTION.md).

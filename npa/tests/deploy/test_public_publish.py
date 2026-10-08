@@ -474,7 +474,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
     assert UNVALIDATED_PUBLICATION_TOOLS == (
-        frozenset({"openpi", "curobo", "ncore", "libero", "sam3", "lyra2"})
+        frozenset({"openpi", "curobo", "ncore", "libero", "sam3"})
         | ({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
     )
     assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset()
@@ -496,6 +496,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         }
     )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
+        "lyra2",
         "diffusers",
         "lingbot-world",
         "sam2",
@@ -657,6 +658,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
 
     for tool in (
         "ltx2",
+        "lyra2",
         "wan2-2",
         "cosmos3-serving",
         "sonic-mujoco",

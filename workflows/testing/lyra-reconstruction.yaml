@@ -7,23 +7,26 @@ metadata:
 config:
   bucket: example-bucket
   prefix: lyra-reconstruction/{{run.id}}
-  source_overlay: true
+  source_overlay: false
+  require_baked_npa: true
+  baked_npa_import: npa.workflows.lyra_stage
+  source_sha: 5fe19717dc3bb9c0975f929342dc9bbf7386df31
   input_uri: s3://{{config.bucket}}/lyra-input/
   output_uri: s3://{{config.bucket}}/{{config.prefix}}/reconstruction/
-  accelerator: RTXPRO6000:1
+  accelerator: B200:1
   views: 128
   resolution: 640
 resources:
-  rtx:
+  gpu:
     cloud: kubernetes
     accelerators: '{{config.accelerator}}'
     cpus: 16
     memory: 96Gi
-    image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lyra2@sha256:cd76116ffac0f930bc8a4645ad92ea0848662426f3fe34c498050ae5bc5afc4d
 initial: reconstruct
 states:
   reconstruct:
-    resources: rtx
+    resources: gpu
     run:
       argv: [python3, -m, npa.workflows.lyra_stage, --input-path, '{{config.input_uri}}', --output-path, '{{config.output_uri}}', --views, '{{config.views}}', --resolution, '{{config.resolution}}']
     inputs:
