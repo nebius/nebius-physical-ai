@@ -46,25 +46,33 @@ def _is_exact_image(reference: Any) -> bool:
     return isinstance(reference, str) and bool(_DIGEST_REFERENCE.fullmatch(reference))
 
 
-def validate_immutable_image_inputs(config: Mapping[str, Any]) -> None:
-    """Require declared provenance image inputs to be exact digest references.
+def required_immutable_image_inputs(config: Mapping[str, Any]) -> dict[str, str]:
+    """Return declared provenance image inputs after exact-reference validation.
 
     Args:
         config: Workflow config after overrides and token resolution.
     Returns:
-        None.
+        Exact operator image references keyed by their config field.
     Raises:
         NpaWorkflowError: The declaration or a required image input is invalid.
     """
     if "required_immutable_images" not in config:
-        return
+        return {}
+    inputs: dict[str, str] = {}
     for key in _required_keys(config["required_immutable_images"]):
-        if _is_exact_image(config.get(key)):
-            continue
-        raise NpaWorkflowError(
-            f"config.{key} requires an explicit registry-qualified immutable image; "
-            f"set --var {key}=<registry>/<repository>@sha256:<64-hex-digest>. "
-            "Use a qualified image for this workload; tool:// and tag-only "
-            "references cannot bind its provenance or child launches. Use a "
-            "digest-only reference; remove any :tag segment before @sha256:."
-        )
+        reference = config.get(key)
+        if not _is_exact_image(reference):
+            raise NpaWorkflowError(
+                f"config.{key} requires an explicit registry-qualified immutable image; "
+                f"set --var {key}=<registry>/<repository>@sha256:<64-hex-digest>. "
+                "Use a qualified image for this workload; tool:// and tag-only "
+                "references cannot bind its provenance or child launches. Use a "
+                "digest-only reference; remove any :tag segment before @sha256:."
+            )
+        inputs[key] = reference
+    return inputs
+
+
+def validate_immutable_image_inputs(config: Mapping[str, Any]) -> None:
+    """Require declared provenance image inputs to be exact digest references."""
+    required_immutable_image_inputs(config)

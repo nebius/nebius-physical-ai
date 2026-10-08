@@ -19,11 +19,13 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     resolve_task_image,
     tool_image_key,
 )
+from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 IMPACT_REPORT = (
     REPO_ROOT / "docs/workbench/validation/public-default-quarantine-impact-20261005.md"
 )
+_INERT_IMMUTABLE_IMAGE = "registry.example.invalid/operator/a@sha256:" + "0" * 64
 
 
 def _task_tool(task: dict) -> str:
@@ -53,7 +55,12 @@ def _blocked_shipped_defaults() -> tuple[set[tuple[str, str]], set[tuple[str, st
                 keys = spec.config["required_immutable_images"]
                 assert keys and any(f"config.{key}" in str(exc) for key in keys)
                 required.update((str(path.relative_to(REPO_ROOT)), key) for key in keys)
-                continue
+                spec = merge_config_overrides(
+                    spec, {key: _INERT_IMMUTABLE_IMAGE for key in keys}
+                )
+                plan = build_plan(
+                    spec, run_id="quarantine-audit", assume_decision=decision
+                )
             for step in plan.steps:
                 task = build_scheduler_task(spec, step, run_id="quarantine-audit")
                 try:

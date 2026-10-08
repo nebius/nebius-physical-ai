@@ -44,7 +44,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from npa.orchestration.npa_workflow.decisions import normalize_decision
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-from npa.orchestration.npa_workflow.image_inputs import validate_immutable_image_inputs
+from npa.orchestration.npa_workflow.image_inputs import required_immutable_image_inputs
 from npa.orchestration.npa_workflow.interpreter import (
     ExecutionPlan,
     PlanStep,
@@ -721,10 +721,16 @@ def plan_fingerprint(
     import json as _json
 
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
+    immutable_image_inputs = required_immutable_image_inputs(
+        _resolved_config(spec, run_id)
+    )
     payload = _json.dumps(
         {
             "workflow": spec.name,
             "api_version": spec.api_version,
+            # Generic tool image resolution may legitimately vary between waves;
+            # explicit provenance inputs must instead remain identical for resume.
+            "required_immutable_image_inputs": immutable_image_inputs,
             "steps": [
                 {
                     "state": step.state,
@@ -3389,7 +3395,7 @@ def run_workflow_runtime(
     """
 
     resolved_config = _resolved_config(spec, run_id)
-    validate_immutable_image_inputs(resolved_config)
+    required_immutable_image_inputs(resolved_config)
 
     opts = options or RuntimeOptions()
     log = logger or (lambda message: None)
