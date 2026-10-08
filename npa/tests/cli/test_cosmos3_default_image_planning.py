@@ -141,7 +141,8 @@ def test_stock_generate_submit_plan_json_reports_candidate_status() -> None:
         ],
     )
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["workflow_validation_candidates"] == [
+    payload = json.loads(result.output)
+    assert payload["workflow_validation_candidates"] == [
         {
             "tool_ref": "workbench.cosmos3.generate",
             "image": _candidate_image(),
@@ -149,6 +150,7 @@ def test_stock_generate_submit_plan_json_reports_candidate_status() -> None:
             "selection_scope": "planned_steps",
         }
     ]
+    assert payload["workflow_validation_candidates_status"] == "available"
 
 
 def test_stock_generate_preflight_probes_the_governed_image(mocker) -> None:
@@ -244,7 +246,8 @@ def test_stock_generate_plan_render_json_reports_candidate_status() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)["workflow_validation_candidates"] == [
+    payload = json.loads(result.stdout)
+    assert payload["workflow_validation_candidates"] == [
         {
             "tool_ref": "workbench.cosmos3.generate",
             "image": _candidate_image(),
@@ -252,6 +255,7 @@ def test_stock_generate_plan_render_json_reports_candidate_status() -> None:
             "selection_scope": "planned_steps",
         }
     ]
+    assert payload["workflow_validation_candidates_status"] == "available"
 
 
 @pytest.mark.parametrize("tool_ref", QUARANTINED_COSMOS3_TOOL_REFS)

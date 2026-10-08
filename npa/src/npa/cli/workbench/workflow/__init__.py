@@ -1987,6 +1987,7 @@ def submit_cmd(
 
     prepared_npa = None
     workflow_validation_candidates: list[dict[str, str]] = []
+    workflow_validation_candidates_status = "available"
     execution_target = None
     execution_preflight_report: dict[str, Any] = {}
     deploy_targets = []
@@ -2902,6 +2903,12 @@ def submit_cmd(
                 # established per-wave planner and error behavior when the
                 # conservative reachability view is not currently available.
                 workflow_validation_candidates = []
+                workflow_validation_candidates_status = "unavailable"
+                typer.echo(
+                    "warning: workflow validation candidate disclosure is unavailable; "
+                    "runtime image selection will proceed per wave",
+                    err=True,
+                )
             if output_format != OutputFormat.json:
                 _emit_workflow_validation_candidate_notices(
                     workflow_validation_candidates
@@ -3000,6 +3007,9 @@ def submit_cmd(
                 pre_submit_hook=refresh_runtime_preflight,
                 output_format=output_format,
                 workflow_validation_candidates=workflow_validation_candidates,
+                workflow_validation_candidates_status=(
+                    workflow_validation_candidates_status
+                ),
                 project=project,
                 auto_load=auto_load,
                 agent_name=agent_name,
@@ -3117,6 +3127,9 @@ def submit_cmd(
                 "plan": prepared_npa.plan.to_dict(),
                 "skypilot_yaml": rendered,
                 "workflow_validation_candidates": workflow_validation_candidates,
+                "workflow_validation_candidates_status": (
+                    workflow_validation_candidates_status
+                ),
             }
             if runtime:
                 planned_payload["run_prefix_uri"] = (
@@ -3647,6 +3660,7 @@ def submit_cmd(
             **result.__dict__,
             "run_id": resolved_run_id,
             "workflow_validation_candidates": workflow_validation_candidates,
+            "workflow_validation_candidates_status": workflow_validation_candidates_status,
         }
         if submission_warnings:
             payload["submission_warnings"] = submission_warnings
@@ -3932,6 +3946,7 @@ def _run_npa_workflow_runtime(
     pre_submit_hook: Callable[[Path], None] | None,
     output_format: "OutputFormat",
     workflow_validation_candidates: Sequence[Mapping[str, str]] = (),
+    workflow_validation_candidates_status: str = "available",
     project: str = "",
     auto_load: bool = True,
     agent_name: str = "",
@@ -4072,6 +4087,9 @@ def _run_npa_workflow_runtime(
         )
     payload = report.to_dict()
     payload["workflow_validation_candidates"] = list(workflow_validation_candidates)
+    payload["workflow_validation_candidates_status"] = (
+        workflow_validation_candidates_status
+    )
     if artifact_load is not None:
         payload["artifact_load"] = artifact_load
     if output_format == OutputFormat.json:
@@ -9999,6 +10017,7 @@ def plan_spec_cmd(
                 payload["workflow_validation_candidates"] = (
                     workflow_validation_candidates
                 )
+                payload["workflow_validation_candidates_status"] = "available"
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
             return
         typer.echo(f"workflow: {wave_plan.workflow}")
@@ -10024,6 +10043,7 @@ def plan_spec_cmd(
         if render_check is not None:
             payload["render_check"] = render_check
             payload["workflow_validation_candidates"] = workflow_validation_candidates
+            payload["workflow_validation_candidates_status"] = "available"
         # The human warning is suppressed under --json to keep the document clean,
         # which made a placeholder plan look valid. Say it in the document instead.
         if _is_placeholder_bucket(str(spec.config.get("bucket", "") or "")):

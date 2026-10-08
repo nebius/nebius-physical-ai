@@ -501,6 +501,7 @@ def test_submit_runtime_passes_options_and_emits_json(
     assert payload["wave_count"] == 2
     assert payload["runtime_state_uri"].endswith("/npa-workflow/runtime.json")
     assert payload["workflow_validation_candidates"] == []
+    assert payload["workflow_validation_candidates_status"] == "available"
 
 
 @pytest.mark.parametrize("selected", ["", "review"])
@@ -1003,7 +1004,8 @@ def test_runtime_submit_json_reports_cosmos3_candidate_status(
     )
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)["workflow_validation_candidates"] == [
+    payload = json.loads(result.stdout)
+    assert payload["workflow_validation_candidates"] == [
         {
             "tool_ref": "workbench.cosmos3.generate",
             "image": (
@@ -1014,6 +1016,7 @@ def test_runtime_submit_json_reports_cosmos3_candidate_status(
             "selection_scope": "reachable_branches",
         }
     ]
+    assert payload["workflow_validation_candidates_status"] == "available"
 
 
 def test_runtime_candidate_disclosure_planning_failure_is_observational(
@@ -1048,7 +1051,10 @@ def test_runtime_candidate_disclosure_planning_failure_is_observational(
 
     assert result.exit_code == 0, result.output
     assert fake_runtime["spec"].name == "token-factory-parallel-fanout"
-    assert json.loads(result.stdout)["workflow_validation_candidates"] == []
+    payload = json.loads(result.stdout)
+    assert payload["workflow_validation_candidates"] == []
+    assert payload["workflow_validation_candidates_status"] == "unavailable"
+    assert "candidate disclosure is unavailable" in result.stderr
 
 
 def test_runtime_required_workflow_selects_runtime_automatically(
@@ -1142,7 +1148,9 @@ def test_non_runtime_submit_records_the_exact_controller_route(
     )
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)["workflow_validation_candidates"] == []
+    payload = json.loads(result.stdout)
+    assert payload["workflow_validation_candidates"] == []
+    assert payload["workflow_validation_candidates_status"] == "available"
     receipt = load_submission_state("unit", "non-runtime-controller-route")
     assert receipt["controller"] == {
         "schema": "npa.workflow.controller-route.v1",

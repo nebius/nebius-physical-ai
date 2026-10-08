@@ -210,8 +210,10 @@ selections; rendering proves resolution, not pullability or runtime capability.
 The matching
 `preflight-images --json` check adds `release_status` only when that checked
 image is a validation candidate, with `selection_scope: reachable_branches`.
-Agent control planes must treat this as validation provenance, not release
-approval.
+Runtime submit JSON also reports `workflow_validation_candidates_status`:
+`available` means the list was computed, while `unavailable` means the runtime
+will select images per wave and the list cannot establish provenance. Agent
+control planes must treat this as validation provenance, not release approval.
 
 `--runtime` supervises the workflow to its terminal state. Secret values resolve
 from the private environment or selected project's NPA credential store; only
