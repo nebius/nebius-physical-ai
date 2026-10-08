@@ -110,6 +110,10 @@ success. Public logs contain fixed status and failure codes, bounded exception
 classes, numeric counts, and cryptographic digests only. Private summaries also
 identify the failed stage. Host diagnostics, exception text, and raw scanner
 output stay out of public logs.
+A failed manifest sender is classified before its bytes are parsed or hashed.
+Authentication, host trust, connectivity, and missing or unreadable remote exports
+produce fixed transport codes; raw SSH diagnostics remain private. A successful
+sender must still satisfy the exact manifest digest and schema.
 If the connection or host storage fails during retention, the job fails and
 cannot claim durable evidence; do not treat an earlier scanner exit as success.
 
