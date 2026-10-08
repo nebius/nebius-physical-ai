@@ -596,11 +596,19 @@ NPA_NUREC_E2E_PREFIX=checkpoints \
 
 Also needs `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and
 `NGC_API_KEY` exported. `HF_TOKEN` is optional for the public PPISP default and
-required only for a gated/private dataset override. Budget ~30 min end to end (image pull,
-30k 3DGUT steps, render, upload); raise `NPA_NUREC_E2E_MAX_WAIT_SECONDS` (default
-7200) for a slower cluster. Measured: **1 passed in 28m47s**, with the underlying
-SkyPilot job taking 26m10s and reporting `test/psnr 31.19`, `test/ssim 0.833`,
-`test/lpips 0.267`.
+required only for a gated/private dataset override. The current two-camera,
+six-stage default completed in about 70 minutes including worker setup; the
+[qualification receipt](../../../docs/workbench/evidence/nurec-default-quality-20261008.json)
+records PSNR 30.272694, SSIM 0.825870 and LPIPS 0.255115, plus decoded artifacts
+and visual review of actual nonzero-offset views. Raise
+`NPA_NUREC_E2E_MAX_WAIT_SECONDS` (default 7200) when a slower target requires it.
+The earlier single-pod result (**1 passed in 28m47s**, PSNR 31.19 / SSIM 0.833 /
+LPIPS 0.267) belongs to its historical input and settings, not these defaults.
+
+The default object recipe allows two million Gaussians
+(`model.strategy.add.max_n_gaussians=2000000`) to retain detail across both
+full-resolution photographic cameras. The native 30,000-step training recipe
+still applies. An explicit Hydra override selects a different model capacity.
 
 ### Default quality readback
 
@@ -617,7 +625,8 @@ NPA_NUREC_QUALITY_RUN_URI=s3://<bucket>/<prefix>/neural-reconstruction/<run-id> 
 
 Supply the same AWS credentials and endpoint as other live readback tests. This
 requires the default auto-exposure capture, native 30,000-step recipe, full-resolution
-training and rendering, PPISP, photographic poses and the nonzero offset. It
+training and rendering, two-million-Gaussian capacity, PPISP, photographic poses
+and the nonzero offset. It
 rejects metrics below PSNR 28 / SSIM 0.8 or above LPIPS 0.3. These checks
 supplement visual inspection of multiple cameras; they do not prove unseen
 surface quality.
@@ -662,8 +671,3 @@ GPU with no H100/H200 reference, every stage in the YAML is a real
   NRE's inline `--enable-difix` are both unwired and unverified here.
 - **COLMAP ingestion is not yet live validated.** Other source-format converters
   and novel sensor-rig integrations remain upstream `ncore` work.
-
-The default object recipe allows two million Gaussians
-(`model.strategy.add.max_n_gaussians=2000000`) to retain detail across both
-full-resolution photographic cameras. The native 30,000-step training recipe
-still applies. An explicit Hydra override selects a different model capacity.

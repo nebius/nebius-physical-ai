@@ -11,50 +11,48 @@
       ]
     },
     "task_fidelity": {
-      "status": "unverified",
-      "reason": "The default retains the normalized auto-exposure capture with source-resolution training, PPISP and pose-preserving novel views. End-to-end quality validation for this revision is in progress; the larger HDR capture and prior low-resolution results do not qualify these defaults.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The October 8 canonical six-stage demo completed with all 59 default photographs across both cameras, source-resolution training/rendering, exact photographic poses, PPISP, two million Gaussians and 30,000 steps. Native PSNR 30.272694, SSIM 0.825870 and LPIPS 0.255115 passed the recorded thresholds. Ten nonzero-offset views were visually inspected; all 59 frames, both videos, USDZ, RRD and offline HTML passed independent readback.",
+      "evidence": [
+        "docs/workbench/evidence/nurec-default-quality-20261008.json",
+        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
+      ]
     }
   },
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "The catalog uses example-bucket. A new run must supply a writable bucket and unique run prefix; historical S3 handoffs are proven only for the completed run.",
+      "reason": "The catalog uses example-bucket. A future run must supply writable storage and a unique prefix; complete S3 handoffs and independent readback are proven for the qualified run only.",
       "evidence": [
-        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
-        "docs/workbench/evidence/public-demos/nurec.json"
+        "docs/workbench/evidence/nurec-default-quality-20261008.json"
       ]
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "The pinned public sample was freshly prepared and consumed by the full demo at source 39a662651. Its hashes and decoded outputs are qualified in the receipt. Future sample overrides require their own input checks.",
+      "reason": "The pinned auto-exposure sample was freshly prepared and consumed as all 59 photographs across both cameras. The receipt binds its revision and archive hash. Future capture overrides still require their own input and pose checks.",
       "evidence": [
-        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
-        "docs/workbench/evidence/public-demos/nurec.json"
+        "docs/workbench/evidence/nurec-default-quality-20261008.json"
       ]
     },
     "credentials": {
       "status": "unverified",
-      "reason": "Each operator must supply S3 credentials, NGC image access and the matching Kubernetes pull secret. HF access is needed only for gated or private dataset overrides; historical authorization does not verify a future operator.",
+      "reason": "Each operator must supply S3 credentials, NGC image access and the matching Kubernetes pull secret. HF access is needed only for gated or private dataset overrides; completed-run authorization does not verify a future operator.",
       "evidence": [
-        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
-        "docs/workbench/evidence/public-demos/nurec.json"
+        "docs/workbench/evidence/nurec-default-quality-20261008.json"
       ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The receipt binds actual native worker image digests and staged source to revision 39a662651. Each future run must verify its selected image and intended source before execution.",
+      "reason": "The receipt binds the native image digest and actual staged runtime source to the qualified outputs, and records unchanged NuRec runtime paths after the main refresh. Every future run must verify its own selected image and source.",
       "evidence": [
-        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
-        "docs/workbench/evidence/public-demos/nurec.json"
+        "docs/workbench/evidence/nurec-default-quality-20261008.json"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The full demo completed on RTX PRO 6000 Blackwell; process-bound GPU observations and complete output checks are recorded in the receipt. Every new target still needs its own GPU/runtime/scratch health checks; L40S was not qualified by this run.",
+      "reason": "The full current default completed on RTX PRO 6000 Blackwell with decoded and visually reviewed outputs. Every new target still needs its own GPU/runtime/scratch health checks; L40S was not qualified by this run.",
       "evidence": [
-        "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
-        "docs/workbench/evidence/public-demos/nurec.json"
+        "docs/workbench/evidence/nurec-default-quality-20261008.json"
       ]
     }
   }
