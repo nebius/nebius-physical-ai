@@ -981,11 +981,11 @@ def workflow_validation_candidate_selections(
         Candidate selections whose resolved image remains the candidate default.
 
     Raises:
-        NpaWorkflowError: If rendering a planned task cannot resolve its image.
         RuntimeError: If the public workflow candidate manifest is invalid.
     """
 
     from npa.deploy.images import public_workflow_image_default
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 
     selections: list[WorkflowValidationCandidateSelection] = []
     seen: set[tuple[str, str]] = set()
@@ -1000,9 +1000,15 @@ def workflow_validation_candidate_selections(
         )
         if not candidate:
             continue
-        image = resolve_task_image(
-            tool_ref, task.get("resources") or {}, options=options
-        )
+        try:
+            image = resolve_task_image(
+                tool_ref, task.get("resources") or {}, options=options
+            )
+        except NpaWorkflowError:
+            # Candidate disclosure is observational. Leave a branch whose image
+            # cannot currently resolve to the workflow's normal validation and
+            # runtime error path instead of making disclosure a new gate.
+            continue
         selected_image = str(
             options.image_digest_pins.get(candidate, candidate)
         ).strip()

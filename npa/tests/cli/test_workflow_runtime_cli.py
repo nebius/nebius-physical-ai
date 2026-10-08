@@ -21,6 +21,7 @@ from npa.cli.workbench.workflow import (
     _execution_target_preflight as REAL_EXECUTION_TARGET_PREFLIGHT,
 )
 from npa.deploy.images import public_release_manifest
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.runtime import RuntimeReport
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
 from npa.orchestration.npa_workflow.run_state import RunManifest
@@ -1012,6 +1013,40 @@ def test_runtime_submit_json_reports_cosmos3_candidate_status(
             "release_status": "workflow_validation_candidate",
         }
     ]
+
+
+def test_runtime_candidate_disclosure_reports_planning_failure(
+    mocker, satisfied_preflight
+) -> None:
+    """A disclosure planning failure remains a bounded CLI failure before launch."""
+
+    driver = mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
+    mocker.patch(
+        "npa.cli.workbench.workflow._image_preflight_steps",
+        side_effect=NpaWorkflowError("synthetic candidate planning failure"),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "runtime-candidate-planning-failure",
+            "--runtime",
+            "--skip-preflight",
+            "--no-preflight-images",
+            "--no-resolve-accelerators",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "synthetic candidate planning failure" in result.output
+    driver.assert_not_called()
 
 
 def test_runtime_required_workflow_selects_runtime_automatically(

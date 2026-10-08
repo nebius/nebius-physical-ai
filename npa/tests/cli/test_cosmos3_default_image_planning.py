@@ -80,6 +80,21 @@ def test_stock_generate_plans_the_exact_governed_image_without_overrides() -> No
     )
 
 
+def test_candidate_selection_skips_an_unresolvable_step(mocker) -> None:
+    """Candidate disclosure must not turn a normal resolution error into a gate."""
+
+    spec = load_spec(SPEC)
+    plan = build_plan(spec, run_id="stock-cosmos3")
+    mocker.patch(
+        "npa.orchestration.npa_workflow.skypilot_render.resolve_task_image",
+        side_effect=NpaWorkflowError("synthetic image resolution failure"),
+    )
+
+    assert not workflow_validation_candidate_selections(
+        spec, plan.steps, run_id="stock-cosmos3", options=SkypilotRenderOptions()
+    )
+
+
 def test_stock_generate_submit_plan_uses_image_resolution() -> None:
     result = CliRunner().invoke(
         app,
