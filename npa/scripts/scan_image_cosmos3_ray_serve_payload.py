@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import io
 import json
@@ -335,8 +336,16 @@ def main() -> int:
     if args.json:
         try:
             _write_private_report(args.json, rendered)
-        except OSError:
-            print(json.dumps({"error": "report-write-failed"}), file=sys.stderr)
+        except OSError as error:
+            print(
+                json.dumps(
+                    {
+                        "error": "report-write-failed",
+                        "errno": errno.errorcode.get(error.errno, "unknown"),
+                    }
+                ),
+                file=sys.stderr,
+            )
             if args.full_stdout:
                 print(rendered)
             else:

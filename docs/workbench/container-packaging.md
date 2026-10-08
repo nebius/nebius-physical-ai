@@ -119,6 +119,9 @@ writes the full metadata report only to its requested file. Use
 ordinary publication workflow keeps member hashes and sizes out of Actions logs.
 The scanner exits 0 for a clean archive, 1 for a blocked finding, and 2 when a
 requested private report cannot be written; it refuses a symlink report target.
+Its stderr JSON identifies only the portable errno class (for example, `ELOOP`)
+so an operator can distinguish a refusal from runner capacity without exposing a
+path or report content.
 With an explicit local `--full-stdout` opt-in, that write failure still prints
 the completed full report so the archive need not be scanned again.
 Do not publish raw layers, extracted credential bytes, or a failed image archive

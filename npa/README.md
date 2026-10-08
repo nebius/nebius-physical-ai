@@ -675,8 +675,9 @@ the full report to the requested file, so a publication log cannot expose member
 commitments; `--full-stdout` is only for local operator attribution. See the
 [payload finding evidence](../docs/workbench/container-packaging.md#cosmos3-ray-payload-finding-evidence)
 contract. It exits 0 for clean, 1 for blocked, or 2 when the private report
-cannot be written (including a symlink target). A metadata report does not
-accept the image or its GPU capability.
+cannot be written (including a symlink target), with a safe errno-class
+diagnostic on stderr. A metadata report does not accept the image or its GPU
+capability.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before
 running. Without an override, Make prefers the contributor environment

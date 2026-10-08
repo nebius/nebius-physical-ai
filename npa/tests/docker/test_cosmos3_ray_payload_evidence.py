@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import errno
 import importlib.util
 import io
 import json
@@ -366,7 +367,10 @@ def test_private_json_report_does_not_follow_a_symlink(tmp_path):
     assert result.returncode == 2
     assert output.is_symlink()
     assert target.read_text(encoding="utf-8") == "unchanged"
-    assert json.loads(result.stderr) == {"error": "report-write-failed"}
+    assert json.loads(result.stderr) == {
+        "error": "report-write-failed",
+        "errno": errno.errorcode[errno.ELOOP],
+    }
     assert set(json.loads(result.stdout)) == set(SCANNER._PUBLIC_STDOUT_FIELDS) | {
         "report_scope"
     }
@@ -386,6 +390,9 @@ def test_private_json_report_does_not_follow_a_symlink(tmp_path):
     )
 
     assert full_result.returncode == 2
-    assert json.loads(full_result.stderr) == {"error": "report-write-failed"}
+    assert json.loads(full_result.stderr) == {
+        "error": "report-write-failed",
+        "errno": errno.errorcode[errno.ELOOP],
+    }
     assert json.loads(full_result.stdout)["report_scope"] == "full"
     assert "archive_sha256" in json.loads(full_result.stdout)
