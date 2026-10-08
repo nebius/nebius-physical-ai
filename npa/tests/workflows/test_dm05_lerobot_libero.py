@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -581,14 +582,28 @@ def test_opendm_parent_jwt_sanitizer_executes_the_dockerfile_ere(tmp_path):
             sanitizer_end, instructions.index(sanitizer_start)
         )
     ].replace(f"fetcher={image_fetcher}", 'fetcher="$fetcher"', 1)
+    assert sanitizer.count("python3.10 -m py_compile") == 1
+    host_sanitizer = sanitizer.replace(
+        "python3.10 -m py_compile",
+        f"{shlex.quote(sys.executable)} -m py_compile",
+        1,
+    )
+    blocked_python = tmp_path / "bin" / "python3.10"
+    blocked_python.parent.mkdir()
+    blocked_python.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+    blocked_python.chmod(0o755)
 
     assert grep_pattern in instructions
     assert sed_expression in instructions
     completed = subprocess.run(
-        ["sh", "-ceu", sanitizer, "sh"],
+        ["sh", "-ceu", host_sanitizer, "sh"],
         capture_output=True,
         check=False,
-        env={**os.environ, "fetcher": str(fetcher)},
+        env={
+            **os.environ,
+            "PATH": f"{blocked_python.parent}{os.pathsep}{os.environ['PATH']}",
+            "fetcher": str(fetcher),
+        },
         text=True,
     )
 
