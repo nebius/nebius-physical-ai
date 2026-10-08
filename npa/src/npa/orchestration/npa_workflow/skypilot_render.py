@@ -970,6 +970,19 @@ def workflow_validation_candidate_selections(
     accepted-release inventory. Keep this provenance signal at the same rendering
     boundary that applies exact, family, wildcard, resource, registry, and
     digest-pin precedence.
+
+    Args:
+        spec: Parsed workflow specification being rendered.
+        steps: Planned workflow steps whose selected images are evaluated.
+        run_id: Stable identifier used to render task configuration.
+        options: Image registry, override, and digest-pin choices.
+
+    Returns:
+        Candidate selections whose resolved image remains the candidate default.
+
+    Raises:
+        NpaWorkflowError: If rendering a planned task cannot resolve its image.
+        RuntimeError: If the public workflow candidate manifest is invalid.
     """
 
     from npa.deploy.images import public_workflow_image_default

@@ -2884,6 +2884,25 @@ def submit_cmd(
                 return
 
         if runtime and not plan_only:
+            try:
+                runtime_candidate_steps = _image_preflight_steps(
+                    merged_npa_spec,
+                    run_id=resolved_run_id,
+                    assume_decision=assume_decision,
+                )
+                workflow_validation_candidates = _workflow_validation_candidate_payload(
+                    merged_npa_spec,
+                    runtime_candidate_steps,
+                    run_id=resolved_run_id,
+                    options=npa_render_options,
+                )
+            except NpaWorkflowError as exc:
+                _fail(str(exc), secrets=submission_redaction_secrets)
+                return
+            if output_format != OutputFormat.json:
+                _emit_workflow_validation_candidate_notices(
+                    workflow_validation_candidates
+                )
             runtime_preflight_evidence = {
                 "exact_image_pull": "pass" if preflight_images else "unknown",
                 "credentials_access": "pass",
@@ -2977,6 +2996,7 @@ def submit_cmd(
                 preflight_evidence=runtime_preflight_evidence,
                 pre_submit_hook=refresh_runtime_preflight,
                 output_format=output_format,
+                workflow_validation_candidates=workflow_validation_candidates,
                 project=project,
                 auto_load=auto_load,
                 agent_name=agent_name,
@@ -3906,6 +3926,7 @@ def _run_npa_workflow_runtime(
     preflight_evidence: Mapping[str, str],
     pre_submit_hook: Callable[[Path], None] | None,
     output_format: "OutputFormat",
+    workflow_validation_candidates: Sequence[Mapping[str, str]] = (),
     project: str = "",
     auto_load: bool = True,
     agent_name: str = "",
@@ -4045,6 +4066,8 @@ def _run_npa_workflow_runtime(
             agent_name=agent_name,
         )
     payload = report.to_dict()
+    if workflow_validation_candidates:
+        payload["workflow_validation_candidates"] = list(workflow_validation_candidates)
     if artifact_load is not None:
         payload["artifact_load"] = artifact_load
     if output_format == OutputFormat.json:
@@ -4478,6 +4501,7 @@ def _plan_preflight_image_requirements(
     options: SkypilotRenderOptions,
     assume_decision: str,
     infra: str = "",
+    steps: Sequence[PlanStep] | None = None,
 ) -> tuple[list[str], dict[str, ImagePullRequirements]]:
     """Preserve each reachable branch's image and exact pull authority."""
     from npa.orchestration.npa_workflow.skypilot_render import (
@@ -4485,10 +4509,16 @@ def _plan_preflight_image_requirements(
         plan_images,
     )
 
-    steps = _image_preflight_steps(spec, run_id=run_id, assume_decision=assume_decision)
-    execution_steps = _image_preflight_execution_steps(spec, steps, infra=infra)
+    planned_steps = (
+        list(steps)
+        if steps is not None
+        else _image_preflight_steps(
+            spec, run_id=run_id, assume_decision=assume_decision
+        )
+    )
+    execution_steps = _image_preflight_execution_steps(spec, planned_steps, infra=infra)
     return (
-        plan_images(spec, steps, run_id=run_id, options=options),
+        plan_images(spec, planned_steps, run_id=run_id, options=options),
         plan_image_pull_requirements(
             spec, execution_steps, run_id=run_id, options=options
         ),
@@ -10241,22 +10271,26 @@ def preflight_images_cmd(
             options=options,
             assume_decision=assume_decision,
             infra=infra,
+            steps=steps,
         )
     except (NpaWorkflowError, ValueError) as exc:
         _fail(f"image preflight planning failed: {exc}")
         return
-    _emit_workflow_validation_candidate_notices(
-        [
-            candidate
-            for candidate in _workflow_validation_candidate_payload(
-                spec,
-                steps,
-                run_id=run_id,
-                options=options,
-            )
-            if candidate["image"] in images
-        ]
-    )
+    workflow_validation_candidates = [
+        candidate
+        for candidate in _workflow_validation_candidate_payload(
+            spec,
+            steps,
+            run_id=run_id,
+            options=options,
+        )
+        if candidate["image"] in images
+    ]
+    _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
+    candidate_release_statuses = {
+        candidate["image"]: candidate["release_status"]
+        for candidate in workflow_validation_candidates
+    }
     explicit_pull_secrets: tuple[str, ...] = ()
     if image_pull_secret:
         explicit_pull_secrets = tuple(
@@ -10388,6 +10422,11 @@ def preflight_images_cmd(
                         "target_status": check.target_status,
                         "authority": check.authority,
                         "digest": check.digest,
+                        **(
+                            {"release_status": candidate_release_statuses[check.image]}
+                            if check.image in candidate_release_statuses
+                            else {}
+                        ),
                         "bootstrap_contract": next(
                             (
                                 item

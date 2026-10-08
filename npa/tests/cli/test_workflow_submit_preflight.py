@@ -2878,7 +2878,10 @@ def test_preflight_images_covers_every_decision_branch(mocker) -> None:
 
 
 def test_preflight_images_reports_valid_empty_plan(mocker) -> None:
-    mocker.patch(
+    reachability = mocker.patch(
+        "npa.cli.workbench.workflow._image_preflight_steps", return_value=[]
+    )
+    requirements = mocker.patch(
         "npa.cli.workbench.workflow._plan_preflight_image_requirements",
         return_value=([], {}),
     )
@@ -2901,6 +2904,8 @@ def test_preflight_images_reports_valid_empty_plan(mocker) -> None:
 
     assert result.exit_code == 0, result.output
     assert result.output == "images: none pinned by this spec\n"
+    reachability.assert_called_once()
+    assert requirements.call_args.kwargs["steps"] == []
     pulls.assert_not_called()
     contracts.assert_not_called()
 

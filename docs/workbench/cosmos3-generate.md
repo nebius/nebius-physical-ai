@@ -191,6 +191,12 @@ public release. Complete
 planning, exact-cluster verification, and image preflight. Submit with the same
 project, cluster, bucket, and config overrides:
 
+JSON output from both `npa workbench workflow submit --plan-only` and runtime
+`submit` reports the selected candidate under `workflow_validation_candidates`,
+with `release_status: workflow_validation_candidate`. The matching
+`preflight-images --json` image check carries the same `release_status`. Agent
+control planes must treat this as validation provenance, not release approval.
+
 ```bash
 npa workbench workflow submit workflows/testing/cosmos3-generate.yaml \
   --project '<project-alias>' --infra 'k8s/<context>' \

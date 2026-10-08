@@ -15,13 +15,28 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     plan_images,
     resolve_task_image,
+    tool_image_key,
     workflow_validation_candidate_selections,
 )
-from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+from npa.orchestration.skypilot.registry_preflight import (
+    ImagePullCheck,
+    KubernetesPullTarget,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "workflows/testing/cosmos3-generate.yaml"
+COSMOS3_CANDIDATE_TOOL_REFS = frozenset(
+    public_release_manifest()["workflow_validation_candidates"]["cosmos3"][
+        "validation_tool_refs"
+    ]
+)
+QUARANTINED_COSMOS3_TOOL_REFS = tuple(
+    tool_ref
+    for tool_ref in sorted(TOOL_CATALOG)
+    if tool_image_key(tool_ref) == "cosmos3"
+    and tool_ref not in COSMOS3_CANDIDATE_TOOL_REFS
+)
 
 
 def _candidate_image() -> str:
@@ -151,15 +166,57 @@ def test_stock_generate_preflight_probes_the_governed_image(mocker) -> None:
     assert "workflow validation candidate, not an accepted release" in result.output
 
 
-@pytest.mark.parametrize(
-    "tool_ref",
-    [
-        "workbench.cosmos3.checkpoint_eval",
-        "workbench.cosmos3.policy_eval",
-        "workbench.cosmos3.policy_train",
-    ],
-)
+def test_stock_generate_preflight_json_reports_candidate_status(mocker) -> None:
+    checks = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[
+            ImagePullCheck(
+                image=_candidate_image(),
+                status="ok",
+                digest="sha256:" + "a" * 64,
+            )
+        ],
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        return_value=KubernetesPullTarget(namespace="stock-test"),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(SPEC),
+            "--infra",
+            "k8s/stock-test",
+            "--var",
+            "bucket=stock-test-bucket",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert checks.call_args.args[0] == [_candidate_image()]
+    assert json.loads(result.stdout)[0]["release_status"] == (
+        "workflow_validation_candidate"
+    )
+
+
+@pytest.mark.parametrize("tool_ref", QUARANTINED_COSMOS3_TOOL_REFS)
 def test_other_cosmos3_capabilities_keep_the_quarantine(tool_ref: str) -> None:
     assert tool_ref in TOOL_CATALOG
+    assert tool_ref not in COSMOS3_CANDIDATE_TOOL_REFS
     with pytest.raises(NpaWorkflowError, match="no consumable public release"):
         resolve_task_image(tool_ref, {}, options=SkypilotRenderOptions())
+
+
+def test_every_non_candidate_cosmos3_catalog_ref_is_quarantined() -> None:
+    """Keep candidate scope tied to the catalog rather than a hand-curated list."""
+
+    assert QUARANTINED_COSMOS3_TOOL_REFS

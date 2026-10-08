@@ -20,6 +20,7 @@ from npa.cli.main import app
 from npa.cli.workbench.workflow import (
     _execution_target_preflight as REAL_EXECUTION_TARGET_PREFLIGHT,
 )
+from npa.deploy.images import public_release_manifest
 from npa.orchestration.npa_workflow.runtime import RuntimeReport
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
 from npa.orchestration.npa_workflow.run_state import RunManifest
@@ -31,6 +32,7 @@ SPECS = REPO_ROOT / "workflows" / "testing"
 FANOUT = SPECS / "token-factory-parallel-fanout.yaml"
 GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
 PAIDF_COSMOS3 = REPO_ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
+COSMOS3_GENERATE = SPECS / "cosmos3-generate.yaml"
 RUNNER = CliRunner()
 
 
@@ -966,6 +968,49 @@ def test_submit_runtime_text_output_lists_waves_and_decisions(fake_runtime) -> N
     assert "waves: 2" in result.output
     assert "[parallel]" in result.output
     assert "decision: promote_checkpoint" in result.output
+
+
+def test_runtime_submit_json_reports_cosmos3_candidate_status(
+    fake_runtime, mocker
+) -> None:
+    """Runtime output carries the same non-release signal as planned submits."""
+
+    candidate = public_release_manifest()["workflow_validation_candidates"]["cosmos3"]
+    mocker.patch("npa.cli.workbench.workflow._enforce_workflow_access")
+    mocker.patch(
+        "npa.workbench.cosmos.checkpoint_access.preflight_control_checkpoint_access"
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(COSMOS3_GENERATE),
+            "--run-id",
+            "runtime-cosmos3-candidate",
+            "--runtime",
+            "--skip-preflight",
+            "--no-preflight-images",
+            "--no-resolve-accelerators",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["workflow_validation_candidates"] == [
+        {
+            "tool_ref": "workbench.cosmos3.generate",
+            "image": (
+                "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3:"
+                f"dev-{candidate['development_sha']}@{candidate['published_digest']}"
+            ),
+            "release_status": "workflow_validation_candidate",
+        }
+    ]
 
 
 def test_runtime_required_workflow_selects_runtime_automatically(
