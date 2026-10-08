@@ -109,22 +109,26 @@ def _history_findings(config: dict) -> list[str]:
 
 def _credential_kind(
     layer: tarfile.TarFile, member: tarfile.TarInfo, name: str
-) -> str | None:
+) -> tuple[str, str] | None:
     """Preserve the path-first and existing member-content credential verdict."""
     kind = path_credential(name)
     if kind is not None:
-        return kind
+        return kind, "path"
     payload = layer.extractfile(member)
     if payload is None:
         return None
     with payload:
-        return content_credential(payload)
+        kind = content_credential(payload)
+    if kind is None:
+        return None
+    return kind, "member-content"
 
 
 def _credential_member(
     layer: tarfile.TarFile,
     member: tarfile.TarInfo,
     kind: str,
+    detection_source: str,
     name: str,
     *,
     layer_index: int,
@@ -146,7 +150,7 @@ def _credential_member(
         "layer_sha256": layer_sha256,
         "member_index": member_index,
         "detection_reason": {
-            "source": "path" if path_credential(name) is not None else "member-content",
+            "source": detection_source,
             "rule": kind,
         },
     }
@@ -174,14 +178,16 @@ def _scan_member(
         findings.payload.append(name)
     if not member.isfile():
         return
-    kind = _credential_kind(layer, member, name)
-    if kind is not None:
+    credential = _credential_kind(layer, member, name)
+    if credential is not None:
+        kind, detection_source = credential
         findings.credentials.append(f"{kind}:{name}")
         findings.members.append(
             _credential_member(
                 layer,
                 member,
                 kind,
+                detection_source,
                 name,
                 layer_index=layer_index,
                 layer_sha256=layer_sha256,
@@ -204,7 +210,8 @@ def _scan_layer(
     if layer_member is None:
         raise RuntimeError(f"layer {layer_name} is not a regular file")
     with layer_member, io.BytesIO(layer_member.read()) as layer_bytes:
-        layer_sha256 = hashlib.sha256(layer_bytes.getbuffer()).hexdigest()
+        with layer_bytes.getbuffer() as layer_view:
+            layer_sha256 = hashlib.sha256(layer_view).hexdigest()
         with tarfile.open(fileobj=layer_bytes) as layer:
             for member_index, member in enumerate(layer):
                 _scan_member(
@@ -330,7 +337,10 @@ def main() -> int:
             _write_private_report(args.json, rendered)
         except OSError:
             print(json.dumps({"error": "report-write-failed"}), file=sys.stderr)
-            print(json.dumps(_stdout_report(report), indent=2, sort_keys=True))
+            if args.full_stdout:
+                print(rendered)
+            else:
+                print(json.dumps(_stdout_report(report), indent=2, sort_keys=True))
             return 2
     if not args.full_stdout:
         rendered = json.dumps(_stdout_report(report), indent=2, sort_keys=True)

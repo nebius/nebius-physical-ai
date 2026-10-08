@@ -117,6 +117,10 @@ Stdout is redacted by default with `report_scope: redacted-summary`; `--json`
 writes the full metadata report only to its requested file. Use
 `--full-stdout` only for local operator attribution, never a public log. The
 ordinary publication workflow keeps member hashes and sizes out of Actions logs.
+The scanner exits 0 for a clean archive, 1 for a blocked finding, and 2 when a
+requested private report cannot be written; it refuses a symlink report target.
+With an explicit local `--full-stdout` opt-in, that write failure still prints
+the completed full report so the archive need not be scanned again.
 Do not publish raw layers, extracted credential bytes, or a failed image archive
 as public Actions artifacts. The workflow writes the full report as a private
 temporary runner file and removes it with the scanned archive; rerun the scanner

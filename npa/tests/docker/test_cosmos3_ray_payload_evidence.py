@@ -112,6 +112,28 @@ def test_hashes_path_credential_even_without_content_marker(tmp_path):
     assert member["detection_reason"] == {"source": "path", "rule": "ssh_host_key"}
 
 
+def test_detection_source_is_recorded_with_the_credential_classification(
+    tmp_path, monkeypatch
+):
+    path, _, _ = _image(tmp_path, [[("source.py", b"inert-fixture")]])
+    calls = 0
+
+    def path_rule(_name):
+        nonlocal calls
+        calls += 1
+        return "synthetic_path_rule" if calls == 1 else None
+
+    monkeypatch.setattr(SCANNER, "path_credential", path_rule)
+
+    report = SCANNER.scan_tarball(path)
+
+    assert calls == 1
+    assert report["credential_members"][0]["detection_reason"] == {
+        "source": "path",
+        "rule": "synthetic_path_rule",
+    }
+
+
 @pytest.mark.parametrize("same_layer", [False, True])
 def test_same_path_members_retain_each_physical_byte_identity(tmp_path, same_layer):
     first = ("source.py", b"hf_token='inert-first-value'\n")
@@ -348,3 +370,22 @@ def test_private_json_report_does_not_follow_a_symlink(tmp_path):
     assert set(json.loads(result.stdout)) == set(SCANNER._PUBLIC_STDOUT_FIELDS) | {
         "report_scope"
     }
+
+    full_result = subprocess.run(
+        [
+            sys.executable,
+            str(SCANNER_PATH),
+            "--tarball",
+            str(path),
+            "--json",
+            str(output),
+            "--full-stdout",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert full_result.returncode == 2
+    assert json.loads(full_result.stderr) == {"error": "report-write-failed"}
+    assert json.loads(full_result.stdout)["report_scope"] == "full"
+    assert "archive_sha256" in json.loads(full_result.stdout)
