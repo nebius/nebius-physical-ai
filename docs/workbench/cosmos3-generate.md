@@ -38,8 +38,8 @@ The source image recipe applies a hash-verified AnyIO 4.14.2 security overlay
 after the upstream model lock, fixing
 [CVE-2026-63374](https://github.com/agronholm/anyio/security/advisories/GHSA-82r6-8w77-94w6).
 CUDA, Torch and model-library versions remain pinned by the upstream lock.
-This source fix does not qualify a release: the default image remains quarantined
-until rebuilt bytes pass security scans and real GPU acceptance. Validate an
+This source fix does not qualify a release: the published release bytes remain
+quarantined until rebuilt bytes pass security scans and real GPU acceptance. Validate an
 immutable development digest before promoting it; existing release bytes do not
 inherit the dependency fix.
 

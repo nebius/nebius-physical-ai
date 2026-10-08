@@ -7,7 +7,7 @@ preflight and submit still failed with the public-release quarantine error.
 `validate-spec` and `plan-spec` check the workflow graph and do not prove that a
 runtime image can be selected.
 
-This draft adds only `workbench.cosmos3.generate` to the existing governed
+This record adds only `workbench.cosmos3.generate` to the existing governed
 Cosmos3 candidate. Its source remains
 `6462f27f98e1ded31d17b00944f943db3381ac35`, which is in main's history, and its
 exact digest remains
@@ -18,12 +18,13 @@ selection keep their existing precedence.
 
 ## Acceptance status
 
-Native stock generation qualification is pending. Keep this PR in draft until
-the exact candidate completes the stock Cosmos3-Nano text-to-image workload on
-Nebius RTX PRO 6000, including its enabled guardrails and published artifact.
+Native stock generation qualification is pending. Before treating this candidate
+selection as ready, the exact candidate must complete the stock Cosmos3-Nano
+text-to-image workload on Nebius RTX PRO 6000, including its enabled guardrails
+and published artifact.
 Preserve the stock prompt, seed, guidance, steps, CPU and memory requests;
 the operator selects the target GPU and storage locations. An explicit immutable
-override is required for qualification against main before this change lands.
+override is required for qualification against main.
 
 The tests exercise actual image planning, submit's plan-only route, and
 `preflight-images` with mocked external probes. They prove selection and probe
@@ -32,5 +33,6 @@ modes, checkpoint evaluation or policy training. Those additional Cosmos3
 actions keep their existing quarantine.
 
 After native qualification, record the exact source/digest, success status and
-artifact validation here before marking the PR ready. Concrete infrastructure
-identifiers and raw operational logs remain in private operator evidence.
+artifact validation here before marking the candidate ready. Concrete
+infrastructure identifiers and raw operational logs remain in private operator
+evidence.

@@ -107,6 +107,4 @@ def test_other_cosmos3_capabilities_keep_the_quarantine(tool_ref):
 
     assert tool_ref in TOOL_CATALOG
     with pytest.raises(NpaWorkflowError, match="no consumable public release"):
-        resolve_task_image(
-            tool_ref, {}, options=SkypilotRenderOptions()
-        )
+        resolve_task_image(tool_ref, {}, options=SkypilotRenderOptions())

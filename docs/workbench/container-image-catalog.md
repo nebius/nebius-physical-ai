@@ -489,10 +489,11 @@ release promotion or completed PAIDF workflow acceptance; these candidates do
 not re-enter the accepted-release table below. Explicit operator registries and
 image overrides remain supported.
 
-The draft [stock Cosmos3 generation follow-up](validation/cosmos3-stock-generation-default-20261006.md)
+The [stock Cosmos3 generation validation record](validation/cosmos3-stock-generation-default-20261006.md)
 extends this same candidate selection to `workbench.cosmos3.generate` without
-promoting a release. Its stock Nano text-to-image workload must pass native
-qualification before that follow-up is ready to merge.
+promoting a release. Native stock Nano text-to-image acceptance remains pending;
+the mapping stays validation-only until that record contains the qualification
+result.
 
 The [default-workflow impact audit](validation/public-default-quarantine-impact-20261005.md)
 checks all shipped plans without image overrides and records the remaining

@@ -23,9 +23,10 @@ PAIDF Cosmos3 variants select the repaired Evaluator and Curator candidates.
 PAIDF Cosmos3 also selects the repaired Cosmos3 candidate for video preparation
 and variant generation. These pins and their qualification scope live in
 `npa/src/npa/deploy/public_release_manifest.json`, beside publication policy.
-The [2026-10-06 stock-generation draft](cosmos3-stock-generation-default-20261006.md)
-also selects this candidate for `workbench.cosmos3.generate`; native acceptance
-is pending and is required before that follow-up is marked ready.
+The [2026-10-06 stock-generation validation record](cosmos3-stock-generation-default-20261006.md)
+also selects this candidate for `workbench.cosmos3.generate`. Native acceptance
+is pending, so this mapping remains validation-only rather than an accepted
+release.
 
 The scope remains explicit because image-byte safety and advertised runtime
 capability are separate claims. Qualifying Nano variant generation does not
