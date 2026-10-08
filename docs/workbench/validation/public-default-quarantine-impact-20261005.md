@@ -128,9 +128,9 @@ access and workload acceptance requirements continue to apply.
 
 The preceding tables preserve the original dated resolver observation. That
 audit missed literal Isaac and SONIC digests, which bypassed tool-default
-quarantine. The follow-up removes those automatic selections. All 131 shipped
-specs now have **36 blocked defaults**: 32 workflows deny quarantined tool-image
-selection, and four deny missing exact operator image inputs before task
+quarantine. The follow-up removes those automatic selections. All 133 shipped
+specs now have **40 blocked defaults**: 33 workflows deny quarantined tool-image
+selection, and seven deny missing exact operator image inputs before task
 expansion. These categories are disjoint in this default audit; supplying exact
 operator inputs may reveal additional quarantined resource defaults. This is
 planning evidence only, not fresh image or GPU acceptance.
@@ -146,6 +146,7 @@ planning evidence only, not fresh image or GPU acceptance.
 | `workflows/testing/cosmos3-generate.yaml` | `cosmos3` |
 | `workflows/testing/cosmos3-policy-model-factory.yaml` | `cosmos3` |
 | `workflows/testing/cosmos3-ray-batch.yaml` | `cosmos3-ray-serve` |
+| `workflows/testing/video-variant-sweep-cosmos3.yaml` | `cosmos3` |
 | `workflows/testing/curobo-benchmark.yaml` | `curobo` |
 | `workflows/testing/franka-rl-transfer.yaml` | `isaac-lab` |
 | `workflows/testing/hardening-with-insights.yaml` | `isaac-lab` |
