@@ -1011,16 +1011,16 @@ def test_runtime_submit_json_reports_cosmos3_candidate_status(
                 f"dev-{candidate['development_sha']}@{candidate['published_digest']}"
             ),
             "release_status": "workflow_validation_candidate",
+            "selection_scope": "reachable_branches",
         }
     ]
 
 
-def test_runtime_candidate_disclosure_reports_planning_failure(
-    mocker, satisfied_preflight
+def test_runtime_candidate_disclosure_planning_failure_is_observational(
+    fake_runtime, mocker
 ) -> None:
-    """A disclosure planning failure remains a bounded CLI failure before launch."""
+    """A disclosure planning failure retains the runtime's established behavior."""
 
-    driver = mocker.patch("npa.orchestration.npa_workflow.runtime.run_workflow_runtime")
     mocker.patch(
         "npa.cli.workbench.workflow._image_preflight_steps",
         side_effect=NpaWorkflowError("synthetic candidate planning failure"),
@@ -1041,12 +1041,14 @@ def test_runtime_candidate_disclosure_reports_planning_failure(
             "--no-resolve-accelerators",
             "--var",
             "bucket=rt-bucket",
+            "--output-format",
+            "json",
         ],
     )
 
-    assert result.exit_code == 1
-    assert "synthetic candidate planning failure" in result.output
-    driver.assert_not_called()
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["spec"].name == "token-factory-parallel-fanout"
+    assert json.loads(result.stdout)["workflow_validation_candidates"] == []
 
 
 def test_runtime_required_workflow_selects_runtime_automatically(

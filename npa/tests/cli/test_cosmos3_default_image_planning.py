@@ -66,6 +66,7 @@ def test_stock_generate_plans_the_exact_governed_image_without_overrides() -> No
             "tool_ref": "workbench.cosmos3.generate",
             "image": _candidate_image(),
             "release_status": "workflow_validation_candidate",
+            "selection_scope": "planned_steps",
         }
     ]
     assert not workflow_validation_candidate_selections(
@@ -145,6 +146,7 @@ def test_stock_generate_submit_plan_json_reports_candidate_status() -> None:
             "tool_ref": "workbench.cosmos3.generate",
             "image": _candidate_image(),
             "release_status": "workflow_validation_candidate",
+            "selection_scope": "planned_steps",
         }
     ]
 
@@ -221,6 +223,35 @@ def test_stock_generate_preflight_json_reports_candidate_status(mocker) -> None:
     assert json.loads(result.stdout)[0]["release_status"] == (
         "workflow_validation_candidate"
     )
+    assert json.loads(result.stdout)[0]["selection_scope"] == "reachable_branches"
+
+
+def test_stock_generate_plan_render_json_reports_candidate_status() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "plan-spec",
+            str(SPEC),
+            "--check-render",
+            "--run-id",
+            "stock-cosmos3-render",
+            "--var",
+            "bucket=stock-test-bucket",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["workflow_validation_candidates"] == [
+        {
+            "tool_ref": "workbench.cosmos3.generate",
+            "image": _candidate_image(),
+            "release_status": "workflow_validation_candidate",
+            "selection_scope": "planned_steps",
+        }
+    ]
 
 
 @pytest.mark.parametrize("tool_ref", QUARANTINED_COSMOS3_TOOL_REFS)

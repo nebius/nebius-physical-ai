@@ -5,7 +5,9 @@ The stock `workflows/testing/cosmos3-generate.yaml` uses
 generation was absent from this action's governed validation scope, so image
 preflight and submit still failed with the public-release quarantine error.
 `validate-spec` and `plan-spec` check the workflow graph and do not prove that a
-runtime image can be selected.
+runtime image can be selected. `plan-spec --check-render` does resolve selected
+images through the production renderer, but it does not prove pullability or
+runtime capability.
 
 This record adds only `workbench.cosmos3.generate` to the existing governed
 Cosmos3 candidate. Its source remains

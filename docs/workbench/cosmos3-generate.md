@@ -200,13 +200,18 @@ npa workbench workflow submit workflows/testing/cosmos3-generate.yaml \
 
 Successful JSON output from every workflow `submit` includes
 `workflow_validation_candidates`; each selection carries
-`release_status: workflow_validation_candidate`. A plan-only or non-runtime
-submit lists its planned steps. A runtime submit lists candidate defaults across
-every reachable branch before decisions execute, so it can include a candidate
-from a branch that the completed run does not take. The matching
+`release_status: workflow_validation_candidate` and either
+`selection_scope: planned_steps` or `selection_scope: reachable_branches`. A
+plan-only or non-runtime submit lists its planned steps. A runtime submit lists
+candidate defaults across every reachable branch before decisions execute, so it
+can include a candidate from a branch that the completed run does not take. A
+`plan-spec --check-render --json` result also reports planned candidate
+selections; rendering proves resolution, not pullability or runtime capability.
+The matching
 `preflight-images --json` check adds `release_status` only when that checked
-image is a validation candidate. Agent control planes must treat this as
-validation provenance, not release approval.
+image is a validation candidate, with `selection_scope: reachable_branches`.
+Agent control planes must treat this as validation provenance, not release
+approval.
 
 `--runtime` supervises the workflow to its terminal state. Secret values resolve
 from the private environment or selected project's NPA credential store; only

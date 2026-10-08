@@ -946,14 +946,26 @@ class WorkflowValidationCandidateSelection:
 
     tool_ref: str
     image: str
+    selection_scope: str
 
     def to_dict(self) -> dict[str, str]:
-        """Return the stable control-plane representation for CLI output."""
+        """Return the stable control-plane representation for CLI output.
+
+        Args:
+            None.
+
+        Returns:
+            Candidate provenance with its image-selection scope.
+
+        Raises:
+            None.
+        """
 
         return {
             "tool_ref": self.tool_ref,
             "image": self.image,
             "release_status": "workflow_validation_candidate",
+            "selection_scope": self.selection_scope,
         }
 
 
@@ -963,6 +975,7 @@ def workflow_validation_candidate_selections(
     *,
     run_id: str,
     options: SkypilotRenderOptions,
+    selection_scope: str = "planned_steps",
 ) -> tuple[WorkflowValidationCandidateSelection, ...]:
     """Report candidate defaults selected after all image-override precedence.
 
@@ -976,6 +989,7 @@ def workflow_validation_candidate_selections(
         steps: Planned workflow steps whose selected images are evaluated.
         run_id: Stable identifier used to render task configuration.
         options: Image registry, override, and digest-pin choices.
+        selection_scope: Machine-readable meaning of the supplied step set.
 
     Returns:
         Candidate selections whose resolved image remains the candidate default.
@@ -1019,6 +1033,7 @@ def workflow_validation_candidate_selections(
                 WorkflowValidationCandidateSelection(
                     tool_ref=tool_ref,
                     image=selected_image,
+                    selection_scope=selection_scope,
                 )
             )
     return tuple(selections)

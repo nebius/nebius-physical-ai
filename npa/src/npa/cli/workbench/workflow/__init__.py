@@ -2895,10 +2895,13 @@ def submit_cmd(
                     runtime_candidate_steps,
                     run_id=resolved_run_id,
                     options=npa_render_options,
+                    selection_scope="reachable_branches",
                 )
-            except NpaWorkflowError as exc:
-                _fail(str(exc), secrets=submission_redaction_secrets)
-                return
+            except NpaWorkflowError:
+                # Candidate disclosure is observational. The runtime retains its
+                # established per-wave planner and error behavior when the
+                # conservative reachability view is not currently available.
+                workflow_validation_candidates = []
             if output_format != OutputFormat.json:
                 _emit_workflow_validation_candidate_notices(
                     workflow_validation_candidates
@@ -4532,6 +4535,7 @@ def _workflow_validation_candidate_payload(
     *,
     run_id: str,
     options: "SkypilotRenderOptions",
+    selection_scope: str = "planned_steps",
 ) -> list[dict[str, str]]:
     """Return non-release image selections for agent and operator control planes."""
 
@@ -4542,7 +4546,11 @@ def _workflow_validation_candidate_payload(
     return [
         selection.to_dict()
         for selection in workflow_validation_candidate_selections(
-            spec, steps, run_id=run_id, options=options
+            spec,
+            steps,
+            run_id=run_id,
+            options=options,
+            selection_scope=selection_scope,
         )
     ]
 
@@ -9846,6 +9854,7 @@ def _check_static_plan_render(
     plan: ExecutionPlan,
     *,
     run_id: str,
+    options: SkypilotRenderOptions | None = None,
 ) -> dict[str, object]:
     """Render a static plan locally and return a secret-free proof."""
 
@@ -9855,11 +9864,14 @@ def _check_static_plan_render(
         render_skypilot_yaml,
     )
 
+    render_options = options or SkypilotRenderOptions(
+        materialize_registry_secrets=False
+    )
     rendered = render_skypilot_yaml(
         spec,
         plan,
         run_id=run_id,
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=render_options,
     )
     assert_no_unresolved_placeholders(rendered)
     task_count = sum(
@@ -9926,6 +9938,7 @@ def plan_spec_cmd(
     """Expand an NPA workflow spec into an execution plan (dry-run)."""
 
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     spec = _load_npa_workflow(yaml_path)
@@ -9949,10 +9962,26 @@ def plan_spec_cmd(
 
     try:
         plan = build_plan(spec, run_id=resolved_run_id, assume_decision=assume_decision)
+        render_options = SkypilotRenderOptions(materialize_registry_secrets=False)
         render_check = (
-            _check_static_plan_render(spec, plan, run_id=resolved_run_id)
+            _check_static_plan_render(
+                spec,
+                plan,
+                run_id=resolved_run_id,
+                options=render_options,
+            )
             if check_render is True
             else None
+        )
+        workflow_validation_candidates = (
+            _workflow_validation_candidate_payload(
+                spec,
+                plan.steps,
+                run_id=resolved_run_id,
+                options=render_options,
+            )
+            if render_check is not None
+            else []
         )
     except NpaWorkflowError as exc:
         _fail(str(exc))
@@ -9967,12 +9996,16 @@ def plan_spec_cmd(
             payload["access_requirements"] = _workflow_access_requirement_payload(spec)
             if render_check is not None:
                 payload["render_check"] = render_check
+                payload["workflow_validation_candidates"] = (
+                    workflow_validation_candidates
+                )
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
             return
         typer.echo(f"workflow: {wave_plan.workflow}")
         typer.echo(f"waves: {len(wave_plan.waves)}")
         if render_check is not None:
             _emit_render_check(render_check)
+            _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
         for wave in wave_plan.waves:
             states = ", ".join(step.state for step in wave.steps)
             suffix = (
@@ -9990,6 +10023,7 @@ def plan_spec_cmd(
         payload["access_requirements"] = _workflow_access_requirement_payload(spec)
         if render_check is not None:
             payload["render_check"] = render_check
+            payload["workflow_validation_candidates"] = workflow_validation_candidates
         # The human warning is suppressed under --json to keep the document clean,
         # which made a placeholder plan look valid. Say it in the document instead.
         if _is_placeholder_bucket(str(spec.config.get("bucket", "") or "")):
@@ -9999,6 +10033,7 @@ def plan_spec_cmd(
     typer.echo(f"workflow: {plan.workflow}")
     if render_check is not None:
         _emit_render_check(render_check)
+        _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
     access = _workflow_access_requirement_payload(spec)
     if access["hf"] or access["ngc"]:
         typer.echo(
@@ -10284,12 +10319,16 @@ def preflight_images_cmd(
             steps,
             run_id=run_id,
             options=options,
+            selection_scope="reachable_branches",
         )
         if candidate["image"] in images
     ]
     _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
-    candidate_release_statuses = {
-        candidate["image"]: candidate["release_status"]
+    candidate_metadata = {
+        candidate["image"]: {
+            "release_status": candidate["release_status"],
+            "selection_scope": candidate["selection_scope"],
+        }
         for candidate in workflow_validation_candidates
     }
     explicit_pull_secrets: tuple[str, ...] = ()
@@ -10424,8 +10463,8 @@ def preflight_images_cmd(
                         "authority": check.authority,
                         "digest": check.digest,
                         **(
-                            {"release_status": candidate_release_statuses[check.image]}
-                            if check.image in candidate_release_statuses
+                            candidate_metadata[check.image]
+                            if check.image in candidate_metadata
                             else {}
                         ),
                         "bootstrap_contract": next(
