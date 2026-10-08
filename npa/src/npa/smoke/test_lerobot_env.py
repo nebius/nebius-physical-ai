@@ -25,10 +25,13 @@ class CheckResult:
     detail: str = ""
 
 
-def _package_version(module, distribution_name: str) -> str:
-    version = getattr(module, "__version__", None)
-    if version:
-        return str(version)
+def _package_version(distribution_name: str) -> str:
+    """Read the installed distribution version used by all LeRobot smokes.
+
+    The secure integration rewrites wheel metadata while preserving upstream
+    package bytes, so ``lerobot.__version__`` is not an authoritative source.
+    """
+
     try:
         return metadata.version(distribution_name)
     except metadata.PackageNotFoundError:
@@ -42,8 +45,8 @@ def _format_exception(exc: BaseException) -> str:
 def check_import_lerobot() -> CheckResult:
     try:
         expected = expected_lerobot_version(__file__)
-        lerobot = importlib.import_module("lerobot")
-        version = _package_version(lerobot, "lerobot")
+        importlib.import_module("lerobot")
+        version = _package_version("lerobot")
         if version != expected:
             return CheckResult(
                 "import lerobot",
