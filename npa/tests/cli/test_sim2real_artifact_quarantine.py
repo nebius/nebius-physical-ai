@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 import os
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.sdk.workbench import sim2real as sim2real_sdk
 from npa.workflows.rerun_serve import RerunServeConfig
 from npa.workflows.sim2real.artifact_config import (
     Sim2RealArtifactConfig,
@@ -73,6 +75,41 @@ def test_regen_reaches_artifacts_while_execution_images_are_quarantined(
     assert "image" not in " ".join(vars(seen[0]))
     with pytest.raises(ValueError, match="remains quarantined"):
         build_config_from_env(run_id="execution-run")
+
+
+def test_regen_project_resolves_storage_without_execution_images(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _reject_execution_images(monkeypatch)
+    seen: list[Sim2RealArtifactConfig] = []
+    storage = SimpleNamespace(
+        checkpoint_bucket="s3://project-bucket",
+        endpoint_url="https://project.example.invalid",
+    )
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.resolve_project_storage", lambda _project: storage
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.regen_sim2real_rrd",
+        lambda config, **_kwargs: (
+            seen.append(config)
+            or RegenResult(config.run_id, str(tmp_path), "review.rrd", "", 4, 1, 4)
+        ),
+    )
+
+    result = _invoke_rerun(
+        "regen",
+        "--project",
+        "operator-project",
+        "--local-dir",
+        str(tmp_path),
+        "--no-sync",
+        "--no-upload",
+    )
+    assert result.exit_code == 0, result.output
+    assert seen[0].s3_bucket == "project-bucket"
+    assert seen[0].s3_endpoint == "https://project.example.invalid"
 
 
 def test_public_execution_defaults_remain_quarantined(
@@ -169,6 +206,48 @@ def test_artifact_config_preserves_environment_fallbacks(
     assert config.s3_prefix == ("explicit-prefix" if explicit else "environment-prefix")
     assert config.outer_iterations == 7
     assert config.k8s_gpu_candidates == ("RTXPRO6000", "L40S")
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_artifact_config_matches_execution_setting_precedence(
+    monkeypatch: pytest.MonkeyPatch, explicit: bool
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example.invalid/operator")
+    monkeypatch.setenv("NPA_SIM2REAL_RUN_ID", "environment-run")
+    monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "environment-bucket")
+    monkeypatch.setenv("NPA_SIM2REAL_PREFIX", "environment-prefix")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://environment.example.invalid")
+    monkeypatch.setenv("OUTER_ITERATIONS", "7")
+    monkeypatch.setenv("NPA_SIM2REAL_K8S_GPU_PRODUCT", "environment-product")
+    monkeypatch.setenv("NPA_SIM2REAL_K8S_GPU_CANDIDATES", "environment-a,environment-b")
+    settings: dict[str, object] = {
+        "run_id": "explicit-run" if explicit else "",
+        "s3_bucket": "explicit-bucket" if explicit else "",
+        "s3_prefix": "explicit-prefix" if explicit else None,
+        "s3_endpoint": "https://explicit.example.invalid" if explicit else "",
+        "k8s_gpu_product": "explicit-product" if explicit else "",
+        "k8s_gpu_candidates": "explicit-a,explicit-b" if explicit else "",
+    }
+    if explicit:
+        settings["outer_iterations"] = 3
+    artifact = build_artifact_config_from_env(**settings)
+    execution = build_config_from_env(**settings)
+    for field in dataclasses.fields(artifact):
+        assert getattr(artifact, field.name) == getattr(execution, field.name)
+
+
+def test_sdk_output_paths_reaches_existing_artifacts_while_images_are_quarantined(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reject_execution_images(monkeypatch)
+    paths = sim2real_sdk.output_paths(
+        run_id="archived-run",
+        s3_bucket="example-bucket",
+        s3_prefix="completed",
+        outer_iterations=3,
+    )
+    assert paths["root"] == "s3://example-bucket/completed/archived-run/"
+    assert paths["stage_10_eval_heldout"].endswith("outer-03/report.json")
 
 
 def test_recording_download_uses_exact_selected_uri(tmp_path: Path) -> None:

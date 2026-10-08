@@ -10,6 +10,7 @@ from typing import Optional
 
 import typer
 
+from npa.clients.config import resolve_project_storage
 from npa.clients.credentials import load_credentials
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
@@ -53,6 +54,7 @@ from npa.workflows.rerun_serve import (
     destroy_rerun_serve,
     redact_rerun_serve_manifest,
     resolve_cluster_name_from_config,
+    resolve_storage_bucket,
     require_kubeconfig,
 )
 from npa.workflows.sim2real import onboarding as onboarding_svc
@@ -912,6 +914,10 @@ def rerun_regen_command(
 ) -> None:
     """Regenerate reports/sim2real.rrd + sim2real.mcap from S3 artifacts (held-out PNG sync included)."""
     try:
+        if project:
+            storage = resolve_project_storage(project)
+            s3_bucket = resolve_storage_bucket(storage, override=s3_bucket)
+            s3_endpoint = s3_endpoint.strip() or storage.endpoint_url or ""
         config = build_artifact_config_from_env(
             run_id=run_id,
             s3_bucket=s3_bucket,
@@ -926,7 +932,7 @@ def rerun_regen_command(
             upload=upload,
             sync_inputs=not no_sync,
         )
-    except Sim2RealRerunRegenError as exc:
+    except (Sim2RealRerunRegenError, Sim2RealRerunServeError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 

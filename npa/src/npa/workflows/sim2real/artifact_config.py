@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Any
 
 from npa.workflows.sim2real.constants import (
     DEFAULT_OUTER_ITERATIONS,
     DEFAULT_PREFIX,
     DEFAULT_S3_ENDPOINT,
 )
+from npa.workflows.sim2real.models import new_run_id
 from npa.workflows.sim2real.utils import _split_csv
 
 
@@ -47,6 +49,9 @@ def build_artifact_config_from_env(
     s3_bucket: str = "",
     s3_prefix: str | None = None,
     s3_endpoint: str = "",
+    outer_iterations: int | None = None,
+    k8s_gpu_product: str = "",
+    k8s_gpu_candidates: Any = "",
 ) -> Sim2RealArtifactConfig:
     """Resolve artifact settings while leaving execution image policy untouched.
 
@@ -55,6 +60,9 @@ def build_artifact_config_from_env(
         s3_bucket: Explicit bucket, or the existing environment fallback.
         s3_prefix: Explicit parent prefix, otherwise the existing environment fallback.
         s3_endpoint: Explicit endpoint, or the existing environment fallback.
+        outer_iterations: Explicit final outer iteration, or the environment fallback.
+        k8s_gpu_product: Explicit GPU product, or the environment fallback.
+        k8s_gpu_candidates: Explicit GPU alternatives, or the environment fallback.
     Returns:
         Image-free settings for artifact download or visualization regeneration.
     Raises:
@@ -62,17 +70,23 @@ def build_artifact_config_from_env(
     """
 
     return Sim2RealArtifactConfig(
-        run_id=run_id,
+        run_id=run_id or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id(),
         s3_bucket=_artifact_bucket(s3_bucket),
         s3_prefix=_artifact_prefix(s3_prefix),
         s3_endpoint=_artifact_endpoint(s3_endpoint),
         outer_iterations=int(
-            os.environ.get("OUTER_ITERATIONS", DEFAULT_OUTER_ITERATIONS)
+            outer_iterations
+            if outer_iterations is not None
+            else os.environ.get("OUTER_ITERATIONS", DEFAULT_OUTER_ITERATIONS)
         ),
-        k8s_gpu_product=os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT")
+        k8s_gpu_product=k8s_gpu_product
+        or os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT")
         or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
         k8s_gpu_candidates=tuple(
-            _split_csv(os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES", ""))
+            _split_csv(
+                k8s_gpu_candidates
+                or os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES", "")
+            )
         ),
     )
 

@@ -623,7 +623,7 @@ def regen_sim2real_rrd(
     )
     rerun_duration_s = round(time.monotonic() - rerun_started, 3)
     if report:
-        from npa.workflows.sim2real.engine import gpu_fallback_report_contract
+        from npa.workflows.sim2real.gpu_fallback import gpu_fallback_report_contract
 
         report["policy_access"] = policy_access
         report["progress_metrics"] = build_progress_metrics(work_dir, outer_history)

@@ -499,7 +499,7 @@ than retaining the withdrawn parent's SSH-key layers. The Isaac 3 OSS dependency
 lock also selects PyJWT 2.14.0, which fixes the critical signature-verification
 issue that blocked its rebuilt image scan; Transfer's hash-verified security
 override selects the same fix. The controller and viewer use the immutable
-2026-10-01 Debian snapshot with fixed Perl, GLib and Mbed TLS, and both upgrade
+2026-10-02 Debian snapshot with fixed Perl, GLib and Mbed TLS, and both upgrade
 inherited packages. EnvGen and Loop Eval use the 2026-10-01 Ubuntu snapshot with
 the fixed `linux-libc-dev` 5.15.0-194.204 package. EnvGen also applies cuRobo's
 existing exact-source correction to an inert scikit-image recipe containing a

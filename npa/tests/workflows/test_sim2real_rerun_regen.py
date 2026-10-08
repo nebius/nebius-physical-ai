@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
@@ -20,6 +21,17 @@ pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
 
 def _config(run_id: str = "sim2real-staged-20260616t093101z") -> Sim2RealLoopConfig:
     return Sim2RealLoopConfig(
+        run_id=run_id,
+        s3_bucket="demo-bucket",
+        s3_prefix="sim2real-b",
+        s3_endpoint="https://storage.example",
+    )
+
+
+def _artifact_config(
+    run_id: str = "sim2real-staged-20260616t093101z",
+) -> Sim2RealArtifactConfig:
+    return Sim2RealArtifactConfig(
         run_id=run_id,
         s3_bucket="demo-bucket",
         s3_prefix="sim2real-b",
@@ -67,8 +79,9 @@ def test_regen_sim2real_rrd_requires_heldout_frames(
         regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
 
 
+@pytest.mark.parametrize("config_factory", [_config, _artifact_config])
 def test_regen_sim2real_rrd_success(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, config_factory
 ) -> None:
     local_dir = tmp_path / "run"
     (local_dir / "inner_loop/outer-01").mkdir(parents=True)
@@ -94,7 +107,7 @@ def test_regen_sim2real_rrd_success(
     )
 
     result = regen_sim2real_rrd(
-        _config(), local_dir=local_dir, sync_inputs=False, upload=False
+        config_factory(), local_dir=local_dir, sync_inputs=False, upload=False
     )
     assert result.heldout_frame_count == 4
     assert result.local_rrd_path.endswith("sim2real.rrd")
