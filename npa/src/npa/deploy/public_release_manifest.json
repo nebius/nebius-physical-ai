@@ -33,8 +33,8 @@
     "cosmos3": {
       "development_sha": "6462f27f98e1ded31d17b00944f943db3381ac35",
       "published_digest": "sha256:1aa6c473d95863709766f02d3e199cf8cf860adbe585b409a23a82bae4a2c37e",
-      "validation_tool_refs": ["workbench.cosmos3.prepare_video_input", "workbench.cosmos3.generate_variants", "workbench.cosmos3.generate"],
-      "scope_reason": "PAIDF and stock Cosmos3-Nano generation validation scope; image-security publication does not qualify every advertised Cosmos3 action, every generation mode, or promote a supported release.",
+      "validation_tool_refs": ["workbench.cosmos3.prepare_video_input", "workbench.cosmos3.generate_variants"],
+      "scope_reason": "Temporary PAIDF validation scope; trusted image-security publication and component smokes do not qualify every advertised Cosmos3 action or promote a supported release.",
       "build_run_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/37378387786"
     },
     "cosmos-evaluator": {

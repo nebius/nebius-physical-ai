@@ -490,10 +490,9 @@ not re-enter the accepted-release table below. Explicit operator registries and
 image overrides remain supported.
 
 The [stock Cosmos3 generation validation record](validation/cosmos3-stock-generation-default-20261006.md)
-extends this same candidate selection to `workbench.cosmos3.generate` without
-promoting a release. The mapping is active, but its image remains a validation
-candidate rather than an accepted release until that record contains the native
-stock Nano text-to-image qualification result.
+defines the narrow native-qualification evidence required before this candidate
+can be considered for `workbench.cosmos3.generate`. Until that evidence exists,
+that action remains quarantined by default.
 
 The [default-workflow impact audit](validation/public-default-quarantine-impact-20261005.md)
 checks all shipped plans without image overrides and records the remaining

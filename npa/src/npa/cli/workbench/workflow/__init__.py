@@ -3052,12 +3052,23 @@ def submit_cmd(
             _fail(str(exc), secrets=submission_redaction_secrets)
             return
 
-        workflow_validation_candidates = _workflow_validation_candidate_payload(
-            prepared_npa.spec,
-            prepared_npa.plan.steps,
-            run_id=resolved_run_id,
-            options=npa_render_options,
-        )
+        try:
+            workflow_validation_candidates = _workflow_validation_candidate_payload(
+                prepared_npa.spec,
+                prepared_npa.plan.steps,
+                run_id=resolved_run_id,
+                options=npa_render_options,
+            )
+        except (NpaWorkflowError, ValueError):
+            workflow_validation_candidates = []
+            workflow_validation_candidates_status = (
+                WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE
+            )
+            typer.echo(
+                "warning: workflow validation candidate disclosure is unavailable; "
+                "image selection will proceed through normal rendering",
+                err=True,
+            )
         if output_format != OutputFormat.json:
             _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
 

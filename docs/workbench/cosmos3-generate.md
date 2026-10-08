@@ -184,19 +184,13 @@ print(result["output_kind"], result["artifact_uri"])
 ### Workflow
 
 `workflows/testing/cosmos3-generate.yaml` runs the same stage through the
-`workbench.cosmos3.generate` toolRef, which resolves automatically to the
-digest-pinned Cosmos3 validation candidate. That candidate is not a supported
-public release. Complete
-[Workbench Getting Started](getting-started.md), including access checks,
-planning, exact-cluster verification, and image preflight. Submit with the same
-project, cluster, bucket, and config overrides:
-
-```bash
-npa workbench workflow submit workflows/testing/cosmos3-generate.yaml \
-  --project '<project-alias>' --infra 'k8s/<context>' \
-  --var 'bucket=<bucket>' --runtime \
-  --secret-env HF_TOKEN --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
-```
+`workbench.cosmos3.generate` toolRef. That action deliberately remains
+quarantined by default: the existing Cosmos3 validation candidate covers PAIDF
+video preparation and variant generation, not stock text-to-image generation.
+The [stock-generation validation record](validation/cosmos3-stock-generation-default-20261006.md)
+defines the narrow H100 qualification required before a separately reviewed
+scope change can enable it. Do not treat the stock test spec as a normal
+getting-started workload until that record is complete.
 
 Successful JSON output from every `npa.workflow` `submit` includes
 `workflow_validation_candidates`; each selection carries

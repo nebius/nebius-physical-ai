@@ -1,4 +1,4 @@
-"""Exercise stock Cosmos3 image selection through real CLI planning paths."""
+"""Cover governed candidate disclosure without relaxing Cosmos3 quarantine."""
 
 import json
 from pathlib import Path
@@ -18,14 +18,11 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     tool_image_key,
     workflow_validation_candidate_selections,
 )
-from npa.orchestration.skypilot.registry_preflight import (
-    ImagePullCheck,
-    KubernetesPullTarget,
-)
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SPEC = ROOT / "workflows/testing/cosmos3-generate.yaml"
+STOCK_SPEC = ROOT / "workflows/testing/cosmos3-generate.yaml"
+PAIDF_SPEC = ROOT / "workflows/main/paidf-cosmos3.yaml"
 COSMOS3_CANDIDATE_TOOL_REFS = frozenset(
     public_release_manifest()["workflow_validation_candidates"]["cosmos3"][
         "validation_tool_refs"
@@ -49,61 +46,74 @@ def _candidate_image() -> str:
     )
 
 
-def test_stock_generate_plans_the_exact_governed_image_without_overrides() -> None:
-    spec = load_spec(SPEC)
+def _paidf_plan():
+    spec = load_spec(PAIDF_SPEC)
+    return spec, build_plan(
+        spec,
+        run_id="candidate-disclosure",
+        assume_decision="promote_checkpoint",
+    )
+
+
+def test_stock_generate_default_stays_quarantined() -> None:
+    spec = load_spec(STOCK_SPEC)
     plan = build_plan(spec, run_id="stock-cosmos3")
-    images = plan_images(
+
+    assert not workflow_validation_candidate_selections(
         spec, plan.steps, run_id="stock-cosmos3", options=SkypilotRenderOptions()
     )
-    assert images == [_candidate_image()]
-    assert [
-        selection.to_dict()
-        for selection in workflow_validation_candidate_selections(
+    with pytest.raises(NpaWorkflowError, match="no consumable public release"):
+        plan_images(
             spec, plan.steps, run_id="stock-cosmos3", options=SkypilotRenderOptions()
         )
-    ] == [
-        {
-            "tool_ref": "workbench.cosmos3.generate",
-            "image": _candidate_image(),
-            "release_status": "workflow_validation_candidate",
-            "selection_scope": "planned_steps",
-        }
-    ]
-    assert not workflow_validation_candidate_selections(
-        spec,
-        plan.steps,
-        run_id="stock-cosmos3",
-        options=SkypilotRenderOptions(
-            image_overrides={
-                "*": "registry.example.invalid/operator/custom@sha256:" + "a" * 64
-            }
-        ),
-    )
+
+
+def test_paidf_candidate_selection_reports_the_resolved_image() -> None:
+    spec, plan = _paidf_plan()
+    selections = {
+        selection.tool_ref: selection.to_dict()
+        for selection in workflow_validation_candidate_selections(
+            spec,
+            plan.steps,
+            run_id="candidate-disclosure",
+            options=SkypilotRenderOptions(),
+        )
+    }
+
+    assert selections["workbench.cosmos3.generate_variants"] == {
+        "tool_ref": "workbench.cosmos3.generate_variants",
+        "image": _candidate_image(),
+        "release_status": "workflow_validation_candidate",
+        "selection_scope": "planned_steps",
+    }
+    assert "workbench.cosmos3.generate" not in selections
 
 
 def test_candidate_selection_skips_an_unresolvable_step(mocker) -> None:
     """Candidate disclosure must not turn a normal resolution error into a gate."""
 
-    spec = load_spec(SPEC)
-    plan = build_plan(spec, run_id="stock-cosmos3")
+    spec, plan = _paidf_plan()
     mocker.patch(
         "npa.orchestration.npa_workflow.skypilot_render.resolve_task_image",
         side_effect=NpaWorkflowError("synthetic image resolution failure"),
     )
 
     assert not workflow_validation_candidate_selections(
-        spec, plan.steps, run_id="stock-cosmos3", options=SkypilotRenderOptions()
+        spec,
+        plan.steps,
+        run_id="candidate-disclosure",
+        options=SkypilotRenderOptions(),
     )
 
 
-def test_stock_generate_submit_plan_uses_image_resolution() -> None:
+def test_stock_generate_submit_plan_stays_quarantined() -> None:
     result = CliRunner().invoke(
         app,
         [
             "workbench",
             "workflow",
             "submit",
-            str(SPEC),
+            str(STOCK_SPEC),
             "--plan-only",
             "--no-deploy-if-absent",
             "--infra",
@@ -114,95 +124,20 @@ def test_stock_generate_submit_plan_uses_image_resolution() -> None:
             "bucket=stock-test-bucket",
         ],
     )
-    assert result.exit_code == 0, result.output
-    assert "status: PLANNED" in result.output
-    assert "no consumable public release" not in result.output
-    assert "workflow validation candidate, not an accepted release" in result.output
+
+    assert result.exit_code == 1
+    assert "no consumable public release" in result.output
+    assert "status: PLANNED" not in result.output
 
 
-def test_stock_generate_submit_plan_json_reports_candidate_status() -> None:
-    result = CliRunner().invoke(
-        app,
-        [
-            "workbench",
-            "workflow",
-            "submit",
-            str(SPEC),
-            "--plan-only",
-            "--no-deploy-if-absent",
-            "--infra",
-            "k8s/stock-test",
-            "--run-id",
-            "stock-cosmos3-json",
-            "--var",
-            "bucket=stock-test-bucket",
-            "--output-format",
-            "json",
-        ],
+def test_stock_generate_preflight_stays_quarantined_before_external_checks(
+    mocker,
+) -> None:
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials"
     )
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["workflow_validation_candidates"] == [
-        {
-            "tool_ref": "workbench.cosmos3.generate",
-            "image": _candidate_image(),
-            "release_status": "workflow_validation_candidate",
-            "selection_scope": "planned_steps",
-        }
-    ]
-    assert payload["workflow_validation_candidates_status"] == "available"
-
-
-def test_stock_generate_preflight_probes_the_governed_image(mocker) -> None:
-    checks = mocker.patch(
-        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
-        return_value=[],
-    )
-    bootstrap = mocker.patch(
-        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
-        return_value=[],
-    )
-    mocker.patch(
-        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
-        return_value=KubernetesPullTarget(namespace="stock-test"),
-    )
-    result = CliRunner().invoke(
-        app,
-        [
-            "workbench",
-            "workflow",
-            "preflight-images",
-            str(SPEC),
-            "--infra",
-            "k8s/stock-test",
-            "--var",
-            "bucket=stock-test-bucket",
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    assert set(checks.call_args.args[0]) == {_candidate_image()}
-    assert bootstrap.called
-    assert "workflow validation candidate, not an accepted release" in result.output
-
-
-def test_stock_generate_preflight_json_reports_candidate_status(mocker) -> None:
-    checks = mocker.patch(
-        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
-        return_value=[
-            ImagePullCheck(
-                image=_candidate_image(),
-                status="ok",
-                digest="sha256:" + "a" * 64,
-            )
-        ],
-    )
-    mocker.patch(
-        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
-        return_value=[],
-    )
-    mocker.patch(
-        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
-        return_value=KubernetesPullTarget(namespace="stock-test"),
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts"
     )
 
     result = CliRunner().invoke(
@@ -211,56 +146,49 @@ def test_stock_generate_preflight_json_reports_candidate_status(mocker) -> None:
             "workbench",
             "workflow",
             "preflight-images",
-            str(SPEC),
+            str(STOCK_SPEC),
             "--infra",
             "k8s/stock-test",
             "--var",
             "bucket=stock-test-bucket",
-            "--json",
         ],
     )
 
-    assert result.exit_code == 0, result.output
-    assert checks.call_args.args[0] == [_candidate_image()]
-    assert json.loads(result.stdout)[0]["release_status"] == (
-        "workflow_validation_candidate"
-    )
-    assert json.loads(result.stdout)[0]["selection_scope"] == "reachable_branches"
-    assert "workflow validation candidate, not an accepted release" not in result.stderr
+    assert result.exit_code == 1
+    assert "no consumable public release" in result.output
+    pulls.assert_not_called()
+    contracts.assert_not_called()
 
 
-def test_stock_generate_plan_render_json_reports_candidate_status() -> None:
+def test_paidf_plan_render_json_reports_candidate_status(monkeypatch) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://unit/npa")
     result = CliRunner().invoke(
         app,
         [
             "workbench",
             "workflow",
             "plan-spec",
-            str(SPEC),
+            str(PAIDF_SPEC),
             "--check-render",
             "--run-id",
-            "stock-cosmos3-render",
-            "--var",
-            "bucket=stock-test-bucket",
+            "candidate-disclosure-render",
             "--json",
         ],
     )
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    assert payload["workflow_validation_candidates"] == [
-        {
-            "tool_ref": "workbench.cosmos3.generate",
-            "image": _candidate_image(),
-            "release_status": "workflow_validation_candidate",
-            "selection_scope": "planned_steps",
-        }
-    ]
+    assert any(
+        candidate["tool_ref"] == "workbench.cosmos3.generate_variants"
+        and candidate["image"] == _candidate_image()
+        and candidate["selection_scope"] == "planned_steps"
+        for candidate in payload["workflow_validation_candidates"]
+    )
     assert payload["workflow_validation_candidates_status"] == "available"
 
 
 @pytest.mark.parametrize("tool_ref", QUARANTINED_COSMOS3_TOOL_REFS)
-def test_other_cosmos3_capabilities_keep_the_quarantine(tool_ref: str) -> None:
+def test_non_candidate_cosmos3_capabilities_keep_the_quarantine(tool_ref: str) -> None:
     assert tool_ref in TOOL_CATALOG
     assert tool_ref not in COSMOS3_CANDIDATE_TOOL_REFS
     with pytest.raises(NpaWorkflowError, match="no consumable public release"):

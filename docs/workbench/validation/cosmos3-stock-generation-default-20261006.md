@@ -9,20 +9,23 @@ runtime image can be selected. `plan-spec --check-render` does resolve selected
 images through the production renderer, but it does not prove pullability or
 runtime capability.
 
-This record adds only `workbench.cosmos3.generate` to the existing governed
-Cosmos3 candidate. Its source remains
+This is a prospective acceptance record; it does not add
+`workbench.cosmos3.generate` to the existing governed Cosmos3 candidate. Its
+source remains
 `6462f27f98e1ded31d17b00944f943db3381ac35`, which is in main's history, and its
 exact digest remains
 `sha256:1aa6c473d95863709766f02d3e199cf8cf860adbe585b409a23a82bae4a2c37e`.
-The old public release stays quarantined and the candidate remains outside the
-accepted-release inventory. Operator overrides and non-official registry
-selection keep their existing precedence.
+The old public release stays quarantined, the candidate remains outside the
+accepted-release inventory, and the stock action remains blocked by default.
+Operator overrides and non-official registry selection keep their existing
+precedence.
 
 ## Acceptance status
 
-Native stock generation qualification is pending. Before treating this candidate
-selection as ready, the exact candidate must complete the stock Cosmos3-Nano
-text-to-image workload with the stock workflow's declared `H100:1` accelerator,
+Native stock generation qualification is pending. Before adding this candidate
+to the stock action's governed selection, the exact candidate must complete the
+stock Cosmos3-Nano text-to-image workload with the stock workflow's declared
+`H100:1` accelerator,
 including its enabled guardrails and published artifact.
 Preserve the stock prompt, seed, guidance, steps, CPU and memory requests;
 an accelerator override qualifies only that override, not the stock default.
@@ -31,13 +34,12 @@ required for qualification against main. Leave `source_overlay` unset and do
 not set `NPA_SRC_OVERLAY`: the qualification must exercise the candidate's
 baked CLI, which is what the stock default submit runs.
 
-The tests exercise actual image planning, submit's plan-only route, and
-`preflight-images` with mocked external probes. They prove selection and probe
-arguments; they do not prove image pulling, GPU inference, other generation
-modes, checkpoint evaluation or policy training. Those additional Cosmos3
-actions keep their existing quarantine.
+The planned regression tests prove that the normal renderer still refuses this
+unqualified default. They do not prove image pulling, GPU inference, other
+generation modes, checkpoint evaluation or policy training. Those additional
+Cosmos3 actions keep their existing quarantine.
 
 After native qualification, record the exact source/digest, success status and
-artifact validation here before marking the candidate ready. Concrete
-infrastructure identifiers and raw operational logs remain in private operator
-evidence.
+artifact validation here before proposing a separately reviewed scope change.
+Concrete infrastructure identifiers and raw operational logs remain in private
+operator evidence.

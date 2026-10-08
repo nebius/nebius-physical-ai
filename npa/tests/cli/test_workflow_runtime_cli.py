@@ -20,7 +20,6 @@ from npa.cli.main import app
 from npa.cli.workbench.workflow import (
     _execution_target_preflight as REAL_EXECUTION_TARGET_PREFLIGHT,
 )
-from npa.deploy.images import public_release_manifest
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.runtime import RuntimeReport
 from npa.orchestration.npa_workflow.run_resolution import RunResolution
@@ -33,7 +32,6 @@ SPECS = REPO_ROOT / "workflows" / "testing"
 FANOUT = SPECS / "token-factory-parallel-fanout.yaml"
 GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
 PAIDF_COSMOS3 = REPO_ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
-COSMOS3_GENERATE = SPECS / "cosmos3-generate.yaml"
 RUNNER = CliRunner()
 
 
@@ -973,15 +971,18 @@ def test_submit_runtime_text_output_lists_waves_and_decisions(fake_runtime) -> N
     assert "decision: promote_checkpoint" in result.output
 
 
-def test_runtime_submit_json_reports_cosmos3_candidate_status(
-    fake_runtime, mocker
-) -> None:
-    """Runtime output carries the same non-release signal as planned submits."""
+def test_runtime_submit_json_reports_candidate_status(fake_runtime, mocker) -> None:
+    """Runtime output carries the supplied non-release signal unchanged."""
 
-    candidate = public_release_manifest()["workflow_validation_candidates"]["cosmos3"]
-    mocker.patch("npa.cli.workbench.workflow._enforce_workflow_access")
+    candidate = {
+        "tool_ref": "workbench.example.candidate",
+        "image": "ghcr.io/example/candidate@sha256:" + "a" * 64,
+        "release_status": "workflow_validation_candidate",
+        "selection_scope": "reachable_branches",
+    }
     mocker.patch(
-        "npa.workbench.cosmos.checkpoint_access.preflight_control_checkpoint_access"
+        "npa.cli.workbench.workflow._workflow_validation_candidate_payload",
+        return_value=[candidate],
     )
     result = RUNNER.invoke(
         app,
@@ -989,9 +990,9 @@ def test_runtime_submit_json_reports_cosmos3_candidate_status(
             "workbench",
             "workflow",
             "submit",
-            str(COSMOS3_GENERATE),
+            str(FANOUT),
             "--run-id",
-            "runtime-cosmos3-candidate",
+            "runtime-candidate",
             "--runtime",
             "--skip-preflight",
             "--no-preflight-images",
@@ -1005,17 +1006,7 @@ def test_runtime_submit_json_reports_cosmos3_candidate_status(
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    assert payload["workflow_validation_candidates"] == [
-        {
-            "tool_ref": "workbench.cosmos3.generate",
-            "image": (
-                "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3:"
-                f"dev-{candidate['development_sha']}@{candidate['published_digest']}"
-            ),
-            "release_status": "workflow_validation_candidate",
-            "selection_scope": "reachable_branches",
-        }
-    ]
+    assert payload["workflow_validation_candidates"] == [candidate]
     assert payload["workflow_validation_candidates_status"] == "available"
 
 
@@ -1052,6 +1043,39 @@ def test_runtime_candidate_disclosure_planning_failure_is_observational(
 
     assert result.exit_code == 0, result.output
     assert fake_runtime["spec"].name == "token-factory-parallel-fanout"
+    payload = json.loads(result.stdout)
+    assert payload["workflow_validation_candidates"] == []
+    assert payload["workflow_validation_candidates_status"] == "unavailable"
+    assert "candidate disclosure is unavailable" in result.stderr
+
+
+def test_submit_plan_candidate_disclosure_failure_is_observational(mocker) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._workflow_validation_candidate_payload",
+        side_effect=ValueError("synthetic candidate disclosure failure"),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--plan-only",
+            "--no-deploy-if-absent",
+            "--infra",
+            "k8s/stock-test",
+            "--run-id",
+            "plan-candidate-disclosure-failure",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["workflow_validation_candidates"] == []
     assert payload["workflow_validation_candidates_status"] == "unavailable"
