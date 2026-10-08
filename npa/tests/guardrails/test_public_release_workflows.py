@@ -211,13 +211,18 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
 
 
 def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
-    """Require both public Cosmos3 Ray scans to use their redacted stdout mode."""
+    """Require every public Cosmos3 Ray scan to use redacted stdout mode."""
     scanner = "scan_image_cosmos3_ray_serve_payload.py"
-    scripts = [
-        str(step.get("run") or "")
-        for step in _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    workflow_paths = [
+        path for pattern in ("*.yml", "*.yaml") for path in WORKFLOWS.glob(pattern)
     ]
-    scanner_steps = [script for script in scripts if scanner in script]
+    scanner_steps = [
+        script
+        for path in workflow_paths
+        for job in _spec(path)["jobs"].values()
+        for step in job.get("steps", [])
+        if scanner in (script := str(step.get("run") or ""))
+    ]
     assert len(scanner_steps) == 2
     for script in scanner_steps:
         invocation = script[script.index(scanner) :]
@@ -225,7 +230,7 @@ def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
             rf"{re.escape(scanner)} \\\n+\s+--tarball .* \\\n+\s+--json ",
             invocation,
         )
-    assert "npa/tests/docker/test_cosmos3_ray_payload_evidence.py" in "\n".join(scripts)
+    assert "npa/tests/docker/test_cosmos3_ray_payload_evidence.py" in _runs(PUBLISH)
 
 
 def test_public_base_pull_authentication_precedes_local_build() -> None:

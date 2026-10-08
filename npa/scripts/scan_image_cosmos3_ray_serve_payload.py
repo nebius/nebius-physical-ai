@@ -196,9 +196,12 @@ def _scan_layer(
     findings: _PayloadFindings,
 ) -> None:
     """Scan every stored entry, retaining deleted or overwritten member evidence."""
-    layer_member = outer.extractfile(layer_name)
+    try:
+        layer_member = outer.extractfile(layer_name)
+    except KeyError as error:
+        raise RuntimeError(f"missing layer {layer_name}") from error
     if layer_member is None:
-        raise RuntimeError(f"missing layer {layer_name}")
+        raise RuntimeError(f"layer {layer_name} is not a regular file")
     with layer_member, io.BytesIO(layer_member.read()) as layer_bytes:
         layer_sha256 = hashlib.sha256(layer_bytes.getbuffer()).hexdigest()
         with tarfile.open(fileobj=layer_bytes) as layer:
@@ -241,9 +244,12 @@ def scan_tarball(path: Path) -> dict[str, object]:
             if len(manifest) != 1:
                 raise RuntimeError("expected one image in docker-save archive")
             record = manifest[0]
-            config_member = outer.extractfile(record["Config"])
+            try:
+                config_member = outer.extractfile(record["Config"])
+            except KeyError as error:
+                raise RuntimeError("missing image config") from error
             if config_member is None:
-                raise RuntimeError("missing image config")
+                raise RuntimeError("image config is not a regular file")
             with config_member:
                 config_bytes = config_member.read()
             config_sha256 = hashlib.sha256(config_bytes).hexdigest()

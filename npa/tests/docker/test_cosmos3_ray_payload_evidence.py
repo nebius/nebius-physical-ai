@@ -196,6 +196,29 @@ def test_missing_docker_save_manifest_has_a_consistent_error(tmp_path):
         SCANNER.scan_tarball(path)
 
 
+def test_missing_docker_save_config_has_a_consistent_error(tmp_path):
+    manifest = [{"Config": "missing-config.json", "RepoTags": [], "Layers": []}]
+    path = tmp_path / "missing-config.tar"
+    path.write_bytes(_tar_entries([("manifest.json", json.dumps(manifest).encode())]))
+
+    with pytest.raises(RuntimeError, match="missing image config"):
+        SCANNER.scan_tarball(path)
+
+
+def test_missing_docker_save_layer_has_a_consistent_error(tmp_path):
+    manifest = [{"Config": "config.json", "RepoTags": [], "Layers": ["missing.tar"]}]
+    config = json.dumps({"config": {}, "history": []}).encode()
+    path = tmp_path / "missing-layer.tar"
+    path.write_bytes(
+        _tar_entries(
+            [("manifest.json", json.dumps(manifest).encode()), ("config.json", config)]
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="missing layer missing.tar"):
+        SCANNER.scan_tarball(path)
+
+
 def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
     payload = b"hf_token='inert-native-cli-value'\n"
     path, _, _ = _image(tmp_path, [[("source.py", payload)]])
