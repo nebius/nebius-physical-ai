@@ -196,7 +196,9 @@ def test_download_uses_a_bounded_https_connection(integration, monkeypatch):
             calls["closed"] = True
 
     monkeypatch.setattr(integration, "WHEEL_URL", url)
-    monkeypatch.setattr(integration, "WHEEL_SHA256", hashlib.sha256(content).hexdigest())
+    monkeypatch.setattr(
+        integration, "WHEEL_SHA256", hashlib.sha256(content).hexdigest()
+    )
     monkeypatch.setattr(integration.http.client, "HTTPSConnection", Connection)
 
     assert integration._download(url, integration.WHEEL_SHA256) == content

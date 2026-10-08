@@ -68,7 +68,9 @@ def test_default_secure_integration_manifest_matches_its_constraints() -> None:
         requirement.name: str(requirement)
         for line in (
             root / "npa/docker/workbench/lerobot/default-runtime-requirements.txt"
-        ).read_text(encoding="utf-8").splitlines()
+        )
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line and not line.startswith("#")
         for requirement in [Requirement(line)]
     }
