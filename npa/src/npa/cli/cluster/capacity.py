@@ -139,13 +139,14 @@ def preset_gpu_count(entry: dict[str, Any]) -> int:
     count = _int_or_none((preset.get("resources") or {}).get("gpu_count"))
     if count:
         return count
-    match = re.match(r"(\d+)gpu-", str(preset.get("name") or ""))
+    name = str(preset.get("name") or "").strip().lower()
+    match = re.match(r"(\d+)gpu-", name)
     return int(match.group(1)) if match else 1
 
 
 def _entry_preset(entry: dict[str, Any]) -> str:
     instance = ((entry or {}).get("spec") or {}).get("compute_instance") or {}
-    return str((instance.get("preset") or {}).get("name") or "")
+    return str((instance.get("preset") or {}).get("name") or "").strip().lower()
 
 
 def _json_payload(capture: CaptureFn, args: list[str]) -> dict[str, Any]:
@@ -407,7 +408,7 @@ def gpu_capacity_error(
         f"ask a tenant admin to raise the {quota_name} quota for {region}",
     ]
     free_vms = preemptible_available(advice)
-    if _entry_preset(advice) == preset:
+    if _entry_preset(advice) == str(preset or "").strip().lower():
         free_gpus = free_vms * preset_gpu_count(advice)
     else:
         free_gpus = free_vms

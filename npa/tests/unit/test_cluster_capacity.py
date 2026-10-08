@@ -497,6 +497,24 @@ def test_preemptible_option_falls_back_to_the_preset_name() -> None:
     assert _PREEMPTIBLE_REMEDY in (_h200_error(advice, 8) or "")
 
 
+def test_preemptible_option_normalizes_matching_preset_names() -> None:
+    advice = _gpu_advice(
+        preemptible=_row("LOW", available=1, limit=128),
+        preset={"name": " 8GPU-128VCPU-1600GB "},
+    )
+
+    assert _PREEMPTIBLE_REMEDY in (_h200_error(advice, 8) or "")
+
+
+def test_preemptible_option_does_not_scale_fallback_preset_availability() -> None:
+    advice = _gpu_advice(
+        preemptible=_row("LOW", available=1, limit=128),
+        preset={"name": "1gpu-16vcpu-128gb", "resources": {"gpu_count": 1}},
+    )
+
+    assert _PREEMPTIBLE_REMEDY not in (_h200_error(advice, 8) or "")
+
+
 def test_preemptible_option_needs_fresh_advice() -> None:
     advice = _gpu_advice(
         preemptible=_row("LOW", state="DATA_STATE_STALE", available=1, limit=128)
