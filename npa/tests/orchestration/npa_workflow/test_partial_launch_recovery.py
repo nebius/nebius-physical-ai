@@ -81,6 +81,7 @@ def partial_runtime(tmp_path, runtime_sdk_submission):
     case.lookup = lambda name, job_id="": ManagedJobEvidence(
         "found",
         job_id=job_id,
+        job_name=name,
         status=case.terminal if case.cancels else "PENDING",
         workload_observable=bool(case.cancels),
     )
@@ -199,13 +200,29 @@ def test_cancellation_race_retains_actual_success(partial_runtime, valid):
 
 @pytest.mark.parametrize(
     "outcome",
-    ["absent", "unavailable", "wrong_id", "wrong_name", "running", "unknown_terminal"],
+    [
+        "absent",
+        "unavailable",
+        "wrong_id",
+        "wrong_name",
+        "missing_name",
+        "running",
+        "unknown_terminal",
+    ],
 )
 def test_uncertain_exact_identity_or_terminal_blocks(partial_runtime, outcome):
     case = partial_runtime
 
     def lookup(name, *, job_id=""):
         if outcome == "unknown_terminal" and not case.cancels:
+            return ManagedJobEvidence(
+                "found",
+                job_id=job_id,
+                job_name=name,
+                status="PENDING",
+                workload_observable=False,
+            )
+        if outcome == "missing_name":
             return ManagedJobEvidence(
                 "found", job_id=job_id, status="PENDING", workload_observable=False
             )
@@ -365,7 +382,7 @@ def test_failed_reserved_successor_is_adopted_when_observable(
     assert successor.recovery_decision == "block_indeterminate"
     case.output = True
     case.lookup = lambda name, job_id="": ManagedJobEvidence(
-        "found", job_id="42", status=state
+        "found", job_id="42", job_name=name, status=state
     )
     executor = _driver(case, options=replace(case.options, resume=True))
     assert executor.execute(case.gate)["status"] == "ok"
@@ -391,7 +408,7 @@ def test_adopted_reserved_successor_retains_reuse_provider_status(
     successor = original.attempts[-1]
     case.output = True
     case.lookup = lambda name, job_id="": ManagedJobEvidence(
-        "found", job_id="42", status="RUNNING"
+        "found", job_id="42", job_name=name, status="RUNNING"
     )
     statuses = iter(["PENDING", "CANCELLED"])
     case.status = lambda _job_id: SimpleNamespace(status=next(statuses))
@@ -423,6 +440,7 @@ def test_posted_reserved_successor_with_uncertain_evidence_never_relaunches(
     case.lookup = lambda name, job_id="": ManagedJobEvidence(
         "found" if outcome == "partial" else outcome,
         job_id="42",
+        job_name=name,
         status="PENDING",
         workload_observable=False,
     )
@@ -711,6 +729,7 @@ def _configure_two_recoveries(case):
         return ManagedJobEvidence(
             "found",
             job_id=job_id,
+            job_name=name,
             status="CANCELLED" if cancelled else "PENDING",
             workload_observable=cancelled,
         )
@@ -938,7 +957,7 @@ def test_paidf_audit_rejects_invalid_redacted_preflight_proof(
 def test_arbitrary_cancelled_status_is_not_exact_cancellation_proof(partial_runtime):
     case = partial_runtime
     case.lookup = lambda name, job_id="": ManagedJobEvidence(
-        "found", job_id=job_id, status="CANCELLED"
+        "found", job_id=job_id, job_name=name, status="CANCELLED"
     )
     executor = _driver(case)
     with pytest.raises(NpaWorkflowError, match="recorded exact cancellation"):
@@ -992,7 +1011,9 @@ def _success_race(case, tmp_path, *, kind="file", before_cancel=False):
 
         def lookup(name, *, job_id=""):
             status(job_id)
-            return ManagedJobEvidence("found", job_id=job_id, status="SUCCEEDED")
+            return ManagedJobEvidence(
+                "found", job_id=job_id, job_name=name, status="SUCCEEDED"
+            )
 
         case.lookup = lookup
     case.status = status
