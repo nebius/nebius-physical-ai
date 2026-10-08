@@ -68,6 +68,7 @@ def test_exact_correction_preserves_loader_and_notices_and_updates_record(instal
     assert (dist / "LICENSE").read_bytes() == b"complete original dependency license\n"
     assert unrelated.read_bytes() == b"unrelated bytecode must stay identical"
     assert report["executable_ast_preserved"] and report["primary_docstring_preserved"]
+    assert report["schema_version"] == "npa.curobo.dependency-source-correction.v1"
     assert report["record_sha256_before"] != report["record_sha256_after"]
     rows = list(csv.reader(io.StringIO((dist / "RECORD").read_text())))
     source_row = next(row for row in rows if row[0] == module.MODULE)
@@ -94,6 +95,23 @@ def test_exact_correction_preserves_loader_and_notices_and_updates_record(instal
         assert namespace["grass"].__doc__ == "Primary public documentation."
     assert outputs == ["same result", "same result"]
     assert calls == ["data/grass.png", "data/grass.png"]
+
+
+def test_correction_receipt_uses_the_declared_capability_schema(installed):
+    module, root, _path, _dist, _source, _sanitized, _unrelated = installed
+    report = module.sanitize_installation(
+        root,
+        schema_version="npa.envgen.dependency-source-correction.v1",
+    )
+    assert report["schema_version"] == "npa.envgen.dependency-source-correction.v1"
+
+
+def test_correction_refuses_an_unsupported_capability_schema(installed):
+    module, root, path, _dist, _source, _sanitized, _unrelated = installed
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="unsupported dependency-correction schema"):
+        module.sanitize_installation(root, schema_version="npa.unknown.v1")
+    assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize(

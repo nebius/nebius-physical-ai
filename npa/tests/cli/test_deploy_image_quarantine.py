@@ -8,8 +8,9 @@ from npa.cli.main import app
 
 @pytest.mark.parametrize("tool", ["genesis", "isaac-lab", "lerobot"])
 @pytest.mark.parametrize("dry_run", [False, True])
-def test_quarantined_deploy_fails_before_infrastructure(
-    tool, dry_run, tmp_path, monkeypatch, mocker
+@pytest.mark.parametrize("remote_state", [False, True])
+def test_quarantined_deploy_fails_before_any_infrastructure_side_effect(
+    tool, dry_run, remote_state, tmp_path, monkeypatch, mocker
 ) -> None:
     monkeypatch.setenv("ACCEPT_EULA", "Y")
     bootstrap = mocker.patch("npa.clients.nebius.bootstrap_environment")
@@ -18,6 +19,7 @@ def test_quarantined_deploy_fails_before_infrastructure(
     mocker.patch("npa.deploy.provisioner.plan", return_value="No changes.")
     mocker.patch("npa.clients.ssh.SSHClient")
     write_config = mocker.patch("npa.clients.config.write_config")
+    isaac_write_config = mocker.patch("npa.cli.isaac_lab.write_config")
     write_env = mocker.patch("npa.deploy.configurator.write_remote_docker_env_file")
     args = [
         "workbench",
@@ -31,13 +33,13 @@ def test_quarantined_deploy_fails_before_infrastructure(
         "tenant",
         "--region",
         "eu-north1",
-        "--tf-dir",
-        str(tmp_path),
         "--gpu-type",
         "gpu-l40s-a",
         "--gpu-preset",
         "1gpu-40vcpu-160gb",
     ]
+    if not remote_state:
+        args.extend(["--tf-dir", str(tmp_path)])
     if dry_run:
         args.append("--dry-run")
 
@@ -46,5 +48,9 @@ def test_quarantined_deploy_fails_before_infrastructure(
     assert result.exit_code == 1
     assert "quarantined" in result.output
     assert not isinstance(result.exception, ValueError)
-    for mutation in (bootstrap, initialize, provision, write_config, write_env):
+    for mutation in (bootstrap, initialize, provision, write_env):
         mutation.assert_not_called()
+    if tool == "isaac-lab":
+        isaac_write_config.assert_not_called()
+    else:
+        write_config.assert_not_called()

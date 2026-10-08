@@ -65,6 +65,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" 5.15.0-
     && mkdir -p /usr/share/doc/npa-envgen \
     && python /usr/local/lib/npa/remove-scikit-image-recipe.py \
       --site-packages /opt/npa/venv/lib/python3.11/site-packages \
+      --schema-version npa.envgen.dependency-source-correction.v1 \
       > /usr/share/doc/npa-envgen/dependency-source-correction.json \
     && find /opt/npa/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \

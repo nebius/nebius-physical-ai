@@ -150,12 +150,13 @@ def test_artifact_config_preserves_environment_fallbacks(
 ) -> None:
     _reject_execution_images(monkeypatch)
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "environment-bucket")
+    monkeypatch.setenv("NPA_SIM2REAL_PREFIX", "environment-prefix")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://environment.example.invalid")
     monkeypatch.setenv("OUTER_ITERATIONS", "7")
     monkeypatch.setenv("NPA_SIM2REAL_K8S_GPU_CANDIDATES", "RTXPRO6000; L40S")
     config = build_artifact_config_from_env(
         run_id="archived-run",
-        s3_prefix="completed",
+        s3_prefix="explicit-prefix" if explicit else None,
         s3_bucket="explicit-bucket" if explicit else "",
         s3_endpoint="https://explicit.example.invalid" if explicit else "",
     )
@@ -165,6 +166,7 @@ def test_artifact_config_preserves_environment_fallbacks(
         if explicit
         else "https://environment.example.invalid"
     )
+    assert config.s3_prefix == ("explicit-prefix" if explicit else "environment-prefix")
     assert config.outer_iterations == 7
     assert config.k8s_gpu_candidates == ("RTXPRO6000", "L40S")
 

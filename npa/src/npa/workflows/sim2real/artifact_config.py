@@ -45,7 +45,7 @@ def build_artifact_config_from_env(
     *,
     run_id: str,
     s3_bucket: str = "",
-    s3_prefix: str = DEFAULT_PREFIX,
+    s3_prefix: str | None = None,
     s3_endpoint: str = "",
 ) -> Sim2RealArtifactConfig:
     """Resolve artifact settings while leaving execution image policy untouched.
@@ -53,7 +53,7 @@ def build_artifact_config_from_env(
     Args:
         run_id: Existing run identifier.
         s3_bucket: Explicit bucket, or the existing environment fallback.
-        s3_prefix: Parent prefix containing the run.
+        s3_prefix: Explicit parent prefix, otherwise the existing environment fallback.
         s3_endpoint: Explicit endpoint, or the existing environment fallback.
     Returns:
         Image-free settings for artifact download or visualization regeneration.
@@ -64,7 +64,7 @@ def build_artifact_config_from_env(
     return Sim2RealArtifactConfig(
         run_id=run_id,
         s3_bucket=_artifact_bucket(s3_bucket),
-        s3_prefix=s3_prefix,
+        s3_prefix=_artifact_prefix(s3_prefix),
         s3_endpoint=_artifact_endpoint(s3_endpoint),
         outer_iterations=int(
             os.environ.get("OUTER_ITERATIONS", DEFAULT_OUTER_ITERATIONS)
@@ -84,6 +84,12 @@ def _artifact_bucket(override: str) -> str:
         or os.environ.get("NPA_S3_BUCKET")
         or os.environ.get("S3_BUCKET", "")
     )
+
+
+def _artifact_prefix(override: str | None) -> str:
+    if override is not None:
+        return override
+    return os.environ.get("NPA_SIM2REAL_PREFIX", DEFAULT_PREFIX)
 
 
 def _artifact_endpoint(override: str) -> str:

@@ -122,6 +122,7 @@ def test_envgen_corrects_inert_dependency_recipe_before_flattening() -> None:
     assert correction < text.index("FROM scratch AS runtime")
     assert text.index("COPY --from=sanitized / /") > correction
     assert "--site-packages /opt/npa/venv/lib/python3.11/site-packages" in text
+    assert "--schema-version npa.envgen.dependency-source-correction.v1" in text
     assert "/usr/share/doc/npa-envgen/dependency-source-correction.json" in text
 
 
