@@ -455,7 +455,7 @@ def _transfer_failure(errors):
             return _QualificationError(code)
     try:
         remote = json.loads(diagnostic)
-    except (ValueError, UnicodeError):
+    except ValueError:
         return _QualificationError("ssh_transfer_failed")
     if isinstance(remote, dict) and remote.get("status") == "failed":
         if remote.get("exception_class") == "FileNotFoundError":

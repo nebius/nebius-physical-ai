@@ -824,6 +824,22 @@ def test_fetch_reports_failed_child_transport_before_digest(
 
 
 @pytest.mark.parametrize(
+    "diagnostic,code",
+    [
+        (b"REMOTE HOST IDENTIFICATION HAS CHANGED", "ssh_host_verification_failed"),
+        (b"Connection timed out", "ssh_connection_failed"),
+        (b"No route to host", "ssh_connection_failed"),
+        (b"Could not resolve hostname", "ssh_connection_failed"),
+        (b"", "ssh_transfer_failed"),
+        (b"\xff", "ssh_transfer_failed"),
+        (b"x" * Q.MANIFEST_BYTES + b"Connection timed out", "ssh_transfer_failed"),
+    ],
+)
+def test_transfer_failure_uses_only_bounded_stderr_diagnostics(diagnostic, code):
+    assert Q._transfer_failure(io.BytesIO(diagnostic)).code == code
+
+
+@pytest.mark.parametrize(
     "sender_exit,expected", [(0, None), (1, "ssh_transfer_failed")]
 )
 def test_manifest_requires_successful_sender_even_with_exact_bytes(
