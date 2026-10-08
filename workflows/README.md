@@ -22,7 +22,7 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 | --- | --- |
 | Run a complete public sample with one command | [Four workflow demos](../docs/workbench/guides/public-workflow-demos.md) — automatic inputs, standard GPU execution, and offline HTML results |
 | Label videos in Encord and export an annotated MP4 | [Encord partner workflows](partners/encord/README.md) — real object tracks, exported-label verification, and media roundtrip |
-| Augment a video or LeRobot episode | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) — public starter, local MP4, and episode/camera inputs |
+| Augment a video or LeRobot episode | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) — public starter, local MP4, and episode/camera inputs; [twelve variants with preserved padding](../docs/workbench/guides/paidf-appearance-12.md#apply-the-recipe) |
 | Generate an image or video | [Cosmos 3](../docs/workbench/cosmos3-generate.md) |
 | Compare Cosmos3-Super serving topologies | [Benchmark results and workflows](../benchmark/cosmos3-super/README.md) |
 | Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [native and operator adapter runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — sealed data/runtime required; GPU acceptance pending |
@@ -146,9 +146,9 @@ and nonregular files are rejected, while parent directories are trusted.
 
 | Directory | Contents |
 | --- | --- |
-| `main/` | The three principal pipelines listed below |
-| `testing/` | General reference specs, component tests, and fixtures |
-| `partners/<partner>/` | Partner integration workflows and their runbooks |
+| [`main/`](main/README.md) | Principal workflows with guides beside each YAML link |
+| [`testing/`](testing/README.md) | Reference workflows, component tests and fixtures, each paired with its guide |
+| [`partners/encord/`](partners/encord/README.md) · [`partners/antioch/`](partners/antioch/README.md) | Partner integration workflows and their adjacent runbooks |
 | [`guides/`](guides/README.md) | Setup and operation runbooks |
 
 The CLI, agent, and live-submit matrix discover main, testing, and partner specs. Raw
@@ -165,11 +165,7 @@ workflow YAMLs remain unchanged from `main`.
 
 ### Main workflows
 
-| Spec | Notes |
-| --- | --- |
-| [`nurec-reconstruct.yaml`](main/nurec-reconstruct.yaml) | Real NCore V4 capture → 3DGUT training on an RT-core GPU → USDZ → rig-offset novel views → Rerun; [guide and measured evidence](../docs/workbench/guides/neural-reconstruction.md#promotion-evidence), [readiness record](main/nurec-reconstruct.readiness.json) |
-| [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Generic LeRobot/video input → prepared timeline → guarded Cosmos 3 full-video edge transfer → aligned evaluator gate/refinement → captions for every accepted variant → real Curator + FiftyOne Brain + Rerun ([guide](guides/paidf-cosmos3.md)) |
-| [`sim2real.yaml`](main/sim2real.yaml) | Canonical 14-stage Sim2Real workflow through the standard SkyPilot runtime ([guide](../docs/workbench/guides/sim2real-workflow.md)) |
+See the [main workflow and guide table](main/README.md) beside the three principal YAML specs.
 
 ### Partner workflows
 
@@ -183,140 +179,31 @@ workflow YAMLs remain unchanged from `main`.
 
 ### Testing and reference workflows
 
-Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Robot learning and simulation](#robot-learning-and-simulation) · [Data, perception, and scenario analysis](#data-perception-and-scenario-analysis) · [Bring your own framework](#bring-your-own-framework) · [Hosted inference and VLM evaluation](#hosted-inference-and-vlm-evaluation) · [Infrastructure and runtime examples](#infrastructure-and-runtime-examples)
+See the [testing workflow and guide tables](testing/README.md) beside the reference YAML specs.
 
 #### Generation and reconstruction
 
-| Spec | Notes |
-| --- | --- |
-| [`content-agents-rigid-object.yaml`](testing/content-agents-rigid-object.yaml) | NVIDIA Content Agents with a public image and runtime-fetched OVRTX: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter ([guide](../docs/workbench/content-agents.md)) |
-| [`cosmos-fetch.yaml`](testing/cosmos-fetch.yaml) | Check Cosmos source/checkpoint access and materialize a local cache |
-| [`cosmos-synth-fanout-curation.yaml`](testing/cosmos-synth-fanout-curation.yaml) | Cosmos synth fan-out + curation |
-| [`cosmos2-transfer.yaml`](testing/cosmos2-transfer.yaml) | Standalone Cosmos Transfer 2.5 GPU augmentation → video and frames |
-| [`cosmos3-checkpoint-eval.yaml`](testing/cosmos3-checkpoint-eval.yaml) | B200-only guarded Cosmos3 still-image checkpoint evaluation |
-| [`cosmos3-generate.yaml`](testing/cosmos3-generate.yaml) | Cosmos3-Nano image generation with default guardrails; gated guardrail assets require HF access |
-| [`cosmos3-policy-model-factory.yaml`](testing/cosmos3-policy-model-factory.yaml) | Experimental native LIBERO policy SFT → simulator evaluation → failure feedback → guarded video candidates; [scope and prerequisites](../docs/workbench/cosmos3-policy-model-factory.md) |
-| [`cosmos3-ray-batch.yaml`](testing/cosmos3-ray-batch.yaml) | Prepared SDG batch through an existing Cosmos3-Nano Ray Serve deployment → media and provenance |
-| [`cosmos3-reason.yaml`](testing/cosmos3-reason.yaml) | Cosmos3 reason |
-| [`cosmos3-super-b200-benchmark.yaml`](testing/cosmos3-super-b200-benchmark.yaml) | Cosmos3-Super serving benchmark on one eight-GPU B200 node |
-| [`cosmos3-super-h200-benchmark.yaml`](testing/cosmos3-super-h200-benchmark.yaml) | Cosmos3-Super serving benchmark on one eight-GPU H200 node |
-| [`cosmos3-super-h200-single-gpu.yaml`](testing/cosmos3-super-h200-single-gpu.yaml) | Isolated Cosmos3-Super TP-1 validation on one H200; distinct from node-throughput benchmarks |
-| [`cosmos3-super-b200-single-gpu.yaml`](testing/cosmos3-super-b200-single-gpu.yaml) | Isolated Cosmos3-Super TP-1 validation on one B200; distinct from node-throughput benchmarks |
-| [`cosmos3-text-to-image.yaml`](testing/cosmos3-text-to-image.yaml) | Public Cosmos3-Nano image generation with guardrails disabled → verified image and manifest |
-| [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |
-| [`scan-to-isaac-navigation.yaml`](testing/scan-to-isaac-navigation.yaml) | Existing NuRec visual scene + operator collision USD mesh and measured transforms → portable USDZ/provenance → actual Isaac PhysX ray probes; live qualification pending, no navigation-policy claim ([guide](../docs/workbench/guides/scan-to-isaac-navigation.md), [readiness](testing/scan-to-isaac-navigation.readiness.json)) |
-| [`rgbd-scan-to-isaac.yaml`](testing/rgbd-scan-to-isaac.yaml) | Metric RGB-D with poses → real Open3D TSDF and held-out depth gate → derived colored USDZ and exact triangle colliders → native Isaac PhysX; complete managed public capture qualified, with a verified navigation-input handoff ([guide](../docs/workbench/guides/rgbd-scan-to-isaac.md)) |
-| [`rgbd-scan-to-policy-demo.yaml`](testing/rgbd-scan-to-policy-demo.yaml) | Automatic public RGB-D sample → measured collision scene → native navigation training → held-out goals and offline HTML ([guide](../docs/workbench/guides/public-workflow-demos.md)) |
-| [`paidf-defect-image-generation.yaml`](testing/paidf-defect-image-generation.yaml) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
-| [`paidf-event-video-generation.yaml`](testing/paidf-event-video-generation.yaml) | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
-| [`paidf-image-attribute-augmentation.yaml`](testing/paidf-image-attribute-augmentation.yaml) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
-| [`nvidia-paidf-vda-cosmos-transfer25.yaml`](testing/nvidia-paidf-vda-cosmos-transfer25.yaml) | Separately named NVIDIA-derived VDA semantic translation → pinned upstream contract → real Cosmos Transfer 2.5/Evaluator/Curator/FiftyOne → Rerun ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |
-| [`physical-ai-data-factory.yaml`](testing/physical-ai-data-factory.yaml) | Cosmos Transfer 2.5 PAIDF blueprint ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |
+[Workflow and guide table](testing/README.md#generation-and-reconstruction).
 
 #### Robot learning and simulation
 
-| Spec | Notes |
-| --- | --- |
-| [`field-failure-reference-demo.yaml`](testing/field-failure-reference-demo.yaml) | Public inputs → baseline training → observed simulation failures → capture admission and reconstruction → mixed-scene replay → development gate → independently held-out comparison and offline HTML ([guide](../docs/workbench/guides/public-workflow-demos.md)) |
-
-| [`behavior-comet-native-full-training.yaml`](testing/behavior-comet-native-full-training.yaml) | Portable real OpenPI native training reference: same-entrypoint CPU input preflight → direct native GPU updates → complete FP32 TrainState/optimizer milestones with provider readback and durable resume ([guide](../docs/workbench/comet-native-full-training.md)); exact private inputs remain operator supplied |
-| [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete pinned MotionBenchMaker and MPiNets benchmark in cuRobo V2 kinematic and payload-dynamics modes; image remains publication-quarantined pending image checks and real GPU validation ([guide](../docs/workbench/curobo.md)) |
-| [`groot-1-7-finetune.yaml`](testing/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
-| [`isaac-arena-evaluation-b200.yaml`](testing/isaac-arena-evaluation-b200.yaml) | Four-seed Arena zero-action state regression on B200; completed scored episodes and hash-bound reports, with no visual claim ([guide](../docs/workbench/isaac-arena.md)) |
-| [`isaac-arena-evaluation-rtxpro.yaml`](testing/isaac-arena-evaluation-rtxpro.yaml) | Arena replay on RTX PRO 6000; exact-digest qualification completed with upstream task success and simulator-ground-truth-bound viewport motion ([readiness](testing/isaac-arena-evaluation-rtxpro.readiness.json)) |
-| [`isaac-franka-capture-reason.yaml`](testing/isaac-franka-capture-reason.yaml) | Headless Isaac Lab Franka RGB capture on GPU → hosted manipulation reasoning |
-| [`multicamera-rgbd-capture.yaml`](testing/multicamera-rgbd-capture.yaml) | Calibrated USD sensor rig → synchronized RGB/depth/poses and optional colored world points → decoded S3 validation; GPU acceptance pending ([guide](../docs/workbench/multicamera-rgbd-capture.md)) |
-| [`multicamera-rgbd-warehouse.yaml`](testing/multicamera-rgbd-warehouse.yaml) | Runtime-collect NVIDIA's full warehouse → four 1280×720 RGB-D streams at 265 poses → per-camera and fused world clouds with decoded S3 validation; complete native RTX qualification and artifact readback recorded for the public demo ([source-bound evidence](../docs/workbench/evidence/public-demos/README.md), [guide](../docs/workbench/multicamera-rgbd-capture.md)) |
-| [`shared-scene-navigation.yaml`](testing/shared-scene-navigation.yaml) | Native Isaac public quadruped reference or BYOF navigation with shared-scene physics/perception probes, checkpoint resume and held-out evaluation. Public bundle builder supplies a cluttered warehouse; reconstructed scenes require measured resets. GPU acceptance unverified. [Contract and runbook](../docs/workbench/guides/shared-scene-navigation.md). |
-| [`isaac-lab-rl-sweep.yaml`](testing/isaac-lab-rl-sweep.yaml) | **Parallel** GPU sweep (port of the `execution: parallel` SkyPilot template) + ranking barrier; submit with `--runtime` |
-| [`lerobot-subtask-proof.yaml`](testing/lerobot-subtask-proof.yaml) | CPU post-review gate: complete LeRobot v3 `subtask_index` coverage → catalog resolution → row-level proof bound to the source Parquet digest ([guide](../docs/workbench/guides/lerobot-subtask-labeling.md)) |
-| [`mjlab-eval.yaml`](testing/mjlab-eval.yaml) | Measured native MJLab checkpoint evaluation |
-| [`mjlab-train-eval.yaml`](testing/mjlab-train-eval.yaml) | Native MJLab training, measured evaluation, ONNX export and independent-seed evaluation |
-| [`mjlab-render.yaml`](testing/mjlab-render.yaml) | Trained MJLab checkpoint to measured evaluation, rendered MP4 and self-contained HTML on RTX PRO 6000 |
-| [`openpi-pi05-four-mode.yaml`](testing/openpi-pi05-four-mode.yaml) | Connected OpenPI runtime graph: live negative gate, direct inference, private cross-pod ClusterIP serving, real pi0.5 LoRA optimizer/checkpoint smoke, and disjoint held-out evaluation; consumes the immutable digest built by `byof-openpi.yaml` ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
-| [`openpi-pi05-full-droid-finetune.yaml`](testing/openpi-pi05-full-droid-finetune.yaml) | Complete upstream pi0.5 full-DROID recipe: checksum-synced RLDS 1.0.1 and preparation RRD, ten-million-frame normalization, fixed 100-update distributed qualification RRD, global batch 256, 100,000 updates on eight one-RTX-PRO-6000 nodes, durable resume, immutable checkpoint lineage, and verified progress RRD snapshots at 1k/10k/25k/50k/75k/100k ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
-| [`retargeting.yaml`](testing/retargeting.yaml) | Motion retargeting |
-| [`rl-policy-training-sim-success.yaml`](testing/rl-policy-training-sim-success.yaml) | Isaac Lab RL train (partial) |
-| [`robocasa-data-policy.yaml`](testing/robocasa-data-policy.yaml) | Native multi-task PandaOmron trajectories → LeRobotDataset v3 → real ACT training → exact-checkpoint evaluation on disjoint RoboCasa tasks → insights |
-| [`lerobot-transfer.yaml`](testing/lerobot-transfer.yaml) | Four-phase LeRobot demonstration experiment: paired ACT training → native PushT transfer stress tests → measured comparison and next-expert-demo queue. [Runbook](../docs/workbench/guides/lerobot-transfer.md). |
-| [`franka-rl-transfer.yaml`](testing/franka-rl-transfer.yaml) | PPO with selectable Franka, UR10e/Robotiq, or Kinova JACO2 embodiment, bounded learned targets and exploration, stable-hold rewards, and an outcome-driven curriculum (`learning_recipe=adaptive-bounded-exploration`). Measured-state checks reject invalid simulation before learning; sealed USD parts, paired physics tests, Token Factory evaluation, and actual LeRobot/Rerun rollouts retain the evidence. Latest native UR diagnostic **failed**; physics remains unqualified despite passing CPU checks. One RTX GPU plus a hosted VLM credential. [Runbook](../docs/workbench/guides/franka-rl-transfer.md). |
-| [`robocasa-smoke.yaml`](testing/robocasa-smoke.yaml) | Native RoboCasa workbench: task registration, asset availability, headless EGL reset, and a real random rollout with video through the npa-robocasa service |
-| [`sonic-eval.yaml`](testing/sonic-eval.yaml) | SONIC eval |
-| [`sonic-export-eval.yaml`](testing/sonic-export-eval.yaml) | Export → eval |
-| [`sonic-export.yaml`](testing/sonic-export.yaml) | SONIC export |
-| [`sonic-locomotion-finetuning.yaml`](testing/sonic-locomotion-finetuning.yaml) | Retarget → train → export → native SONIC eval |
-| [`sonic-train.yaml`](testing/sonic-train.yaml) | SONIC train |
+[Workflow and guide table](testing/README.md#robot-learning-and-simulation).
 
 #### Data, perception, and scenario analysis
 
-| Spec | Notes |
-| --- | --- |
-| [`alpamayo2-ray-sweep.yaml`](testing/alpamayo2-ray-sweep.yaml) | Ray GPU actors sweep scenario, seed, and diffusion settings; Ray CPU tasks reduce measured ADE/FDE and seed variability ([guide](../docs/workbench/alpamayo2-super.md#ray-experiments)) |
-| [`alpamayo2-ray-hardcases.yaml`](testing/alpamayo2-ray-hardcases.yaml) | Ray baseline → mean-error selection → refinement with matched scenarios and seeds; reports measured error changes ([guide](../docs/workbench/alpamayo2-super.md#ray-experiments)) |
-| [`alpamayo2-super-inference.yaml`](testing/alpamayo2-super-inference.yaml) | Real Alpamayo 2 Super 34B trajectory inference on `B200:1`; runtime-only OpenMDW weights and separately gated PhysicalAI-AV sample data ([guide](../docs/workbench/alpamayo2-super.md)) |
-| [`adversarial-scenario-hardening.yaml`](testing/adversarial-scenario-hardening.yaml) | Adversarial scenario generation and ranking → policy hardening loop → promotion gate |
-| [`av-night-scene-hardening.yaml`](testing/av-night-scene-hardening.yaml) | 8-stage AV night-scene pipeline ending when both detector metrics artifacts are written; human/FiftyOne inspection is post-run |
-| [`bdd100k-pipeline.yaml`](testing/bdd100k-pipeline.yaml) | 10-stage AV pipeline ending when all three detector metrics artifacts are written; human/FiftyOne inspection is post-run ([cookbook](../docs/workbench/cookbooks/bdd100k-pipeline.md)) |
-| [`dataset-ingest-curate.yaml`](testing/dataset-ingest-curate.yaml) | Sensor-data ingest → validation gate → slice curation → queryable version registration |
-| [`dataset-of-record-smoke.yaml`](testing/dataset-of-record-smoke.yaml) | CPU dataset-of-record smoke using the manifest-backed query fallback |
-| [`hardening-with-insights.yaml`](testing/hardening-with-insights.yaml) | Adversarial hardening loop → policy publication → insights metrics, lineage, and dashboard |
-| [`insights-aggregate.yaml`](testing/insights-aggregate.yaml) | CPU aggregation of an existing run prefix → dashboard and static HTML |
-| [`insights-smoke.yaml`](testing/insights-smoke.yaml) | CPU fixture-run ingestion → comparison and dashboard artifacts |
-| [`scenario-gen-smoke.yaml`](testing/scenario-gen-smoke.yaml) | CPU adversarial scenario generation and ranking smoke |
+[Workflow and guide table](testing/README.md#data-perception-and-scenario-analysis).
 
 #### Bring your own framework
 
-| Spec | Notes |
-| --- | --- |
-| [`byof-apriltag.yaml`](testing/byof-apriltag.yaml) | Plan-only catalog definition; run pinned CPU fiducial detection and controls through the direct BYOF runner |
-| [`byof-droid-policy-learning.yaml`](testing/byof-droid-policy-learning.yaml) | OSS registry: DROID policy learning pinned image + RLDS config smoke |
-| [`byof-evo.yaml`](testing/byof-evo.yaml) | Plan-only catalog definition; run pinned evo APE/RPE controls and matched KITTI plots through the direct BYOF runner |
-| [`habitat-sim-smoke.yaml`](testing/habitat-sim-smoke.yaml) | Quarantined dedicated Habitat image: exact runtime-fetched Skokloster RGB/depth traversal, Bullet, and NVIDIA EGL on one STRICT-bound RTX PRO 6000 (never B200); image and live proof remain pending |
-| [`byof-ltx2.yaml`](testing/byof-ltx2.yaml) | LTX-2.5 video generation and FiftyOne curation; source and gated weights fetched at runtime |
-| [`byof-maniskill.yaml`](testing/byof-maniskill.yaml) | OSS registry: ManiSkill pinned image + PickCube smoke |
-| [`byof-mujoco-playground.yaml`](testing/byof-mujoco-playground.yaml) | OSS registry: MuJoCo Playground pinned image + Cartpole smoke |
-| [`byof-open-dreamer.yaml`](testing/byof-open-dreamer.yaml) | Open Dreamer multi-GPU tokenizer and dynamics training on Minecraft/VPT data → action-conditioned dream rollout and Rerun evidence |
-| [`byof-openpi.yaml`](testing/byof-openpi.yaml) | OSS registry: OpenPI pi0.5 Polaris direct + WebSocket-served Franka joint-position inference on `B200:1`; runtime-only checkpoint and scoped Gemma gate ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
-| [`byof-robocasa.yaml`](testing/byof-robocasa.yaml) | OSS registry: RoboCasa pinned image + headless kitchen-task smoke |
-| [`byof-robomimic.yaml`](testing/byof-robomimic.yaml) | Quarantined neutral candidate: plans real robomimic BC optimizer steps, disjoint held-out validation, exact-checkpoint reload, and held-out Lift PH low-dimensional action inference on `B200:1`; CUDA runtime use and live/public acceptance remain deferred ([guide](../docs/workbench/byof-robomimic.md)) |
-| [`byof-wan2.2-multigpu.yaml`](testing/byof-wan2.2-multigpu.yaml) | Wan 2.2 generation across four participating GPU ranks; MP4, topology, and Rerun evidence |
-| [`byof-wan2.2.yaml`](testing/byof-wan2.2.yaml) | Wan 2.2 TI2V-5B on one RTX PRO 6000; decoded MP4 and verified Rerun evidence; [configurable frames, sampling steps, and seed](../docs/workbench/wan2.2.md#generate-a-longer-clip) on both Wan routes |
-| [`byof.yaml`](testing/byof.yaml) | BYOF via `run_byof_repo.py` |
+[Workflow and guide table](testing/README.md#bring-your-own-framework).
 
 #### Hosted inference and VLM evaluation
 
-| Spec | Notes |
-| --- | --- |
-| [`token-factory-batch-generate.yaml`](testing/token-factory-batch-generate.yaml) | Hosted asynchronous batch text generation → generations JSONL |
-| [`token-factory-caption.yaml`](testing/token-factory-caption.yaml) | Hosted vision captioning; pass `--secret-env NEBIUS_TOKEN_FACTORY_KEY` |
-| [`token-factory-cosmos-reason.yaml`](testing/token-factory-cosmos-reason.yaml) | Hosted inference; pass `--secret-env NEBIUS_TOKEN_FACTORY_KEY` |
-| [`token-factory-gate-loop.yaml`](testing/token-factory-gate-loop.yaml) | Zero-GPU **runtime** gate loop: real early-exit + `goto` branch; submit with `--runtime` |
-| [`token-factory-generate.yaml`](testing/token-factory-generate.yaml) | Hosted inference; pass `--secret-env NEBIUS_TOKEN_FACTORY_KEY` |
-| [`token-factory-parallel-fanout.yaml`](testing/token-factory-parallel-fanout.yaml) | Zero-GPU **parallel** fan-out (JobGroup) + join barrier; submit with `--runtime` |
-| [`token-factory-trigger-watch.yaml`](testing/token-factory-trigger-watch.yaml) | Wait for frames in an inbox prefix → hosted vision captioning |
-| [`tokenfactory-cosmos-gate.yaml`](testing/tokenfactory-cosmos-gate.yaml) | Gate loop |
-| [`tokenfactory-rollout-judge-combo.yaml`](testing/tokenfactory-rollout-judge-combo.yaml) | LeRobot GPU rollout → hosted VLM evaluation |
-| [`tokenfactory-rollout-judge.yaml`](testing/tokenfactory-rollout-judge.yaml) | Reason → VLM chain |
-| [`tokenfactory-scene-to-rollout-judge.yaml`](testing/tokenfactory-scene-to-rollout-judge.yaml) | Hosted scene reasoning → GPU policy rollout → hosted VLM evaluation against the plan |
-| [`tokenfactory-train-triage.yaml`](testing/tokenfactory-train-triage.yaml) | LeRobot GPU policy training → hosted text triage of run artifacts |
-| [`vlm-eval-benchmark.yaml`](testing/vlm-eval-benchmark.yaml) | VLM benchmark |
-| [`vlm-eval-loop.yaml`](testing/vlm-eval-loop.yaml) | Self-hosted VLM rollout-set evaluation → aggregate task-success report |
-| [`vlm-eval-single.yaml`](testing/vlm-eval-single.yaml) | Self-hosted VLM eval |
-| [`vlm-eval-token-factory.yaml`](testing/vlm-eval-token-factory.yaml) | Hosted Token Factory VLM evaluation over a rollout prefix |
+[Workflow and guide table](testing/README.md#hosted-inference-and-vlm-evaluation).
 
 #### Infrastructure and runtime examples
 
-| Spec | Notes |
-| --- | --- |
-| [`multi-node-probe.yaml`](testing/multi-node-probe.yaml) | Gang-scheduled multi-node stage with evidence from every rank |
-| [`sim2real-envgen-shards.yaml`](testing/sim2real-envgen-shards.yaml) | **DEMO ONLY** isolated envgen fan-out fixture |
-| [`sim2real-two-step-agent.yaml`](testing/sim2real-two-step-agent.yaml) | **DEMO ONLY** agent-generated two-state DSL fixture |
-| [`sim2real-two-step.yaml`](testing/sim2real-two-step.yaml) | **DEMO ONLY** two-state DSL fixture |
-| [`sonic-b300-routing-evidence.yaml`](testing/sonic-b300-routing-evidence.yaml) | CPU-only, fail-closed explicit B300 routing evidence with a time-structured RRD ([cookbook](../docs/workbench/cookbooks/sonic-b300-routing-evidence.md)) |
-
-The canonical Sim2Real spec is `workflows/main/sim2real.yaml`; it uses the same
-standard runtime as the other workflows. Its small `sim2real-*` fixtures do not
-substitute for a complete robot-learning run.
+[Workflow and guide table](testing/README.md#infrastructure-and-runtime-examples).
 
 ## Live GPU / CPU submit E2E
 
