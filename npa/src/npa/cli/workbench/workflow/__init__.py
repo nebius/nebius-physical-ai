@@ -1530,6 +1530,10 @@ def submit_cmd(
     merged_npa_spec = None
     robotwin_submit_context = None
     if is_npa_spec:
+        from npa.orchestration.npa_workflow.image_inputs import (
+            validate_immutable_image_inputs,
+        )
+        from npa.orchestration.npa_workflow.interpreter import _make_context
         from npa.orchestration.npa_workflow.presets import preset_overrides
         from npa.orchestration.npa_workflow.spec import load_spec
         from npa.orchestration.npa_workflow.submit import load_spec_for_submit
@@ -1545,6 +1549,9 @@ def submit_cmd(
             # staging, provisioning, or accelerator discovery.
             merged_npa_spec = load_spec_for_submit(
                 yaml_path, config_overrides=substitutions
+            )
+            validate_immutable_image_inputs(
+                _make_context(merged_npa_spec, run_id=run_id or "preflight").config
             )
             validate_image_override_selectors(
                 merged_npa_spec,

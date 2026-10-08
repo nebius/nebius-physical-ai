@@ -724,27 +724,27 @@ def plan_fingerprint(
     immutable_image_inputs = required_immutable_image_inputs(
         _resolved_config(spec, run_id)
     )
-    payload = _json.dumps(
-        {
-            "workflow": spec.name,
-            "api_version": spec.api_version,
-            # Generic tool image resolution may legitimately vary between waves;
-            # explicit provenance inputs must instead remain identical for resume.
-            "required_immutable_image_inputs": immutable_image_inputs,
-            "steps": [
-                {
-                    "state": step.state,
-                    "iteration": step.iteration,
-                    "group": step.group,
-                    "argv": step.argv,
-                    "shell": step.shell,
-                    "resources": step.resources,
-                }
-                for step in plan.steps
-            ],
-        },
-        sort_keys=True,
-    )
+    payload_data: dict[str, Any] = {
+        "workflow": spec.name,
+        "api_version": spec.api_version,
+        "steps": [
+            {
+                "state": step.state,
+                "iteration": step.iteration,
+                "group": step.group,
+                "argv": step.argv,
+                "shell": step.shell,
+                "resources": step.resources,
+            }
+            for step in plan.steps
+        ],
+    }
+    # Generic tool image resolution may legitimately vary between waves;
+    # explicit provenance inputs must instead remain identical for resume.
+    # Preserve legacy fingerprint bytes for specs that declare no such inputs.
+    if immutable_image_inputs:
+        payload_data["required_immutable_image_inputs"] = immutable_image_inputs
+    payload = _json.dumps(payload_data, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 

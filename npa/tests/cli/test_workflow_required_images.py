@@ -7,6 +7,8 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.workbench.workflow import app
+from npa.cli.workbench import workflow
+from npa.orchestration.npa_workflow import deploy
 
 ROOT = Path(__file__).resolve().parents[3]
 ISAAC = "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
@@ -52,3 +54,21 @@ def test_plan_cli_uses_operator_vars_before_real_render(monkeypatch):
     payload = json.loads(result.stdout)
     assert payload["render_check"]["tasks"] == 8
     assert ISAAC in result.stdout and CPU in result.stdout
+
+
+def test_submit_rejects_missing_exact_images_before_staging_or_provisioning(
+    monkeypatch,
+):
+    path = ROOT / "workflows/testing/rgbd-scan-to-policy-demo.yaml"
+
+    def unexpected_side_effect(*_args, **_kwargs):
+        pytest.fail("missing immutable images must fail before this side effect")
+
+    monkeypatch.setattr(deploy, "plan_infra_present", unexpected_side_effect)
+    monkeypatch.setattr(workflow, "_stage_npa_src_for_submit", unexpected_side_effect)
+
+    result = CliRunner().invoke(app, ["submit", str(path), "--skip-preflight"])
+
+    assert result.exit_code == 1
+    assert "requires an explicit" in result.output
+    assert "--var" in result.output

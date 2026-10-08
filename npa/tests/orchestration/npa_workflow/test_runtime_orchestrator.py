@@ -4769,6 +4769,33 @@ def test_resume_refuses_a_changed_required_immutable_image(tmp_path: Path) -> No
     assert not submitter.calls
 
 
+def test_undeclared_immutable_images_preserve_legacy_fingerprint(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    plan = build_plan(spec, run_id="rt-legacy-fingerprint")
+    legacy_payload = {
+        "workflow": spec.name,
+        "api_version": spec.api_version,
+        "steps": [
+            {
+                "state": step.state,
+                "iteration": step.iteration,
+                "group": step.group,
+                "argv": step.argv,
+                "shell": step.shell,
+                "resources": step.resources,
+            }
+            for step in plan.steps
+        ],
+    }
+    expected = hashlib.sha256(
+        json.dumps(legacy_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+
+    assert plan_fingerprint(spec, run_id="rt-legacy-fingerprint") == expected
+
+
 def test_resume_accepts_an_unchanged_plan(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     store = MemoryStore()
