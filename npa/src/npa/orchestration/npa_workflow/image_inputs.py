@@ -65,5 +65,6 @@ def validate_immutable_image_inputs(config: Mapping[str, Any]) -> None:
             f"config.{key} requires an explicit registry-qualified immutable image; "
             f"set --var {key}=<registry>/<repository>@sha256:<64-hex-digest>. "
             "Use a qualified image for this workload; tool:// and tag-only "
-            "references cannot bind its provenance or child launches."
+            "references cannot bind its provenance or child launches. Use a "
+            "digest-only reference; remove any :tag segment before @sha256:."
         )

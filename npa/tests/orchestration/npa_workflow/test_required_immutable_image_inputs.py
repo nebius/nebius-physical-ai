@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 import yaml
 
-from npa.orchestration.npa_workflow import interpreter
+from npa.orchestration.npa_workflow import interpreter, runtime
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.readiness import load_readiness_record
 from npa.orchestration.npa_workflow.skypilot_render import (
@@ -144,6 +144,33 @@ def test_missing_image_fails_before_runtime_store_or_executor(tmp_path, monkeypa
     store_factory.assert_not_called()
     store.write_manifest.assert_not_called()
     executor.assert_not_called()
+
+
+def test_missing_image_fails_before_runtime_tier_store_or_executor(tmp_path, monkeypatch):
+    spec = _spec(tmp_path, {"required_immutable_images": ["runtime"], "runtime": ""})
+    store_factory = Mock(return_value=None)
+    executor_factory = Mock()
+    monkeypatch.setattr(runtime, "store_for_config", store_factory)
+    monkeypatch.setattr(runtime, "SkyPilotWaveExecutor", executor_factory)
+
+    with pytest.raises(NpaWorkflowError, match="--var runtime="):
+        runtime.run_workflow_runtime(spec, run_id="runtime-denied")
+
+    store_factory.assert_not_called()
+    executor_factory.assert_not_called()
+
+
+def test_tagged_digest_explains_the_required_canonical_form(tmp_path):
+    tagged_digest = "registry.example.invalid/runtime:tag@sha256:" + "a" * 64
+    spec = _spec(
+        tmp_path,
+        {"required_immutable_images": ["runtime"], "runtime": tagged_digest},
+    )
+
+    with pytest.raises(
+        NpaWorkflowError, match=r"remove any :tag segment before @sha256"
+    ):
+        interpreter.build_plan(spec)
 
 
 @pytest.mark.parametrize("name", EXACT_INPUT_SPECS)

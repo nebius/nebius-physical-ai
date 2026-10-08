@@ -44,6 +44,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from npa.orchestration.npa_workflow.decisions import normalize_decision
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.image_inputs import validate_immutable_image_inputs
 from npa.orchestration.npa_workflow.interpreter import (
     ExecutionPlan,
     PlanStep,
@@ -3387,6 +3388,9 @@ def run_workflow_runtime(
     than stopping. Every real decision comes from S3 and is recorded in the ledger.
     """
 
+    resolved_config = _resolved_config(spec, run_id)
+    validate_immutable_image_inputs(resolved_config)
+
     opts = options or RuntimeOptions()
     log = logger or (lambda message: None)
 
@@ -3401,7 +3405,7 @@ def run_workflow_runtime(
             )
     else:
         if store is None:
-            store = store_for_config(_resolved_config(spec, run_id), run_id=run_id)
+            store = store_for_config(resolved_config, run_id=run_id)
         if store is None:
             message = (
                 "config.bucket is not set, so no runtime ledger can be written: "
