@@ -1031,16 +1031,20 @@ def _prepare_publication_padding(artifact, source, metadata, root):
 
 def _preserve_publication_padding(artifact, source, metadata, base, storage, root):
     """Prepare and retain the raw model output on the ordinary path."""
+    record = metadata.get("source_content_region")
+    retains_raw = False
+    if record is not None:
+        width, height = record["canvas"]
+        retains_raw = record["bounds"] != [0, 0, width, height]
+    if retains_raw:
+        raw_uri = base + "raw_model_video.mp4"
+        storage.upload_file(str(artifact), raw_uri)
+        _retain_raw_metadata(artifact, record, metadata, base, storage)
     published, updated, raw = _prepare_publication_padding(
         artifact, source, metadata, root
     )
     if raw is None:
         return published, updated
-    raw_uri = base + "raw_model_video.mp4"
-    storage.upload_file(str(raw), raw_uri)
-    _retain_raw_metadata(
-        raw, metadata["source_content_region"], metadata, base, storage
-    )
     return published, {
         **updated,
         "padding_preservation": {
