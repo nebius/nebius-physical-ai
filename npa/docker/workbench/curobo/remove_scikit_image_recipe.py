@@ -23,13 +23,9 @@ EXPECTED_VERSION = "0.26.0"
 SOURCE_SHA256 = "50e6234fa2170820eaf8d0f8f42b51905822afc3680a4f09113fa11d435f7fb4"
 SANITIZED_SHA256 = "7f505612106adcc880746de642ceb91c9cbb74a6bd0c8100689c0da539c96abf"
 MODULE = "skimage/data/_fetchers.py"
-DEFAULT_SCHEMA_VERSION = "npa.curobo.dependency-source-correction.v1"
-SUPPORTED_SCHEMA_VERSIONS = frozenset(
-    {
-        DEFAULT_SCHEMA_VERSION,
-        "npa.envgen.dependency-source-correction.v1",
-    }
-)
+RECEIPT_SCHEMA_VERSION = "npa.dependency-source-correction.v1"
+DEFAULT_CAPABILITY = "curobo"
+SUPPORTED_CAPABILITIES = frozenset({"curobo", "envgen", "fiftyone"})
 
 
 def sanitize_source(source: bytes, version: str) -> bytes:
@@ -77,10 +73,10 @@ def sanitize_source(source: bytes, version: str) -> bytes:
 def sanitize_installation(
     site_packages: Path,
     *,
-    schema_version: str = DEFAULT_SCHEMA_VERSION,
+    capability: str = DEFAULT_CAPABILITY,
 ) -> dict:
-    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
-        raise ValueError(f"unsupported dependency-correction schema: {schema_version}")
+    if capability not in SUPPORTED_CAPABILITIES:
+        raise ValueError(f"unsupported dependency-correction capability: {capability}")
     site_packages = site_packages.resolve(strict=True)
     distributions = [
         d
@@ -140,7 +136,8 @@ def sanitize_installation(
     csv.writer(stream, lineterminator="\n").writerows(new_rows)
     record_path.write_text(stream.getvalue())
     return {
-        "schema_version": schema_version,
+        "schema_version": RECEIPT_SCHEMA_VERSION,
+        "capability": capability,
         "distribution": "scikit-image",
         "version": distribution.version,
         "module": MODULE,
@@ -158,16 +155,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--site-packages", type=Path, required=True)
     parser.add_argument(
-        "--schema-version",
-        choices=sorted(SUPPORTED_SCHEMA_VERSIONS),
-        default=DEFAULT_SCHEMA_VERSION,
+        "--capability",
+        choices=sorted(SUPPORTED_CAPABILITIES),
+        default=DEFAULT_CAPABILITY,
     )
     args = parser.parse_args()
     print(
         json.dumps(
             sanitize_installation(
                 args.site_packages,
-                schema_version=args.schema_version,
+                capability=args.capability,
             ),
             sort_keys=True,
         )

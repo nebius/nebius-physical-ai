@@ -10,6 +10,9 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_ENV_COUNT,
     DEFAULT_ENVGEN_SHARD_COUNT,
+    DEFAULT_K8S_GPU_PRODUCT,
+    DEFAULT_K8S_GPU_RESOURCE,
+    DEFAULT_K8S_ISAAC_CACHE_PVC,
     DEFAULT_K8S_MAX_PARALLEL_GPUS,
     DEFAULT_INNER_ITERATIONS,
     DEFAULT_ISAAC_TASK,
@@ -403,17 +406,17 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         k8s_isaac_cache_pvc=str(
             overrides.get("k8s_isaac_cache_pvc")
             or os.environ.get("NPA_SIM2REAL_ISAAC_CACHE_PVC")
-            or "npa-sim2real-isaac-cache"
+            or DEFAULT_K8S_ISAAC_CACHE_PVC
         ),
         k8s_gpu_resource=str(
             overrides.get("k8s_gpu_resource")
             or os.environ.get("NPA_SIM2REAL_K8S_GPU_RESOURCE")
-            or "nvidia.com/gpu"
+            or DEFAULT_K8S_GPU_RESOURCE
         ),
         k8s_gpu_product=str(
             overrides.get("k8s_gpu_product")
             or os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT")
-            or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+            or DEFAULT_K8S_GPU_PRODUCT
         ),
         k8s_gpu_candidates=tuple(
             _split_csv(

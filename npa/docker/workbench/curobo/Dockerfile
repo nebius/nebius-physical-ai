@@ -54,6 +54,7 @@ RUN pip install --no-cache-dir --require-hashes \
     && python /opt/filter_cudnn_runtime.py > /usr/share/doc/npa-curobo/cudnn-runtime.json \
     && python /opt/remove_scikit_image_recipe.py \
       --site-packages /opt/npa-venv/lib/python3.12/site-packages \
+      --capability curobo \
       > /usr/share/doc/npa-curobo/dependency-source-correction.json \
     && pip check
 

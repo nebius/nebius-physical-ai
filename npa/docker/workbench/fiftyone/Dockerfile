@@ -108,6 +108,7 @@ RUN python -m venv "${FIFTYONE_VENV}" \
       "scikit-image==0.26.0" \
     && python /opt/npa-remove-scikit-image-recipe.py \
       --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+      --capability fiftyone \
     && curl --fail --location --silent --show-error \
       -o /tmp/mongodb.tgz "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz" \
     && echo "${MONGODB_SHA256}  /tmp/mongodb.tgz" | sha256sum -c - \

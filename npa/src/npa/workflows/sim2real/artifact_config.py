@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from npa.workflows.sim2real.constants import (
+    DEFAULT_K8S_GPU_PRODUCT,
     DEFAULT_OUTER_ITERATIONS,
     DEFAULT_PREFIX,
     DEFAULT_S3_ENDPOINT,
@@ -39,7 +40,7 @@ class Sim2RealArtifactConfig:
     s3_prefix: str = DEFAULT_PREFIX
     s3_endpoint: str = DEFAULT_S3_ENDPOINT
     outer_iterations: int = DEFAULT_OUTER_ITERATIONS
-    k8s_gpu_product: str = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+    k8s_gpu_product: str = DEFAULT_K8S_GPU_PRODUCT
     k8s_gpu_candidates: tuple[str, ...] = ()
 
 
@@ -81,7 +82,7 @@ def build_artifact_config_from_env(
         ),
         k8s_gpu_product=k8s_gpu_product
         or os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT")
-        or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        or DEFAULT_K8S_GPU_PRODUCT,
         k8s_gpu_candidates=tuple(
             _split_csv(
                 k8s_gpu_candidates

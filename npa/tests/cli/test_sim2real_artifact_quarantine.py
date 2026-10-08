@@ -161,6 +161,30 @@ def test_regen_project_configuration_errors_are_cli_errors(
     assert "Traceback" not in result.output
 
 
+def test_regen_reports_artifact_configuration_value_errors_as_cli_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OUTER_ITERATIONS", "not-an-integer")
+    result = _invoke_rerun("regen", "--no-sync")
+    assert result.exit_code == 1
+    assert "Error: invalid literal for int()" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_regen_does_not_reclassify_execution_value_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def execution_error(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("execution invariant failed")
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.regen_sim2real_rrd", execution_error
+    )
+    result = _invoke_rerun("regen", "--no-sync")
+    assert isinstance(result.exception, ValueError)
+    assert "Error: execution invariant failed" not in result.output
+
+
 def test_heldout_only_reports_quarantined_execution_images_as_cli_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -356,6 +380,28 @@ def test_artifact_config_matches_execution_setting_precedence(
     execution = build_config_from_env(**settings)
     for field in dataclasses.fields(artifact):
         assert getattr(artifact, field.name) == getattr(execution, field.name)
+
+
+def test_artifact_config_default_gpu_settings_match_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "OUTER_ITERATIONS",
+        "NPA_SIM2REAL_K8S_GPU_PRODUCT",
+        "NPA_SIM2REAL_K8S_GPU_CANDIDATES",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example.invalid/operator")
+    settings = {
+        "run_id": "default-settings-run",
+        "s3_bucket": "example-bucket",
+        "s3_prefix": "completed",
+        "s3_endpoint": "https://storage.example.invalid",
+    }
+    artifact = build_artifact_config_from_env(**settings)
+    execution = build_config_from_env(**settings)
+    assert artifact.k8s_gpu_product == execution.k8s_gpu_product
+    assert artifact.k8s_gpu_candidates == execution.k8s_gpu_candidates
 
 
 def test_sdk_output_paths_reaches_existing_artifacts_while_images_are_quarantined(

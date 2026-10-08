@@ -374,6 +374,45 @@ def test_diagnostic_settings_preserve_execution_environment_precedence(
     diagnostic_spies.defaults.assert_not_called()
 
 
+def test_diagnostic_default_kubernetes_settings_match_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "NPA_SIM2REAL_ISAAC_CACHE_PVC",
+        "NPA_SIM2REAL_K8S_GPU_RESOURCE",
+        "NPA_SIM2REAL_K8S_GPU_PRODUCT",
+        "NPA_SIM2REAL_K8S_GPU_CANDIDATES",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example.invalid/operator")
+    monkeypatch.setattr(
+        diagnostic_config, "_serviceaccount_namespace", lambda: "pod-namespace"
+    )
+    monkeypatch.setattr(
+        execution_config, "_serviceaccount_namespace", lambda: "pod-namespace"
+    )
+    settings = {
+        "run_id": "default-settings-run",
+        "s3_bucket": "example-bucket",
+        "s3_endpoint": "https://storage.example.invalid",
+    }
+    context = diagnostic_config.build_diagnostic_config_from_env(**settings)
+    config = execution_config.build_config_from_env(
+        **settings,
+        **{
+            field: f"registry.example.invalid/{field}:accepted"
+            for field in _IMAGE_FIELDS
+        },
+    )
+    for field in (
+        "k8s_isaac_cache_pvc",
+        "k8s_gpu_resource",
+        "k8s_gpu_product",
+        "k8s_gpu_candidates",
+    ):
+        assert getattr(context, field) == getattr(config, field)
+
+
 def test_empty_run_id_uses_existing_environment_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

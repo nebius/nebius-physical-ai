@@ -956,7 +956,12 @@ def rerun_regen_command(
             s3_prefix=s3_prefix,
             s3_endpoint=s3_endpoint,
         )
-        work_dir = local_dir or default_regen_local_dir(run_id)
+    except (ConfigError, ProjectCredentialStoreError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    work_dir = local_dir or default_regen_local_dir(run_id)
+    try:
         result = regen_sim2real_rrd(
             config,
             local_dir=work_dir,
@@ -964,11 +969,7 @@ def rerun_regen_command(
             upload=upload,
             sync_inputs=not no_sync,
         )
-    except (
-        ConfigError,
-        ProjectCredentialStoreError,
-        Sim2RealRerunRegenError,
-    ) as exc:
+    except Sim2RealRerunRegenError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
