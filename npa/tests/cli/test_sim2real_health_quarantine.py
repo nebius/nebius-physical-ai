@@ -295,7 +295,7 @@ def test_image_free_checks_reject_unused_execution_overrides(
         ],
     )
     assert result.exit_code == 2
-    assert "--policy-image" in result.output
+    assert "--policy-image is not used" in result.output
     assert "--checks config or registry" in result.output
     diagnostic_spies.execution.assert_not_called()
     diagnostic_spies.defaults.assert_not_called()

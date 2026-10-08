@@ -16,6 +16,7 @@ USER root
 # Preserve the policy variant while binding the complete running SDK to the
 # child source revision, rather than only relabeling the inherited parent.
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
+RUN rm -rf /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/common/verify_sim2real_sdk_source.py \

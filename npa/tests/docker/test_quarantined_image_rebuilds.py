@@ -57,6 +57,9 @@ def test_policy_children_bind_the_actual_sdk_source_to_their_revision(child):
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in text
     for source in ("pyproject.toml", "src/npa", "workflows"):
         assert f"COPY --chown=ubuntu:ubuntu {source} " in text
+    assert text.index("RUN rm -rf /opt/npa/src/npa") < text.index(
+        "COPY --chown=ubuntu:ubuntu src/npa "
+    )
     assert text.index("COPY --chown=ubuntu:ubuntu src/npa ") < text.index(
         "&& env -u PYTHONPATH python -c"
     )

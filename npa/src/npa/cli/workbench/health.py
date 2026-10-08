@@ -691,8 +691,9 @@ def _sim2real_preflight_config(selected, overrides):
     )
     if ignored:
         options = ", ".join(f"--{key.replace('_', '-')}" for key in ignored)
+        verb = "is" if len(ignored) == 1 else "are"
         raise ValueError(
-            f"{options} are not used by the selected image-independent checks. "
+            f"{options} {verb} not used by the selected image-independent checks. "
             "Include --checks config or registry to validate execution settings."
         )
     return build_diagnostic_config_from_env(

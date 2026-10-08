@@ -17,6 +17,7 @@ USER root
 # The inherited exact-source .pth resolves this path. Replace the complete SDK,
 # so the advertised child revision identifies the source that actually runs.
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
+RUN rm -rf /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/common/verify_sim2real_sdk_source.py \
