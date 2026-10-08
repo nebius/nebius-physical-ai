@@ -210,10 +210,11 @@ selections; rendering proves resolution, not pullability or runtime capability.
 The matching
 `preflight-images --json` check adds `release_status` only when that checked
 image is a validation candidate, with `selection_scope: reachable_branches`.
-Runtime submit JSON also reports `workflow_validation_candidates_status`:
-`available` means the list was computed, while `unavailable` means the runtime
-will select images per wave and the list cannot establish provenance. Agent
-control planes must treat this as validation provenance, not release approval.
+Every `npa.workflow` submit JSON result reports
+`workflow_validation_candidates_status`: `available` means the list was
+computed, while a runtime `unavailable` result means the runtime will select
+images per wave and the list cannot establish provenance. Agent control planes
+must treat this as validation provenance, not release approval.
 Raw SkyPilot YAML submits report `not_applicable`, because they do not have
 `npa.workflow` candidate selection to compute.
 

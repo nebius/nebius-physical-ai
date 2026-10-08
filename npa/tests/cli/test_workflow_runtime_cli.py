@@ -1019,14 +1019,15 @@ def test_runtime_submit_json_reports_cosmos3_candidate_status(
     assert payload["workflow_validation_candidates_status"] == "available"
 
 
+@pytest.mark.parametrize("error_type", [NpaWorkflowError, ValueError])
 def test_runtime_candidate_disclosure_planning_failure_is_observational(
-    fake_runtime, mocker
+    fake_runtime, mocker, error_type
 ) -> None:
     """A disclosure planning failure retains the runtime's established behavior."""
 
     mocker.patch(
         "npa.cli.workbench.workflow._image_preflight_steps",
-        side_effect=NpaWorkflowError("synthetic candidate planning failure"),
+        side_effect=error_type("synthetic candidate planning failure"),
     )
 
     result = RUNNER.invoke(

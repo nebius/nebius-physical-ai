@@ -226,6 +226,7 @@ def test_stock_generate_preflight_json_reports_candidate_status(mocker) -> None:
         "workflow_validation_candidate"
     )
     assert json.loads(result.stdout)[0]["selection_scope"] == "reachable_branches"
+    assert "workflow validation candidate, not an accepted release" not in result.stderr
 
 
 def test_stock_generate_plan_render_json_reports_candidate_status() -> None:

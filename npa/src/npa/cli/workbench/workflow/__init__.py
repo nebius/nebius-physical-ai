@@ -2908,7 +2908,7 @@ def submit_cmd(
                         WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES
                     ),
                 )
-            except NpaWorkflowError:
+            except (NpaWorkflowError, ValueError):
                 # Candidate disclosure is observational. The runtime retains its
                 # established per-wave planner and error behavior when the
                 # conservative reachability view is not currently available.
@@ -3957,10 +3957,8 @@ def _run_npa_workflow_runtime(
     preflight_evidence: Mapping[str, str],
     pre_submit_hook: Callable[[Path], None] | None,
     output_format: "OutputFormat",
-    workflow_validation_candidates: Sequence[Mapping[str, str]] = (),
-    workflow_validation_candidates_status: str = (
-        WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE
-    ),
+    workflow_validation_candidates: Sequence[Mapping[str, str]],
+    workflow_validation_candidates_status: str,
     project: str = "",
     auto_load: bool = True,
     agent_name: str = "",
@@ -9890,24 +9888,20 @@ def _check_static_plan_render(
     plan: ExecutionPlan,
     *,
     run_id: str,
-    options: SkypilotRenderOptions | None = None,
+    options: SkypilotRenderOptions,
 ) -> dict[str, object]:
     """Render a static plan locally and return a secret-free proof."""
 
     from npa.orchestration.npa_workflow.skypilot_render import (
-        SkypilotRenderOptions,
         assert_no_unresolved_placeholders,
         render_skypilot_yaml,
     )
 
-    render_options = options or SkypilotRenderOptions(
-        materialize_registry_secrets=False
-    )
     rendered = render_skypilot_yaml(
         spec,
         plan,
         run_id=run_id,
-        options=render_options,
+        options=options,
     )
     assert_no_unresolved_placeholders(rendered)
     task_count = sum(
@@ -10370,7 +10364,8 @@ def preflight_images_cmd(
     except (NpaWorkflowError, ValueError) as exc:
         _fail(f"image preflight planning failed: {exc}")
         return
-    _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
+    if not json_output:
+        _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
     candidate_metadata = {
         candidate["image"]: {
             "release_status": candidate["release_status"],
