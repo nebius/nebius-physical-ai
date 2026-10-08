@@ -210,6 +210,19 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
     assert "if matrix and head != sha" in text
 
 
+def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
+    """Require both public Cosmos3 Ray scans to use their redacted stdout mode."""
+    text = PUBLISH.read_text(encoding="utf-8")
+    scanner = "scan_image_cosmos3_ray_serve_payload.py"
+    positions = [
+        index for index in range(len(text)) if text.startswith(scanner, index)
+    ]
+    assert len(positions) == 2
+    for position in positions:
+        branch_end = text.index("\n          fi", position)
+        assert "--json" in text[position:branch_end]
+
+
 def test_public_base_pull_authentication_precedes_local_build() -> None:
     spec = _spec(PUBLISH)
     steps = spec["jobs"]["build-development"]["steps"]

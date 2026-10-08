@@ -205,11 +205,11 @@ def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
     )
     assert result.returncode == 1
     report = json.loads(output.read_text())
-    assert json.loads(output.read_text()) == report
     assert (
         report["credential_members"][0]["sha256"] == hashlib.sha256(payload).hexdigest()
     )
     stdout_report = json.loads(result.stdout)
+    assert all(report[key] == stdout_report[key] for key in stdout_report)
     assert stdout_report["credential_hits"] == report["credential_hits"]
     assert "credential_members" not in stdout_report
     assert "archive_sha256" not in stdout_report
