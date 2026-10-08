@@ -10,12 +10,12 @@ config:
   bucket: example-bucket
   prefix: rgbd-scan-to-policy-demo/{{run.id}}
   source_overlay: true
-  assembly_image: ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb
-  isaac_image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6
+  assembly_image: ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:efcd93d00940b6ee718aeb5907e02dcc6a576b7d3f4151a6d40607d2c55545ca
+  isaac_image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:ef7f4234839852ed7b48ea4b88fd61f1c45a37ca00294c10a0a23fb335807ef4
   run_uri: s3://{{config.bucket}}/{{config.prefix}}
   assembled_uri: '{{config.run_uri}}/assembled'
   reports_uri: '{{config.run_uri}}/reports'
-  reconstruction_image: ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb
+  reconstruction_image: ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:efcd93d00940b6ee718aeb5907e02dcc6a576b7d3f4151a6d40607d2c55545ca
   reconstructed_uri: '{{config.run_uri}}/reconstructed'
   num_envs: 4000
   iterations: 500

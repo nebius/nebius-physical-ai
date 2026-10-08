@@ -55,7 +55,7 @@ def test_shown_catalog_has_npa_workflow_specs() -> None:
         "sim2real.yaml",
         "paidf-cosmos3.yaml",
         "nurec-reconstruct.yaml",
-        "lerobot-transfer.yaml",
+        "groot-1-7-finetune.yaml",
         "rgbd-scan-to-policy-demo.yaml",
     ):
         expected = NPA_WORKFLOWS / "main" / name

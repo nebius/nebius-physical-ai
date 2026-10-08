@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "b540b1a2483e50b257028f6d2b8132111b1cdc50d8ffe82012fec21b3e9966e8",
+  "workflow_sha256": "ea0559a5f491bee43a79c82384f709d0706cc215a25925096b760fdc9d44321c",
   "planning": {
     "validation": {
       "status": "verified",
@@ -10,8 +10,8 @@
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "Fresh source de63c25f4 completed 500 PPO updates and 16 million transitions with 4,000 robots, then passed 3,386/4,000 held-out routes (84.65%) above the unchanged 80% gate. All cases terminated by native step 20 within the 300-step maximum. Nine publication bundles, native controls, sampled GPU bindings and original CLI/report/browser/privacy evidence were independently verified. Original external auditor import failures remain preserved beside unchanged corrected results. New-site, physical-robot and camera-input policy transfer are outside this qualification.",
+      "status": "unverified",
+      "reason": "The recorded historical run completed 500 PPO updates and passed 3,386/4,000 held-out routes in one reconstructed scene. This spec selects repaired Isaac Lab and SONIC development images; its fresh end-to-end qualification is pending. Historical workload results do not qualify the replacement image bytes or physical-robot transfer.",
       "evidence": [
         "docs/workbench/guides/rgbd-scan-to-policy-demo.md",
         "docs/workbench/evidence/public-demos/real-to-sim.json",
@@ -41,7 +41,7 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The completed source de63c25f4 run binds actual native image, source-overlay, recipe and checkpoint hashes. A future operator must verify the selected image and source. Observed robot/actuator hashes after setup do not establish complete vendor asset closure or pre-load identity.",
+      "reason": "The original Isaac Lab and SONIC pins are quarantined. This spec selects immutable repaired development candidates that passed publication gates; exact-target bootstrap and native workflow qualification are pending. These pins do not promote either image to a supported release.",
       "evidence": [
         "docs/workbench/evidence/public-demos/real-to-sim.json"
       ]

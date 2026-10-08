@@ -35,6 +35,11 @@ Open3D/SciPy stack. USD assembly adds `usd-core==26.8` into an isolated temporar
 site directory. Native physics, training, and rendering use the pinned Isaac
 image. Source overlay staging supplies this checkout's adapters.
 
+The current pins select repaired development images for SONIC and Isaac Lab.
+Their publication checks passed; fresh workflow qualification is in progress.
+The historical images used for the results below remain quarantined. These
+workflow-specific pins do not promote either image to a supported release.
+
 ## What it runs
 
 1. Verify the downloaded archive against SHA-256

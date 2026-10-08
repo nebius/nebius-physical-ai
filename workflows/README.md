@@ -27,12 +27,11 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 | Compare Cosmos3-Super serving topologies | [Benchmark results and workflows](../benchmark/cosmos3-super/README.md) |
 | Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [native and operator adapter runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — sealed data/runtime required; GPU acceptance pending |
 | Train navigation from a public RGB-D capture | [Scan-to-policy](main/rgbd-scan-to-policy-demo.yaml) · [runbook](../docs/workbench/guides/rgbd-scan-to-policy-demo.md) — automatic sample setup through held-out evaluation |
-| Compare imitation policies and prioritize expert demos | [LeRobot transfer](main/lerobot-transfer.yaml) · [runbook](../docs/workbench/guides/lerobot-transfer.md) — paired ACT training and measured PushT stress tests |
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Prepare a reconstructed scene for Isaac navigation | [Scan-to-Isaac handoff](../docs/workbench/guides/scan-to-isaac-navigation.md) — supplied collision mesh, portable USDZ, and native PhysX probes |
 | Reconstruct metric RGB-D into a collision scene | [RGB-D scan to Isaac](../docs/workbench/guides/rgbd-scan-to-isaac.md) — measured TSDF surface, held-out depth qualification, colored USDZ, native PhysX; [explicit native-training handoff](../docs/workbench/guides/rgbd-scan-to-isaac.md#continue-into-native-navigation-training) requires the companion navigation implementation |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
-| Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
+| Fine-tune and inspect a GR00T policy | [GR00T N1.7](main/groot-1-7-finetune.yaml) · [runbook](../docs/workbench/cookbooks/groot-1-7-training.md) — distributed optimizer smoke, held-out action prediction, and synchronized diagnostics |
 | Evaluate a BEHAVIOR 2026 policy | [Start here](../docs/workbench/challenge-onboarding.md) · [Workflow](testing/behavior-challenge-eval.yaml) · [measured scope and limits](../docs/workbench/behavior-campaign.md#scope-and-validation-status) — operator runtime required |
 | Run a live π0.5 robot pickup in Antioch | [OpenPI live pickup](partners/antioch/openpi-live-pickup.md) — pretrained-policy inference, physical success checks, and native recording |
 | Collect Antioch trajectories and train ACT | [Antioch ACT workflow](partners/antioch/antioch-offline-policy-train.yaml) — completed dataset → LeRobot training; [runbook](partners/antioch/README.md#dataset-based-act-training) |
@@ -160,24 +159,23 @@ workflow YAMLs remain unchanged from `main`.
 
 | Spec | Notes |
 | --- | --- |
-| [`lerobot-transfer.yaml`](main/lerobot-transfer.yaml) | Sealed demonstrations → parallel ACT training → paired native PushT stress tests → uncertainty report and next expert-demo requests; full B200 execution verified, candidate below the success gate ([guide and measured results](../docs/workbench/guides/lerobot-transfer.md#measured-b200-results), [readiness](main/lerobot-transfer.readiness.json)) |
+| [`groot-1-7-finetune.yaml`](main/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
 | [`nurec-reconstruct.yaml`](main/nurec-reconstruct.yaml) | Real NCore V4 capture → 3DGUT training on an RT-core GPU → USDZ → rig-offset novel views → Rerun; [guide and measured evidence](../docs/workbench/guides/neural-reconstruction.md#promotion-evidence), [readiness record](main/nurec-reconstruct.readiness.json) |
 | [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Generic LeRobot/video input → prepared timeline → guarded Cosmos 3 full-video edge transfer → aligned evaluator gate/refinement → captions for every accepted variant → real Curator + FiftyOne Brain + Rerun ([guide](guides/paidf-cosmos3.md)) |
 | [`rgbd-scan-to-policy-demo.yaml`](main/rgbd-scan-to-policy-demo.yaml) | Public metric RGB-D → measured collision scene and native PhysX checks → PPO training → held-out navigation and offline HTML; 3,386/4,000 routes passed in the reconstructed scene ([guide](../docs/workbench/guides/rgbd-scan-to-policy-demo.md), [readiness](main/rgbd-scan-to-policy-demo.readiness.json)) |
 | [`sim2real.yaml`](main/sim2real.yaml) | Canonical 14-stage Sim2Real workflow through the standard SkyPilot runtime ([guide](../docs/workbench/guides/sim2real-workflow.md)) |
 
-The scan-to-policy and LeRobot transfer workflows are promoted because they
-connect real data preparation, learning, independent evaluation, and inspectable
-outputs. They offer two reusable experiment designs: learning navigation in a
-measured scene and comparing imitation policies to prioritize demonstration
-collection. Both have complete recorded GPU execution; their guides retain the
-exact qualification scope and current operator prerequisites.
+The scan-to-policy and GR00T workflows connect real input preparation,
+learning, independent evaluation, and inspectable outputs. Scan-to-policy
+trains navigation in a measured scene; GR00T validates distributed fine-tuning,
+checkpoint identity, held-out action prediction, and artifact/viewer handoff.
+LeRobot transfer remains in testing.
 
-Promotion describes their place in the catalog. The scan-to-policy result covers
-held-out goals in one reconstructed scene. LeRobot's candidate failed its absolute
-success gate, and neither workflow establishes physical-robot transfer. Their
-workflow bytes and readiness records are unchanged by this move; historical
-evidence retains the original submission paths.
+Catalog promotion does not establish physical-robot transfer. The recorded
+scan-to-policy qualification covers held-out goals in one reconstructed scene.
+GR00T's default four-step optimizer smoke establishes operational behavior;
+it does not establish statistically meaningful learning or closed-loop control.
+Their guides retain the qualification scope and current operator prerequisites.
 
 ### Partner workflows
 
@@ -228,7 +226,6 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | [`behavior-comet-native-full-training.yaml`](testing/behavior-comet-native-full-training.yaml) | Portable real OpenPI native training reference: same-entrypoint CPU input preflight → direct native GPU updates → complete FP32 TrainState/optimizer milestones with provider readback and durable resume ([guide](../docs/workbench/comet-native-full-training.md)); exact private inputs remain operator supplied |
 | [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete pinned MotionBenchMaker and MPiNets benchmark in cuRobo V2 kinematic and payload-dynamics modes; image remains publication-quarantined pending image checks and real GPU validation ([guide](../docs/workbench/curobo.md)) |
-| [`groot-1-7-finetune.yaml`](testing/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
 | [`isaac-arena-evaluation-b200.yaml`](testing/isaac-arena-evaluation-b200.yaml) | Four-seed Arena zero-action state regression on B200; completed scored episodes and hash-bound reports, with no visual claim ([guide](../docs/workbench/isaac-arena.md)) |
 | [`isaac-arena-evaluation-rtxpro.yaml`](testing/isaac-arena-evaluation-rtxpro.yaml) | Arena replay on RTX PRO 6000; exact-digest qualification completed with upstream task success and simulator-ground-truth-bound viewport motion ([readiness](testing/isaac-arena-evaluation-rtxpro.readiness.json)) |
 | [`isaac-franka-capture-reason.yaml`](testing/isaac-franka-capture-reason.yaml) | Headless Isaac Lab Franka RGB capture on GPU → hosted manipulation reasoning |
@@ -245,6 +242,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`retargeting.yaml`](testing/retargeting.yaml) | Motion retargeting |
 | [`rl-policy-training-sim-success.yaml`](testing/rl-policy-training-sim-success.yaml) | Isaac Lab RL train (partial) |
 | [`robocasa-data-policy.yaml`](testing/robocasa-data-policy.yaml) | Native multi-task PandaOmron trajectories → LeRobotDataset v3 → real ACT training → exact-checkpoint evaluation on disjoint RoboCasa tasks → insights |
+| [`lerobot-transfer.yaml`](testing/lerobot-transfer.yaml) | Four-phase LeRobot demonstration experiment: paired ACT training → native PushT transfer stress tests → measured comparison and next-expert-demo queue. [Runbook](../docs/workbench/guides/lerobot-transfer.md). |
 | [`franka-rl-transfer.yaml`](testing/franka-rl-transfer.yaml) | PPO with selectable Franka, UR10e/Robotiq, or Kinova JACO2 embodiment, bounded learned targets and exploration, stable-hold rewards, and an outcome-driven curriculum (`learning_recipe=adaptive-bounded-exploration`). Measured-state checks reject invalid simulation before learning; sealed USD parts, paired physics tests, Token Factory evaluation, and actual LeRobot/Rerun rollouts retain the evidence. Latest native UR diagnostic **failed**; physics remains unqualified despite passing CPU checks. One RTX GPU plus a hosted VLM credential. [Runbook](../docs/workbench/guides/franka-rl-transfer.md). |
 | [`robocasa-smoke.yaml`](testing/robocasa-smoke.yaml) | Native RoboCasa workbench: task registration, asset availability, headless EGL reset, and a real random rollout with video through the npa-robocasa service |
 | [`sonic-eval.yaml`](testing/sonic-eval.yaml) | SONIC eval |

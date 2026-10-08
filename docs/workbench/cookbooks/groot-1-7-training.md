@@ -30,7 +30,7 @@ agent_ui_load_viewer_verification
 Use the repository virtual environment for repository validation:
 
 ```bash
-SPEC=workflows/testing/groot-1-7-finetune.yaml
+SPEC=workflows/main/groot-1-7-finetune.yaml
 RUN_ID=groot-n1-7-operational-example
 
 npa/.venv/bin/npa workbench workflow validate-spec "$SPEC"
@@ -57,7 +57,7 @@ MCAP production are CPU artifact conversions and no stage renders with RT cores.
 
 ## Submit
 
-Supply the bucket, real source dataset, registry image, deployed agent URL, and
+Supply the bucket, real source dataset, deployed agent URL, and
 runtime secrets at submission time; do not commit tenant or customer values.
 
 ```bash
@@ -71,10 +71,14 @@ npa/.venv/bin/npa workbench workflow submit "$SPEC" \
   --var per_device_batch_size=1 \
   --var gradient_accumulation_steps=1 \
   --var global_batch_size=2 \
-  --registry "<registry>/npa-groot:<validated-tag>" \
   --secret-env HF_TOKEN \
   --secret-env NPA_AGENT_BASIC_AUTH
 ```
+
+The workflow pins an immutable GR00T development image with Kubernetes SSH
+bootstrap and MCAP support. `source_overlay: true` stages this checkout's adapters.
+Override `groot_image` only with an independently checked image. This workflow
+pin does not change the supported GR00T release.
 
 Before the trainer is scheduled, the CPU preflight checks the GPU/batch/step
 contract and the split stage derives real sample coverage. Training evidence

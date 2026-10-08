@@ -1,6 +1,6 @@
 # LeRobot transfer: demonstrations, policy, evidence, next data
 
-Run [`lerobot-transfer.yaml`](../../../workflows/main/lerobot-transfer.yaml)
+Run [`lerobot-transfer.yaml`](../../../workflows/testing/lerobot-transfer.yaml)
 on Nebius reserved B200 capacity for training and evaluation.
 It is a four-phase alternative for teams that already have useful
 demonstrations and want to find the next data that their policy needs.
@@ -63,10 +63,10 @@ From the checkout containing this change:
 ```bash
 npa/.venv/bin/npa workbench health preflight --project "$NPA_PROJECT" --checks nebius,s3
 npa/.venv/bin/npa workbench workflow stage-src --project "$NPA_PROJECT" --bucket "$NPA_OUTPUT_BUCKET"
-npa/.venv/bin/npa workbench workflow validate-spec workflows/main/lerobot-transfer.yaml --json
-npa/.venv/bin/npa workbench workflow plan-spec workflows/main/lerobot-transfer.yaml --run-id "$NPA_RUN_ID" --waves --json
-npa/.venv/bin/npa workbench workflow preflight-images workflows/main/lerobot-transfer.yaml --json
-npa/.venv/bin/npa workbench workflow submit workflows/main/lerobot-transfer.yaml \
+npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/lerobot-transfer.yaml --json
+npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/lerobot-transfer.yaml --run-id "$NPA_RUN_ID" --waves --json
+npa/.venv/bin/npa workbench workflow preflight-images workflows/testing/lerobot-transfer.yaml --json
+npa/.venv/bin/npa workbench workflow submit workflows/testing/lerobot-transfer.yaml \
   --project "$NPA_PROJECT" --infra "k8s/$NPA_KUBE_CONTEXT" \
   --isolated-config-dir "$NPA_SKYPILOT_ISOLATED_CONFIG_DIR" \
   --run-id "$NPA_RUN_ID" --runtime --stage-src --max-wait-seconds 0 \
@@ -230,7 +230,7 @@ deployment readiness.
 | **Deployment readiness** | The report preserves `ready_for_robot_deployment=false` and `physical_robot_tested=false`. A separate hardware experiment is required before any robot-deployment claim. |
 
 These conclusions describe checked-in historical evidence. The workflow's
-[readiness record](../../../workflows/main/lerobot-transfer.readiness.json)
+[readiness record](../../../workflows/testing/lerobot-transfer.readiness.json)
 records what was verified for that run; it is not a reusable preflight for a
 future run. A future operator must independently verify current credentials,
 writable project storage, the exact staged source, image pullability, and B200
@@ -239,7 +239,7 @@ established from the evidence JSON, trial CSV, or historical readiness record.
 
 ## Validation
 
-See the workflow's [readiness record](../../../workflows/main/lerobot-transfer.readiness.json)
+See the workflow's [readiness record](../../../workflows/testing/lerobot-transfer.readiness.json)
 for the distinction between planning checks and live execution evidence.
 Focused regression coverage:
 
