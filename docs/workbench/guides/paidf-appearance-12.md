@@ -119,6 +119,10 @@ NPA_PAIDF_APPEARANCE_CASES="$PRIVATE_RUN_DIR/proof-cases.json" \
 
 This audit makes read-only storage calls and downloads actual videos. It does
 not generate more candidates or reinterpret a rejection as acceptance.
+The canonical workflow deliberately finishes a rejected batch with a failed
+`reject-quality` terminal stage after preserving review evidence. The audit
+requires that exact rejection path, a valid rejected disposition and successful
+preceding stages; other workflow failures do not qualify.
 
 ## Public reference measurement
 

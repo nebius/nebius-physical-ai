@@ -14,6 +14,7 @@ import pytest
 import yaml
 
 from npa.workflows.paidf_cosmos3_media import verify_pair
+from npa.workflows.paidf_cosmos3 import _validated_quality_status
 
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_skypilot, pytest.mark.gpu]
@@ -102,8 +103,31 @@ def _audit_variant(client, root, clip, source, destination, recipe, frames):
     return alignment["generated_sha256"]
 
 
+def _audit_terminal(runtime, accepted):
+    if accepted:
+        assert runtime["status"] == "succeeded"
+        return
+    assert runtime["status"] == "failed"
+    assert runtime["waves"][-1]["states"] == ["reject-quality"]
+    latest = {
+        state: wave["status"] for wave in runtime["waves"] for state in wave["states"]
+    }
+    assert latest.pop("reject-quality") == "failed"
+    required = {
+        "generate-variants",
+        "evaluate",
+        "quality-gate",
+        "quality-disposition",
+        "visualize-quality-evidence",
+        "quality-route",
+    }
+    assert required <= latest.keys()
+    assert set(latest.values()) == {"succeeded"}
+    assert "require-accepted-quality" not in latest
+    assert "annotate-augmented" not in latest
+
+
 def _audit_completion(client, root, hashes):
-    assert _read(client, root, "npa-workflow/runtime.json")["status"] == "succeeded"
     evaluation = _read(client, root, "grade/cosmos_evaluator.json")
     disposition = _read(client, root, "grade/quality_disposition.json")
     assert evaluation["status"] == "completed"
@@ -117,7 +141,12 @@ def _audit_completion(client, root, hashes):
     assert evaluation["attribute_threshold"] == 1.0
     assert evaluation["temporal_mode"] == evaluation["appearance_mode"] == "advisory"
     expected = "accepted" if evaluation["passed"] else "rejected"
-    assert disposition["quality_status"] == expected
+    assert _validated_quality_status(disposition) == expected
+    _audit_terminal(
+        _read(client, root, "npa-workflow/runtime.json"), evaluation["passed"]
+    )
+    bucket, key = _location(root, "reports/quality-evidence.rrd")
+    assert client.head_object(Bucket=bucket, Key=key)["ContentLength"] > 0
 
 
 @pytest.mark.timeout(0)
