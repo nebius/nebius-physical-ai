@@ -7,6 +7,8 @@ For a complete manual setup and run, start with the
 project setup, new or existing Kubernetes clusters, credential-file formats,
 Token Factory key creation, Python and CLI installation checks, submission, and
 artifact inspection.
+For twelve separate appearance videos with automatic padding preservation, use
+the [copy-paste recipe guide](paidf-appearance-12.md#apply-the-recipe).
 Use this page for the workflow's input, generation, and acceptance contracts.
 For the configuration keys and timing contract, see the setup guide's
 [generation and evaluation settings](../../../workflows/guides/paidf-cosmos3.md#r5-find-and-change-generation-and-evaluation-settings).
@@ -76,21 +78,29 @@ configuration are hash bound. The model-selection receipt states that its basis
 is the native configuration and resolver contract; it does not claim loader-open
 instrumentation.
 
-Each clip is published under its batch and actual video SHA, with conditional
-creation and byte readback for the complete video, canonical numbered PNGs,
-edge and optional RGB controls, metadata, native execution and transfer reports.
-Completion is sealed last. Recovery verifies every object and fully decodes the
-video against the same source timeline before skipping that variant. The normal
-collector writes the canonical manifest after all requested variants complete;
+Each clip is published under its batch and final published-video SHA, with
+conditional creation and byte readback for the complete video, canonical
+numbered PNGs, edge and optional RGB controls, metadata, native execution and
+transfer reports. When source padding is restored, the same immutable object
+set retains `raw_model_video.mp4` and its metadata: the native guarded hash
+binds the raw bytes while the publication directory and descriptor bind the
+final padding-preserved bytes. Completion is sealed last. Recovery verifies
+both lineages, every object, and the full final video against the same source
+timeline before skipping that variant. The normal collector writes the
+canonical manifest after all requested variants complete;
 `recovered_variant_count` reports how many verified variants that invocation
 reused. Guardrails and evaluator thresholds retain their existing behavior.
 
 This path requires the normal workflow's `NPA_TASK_IMAGE` immutable reference.
-Direct calls lacking that identity, non-structural generation and custom
-checkpoints retain fresh generation. `NPA_COSMOS3_NANO_REVISION` is an internal
-handoff set by the coordinator, not an operator model-selection option. Stage
-the reviewed checkout through normal workflow submission. Keep native acceptance
-pending until a fresh candidate-source run passes the
+Direct calls lacking that identity, mutable image references, non-structural
+generation, and custom checkpoints retain fresh generation. Set
+`variant_recovery: disabled` (or `--variant-recovery disabled`) to deliberately
+regenerate rather than reuse after an operational runtime change. An unchanged
+immutable batch remains fail-closed: a changed GPU runtime rejects reuse and
+points to that explicit regeneration mode. `NPA_COSMOS3_NANO_REVISION` is an
+internal handoff set by the coordinator, not an operator model-selection option.
+Stage the reviewed checkout through normal workflow submission. Keep native
+acceptance pending until a fresh candidate-source run passes the
 [read-only live receipt audit](../../../npa/tests/e2e/README.md#paidf-native-variant-recovery);
 fixture interruption tests establish the recovery protocol and do not prove
 model inference or training-data suitability.
@@ -134,18 +144,25 @@ bucket, or infrastructure identifier is embedded.
 
 Generation behavior is configuration-driven through `cosmos3_checkpoint`,
 `cosmos3_mode`, `seed`, `guidance`, `steps`, `variant_count`,
-`variant_parallelism`, and `parallelism_preset`. `augmentation_seed` defaults to
-`30`, keeping appearance profiles consistent across fresh run IDs; change it for
-new appearance experiments. Quality and retries use
+`variant_parallelism`, `parallelism_preset`, and `variant_recovery`.
+`augmentation_seed` defaults to `30`, keeping appearance profiles consistent
+across fresh run IDs; change it for new appearance experiments. Quality and retries use
 `grade_threshold`, `attribute_threshold`, `refinement_iterations`, `retry_seed_stride`,
 `retry_guidance_delta`, and `retry_steps_delta`. `source_motion_weight` is a
 compatibility setting that must be `0.0` (the default). Nonzero values fail
-before generation. Publication copies the model output bytes without blending,
-resizing, or changing the frame rate, and records their SHA-256 digest.
+before generation. Publication preserves every generated scene pixel without
+source/model blending, resizing or changing the frame rate. When verified
+padding exists, it restores those borders from the prepared source and writes
+a lossless `augmented_video.mp4`, retaining `raw_model_video.mp4` separately.
+The preservation receipt records the raw and published hashes and exact pixel
+checks. Without verified padding, the model bytes pass through unchanged.
+See [padding behavior and output checks](paidf-appearance-12.md#5-download-the-videos-and-verify-padding-preservation).
 The check lives in the shared generation implementation, so custom workflows
 using `workbench.cosmos3.generate_variants` and direct CLI callers receive the
-same protection for any dataset. Existing deployed images need the updated code;
-setting the workflow value to zero also disables blending in the older publisher.
+same protection for any dataset. New submissions of the canonical workflow use
+the current checkout through `source_overlay: true`; custom or direct deployments
+must also use the updated NPA code. The older publisher's `source_motion_weight=0`
+disables blending but does not add automatic padding detection or preservation.
 The composition requires
 `video2video`: selecting a text-to-video or image-to-video mode fails before GPU
 inference rather than producing a misleading source-conditioned claim.

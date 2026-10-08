@@ -546,6 +546,8 @@ class VariantRecovery:
             "source_edges.mkv",
             "native_execution.json",
         }
+        if receipt["variant"].get("padding_preservation") is not None:
+            required.update({"raw_model_video.mp4", "raw_model_metadata.json"})
         if request["rgb_weight"]:
             required.add("source_rgb.mkv")
         if not isinstance(inventory, dict) or not required <= inventory.keys():
@@ -648,10 +650,13 @@ def _verify_publication_semantics(objects, receipt, batch, aligned):
             "native execution object differs from its completion receipt"
         )
     transfer = native["structural_transfer"]
-    if transfer.get("guarded_output_sha256") != aligned["generated_sha256"]:
+    raw_video = objects.get("raw_model_video.mp4", objects["augmented_video.mp4"])
+    raw_sha256 = hashlib.sha256(raw_video).hexdigest()
+    if transfer.get("guarded_output_sha256") != raw_sha256:
         raise VariantRecoveryError(
-            "published video differs from native guarded output bytes"
+            "retained raw model video differs from native guarded output bytes"
         )
+    _verify_padding_lineage(objects, receipt, batch, aligned, raw_sha256)
     if hashlib.sha256(objects["source_edges.mkv"]).hexdigest() != transfer.get(
         "control_sha256"
     ):
@@ -672,6 +677,44 @@ def _verify_publication_semantics(objects, receipt, batch, aligned):
     _verify_metadata_document(
         json.loads(objects["metadata.json"]), receipt, batch, aligned
     )
+
+
+def _verify_padding_lineage(objects, receipt, batch, aligned, raw_sha256):
+    """Bind raw guarded bytes and transformed publication bytes when padded."""
+    padding = receipt["variant"].get("padding_preservation")
+    if padding is None:
+        return
+    if not isinstance(padding, dict):
+        raise VariantRecoveryError("padding preservation receipt is malformed")
+    final_sha256 = hashlib.sha256(objects["augmented_video.mp4"]).hexdigest()
+    source_region = batch["identity"].get("source_content_region")
+    if not isinstance(source_region, dict):
+        raise VariantRecoveryError("batch source content region is absent")
+    expected = {
+        "raw_model_sha256": raw_sha256,
+        "published_sha256": final_sha256,
+        "source_sha256": source_region.get("source_sha256"),
+        "raw_model_video_uri": receipt["prefix"] + "raw_model_video.mp4",
+    }
+    if any(padding.get(key) != value for key, value in expected.items()):
+        raise VariantRecoveryError(
+            "padding preservation lineage differs from publication"
+        )
+    if final_sha256 != aligned["generated_sha256"]:
+        raise VariantRecoveryError("published padding-preserved bytes are not aligned")
+    raw_metadata = json.loads(objects["raw_model_metadata.json"])
+    expected_raw_metadata = {
+        "schema": "npa.video.raw-model-output.v1",
+        "status": "retained",
+        "sha256": raw_sha256,
+        "source_sha256": source_region.get("source_sha256"),
+        "temporal_alignment": receipt["native"].get("temporal_alignment"),
+        "guardrails": True,
+    }
+    if raw_metadata != expected_raw_metadata:
+        raise VariantRecoveryError(
+            "retained raw model metadata differs from native evidence"
+        )
 
 
 def _verify_transfer_document(document, native, prefix):
@@ -722,7 +765,10 @@ def _verify_metadata_document(document, receipt, batch, aligned):
         "transfer_uri": prefix + "transfer.json",
         "native_execution_uri": prefix + "native_execution.json",
         "lineage": {"input_provenance_uri": batch["identity"]["input_provenance_uri"]},
+        "source_content_region": batch["identity"]["source_content_region"],
     }
+    if variant.get("padding_preservation") is not None:
+        expected["padding_preservation"] = variant["padding_preservation"]
     if not isinstance(document, dict) or any(
         document.get(key) != value for key, value in expected.items()
     ):
@@ -733,7 +779,21 @@ def _verify_metadata_document(document, receipt, batch, aligned):
 
 def _verify_batch_identity(batch, identity):
     model = batch.get("model_binding")
-    if batch.get("schema") != _BATCH_SCHEMA or batch.get("identity") != identity:
+    stored_identity = batch.get("identity")
+    if batch.get("schema") != _BATCH_SCHEMA or stored_identity != identity:
+        if isinstance(stored_identity, dict):
+            stored_without_gpu = {
+                key: value
+                for key, value in stored_identity.items()
+                if key != "gpu_runtime"
+            }
+            requested_without_gpu = {
+                key: value for key, value in identity.items() if key != "gpu_runtime"
+            }
+            if stored_without_gpu == requested_without_gpu:
+                raise VariantRecoveryError(
+                    "same-run GPU runtime changed; set variant_recovery=disabled to regenerate"
+                )
         raise VariantRecoveryError(
             "same-run batch source or generation settings changed"
         )
@@ -746,7 +806,7 @@ def _verify_batch_identity(batch, identity):
 
 
 def _native_receipt(result):
-    return {
+    receipt = {
         key: result[key]
         for key in (
             "native_model_selection",
@@ -755,10 +815,17 @@ def _native_receipt(result):
             "sample_outputs",
         )
     }
+    if result.get("temporal_alignment") is not None:
+        receipt["temporal_alignment"] = result["temporal_alignment"]
+    return receipt
 
 
 def recovery_enabled(
-    checkpoint: str, structural_control: str, run_id: str, environ: Mapping[str, str]
+    checkpoint: str,
+    structural_control: str,
+    run_id: str,
+    environ: Mapping[str, str],
+    mode: str = "auto",
 ) -> bool:
     """Identify the stock immutable-image Nano structural workflow recovery path.
 
@@ -770,12 +837,15 @@ def recovery_enabled(
     Returns:
         Whether complete same-run recovery is available for this invocation.
     Raises:
-        VariantRecoveryError: A supplied runtime image is mutable or invalid.
+        VariantRecoveryError: The requested recovery mode is invalid.
     """
+    if mode not in {"auto", "disabled"}:
+        raise VariantRecoveryError("variant_recovery must be auto or disabled")
+    if mode == "disabled":
+        return False
     if checkpoint != "Cosmos3-Nano" or structural_control != "edge" or not run_id:
         return False
     image = environ.get("NPA_TASK_IMAGE", "")
     if not image:
         return False
-    _image_binding(image)
-    return True
+    return _IMAGE.fullmatch(image) is not None

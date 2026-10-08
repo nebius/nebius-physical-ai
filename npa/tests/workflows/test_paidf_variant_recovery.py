@@ -72,6 +72,40 @@ def _video(path, color):
     return path
 
 
+def _rgb_video(path, pixels):
+    height, width = pixels.shape[1:3]
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pixel_format",
+            "rgb24",
+            "-video_size",
+            f"{width}x{height}",
+            "-framerate",
+            "24",
+            "-i",
+            "-",
+            "-c:v",
+            "ffv1",
+            "-pix_fmt",
+            "bgr0",
+            "-f",
+            "matroska",
+            str(path),
+        ],
+        input=pixels.tobytes(),
+        check=True,
+        capture_output=True,
+    )
+    return path
+
+
 def _inputs(root):
     configs, captions = root / "configs", root / "captions"
     configs.mkdir()
@@ -301,6 +335,67 @@ def test_five_verified_variants_survive_worker_loss_and_only_seven_are_generated
     )
 
 
+def test_padded_publication_binds_raw_native_evidence_to_final_bytes(
+    batch, tmp_path, monkeypatch
+):
+    """Recovery accepts a padding transform only when both byte lineages seal."""
+    import numpy as np
+
+    from npa.workflows.video_content_region import content_region_record
+    from npa.workflows.paidf_cosmos3_media import probe_video
+
+    kwargs, _source, _generated, _calls = batch
+    pixels = np.zeros((6, 480, 832, 3), dtype=np.uint8)
+    pixels[:, :, 96:736] = 100
+    source = _rgb_video(tmp_path / "padded-source.mkv", pixels)
+    raw_pixels = pixels.copy()
+    raw_pixels[:, :, :96] = (255, 0, 0)
+    raw_pixels[:, :, 736:] = (0, 255, 255)
+    raw = _rgb_video(tmp_path / "raw-model.mkv", raw_pixels)
+    record = content_region_record(probe_video(source), [96, 0, 736, 480])
+    Path(kwargs["input_provenance_uri"]).write_text(
+        json.dumps(
+            {
+                "status": "prepared",
+                "sha256": recovery.video_sha256(source),
+                "source_content_region": record,
+            }
+        )
+    )
+    kwargs["input_video_uri"] = str(source)
+    kwargs["variant_count"] = 1
+    calls = []
+    original_write = paidf._write_json
+
+    def lose_worker_after_completion(value, uri, **options):
+        if uri.endswith("cosmos_augmented/manifest.json"):
+            raise RuntimeError("synthetic loss after immutable completion")
+        return original_write(value, uri, **options)
+
+    monkeypatch.setattr(paidf, "_write_json", lose_worker_after_completion)
+    with pytest.raises(RuntimeError, match="immutable completion"):
+        paidf.generate_variants(**kwargs, generator=_generator(source, raw, calls))
+    assert calls == [0]
+    receipt = next(iter(_receipts(kwargs["storage"]).values()))
+    prefix = receipt["prefix"]
+    published = kwargs["storage"].objects[prefix + "augmented_video.mp4"]
+    retained = kwargs["storage"].objects[prefix + "raw_model_video.mp4"]
+    assert retained == raw.read_bytes() and published != retained
+    assert receipt["native"]["structural_transfer"]["guarded_output_sha256"] == (
+        hashlib.sha256(retained).hexdigest()
+    )
+    assert prefix.rsplit("/", 2)[-2] == hashlib.sha256(published).hexdigest()
+    assert receipt["variant"]["padding_preservation"]["published_sha256"] == (
+        hashlib.sha256(published).hexdigest()
+    )
+    monkeypatch.setattr(paidf, "_write_json", original_write)
+    calls = []
+    resumed = paidf.generate_variants(
+        **kwargs, generator=_generator(source, raw, calls)
+    )
+    assert calls == [] and resumed["recovered_variant_count"] == 1
+
+
 def test_legacy_progress_and_metadata_cannot_skip_generation(batch):
     kwargs, source, generated, _calls = batch
     kwargs["storage"].objects[kwargs["output_uri"] + "generation-progress.json"] = (
@@ -471,18 +566,27 @@ def test_partial_upload_is_not_reusable(batch):
     ],
 )
 def test_mutable_image_cannot_enable_recovery(image):
-    if not image:
-        assert (
-            recovery.recovery_enabled(
-                "Cosmos3-Nano", "edge", "unit-run", {"NPA_TASK_IMAGE": image}
-            )
-            is False
+    assert (
+        recovery.recovery_enabled(
+            "Cosmos3-Nano", "edge", "unit-run", {"NPA_TASK_IMAGE": image}
         )
-    else:
-        with pytest.raises(recovery.VariantRecoveryError, match="immutable"):
-            recovery.recovery_enabled(
-                "Cosmos3-Nano", "edge", "unit-run", {"NPA_TASK_IMAGE": image}
-            )
+        is False
+    )
+
+
+def test_recovery_can_be_explicitly_disabled_before_runtime_binding():
+    assert (
+        recovery.recovery_enabled(
+            "Cosmos3-Nano",
+            "edge",
+            "unit-run",
+            {"NPA_TASK_IMAGE": "ghcr.io/example/npa-cosmos3:latest"},
+            "disabled",
+        )
+        is False
+    )
+    with pytest.raises(recovery.VariantRecoveryError, match="auto or disabled"):
+        recovery.recovery_enabled("Cosmos3-Nano", "edge", "unit-run", {}, "unsupported")
 
 
 def test_tagged_and_bare_digest_references_bind_to_the_same_image():

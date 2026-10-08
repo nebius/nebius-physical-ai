@@ -29,6 +29,9 @@ MANUAL_GATES = {
         "read-only immutable native variant verification requires an owner-selected "
         "completed candidate-source PAIDF run and private fresh-run configuration"
     ),
+    "NPA_LINEAGE_POSTGRES_DSN": "requires operator-selected private Postgres and MLflow tracking services",
+    "NPA_VIDEO_SWEEP_FULL_GPU": "requires real Transfer runtime, licensed model access, inputs and tracking services",
+    "NPA_VIDEO_SWEEP_REASONER_MODEL": "requires an explicit available model for live paid hosted inference",
     "NPA_SPECIALISTS_LIVE": (
         "uses paid Token Factory inference with independent GLM and DeepSeek workers; "
         "run the restart and workflow-repair proof in docs/workbench/specialists.md"
