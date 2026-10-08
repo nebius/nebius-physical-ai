@@ -16,9 +16,11 @@ Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
 artifacts without resolving execution image defaults. Regeneration therefore
 remains available after an old runtime is quarantined. Executing new workloads,
 including `rerun heldout-only`, still requires qualified component images.
-For `rerun regen`, bucket selection is `--s3-bucket`, then configured
-`--project` storage, then Sim2Real storage environment settings; the endpoint
-follows the same explicit-project-environment order.
+For `rerun regen`, `--s3-bucket` wins. With `--project`, configured project
+storage is followed by that resolver's standard environment and host-credential
+fallbacks; only an unresolved project value leaves Sim2Real storage environment
+settings in effect. The endpoint follows the same explicit-project-resolution
+order.
 See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
 
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich

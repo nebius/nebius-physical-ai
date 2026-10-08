@@ -23,7 +23,7 @@ EXPECTED_VERSION = "0.26.0"
 SOURCE_SHA256 = "50e6234fa2170820eaf8d0f8f42b51905822afc3680a4f09113fa11d435f7fb4"
 SANITIZED_SHA256 = "7f505612106adcc880746de642ceb91c9cbb74a6bd0c8100689c0da539c96abf"
 MODULE = "skimage/data/_fetchers.py"
-RECEIPT_SCHEMA_VERSION = "npa.dependency-source-correction.v1"
+RECEIPT_SCHEMA_VERSION = "npa.dependency-source-correction.v2"
 DEFAULT_CAPABILITY = "curobo"
 SUPPORTED_CAPABILITIES = frozenset({"curobo", "envgen", "fiftyone"})
 

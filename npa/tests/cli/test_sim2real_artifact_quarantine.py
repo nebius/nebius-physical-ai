@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 from npa.clients.config import ConfigError
 from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.cli.main import app
+from npa.lifecycle_intent import OperationIntent, current_intent
 from npa.sdk.workbench import sim2real as sim2real_sdk
 from npa.workflows.sim2real import config as execution_config
 from npa.workflows.rerun_serve import RerunServeConfig
@@ -90,8 +91,12 @@ def test_regen_project_resolves_storage_without_execution_images(
         endpoint_url="https://project.example.invalid",
     )
 
+    def resolve_storage(_project: str) -> SimpleNamespace:
+        assert current_intent() == OperationIntent.OBSERVE
+        return storage
+
     monkeypatch.setattr(
-        "npa.cli.workbench.sim2real.resolve_project_storage", lambda _project: storage
+        "npa.cli.workbench.sim2real.resolve_project_storage", resolve_storage
     )
     monkeypatch.setattr(
         "npa.cli.workbench.sim2real.regen_sim2real_rrd",
@@ -304,6 +309,32 @@ def test_serve_local_record_uses_resolved_viewer_storage(
             "aws_secret_access_key": "sk",
         }
     ]
+
+
+def test_serve_local_record_rejects_artifact_config_before_viewer_apply(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mocker: pytest.MockFixture
+) -> None:
+    config = RerunServeConfig(
+        run_id="archived-run",
+        s3_bucket="resolved-bucket",
+        s3_prefix="completed",
+        s3_endpoint="https://storage.example.invalid",
+    )
+    _mock_viewer_deploy(monkeypatch, config)
+    apply = mocker.patch("npa.cli.workbench.sim2real.apply_rerun_serve")
+    monkeypatch.setenv("OUTER_ITERATIONS", "not-an-integer")
+
+    result = _invoke_rerun(
+        "serve",
+        "--local-record",
+        "--local-rrd-path",
+        str(tmp_path / "local.rrd"),
+    )
+
+    assert result.exit_code == 1
+    assert "Error: invalid literal for int()" in result.output
+    assert "Traceback" not in result.output
+    apply.assert_not_called()
 
 
 def _mock_viewer_deploy(

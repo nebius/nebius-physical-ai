@@ -14,6 +14,7 @@ from npa.clients.config import ConfigError, resolve_project_storage
 from npa.clients.credentials import load_credentials
 from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.clients.storage import StorageClient
+from npa.lifecycle_intent import OperationIntent, operation_intent
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_ENVGEN_SHARD_COUNT,
@@ -79,7 +80,11 @@ app = typer.Typer(
 
 
 def _resolve_rerun_storage(
-    *, project: str, s3_bucket: str, s3_endpoint: str
+    *,
+    project: str,
+    s3_bucket: str,
+    s3_endpoint: str,
+    observe_project_storage: bool = False,
 ) -> tuple[str, str]:
     """Resolve explicit, project, then environment storage for a Rerun command.
 
@@ -87,6 +92,8 @@ def _resolve_rerun_storage(
         project: Optional project alias whose storage settings take precedence.
         s3_bucket: Explicit bucket override.
         s3_endpoint: Explicit endpoint override.
+        observe_project_storage: Read project credentials without legacy migration
+            or alias writes.
     Returns:
         The bucket and endpoint arguments for artifact configuration resolution.
     Raises:
@@ -96,7 +103,11 @@ def _resolve_rerun_storage(
 
     if not project:
         return s3_bucket, s3_endpoint
-    storage = resolve_project_storage(project)
+    if observe_project_storage:
+        with operation_intent(OperationIntent.OBSERVE):
+            storage = resolve_project_storage(project)
+    else:
+        storage = resolve_project_storage(project)
     if s3_bucket.strip() or storage.checkpoint_bucket:
         s3_bucket = resolve_storage_bucket(storage, override=s3_bucket)
     return s3_bucket, s3_endpoint.strip() or storage.endpoint_url or ""
@@ -812,6 +823,7 @@ def rerun_serve_command(
     ),
 ) -> None:
     """Deploy a hosted Rerun viewer; pod init container pulls reports/sim2real.rrd from S3."""
+    artifact_config = None
     try:
         access_key, secret_key = _rerun_serve_credentials()
         cluster_context = cluster_name.strip() or resolve_cluster_name_from_config()
@@ -839,6 +851,13 @@ def rerun_serve_command(
             rrd_s3_uri=rrd_uri,
             report_uri=report_uri,
         )
+        if local_record and not destroy:
+            artifact_config = build_artifact_config_from_env(
+                run_id=run_id,
+                s3_bucket=config.s3_bucket,
+                s3_prefix=config.s3_prefix,
+                s3_endpoint=config.s3_endpoint,
+            )
         if dry_run:
             manifest = build_rerun_serve_manifest(config)
             if output == OutputFormat.json:
@@ -866,7 +885,7 @@ def rerun_serve_command(
             )
         else:
             result = apply_rerun_serve(config, kubeconfig=resolved_kubeconfig)
-    except Sim2RealRerunServeError as exc:
+    except (Sim2RealRerunServeError, ValueError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
@@ -879,12 +898,7 @@ def rerun_serve_command(
             err=True,
         )
     if local_record and not destroy:
-        artifact_config = build_artifact_config_from_env(
-            run_id=run_id,
-            s3_bucket=config.s3_bucket,
-            s3_prefix=config.s3_prefix,
-            s3_endpoint=config.s3_endpoint,
-        )
+        assert artifact_config is not None
         dest = resolve_local_rrd_path(
             run_id,
             override=str(local_rrd_path) if local_rrd_path is not None else "",
@@ -948,7 +962,10 @@ def rerun_regen_command(
     """Regenerate reports/sim2real.rrd + sim2real.mcap from S3 artifacts (held-out PNG sync included)."""
     try:
         s3_bucket, s3_endpoint = _resolve_rerun_storage(
-            project=project, s3_bucket=s3_bucket, s3_endpoint=s3_endpoint
+            project=project,
+            s3_bucket=s3_bucket,
+            s3_endpoint=s3_endpoint,
+            observe_project_storage=True,
         )
         config = build_artifact_config_from_env(
             run_id=run_id,

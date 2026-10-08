@@ -622,6 +622,10 @@ def sim2real_command(
     # script use `--checks all`) — expand it to the full check set.
     if "all" in selected:
         selected = list(ALL_CHECKS)
+    if not selected:
+        raise typer.BadParameter(
+            f"at least one check is required. Choices: {', '.join(ALL_CHECKS)}."
+        )
     unknown = [item for item in selected if item not in ALL_CHECKS]
     if unknown:
         raise typer.BadParameter(

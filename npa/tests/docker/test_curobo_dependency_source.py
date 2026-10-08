@@ -68,7 +68,7 @@ def test_exact_correction_preserves_loader_and_notices_and_updates_record(instal
     assert (dist / "LICENSE").read_bytes() == b"complete original dependency license\n"
     assert unrelated.read_bytes() == b"unrelated bytecode must stay identical"
     assert report["executable_ast_preserved"] and report["primary_docstring_preserved"]
-    assert report["schema_version"] == "npa.dependency-source-correction.v1"
+    assert report["schema_version"] == "npa.dependency-source-correction.v2"
     assert report["capability"] == "curobo"
     assert report["record_sha256_before"] != report["record_sha256_after"]
     rows = list(csv.reader(io.StringIO((dist / "RECORD").read_text())))
@@ -107,7 +107,7 @@ def test_correction_receipt_uses_a_shared_schema_and_declared_capability(
         root,
         capability=capability,
     )
-    assert report["schema_version"] == "npa.dependency-source-correction.v1"
+    assert report["schema_version"] == "npa.dependency-source-correction.v2"
     assert report["capability"] == capability
 
 

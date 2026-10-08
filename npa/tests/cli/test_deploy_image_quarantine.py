@@ -1,5 +1,7 @@
 """Reject withdrawn container defaults before creating or modifying a workbench."""
 
+import os
+
 import pytest
 from typer.testing import CliRunner
 
@@ -12,6 +14,9 @@ from npa.cli.main import app
 def test_quarantined_deploy_fails_before_any_infrastructure_side_effect(
     tool, dry_run, remote_state, tmp_path, monkeypatch, mocker
 ) -> None:
+    for name in tuple(os.environ):
+        if name == "NPA_REGISTRY" or name.endswith("_IMAGE"):
+            monkeypatch.delenv(name)
     monkeypatch.setenv("ACCEPT_EULA", "Y")
     bootstrap = mocker.patch("npa.clients.nebius.bootstrap_environment")
     provision = mocker.patch("npa.deploy.provisioner.apply")

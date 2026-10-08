@@ -304,6 +304,17 @@ def test_unknown_checks_fail_before_any_config_or_credentials(
     diagnostic_spies.loaded.assert_not_called()
 
 
+def test_empty_checks_fail_before_any_config_or_credentials(
+    diagnostic_spies: SimpleNamespace,
+) -> None:
+    result = runner.invoke(app, ["workbench", "health", "sim2real", "--checks", ""])
+    assert result.exit_code == 2
+    assert "at least one check is required" in result.output
+    diagnostic_spies.execution.assert_not_called()
+    diagnostic_spies.defaults.assert_not_called()
+    diagnostic_spies.loaded.assert_not_called()
+
+
 @pytest.mark.parametrize("warn_only", [False, True])
 def test_s3_failure_preserves_report_and_exit_contract(
     diagnostic_spies: SimpleNamespace,
