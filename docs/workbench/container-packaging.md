@@ -101,10 +101,11 @@ is parseable, or a match is harmless.
 The scan covers every stored layer. Repeated paths retain separate member
 records, including overwritten or deleted ancestor files; the existing
 `credential_hits` list remains deduplicated. Member hashes cover the complete
-file even when credential detection stops at an early match. Compare a member
-hash with independently obtained exact source or package bytes before
-classifying a finding. Hash equality is evidence of byte identity and does not
-waive any publication gate or establish GPU capability acceptance.
+file even when credential detection stops at an early match. `layer_sha256` is
+the hash of the stored Docker-save layer entry, not a declared rootfs `diff_id`.
+Compare a member hash with independently obtained exact source or package bytes
+before classifying a finding. Hash equality is evidence of byte identity and
+does not waive any publication gate or establish GPU capability acceptance.
 
 The ordinary publication workflow prints this metadata report. Do not publish
 raw layers, extracted credential bytes, or a failed image archive as public
