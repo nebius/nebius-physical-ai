@@ -212,11 +212,11 @@ def _generation_inputs(tmp_path: Path) -> dict[str, Path]:
 
 @requires_ffmpeg
 @pytest.mark.parametrize("prior_status", ["completed", "degraded"])
-@pytest.mark.parametrize("with_content_region", [False, True])
+@pytest.mark.parametrize("with_content_region", [False, True, None])
 def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     tmp_path: Path,
     prior_status: str,
-    with_content_region: bool,
+    with_content_region: bool | None,
 ) -> None:
     paths = _generation_inputs(tmp_path)
     region = None
@@ -225,6 +225,7 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
         from npa.workflows.video_content_region import content_region_record
 
         region = content_region_record(probe_video(paths["source"]), [0, 0, 64, 64])
+    if with_content_region is not False:
         paths["provenance"].write_text(
             json.dumps({"status": "prepared", "source_content_region": region})
         )
@@ -292,6 +293,7 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     assert metadata["weights_baked"] is False
     assert metadata["motion_preservation"] is None
     assert metadata.get("source_content_region") == region
+    assert ("source_content_region" in metadata) is (with_content_region is not False)
     generated_bytes = generated_video.read_bytes()
     assert generated_bytes != paths["source"].read_bytes()
     for variant in first["variants"]:

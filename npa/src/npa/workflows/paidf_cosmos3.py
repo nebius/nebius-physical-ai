@@ -981,7 +981,7 @@ def _variant_metadata(
     if metadata.get("temporal_alignment") is not None:
         payload["temporal_alignment"] = metadata["temporal_alignment"]
         payload["structural_control"] = "edge"
-    if metadata.get("source_content_region") is not None:
+    if "source_content_region" in metadata:
         payload["source_content_region"] = metadata["source_content_region"]
     return payload
 
