@@ -4588,6 +4588,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "transfer_rgb_weight": "",
             "transfer_first_chunk_conditional_frames": "",
             "transfer_cfg_normalization": "",
+            "variant_recovery": "auto",
         },
         omit_flags_when_empty=(
             "--structural-control",
@@ -4598,6 +4599,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--transfer-rgb-weight",
             "--transfer-first-chunk-conditional-frames",
             "--transfer-cfg-normalization",
+            "--variant-recovery",
         ),
         access_capabilities=("cosmos3",),
         description=(
@@ -4668,6 +4670,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.transfer_first_chunk_conditional_frames}}",
             "--transfer-cfg-normalization",
             "{{config.transfer_cfg_normalization}}",
+            "--variant-recovery",
+            "{{config.variant_recovery}}",
             "--run-id",
             "{{run.id}}",
         ],
