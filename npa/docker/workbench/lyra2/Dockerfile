@@ -41,6 +41,7 @@ COPY --chmod=0755 docker/workbench/lyra2/entrypoint.sh /usr/local/bin/lyra2-entr
 COPY --chmod=0644 docker/workbench/lyra2/REDISTRIBUTION.md /usr/share/doc/npa-lyra2/REDISTRIBUTION.md
 
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && grep -qx 'ubuntu ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/npa-skypilot \
     && /opt/npa/.venv/bin/python -m pip install --no-cache-dir --no-deps /opt/npa \
     && /opt/npa/.venv/bin/python -m pip check \
     && python3.12 -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-source.pth').write_text('/opt/npa/src\\n')" \
@@ -59,6 +60,5 @@ RUN /usr/local/bin/lyra2-entrypoint /bin/sh -c \
     'set -eu; test -w /tmp; test -w "$HOME"; command -v rsync; command -v service; command -v wget; command -v nc; command -v fusermount; command -v lspci; test -x /usr/sbin/sshd; sudo -n true; dpkg --audit' \
     && dpkg-query -W -f='${Status}\n' openssh-server rsync sudo wget netcat-openbsd fuse pciutils \
       | /opt/npa/.venv/bin/python -c 'import sys; assert sys.stdin.read().splitlines() == ["install ok installed"] * 7' \
-    && sudo -n grep -qx 'ubuntu ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/npa-skypilot \
     && test "$(/usr/local/bin/lyra2-entrypoint /usr/bin/printf '%s' 'argv with spaces')" = 'argv with spaces'
 ENTRYPOINT ["/usr/local/bin/lyra2-entrypoint"]
