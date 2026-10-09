@@ -563,6 +563,24 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     )
 
 
+def test_opendm_flattened_final_stage_restores_nonroot_runtime_user():
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/lerobot/Dockerfile.dm05-opendm-baseline-validation"
+    )
+    final_stage = dockerfile.read_text(encoding="utf-8").split("\nFROM scratch\n", 1)[1]
+    user_directives = [
+        line.strip() for line in final_stage.splitlines() if line.startswith("USER ")
+    ]
+
+    assert "WORKDIR /opt/opendm" in final_stage
+    assert user_directives[-1] == "USER ubuntu"
+    assert final_stage.index("COPY --chown=ubuntu:ubuntu") < final_stage.rindex(
+        "USER ubuntu"
+    )
+    assert final_stage.rstrip().endswith("USER ubuntu")
+
+
 def test_opendm_parent_jwt_sanitizer_executes_the_dockerfile_ere(tmp_path):
     dockerfile = (
         Path(__file__).resolve().parents[2]

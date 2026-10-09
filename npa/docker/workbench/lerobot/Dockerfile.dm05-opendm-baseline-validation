@@ -102,6 +102,7 @@ LABEL org.opencontainers.image.source="https://github.com/dexmal/opendm" \
       org.nebius.npa.validation-disposition="operator-private-no-publication"
 
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WORKDIR /opt/opendm
 ENTRYPOINT ["python", "-m", "npa.server.app"]
 
 USER root
@@ -115,3 +116,5 @@ ENV NPA_DM05_OPENDM_RUNTIME_MANIFEST=/opt/opendm/dm05-libero-baseline-runtime.js
     NPA_DM05_OPENDM_PYTHON=/opt/opendm-venv/bin/python \
     NPA_DM05_DEXBOTIC_PYTHON=/opt/libero-venv/bin/python \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
+
+USER ubuntu
