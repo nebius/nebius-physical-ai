@@ -142,7 +142,15 @@ def _dns_egress():
                 "namespaceSelector": {
                     "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
                 },
-                "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                "podSelector": {
+                    "matchExpressions": [
+                        {
+                            "key": "k8s-app",
+                            "operator": "In",
+                            "values": ["kube-dns", "coredns"],
+                        }
+                    ]
+                },
             }
         ],
         "ports": [{"protocol": protocol, "port": 53} for protocol in ("UDP", "TCP")],
