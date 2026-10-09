@@ -197,15 +197,19 @@ aws s3 cp "$RUN_URI/cosmos_augmented/manifest.json" "$EVIDENCE_DIR/manifest.json
 aws s3 cp "$RUN_URI/cosmos_augmented/" "$EVIDENCE_DIR/cosmos_augmented/" \
   --recursive --exclude '*' --include 'variant-*/augmented_video.mp4' \
   --include 'variant-*/metadata.json' --include 'variant-*/raw_model_video.mp4' \
-  --include 'variant-*/raw_model_metadata.json' --profile nebius
+  --include 'variant-*/raw_model_metadata.json' \
+  --include 'variant-*/_native/*/*/augmented_video.mp4' \
+  --include 'variant-*/_native/*/*/metadata.json' \
+  --include 'variant-*/_native/*/*/raw_model_video.mp4' \
+  --include 'variant-*/_native/*/*/raw_model_metadata.json' --profile nebius
 aws s3 cp "$RUN_URI/grade/cosmos_evaluator.json" "$EVIDENCE_DIR/cosmos_evaluator.json" \
   --profile nebius
 jq '{status, variant_count, published: (.variants | length)}' "$EVIDENCE_DIR/manifest.json"
-jq '{clip, profile: .variables, bounds: .source_content_region.bounds,
-     detection: .source_content_region.padding_detection.status,
-     preservation: (.padding_preservation | if . == null then null else
-       {status, scene_pixels_unchanged, padding_matches_source} end)}' \
-  "$EVIDENCE_DIR"/cosmos_augmented/variant-*/metadata.json
+find "$EVIDENCE_DIR/cosmos_augmented" -type f -name metadata.json -print0 |
+  xargs -0 -r jq '{clip, profile: .variables, bounds: .source_content_region.bounds,
+                    detection: .source_content_region.padding_detection.status,
+                    preservation: (.padding_preservation | if . == null then null else
+                      {status, scene_pixels_unchanged, padding_matches_source} end)}'
 jq '{status, passed, score, clip_count, passed_clips,
      padding: [.clips[] | {clip_id, padding: .spatial_evidence.padding}]}' \
   "$EVIDENCE_DIR/cosmos_evaluator.json"
@@ -240,7 +244,18 @@ each output, since the model can miss a material instruction.
 that setting requires a generation job with multiple visible GPUs. It does not
 allocate GPUs or spread variants across independent single-GPU nodes.
 
-Each generated video is published separately beneath the run prefix:
+When the standard native recovery path is eligible, each generated video is
+published beneath an immutable batch and final-video digest. The manifest is the
+source of truth for those URIs:
+
+```text
+cosmos_augmented/variant-0000/_native/<batch-sha256>/<published-video-sha256>/augmented_video.mp4
+...
+cosmos_augmented/variant-0011/_native/<batch-sha256>/<published-video-sha256>/augmented_video.mp4
+```
+
+For a non-native, mutable-image, custom-checkpoint, or explicitly disabled
+recovery run, publication remains directly beneath the variant directory:
 
 ```text
 cosmos_augmented/variant-0000/augmented_video.mp4
