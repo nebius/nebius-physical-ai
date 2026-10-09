@@ -187,6 +187,14 @@ def test_public_image_retains_act_and_operator_images_keep_policy_classes(
         module._require_image_policy_capability(policy_type)
 
 
+def test_image_policy_capability_tolerates_a_trailing_separator(
+    genesis_modules, monkeypatch
+):
+    module = genesis_modules["eval_student"]
+    monkeypatch.setenv("NPA_GENESIS_SUPPORTED_STUDENT_POLICIES", "act,")
+    module._require_image_policy_capability("act")
+
+
 def test_missing_lerobot_keeps_actionable_student_evaluation_guidance(
     genesis_modules, monkeypatch, tmp_path
 ):

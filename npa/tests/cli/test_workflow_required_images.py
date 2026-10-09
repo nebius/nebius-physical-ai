@@ -102,5 +102,5 @@ def test_submit_rejects_override_of_required_image_before_staging_or_provisionin
     )
 
     assert result.exit_code == 1
-    assert "image override changes the execution image" in result.output
+    assert "image selection changes the execution image" in result.output
     assert "config.assembly_image" in result.output

@@ -974,9 +974,6 @@ def validate_immutable_image_override_bindings(
         NpaWorkflowRenderError: An image override changes a protected execution image.
     """
 
-    if not options.image_overrides:
-        return
-
     from npa.orchestration.npa_workflow.image_inputs import (
         required_immutable_image_inputs,
     )
@@ -1001,7 +998,7 @@ def validate_immutable_image_override_bindings(
             continue
         key_names = ", ".join(f"config.{key}" for key in protected_keys)
         raise NpaWorkflowRenderError(
-            "image override changes the execution image bound to required immutable "
+            "image selection changes the execution image bound to required immutable "
             f"input(s) {key_names} for state {step.state!r}: expected "
             f"{declared_image!r}, selected {selected_image or '<SkyPilot default>'!r}. "
             "Remove the override for this task or set it to the declared digest."

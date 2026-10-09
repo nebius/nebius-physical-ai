@@ -229,7 +229,7 @@ def test_required_image_override_binding_rejects_direct_renderer_bypass(
     plan = interpreter.build_plan(spec, run_id="protected-image-override")
     step = replace(plan.steps[0], tool_ref="workbench.open3d.register")
 
-    with pytest.raises(NpaWorkflowError, match="image override changes") as raised:
+    with pytest.raises(NpaWorkflowError, match="image selection changes") as raised:
         validate_immutable_image_override_bindings(
             spec,
             (step,),
@@ -252,6 +252,21 @@ def test_required_image_override_binding_allows_the_declared_digest():
         run_id="protected-image-allow",
         options=SkypilotRenderOptions(image_overrides={"workbench.open3d": declared}),
     )
+
+
+def test_required_image_binding_rejects_a_digest_pin_replacement():
+    spec = _supplied_spec("rgbd-scan-to-policy-demo.yaml")
+    plan = interpreter.build_plan(spec, run_id="protected-image-pin")
+    step = plan.steps[0]
+    declared = str(step.resources_profile["image"])
+
+    with pytest.raises(NpaWorkflowError, match="image selection changes"):
+        validate_immutable_image_override_bindings(
+            spec,
+            (step,),
+            run_id="protected-image-pin",
+            options=SkypilotRenderOptions(image_digest_pins={declared: ISAAC}),
+        )
 
 
 @pytest.mark.parametrize("name", EXACT_INPUT_SPECS)

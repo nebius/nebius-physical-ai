@@ -100,8 +100,10 @@ def _require_image_policy_capability(policy_type: str) -> None:
     configured = os.environ.get("NPA_GENESIS_SUPPORTED_STUDENT_POLICIES", "")
     if not configured:
         return
-    supported = {name.strip().lower() for name in configured.split(",")}
-    if not supported <= set(_POLICY_CLASS_MAP):
+    supported = {
+        name for value in configured.split(",") if (name := value.strip().lower())
+    }
+    if not supported or not supported <= set(_POLICY_CLASS_MAP):
         raise EvalError("Genesis image declares an invalid student policy capability")
     if not any(name in policy_type for name in supported):
         raise EvalError(
