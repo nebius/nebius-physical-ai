@@ -783,11 +783,14 @@ jobs:
           fi
           if [ "$TOOL" = cosmos3-ray-serve ]; then
             payload_report="$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
-            if ! npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
+            if npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
               --json "$payload_report"; then
+              :
+            else
+              status=$?
               rm -f "$RUNNER_TEMP/${TOOL}.tar" "$payload_report"
-              exit 1
+              exit "$status"
             fi
           fi
           if [ "$TOOL" = sonic-mujoco ]; then
@@ -1261,11 +1264,14 @@ jobs:
           fi
           if [ "$TOOL" = cosmos3-ray-serve ]; then
             payload_report="$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json"
-            if ! npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
+            if npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --json "$payload_report"; then
+              :
+            else
+              status=$?
               rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar" "$payload_report"
-              exit 1
+              exit "$status"
             fi
           fi
           if [ "$TOOL" = sonic-mujoco ]; then

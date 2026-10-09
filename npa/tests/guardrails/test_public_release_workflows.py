@@ -230,6 +230,8 @@ def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
     for script in scanner_steps:
         assert "--json" in script
         assert "--full-stdout" not in script
+        assert "status=$?" in script
+        assert 'exit "$status"' in script
     assert "npa/tests/docker/test_cosmos3_ray_payload_evidence.py" in _runs(PUBLISH)
     workflow_text = PUBLISH.read_text(encoding="utf-8")
     for archive, report in (
