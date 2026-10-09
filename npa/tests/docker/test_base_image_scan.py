@@ -41,6 +41,14 @@ def _entries() -> list[dict[str, object]]:
             "mirror.gcr.io/nvidia/cuda@sha256:digest",
         ),
         (
+            "registry.docker.io/nvidia/cuda@sha256:digest",
+            "mirror.gcr.io/nvidia/cuda@sha256:digest",
+        ),
+        (
+            "registry.hub.docker.com/library/python@sha256:digest",
+            "mirror.gcr.io/library/python@sha256:digest",
+        ),
+        (
             "ghcr.io/example/base:latest@sha256:digest",
             "ghcr.io/example/base:latest@sha256:digest",
         ),

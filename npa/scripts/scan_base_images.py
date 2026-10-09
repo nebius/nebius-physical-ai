@@ -73,7 +73,13 @@ def _docker_hub_mirror_reference(image: str) -> str:
     if "/" not in image:
         return f"mirror.gcr.io/library/{image}"
     registry, repository = image.split("/", 1)
-    if registry in {"docker.io", "index.docker.io", "registry-1.docker.io"}:
+    if registry in {
+        "docker.io",
+        "index.docker.io",
+        "registry-1.docker.io",
+        "registry.docker.io",
+        "registry.hub.docker.com",
+    }:
         if "/" not in repository:
             repository = f"library/{repository}"
         return f"mirror.gcr.io/{repository}"

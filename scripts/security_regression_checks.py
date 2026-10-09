@@ -45,6 +45,13 @@ def _dependency_fixture(root: Path) -> None:
     _write_fixture(
         root, "commented-requirements.txt", "requests==2.19.1\t# synthetic pin\n"
     )
+    named_wheel = (
+        "requests @ https://files.pythonhosted.org/packages/65/47/"
+        "7e02164a2a3db50ed6d8a6ab1d6d60b69c4c3fdf57a284257925dfc12bda/"
+        "requests-2.19.1-py2.py3-none-any.whl "
+        "--hash=sha256:63b52e3c866428a224f97cab011de738c36aec0185aa91cfacd418b5d58911d1\n"
+    )
+    _write_fixture(root, "named-wheel-requirements.txt", named_wheel)
     _write_fixture(root, "isaac-oss-deps.txt", "requests==2.19.1\n")
     _write_fixture(root, "baked-constraints.txt", "requests==2.19.1\n")
     lock = {
@@ -113,6 +120,7 @@ def _check_dependencies(root: Path, output: Path) -> dict:
         ("package-lock.json", "minimist"),
         ("hashed-requirements.txt", "requests"),
         ("commented-requirements.txt", "requests"),
+        ("named-wheel-requirements.txt", "requests"),
         ("isaac-oss-deps.txt", "requests"),
         ("baked-constraints.txt", "requests"),
     )

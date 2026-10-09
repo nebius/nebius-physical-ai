@@ -78,7 +78,7 @@ Those boundaries motivate three complementary maintained scanners:
 |---|---|
 | Bandit 1.9.4 | All tracked Python, including scripts and tests; medium/high severity and confidence, including unsafe deserialization, injection, weak transport and unsafe APIs. |
 | zizmor 1.30.1 | GitHub workflows and local actions; regular-persona findings with at least medium severity/confidence, including template injection and excessive permissions. |
-| Trivy 0.74.0 | All advisory severities, including unfixed vulnerabilities, for exact Python requirement pins and bare hash-fragment-bound wheel URLs, project extra pins, npm lock dependencies including development dependencies, and the resolved NPA core/development dependency closure. |
+| Trivy 0.74.0 | All advisory severities, including unfixed vulnerabilities, for exact Python requirement pins, bare and PEP 508 named hash-fragment-bound wheel URLs, explicitly mapped immutable source archives, project extra pins, npm lock dependencies including development dependencies, and the resolved NPA core/development dependency closure. |
 
 The gate materializes regular files from the actual target commit and the
 proposed merge commit, scans both with the same policy and vulnerability database,
@@ -122,7 +122,10 @@ receives isolated empty configuration and ignore files, so the image scan's
 OS-only settings do not hide application vulnerabilities. Python requirements,
 `*-deps.txt`, `*-wheels.txt`, `*-overrides.txt`, and constraint files are
 normalized into explicit pip inventories, including pins with inline hashes,
-whitespace-separated comments, and bare wheel URLs carrying SHA-256 fragments.
+whitespace-separated comments, and bare or PEP 508 named wheel URLs carrying
+SHA-256 fragments. Named wheels must agree with their declared package name.
+The one immutable MoviePy source archive is explicitly mapped to the version in
+that source revision; other non-wheel direct references fail closed.
 npm locks must retain
 resolved direct packages and agree with exact direct version pins. The
 core/development dependency closure is resolved with pinned uv, Python 3.12 and
