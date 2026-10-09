@@ -37,15 +37,15 @@ RUNNER = CliRunner()
 
 
 def test_candidate_disclosure_log_redacts_active_submit_values(caplog) -> None:
-    token = workflow_cli._SUBMIT_PRIVATE_REDACTIONS.set(("private-candidate-value",))
+    token = workflow_cli._SUBMIT_PRIVATE_REDACTIONS.set(("redacted-candidate-value",))
     try:
         workflow_cli._log_workflow_validation_candidate_disclosure_failure(
-            ValueError("candidate disclosure private-candidate-value failure")
+            ValueError("candidate disclosure redacted-candidate-value failure")
         )
     finally:
         workflow_cli._SUBMIT_PRIVATE_REDACTIONS.reset(token)
 
-    assert "private-candidate-value" not in caplog.text
+    assert "redacted-candidate-value" not in caplog.text
     assert "<redacted>" in caplog.text
 
 
