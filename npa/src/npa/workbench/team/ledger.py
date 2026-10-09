@@ -140,11 +140,15 @@ class TeamLedger:
         Raises:
             sqlite3.Error: Durable state is unavailable.
         """
-        placeholders = ",".join("?" for _ in expected)
         with self._transaction() as db:
+            current = db.execute(
+                "SELECT status FROM runs WHERE id=?", (run_id,)
+            ).fetchone()
+            if current is None or current["status"] not in expected:
+                return False
             changed = db.execute(
-                f"UPDATE runs SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN ({placeholders})",
-                (status, run_id, *expected),
+                "UPDATE runs SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=?",
+                (status, run_id, current["status"]),
             ).rowcount
         return bool(changed)
 
@@ -221,15 +225,25 @@ class TeamLedger:
             row = db.execute("SELECT * FROM waves WHERE id=?", (wave_id,)).fetchone()
             if row is None:
                 raise ConflictError("wave intent is missing")
-            for column, value, empty in (
-                ("request_id", request_id, ""),
-                ("job_ids", json.dumps(list(job_ids)), "[]"),
+            for column, value, empty, query in (
+                (
+                    "request_id",
+                    request_id,
+                    "",
+                    "UPDATE waves SET request_id=? WHERE id=?",
+                ),
+                (
+                    "job_ids",
+                    json.dumps(list(job_ids)),
+                    "[]",
+                    "UPDATE waves SET job_ids=? WHERE id=?",
+                ),
             ):
                 if value == empty:
                     continue
                 if row[column] not in (empty, value):
                     raise ConflictError("wave scheduler identity cannot be replaced")
-                db.execute(f"UPDATE waves SET {column}=? WHERE id=?", (value, wave_id))
+                db.execute(query, (value, wave_id))
 
     def waves(self, run_id: str) -> list[dict]:
         """Read scheduler identities associated with one authorized run.

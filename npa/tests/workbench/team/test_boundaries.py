@@ -124,7 +124,9 @@ def test_placement_escape_rejected(binding, workflow, resources):
 def test_rendered_task_cannot_upload_server_files(binding, tmp_path):
     path = tmp_path / "wave.yaml"
     path.write_text(
-        yaml.safe_dump({"resources": {}, "file_mounts": {"/tmp/key": "/etc/private"}})
+        yaml.safe_dump(
+            {"resources": {}, "file_mounts": {str(tmp_path / "key"): "/etc/private"}}
+        )
     )
     with pytest.raises(AuthorizationError):
         enforce_rendered_tasks(path, binding, {})
@@ -220,3 +222,22 @@ def test_worker_configuration_never_contains_operator_credentials(config):
     assert "NO_UPLOAD" not in rendered
     assert "test-alice" not in rendered
     assert "npa-team-controller" not in rendered and "npa-team-worker" in rendered
+
+
+def test_concurrent_run_transitions_have_one_winner(config, actor, workflow):
+    ledger = TeamLedger(config.state_dir)
+    request = SubmitRequest(
+        workspace="robotics", cluster="east", idempotency_key="race", workflow=workflow
+    )
+    record, _ = ledger.create(actor, request, {})
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(
+            pool.map(
+                lambda _: ledger.transition(record["id"], ("accepted",), "running"),
+                range(16),
+            )
+        )
+    assert sum(results) == 1
+    assert ledger.get(record["id"])["status"] == "running"
+    assert not ledger.transition(record["id"], (), "cancelled")
+    assert not ledger.transition("missing", ("running",), "cancelled")
