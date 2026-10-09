@@ -101,9 +101,7 @@ def _local_credentials(config):
         "pending": accounts.create("sample-pending", ["researchers"]),
         "unassigned": accounts.create("sample-unassigned"),
     }
-    keys = {
-        name: accounts.issue_key(user["id"])[1] for name, user in users.items()
-    }
+    keys = {name: accounts.issue_key(user["id"])[1] for name, user in users.items()}
 
     def headers(name="runner_a"):
         return {"Authorization": "Bearer " + keys[name]}
