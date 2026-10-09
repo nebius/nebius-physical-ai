@@ -697,14 +697,6 @@ def _scan_summary(root, manifest, selector, returncode):
     }
 
 
-def _stream_sha256(stream):
-    """Hash a held private stream on all supported repository Pythons."""
-    value = hashlib.sha256()
-    while chunk := stream.read(CHUNK):
-        value.update(chunk)
-    return value.hexdigest()
-
-
 def _bundle(root):
     target = root / "result.tar"
     with _private_output(target) as output:
