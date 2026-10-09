@@ -1,5 +1,8 @@
 # Workbench documentation
 
+For dataset submission, robot input diagnosis and private processing, see
+[PAIDF dataset batches](guides/paidf-dataset-batches.md).
+
 [All docs](../README.md) · [Quickstart](../quickstart.md) · [CLI reference](../cli/workbench.md)
 
 Use `npa workbench <tool> <command>` for a capability and
