@@ -1,0 +1,58 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "9097c75a1fd47302117c8de8db762e364d8ed02e38c1a09a3372b16dc478b6c3",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Local validate-spec and plan-spec --check-render succeeded with 12 states. Sampling overrides were also planned locally; no provider or GPU workload was launched.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/cosmos-data-factory/paidf-event-video-generation.yaml --json",
+        "npa workbench workflow plan-spec workflows/cosmos-data-factory/paidf-event-video-generation.yaml --run-id local-review --check-render --json",
+        "npa/tests/orchestration/npa_workflow/test_partner_catalog.py",
+        "npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The existing provenance, generation, labeling, dataset, and terminal-validation graph is retained at its new canonical path. Native protocol and upstream-boundary tests pass. The adjacent guide discloses semantic differences; this is not proof of a new live result.",
+      "evidence": [
+        "npa/tests/workflows/test_paidf_upstream.py",
+        "event-video-generation.md",
+        "README.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The shipped output bucket is a placeholder. No operator-owned target or write/read probe was selected for this authoring task.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The shipped S3 image prefix is a placeholder. An authorized dataset must be staged and decoded by preparation before execution.",
+      "evidence": [
+        "event-video-generation.md"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "No run-scoped S3, hosted-model, HF, or NGC credential/access checks were performed for this relocation.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "The shipped generation and labeling images are invalid zero-digest placeholders. Supply exact scanned operator-private digests and prove target pullability; prior accepted digests do not qualify replacement bytes.",
+      "evidence": [
+        "../../docs/workbench/guides/physical-ai-data-factory.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No Kubernetes context or GPU capacity was selected or probed. The local SkyPilot render check does not establish target readiness.",
+      "evidence": [
+        "README.md"
+      ]
+    }
+  }
+}

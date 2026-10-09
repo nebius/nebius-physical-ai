@@ -23,6 +23,7 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 | Run a complete public sample with one command | [Four workflow demos](../docs/workbench/guides/public-workflow-demos.md) — automatic inputs, standard GPU execution, and offline HTML results |
 | Label videos in Encord and export an annotated MP4 | [Encord partner workflows](partners/encord/README.md) — real object tracks, exported-label verification, and media roundtrip |
 | Augment a video or LeRobot episode | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) — public starter, local MP4, and episode/camera inputs; [twelve variants with preserved padding](../docs/workbench/guides/paidf-appearance-12.md#apply-the-recipe) |
+| Edit person-image attributes or generate annotated event videos | [Cosmos Data Factory](cosmos-data-factory/README.md) — separate IAA and EVG workflows, shared setup, and upstream YAML conversion decision |
 | Generate an image or video | [Cosmos 3](../docs/workbench/cosmos3-generate.md) |
 | Compare Cosmos3-Super serving topologies | [Benchmark results and workflows](../benchmark/cosmos3-super/README.md) |
 | Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [native and operator adapter runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — sealed data/runtime required; GPU acceptance pending |
@@ -139,15 +140,18 @@ and nonregular files are rejected, while parent directories are trusted.
 | --- | --- |
 | [`main/`](main/README.md) | Principal workflows with guides beside each YAML link |
 | [`testing/`](testing/README.md) | Reference workflows, component tests and fixtures, each paired with its guide |
+| [`cosmos-data-factory/`](cosmos-data-factory/README.md) | Separate Early Access IAA and EVG integrations with setup, guides, and NPA-adapted NVIDIA skills |
 | [`partners/encord/`](partners/encord/README.md) · [`partners/antioch/`](partners/antioch/README.md) | Partner integration workflows and their adjacent runbooks |
 | [`guides/`](guides/README.md) | Setup and operation runbooks |
 
-The CLI, agent, and live-submit matrix discover main, testing, and partner specs. Raw
+The CLI, agent, and live-submit matrix discover main, testing, Cosmos Data Factory,
+and partner specs. Raw
 SkyPilot tasks are separate tool-specific examples; see the
 [reference-assets index](../npa/workflows/workbench/README.md).
 
 The established Cosmos Transfer VDA, the separately named direct NVIDIA VDA,
-and the direct DIG, IAA, and EVG translations are testing-tier PAIDF specs. The
+and the direct DIG translation are testing-tier PAIDF specs. IAA and EVG live in
+`cosmos-data-factory/` with their own guides. The
 direct translations record `reports/upstream.json` and all execute through
 SkyPilot rather than OSMO or Airflow. The established Transfer and Cosmos 3
 workflow YAMLs remain unchanged from `main`.
