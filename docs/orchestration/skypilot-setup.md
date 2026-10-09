@@ -6,6 +6,10 @@ SkyPilot is an external CLI dependency for NPA orchestration. NPA calls the
 `sky` CLI through subprocess and does not install or import SkyPilot in NPA's
 Python environment.
 
+For a team API that remains reachable across VDI restarts, use the
+[persistent HTTPS LoadBalancer recipe](skypilot-api-loadbalancer.md). That
+operator-owned service is separate from NPA's isolated workflow APIs.
+
 Isolated workflow execution requires a **Linux operator host with `/proc`**.
 NPA verifies the local API's process lifetime, environment, session, and socket
 ownership through Linux procfs. macOS can install NPA and validate or plan a
