@@ -353,10 +353,9 @@ def test_only_one_authenticated_control_transport_owns_mode_changes(
 
 
 def test_server_lease_replaces_half_open_transport_and_forged_clock_cannot_steal(
-    monkeypatch,
+    monkeypatch, tmp_path: Path
 ) -> None:
-    runtime = _runtime_module()
-    monkeypatch.setenv("NPA_LEISAAC_RUN_ID", RUN_ID)
+    runtime = _prepare_runtime(monkeypatch, tmp_path)
     runtime.CONTROL_OWNER.update(token="", client_id="", lease_id="")
     released: list[dict[str, object]] = []
     monkeypatch.setattr(runtime, "_append_inputs", lambda rows: released.extend(rows))
