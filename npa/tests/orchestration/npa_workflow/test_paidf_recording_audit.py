@@ -27,6 +27,28 @@ def live_audit(monkeypatch):
     return importlib.import_module("tests.e2e.test_npa_workflow_submit_live_e2e")
 
 
+@pytest.mark.parametrize(
+    "uri, message",
+    [
+        ("https://synthetic-private-bucket/paidf-cosmos3/synthetic-run/", "bucket"),
+        ("s3://other-synthetic-bucket/paidf-cosmos3/synthetic-run/", "bucket"),
+        ("s3://synthetic-private-bucket/paidf-cosmos3/other-run/", "run"),
+    ],
+)
+def test_completed_artifact_audit_rejects_a_different_run_or_bucket(
+    live_audit, uri, message
+):
+    with pytest.raises(AssertionError, match=message):
+        live_audit._assert_paidf_live_artifacts(
+            spec="paidf-cosmos3.yaml",
+            run_prefix_uri=uri,
+            waves=[],
+            bucket=BUCKET,
+            run_id="synthetic-run",
+            e2e_project=None,
+        )
+
+
 @pytest.fixture(scope="module")
 def video(tmp_path_factory):
     path = tmp_path_factory.mktemp("paidf-audit-video") / "candidate-a.mp4"

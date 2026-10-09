@@ -17,8 +17,15 @@ the attempt as unsuccessful, the same as `"success": false`; only
 or confirmation-token state.
 
 Only quota/capacity exhaustion, insufficient GPU or Unschedulable, and no
-compatible product/affinity count. Auth, RBAC, network, image-pull, checkpoint,
-application, runtime, cancellation, and timeout failures never count. The
+compatible product/affinity count. For a Nebius Compute failure, send the
+operation's `status.details[].code` as the failure code and the violation text
+as the message: `NotEnoughResources` counts as capacity exhaustion, and
+`QuotaFailure` counts only when the message names a `compute.instance.gpu.*`
+quota. Auth, RBAC, network, image-pull, checkpoint, application, runtime,
+cancellation, and timeout failures never count, even when a placement code is
+also present. A timeout means the `timeout` code or a message that says the
+operation timed out; the `NotEnoughResources` message's "VM schedule timeout"
+wording is a capacity failure. The
 default prompt occurs on the third qualifying failure, or immediately when
 deterministic preflight proves on-demand cannot succeed and compatible
 preemptible capacity is available.
