@@ -1,47 +1,61 @@
 # Cosmos Evaluator report inspection
 
-`npa workbench cosmos-evaluator report` reads one existing
-`npa.cosmos_evaluator.report.v1` JSON artifact. It does not run inference,
-submit work, mutate the artifact, list an object prefix, or select a latest
-report.
+[Workbench docs](README.md) · [Manual operations](guides/manual-workflow-operations.md) · [Dataset batches](guides/paidf-dataset-batches.md)
 
-Use an exact local file or exact S3 object:
+Read an existing `npa.cosmos_evaluator.report.v1` artifact to see each variant's
+score, reported pass/fail and attribute, hallucination, temporal and appearance
+diagnostics. Inspection does not run inference or change the report.
+
+## Inspect a report
+
+Choose the exact local file or S3 object listed in your run's artifacts:
 
 ```bash
 npa workbench cosmos-evaluator report \
   --input-path ./cosmos_evaluator.json
 
 npa workbench cosmos-evaluator report \
-  --input-path s3://<bucket>/<exact-report-key> \
+  --input-path 's3://<bucket>/<exact-report-key>' \
   --output-format json
 ```
 
-The default table lists the reported gate score and disposition for each
-variant, followed by attribute, hallucination, temporal, and appearance
-diagnostic state. JSON emits the same bounded projection. It deliberately
-excludes source URIs, prompts, and arbitrary report metadata.
+The default is a readable table. Use `--output-format json` for scripts.
+Both formats omit source URIs, prompts and arbitrary metadata. The command
+reads only the selected report; it does not scan a prefix or select the latest.
 
-The reported score is an evaluator gate score, not calibrated confidence. This
-reader does not establish semantic material validation or multi-view validation;
-multi-view assessment is reported as `not_evaluated` when present in an input
-artifact.
+## Interpret the result
 
-## Diagnostic states and gate semantics
+Each diagnostic states its role in the reported gate:
 
-`required` diagnostics contributed to the evaluator gate for that variant;
-`advisory` diagnostics did not. `unverified` means an older artifact lacks the
-enforcement facts needed to classify the diagnostic. A missing companion field
-is shown as `not_evaluated`; a report is only fully graded when its required and
-enforcement evidence is complete.
+| Role | Meaning |
+| --- | --- |
+| `required` | Contributed to the variant's pass/fail decision. |
+| `advisory` | Did not contribute to that decision. |
+| `unverified` | The artifact lacks facts needed to determine the role. |
 
-The inspector preserves a producer's reported quality outcome. A completed
-failed-quality report is a successful read and exits zero. Malformed or
-contradictory artifacts, including non-finite scores, non-boolean dispositions,
-duplicate variant IDs, count mismatches, or a pass contradicted by required
-diagnostics, fail clearly. Missing evidence is never averaged into a new passing
-score.
+Check `evaluation_state` separately from the reported pass/fail:
 
-## SDK
+| State | Meaning |
+| --- | --- |
+| `graded` | Required diagnostic evidence and enforcement facts are complete; check the reported gate to see whether quality passed. |
+| `incomplete` | Required evidence or enforcement facts are missing; inspect the affected diagnostics. |
+| `ungraded` | The report has no variants to grade. |
+
+A missing diagnostic is `not_evaluated`; unavailable, skipped and error states
+remain explicit. Missing evidence is never averaged into a new passing score.
+
+## Exit status and limits
+
+A valid report with failed quality still exits zero: the read succeeded.
+Scripts must check `reported_gate.passed` and the evidence state. An unreadable,
+malformed or contradictory report exits nonzero, including a pass contradicted
+by required diagnostics, duplicate IDs or inconsistent report counts.
+
+The score is a gate score, not calibrated confidence. This reader does not
+establish semantic material preservation or multiview consistency; multiview
+assessment remains `not_evaluated` even when the input claims it.
+
+## Python SDK
 
 ```python
 from npa.sdk.workbench import cosmos_evaluator
@@ -51,5 +65,4 @@ summary = cosmos_evaluator.report(
 )
 ```
 
-The SDK reads the exact object with the scoped storage client. It does not scan
-the bucket and does not infer a report location.
+The SDK returns the same diagnostic projection and reads only the selected object.

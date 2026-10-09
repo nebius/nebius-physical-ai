@@ -6,6 +6,9 @@ A workflow is a graph of tool calls, S3 artifacts, and transitions. NPA validate
 and plans the YAML, then uses SkyPilot to execute it. This page covers the command
 sequence and format; each workload guide supplies its inputs and resource needs.
 
+For an existing workflow, use the [manual run sequence](guides/manual-workflow-operations.md).
+For multiple episodes, use [dataset batches and capacity planning](guides/paidf-dataset-batches.md).
+
 ## Quick start
 
 From the clone root, inspect a generation workflow locally:

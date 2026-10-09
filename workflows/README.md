@@ -55,9 +55,8 @@ npa workbench workflow plan-spec workflows/testing/cosmos3-generate.yaml --run-i
 Expect a valid spec and one `generate` stage. Its bucket is a placeholder;
 validation and planning do not verify model access, stage data, or reserve GPUs.
 
-For execution, follow the selected runbook in order. The [manual operations
-guide](../docs/workbench/guides/manual-workflow-operations.md) gives the exact
-current single-run commands and the shipped dataset batch driver.
+For execution, follow the [manual run sequence](../docs/workbench/guides/manual-workflow-operations.md).
+For multiple episodes, use [dataset batches and capacity planning](../docs/workbench/guides/paidf-dataset-batches.md).
 
 1. Configure the project and prepare its input, run-scoped storage, credentials, and compute.
 2. Validate and plan with the configuration overrides you will submit.

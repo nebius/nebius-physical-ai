@@ -1,8 +1,5 @@
 # Choose a Workbench workload
 
-For whole datasets, input diagnostics, private Python/image paths and capacity planning,
-follow [PAIDF dataset batches](paidf-dataset-batches.md).
-
 [Workbench docs](../README.md) · [Cookbooks](../cookbooks/README.md) · [Workflow catalog](../../../workflows/README.md)
 
 Choose the result you want, then follow that guide from inputs to inspected
@@ -10,10 +7,14 @@ artifacts. Complete the [quickstart](../../quickstart.md) and
 [GPU runtime setup](../getting-started.md) before a cloud run. A local preview
 checks the declaration; each guide states what its live validation actually proves.
 
-For a beginner-readable single-run lifecycle — saved configuration, candidate
-selection, `--var` configuration, preflight, submit, inspection, and recovery —
-start with [manual workflow operations](manual-workflow-operations.md). It also
-connects the single-run lifecycle to the shipped dataset batch driver.
+## Workflow operations
+
+| Task | Guide |
+| --- | --- |
+| Configure, submit, inspect or resume a workflow | [Manual workflow operations](manual-workflow-operations.md) |
+| Batch episodes and choose concurrency | [Dataset batches and capacity](paidf-dataset-batches.md) |
+| Read augmentation scores and diagnostics | [Evaluator report inspection](../cosmos-evaluator-report.md) |
+| Copy selected GCS/S3 objects | [Scoped storage transfers](scoped-storage-transfers.md) |
 
 ## Robot and reconstruction guides
 

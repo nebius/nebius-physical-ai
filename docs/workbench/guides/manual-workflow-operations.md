@@ -2,26 +2,31 @@
 
 [Workbench documentation](../README.md) · [Workflow catalog](../../../workflows/README.md) · [workflow authoring reference](../npa-workflow-guide.md)
 
-Operate one checked-in NPA declarative workflow from a saved local
-configuration: choose a candidate, set documented values, verify its inputs and
-images, submit one run, and inspect or resume its durable evidence. The
-relevant limits are stated beside the batch, input, scheduling, and evaluation
-steps below.
+Run an existing workflow from saved private configuration, inspect its outputs,
+and resume the same run after an interruption. The example uses PAIDF Cosmos 3;
+other workflows have their own input, image and model-access requirements.
 
-Use the installed command as the source of truth for a release:
+Before a cloud run, complete [Workbench setup](../getting-started.md), select a
+compatible GPU cluster, and read the [PAIDF setup guide](../../../workflows/guides/paidf-cosmos3.md).
+Run the examples from the checkout root in the same Bash shell. Replace quoted
+placeholders with your private values. For release-specific options, use
+`npa workbench workflow <command> --help`.
 
-```bash
-npa workbench workflow --help
-npa workbench workflow submit --help
-```
+Use `prepare-run` for a new ID, `preflight-images` for image checks, and
+`submit --resume-run` to resume. Set parameters with `--var KEY=VALUE`.
 
-The command names in this guide are intentional. The current CLI calls the
-preparation command `prepare-run`, image checking `preflight-images`, and
-resume `submit --resume-run <run-id>`. There is no standalone `prepare`,
-`preflight`, or `resume` workflow command. Likewise, the current workflow CLI
-does not have `--set`: use repeatable `--var KEY=VALUE` to overlay `config`.
+| Task | Go to |
+| --- | --- |
+| Save configuration and credentials | [1. Configuration](#1-save-private-configuration) |
+| Find a workflow | [2. Workflow selection](#2-choose-a-workflow) |
+| Reuse YAML with parameter overrides | [3. Parameters](#3-set-workflow-parameters) |
+| Prepare, plan, submit, inspect or resume | [4. Single run](#4-run-and-inspect-one-workflow) |
+| Submit episodes and choose concurrency | [5. Batches and scale](#5-submit-episode-batches) |
+| Select source data and assess quality | [6. Inputs and quality](#6-check-inputs-and-quality) |
+| Copy selected GCS/S3 objects | [7. Storage transfers](#7-transfer-selected-objects) |
+| Draft a new workflow | [8. Authoring](#8-author-a-new-workflow) |
 
-## 1. Keep configuration deterministic and private
+## 1. Save private configuration
 
 NPA saves operator configuration and credentials outside the repository,
 normally under `~/.npa/`. A separate automation environment can set
@@ -55,7 +60,7 @@ project alias, spec path, run ID, complete `--var` list, and exact input/output
 object URIs. Those facts are enough to repeat the configuration without putting
 private state into Git.
 
-## 2. Choose a candidate workflow
+## 2. Choose a workflow
 
 Discover shipped candidates before choosing one:
 
@@ -72,55 +77,25 @@ credential, or validation step and may not be suitable as an operational
 template without review. Read the adjacent guide and the YAML's `config`,
 `resources`, `inputs`, and `outputs` before selecting either kind.
 
-For multiple episodes, use the shipped
-[dataset batch driver](paidf-dataset-batches.md). Its private manifest selects
-the workflow, inputs, episode/camera selectors, and configuration for independent
-runs. Choose concurrency for the available cluster capacity:
+## 3. Set workflow parameters
 
-```bash
-MAX_CONCURRENT_RUNS='<operator-selected-concurrency>'
-npa workbench workflow batch plan ./paidf-batch.yaml
-npa workbench workflow batch submit ./paidf-batch.yaml \
-  --state-dir ./private-batch-state --max-concurrent-runs "$MAX_CONCURRENT_RUNS"
-npa workbench workflow batch status '<batch-id>' \
-  --state-dir ./private-batch-state
-```
-
-Keep the manifest, checkout, and private state directory for recovery. Rerun
-the same `batch submit` command with `--resume` to reconcile started runs and
-recheck completed runs before admitting pending work. The foreground driver
-uses existing capacity; it does not provision or resize node groups. Its local
-status is a ledger of client outcomes, so inspect the original workflow run IDs
-when remote execution is uncertain. The single-run lifecycle below explains
-the planning, input, credential, and recovery checks that each run still needs.
-
-## 3. Configure a checked-in workflow without copying YAML
-
-Set the spec and a private set of values. A value supplied with `--var` overlays
-the YAML's `config` for that command. Repeat the same overrides for planning,
-image preflight, and submit. `validate-spec` validates the stored specification;
-its installed interface accepts `--preset`, not `--var`.
+Set the spec and your private values. `--var KEY=VALUE` overlays the YAML's
+`config` for that command; use the same overrides for planning, image preflight
+and submit. `validate-spec` checks the stored spec and accepts `--preset`, not
+`--var`.
 
 ```bash
 SPEC='workflows/main/paidf-cosmos3.yaml'
 PROJECT_ALIAS='<local-project-alias>'
-RUN_ID='<new-run-id-from-prepare-run>'
 BUCKET='<your-bucket>'
 KUBE_CONTEXT='<your-kubernetes-context>'
 
 npa workbench workflow validate-spec "$SPEC" --json
-npa workbench workflow plan-spec "$SPEC" \
-  --run-id "$RUN_ID" \
-  --var bucket="$BUCKET" \
-  --var variant_count=1 \
-  --check-render --waves --json
 ```
 
-Do not copy a rendered command string, generated YAML, or an artifact path into
-the source workflow. Instead, select only documented `config` keys, keep them
-as `--var KEY=VALUE`, and inspect the resolved plan. `--preset <name>` is also
-available when a workflow documents a shipped preset; preset-owned dataset,
-task, and trigger keys cannot be replaced by `--var`.
+Use documented `config` keys instead of copying rendered commands or artifact
+paths into YAML. A shipped `--preset <name>` can select a documented recipe;
+its dataset, task and trigger keys cannot be replaced by `--var`.
 
 The PAIDF Cosmos 3 workflow's useful first overrides include `bucket`,
 `variant_count`, `appearance_profiles_json`, `grade_threshold`, and
@@ -131,7 +106,11 @@ is an opt-in configuration overlay; it supplies twelve profiles through
 variants can cycle through profiles; a variant count is not a count of distinct
 profiles.
 
-## 4. Single-run lifecycle
+For editor completion, [export the installed workflow schema](../npa-workflow-guide.md#schema-and-editor-completion).
+The schema describes declaration structure; tool-specific `config` values still
+need validation and planning.
+
+## 4. Run and inspect one workflow
 
 Run health checks before a provider operation. `preflight` checks selected
 credentials; it does not prove a Kubernetes context, image pullability, or GPU
@@ -144,9 +123,14 @@ npa workbench health access --capability cosmos3 --json
 npa workbench workflow prepare-run "$SPEC" --project "$PROJECT_ALIAS" --json
 ```
 
-Copy the returned run ID into the private `RUN_ID` value. `prepare-run` creates
-a fresh ID when `--resume-run` is absent; pass `--resume-run "$RUN_ID"` only to
-prepare scoped metadata for an existing ID.
+Set `RUN_ID` to the `run_id` returned by `prepare-run` before planning or submitting:
+
+```bash
+RUN_ID='<run-id-returned-by-prepare-run>'
+```
+
+`prepare-run` creates a fresh ID unless you pass `--resume-run "$RUN_ID"` to
+prepare metadata for an existing run.
 
 The access command above checks the selected Cosmos 3 model closure. Choose the
 matching capability when operating another workflow; its model or service access
@@ -157,17 +141,22 @@ For Kubernetes image verification, `--infra` needs the exact `k8s/<context>`
 target; the ambient context is not used as a substitute.
 
 ```bash
+npa workbench workflow plan-spec "$SPEC" \
+  --run-id "$RUN_ID" \
+  --var bucket="$BUCKET" --var variant_count=1 \
+  --check-render --waves --json
 npa workbench workflow preflight-images "$SPEC" \
   --project "$PROJECT_ALIAS" \
   --infra "k8s/$KUBE_CONTEXT" \
   --var bucket="$BUCKET" --var variant_count=1 --json
 ```
 
-Use `--plan-only` to inspect a rendered submission without launching it. The
-PAIDF Cosmos 3 workflow declares runtime execution, so its actual submit uses
-the runtime driver automatically; `--runtime` is shown below to make that
-choice visible. Do not use `--assume-decision` for an execution: it is only for
-planning a branch.
+Use `submit --plan-only` to inspect a submission without launching it.
+PAIDF selects the runtime driver automatically; the example spells out
+`--runtime`. `--assume-decision` is only for planning a branch.
+
+This first submission uses the workflow's starter input. For your own data,
+add exactly one [input selection](#6-check-inputs-and-quality).
 
 ```bash
 npa workbench workflow submit "$SPEC" \
@@ -219,25 +208,48 @@ npa workbench workflow submit "$SPEC" \
   --secret-env HF_TOKEN
 ```
 
-Follow the command's exact recovery message when it requires additional
-evidence. A resume preserves the durable ledger; it is not permission to launch
-a duplicate run or infer that a missing status response was a failed workload.
+Follow the command's recovery message. Resume preserves the durable ledger;
+a missing status response is not evidence that the workload failed.
 
-Use these read-only commands to save the current schema and inspect one explicit
-evaluator report:
+Inspect the exact evaluator artifact listed by `artifacts`:
 
 ```bash
-npa workbench workflow schema > ./workflow-schema.json
-npa workbench cosmos-evaluator report --input-path '<explicit-report>'
+npa workbench cosmos-evaluator report --input-path '<exact-local-or-s3-report>'
 ```
 
-The schema command describes the declaration shape; it does not verify that a
-particular input, image, or scheduler request can run. The report command
-interprets the supplied evaluator report; it does not create evaluation evidence.
-See [report inspection](../cosmos-evaluator-report.md) for per-variant scores,
-required/advisory/unverified diagnostics, and incomplete-evidence handling.
+The [report guide](../cosmos-evaluator-report.md) explains scores, diagnostic
+roles and incomplete evidence. Inspection reads existing evidence; it does not
+run evaluation.
 
-## 5. PAIDF input and quality boundaries
+## 5. Submit episode batches
+
+First verify one selected episode through the single-run sequence above. Then
+create a private manifest using the [dataset batch guide](paidf-dataset-batches.md).
+It defines the workflow, project/context, inputs, explicit episode/camera
+selectors, configuration and secret names.
+
+```bash
+MAX_CONCURRENT_RUNS='<operator-selected-concurrency>'
+npa workbench workflow batch plan ./paidf-batch.yaml
+npa workbench workflow batch submit ./paidf-batch.yaml \
+  --state-dir ./private-batch-state --max-concurrent-runs "$MAX_CONCURRENT_RUNS"
+npa workbench workflow batch status '<batch-id>' \
+  --state-dir ./private-batch-state
+```
+
+Choose concurrency for [existing cluster capacity](paidf-dataset-batches.md#concurrency-and-existing-capacity).
+The foreground driver counts active workflow clients, not GPUs; it does not
+provision or resize node groups. For measured scale, record queue/startup and
+generation time, GPU occupancy, accepted outputs and failed-run recovery.
+
+Keep the same manifest, checkout and private state directory. Resume with the
+same `batch submit` command plus `--resume`: started runs are reconciled and
+completed runs rechecked before pending work is admitted. `batch status` is a
+local ledger, not a fresh remote observation. If execution is uncertain, inspect
+the original run IDs. See [batch recovery](paidf-dataset-batches.md#progress-and-recovery)
+for interruptions, retained locks and cancellation.
+
+## 6. Check inputs and quality
 
 PAIDF accepts exactly one input mode per submission. For one local H.264 MP4,
 use `--input-video /absolute/path/source.mp4`; for one staged object, use
@@ -281,96 +293,14 @@ edges, alignment/hash fields, and relevant crop/region evidence alongside the
 quality report. Lowering `grade_threshold` or `attribute_threshold` only changes
 the decision rule; it does not correct pixels, geometry, timing, or contacts.
 
-## 6. Move only selected objects between storage systems
+## 7. Transfer selected objects
 
-Use a run-scoped prefix, separate credentials for each provider, and the
-smallest permissions each identity needs. A practical split is: ingress can
-read one source object, the workflow can read its input and write its own run
-prefix, and egress can read only selected final objects. Do not grant a workflow
-identity whole-bucket read/write/delete permissions, and do not share one
-credential between the external source and the S3-compatible destination.
+For GCS inputs or outputs, follow [scoped GCS/S3 transfers](scoped-storage-transfers.md).
+The examples use separate identities, exact objects, full-byte readback checks,
+and automatic private-staging cleanup. PAIDF accepts S3 inputs; it does not read
+`gs://` objects directly.
 
-NPA workflow paths are `s3://` URIs. Do not claim `gs://` is a native PAIDF
-input. Stage one named Cloud Storage object through an owner-only local
-directory, verify it, then upload it to one named S3-compatible object. Use the
-selected project's verified storage endpoint and private AWS credential profile
-explicitly. `configure --show --env` exports host defaults; it does not establish
-that its endpoint belongs to `PROJECT_ALIAS`. The
-syntax below follows the official [Google Cloud Storage
-reference](https://cloud.google.com/sdk/gcloud/reference/storage/cp) and [AWS
-CLI `s3 cp` reference](https://docs.aws.amazon.com/cli/latest/reference/s3/cp.html).
-
-```bash
-(
-set -euo pipefail
-umask 077
-PRIVATE_INGRESS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/npa-private-ingress.XXXXXX")"
-trap 'rm -rf -- "$PRIVATE_INGRESS_DIR"' EXIT
-chmod 700 "$PRIVATE_INGRESS_DIR"
-S3_ENDPOINT='<verified-selected-project-storage-endpoint>'
-S3_PROFILE='<private-scoped-ingress-aws-profile>'
-GCS_OBJECT='gs://<source-bucket>/<input-key>.mp4'
-LOCAL_INPUT="$PRIVATE_INGRESS_DIR/source.mp4"
-S3_READBACK="$PRIVATE_INGRESS_DIR/source.s3-readback.mp4"
-S3_BUCKET='<your-bucket>'
-S3_KEY="ingress/$RUN_ID/source.mp4"
-INPUT_URI="s3://$S3_BUCKET/$S3_KEY"
-
-GCS_SOURCE_BYTES="$(gcloud storage objects describe "$GCS_OBJECT" --format='value(size)')"
-gcloud storage cp "$GCS_OBJECT" "$LOCAL_INPUT"
-LOCAL_SOURCE_BYTES="$(wc -c < "$LOCAL_INPUT" | awk '{print $1}')"
-test "$GCS_SOURCE_BYTES" = "$LOCAL_SOURCE_BYTES"
-SOURCE_SHA256="$(sha256sum "$LOCAL_INPUT" | awk '{print $1}')"
-
-aws --profile "$S3_PROFILE" --endpoint-url "$S3_ENDPOINT" s3 cp "$LOCAL_INPUT" "$INPUT_URI"
-aws --profile "$S3_PROFILE" --endpoint-url "$S3_ENDPOINT" s3 cp "$INPUT_URI" "$S3_READBACK"
-test "$(wc -c < "$S3_READBACK" | awk '{print $1}')" = "$LOCAL_SOURCE_BYTES"
-test "$(sha256sum "$S3_READBACK" | awk '{print $1}')" = "$SOURCE_SHA256"
-)
-```
-
-The first byte and hash checks prove that the exact input object survived the
-GCS-to-S3 staging path. Keep the source-provider and destination-provider
-credentials separate: the GCS ingress identity reads only `GCS_OBJECT`, while
-the S3 identity writes and reads only `INPUT_URI`. Give PAIDF only the staged
-exact destination URI through `--input-uri`. The subshell stops at any failed
-copy or verification; no later transfer proceeds after a mismatch.
-
-For egress, choose one exact durable output object after reviewing the run.
-Copy it with the egress identity to a separate Cloud Storage destination, read
-that object back, and compare the complete bytes independently:
-
-```bash
-(
-set -euo pipefail
-umask 077
-PRIVATE_EGRESS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/npa-private-egress.XXXXXX")"
-trap 'rm -rf -- "$PRIVATE_EGRESS_DIR"' EXIT
-S3_ENDPOINT='<verified-selected-project-storage-endpoint>'
-S3_PROFILE='<private-scoped-egress-aws-profile>'
-OUTPUT_URI='<exact-s3-uri-from-npa-workflow-artifacts>'
-LOCAL_OUTPUT="$PRIVATE_EGRESS_DIR/augmented_video.mp4"
-GCS_OUTPUT='gs://<egress-bucket>/<run-scoped-prefix>/augmented_video.mp4'
-GCS_READBACK="$PRIVATE_EGRESS_DIR/augmented_video.gcs-readback.mp4"
-
-aws --profile "$S3_PROFILE" --endpoint-url "$S3_ENDPOINT" s3 cp "$OUTPUT_URI" "$LOCAL_OUTPUT"
-OUTPUT_BYTES="$(wc -c < "$LOCAL_OUTPUT")"
-OUTPUT_SHA256="$(sha256sum "$LOCAL_OUTPUT" | awk '{print $1}')"
-gcloud storage cp "$LOCAL_OUTPUT" "$GCS_OUTPUT"
-gcloud storage cp "$GCS_OUTPUT" "$GCS_READBACK"
-test "$(wc -c < "$GCS_READBACK")" = "$OUTPUT_BYTES"
-test "$(sha256sum "$GCS_READBACK" | awk '{print $1}')" = "$OUTPUT_SHA256"
-cmp -s "$LOCAL_OUTPUT" "$GCS_READBACK"
-)
-```
-
-This egress step verifies the complete selected object rather than relying on a
-listed size or optional provider checksum metadata. Use an egress GCS identity
-that can write and read only `GCS_OUTPUT`, distinct from both ingress identities.
-Use a recursive copy only for an explicitly reviewed run-scoped prefix, never a
-whole bucket.
-
-## 7. Execution and authoring are different jobs
+## 8. Author a new workflow
 
 The checked-in YAML is the declarative execution contract: `validate-spec`,
 `plan-spec`, `preflight-images`, and `submit` operate it. An optional authoring
