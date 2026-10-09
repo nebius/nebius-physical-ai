@@ -1,0 +1,28 @@
+{
+  "prompt_file": "prompts/lerobot-cups-open.txt",
+  "negative_file": "inputs/transfer/negative_prompt.json",
+  "negative_compact_json": true,
+  "shape": {
+    "size": "832x480",
+    "num_frames": 192,
+    "fps": 24,
+    "num_inference_steps": 35,
+    "guidance_scale": "3.0",
+    "flow_shift": "10.0",
+    "max_sequence_length": "4096"
+  },
+  "files": {
+    "input_reference": "inputs/lerobot/episode0-832x480-24fps.mp4"
+  },
+  "extra_params": {
+    "guardrails": false,
+    "edge": {
+      "preset_edge_threshold": "medium"
+    },
+    "resolution": "480",
+    "control_guidance": 1.5,
+    "num_video_frames_per_chunk": 297,
+    "max_frames": 192
+  },
+  "note": "Edge transfer at the Workbench augmentation contract (832x480, 24 fps, 35 steps, guidance 3, control guidance 1.5, medium Canny) on lerobot/aloha_static_cups_open episode 0 cam_high, 8 s letterboxed; edge derived server-side from input_reference; expected output adopted from warmup"
+}

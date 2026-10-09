@@ -6,6 +6,7 @@ workload controls, and an explanation of what the measurements establish.
 | Benchmark | Hardware | What it measures |
 | --- | --- | --- |
 | [Cosmos3-Super](cosmos3-super/README.md) | Eight-GPU HGX B200 and HGX H200 nodes on Nebius | Request latency versus technically valid video output per node-hour across four serving topologies |
+| [Cosmos3-Nano](cosmos3-nano/README.md) | One eight-GPU HGX H200 node on Nebius | Reference results without a Workbench workflow: technically valid video output per node-hour for Nano across ten cells, against the Cosmos3-Super reference |
 
 Each benchmark should include its workflow YAMLs, hardware and software pins,
 request and validation protocol, results with units and source dates, and
