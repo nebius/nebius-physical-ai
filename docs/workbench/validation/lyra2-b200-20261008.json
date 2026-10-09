@@ -1,0 +1,225 @@
+{
+  "format": "npa_lyra2_gpu_qualification_v1",
+  "date": "2026-10-08",
+  "scope": "Standalone Lyra 2 reconstruction; no image-to-video generation, Isaac manipulation, collision qualification or RTX inference claim.",
+  "image": "ghcr.io/nebius/nebius-physical-ai/npa-lyra2@sha256:cd76116ffac0f930bc8a4645ad92ea0848662426f3fe34c498050ae5bc5afc4d",
+  "development_sha": "5fe19717dc3bb9c0975f929342dc9bbf7386df31",
+  "anonymous_development_manifest_and_config_verified": true,
+  "architecture": "linux/amd64",
+  "runtime_user": "ubuntu",
+  "layers": 23,
+  "compressed_layer_bytes": 6032826744,
+  "trusted_publication": {
+    "run": "https://github.com/nebius/nebius-physical-ai/actions/runs/37834534944",
+    "source_license_packaging_nonroot_bootstrap_revision_gates": "passed",
+    "vulnerability_secret_license_policy_gates": "passed",
+    "provenance_attestation": "https://github.com/nebius/nebius-physical-ai/attestations/54081977",
+    "sbom_attestation": "https://github.com/nebius/nebius-physical-ai/attestations/54082015",
+    "both_attestations_independently_verified": true,
+    "payload_scan": {
+      "prepush_entries": 51690,
+      "registry_entries": 51689,
+      "result": "clean",
+      "coverage": "Layer paths, history and configured payload patterns; not a claim of complete binary-byte inspection."
+    }
+  },
+  "execution": {
+    "status": "succeeded",
+    "requested_gpus": 1,
+    "image_digest_verified_in_running_pod": true,
+    "source_overlay": false,
+    "required_baked_npa_revision": "5fe19717dc3bb9c0975f929342dc9bbf7386df31",
+    "cold_runtime_fetch": true,
+    "manual_runtime_repairs": false,
+    "gpu_architecture": {
+      "torch_version": "2.11.0+cu128",
+      "torch_cuda_version": "12.8",
+      "arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "cuda_available": true,
+      "devices": [
+        {
+          "index": 0,
+          "name": "NVIDIA B200",
+          "capability": [
+            10,
+            0
+          ],
+          "arch": "sm_100",
+          "known_as": "B200 (Blackwell datacenter)",
+          "sass_covered": true
+        }
+      ],
+      "ok": true,
+      "failures": []
+    }
+  },
+  "artifacts": {
+    "status": "passed",
+    "s3_readback_verified": true,
+    "native": {
+      "schema": "npa.lyra-reconstruction.v1",
+      "source_revision": "9fffc9adc37004091ecf26ef03abfb3abdf4d59a",
+      "model_revision": "c178c3fcf12b63cf98f6749999e6ecb63901669f",
+      "model_file": "checkpoints/recon/model.pt",
+      "checkpoint_sha256": "d26380a2d2ecceb6c7ed8ccdb6c53d2664259132ddc946c6c189cf29151c8042",
+      "input_sha256": "4ec79b8de6078910870f0405bbc3d88d2eedde59ee611d608a38c6d4c77fba9b",
+      "checksums": {
+        "reconstructed_scene.ply": "c495e3776175de0ad4acd6fb3859845f2eea4df435d9cbdb0f15206e3dfe6552",
+        "gs_trajectory.mp4": "7297d7cba0a7fdd7f62d88f925c3ef608112000171726102779dd82888309e42",
+        "cameras.npz": "cfe8bcf543fd753cfc3067b0d888bc9b62e21ac3103977af4463ef337215bcb1",
+        "geometry.npz": "85265c5556edfedbea468822fc425c0a413cdaf5c7477c617e55da385d73f0cd"
+      },
+      "pose_estimator": "Lyra upstream --no_vipe: DA3 two-pass",
+      "geometry": "estimated depth; metric calibration required before manipulation",
+      "scope": "private internal research and development; non-production",
+      "gpu": "NVIDIA B200",
+      "torch": "2.11.0+cu128",
+      "cuda": "12.8",
+      "views": 128,
+      "resolution": 640
+    },
+    "videos": {
+      "capture.mp4": {
+        "codec_name": "h264",
+        "width": 640,
+        "height": 480,
+        "r_frame_rate": "30/1",
+        "nb_read_frames": "320"
+      },
+      "gs_trajectory.mp4": {
+        "codec_name": "h264",
+        "width": 640,
+        "height": 480,
+        "r_frame_rate": "30/1",
+        "nb_read_frames": "320"
+      }
+    },
+    "gaussian_count": 8658944,
+    "geometry": {
+      "depth": {
+        "shape": [
+          128,
+          476,
+          644
+        ],
+        "finite": true
+      },
+      "conf": {
+        "shape": [
+          128,
+          476,
+          644
+        ],
+        "finite": true
+      },
+      "extrinsics": {
+        "shape": [
+          128,
+          3,
+          4
+        ],
+        "finite": true
+      },
+      "intrinsics": {
+        "shape": [
+          128,
+          3,
+          3
+        ],
+        "finite": true
+      },
+      "processed_images": {
+        "shape": [
+          128,
+          476,
+          644,
+          3
+        ],
+        "finite": true
+      }
+    },
+    "artifacts": {
+      ".done": {
+        "sha256": "d117fa006ba9208500b2930ce69cbde436c647afa917cb7396a9bc9111a46dd2",
+        "bytes": 5
+      },
+      "ATTRIBUTION.txt": {
+        "sha256": "39c45c4c7c3d86c2962857bd0837b517071ddf43272f5676fa2b30e95590363c",
+        "bytes": 357
+      },
+      "cameras.npz": {
+        "sha256": "cfe8bcf543fd753cfc3067b0d888bc9b62e21ac3103977af4463ef337215bcb1",
+        "bytes": 47636
+      },
+      "capture.json": {
+        "sha256": "5cc2fb73713714ade9a7b055cd1ed1cee94bf369137c73075ff9093ddfb2f107",
+        "bytes": 319392
+      },
+      "capture.mp4": {
+        "sha256": "4ec79b8de6078910870f0405bbc3d88d2eedde59ee611d608a38c6d4c77fba9b",
+        "bytes": 4347545
+      },
+      "geometry.npz": {
+        "sha256": "85265c5556edfedbea468822fc425c0a413cdaf5c7477c617e55da385d73f0cd",
+        "bytes": 346656721
+      },
+      "gs_trajectory.mp4": {
+        "sha256": "7297d7cba0a7fdd7f62d88f925c3ef608112000171726102779dd82888309e42",
+        "bytes": 1132426
+      },
+      "index.html": {
+        "sha256": "a526208d8efd278a3d4b4fdd3fef047b47735da79093e46b2ac7e060fa457b18",
+        "bytes": 13905651
+      },
+      "measured-depth.npz": {
+        "sha256": "d3e7aaf51b038b9a2d549303569aa514488087b100c0b3587599156274b41320",
+        "bytes": 8800650
+      },
+      "reconstructed_scene.ply": {
+        "sha256": "c495e3776175de0ad4acd6fb3859845f2eea4df435d9cbdb0f15206e3dfe6552",
+        "bytes": 588808609
+      },
+      "reconstruction.json": {
+        "sha256": "1774136908b6c6c20809a754c9310afdae025aa68ce5d8b2511bd392c0f28534",
+        "bytes": 1105
+      }
+    },
+    "scope": "Native Lyra reconstruction only; no Isaac manipulation or RTX inference claim."
+  },
+  "offline_browser_checks": [
+    {
+      "layout": "desktop",
+      "javascript_errors": [],
+      "offline_requests": [
+        "file"
+      ],
+      "complete": true,
+      "views": 128,
+      "pointCount": 176128,
+      "webgl": true,
+      "sourceAvailable": true,
+      "reconstructionAvailable": true
+    },
+    {
+      "layout": "mobile",
+      "javascript_errors": [],
+      "offline_requests": [
+        "file"
+      ],
+      "complete": true,
+      "views": 128,
+      "pointCount": 176128,
+      "webgl": true,
+      "sourceAvailable": true,
+      "reconstructionAvailable": true
+    }
+  ],
+  "delivery": "Source, inference runtime and model fetched at execution; model and generated media remain outside the public image and repository."
+}

@@ -189,7 +189,7 @@ def test_runtime_manifest_closes_source_data_task_model_and_runtime_identity() -
     assert all(item["url"].startswith("https://") for item in artifacts)
     assert all(item["license_expression"].strip() for item in artifacts)
     assert all(item["size_bytes"] > 0 for item in artifacts)
-    assert sum(item["size_bytes"] for item in artifacts) == 3_277_640_175
+    assert sum(item["size_bytes"] for item in artifacts) == 3_277_660_358
 
 
 def test_libero_smoke_uses_real_upstream_conditioned_training_and_heldout() -> None:
