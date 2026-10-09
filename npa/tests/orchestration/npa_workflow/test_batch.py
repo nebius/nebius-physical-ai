@@ -158,25 +158,43 @@ print(json.dumps({'status': 'succeeded', 'run_id': run_id}))
 def test_real_children_obey_limit_and_completed_resume_reverifies(
     manifest, children, tmp_path
 ):
+    first_admission = []
     result = batch.run_batch(
-        manifest[0], state_dir=tmp_path / "state", max_concurrent_runs=3
+        manifest[0],
+        state_dir=tmp_path / "state",
+        max_concurrent_runs=3,
+        reporter=first_admission.append,
     )
     assert all(record["status"] == "succeeded" for record in result["runs"].values())
     evidence = json.loads(children.read_text())
-    assert evidence["maximum"] == 3
+    # Process scheduling can finish one short-lived child before a sibling has
+    # entered the test helper.  The scheduler's contract is a ceiling, while
+    # the driver's admission report proves it filled that ceiling.
+    assert 1 <= evidence["maximum"] <= 3
+    assert any(
+        message.endswith("active workflow runs: 3") for message in first_admission
+    )
     assert len(evidence["calls"]) == 6
     assert all("--runtime" in call["args"] for call in evidence["calls"])
     assert all(
         call["args"][call["args"].index("--max-wait-seconds") + 1] == "0"
         for call in evidence["calls"]
     )
+    resumed_admission = []
     batch.run_batch(
-        manifest[0], state_dir=tmp_path / "state", max_concurrent_runs=3, resume=True
+        manifest[0],
+        state_dir=tmp_path / "state",
+        max_concurrent_runs=3,
+        resume=True,
+        reporter=resumed_admission.append,
     )
     replay = json.loads(children.read_text())
     assert len(replay["calls"]) == 12
     assert all(call["resume"] for call in replay["calls"][6:])
-    assert replay["maximum"] == 3
+    assert 1 <= replay["maximum"] <= 3
+    assert any(
+        message.endswith("active workflow runs: 3") for message in resumed_admission
+    )
 
 
 def test_failure_stops_admission_and_resume_reconciles_first(
