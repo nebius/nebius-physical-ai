@@ -1,5 +1,8 @@
 # PAIDF with Cosmos 3 video conditioning
 
+For whole-dataset submission, read-only robot input checks and private source/image integration,
+see [PAIDF dataset batches](paidf-dataset-batches.md).
+
 [Guides](README.md)
 
 For a complete manual setup and run, start with the

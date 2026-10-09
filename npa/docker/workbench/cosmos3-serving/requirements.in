@@ -22,6 +22,7 @@ aenum==3.1.16
 pyzmq>=25.0.0
 janus>=1.0.0
 msgpack>=1.0.0
+multidict==6.9.1
 pydantic>=2.1.0
 pydantic-settings>=2.0.0
 gguf>=0.10.0
@@ -31,3 +32,4 @@ fa3-fwd==0.0.3
 setuptools==80.10.2
 setuptools-scm==10.2.3
 wheel==0.48.0
+urllib3==2.8.0
