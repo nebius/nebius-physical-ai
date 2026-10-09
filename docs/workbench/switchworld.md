@@ -13,11 +13,16 @@ The default `runtime_image` remains the catalog LingBot image. An operator may
 select a separately qualified private, immutable runtime with
 `--var runtime_image=...`; this does not suppress the workflow's required NPA
 source overlay and is not a public-image publication mechanism.
-Every stage invokes `wan-runtime exec python3`, which installs the pinned
-CUDA/PyTorch closure into the operator-writable Wan runtime cache before real
-case validation, generation, measurement, or visualization. The private image
-still contains no CUDA/PyTorch payload; this is the inherited Wan runtime-fetch
-mechanism, not a new SwitchWorld acceptance flag.
+The preparation, baseline, adapter, and measurement stages invoke
+`wan-runtime exec python3`, which installs the pinned CUDA/PyTorch closure into
+the operator-writable Wan runtime cache before real case validation, generation,
+or measurement. The private image still contains no CUDA/PyTorch payload; this
+is the inherited Wan runtime-fetch mechanism, not a new SwitchWorld acceptance
+flag. The `emit-paired-artifacts` stage instead invokes
+`switchworld-visualize-runtime exec python3`, a separate hash-locked CPU
+visualization environment with its own operator-writable cache. Its NumPy 2 and
+Rerun dependencies remain separate from the Wan model runtime's NumPy 1.26
+closure.
 Baseline, adapter, and measurement stages materialize the pinned SwitchWorld
 revision from a host-allowlisted HTTPS archive rather than a runtime `git
 clone`. NPA checks the archive's pinned byte size and SHA-256 before securely
