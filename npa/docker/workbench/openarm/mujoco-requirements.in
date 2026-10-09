@@ -8,6 +8,7 @@
 #   --constraint - --python-version 3.11 --generate-hashes --no-emit-index-url \
 #   --output-file npa/docker/workbench/openarm/mujoco-requirements.txt
 fastapi==0.136.1
+fsspec==2026.6.0
 mujoco==3.6.0
 pydantic==2.13.5
 starlette==1.6.0
