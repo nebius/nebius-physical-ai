@@ -1,12 +1,15 @@
 """Apply desktop configuration on an existing Ubuntu host through private SSH stdin."""
 
-from contextlib import redirect_stderr
+from contextlib import closing, redirect_stderr
+import base64
 import fcntl
+from http.client import HTTPConnection, HTTPException
 import json
 import os
 from pathlib import Path
 import secrets
 import shutil
+import sqlite3
 import subprocess
 import traceback
 
@@ -546,7 +549,65 @@ def _status():
             result[key] = json.loads(path.read_text())
     if "public_access" in result:
         result["public_url"] = result["public_access"]["url"]
+    result["chat_health"] = _chat_health(_STATE / "codex-chat/config.json")
+    disk = shutil.disk_usage(_STATE if _STATE.exists() else Path.home())
+    result["disk"] = dict(zip(("total_bytes", "used_bytes", "free_bytes"), disk))
     return result
+
+
+def _chat_health(config_path):
+    if not config_path.exists():
+        return {"installed": False}
+    result = {"installed": True, "connected": False, "model_count": None}
+    try:
+        config = json.loads(config_path.read_text())
+        state = _chat_probe(config, "/chat/api/state")
+        if not isinstance(state, dict):
+            raise ValueError("Invalid chat state")
+        result["connected"] = state.get("connected") is True
+        models = _chat_probe(config, "/chat/api/models")
+        if not isinstance(models, dict) or not isinstance(models.get("data"), list):
+            raise ValueError("Invalid model catalog")
+        result["model_count"] = len(models["data"])
+    except (OSError, HTTPException, ValueError, KeyError, TypeError):
+        result["probe_error"] = "Chat readiness could not be verified."
+    result["history"] = _chat_history_health(Path.home() / ".codex/state_5.sqlite")
+    return result
+
+
+def _chat_probe(config, path):
+    port = config["port"]
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise ValueError("Invalid loopback port")
+    password = Path(config["password_file"]).read_text().strip()
+    credentials = base64.b64encode(f"{config['username']}:{password}".encode()).decode()
+    connection = HTTPConnection("127.0.0.1", port, timeout=3)
+    try:
+        connection.request(
+            "GET", path, headers={"Authorization": "Basic " + credentials}
+        )
+        with connection.getresponse() as response:
+            if response.status != 200:
+                raise ValueError("Chat probe failed")
+            return json.load(response)
+    finally:
+        connection.close()
+
+
+def _chat_history_health(database):
+    if not database.exists():
+        return {"verified": False}
+    try:
+        with closing(
+            sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
+        ) as db:
+            rows = db.execute(
+                "SELECT rollout_path FROM threads WHERE source = 'vscode' AND archived = 0"
+            ).fetchall()
+        missing = sum(not path or not Path(path).is_file() for (path,) in rows)
+        return {"verified": True, "records": len(rows), "missing_transcripts": missing}
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return {"verified": False}
 
 
 def _gateway_credentials():
@@ -747,6 +808,7 @@ def _chat_setup(config):
         "chat_proxy.py",
         "chat_history.py",
         "chat_models.py",
+        "chat_permissions.py",
         "chat_delivery.py",
         "chat_session.py",
         "chat_pwa.py",

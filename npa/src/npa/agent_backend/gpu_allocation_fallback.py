@@ -20,6 +20,10 @@ PLACEMENT_CODES = {
     "insufficient_gpu": "unschedulable_gpu",
     "no_compatible_product": "no_compatible_product",
     "affinity_mismatch": "no_compatible_product",
+    # Nebius Compute ServiceError codes (status.details[].code). QuotaFailure
+    # is handled separately because it covers every quota, not only GPUs.
+    "notenoughresources": "capacity_exhausted",
+    "not_enough_resources": "capacity_exhausted",
 }
 NON_PLACEMENT_CODES = {
     "auth",
@@ -48,7 +52,8 @@ _PLACEMENT_PATTERNS = (
     (
         "capacity_exhausted",
         re.compile(
-            r"\b(insufficient capacity|capacity (?:unavailable|exhausted)|out of capacity)\b",
+            r"\b(insufficient (?:capacity|hardware resources)|capacity (?:unavailable|exhausted)"
+            r"|out of capacity)\b",
             re.I,
         ),
     ),
@@ -92,6 +97,10 @@ def logical_allocation_ref(value: str) -> str:
     return _digest(str(value))
 
 
+_PROVIDER_QUOTA_CODES = {"quotafailure", "quota_failure"}
+_GPU_QUOTA_RE = re.compile(r"\bcompute\.instance\.gpu\.", re.IGNORECASE)
+
+
 def classify_failure(code: str = "", message: str = "") -> dict[str, Any]:
     """Classify only concrete placement evidence as qualifying."""
 
@@ -100,6 +109,13 @@ def classify_failure(code: str = "", message: str = "") -> dict[str, Any]:
         str(message or "")
     ):
         return {"category": normalized or "non_placement", "qualifying": False}
+    if normalized in _PROVIDER_QUOTA_CODES:
+        # Count only GPU quota violations: those are the ones a preemptible
+        # pool is known to relieve. Send the violation's quota name in the
+        # message so it can be checked.
+        if _GPU_QUOTA_RE.search(str(message or "")):
+            return {"category": "quota_exhausted", "qualifying": True}
+        return {"category": "quota_non_gpu", "qualifying": False}
     if normalized in PLACEMENT_CODES:
         return {"category": PLACEMENT_CODES[normalized], "qualifying": True}
     for category, pattern in _PLACEMENT_PATTERNS:

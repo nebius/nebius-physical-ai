@@ -226,6 +226,7 @@ def staged_source_files(root: Path) -> dict[Path, Path]:
     """
 
     files = {relative: root / relative for relative in iter_source_files(root)}
+    _include_required_build_files(root, files)
     catalog = root.parent / "workflows"
     if (
         catalog.is_dir()
@@ -258,6 +259,35 @@ def staged_source_files(root: Path) -> dict[Path, Path]:
             ):
                 files[Path("src/npa/workflows") / relative] = catalog / relative
     return dict(sorted(files.items()))
+
+
+def _include_required_build_files(root: Path, files: dict[Path, Path]) -> None:
+    """Keep Hatch's required inputs present without broadly bypassing gitignore."""
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    targets = (
+        project.get("tool", {}).get("hatch", {}).get("build", {}).get("targets", {})
+    )
+    required = {
+        Path(source)
+        for target in targets.values()
+        for source in target.get("force-include", {})
+    }
+    ignored_build_input = Path("src/npa/deploy/terraform/.terraform.lock.hcl")
+    for relative in sorted(required):
+        if not _is_safe_regular_source(root, relative):
+            raise SrcStagingError(
+                f"Required package build input is missing or unsafe: {relative}"
+            )
+        if relative not in files and relative != ignored_build_input:
+            raise SrcStagingError(
+                f"Required package build input is excluded from staging: {relative}"
+            )
+        files[relative] = root / relative
 
 
 def source_fingerprint(root: Path, files: Iterable[Path] | None = None) -> str:
