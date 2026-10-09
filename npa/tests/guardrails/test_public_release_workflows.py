@@ -250,7 +250,14 @@ def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
     ):
         assert f'payload_report="{report}"' in workflow_text
         normalized_workflow = workflow_text.replace("\\\n", " ")
-        assert f'rm -f "{archive}" "$payload_report"' in normalized_workflow
+        assert re.search(
+            rf'rm -f "{re.escape(archive)}"\s+"\$payload_report"',
+            normalized_workflow,
+        )
+        assert re.search(
+            rf'rm -f "{re.escape(archive)}"\s+"{re.escape(report)}"',
+            normalized_workflow,
+        )
     steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
     for step_name in (
         "Enforce runtime, revision, bootstrap, config, and history contracts",

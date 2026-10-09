@@ -344,6 +344,35 @@ def test_native_cli_keeps_blocking_exit_and_outputs_metadata_only(tmp_path):
     ) | {"report_scope"}
 
 
+def test_native_cli_clean_json_report_allows_publication(tmp_path):
+    path, _, _ = _image(tmp_path, [[("source.py", b"value = 42\n")]])
+    output = tmp_path / "report.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCANNER_PATH),
+            "--tarball",
+            str(path),
+            "--json",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    report = json.loads(output.read_text())
+    stdout_report = json.loads(result.stdout)
+    assert report["verdict"] == "clean"
+    assert report["report_scope"] == "full"
+    assert stdout_report["verdict"] == "clean"
+    assert stdout_report["report_scope"] == "redacted-summary"
+    assert set(stdout_report) == set(SCANNER._PUBLIC_STDOUT_FIELDS) | {"report_scope"}
+    assert result.stderr == ""
+
+
 def test_private_json_report_does_not_follow_a_symlink(tmp_path):
     path, _, _ = _image(
         tmp_path, [[("source.py", b"hf_token='inert-write-failure'\n")]]
