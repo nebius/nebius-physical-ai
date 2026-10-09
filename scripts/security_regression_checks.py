@@ -45,6 +45,8 @@ def _dependency_fixture(root: Path) -> None:
     _write_fixture(
         root, "commented-requirements.txt", "requests==2.19.1\t# synthetic pin\n"
     )
+    _write_fixture(root, "isaac-oss-deps.txt", "requests==2.19.1\n")
+    _write_fixture(root, "baked-constraints.txt", "requests==2.19.1\n")
     lock = {
         "name": "synthetic-security-regression",
         "version": "1.0.0",
@@ -111,6 +113,8 @@ def _check_dependencies(root: Path, output: Path) -> dict:
         ("package-lock.json", "minimist"),
         ("hashed-requirements.txt", "requests"),
         ("commented-requirements.txt", "requests"),
+        ("isaac-oss-deps.txt", "requests"),
+        ("baked-constraints.txt", "requests"),
     )
     for manifest, package in declarations:
         matched = [
@@ -144,7 +148,17 @@ def _check_current_dependencies(root: Path, output: Path) -> dict:
     patched = scan_dependencies(root, output / "current-patched", output / "cache")
     if blocking_findings(vulnerable, patched):
         raise AssertionError("Patched application dependency fixture must pass")
-    return {"unchanged_rejected": True, "patched_accepted": True}
+    workbench = "npa/docker/workbench/tool/requirements.txt"
+    _write_fixture(root, workbench, "urllib3==1.25.2\n")
+    runtime = scan_dependencies(root, output / "current-workbench", output / "cache")
+    runtime_findings = [item for item in runtime if item["path"] == workbench]
+    if not runtime_findings or blocking_findings(runtime, runtime) != runtime_findings:
+        raise AssertionError("Unchanged remediated workbench families must fail")
+    return {
+        "unchanged_application_rejected": True,
+        "patched_application_accepted": True,
+        "unchanged_workbench_family_rejected": True,
+    }
 
 
 def _arguments() -> argparse.Namespace:

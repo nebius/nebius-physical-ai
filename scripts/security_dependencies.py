@@ -62,6 +62,17 @@ def _write_pins(destination: Path, pins: list[str]) -> None:
     destination.write_text("\n".join(sorted(set(pins))) + "\n")
 
 
+def _is_python_dependency_manifest(source: Path) -> bool:
+    """Recognize maintained Python requirement, constraint, and dependency pins."""
+    if source.suffix not in {".txt", ".lock", ".in"}:
+        return False
+    return (
+        "requirements" in source.name
+        or source.name.endswith("-deps.txt")
+        or source.name.endswith("constraints.txt")
+    )
+
+
 def _validate_npm_manifests(root: Path) -> None:
     for manifest in root.rglob("package.json"):
         project = json.loads(manifest.read_text())
@@ -154,11 +165,7 @@ def _inventory(root: Path, output: Path, cache: Path) -> dict[str, str]:
             destination = output / "inputs" / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, destination)
-        elif "requirements" in source.name and source.suffix in {
-            ".txt",
-            ".lock",
-            ".in",
-        }:
+        elif _is_python_dependency_manifest(source):
             destination = output / "inputs" / relative / "requirements.txt"
             _write_pins(destination, _exact_pins(source.read_text()))
         elif source.name == "pyproject.toml":

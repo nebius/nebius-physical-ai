@@ -100,8 +100,11 @@ unchanged pin on both branches. This covers `npa/requirements-lock.txt`,
 closure, the browser test npm lock, and `scripts/security-requirements.txt`.
 Deleting either required application/CI requirements file fails scanning.
 The private summary separates new regressions from all blocking findings.
-Vendor and tool-runtime inventories retain differential checks and their
-separate image validation requirements.
+For deployed workbench inventories, the remediated `fsspec`, GitPython,
+Hydra-core, multidict, OAuthlib, urllib3, virtualenv, and Werkzeug families also
+have an absolute gate. Other workbench dependencies retain regression checks;
+Robomimic's unshipped historical source-evidence lock remains explicitly
+differential.
 
 The AnyIO floor is 4.14.2 for ordinary installs and the application lock, covering
 [TLS hostname verification](https://github.com/advisories/GHSA-82r6-8w77-94w6)
@@ -116,9 +119,10 @@ version-update configuration does not enable it or merge its PRs automatically.
 
 Candidate Bandit/zizmor ignore comments and configuration are disabled. Trivy
 receives isolated empty configuration and ignore files, so the image scan's
-OS-only settings do not hide application vulnerabilities. Python requirements
-with nonstandard filenames are normalized into explicit pip inventories, including
-pins with inline hashes and whitespace-separated comments. npm locks must retain
+OS-only settings do not hide application vulnerabilities. Python requirements,
+`*-deps.txt` inventories, and constraint files are normalized into explicit pip
+inventories, including pins with inline hashes and whitespace-separated comments.
+npm locks must retain
 resolved direct packages and agree with exact direct version pins. The
 core/development dependency closure is resolved with pinned uv, Python 3.12 and
 public PyPI metadata, with source builds disabled. Candidate application code,

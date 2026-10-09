@@ -3,7 +3,7 @@
 anyio==4.14.2
 click==8.3.3
 cryptography==50.0.1
-hydra-core==1.3.6
+hydra-core==1.3.7
 idna==3.19
 msgpack==1.2.1
 pillow==12.3.0
@@ -11,6 +11,6 @@ pygments==2.21.0
 pytest==9.0.3
 requests==2.34.2
 setuptools==84.0.0
-urllib3==2.7.0
+urllib3==2.8.0
 # NLTK is installed by common/install_hardened_nltk.sh from the pinned fix commit.
 defusedxml==0.7.1

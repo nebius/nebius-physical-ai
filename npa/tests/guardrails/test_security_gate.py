@@ -11,6 +11,7 @@ from threading import Barrier
 from types import SimpleNamespace
 
 from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 import pytest
 import yaml
@@ -197,23 +198,74 @@ def test_unchanged_application_vulnerabilities_block(security_modules, manifest)
     assert gate.blocking_findings([finding], []) == []
 
 
-def test_vendor_dependencies_keep_regression_enforcement(security_modules):
-    """Retain differential enforcement for separately validated tool runtimes.
+@pytest.mark.parametrize(
+    "package",
+    [
+        "fsspec",
+        "gitpython",
+        "hydra-core",
+        "multidict",
+        "oauthlib",
+        "urllib3",
+        "virtualenv",
+        "werkzeug",
+    ],
+)
+def test_workbench_dependencies_block_unchanged_vulnerabilities(
+    security_modules, package
+):
+    """Reject newly disclosed advisories in deployed workbench inventories.
 
     Args:
         security_modules: Checked-out scanner policy.
+        package: Remediated dependency family under absolute enforcement.
     Returns:
         None.
     Raises:
-        AssertionError: A new vendor vulnerability passes or source policy changes.
+        AssertionError: An unchanged workbench vulnerability passes.
     """
     gate, _ = security_modules
     finding = dict(
-        _finding("npa/docker/workbench/tool/requirements.txt"), scanner="trivy"
+        _finding("npa/docker/workbench/tool/requirements.txt"),
+        scanner="trivy",
+        identity=f"{package}==0:synthetic-advisory",
     )
-    assert gate.blocking_findings([finding], [finding]) == []
+    assert gate.blocking_findings([finding], [finding]) == [finding]
     assert gate.blocking_findings([], [finding]) == [finding]
     assert gate.blocking_findings([_finding()], [_finding()]) == []
+
+
+@pytest.mark.parametrize(
+    "manifest,identity",
+    [
+        (
+            "npa/docker/workbench/cosmos3-serving/requirements.lock",
+            "vllm==0.28.0:synthetic-advisory",
+        ),
+        (
+            "npa/docker/workbench/robomimic/baked-requirements.lock",
+            "urllib3==2.7.0:synthetic-advisory",
+        ),
+    ],
+)
+def test_bounded_workbench_findings_remain_differential(
+    security_modules, manifest, identity
+):
+    """Keep other packages and unshipped historical evidence differential.
+
+    Args:
+        security_modules: Checked-out scanner policy.
+        manifest: Narrowly reviewed exception path.
+        identity: Non-absolute package identity or evidence-only dependency.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A documented exception becomes absolute or unrestricted.
+    """
+    gate, _ = security_modules
+    finding = dict(_finding(manifest), scanner="trivy", identity=identity)
+    assert gate.blocking_findings([finding], [finding]) == []
+    assert gate.blocking_findings([], [finding]) == [finding]
 
 
 @pytest.mark.parametrize("patched", [False, True])
@@ -815,6 +867,66 @@ def test_python_pins_survive_requirement_options(
     assert dependencies._expected_packages(output / "inputs" / target) == {
         ("requests", "2.19.1")
     }
+
+
+@pytest.mark.parametrize("manifest", ["isaac-oss-deps.txt", "baked-constraints.txt"])
+def test_nonstandard_python_dependency_manifests_are_inventoried(
+    security_modules, tmp_path, manifest
+):
+    """Scan maintained dependency and constraint files outside requirements names.
+
+    Args:
+        security_modules: Checked-out gate and dependency modules.
+        tmp_path: Isolated dependency inventory directories.
+        manifest: Supported nonstandard manifest name.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Exact pins in a supported manifest evade inventory.
+    """
+    _, dependencies = security_modules
+    root = tmp_path / "source"
+    root.mkdir()
+    (root / manifest).write_text("requests==2.19.1\n")
+    output = tmp_path / "report"
+    inventory = dependencies._inventory(root, output, tmp_path / "cache")
+    assert set(inventory.values()) == {manifest}
+    target = next(iter(inventory))
+    assert dependencies._expected_packages(output / "inputs" / target) == {
+        ("requests", "2.19.1")
+    }
+
+
+@pytest.mark.parametrize(
+    "package,minimum",
+    [
+        ("fsspec", "2026.6.0"),
+        ("gitpython", "3.1.62"),
+        ("hydra-core", "1.3.7"),
+        ("multidict", "6.9.1"),
+        ("oauthlib", "4.0.0"),
+        ("urllib3", "2.8.0"),
+        ("virtualenv", "21.7.13"),
+        ("werkzeug", "3.1.9"),
+    ],
+)
+def test_deployed_workbench_security_floors(security_modules, package, minimum):
+    """Prevent regenerated workbench manifests from restoring vulnerable pins."""
+    _, dependencies = security_modules
+    root = Path(__file__).resolve().parents[3] / "npa/docker/workbench"
+    evidence = root / "robomimic/baked-requirements.lock"
+    versions = []
+    for manifest in root.rglob("*"):
+        if manifest == evidence or not dependencies._is_python_dependency_manifest(
+            manifest
+        ):
+            continue
+        for pin in dependencies._exact_pins(manifest.read_text()):
+            name, version = pin.split("==", maxsplit=1)
+            if canonicalize_name(name) == canonicalize_name(package):
+                versions.append(Version(version))
+    assert versions
+    assert min(versions) >= Version(minimum)
 
 
 @pytest.mark.parametrize(
