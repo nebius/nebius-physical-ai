@@ -1,0 +1,73 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: physical-augmentation
+  executionMode: runtime
+  description: >-
+    Regenerate executed Franka lift actions across object-position, mass, and
+    friction changes. Retain every attempt, verify native physics and transition
+    alignment, and export accepted demonstrations to LeRobot and Rerun.
+
+config:
+  bucket: example-bucket
+  prefix: "physical-augmentation/{{run.id}}"
+  source_overlay: "1"
+  seed: "42"
+  episodes_per_condition: "3"
+  episode_steps: "600"
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  collection_uri: "s3://{{config.bucket}}/{{config.prefix}}/collection/"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46
+  isaac:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 96Gi
+    image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46
+
+initial: prepare
+
+states:
+  prepare:
+    description: Seal paired reset seeds, physics conditions, action semantics, and acceptance criteria.
+    resources: cpu
+    run:
+      argv: [python3, -m, npa.workflows.physical_augmentation, prepare, --run-id, "{{run.id}}", --seed, "{{config.seed}}", --episodes-per-condition, "{{config.episodes_per_condition}}", --episode-steps, "{{config.episode_steps}}", --output-path, "{{config.prepared_uri}}"]
+    outputs:
+      - {uri: "{{config.prepared_uri}}recipe.json", schema: npa.physical-augmentation.recipe.v1}
+    next: collect
+
+  collect:
+    description: Execute fresh measured-state IK actions in each physical condition and capture aligned RTX transitions.
+    resources: isaac
+    run:
+      argv: [python3, -m, npa.workflows.physical_augmentation, collect, --input-path, "{{config.prepared_uri}}", --output-path, "{{config.collection_uri}}"]
+    inputs:
+      - {uri: "{{config.prepared_uri}}", schema: npa.physical-augmentation.recipe.v1}
+    outputs:
+      - {uri: "{{config.collection_uri}}collection.json", schema: npa.physical-augmentation.collection.v1}
+    next: report
+
+  report:
+    description: Recompute success, retain failure counts, and export accepted actions with genuine simulator video.
+    resources: cpu
+    run:
+      argv: [python3, -m, npa.workflows.physical_augmentation, report, --input-path, "{{config.collection_uri}}", --output-path, "{{config.report_uri}}"]
+    inputs:
+      - {uri: "{{config.collection_uri}}", schema: npa.physical-augmentation.collection.v1}
+    outputs:
+      - {uri: "{{config.report_uri}}report.json", schema: npa.physical-augmentation.report.v1}
+      - {uri: "{{config.report_uri}}lerobot/meta/info.json", schema: lerobot.dataset.v3}
+      - {uri: "{{config.report_uri}}demonstrations.rrd", schema: application/vnd.rerun.rrd}
+      - {uri: "{{config.report_uri}}demo.html", schema: text/html}
+      - {uri: "{{config.report_uri}}demo.mp4", schema: video/mp4}
+      - {uri: "{{config.report_uri}}demo-validation.json", schema: npa.physical-augmentation.demo.v1}
+    terminal: true

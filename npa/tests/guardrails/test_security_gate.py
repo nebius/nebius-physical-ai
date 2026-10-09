@@ -5,12 +5,14 @@ from __future__ import annotations
 import importlib
 import io
 import json
+import re
 import subprocess
 from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace
 
 from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 import pytest
 import yaml
@@ -197,23 +199,82 @@ def test_unchanged_application_vulnerabilities_block(security_modules, manifest)
     assert gate.blocking_findings([finding], []) == []
 
 
-def test_vendor_dependencies_keep_regression_enforcement(security_modules):
-    """Retain differential enforcement for separately validated tool runtimes.
+@pytest.mark.parametrize(
+    "package",
+    [
+        "fsspec",
+        "gitpython",
+        "hydra-core",
+        "multidict",
+        "oauthlib",
+        "urllib3",
+        "virtualenv",
+        "werkzeug",
+    ],
+)
+@pytest.mark.parametrize(
+    "path",
+    [
+        "npa/docker/workbench/tool/requirements.txt",
+        "npa/workflows/workbench/tool/requirements.txt",
+    ],
+)
+def test_workbench_dependencies_block_unchanged_vulnerabilities(
+    security_modules, package, path
+):
+    """Reject newly disclosed advisories in deployed workbench inventories.
 
     Args:
         security_modules: Checked-out scanner policy.
+        package: Remediated dependency family under absolute enforcement.
+        path: Deployed image or workflow dependency input.
     Returns:
         None.
     Raises:
-        AssertionError: A new vendor vulnerability passes or source policy changes.
+        AssertionError: An unchanged workbench vulnerability passes.
     """
     gate, _ = security_modules
     finding = dict(
-        _finding("npa/docker/workbench/tool/requirements.txt"), scanner="trivy"
+        _finding(path),
+        scanner="trivy",
+        identity=f"{package}==0:synthetic-advisory",
     )
-    assert gate.blocking_findings([finding], [finding]) == []
+    assert gate.blocking_findings([finding], [finding]) == [finding]
     assert gate.blocking_findings([], [finding]) == [finding]
     assert gate.blocking_findings([_finding()], [_finding()]) == []
+
+
+@pytest.mark.parametrize(
+    "manifest,identity",
+    [
+        (
+            "npa/docker/workbench/cosmos3-serving/requirements.lock",
+            "vllm==0.28.0:synthetic-advisory",
+        ),
+        (
+            "npa/docker/workbench/robomimic/baked-requirements.lock",
+            "urllib3==2.7.0:synthetic-advisory",
+        ),
+    ],
+)
+def test_bounded_workbench_findings_remain_differential(
+    security_modules, manifest, identity
+):
+    """Keep other packages and unshipped historical evidence differential.
+
+    Args:
+        security_modules: Checked-out scanner policy.
+        manifest: Narrowly reviewed exception path.
+        identity: Non-absolute package identity or evidence-only dependency.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A documented exception becomes absolute or unrestricted.
+    """
+    gate, _ = security_modules
+    finding = dict(_finding(manifest), scanner="trivy", identity=identity)
+    assert gate.blocking_findings([finding], [finding]) == []
+    assert gate.blocking_findings([], [finding]) == [finding]
 
 
 @pytest.mark.parametrize("patched", [False, True])
@@ -815,6 +876,209 @@ def test_python_pins_survive_requirement_options(
     assert dependencies._expected_packages(output / "inputs" / target) == {
         ("requests", "2.19.1")
     }
+
+
+def test_hash_verified_wheel_urls_are_inventoried(security_modules, tmp_path):
+    """Scan a direct wheel URL as its exact package and version."""
+    _, dependencies = security_modules
+    root = tmp_path / "source"
+    root.mkdir()
+    url = (
+        "https://files.pythonhosted.org/packages/d6/0b/"
+        "gitpython-3.1.62-py3-none-any.whl#sha256=" + "0" * 64
+    )
+    (root / "security-overrides.txt").write_text(url + "\n")
+    output = tmp_path / "report"
+    inventory = dependencies._inventory(root, output, tmp_path / "cache")
+    assert set(inventory.values()) == {"security-overrides.txt"}
+    target = next(iter(inventory))
+    assert dependencies._expected_packages(output / "inputs" / target) == {
+        ("gitpython", "3.1.62")
+    }
+
+
+def test_named_hash_verified_wheel_urls_are_inventoried(security_modules):
+    """Parse PEP 508 direct wheels without allowing declared-name substitution."""
+    _, dependencies = security_modules
+    url = (
+        "https://files.pythonhosted.org/packages/d6/0b/"
+        "gitpython-3.1.62-py3-none-any.whl#sha256=" + "0" * 64
+    )
+    assert dependencies._exact_pins(f"GitPython @ {url}") == ["gitpython==3.1.62"]
+    with pytest.raises(ValueError, match="does not match"):
+        dependencies._exact_pins(f"urllib3 @ {url}")
+    option_url = url.split("#", maxsplit=1)[0]
+    option_hash = " --hash=sha256:" + "0" * 64
+    assert dependencies._exact_pins(f"GitPython @ {option_url}{option_hash}") == [
+        "gitpython==3.1.62"
+    ]
+    with pytest.raises(ValueError, match="conflicting SHA-256"):
+        dependencies._exact_pins(f"GitPython @ {url} --hash=sha256:" + "1" * 64)
+
+
+def test_named_wheel_runtime_manifests_are_not_empty(security_modules):
+    """Keep every hash-bound Flex-PI runtime wheel visible to Trivy."""
+    _, dependencies = security_modules
+    repository = Path(__file__).resolve().parents[3]
+    manifests = [
+        repository / "npa/src/npa/workbench/flex_pi/b300-runtime-requirements.txt",
+        repository / "npa/src/npa/workbench/flex_pi/training-profiler-requirements.txt",
+    ]
+    for manifest in manifests:
+        declarations = [
+            line
+            for line in manifest.read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        pins = dependencies._exact_pins(manifest.read_text())
+        assert len(pins) == len(declarations)
+        assert len(pins) > 0
+
+
+def test_exact_source_archive_mapping_is_inventoried(security_modules):
+    """Represent the one approved source archive by its verified project version."""
+    _, dependencies = security_modules
+    repository = Path(__file__).resolve().parents[3]
+    project = tomllib.loads((repository / "npa/pyproject.toml").read_text())["project"]
+    declaration = next(
+        item
+        for item in project["optional-dependencies"]["genesis"]
+        if item.startswith("moviepy @ ")
+    )
+    assert dependencies._exact_pins(declaration) == ["moviepy==2.2.1"]
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "https://example.invalid/package-1.0.0.tar.gz#sha256=" + "0" * 64,
+        "https://example.invalid/package-1.0.0-py3-none-any.whl",
+        "package @ https://example.invalid/package-1.0.0.tar.gz#sha256=" + "0" * 64,
+        "package @ git+https://example.invalid/package.git@deadbeef",
+    ],
+)
+def test_direct_dependency_urls_fail_closed(security_modules, declaration):
+    """Reject direct URLs that cannot provide exact hash-bound wheel inventory."""
+    _, dependencies = security_modules
+    with pytest.raises(ValueError, match="Direct dependency"):
+        dependencies._exact_pins(declaration)
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        "isaac-oss-deps.txt",
+        "baked-constraints.txt",
+        "security-overrides.txt",
+        "isaac-nvidia-wheels.txt",
+    ],
+)
+def test_nonstandard_python_dependency_manifests_are_inventoried(
+    security_modules, tmp_path, manifest
+):
+    """Scan maintained dependency and constraint files outside requirements names.
+
+    Args:
+        security_modules: Checked-out gate and dependency modules.
+        tmp_path: Isolated dependency inventory directories.
+        manifest: Supported nonstandard manifest name.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Exact pins in a supported manifest evade inventory.
+    """
+    _, dependencies = security_modules
+    root = tmp_path / "source"
+    root.mkdir()
+    (root / manifest).write_text("requests==2.19.1\n")
+    output = tmp_path / "report"
+    inventory = dependencies._inventory(root, output, tmp_path / "cache")
+    assert set(inventory.values()) == {manifest}
+    target = next(iter(inventory))
+    assert dependencies._expected_packages(output / "inputs" / target) == {
+        ("requests", "2.19.1")
+    }
+
+
+def _installation_source_pins(root: Path) -> list[str]:
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)==([0-9][A-Za-z0-9.!+_-]*)"
+    )
+    pins = []
+    sources = [*root.rglob("Dockerfile*"), *root.rglob("*.patch")]
+    for source in sources:
+        lines = source.read_text().splitlines()
+        if source.suffix == ".patch":
+            lines = [
+                line[1:]
+                for line in lines
+                if line.startswith("+") and not line.startswith("+++")
+            ]
+        matches = pattern.findall("\n".join(lines))
+        pins.extend(f"{name}=={version}" for name, version in matches)
+    return pins
+
+
+def _retained_patch_context_pins(root: Path) -> list[str]:
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)==([0-9][A-Za-z0-9.!+_-]*)"
+    )
+    pins = []
+    for source in root.rglob("*.patch"):
+        context = "\n".join(
+            line[1:] for line in source.read_text().splitlines() if line.startswith(" ")
+        )
+        pins.extend(f"{name}=={version}" for name, version in pattern.findall(context))
+    return pins
+
+
+@pytest.mark.parametrize(
+    "package,minimum",
+    [
+        ("fsspec", "2026.6.0"),
+        ("gitpython", "3.1.62"),
+        ("hydra-core", "1.3.7"),
+        ("multidict", "6.9.1"),
+        ("oauthlib", "4.0.0"),
+        ("urllib3", "2.8.0"),
+        ("virtualenv", "21.7.13"),
+        ("werkzeug", "3.1.9"),
+    ],
+)
+def test_deployed_workbench_security_floors(security_modules, package, minimum):
+    """Prevent deployed manifests and build inputs from restoring vulnerable pins."""
+    _, dependencies = security_modules
+    repository = Path(__file__).resolve().parents[3]
+    roots = [
+        repository / "npa/docker/workbench",
+        repository / "npa/workflows/workbench",
+    ]
+    evidence = roots[0] / "robomimic/baked-requirements.lock"
+    versions = []
+    retained_context_versions = []
+    pins = _installation_source_pins(roots[0])
+    for root in roots:
+        for manifest in root.rglob("*"):
+            if (
+                manifest == evidence
+                or not manifest.is_file()
+                or not dependencies._is_python_dependency_manifest(manifest)
+            ):
+                continue
+            pins.extend(dependencies._exact_pins(manifest.read_text()))
+    for pin in pins:
+        name, version = pin.split("==", maxsplit=1)
+        if canonicalize_name(name) == canonicalize_name(package):
+            versions.append(Version(version))
+    for pin in _retained_patch_context_pins(roots[0]):
+        name, version = pin.split("==", maxsplit=1)
+        if canonicalize_name(name) == canonicalize_name(package):
+            retained_context_versions.append(Version(version))
+    assert versions
+    assert min(versions) >= Version(minimum)
+    assert not retained_context_versions or min(retained_context_versions) >= Version(
+        minimum
+    )
 
 
 @pytest.mark.parametrize(

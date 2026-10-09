@@ -811,6 +811,26 @@ images:
       cosmos2-transfer/REDISTRIBUTION.md; built-byte scans are a release gate.
     redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
+  lyra2:
+    dockerfile: lyra2/Dockerfile
+    tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    notes: >-
+      Dedicated Lyra 2 reconstruction bootstrap on a pinned CUDA 12.8 compiler
+      base. Ships NPA and its locked CPU dependencies, with no Isaac runtime,
+      PyTorch, cuDNN wheel, Lyra source, checkpoint, input capture or populated
+      model cache. Lyra and DA3 source, PyTorch cu128, gsplat and the exact Lyra
+      reconstruction checkpoint are fetched into a private per-job temporary
+      environment. The model remains subject to NVIDIA's Internal Scientific
+      Research and Development Model License. The rtfetch2 recipe inherits the
+      immutable rtfetch1 CUDA/Ubuntu/CPU closure and adds hash-pinned Ubuntu
+      wget, netcat, FUSE and PCI packages so required SkyPilot startup tools
+      are available even when runtime APT mirrors are unavailable.
+      The rtfetch2 digest passed cold native reconstruction and decoded artifact
+      verification on preemptible RTX PRO 6000. The rtfetch1 release retains its
+      separate B200 qualification; rtfetch2 has not been run on B200 or B300.
   cosmos3:
     dockerfile: cosmos3/Dockerfile
     tier: job

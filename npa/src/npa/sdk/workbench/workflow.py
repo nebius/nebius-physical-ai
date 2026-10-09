@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from npa.orchestration.npa_workflow.batch import batch_status, run_batch
+from npa.orchestration.npa_workflow.batch_plan import plan_batch
+from npa.workflows.data_factory_input_diagnostics import check_paidf_input
+
 from npa.orchestration.skypilot.workflow_state import (
     WorkflowS3Config,
     list_artifacts,
@@ -122,4 +126,13 @@ def _state(
     )
 
 
-__all__ = ["artifacts", "logs", "runs", "status"]
+__all__ = [
+    "artifacts",
+    "logs",
+    "runs",
+    "status",
+    "plan_batch",
+    "run_batch",
+    "batch_status",
+    "check_paidf_input",
+]

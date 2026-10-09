@@ -499,6 +499,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         }
     )
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
+        "lyra2",
         "diffusers",
         "lingbot-world",
         "sam2",
@@ -660,6 +661,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
 
     for tool in (
         "ltx2",
+        "lyra2",
         "wan2-2",
         "cosmos3-serving",
         "sonic-mujoco",
