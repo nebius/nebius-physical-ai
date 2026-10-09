@@ -178,10 +178,48 @@ print(json.dumps({'status': 'succeeded', 'run_id': run_id}))
     return journal
 
 
+class _BatchAdmissionObserver:
+    def __init__(self, launch, clock):
+        self._launch = launch
+        self._clock = clock
+        self.children = []
+        self._start = 0
+        self._expected = None
+        self.admissions_at_first_yield = None
+
+    def arm(self, expected_admissions):
+        self._start = len(self.children)
+        self._expected = expected_admissions
+        self.admissions_at_first_yield = None
+
+    def launch(self, *args):
+        process = self._launch(*args)
+        self.children.append(process)
+        return process
+
+    def sleep(self, delay):
+        if self.admissions_at_first_yield is None:
+            self.admissions_at_first_yield = len(self.children) - self._start
+            if self.admissions_at_first_yield != self._expected:
+                raise RuntimeError(
+                    f"scheduler admitted {self.admissions_at_first_yield} real children"
+                )
+        self._clock.sleep(delay)
+
+
+@pytest.fixture
+def admission_observer(monkeypatch):
+    observer = _BatchAdmissionObserver(batch._launch, batch.time)
+    monkeypatch.setattr(batch, "_launch", observer.launch)
+    monkeypatch.setattr(batch, "time", observer)
+    return observer
+
+
 def test_real_children_obey_limit_and_completed_resume_reverifies(
-    manifest, children, tmp_path, monkeypatch
+    manifest, children, tmp_path, monkeypatch, admission_observer
 ):
     monkeypatch.setenv("BATCH_TEST_RENDEZVOUS_PARTIES", "3")
+    admission_observer.arm(expected_admissions=3)
     result = batch.run_batch(
         manifest[0],
         state_dir=tmp_path / "state",
@@ -191,67 +229,61 @@ def test_real_children_obey_limit_and_completed_resume_reverifies(
     evidence = json.loads(children.read_text())
     assert evidence["maximum"] == 3
     assert len(evidence["calls"]) == 6
+    assert "rendezvous_released" not in evidence
+    assert admission_observer.admissions_at_first_yield == 3
     assert all("--runtime" in call["args"] for call in evidence["calls"])
     assert all(
         call["args"][call["args"].index("--max-wait-seconds") + 1] == "0"
         for call in evidence["calls"]
     )
-    batch.run_batch(
+    admission_observer.arm(expected_admissions=3)
+    resumed = batch.run_batch(
         manifest[0],
         state_dir=tmp_path / "state",
         max_concurrent_runs=3,
         resume=True,
     )
     replay = json.loads(children.read_text())
+    assert all(record["status"] == "succeeded" for record in resumed["runs"].values())
     assert len(replay["calls"]) == 12
     assert all(call["resume"] for call in replay["calls"][6:])
     assert replay["maximum"] == 3
+    assert "rendezvous_released" not in replay
+    assert admission_observer.admissions_at_first_yield == 3
 
 
 def test_scheduler_maximum_two_fails_at_first_yield_and_reaps_children(
-    manifest, children, tmp_path, monkeypatch
+    manifest, children, tmp_path, monkeypatch, admission_observer
 ):
     monkeypatch.setenv("BATCH_TEST_RENDEZVOUS_PARTIES", "3")
-    plan = plan_batch(manifest[0])
-    directory = tmp_path / "state" / plan["batch_id"]
     scheduler_maximum = 2
-    admitted_runs = plan["runs"][:scheduler_maximum]
-    launched = []
-    launch = batch._launch
-    first_scheduler_yield = False
 
-    def observe_launch(*args):
-        process = launch(*args)
-        launched.append(process)
-        return process
+    def admit_at_most_two(plan, directory, state, concurrency, report, lock_fd):
+        batch._drive(
+            plan,
+            plan["runs"][:scheduler_maximum],
+            directory,
+            state,
+            concurrency,
+            report,
+            lock_fd,
+        )
 
-    def fail_at_first_scheduler_yield(delay):
-        nonlocal first_scheduler_yield
-        first_scheduler_yield = True
-        assert delay == 0.2
-        assert len(launched) == 2
-        assert all(process.poll() is None for process in launched)
-        raise RuntimeError("scheduler admitted only 2 real children")
-
-    monkeypatch.setattr(batch, "_launch", observe_launch)
-    monkeypatch.setattr(batch.time, "sleep", fail_at_first_scheduler_yield)
-    with batch._batch_lock(directory) as lock_fd:
-        state = batch._initialize(plan, directory, resume=False)
-        with pytest.raises(RuntimeError, match="scheduler admitted only 2"):
-            batch._drive(
-                plan,
-                admitted_runs,
-                directory,
-                state,
-                concurrency=3,
-                report=lambda _: None,
-                lock_fd=lock_fd,
-            )
-    assert first_scheduler_yield
-    assert len(launched) == 2
-    assert len({process.pid for process in launched}) == 2
-    assert all(process.returncode is not None for process in launched)
-    assert all(process.returncode < 0 for process in launched)
+    monkeypatch.setattr(batch, "_run_phases", admit_at_most_two)
+    admission_observer.arm(expected_admissions=3)
+    with pytest.raises(RuntimeError, match="scheduler admitted 2 real children"):
+        batch.run_batch(
+            manifest[0],
+            state_dir=tmp_path / "state",
+            max_concurrent_runs=3,
+        )
+    assert admission_observer.admissions_at_first_yield == 2
+    assert len(admission_observer.children) == 2
+    assert len({process.pid for process in admission_observer.children}) == 2
+    assert all(
+        process.returncode is not None for process in admission_observer.children
+    )
+    assert all(process.returncode < 0 for process in admission_observer.children)
 
 
 def test_failure_stops_admission_and_resume_reconciles_first(
