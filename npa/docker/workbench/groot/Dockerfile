@@ -229,7 +229,8 @@ replace_once(
 print("GROOT_RUNTIME_PIN_PATCH_OK " + cosmos_revision)
 PY
 
-RUN cd "${GROOT_REPO}" \
+RUN export UV_CACHE_DIR=/tmp/groot-uv-cache \
+    && cd "${GROOT_REPO}" \
     && uv sync --python 3.10 \
     && uv pip install --python "${GROOT_VENV}/bin/python" \
       boto3==1.42.91 \
@@ -261,7 +262,8 @@ RUN cd "${GROOT_REPO}" \
       "transformers>=5.3.0" \
       "urllib3>=2.7.0" \
       "wheel>=0.46.2" \
-    && (uv pip uninstall --python "${GROOT_VENV}/bin/python" -y wandb lxml || true)
+    && (uv pip uninstall --python "${GROOT_VENV}/bin/python" -y wandb lxml || true) \
+    && rm -rf "${UV_CACHE_DIR}"
 
 # The Isaac side of the image: python3.11 + PyTorch + the OSS dependency closure Isaac
 # needs, the runtime-fetch bootstrap, and the /isaac-sim/python.sh shim. What used to be
@@ -290,7 +292,7 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
 # run time, so the runtime user must not be able to rewrite it.
 USER ubuntu
 
-RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
+RUN /opt/isaac-lab/venv/bin/python -m pip install --no-cache-dir --no-deps --upgrade \
       "GitPython>=3.1.50" \
       "PyJWT>=2.13.0" \
       "aiohttp>=3.13.3" \

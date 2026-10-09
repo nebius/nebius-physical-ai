@@ -1016,6 +1016,25 @@ def test_groot_container_dockerfile_pins_runtime_versions() -> None:
     assert "--platform linux/amd64" in build_script
 
 
+def test_groot_container_scanned_dependency_layers_do_not_commit_package_caches() -> (
+    None
+):
+    dockerfile = (PACKAGE_ROOT / "docker/workbench/groot/Dockerfile").read_text()
+
+    uv_layer_start = dockerfile.index("RUN export UV_CACHE_DIR=/tmp/groot-uv-cache")
+    uv_layer_end = dockerfile.index("\n\n", uv_layer_start)
+    uv_layer = dockerfile[uv_layer_start:uv_layer_end]
+    assert "uv sync --python 3.10" in uv_layer
+    assert 'rm -rf "${UV_CACHE_DIR}"' in uv_layer
+    assert uv_layer.index("uv sync --python 3.10") < uv_layer.index(
+        'rm -rf "${UV_CACHE_DIR}"'
+    )
+    assert (
+        "RUN /opt/isaac-lab/venv/bin/python -m pip install "
+        "--no-cache-dir --no-deps --upgrade"
+    ) in dockerfile
+
+
 def test_groot_install_command_never_inlines_service_env() -> None:
     """Regression: the install script is embedded in SSHError on failure and
     printed verbatim, so it must never carry credential/GPU env values inline.
