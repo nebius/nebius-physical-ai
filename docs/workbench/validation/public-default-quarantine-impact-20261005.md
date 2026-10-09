@@ -11,8 +11,8 @@ It checks image selection; it does not claim GPU execution or acceptance of the
 blocked images. The guardrail compares the table below with actual default
 resolution, so a wildcard image override cannot conceal another regression.
 
-After PAIDF's repaired defaults, 33 workflows still fail default image planning:
-26 select the stale image families withdrawn by #807, and seven require images
+After PAIDF's repaired defaults, 34 workflows still fail default image planning:
+27 select the stale image families withdrawn by #807, and seven require images
 without an accepted public release. The audit checks every task, including
 unbuilt and validation candidates outside the stale-image inventory.
 
@@ -39,7 +39,7 @@ artifact behavior.
 
 ## Still blocked shipped workflows
 
-These 26 workflows need a repaired, scanned and capability-qualified image or an
+These 27 workflows need a repaired, scanned and capability-qualified image or an
 explicit operator-owned image. A repaired parent does not repair the layers of
 an already-published derivative. The table is an outstanding qualification
 inventory, not an instruction to remove quarantine.
