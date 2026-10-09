@@ -345,7 +345,15 @@ def _emit_report(
 
 
 def main() -> int:
-    """Run the Cosmos3 Ray payload scanner as a command-line program."""
+    """Run the Cosmos3 Ray payload scanner as a command-line program.
+
+    Args:
+        None.
+    Returns:
+        Process exit status for ``sys.exit``.
+    Raises:
+        None directly; scanner and subprocess failures propagate to the caller.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("image", nargs="?")
     parser.add_argument("--tarball", type=Path)

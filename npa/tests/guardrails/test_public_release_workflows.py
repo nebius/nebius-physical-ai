@@ -211,7 +211,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
 
 
 def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
-    """Require every public Cosmos3 Ray scan to use redacted stdout mode."""
+    """Require redacted scanner output, cleanup, and failure-status preservation."""
     scanner = "scan_image_cosmos3_ray_serve_payload.py"
     workflow_paths = [
         path for pattern in ("*.yml", "*.yaml") for path in WORKFLOWS.glob(pattern)
@@ -230,8 +230,12 @@ def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
     for script in scanner_steps:
         assert "--json" in script
         assert "--full-stdout" not in script
-        assert "status=$?" in script
-        assert 'exit "$status"' in script
+        assert re.search(
+            r"else\s+(?P<status>[A-Za-z_][A-Za-z0-9_]*)=\$\?.*?"
+            r'exit "\$(?P=status)"',
+            script,
+            re.DOTALL,
+        )
     assert "npa/tests/docker/test_cosmos3_ray_payload_evidence.py" in _runs(PUBLISH)
     workflow_text = PUBLISH.read_text(encoding="utf-8")
     for archive, report in (
@@ -245,11 +249,8 @@ def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
         ),
     ):
         assert f'payload_report="{report}"' in workflow_text
-        assert f'rm -f "{archive}" "$payload_report"' in workflow_text
-        assert re.search(
-            rf'rm -f "{re.escape(archive)}" \\\n+\s+"{re.escape(report)}"',
-            workflow_text,
-        )
+        normalized_workflow = workflow_text.replace("\\\n", " ")
+        assert f'rm -f "{archive}" "$payload_report"' in normalized_workflow
     steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
     for step_name in (
         "Enforce runtime, revision, bootstrap, config, and history contracts",
