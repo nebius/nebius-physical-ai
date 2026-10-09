@@ -36,6 +36,8 @@ API_ONLY_VLM_AUDIT_TOOLS = frozenset(
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
+    "workflow.video_sweep.generate": "cosmos2-transfer",
+    "workflow.video_sweep.generate_cosmos3": "cosmos3",
     "workflow.habitat_sim.smoke": "habitat-sim",
     "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
@@ -103,6 +105,15 @@ HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workflow.video_sweep.prepare": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.video_sweep.review": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.video_sweep.generate": ("HF_TOKEN",),
+    "workflow.video_sweep.generate_cosmos3": ("HF_TOKEN",),
+    "workflow.video_sweep.lineage": (
+        "NPA_LINEAGE_POSTGRES_DSN",
+        "MLFLOW_TRACKING_URI",
+        "MLFLOW_EXPERIMENT_ID",
+    ),
     "workbench.encord": ("ENCORD_SSH_KEY_B64",),
     "workflow.paidf": (),
     "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
@@ -161,6 +172,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # already installs vLLM for self-hosted vlm_eval); it is what lets the npa.workflow
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
+    "workflow.video_sweep.lineage": "video-sweep",
     "workbench.encord": "encord",
     "workbench.token_factory.robot_sdg": "robot-sdg",
     "workbench.sonic": "sonic",
@@ -867,9 +879,17 @@ def resolve_task_image(
     _validate_image_override_syntax(options)
 
     def resolve_tool(tool: str, **kwargs: Any) -> str:
-        from npa.deploy.images import container_image_for_tool
+        from npa.deploy.images import (
+            container_image_for_tool,
+            public_workflow_image_default,
+        )
 
         try:
+            candidate = public_workflow_image_default(
+                tool, tool_ref=tool_ref, registry=kwargs.get("registry")
+            )
+            if candidate:
+                return candidate
             return container_image_for_tool(tool, **kwargs)
         except ValueError as exc:
             # Image quarantine is a workflow-planning failure at this boundary,
@@ -1966,7 +1986,9 @@ def render_setup_for_tool(
             "  printf '%s\\n' \"$npa_baked_pythonpath\" > /tmp/npa-baked-pythonpath\n"
             "fi\n"
         )
-    parts = [default_npa_setup()]
+    from npa.orchestration.npa_workflow.nurec_setup import render_nurec_adapter_setup
+
+    parts = [render_nurec_adapter_setup(tool_ref), default_npa_setup()]
     if tool_ref == "workbench.token_factory.robot_sdg":
         parts.append(
             'if [ "$(id -u)" = 0 ]; then\n'

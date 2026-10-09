@@ -3,7 +3,8 @@ FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9
 
 ARG SIM2REAL_CONTROL_VERSION=0.1.2
 ARG NPA_SOURCE_SHA
-ARG DEBIAN_SNAPSHOT=20260801T000000Z
+ARG DEBIAN_SNAPSHOT=20261002T000000Z
+ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1
 
 LABEL npa.tool="sim2real-control" \
       npa.version="${SIM2REAL_CONTROL_VERSION}" \
@@ -43,8 +44,10 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && printf 'Acquire::Check-Valid-Until "false";\n' \
       > /etc/apt/apt.conf.d/99snapshot \
     && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
       curl netcat-openbsd openssh-client openssh-server procps rsync sudo \
+      "perl-base=${MIN_PERL_BASE_VERSION}" \
     && rm -f /etc/ssh/ssh_host_* \
     && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \
     && printf '%s\n' \
@@ -60,6 +63,15 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && rsync --version >/dev/null
 
 WORKDIR /workspace
+
+COPY --chmod=0644 docker/workbench/common/sim2real-cpu-build-requirements.txt \
+    /opt/npa/sim2real-cpu-build-requirements.txt
+COPY --chmod=0644 docker/workbench/common/update_pip_vendor.py \
+    /opt/npa/update_pip_vendor.py
+RUN python -m pip install --no-cache-dir --no-deps --upgrade \
+      -r /opt/npa/sim2real-cpu-build-requirements.txt \
+    && python /opt/npa/update_pip_vendor.py \
+    && python -m pip check
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
