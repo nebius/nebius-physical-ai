@@ -32,14 +32,16 @@ def _scheduler(image):
     scheduler.update(
         command=["/bin/sh", "-c"],
         args=[
-            "mkdir -p /state/sky/.sky && exec /opt/sky/bin/python -m sky.server.server --host 127.0.0.1 --port 46581"
+            "mkdir -p /state/sky/.sky && ln -sfn /opt/sky /state/sky/skypilot-runtime && cd /state/sky && exec /opt/sky/bin/python -m sky.server.server --host 127.0.0.1 --port 46580"
         ],
         env=[
             {"name": key, "value": value}
             for key, value in {
                 "HOME": "/state/sky",
+                "PATH": "/opt/sky/bin:/usr/local/bin:/usr/bin:/bin",
                 "SKYPILOT_GLOBAL_CONFIG": "/etc/npa-team/sky-server.yaml",
                 "KUBECONFIG": "/etc/npa-team/sky-kubeconfig.yaml",
+                "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:46580",
                 "IS_SKYPILOT_SERVER": "true",
                 "SKYPILOT_DISABLE_USAGE_COLLECTION": "1",
             }.items()

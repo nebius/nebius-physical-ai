@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
 from pathlib import Path
 from typing import Annotated, Literal
@@ -234,32 +233,6 @@ class Cluster(Contract):
 
     context: str = Field(min_length=1)
     kubeconfig: AbsolutePath
-    api_server_url: str
-    api_server_cidr: str
-    api_server_port: int = Field(default=443, ge=1, le=65535)
-
-    @model_validator(mode="after")
-    def validate_api_address(self):
-        """Permit only an exact API-server address in controller egress rules.
-
-        Args:
-            None.
-        Returns:
-            The validated contract instance.
-        Raises:
-            ValueError: A policy constraint is violated.
-        """
-        network = ipaddress.ip_network(self.api_server_cidr, strict=True)
-        endpoint = urlsplit(self.api_server_url)
-        if endpoint.scheme != "https" or not endpoint.hostname or endpoint.username:
-            raise ValueError("cluster API URL must use HTTPS without credentials")
-        if endpoint.query or endpoint.fragment or endpoint.path not in ("", "/"):
-            raise ValueError("cluster API URL must identify the Kubernetes server")
-        if network.num_addresses != 1:
-            raise ValueError("API-server CIDR must identify exactly one address")
-        if (endpoint.port or 443) != self.api_server_port:
-            raise ValueError("API-server URL and egress port must agree")
-        return self
 
 
 class Workspace(Contract):
@@ -364,9 +337,9 @@ class TeamConfig(Contract):
             raise ValueError("SkyPilot credentials cannot be embedded in its URL")
         if endpoint.hostname not in ("127.0.0.1", "::1"):
             raise ValueError("the private SkyPilot endpoint must bind to loopback")
-        if endpoint.port in (None, 46580) or endpoint.path not in ("", "/"):
+        if endpoint.port != 46580 or endpoint.path not in ("", "/"):
             raise ValueError(
-                "use an explicit non-default private SkyPilot port to prevent SDK auto-start"
+                "native managed jobs require the private SkyPilot port 46580"
             )
         return self
 

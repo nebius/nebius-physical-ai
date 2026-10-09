@@ -130,12 +130,32 @@ def test_rendered_task_cannot_upload_server_files(binding, tmp_path):
         enforce_rendered_tasks(path, binding, {})
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"name": "task'$(id)"},
+        {"name": "task`id`"},
+        {"name": "../../server"},
+        {"api_server_access": True},
+        {"pool": "shared-pool"},
+        {"event_callback": "touch /tmp/control-plane"},
+        {"file_mounts_blob_id": "unexpected-upload"},
+        {"envs": {"VALUE;id": "x"}},
+    ],
+)
+def test_scheduler_metadata_cannot_expand_server_execution(binding, tmp_path, extra):
+    path = tmp_path / "wave.yaml"
+    path.write_text(yaml.safe_dump({"name": "verify", "resources": {}, **extra}))
+    with pytest.raises(AuthorizationError):
+        enforce_rendered_tasks(path, binding, {})
+
+
 def test_worker_identity_has_no_rbac_writes(binding):
     documents = execution_manifests(binding)
     quotas = [item for item in documents if item["kind"] == "ResourceQuota"]
     assert sorted(
         item["spec"]["hard"]["requests.nvidia.com/gpu"] for item in quotas
-    ) == ["0", "1"]
+    ) == ["1"]
     for role in (item for item in documents if item["kind"] in {"Role", "ClusterRole"}):
         assert all(
             "rbac.authorization.k8s.io" not in rule["apiGroups"]
@@ -194,9 +214,9 @@ def test_concurrent_idempotency_and_missing_launch_ack(config, actor, workflow):
         ledger.create(actor, changed, {})
 
 
-def test_controller_bootstrap_never_contains_operator_credentials(config):
+def test_worker_configuration_never_contains_operator_credentials(config):
     rendered = json.dumps(server_config(config))
     assert "LOCAL_CREDENTIALS" not in rendered
     assert "NO_UPLOAD" not in rendered
     assert "test-alice" not in rendered
-    assert "npa-team-controller" in rendered and "npa-team-worker" in rendered
+    assert "npa-team-controller" not in rendered and "npa-team-worker" in rendered

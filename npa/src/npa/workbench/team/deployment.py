@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import base64
 import copy
 import hashlib
 import json
-import shlex
-import ipaddress
-from urllib.parse import urlsplit
 from pathlib import Path
 
 import yaml
@@ -17,13 +13,12 @@ from .authorization import ExecutionBinding
 from .enrollment import kubectl
 from .errors import BackendError
 from .manifests import (
-    CONTROLLER_ACCOUNT,
     WORKER_ACCOUNT,
     admission_manifests,
     execution_manifests,
 )
 from .models import execution_name
-from .workflow_policy import controller_context, worker_context
+from .workflow_policy import worker_context
 
 
 def allocations(config):
@@ -109,7 +104,7 @@ def export_server_kubeconfig(config, output_path: Path):
 
 
 def server_config(config):
-    """Bind each private scheduler workspace to a personal worker/controller pair.
+    """Bind private scheduler workspaces to personal worker namespaces.
 
     Args:
         config: Validated installation configuration.
@@ -120,21 +115,17 @@ def server_config(config):
     """
     contexts, workspaces = {}, {}
     for binding in allocations(config):
-        worker, control = worker_context(binding), controller_context(binding)
+        worker = worker_context(binding)
         contexts[worker] = {
             "remote_identity": WORKER_ACCOUNT,
             "pod_config": {"spec": {"automountServiceAccountToken": False}},
         }
-        contexts[control] = {
-            "remote_identity": CONTROLLER_ACCOUNT,
-            "post_provision_runcmd": [_controller_bootstrap(binding)],
-        }
         workspaces[scheduler_workspace(binding)] = {
-            "kubernetes": {"allowed_contexts": [worker, control]},
+            "kubernetes": {"allowed_contexts": [worker]},
         }
     return {
         "rbac": {"default_role": "user"},
-        "jobs": {"controller": {"consolidation_mode": False}},
+        "jobs": {"controller": {"consolidation_mode": True}},
         "allowed_clouds": ["kubernetes"],
         "kubernetes": {
             "allowed_contexts": list(contexts),
@@ -146,7 +137,7 @@ def server_config(config):
 
 
 def scheduler_user(binding):
-    """Keep each person's cluster controller separate while the ledger retains identity.
+    """Assign a stable scheduler identity to each person's cluster allocation.
 
     Args:
         binding: Personal workspace and cluster allocation.
@@ -173,10 +164,7 @@ def scheduler_workspace(binding):
 
 
 def _append_contexts(merged, source, binding):
-    for context_name, namespace in (
-        (worker_context(binding), binding.namespace),
-        (controller_context(binding), binding.namespace + "-control"),
-    ):
+    for context_name, namespace in ((worker_context(binding), binding.namespace),):
         cluster, user = (
             copy.deepcopy(source["clusters"][0]),
             copy.deepcopy(source["users"][0]),
@@ -194,61 +182,6 @@ def _append_contexts(merged, source, binding):
                 },
             }
         )
-
-
-def _controller_bootstrap(binding):
-    worker, control = worker_context(binding), controller_context(binding)
-    config = {
-        "apiVersion": "v1",
-        "kind": "Config",
-        "current-context": worker,
-        "clusters": [_controller_cluster(binding)],
-        "users": [
-            {
-                "name": "controller",
-                "user": {
-                    "tokenFile": "/var/run/secrets/kubernetes.io/serviceaccount/token",
-                },
-            }
-        ],
-        "contexts": [
-            {
-                "name": name,
-                "context": {
-                    "cluster": "local",
-                    "user": "controller",
-                    "namespace": namespace,
-                },
-            }
-            for name, namespace in (
-                (worker, binding.namespace),
-                (control, binding.namespace + "-control"),
-            )
-        ],
-    }
-    encoded = base64.b64encode(json.dumps(config).encode()).decode()
-    return (
-        "umask 077; mkdir -p ~/.kube; printf %s "
-        + shlex.quote(encoded)
-        + " | base64 -d > ~/.kube/config"
-    )
-
-
-def _controller_api_address(binding):
-    address = ipaddress.ip_network(binding.connection.api_server_cidr).network_address
-    host = f"[{address}]" if address.version == 6 else str(address)
-    return f"https://{host}:{binding.connection.api_server_port}"
-
-
-def _controller_cluster(binding):
-    return {
-        "name": "local",
-        "cluster": {
-            "server": _controller_api_address(binding),
-            "tls-server-name": urlsplit(binding.connection.api_server_url).hostname,
-            "certificate-authority": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
-        },
-    }
 
 
 def _write(path, content):

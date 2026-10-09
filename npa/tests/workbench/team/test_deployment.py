@@ -1,8 +1,6 @@
 """Check enrollment drift, private scheduler routing, and personal cloud provisioning."""
 
-import base64
 import json
-import shlex
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -18,10 +16,11 @@ from npa.workbench.team.manifests import admission_manifests, execution_manifest
 from npa.workbench.team.models import SubmitRequest, TeamConfig
 from npa.workbench.team.pod_deployment import service_manifests
 from npa.workbench.team.service import binding_snapshot
+from npa.workbench.team.scheduler_access import scheduler_access_manifests
 
 
-def test_no_default_port_autostart_or_public_backend(config):
-    for endpoint in ("http://127.0.0.1:46580", "https://scheduler.example.test:46581"):
+def test_requires_native_private_port_and_rejects_public_backend(config):
+    for endpoint in ("http://127.0.0.1:46581", "https://scheduler.example.test:46580"):
         document = config.model_dump(mode="json")
         document["sky_endpoint"] = endpoint
         with pytest.raises(ValidationError):
@@ -38,28 +37,24 @@ def test_service_rejects_paths_that_change_when_its_working_directory_changes(
         TeamConfig.model_validate(document)
 
 
-def test_each_cluster_has_its_own_controller_and_no_private_user_registration(
-    config, binding
-):
+def test_personal_cluster_placement_uses_private_native_scheduler(config, binding):
     other = replace(binding, cluster="west", connection=config.clusters["west"])
     assert scheduler_user(other) != scheduler_user(binding)
     settings = server_config(config)
     assert settings["rbac"]["default_role"] == "user"
-    assert settings["jobs"]["controller"]["consolidation_mode"] is False
+    assert settings["jobs"]["controller"]["consolidation_mode"] is True
     assert all(
         "allowed_users" not in value for value in settings["workspaces"].values()
     )
-    control = next(
-        value
-        for value in settings["kubernetes"]["context_configs"].values()
-        if "post_provision_runcmd" in value
+    contexts = settings["kubernetes"]["context_configs"]
+    assert all(
+        value["remote_identity"] == "npa-team-worker" for value in contexts.values()
     )
-    command = shlex.split(control["post_provision_runcmd"][0])
-    encoded = command[command.index("%s") + 1]
-    kubeconfig = json.loads(base64.b64decode(encoded))
-    assert kubeconfig["clusters"][0]["cluster"]["server"] == "https://192.0.2.1:443"
-    assert "tokenFile" in kubeconfig["users"][0]["user"]
-    assert "token" not in kubeconfig["users"][0]["user"]
+    assert all(
+        len(value["kubernetes"]["allowed_contexts"]) == 1
+        for value in settings["workspaces"].values()
+    )
+    assert all("post_provision_runcmd" not in value for value in contexts.values())
 
 
 def test_service_exposes_only_gateway_and_copies_credentials_privately():
@@ -72,11 +67,35 @@ def test_service_exposes_only_gateway_and_copies_credentials_privately():
     deployment, service, policy = documents
     pod = deployment["spec"]["template"]["spec"]
     scheduler = pod["containers"][1]
-    assert "--port 46581" in scheduler["args"][0]
+    assert "--port 46580" in scheduler["args"][0]
     assert "--host 127.0.0.1" in scheduler["args"][0]
+    environment = {item["name"]: item["value"] for item in scheduler["env"]}
+    assert environment["SKYPILOT_API_SERVER_ENDPOINT"] == "http://127.0.0.1:46580"
+    assert environment["PATH"].startswith("/opt/sky/bin:")
+    assert "cd /state/sky" in scheduler["args"][0]
     assert [port["port"] for port in service["spec"]["ports"]] == [8443]
     assert "chmod 600" in pod["initContainers"][0]["args"][0]
     assert pod["automountServiceAccountToken"] is False
+
+
+def test_scheduler_cannot_grant_cluster_roles_or_impersonate_arbitrary_users(binding):
+    documents = scheduler_access_manifests([binding], "management", "scheduler")
+    discovery = next(item for item in documents if item["kind"] == "ClusterRole")
+    assert all(
+        set(rule["verbs"]) <= {"get", "list", "watch"} for rule in discovery["rules"]
+    )
+    role = next(item for item in documents if item["kind"] == "Role")
+    assert role["metadata"]["namespace"] == binding.namespace
+    assert all(
+        "rbac.authorization.k8s.io" not in rule["apiGroups"] for rule in role["rules"]
+    )
+    impersonation = [rule for rule in role["rules"] if "impersonate" in rule["verbs"]]
+    assert len(impersonation) == 1
+    assert impersonation[0]["resourceNames"] == ["npa-team-worker"]
+    with pytest.raises(ValueError, match="exactly one cluster"):
+        scheduler_access_manifests(
+            [binding, replace(binding, cluster="west")], "management", "scheduler"
+        )
 
 
 def test_enrollment_requires_current_quota_and_admission(binding, monkeypatch):

@@ -2,7 +2,7 @@
 
 Team mode adds an authenticated gateway for shared Kubernetes clusters. Local
 Workbench accounts or external identities receive workspace grants; each allocated
-person has worker/controller namespaces, an explicit GPU quota, and a dedicated
+person has a worker namespace, an explicit GPU quota, and a dedicated
 storage principal and bucket. Every stage stays inside its run's allocation.
 
 This implementation requires live deployment qualification before production.
@@ -52,16 +52,13 @@ identity:
   groups_claim: groups
   algorithms: [RS256]
 state_dir: /state/team
-sky_endpoint: http://127.0.0.1:46581
+sky_endpoint: http://127.0.0.1:46580
 sky_python: /opt/sky/bin/python
 disabled_subjects: []
 clusters:
   training:
     context: training
     kubeconfig: /etc/npa-team/training.yaml
-    api_server_url: https://kubernetes.example.com
-    api_server_cidr: 192.0.2.10/32
-    api_server_port: 443
 workspaces:
   robotics:
     grants:
@@ -94,13 +91,11 @@ These are concurrent whole-NVIDIA-GPU caps, not reservations, GPU-hour budgets,
 MIG allocations, or fair queues.
 Reapply enrollment after quota changes; existing use can outlast a quota reduction.
 
-`api_server_url` must be reachable from controllers and match their TLS trust.
-`api_server_cidr` identifies the exact address controllers dial, retaining the
-URL hostname for TLS verification. Account for the CNI's
-treatment of service translation. Default network policies allow paired
-namespaces, cluster DNS, public HTTP/HTTPS, and the controller's explicit API
-address. Private registries, private object endpoints, nonstandard DNS labels,
-or other private services require reviewed policy changes.
+The scheduler uses the explicitly enrolled kubeconfig for each cluster. Default
+worker network policies allow traffic inside the same personal namespace,
+cluster DNS, and public HTTP/HTTPS. Private registries, private object endpoints,
+nonstandard DNS labels, or other private services require reviewed policy changes.
+Workers have no Kubernetes API credentials and cannot contact the private scheduler.
 
 Each allocation requires a distinct storage principal and bucket, with cloud IAM
 allowing only its bucket and explicit shared read-only inputs. Credential files
@@ -135,11 +130,12 @@ npa workbench team export-kubeconfig --config /private/team.yaml \
   --output-path /private/sky-kubeconfig.yaml
 ```
 
-Review rendered resources before enrollment. They include namespaces, fixed
-service accounts, namespaced controller RBAC, read-only node discovery, quotas,
-network policies, and validating admission rules. Workers receive no Kubernetes
-token and cannot select another account. Controllers cannot write cluster-wide
-RBAC. Submissions verify installed resources and selected RBAC denials; missing
+Review rendered resources before enrollment. They include personal namespaces,
+fixed worker accounts, quotas, network policies, and validating admission rules.
+Workers receive no Kubernetes token and cannot select another account. The
+trusted scheduler receives execution access only in enrolled namespaces, read-only
+node/runtime-class discovery, and admission-policy inspection. It cannot write
+cluster-wide RBAC. Submissions verify installed resources and selected RBAC denials; missing
 controls reject new work. Admission support and an enforcing CNI are required.
 These checks do not establish that the CNI actually enforces the network policy.
 
@@ -182,7 +178,16 @@ duplicate supervisors. No separate VM is required; active-active mode is absent.
 
 An existing private Linux host can also run the services. Install NPA, uvicorn
 and kubectl; install `skypilot[kubernetes]==0.12.2` in a separate environment.
-Start `/opt/sky/bin/python -m sky.server.server --host 127.0.0.1 --port 46581`
+For in-cluster credentials, render `scheduler_access_manifests()` from
+`npa.workbench.team.scheduler_access` with that cluster's allocations and its
+existing management service account. Apply the returned RBAC as an administrator.
+It grants namespaced execution and exact worker impersonation for denial checks;
+it grants no cluster-wide mutation. Mount a projected token and CA into the trusted
+service, and reference `tokenFile` in its private kubeconfig. For additional
+clusters, enroll a separate scoped connection in each cluster; end users need
+neither cloud-project membership nor these credentials.
+
+Start `/opt/sky/bin/python -m sky.server.server --host 127.0.0.1 --port 46580`
 with `IS_SKYPILOT_SERVER=true`, `SKYPILOT_DISABLE_USAGE_COLLECTION=1`, a private
 `HOME`, the rendered `SKYPILOT_GLOBAL_CONFIG`, and exported `KUBECONFIG`. Then
 run `npa workbench team serve --config /private/team.yaml` behind HTTPS. The
@@ -217,8 +222,18 @@ provider state proves termination.
 Repeat cancellation to recheck a nonterminal result. Internal SkyPilot workspaces
 only select placement; the gateway owns authorization. They deliberately avoid
 SkyPilot's startup-only private-user registration policy. The scheduler's default
-role is `user`, controller consolidation is disabled, and its non-default
-loopback port prevents the SDK from auto-starting an unmanaged replacement server.
+role is `user`; native managed-job consolidation runs trusted job monitors inside
+its container. There are no per-person controller pods. SkyPilot 0.12.2 requires
+its standard loopback port, `46580`, for this mode. The gateway checks server
+health before SDK operations and initializes the SDK's client context so queue,
+cancel, and logs retain the allocation workspace. Keep the scheduler in its
+own container network namespace with the gateway; do not share an operator's
+local SkyPilot server. A container restart ends its child monitors, while the
+persistent volume retains scheduler state.
+
+The gateway and scheduler are trusted administrators of enrolled worker namespaces.
+A compromise of that shared service affects those namespaces. Personal namespace
+isolation protects against worker jobs; it does not isolate a compromised broker.
 
 For local accounts, `team account update --disabled` blocks all login methods;
 `team account revoke-key` blocks the selected key and its browser sessions.
@@ -238,8 +253,8 @@ npa workbench team stop-run "$RUN_ID" --config /private/team.yaml
 Arbitrary pod configuration, server file mounts, public SkyPilot services, and
 workflow changes to cloud/context are rejected. All stages use the run namespace.
 Automatic cloud-token exchange and refresh are not implemented; rotate scoped
-storage credentials through the operator's existing process. The controller's
-Kubernetes token rotates normally. Removing Workbench access does not revoke
+storage credentials through the operator's existing process. An in-cluster
+scheduler can use a rotating projected Kubernetes service-account token. Removing Workbench access does not revoke
 cloud keys already issued to jobs: stop affected runs, revoke their recorded
 access keys through cloud IAM, and replace the private credential file before
 granting access again. The provisioning receipt records the exact key and account.
@@ -248,7 +263,7 @@ Before production, qualify two real users: CPU/GPU jobs, quota rejection,
 cross-user status/log/artifact denial, cross-bucket read/write denial, rejected
 identity/token overrides, network isolation, restart/reconciliation, and
 offboarding/cancellation. The container, admission expressions, CNI, cloud IAM,
-OIDC provider, and actual SkyPilot controller launch require live evidence.
+optional OIDC provider, and actual SkyPilot managed-job execution require live evidence.
 Offline tests and schema validation alone do not prove production isolation.
 
 Set `RUN_ID` to the server-issued ID returned by submission. For opt-in admission,

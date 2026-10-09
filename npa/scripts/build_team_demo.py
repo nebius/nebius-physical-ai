@@ -38,13 +38,11 @@ def _configuration(root):
             },
             "state_dir": root / "state",
             "sky_python": root / "unused-interpreter",
-            "sky_endpoint": "http://127.0.0.1:46581",
+            "sky_endpoint": "http://127.0.0.1:46580",
             "clusters": {
                 name: {
                     "context": name,
                     "kubeconfig": root / f"{name}.yaml",
-                    "api_server_url": "https://192.0.2.1",
-                    "api_server_cidr": "192.0.2.1/32",
                 }
                 for name in ("east", "west")
             },

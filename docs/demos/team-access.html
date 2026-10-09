@@ -964,7 +964,7 @@ npa workbench team enroll --config /private/team.yaml \
             <div class="card">
               <span class="pill">3</span><b>Private SkyPilot</b>
               <p>
-                Loopback API. Per-person, per-cluster controllers. No direct
+                Loopback API. Shared trusted job monitors; personal worker namespaces. No direct
                 user access to the server.
               </p>
             </div>
@@ -1206,7 +1206,7 @@ finally:
             </div>
           </div>
           <div class="notice warning">
-            <strong>Before production:</strong> qualify actual controller
+            <strong>Before production:</strong> qualify actual managed-job
             launches, GPU quota rejection, network isolation, cross-bucket IAM,
             the chosen identity provider, and restart/cancellation. No automatic
             cloud-token federation, fair GPU queue, MIG allocation, or
@@ -1358,7 +1358,7 @@ finally:
       "detail": "The actual service checks the current denylist. Already issued cloud keys are not revoked by this check."
     }
   ],
-  "source_sha256": "5023d640bb3ba4d1ccde030314aaf9d611b3be4fc2f789cfc261c5f4b6ac46b6",
+  "source_sha256": "691581d98bc72c51a097c870cf4da2e9f6971b465fc5f75391e659fe250d3fbf",
   "scope": "20 real local API and policy checks passed. Synthetic JWT issuer; simulated execution and enrollment. No Kubernetes or cloud-storage calls."
 }</script>
     <script>

@@ -49,14 +49,12 @@ def config(tmp_path):
                 "jwks_url": "https://identity.example.test/jwks",
             },
             "state_dir": tmp_path / "state",
-            "sky_endpoint": "http://127.0.0.1:46581",
+            "sky_endpoint": "http://127.0.0.1:46580",
             "sky_python": tmp_path / "sky-python",
             "clusters": {
                 name: {
                     "context": name,
                     "kubeconfig": tmp_path / f"{name}.yaml",
-                    "api_server_url": "https://192.0.2.1",
-                    "api_server_cidr": "192.0.2.1/32",
                 }
                 for name in ("east", "west")
             },

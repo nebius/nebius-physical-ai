@@ -18,7 +18,9 @@ RUN python -m venv /opt/npa-venv \
     && python -m venv /opt/sky \
     && /opt/sky/bin/pip install --no-cache-dir 'skypilot[kubernetes]==0.12.2' \
       'kubernetes>=20.0.0,!=32.0.0,<36' \
-    && useradd --uid 1000 --create-home workbench
+    && useradd --uid 1000 --create-home workbench \
+    && chown workbench:workbench \
+      /opt/sky/lib/python3.12/site-packages/sky/utils/kubernetes/rsync_helper.sh
 ENV PATH=/opt/npa-venv/bin:/usr/local/bin:/usr/bin:/bin
 USER 1000:1000
 ENTRYPOINT ["npa", "workbench", "team", "serve"]

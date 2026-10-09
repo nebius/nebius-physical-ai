@@ -15,11 +15,43 @@ import yaml
 from npa.workbench.team.deployment import server_config
 from npa.workbench.team.ledger import TeamLedger
 from npa.workbench.team.sky_backend import SkyBackend
+from npa.workbench.team import sky_bridge
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("NPA_TEAM_SKY_PYTHON"),
     reason="Select an isolated SkyPilot 0.12.2 interpreter for the compatibility test",
 )
+
+
+def test_pinned_sdk_forwards_workspace_for_first_cancel_call(config, binding, tmp_path):
+    backend = SkyBackend(config, binding, TeamLedger(config.state_dir), "run-context")
+    environment = backend._bridge_environment()
+    program = r"""
+import runpy, sys
+import sky
+from sky.server.requests import payloads
+from unittest.mock import patch
+import requests
+response = requests.Response()
+response.status_code = 200
+response._content = b'{"status":"healthy","api_version":"1","version":"0.12.2"}'
+def cancel(**kwargs):
+    body = payloads.JobsCancelBody(**kwargs)
+    assert body.override_skypilot_config['active_workspace'].startswith('team-')
+    assert body.job_ids == [7]
+    return 'request'
+bridge = runpy.run_path(sys.argv[1])
+with patch('sky.server.common.make_authenticated_request', return_value=response), patch('sky.jobs.cancel', side_effect=cancel), patch('sky.get', return_value=None):
+    assert bridge['_execute']({'operation':'cancel','job_ids':[7]}) == {'cancel_requested':True}
+"""
+    result = subprocess.run(
+        [os.environ["NPA_TEAM_SKY_PYTHON"], "-c", program, sky_bridge.__file__],
+        env=environment,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_real_private_server_accepts_new_synthetic_identity(config, binding, tmp_path):

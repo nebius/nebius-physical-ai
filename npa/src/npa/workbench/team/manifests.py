@@ -5,7 +5,6 @@ from __future__ import annotations
 from .authorization import ExecutionBinding
 
 WORKER_ACCOUNT = "npa-team-worker"
-CONTROLLER_ACCOUNT = "npa-team-controller"
 _LABEL = "npa.nebius.ai/team-execution"
 
 
@@ -15,29 +14,17 @@ def execution_manifests(binding: ExecutionBinding) -> list[dict]:
     Args:
         binding: Validated person, workspace, cluster, and capacity allocation.
     Returns:
-        Namespaces, accounts, scoped roles, quotas, and network policy manifests.
+        Namespaces, worker accounts, quotas, and network policy manifests.
     Raises:
         None.
     """
     worker = binding.namespace
-    control = worker + "-control"
-    result = [_namespace(worker, worker), _namespace(control, worker)]
-    result += [
+    return [
+        _namespace(worker, worker),
         _account(worker, WORKER_ACCOUNT, False),
-        _account(control, CONTROLLER_ACCOUNT, True),
-    ]
-    result += [
         _quota(worker, binding.allocation.clusters[binding.cluster]),
-        _quota(control, 0),
+        _network_policy(worker),
     ]
-    result += _controller_roles(worker, control)
-    result += _controller_roles(control, control)
-    result += _discovery_roles(control)
-    result += [
-        _network_policy(worker, control, None),
-        _network_policy(control, worker, binding),
-    ]
-    return result
 
 
 def admission_manifests() -> list[dict]:
@@ -106,9 +93,7 @@ def _namespace(name, execution):
             "labels": {
                 _LABEL: execution,
                 "pod-security.kubernetes.io/enforce": "baseline",
-                "npa.nebius.ai/team-role": "controller"
-                if name.endswith("-control")
-                else "worker",
+                "npa.nebius.ai/team-role": "worker",
             },
         },
     }
@@ -132,84 +117,11 @@ def _quota(namespace, gpus):
     }
 
 
-def _controller_roles(worker, control):
-    metadata = {"name": "npa-team-execution", "namespace": worker}
-    role = {
-        "apiVersion": "rbac.authorization.k8s.io/v1",
-        "kind": "Role",
-        "metadata": metadata,
-        "rules": _execution_rules(),
-    }
-    binding = {
-        "apiVersion": "rbac.authorization.k8s.io/v1",
-        "kind": "RoleBinding",
-        "metadata": metadata,
-        "subjects": [
-            {"kind": "ServiceAccount", "name": CONTROLLER_ACCOUNT, "namespace": control}
-        ],
-        "roleRef": {
-            "apiGroup": "rbac.authorization.k8s.io",
-            "kind": "Role",
-            "name": metadata["name"],
-        },
-    }
-    return [role, binding]
-
-
-def _execution_rules():
-    return [
-        {
-            "apiGroups": [""],
-            "resources": [
-                "pods",
-                "pods/exec",
-                "pods/portforward",
-                "pods/log",
-                "services",
-                "events",
-                "configmaps",
-                "secrets",
-                "persistentvolumeclaims",
-            ],
-            "verbs": [
-                "get",
-                "list",
-                "watch",
-                "create",
-                "update",
-                "patch",
-                "delete",
-            ],
-        },
-        {
-            "apiGroups": [""],
-            "resources": ["serviceaccounts"],
-            "verbs": ["get", "list"],
-        },
-    ]
-
-
-def _network_policy(namespace, peer, connection):
+def _network_policy(namespace):
     own = {
         "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": namespace}}
     }
-    other = {
-        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": peer}}
-    }
-    egress = [{"to": [own, other]}, _dns_egress(), _public_egress()]
-    if connection is not None:
-        cluster = connection.connection
-        egress.append(
-            {
-                "to": [{"ipBlock": {"cidr": cluster.api_server_cidr}}],
-                "ports": [
-                    {
-                        "protocol": "TCP",
-                        "port": cluster.api_server_port,
-                    }
-                ],
-            }
-        )
+    egress = [{"to": [own]}, _dns_egress(), _public_egress()]
     return {
         "apiVersion": "networking.k8s.io/v1",
         "kind": "NetworkPolicy",
@@ -217,7 +129,7 @@ def _network_policy(namespace, peer, connection):
         "spec": {
             "podSelector": {},
             "policyTypes": ["Ingress", "Egress"],
-            "ingress": [{"from": [own, other]}],
+            "ingress": [{"from": [own]}],
             "egress": egress,
         },
     }
@@ -254,21 +166,19 @@ def _public_egress():
 
 
 def _pod_validations():
-    role = "namespaceObject.metadata.labels['npa.nebius.ai/team-role']"
-    expected = f"({role} == 'worker' ? '{WORKER_ACCOUNT}' : '{CONTROLLER_ACCOUNT}')"
     return [
         _whole_gpu_validation("containers"),
         _whole_gpu_validation("initContainers"),
         {
-            "expression": f"object.spec.serviceAccountName == {expected}",
+            "expression": f"object.spec.serviceAccountName == '{WORKER_ACCOUNT}'",
             "message": "team workload identity is fixed by the administrator",
         },
         {
-            "expression": f"{role} != 'worker' || (has(object.spec.automountServiceAccountToken) && !object.spec.automountServiceAccountToken)",
+            "expression": "has(object.spec.automountServiceAccountToken) && !object.spec.automountServiceAccountToken",
             "message": "worker Kubernetes tokens are disabled",
         },
         {
-            "expression": f"{role} != 'worker' || !has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.projected) || v.projected.sources.all(s, !has(s.serviceAccountToken)))",
+            "expression": "!has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.projected) || v.projected.sources.all(s, !has(s.serviceAccountToken)))",
             "message": "workers cannot project Kubernetes tokens",
         },
         {
@@ -295,38 +205,3 @@ def _whole_gpu_validation(field):
         "expression": f"!has(object.spec.{field}) || object.spec.{field}.all(c, !has(c.resources) || !has({requests}) || {requests}.all(k, !k.startsWith('nvidia.com/') || k == 'nvidia.com/gpu'))",
         "message": "team quotas currently support whole NVIDIA GPUs only",
     }
-
-
-def _discovery_roles(control):
-    name = control + "-discovery"
-    return [
-        {
-            "apiVersion": "rbac.authorization.k8s.io/v1",
-            "kind": "ClusterRole",
-            "metadata": {"name": name},
-            "rules": [
-                {
-                    "apiGroups": [""],
-                    "resources": ["nodes", "namespaces"],
-                    "verbs": ["get", "list", "watch"],
-                }
-            ],
-        },
-        {
-            "apiVersion": "rbac.authorization.k8s.io/v1",
-            "kind": "ClusterRoleBinding",
-            "metadata": {"name": name},
-            "subjects": [
-                {
-                    "kind": "ServiceAccount",
-                    "name": CONTROLLER_ACCOUNT,
-                    "namespace": control,
-                }
-            ],
-            "roleRef": {
-                "apiGroup": "rbac.authorization.k8s.io",
-                "kind": "ClusterRole",
-                "name": name,
-            },
-        },
-    ]

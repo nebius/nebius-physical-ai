@@ -11,7 +11,6 @@ import yaml
 
 from .errors import BackendError, ConflictError
 from .manifests import (
-    CONTROLLER_ACCOUNT,
     WORKER_ACCOUNT,
     admission_manifests,
     execution_manifests,
@@ -55,7 +54,7 @@ def apply_enrollment(binding):
     Raises:
         ConflictError, BackendError: Namespace ownership or cluster policy fails.
     """
-    for name in (binding.namespace, binding.namespace + "-control"):
+    for name in (binding.namespace,):
         response = kubectl(
             binding, "get", "namespace", name, "--ignore-not-found", "-o", "json"
         )
@@ -196,7 +195,6 @@ def _admission_request(binding, pod):
 def _check_denials(binding):
     accounts = [
         (binding.namespace, WORKER_ACCOUNT),
-        (binding.namespace + "-control", CONTROLLER_ACCOUNT),
     ]
     for namespace, account in accounts:
         subject = f"system:serviceaccount:{namespace}:{account}"

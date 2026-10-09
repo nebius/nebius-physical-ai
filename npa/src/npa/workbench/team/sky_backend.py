@@ -15,7 +15,7 @@ from .errors import BackendError, ConflictError
 from .ledger import TeamLedger
 from .models import TeamConfig
 from .storage import storage_credentials, workload_secrets
-from .workflow_policy import controller_context, enforce_rendered_tasks
+from .workflow_policy import enforce_rendered_tasks
 
 
 class SkyBackend:
@@ -277,14 +277,6 @@ class SkyBackend:
         configuration = {
             "active_workspace": scheduler_workspace(self.binding),
             "api_server": {"endpoint": self.config.sky_endpoint},
-            "jobs": {
-                "controller": {
-                    "resources": {
-                        "cloud": "kubernetes",
-                        "region": controller_context(self.binding),
-                    }
-                }
-            },
         }
         PrivateRunFiles(self.root, "client").write(
             "", "client/sky-client.yaml", yaml.safe_dump(configuration).encode()

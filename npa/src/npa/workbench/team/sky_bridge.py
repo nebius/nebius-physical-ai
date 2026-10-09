@@ -45,6 +45,10 @@ def _execute(request):
     import sky
     from sky.utils import dag_utils
 
+    # The pinned managed-job SDK omits its client-context decorator on several
+    # methods. This public read-only call establishes client configuration
+    # forwarding before queue/cancel/logs, including the allocation workspace.
+    sky.api_info()
     operation = request["operation"]
     if operation == "launch":
         dag = dag_utils.load_dag_from_yaml_str(request["yaml"])

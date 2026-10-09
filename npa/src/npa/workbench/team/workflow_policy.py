@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -34,6 +35,9 @@ _RESERVED_ENV = (
     "SKYPILOT_",
     "NPA_TEAM_",
     "NPA_CONFIG_DIR",
+)
+_TASK_FIELDS = frozenset(
+    {"name", "resources", "envs", "setup", "run", "num_nodes", "config"}
 )
 
 
@@ -120,19 +124,40 @@ def enforce_rendered_tasks(
     for task in documents:
         if not isinstance(task, dict):
             raise TeamError("rendered workflow contains an invalid task")
+        _check_task_name(task)
         if "resources" not in task:
             if set(task) <= {"name", "execution"}:
                 continue
             raise TeamError("rendered task is missing its enforced resource placement")
-        if any(task.get(key) for key in ("workdir", "file_mounts", "service")):
-            raise AuthorizationError(
-                "team tasks cannot mount server files or start public services"
-            )
+        _check_task_metadata(task)
         _check_task_config(task)
         _bind_profile(task["resources"], binding)
         task["envs"] = {**task.get("envs", {}), **credentials}
         task["config"] = _worker_identity()
     return yaml.safe_dump_all(documents, sort_keys=False)
+
+
+def _check_task_metadata(task):
+    if any(task.get(key) for key in ("workdir", "file_mounts", "service")):
+        raise AuthorizationError(
+            "team tasks cannot mount server files or start public services"
+        )
+    if set(task) - _TASK_FIELDS:
+        raise AuthorizationError("rendered task contains unsupported execution fields")
+    environment = task.get("envs", {})
+    if not isinstance(environment, dict) or any(
+        not isinstance(key, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) is None
+        for key in environment
+    ):
+        raise AuthorizationError("team environment names must be shell identifiers")
+
+
+def _check_task_name(task):
+    if "name" in task and (
+        not isinstance(task["name"], str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", task["name"]) is None
+    ):
+        raise AuthorizationError("team task names must be plain identifiers")
 
 
 def _worker_identity():
@@ -218,16 +243,3 @@ def worker_context(binding: ExecutionBinding) -> str:
         None.
     """
     return f"{binding.namespace}-{binding.cluster}-worker"
-
-
-def controller_context(binding: ExecutionBinding) -> str:
-    """Name a server-managed personal controller context.
-
-    Args:
-        binding: Authorized execution allocation.
-    Returns:
-        Stable, distinct context name.
-    Raises:
-        None.
-    """
-    return f"{binding.namespace}-{binding.cluster}-control"
