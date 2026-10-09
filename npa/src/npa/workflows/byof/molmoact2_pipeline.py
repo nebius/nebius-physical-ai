@@ -30,9 +30,9 @@ BASE_CHECKPOINT_REVISION = "e432d85f6e039edca44afb93c262f3084ab72a9c"
 
 
 def _default_work_root() -> str:
-    """Use the process-selected temporary filesystem for adapter intermediates."""
+    """Use a process-scoped directory on the selected temporary filesystem."""
 
-    return str(Path(tempfile.gettempdir()) / "npa-molmoact2")
+    return str(Path(tempfile.gettempdir()) / f"npa-molmoact2-{os.getpid()}")
 
 
 class MolmoAct2PipelineError(RuntimeError):
@@ -149,13 +149,17 @@ def _dataset_contract(root: Path) -> tuple[int, dict[str, Any]]:
     return total, info
 
 
-def _deterministic_split(
-    total: int, revision: str, heldout_fraction: float
-) -> tuple[list[int], list[int]]:
+def _validate_heldout_fraction(heldout_fraction: float) -> None:
     if not 0.0 < heldout_fraction < 1.0:
         raise MolmoAct2PipelineError(
             "heldout_fraction must be strictly between 0 and 1"
         )
+
+
+def _deterministic_split(
+    total: int, revision: str, heldout_fraction: float
+) -> tuple[list[int], list[int]]:
+    _validate_heldout_fraction(heldout_fraction)
     ordered = sorted(
         range(total),
         key=lambda episode: hashlib.sha256(
@@ -168,6 +172,7 @@ def _deterministic_split(
 
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
     """Fetch the immutable official dataset and make a real episode split."""
+    _validate_heldout_fraction(args.heldout_fraction)
     from huggingface_hub import snapshot_download
 
     work = Path(args.work_root).resolve() / "prepare"
