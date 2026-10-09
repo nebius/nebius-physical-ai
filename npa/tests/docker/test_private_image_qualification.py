@@ -604,6 +604,28 @@ def test_receipt_digest_supports_python310(private_root, monkeypatch):
         assert archive.extractfile("summary.json").read() == summary
 
 
+def test_receipt_bundle_uses_descriptor_bound_digest(private_root, monkeypatch):
+    summary = b'{"status":"passed"}\n'
+    Q._write(private_root / "summary.json", summary)
+    observed = {}
+    descriptor_digest = Q._descriptor_digest
+
+    def record_descriptor_digest(descriptor, length):
+        observed["descriptor_size"] = os.fstat(descriptor).st_size
+        observed["length"] = length
+        return descriptor_digest(descriptor, length)
+
+    def reject_stream_digest(*_args):
+        raise AssertionError("bundle digest must remain descriptor-bound")
+
+    monkeypatch.setattr(Q, "_descriptor_digest", record_descriptor_digest)
+    monkeypatch.setattr(Q, "_stream_sha256", reject_stream_digest, raising=False)
+    path, size, digest = Q._bundle(private_root)
+
+    assert observed == {"descriptor_size": size, "length": size}
+    assert digest == Q._sha(path.read_bytes())
+
+
 def test_private_failure_receipt_distinguishes_capacity_and_hides_exception_text(
     export, private_root, monkeypatch, capsys
 ):
