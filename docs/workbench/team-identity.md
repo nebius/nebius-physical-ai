@@ -182,6 +182,8 @@ permanent `subject`, `groups` and `workspaces` (workspace names mapped to roles)
 Optional `runs` verifies that real recorded run IDs appear in the account's
 own listing. Optional `certificate` pins only the selected test certificate's
 public key in Chrome; optional `screenshot` writes a private screenshot.
+For a private endpoint, optional `proxy` selects an operator-provided HTTP
+CONNECT proxy. The test still uses the gateway's HTTPS identity and origin.
 Keep all of these files outside Git.
 
 ```bash
