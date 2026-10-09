@@ -1005,7 +1005,9 @@ def _short_event_socket_path(tmp_path: Path) -> Path:
 
     digest = hashlib.sha256(os.fspath(tmp_path).encode()).hexdigest()[:16]
     filename = f"npa-leisaac-{digest}.sock"
-    for directory in dict.fromkeys((Path(tempfile.gettempdir()), Path("/tmp"))):
+    temporary_directory = Path(tempfile.gettempdir())
+    fallback_directory = Path(temporary_directory.anchor) / "tmp"
+    for directory in dict.fromkeys((temporary_directory, fallback_directory)):
         candidate = directory / filename
         if len(os.fsencode(candidate)) < 108:
             return candidate
@@ -1063,7 +1065,7 @@ def test_runtime_lifespan_falls_back_from_an_overlong_tmpdir(
     monkeypatch.setattr(tempfile, "gettempdir", lambda: os.fspath(overlong_tmpdir))
     runtime = _prepare_runtime(monkeypatch, tmp_path)
 
-    assert runtime.IPC_EVENT_PATH.parent == Path("/tmp")
+    assert runtime.IPC_EVENT_PATH.parent == Path(overlong_tmpdir.anchor) / "tmp"
     assert len(os.fsencode(runtime.IPC_EVENT_PATH)) < 108
     with TestClient(runtime.build_app()):
         assert runtime.IPC_EVENT_PATH.is_socket()
