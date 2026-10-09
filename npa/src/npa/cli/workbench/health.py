@@ -649,7 +649,10 @@ def sim2real_command(
         try:
             credentials = _project_credentials(project.strip(), credentials)
             if not s3_bucket.strip():
-                overrides["s3_bucket"] = credentials.s3_bucket
+                # CredentialsConfig keeps a URI because it is also consumed by
+                # credential preflight.  The execution config, however, owns a
+                # bucket *name* and derives its own s3:// artifact URIs.
+                overrides["s3_bucket"] = credentials.s3_bucket.removeprefix("s3://")
             if not s3_endpoint.strip():
                 overrides["s3_endpoint"] = credentials.s3_endpoint
         except (ConfigError, ProjectCredentialStoreError):

@@ -313,6 +313,73 @@ def test_s3_project_selection_replaces_conflicting_ambient_target(
     assert "project-secret" not in result.output
 
 
+def test_project_bucket_is_normalized_for_image_dependent_config(
+    diagnostic_spies: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A project URI must not become a double-scheme derived artifact path."""
+
+    project_credentials = SimpleNamespace(
+        s3_bucket="s3://project-bucket",
+        s3_endpoint="https://project.example.invalid",
+        s3_access_key_id="project-access",
+        s3_secret_access_key="project-secret",
+    )
+    for image_variable in (
+        "AUGMENT_IMAGE",
+        "ENVGEN_IMAGE",
+        "POLICY_IMAGE",
+        "TRAINER_IMAGE",
+        "VLM_IMAGE",
+        "EVAL_IMAGE",
+        "ISAAC_IMAGE",
+    ):
+        monkeypatch.setenv(image_variable, "registry.example.invalid/fixture:accepted")
+    monkeypatch.setattr(
+        health,
+        "_project_credentials",
+        lambda _project, _credentials: project_credentials,
+    )
+    built_configs: list[models.Sim2RealLoopConfig] = []
+
+    def record_preflight(
+        config: models.Sim2RealLoopConfig, **_kwargs: object
+    ) -> list[object]:
+        built_configs.append(config)
+        return []
+
+    monkeypatch.setattr(
+        health, "build_config_from_env", execution_config.build_config_from_env
+    )
+    monkeypatch.setattr(health, "run_preflight", record_preflight)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "config,s3",
+            "--project",
+            "selected-project",
+            "--run-id",
+            "project-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(built_configs) == 1
+    config = built_configs[0]
+    assert config.s3_bucket == "project-bucket"
+    assert (
+        config.trigger_dataset_uri
+        == "s3://project-bucket/sim2real-triggers/project-run/"
+    )
+    assert "s3://s3://" not in config.trigger_dataset_uri
+
+
 @pytest.mark.parametrize(
     "failure",
     [
