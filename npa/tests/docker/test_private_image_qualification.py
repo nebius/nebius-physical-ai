@@ -813,3 +813,179 @@ def test_ignored_bytecode_is_rejected_before_native_children(private_root, monke
     )
     with pytest.raises(Q._QualificationError, match="scanner_source_dirty"):
         Q._run(args)
+
+
+@pytest.mark.parametrize(
+    "diagnostic,code",
+    [
+        (
+            "private-user@private-host: Permission denied (publickey).",
+            "ssh_authentication_failed",
+        ),
+        (
+            "Host key verification failed for private-host",
+            "ssh_host_verification_failed",
+        ),
+        (
+            "ssh: connect to host private-host: Connection refused",
+            "ssh_connection_failed",
+        ),
+        (
+            json.dumps(
+                {
+                    "status": "failed",
+                    "exception_class": "FileNotFoundError",
+                    "path": "private-path",
+                }
+            ),
+            "remote_export_missing",
+        ),
+        (
+            json.dumps(
+                {
+                    "status": "failed",
+                    "exception_class": "PermissionError",
+                    "path": "private-path",
+                }
+            ),
+            "remote_export_permissions",
+        ),
+        (
+            json.dumps(
+                {
+                    "status": "failed",
+                    "exception_class": "_QualificationError",
+                    "failure_code": "directory_not_private",
+                }
+            ),
+            "remote_interface_failed",
+        ),
+        ("unclassified private diagnostic", "ssh_transfer_failed"),
+    ],
+)
+@pytest.mark.parametrize("role", ["manifest", "archive"])
+def test_fetch_reports_failed_child_transport_before_digest(
+    private_root, monkeypatch, capsys, diagnostic, code, role
+):
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stderr.write(" + repr(diagnostic) + "); sys.exit(255)",
+    ]
+    monkeypatch.setattr(Q, "_remote_command", lambda *_args: command)
+    target = private_root / "manifest"
+    with pytest.raises(Q._QualificationError) as raised:
+        Q._fetch([], "a" * 64, role, target, size=3, digest=Q._sha(b"abc"))
+    assert raised.value.code == code
+    assert "private" not in json.dumps(Q._failure(raised.value, "interface"))
+    assert capsys.readouterr() == ("", "")
+    assert target.read_bytes() == b""
+
+
+@pytest.mark.parametrize(
+    "diagnostic,code",
+    [
+        (b"REMOTE HOST IDENTIFICATION HAS CHANGED", "ssh_host_verification_failed"),
+        (b"Connection timed out", "ssh_connection_failed"),
+        (b"No route to host", "ssh_connection_failed"),
+        (b"Could not resolve hostname", "ssh_connection_failed"),
+        (b"", "ssh_transfer_failed"),
+        (b"\xff", "ssh_transfer_failed"),
+        (b"x" * Q.MANIFEST_BYTES + b"Connection timed out", "ssh_transfer_failed"),
+    ],
+)
+def test_transfer_failure_uses_only_bounded_stderr_diagnostics(diagnostic, code):
+    assert Q._transfer_failure(io.BytesIO(diagnostic)).code == code
+
+
+@pytest.mark.parametrize(
+    "sender_exit,expected", [(0, None), (1, "ssh_transfer_failed")]
+)
+def test_manifest_requires_successful_sender_even_with_exact_bytes(
+    export, private_root, monkeypatch, sender_exit, expected
+):
+    data = (export[0] / "manifest.json").read_bytes()
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.buffer.write("
+        + repr(data)
+        + "); sys.exit("
+        + str(sender_exit)
+        + ")",
+    ]
+    monkeypatch.setattr(Q, "_remote_command", lambda *_args: command)
+    target = private_root / "received-manifest"
+    if expected:
+        with pytest.raises(Q._QualificationError, match=expected):
+            Q._fetch([], export[1], "manifest", target)
+        assert target.read_bytes() == b""
+    else:
+        Q._fetch([], export[1], "manifest", target)
+        assert target.read_bytes() == data
+
+
+def test_successful_manifest_sender_still_requires_matching_digest(
+    private_root, monkeypatch
+):
+    command = [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'{}')"]
+    monkeypatch.setattr(Q, "_remote_command", lambda *_args: command)
+    with pytest.raises(Q._QualificationError, match="manifest_digest"):
+        Q._fetch([], "a" * 64, "manifest", private_root / "wrong-manifest")
+
+
+@pytest.mark.parametrize(
+    "role,code", [("manifest", "manifest_size"), ("archive", "transfer_oversized")]
+)
+def test_oversized_sender_is_reaped_without_waiting_for_full_stream(
+    private_root, monkeypatch, role, code
+):
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.buffer.write(b'x' * (8 * 1024 * 1024))",
+    ]
+    monkeypatch.setattr(Q, "_remote_command", lambda *_args: command)
+    original = subprocess.Popen
+    children = []
+
+    def tracked(*args, **kwargs):
+        child = original(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(Q.subprocess, "Popen", tracked)
+    with pytest.raises(Q._QualificationError, match=code):
+        Q._fetch(
+            [],
+            "a" * 64,
+            role,
+            private_root / "oversized-manifest",
+            size=3,
+            digest=Q._sha(b"abc"),
+        )
+    assert len(children) == 1
+    assert children[0].returncode is not None
+
+
+@pytest.mark.parametrize("payload", [b"a", b"bad"])
+def test_failed_archive_sender_overrides_partial_or_wrong_digest_error(
+    private_root, monkeypatch, payload
+):
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.buffer.write("
+        + repr(payload)
+        + "); sys.stderr.write('Connection refused private-endpoint'); sys.exit(255)",
+    ]
+    monkeypatch.setattr(Q, "_remote_command", lambda *_args: command)
+    with pytest.raises(Q._QualificationError, match="ssh_connection_failed"):
+        Q._fetch(
+            [],
+            "a" * 64,
+            "archive",
+            private_root / "partial-archive",
+            size=3,
+            digest=Q._sha(b"abc"),
+        )

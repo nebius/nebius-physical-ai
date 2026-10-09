@@ -196,6 +196,9 @@ def verify_host_key(
             # the SSH handshake still rejects an endpoint presenting a new key.
             return path
     query = f'{{sp_resource_id="{instance_id}"}} |= "NPA_SSH_HOST_KEY {nonce} "'
+    # Serial-log rows retain their bucket identity in the response. Selecting the
+    # legacy bucket explicitly fails in projects where the provider exposes it
+    # only through the default logging scope.
     raw = nebius._run(
         [
             "logging",
@@ -203,8 +206,6 @@ def verify_host_key(
             query,
             "--project-id",
             project_id,
-            "--bucket",
-            "sp_serial",
             "--format",
             "json",
         ]

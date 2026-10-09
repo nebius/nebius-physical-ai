@@ -38,6 +38,14 @@ function startMockServer(port) {
   const leisaacHtml = generateAgentUiHtml(true);
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || "/", `http://127.0.0.1:${port}`);
+    if (url.pathname === "/workflow-preview/") {
+      const result = spawnSync(path.join(repoRoot, ".venv/bin/python"), [
+        path.join(__dirname, "preview_report_fixture.py"),
+      ], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
+      res.writeHead(result.status === 0 ? 200 : 500, { "content-type": "text/html; charset=utf-8" });
+      res.end(result.status === 0 ? result.stdout : "Preview fixture rendering failed.");
+      return;
+    }
     if (url.pathname === "/specialists/" || url.pathname === "/app.js") {
       const name = url.pathname === "/app.js" ? "app.js" : "index.html";
       const source = path.join(repoRoot, "src/npa/agent_backend/specialists/ui", name);
