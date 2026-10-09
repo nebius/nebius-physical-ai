@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import io
 import json
+import re
 import subprocess
 from pathlib import Path
 from threading import Barrier
@@ -211,14 +212,22 @@ def test_unchanged_application_vulnerabilities_block(security_modules, manifest)
         "werkzeug",
     ],
 )
+@pytest.mark.parametrize(
+    "path",
+    [
+        "npa/docker/workbench/tool/requirements.txt",
+        "npa/workflows/workbench/tool/requirements.txt",
+    ],
+)
 def test_workbench_dependencies_block_unchanged_vulnerabilities(
-    security_modules, package
+    security_modules, package, path
 ):
     """Reject newly disclosed advisories in deployed workbench inventories.
 
     Args:
         security_modules: Checked-out scanner policy.
         package: Remediated dependency family under absolute enforcement.
+        path: Deployed image or workflow dependency input.
     Returns:
         None.
     Raises:
@@ -226,7 +235,7 @@ def test_workbench_dependencies_block_unchanged_vulnerabilities(
     """
     gate, _ = security_modules
     finding = dict(
-        _finding("npa/docker/workbench/tool/requirements.txt"),
+        _finding(path),
         scanner="trivy",
         identity=f"{package}==0:synthetic-advisory",
     )
@@ -869,7 +878,48 @@ def test_python_pins_survive_requirement_options(
     }
 
 
-@pytest.mark.parametrize("manifest", ["isaac-oss-deps.txt", "baked-constraints.txt"])
+def test_hash_verified_wheel_urls_are_inventoried(security_modules, tmp_path):
+    """Scan a direct wheel URL as its exact package and version."""
+    _, dependencies = security_modules
+    root = tmp_path / "source"
+    root.mkdir()
+    url = (
+        "https://files.pythonhosted.org/packages/d6/0b/"
+        "gitpython-3.1.62-py3-none-any.whl#sha256=" + "0" * 64
+    )
+    (root / "security-overrides.txt").write_text(url + "\n")
+    output = tmp_path / "report"
+    inventory = dependencies._inventory(root, output, tmp_path / "cache")
+    assert set(inventory.values()) == {"security-overrides.txt"}
+    target = next(iter(inventory))
+    assert dependencies._expected_packages(output / "inputs" / target) == {
+        ("gitpython", "3.1.62")
+    }
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.invalid/package-1.0.0.tar.gz#sha256=" + "0" * 64,
+        "https://example.invalid/package-1.0.0-py3-none-any.whl",
+    ],
+)
+def test_direct_dependency_urls_fail_closed(security_modules, url):
+    """Reject direct URLs that cannot provide exact hash-bound wheel inventory."""
+    _, dependencies = security_modules
+    with pytest.raises(ValueError, match="parseable wheel and SHA-256"):
+        dependencies._exact_pins(url)
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        "isaac-oss-deps.txt",
+        "baked-constraints.txt",
+        "security-overrides.txt",
+        "isaac-nvidia-wheels.txt",
+    ],
+)
 def test_nonstandard_python_dependency_manifests_are_inventoried(
     security_modules, tmp_path, manifest
 ):
@@ -897,6 +947,21 @@ def test_nonstandard_python_dependency_manifests_are_inventoried(
     }
 
 
+def _installation_source_pins(root: Path) -> list[str]:
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)==([0-9][A-Za-z0-9.!+_-]*)"
+    )
+    pins = []
+    sources = [*root.rglob("Dockerfile*"), *root.rglob("*.patch")]
+    for source in sources:
+        lines = source.read_text().splitlines()
+        if source.suffix == ".patch":
+            lines = [line for line in lines if not line.startswith("-")]
+        matches = pattern.findall("\n".join(lines))
+        pins.extend(f"{name}=={version}" for name, version in matches)
+    return pins
+
+
 @pytest.mark.parametrize(
     "package,minimum",
     [
@@ -911,20 +976,29 @@ def test_nonstandard_python_dependency_manifests_are_inventoried(
     ],
 )
 def test_deployed_workbench_security_floors(security_modules, package, minimum):
-    """Prevent regenerated workbench manifests from restoring vulnerable pins."""
+    """Prevent deployed manifests and build inputs from restoring vulnerable pins."""
     _, dependencies = security_modules
-    root = Path(__file__).resolve().parents[3] / "npa/docker/workbench"
-    evidence = root / "robomimic/baked-requirements.lock"
+    repository = Path(__file__).resolve().parents[3]
+    roots = [
+        repository / "npa/docker/workbench",
+        repository / "npa/workflows/workbench",
+    ]
+    evidence = roots[0] / "robomimic/baked-requirements.lock"
     versions = []
-    for manifest in root.rglob("*"):
-        if manifest == evidence or not dependencies._is_python_dependency_manifest(
-            manifest
-        ):
-            continue
-        for pin in dependencies._exact_pins(manifest.read_text()):
-            name, version = pin.split("==", maxsplit=1)
-            if canonicalize_name(name) == canonicalize_name(package):
-                versions.append(Version(version))
+    pins = _installation_source_pins(roots[0])
+    for root in roots:
+        for manifest in root.rglob("*"):
+            if (
+                manifest == evidence
+                or not manifest.is_file()
+                or not dependencies._is_python_dependency_manifest(manifest)
+            ):
+                continue
+            pins.extend(dependencies._exact_pins(manifest.read_text()))
+    for pin in pins:
+        name, version = pin.split("==", maxsplit=1)
+        if canonicalize_name(name) == canonicalize_name(package):
+            versions.append(Version(version))
     assert versions
     assert min(versions) >= Version(minimum)
 

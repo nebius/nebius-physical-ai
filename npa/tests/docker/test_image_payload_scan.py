@@ -199,10 +199,11 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
         "'python-dateutil==2.9.0.post0'",
         "'s3transfer==0.16.0'",
         "'six==1.17.0'",
-        "'urllib3==2.7.0'",
+        "'urllib3==2.8.0'",
     ):
         assert pin in dockerfile
     assert '"boto3":"1.42.91"' in dockerfile
+    assert '"urllib3":"2.8.0"' in dockerfile
     assert "boto3.session.Session()" in dockerfile
     assert "'deepdiff==8.6.2'" in dockerfile
     assert "WANDB_MODE=disabled" in dockerfile

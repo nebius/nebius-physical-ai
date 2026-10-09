@@ -1,5 +1,9 @@
 # Portable security updates above the immutable upstream model lock.
 # Keep accelerator and model-library versions in the upstream lock.
+# Regenerate from the repository root with `uv pip compile --no-deps
+# --generate-hashes --no-header --no-annotate --output-file
+# npa/docker/workbench/openpi/security-upgrades-requirements.txt
+# npa/docker/workbench/openpi/security-upgrades-requirements.in`.
 aiosignal==1.4.0
 aiohttp==3.14.3
 click==8.3.3

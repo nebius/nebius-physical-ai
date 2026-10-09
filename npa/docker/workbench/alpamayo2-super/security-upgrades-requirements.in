@@ -1,5 +1,9 @@
 # Portable security updates above the immutable upstream model lock.
 # Keep accelerator and model-library versions in the upstream lock.
+# Regenerate from the repository root with `uv pip compile --no-deps
+# --generate-hashes --no-header --no-annotate --output-file
+# npa/docker/workbench/alpamayo2-super/security-upgrades-requirements.txt
+# npa/docker/workbench/alpamayo2-super/security-upgrades-requirements.in`.
 hydra-core==1.3.7
 pillow==12.3.0
 setuptools==84.0.0

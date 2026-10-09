@@ -1,5 +1,9 @@
 # Portable security updates above the immutable upstream model lock.
 # Keep accelerator and model-library versions in the upstream lock.
+# Regenerate from the repository root with `uv pip compile --python-version 3.12
+# --no-deps --generate-hashes --no-header --no-annotate --output-file
+# npa/docker/workbench/cosmos3/security-upgrades-requirements.txt
+# npa/docker/workbench/cosmos3/security-upgrades-requirements.in`.
 anyio==4.14.2
 click==8.3.3
 cryptography==50.0.1

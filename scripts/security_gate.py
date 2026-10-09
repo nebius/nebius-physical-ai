@@ -36,6 +36,10 @@ _STRICT_WORKBENCH_PACKAGES = {
     "virtualenv",
     "werkzeug",
 }
+_STRICT_WORKBENCH_PATH_PREFIXES = (
+    "npa/docker/workbench/",
+    "npa/workflows/workbench/",
+)
 # This immutable source evidence is not copied into the candidate image.
 _DIFFERENTIAL_DEPENDENCY_PATHS = {
     "npa/docker/workbench/robomimic/baked-requirements.lock",
@@ -49,7 +53,7 @@ def _strict_dependency_finding(finding: dict) -> bool:
         return False
     package = canonicalize_name(finding["identity"].partition("==")[0])
     return path in _STRICT_DEPENDENCY_PATHS or (
-        path.startswith("npa/docker/workbench/")
+        path.startswith(_STRICT_WORKBENCH_PATH_PREFIXES)
         and package in _STRICT_WORKBENCH_PACKAGES
     )
 

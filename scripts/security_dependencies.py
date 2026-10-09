@@ -9,9 +9,10 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from packaging.requirements import InvalidRequirement, Requirement
-from packaging.utils import canonicalize_name
+from packaging.utils import canonicalize_name, parse_wheel_filename
 
 try:
     import tomllib
@@ -38,6 +39,23 @@ def _run(arguments: list[str], directory: Path) -> None:
         raise RuntimeError(f"{arguments[0]} failed; inspect private commands.log")
 
 
+def _wheel_url_pin(declaration: str) -> str | None:
+    parsed = urlsplit(declaration)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if not parsed.path.endswith(".whl") or not re.fullmatch(
+        r"sha256=[0-9a-fA-F]{64}", parsed.fragment
+    ):
+        raise ValueError(
+            "Direct dependency URLs require a parseable wheel and SHA-256 fragment"
+        )
+    try:
+        name, version, _, _ = parse_wheel_filename(unquote(Path(parsed.path).name))
+    except ValueError as error:
+        raise ValueError("Direct dependency URL has an invalid wheel filename") from error
+    return f"{name}=={version}"
+
+
 def _exact_pins(text: str) -> list[str]:
     pins = []
     for line in text.replace("\\\n", "").splitlines():
@@ -46,6 +64,10 @@ def _exact_pins(text: str) -> list[str]:
             r"\s+--(?:hash|config-settings)(?:=|\s)", declaration, maxsplit=1
         )[0]
         if not declaration or declaration.startswith(("#", "-")):
+            continue
+        wheel_pin = _wheel_url_pin(declaration)
+        if wheel_pin:
+            pins.append(wheel_pin)
             continue
         try:
             requirement = Requirement(declaration)
@@ -70,6 +92,8 @@ def _is_python_dependency_manifest(source: Path) -> bool:
         "requirements" in source.name
         or source.name.endswith("-deps.txt")
         or source.name.endswith("constraints.txt")
+        or source.name.endswith("-overrides.txt")
+        or source.name.endswith("-wheels.txt")
     )
 
 
