@@ -643,7 +643,9 @@ def sim2real_command(
 
     probes = DoctorProbes(
         s3_client_factory=lambda: StorageClient.from_environment(
-            endpoint_url=config.s3_endpoint
+            endpoint_url=config.s3_endpoint,
+            aws_access_key_id=credentials.s3_access_key_id,
+            aws_secret_access_key=credentials.s3_secret_access_key,
         ),
         image_inspector=_image_inspector,
         credentials=credentials,

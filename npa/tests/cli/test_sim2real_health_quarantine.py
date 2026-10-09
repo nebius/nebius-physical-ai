@@ -206,7 +206,9 @@ def test_tokens_and_s3_use_explicit_storage_without_image_resolution(
         ("tokens", "PASS"),
     ]
     diagnostic_spies.storage_factory.assert_called_once_with(
-        endpoint_url="https://explicit.example.invalid"
+        endpoint_url="https://explicit.example.invalid",
+        aws_access_key_id="fixture-access",
+        aws_secret_access_key="fixture-secret",
     )
     diagnostic_spies.storage.list_checkpoints.assert_called_once_with(
         "s3://explicit-bucket/"
