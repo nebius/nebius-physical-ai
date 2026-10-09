@@ -51,10 +51,62 @@ def _candidate(**overrides):
             "0/3 nodes are Unschedulable: insufficient nvidia.com/gpu",
             "unschedulable_gpu",
         ),
+        # Nebius Compute ServiceError codes (status.details[].code).
+        ("NotEnoughResources", "", "capacity_exhausted"),
+        ("not_enough_resources", "", "capacity_exhausted"),
+        (
+            "QuotaFailure",
+            "quota compute.instance.gpu.b200: limit 8, requested 9",
+            "quota_exhausted",
+        ),
+        ("quota_failure", "compute.instance.gpu.h200", "quota_exhausted"),
+        (
+            "",
+            "VM schedule timeout, most likely due to insufficient hardware "
+            "resources, for more information see "
+            "https://docs.nebius.com/compute/virtual-machines/not-enough-resources",
+            "capacity_exhausted",
+        ),
     ],
 )
 def test_qualifying_classifications(code: str, message: str, category: str) -> None:
     assert classify_failure(code, message) == {"category": category, "qualifying": True}
+
+
+def test_quota_failure_counts_only_for_gpu_quotas() -> None:
+    for message in ("", "quota compute.disk.count: limit 4, requested 5"):
+        assert classify_failure("QuotaFailure", message) == {
+            "category": "quota_non_gpu",
+            "qualifying": False,
+        }
+
+
+def test_non_placement_evidence_still_wins_over_placement_codes() -> None:
+    assert (
+        classify_failure("quota_exhausted", "permission denied")["qualifying"] is False
+    )
+    assert (
+        classify_failure("NotEnoughResources", "VM schedule timed out")["qualifying"]
+        is False
+    )
+    assert (
+        classify_failure("", "not enough resources to pull image")["qualifying"]
+        is False
+    )
+
+
+def test_workload_timeouts_do_not_count_as_capacity() -> None:
+    assert classify_failure("", "operation timed out waiting for RUNNING") == {
+        "category": "non_placement",
+        "qualifying": False,
+    }
+    assert classify_failure(
+        "", "operation timed out; insufficient hardware resources"
+    ) == {"category": "non_placement", "qualifying": False}
+    assert classify_failure("timeout", "insufficient hardware resources") == {
+        "category": "timeout",
+        "qualifying": False,
+    }
 
 
 @pytest.mark.parametrize(
