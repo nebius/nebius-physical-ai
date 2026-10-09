@@ -2707,7 +2707,17 @@ def workflow_status(
             error=result.stderr.strip() or result.stdout.strip(),
         )
 
-    status = _status_from_queue_payload(result.stdout, job_id)
+    rows = verified_structured_queue_rows(result)
+    if rows is None:
+        return WorkflowResult(
+            status="UNKNOWN",
+            job_id=job_id,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error="SkyPilot queue response is malformed, ambiguous, or schema-invalid",
+        )
+    status = _status_from_queue_rows(rows, job_id)
     if not status:
         # A successful queue response is authoritative: if the recorded id is
         # absent, the managed-jobs controller has lost (or garbage-collected) its
@@ -2890,6 +2900,8 @@ def find_job_ids_by_name(
     )
     if result.returncode != 0:
         return []
+    if verified_structured_queue_rows(result) is None:
+        return []
     return parse_job_ids_by_name(result.stdout, job_name)
 
 
@@ -2946,7 +2958,7 @@ def lookup_managed_job(
         )
         return ManagedJobEvidence("unavailable", error=redact_text(detail))
     else:
-        parsed_jobs = queue_rows_from_output(result.stdout)
+        parsed_jobs = verified_structured_queue_rows(result)
         if parsed_jobs is None:
             return ManagedJobEvidence(
                 "unavailable",
@@ -3156,7 +3168,7 @@ def _reconcile_managed_job_env(
             error=_redact_private_text(detail, redactions),
         )
     else:
-        parsed_rows = queue_rows_from_output(result.stdout)
+        parsed_rows = verified_structured_queue_rows(result)
         if parsed_rows is None:
             return ReconciliationEvidence(
                 ReconciliationState.AMBIGUOUS,
@@ -3438,7 +3450,7 @@ def _libero_launch_binding_candidates(
                 "binding could not be read; preserving indeterminate state and "
                 "refusing retry",
             )
-        rows = queue_rows_from_output(result.stdout)
+        rows = verified_structured_queue_rows(result)
     except Exception:  # noqa: BLE001 - missing confirmation must fail closed
         return (
             "",
@@ -5216,6 +5228,8 @@ def _verified_job_id(
         )
         if result.returncode != 0:
             return parsed
+        if verified_structured_queue_rows(result) is None:
+            return parsed
         ids = parse_job_ids_by_name(result.stdout, job_name)
     except Exception:  # noqa: BLE001 - never fail a successful submit over a lookup
         return parsed
@@ -5343,8 +5357,14 @@ def _status_from_queue_payload(output: str, job_id: str) -> str:
     jobs = queue_rows_from_output(output)
     if jobs is None:
         return ""
+    return _status_from_queue_rows(jobs, job_id)
+
+
+def _status_from_queue_rows(jobs: Sequence[Mapping[str, Any]], job_id: str) -> str:
+    """Classify one managed job from an already verified queue row collection."""
+
     statuses = []
-    for job in jobs or []:
+    for job in jobs:
         current_id = str(job.get("job_id") or job.get("id") or "")
         if current_id == str(job_id):
             status = str(job.get("status", "")).upper()
