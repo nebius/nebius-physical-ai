@@ -214,10 +214,22 @@ def test_fastwam_image_removes_the_known_inert_scikit_image_recipe_in_its_instal
     correction = "python /opt/lerobot/remove_scikit_image_recipe.py"
     assert correction in install_layer
     assert install_layer.index(correction) > install_layer.index("pip install")
-    assert install_layer.index(correction) < install_layer.index(
-        "pip uninstall -y wandb"
-    )
     assert install_layer.index("python -m pip check") > install_layer.index(correction)
+
+
+def test_fastwam_image_keeps_the_libero_extra_dependency_consistent() -> None:
+    """Do not remove the transitive dependency after validating the image."""
+
+    dockerfile = FASTWAM_DOCKERFILE.read_text()
+    start = dockerfile.index("RUN python3.12 -m venv /opt/lerobot/venv")
+    end = dockerfile.index("\n\n", start)
+    install_layer = dockerfile[start:end]
+
+    assert "lerobot[training,evaluation,pusht,libero," in install_layer
+    assert "pip uninstall -y wandb" not in install_layer
+    assert install_layer.index("python -m pip check") > install_layer.index(
+        "lerobot[training,evaluation,pusht,libero,"
+    )
 
 
 def test_fastwam_image_sanitizer_executes_against_installed_site_packages(
