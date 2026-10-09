@@ -95,7 +95,7 @@ def test_isaac_2_runtime_dependency_fixes_preserve_the_runtime_family(name, floo
 
 def test_loop_eval_uses_the_fixed_kernel_header_snapshot():
     text = (WORKBENCH / "sim2real-eval/Dockerfile").read_text()
-    assert "ARG UBUNTU_SNAPSHOT=20261001T000000Z" in text
-    assert (
-        'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" 5.15.0-194.204' in text
-    )
+    assert "ARG UBUNTU_SNAPSHOT=20261002T000000Z" in text
+    assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in text
+    prereqs = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text()
+    assert 'linux_libc_dev_version="5.15.0-198.208"' in prereqs
