@@ -505,11 +505,10 @@ def test_parent_os_security_patch_is_narrow_and_runtime_independent() -> None:
 
     assert security_patch in dockerfile
     assert "apt-get upgrade" not in dockerfile
-    assert dockerfile.index(security_patch) < dockerfile.index(
-        "# Keep only source and project metadata"
-    )
-    assert "torch==2.13.0+cu126" not in security_patch
-    assert "NPA_LINGBOT_VA_PARENT_IMAGE" not in security_patch
+    patch_start = dockerfile.index(security_patch)
+    patch_end = patch_start + len(security_patch)
+    assert dockerfile.index('RUN [[ "${NPA_LINGBOT_VA_PARENT_IMAGE}"') < patch_start
+    assert patch_end < dockerfile.index("RUN GIT_LFS_SKIP_SMUDGE=1 git clone")
 
 
 def _parent_reference_guard(dockerfile: str) -> str:
