@@ -55,6 +55,10 @@ RESULT_URI_TOOLS: dict[str, tuple[str, str]] = {
         "--output-path",
         "npa.workbench.encord:push_receipt_uri_for",
     ),
+    "workbench.encord.curate": (
+        "--output-path",
+        "npa.workbench.encord:curate_receipt_uri_for",
+    ),
     "workbench.encord.pull": (
         "--output-path",
         "npa.workbench.encord:pull_manifest_uri_for",

@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Literal, Sequence
+from typing import Any, Literal, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 PUSH_RECEIPT_SCHEMA = "npa.encord.push_receipt.v1"
 PULL_MANIFEST_SCHEMA = "npa.encord.pull_manifest.v2"
+CURATE_RECEIPT_SCHEMA = "npa.encord.curate_receipt.v1"
 ROUNDTRIP_REPORT_SCHEMA = "npa.encord.roundtrip_report.v1"
 IDENTITY_SIDECAR_SCHEMA = "npa.encord.identity_sidecar.v1"
 
 PUSH_RECEIPT_FILENAME = "push_receipt.json"
 PULL_MANIFEST_FILENAME = "manifest.json"
+CURATE_RECEIPT_FILENAME = "curate_receipt.json"
 ROUNDTRIP_REPORT_FILENAME = "roundtrip_report.json"
 
 DEFAULT_MEDIA_FILTER = "videos-images"
@@ -476,6 +478,67 @@ class RoundtripItem(StrictModel):
     reasons: list[str] = Field(default_factory=list)
 
 
+class CurateReceipt(StrictModel):
+    schema_: Literal["npa.encord.curate_receipt.v1"] = Field(
+        default=CURATE_RECEIPT_SCHEMA, alias="schema"
+    )
+    tool: str = "encord"
+    stage: str = "curate"
+    phase: ArtifactPhase
+    status: RunStatus
+    revision: int = Field(ge=0)
+    generated_at: str
+    updated_at: str
+    workflow_run: str = ""
+    source_receipt_uri: str = ""
+    encord_domain: str
+    folder_name: str
+    folder_uuid: str = ""
+    collection_name: str
+    collection_uuid: str = ""
+    preset_name: str
+    preset_uuid: str = ""
+    preset_deleted: bool = False
+    filters: list[str]
+    filter_preset_json: dict[str, Any]
+    items_total: int = Field(default=0, ge=0)
+    items_selected: int = Field(default=0, ge=0)
+    selected_item_uuids: list[str] = Field(default_factory=list)
+    receipt_uri: str
+    error_code: str = ""
+    error: str = ""
+    durability_warning: str = DURABILITY_WARNING
+
+    _required = field_validator(
+        "generated_at",
+        "updated_at",
+        "encord_domain",
+        "folder_name",
+        "collection_name",
+        "preset_name",
+        "receipt_uri",
+    )(_nonempty)
+
+    @model_validator(mode="after")
+    def validate_receipt(self) -> "CurateReceipt":
+        _validate_run_phase(self.phase, self.status)
+        if self.items_selected != len(self.selected_item_uuids):
+            raise ValueError("curation selected count does not reconcile")
+        if self.items_selected > self.items_total:
+            raise ValueError("curation selected more items than the folder contains")
+        _reject_duplicates("selected item UUID", self.selected_item_uuids)
+        if self.status == "completed" and (
+            not self.collection_uuid
+            or not self.selected_item_uuids
+            or not self.preset_uuid
+            or not self.preset_deleted
+        ):
+            raise ValueError(
+                "completed curation requires a nonempty Collection and cleaned preset"
+            )
+        return self
+
+
 class RoundtripReport(StrictModel):
     schema_: Literal["npa.encord.roundtrip_report.v1"] = Field(
         default=ROUNDTRIP_REPORT_SCHEMA, alias="schema"
@@ -485,6 +548,7 @@ class RoundtripReport(StrictModel):
     generated_at: str
     workflow_run: str = ""
     receipt_uri: str
+    curate_receipt_uri: str = ""
     manifest_uri: str
     report_uri: str
     status: Literal["completed", "failed"]
@@ -498,6 +562,7 @@ class RoundtripReport(StrictModel):
     size_mismatched: int = Field(ge=0)
     checksum_mismatched: int = Field(ge=0)
     checksum_unavailable: int = Field(ge=0)
+    defects: list[str] = Field(default_factory=list)
     items: list[RoundtripItem] = Field(default_factory=list)
 
     _required = field_validator(

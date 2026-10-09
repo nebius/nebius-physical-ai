@@ -294,6 +294,62 @@ def pull_cmd(
     )
 
 
+@app.command("curate")
+@json_stdout_contract
+def curate_cmd(
+    folder: str = typer.Option(
+        ..., "--folder", help="Existing Encord folder title or UUID."
+    ),
+    filter_specs: list[str] = typer.Option(
+        ..., "--filter", help="Repeat metric:min:max filters."
+    ),
+    collection: str = typer.Option(
+        ..., "--collection", help="Fresh Collection title or UUID."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 curation receipt URI."
+    ),
+    receipt_uri: str = typer.Option(
+        "", "--receipt-uri", help="Optional source push receipt."
+    ),
+    workflow_run: str = typer.Option("", "--workflow-run"),
+    output_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Apply Encord metadata or ready quality-metric filters into a Collection."""
+
+    from npa.cli.path_contract import (
+        PathContractError,
+        validate_read_path,
+        validate_write_path,
+    )
+    from npa.sdk.workbench.encord import curate
+
+    try:
+        validate_write_path(output_path, tool="encord curate", required=True)
+        if receipt_uri:
+            validate_read_path(
+                receipt_uri,
+                tool="encord curate",
+                option="--receipt-uri",
+                allow_hf=False,
+            )
+        receipt = curate(
+            folder=folder,
+            filters=filter_specs,
+            collection=collection,
+            output_path=output_path,
+            source_receipt_uri=receipt_uri,
+            workflow_run=workflow_run,
+        )
+    except (PathContractError, EncordToolError) as exc:
+        _fail(str(exc))
+    _emit(
+        receipt,
+        output_json=output_json,
+        text=f"Encord curate: {receipt.items_selected}/{receipt.items_total} selected; receipt: {receipt.receipt_uri}",
+    )
+
+
 @app.command("verify-roundtrip")
 @json_stdout_contract
 def verify_roundtrip_cmd(
@@ -302,6 +358,11 @@ def verify_roundtrip_cmd(
     ),
     manifest_uri: str = typer.Option(
         ..., "--manifest-uri", help="S3 URI of a final Encord pull manifest."
+    ),
+    curate_receipt_uri: str = typer.Option(
+        "",
+        "--curate-receipt-uri",
+        help="Optional final curation receipt for subset verification.",
     ),
     output_path: str = typer.Option(
         ..., "--output-path", help="S3 URI for the roundtrip verification report."
@@ -333,10 +394,18 @@ def verify_roundtrip_cmd(
             option="--manifest-uri",
             allow_hf=False,
         )
+        if curate_receipt_uri:
+            validate_read_path(
+                curate_receipt_uri,
+                tool="encord verify-roundtrip",
+                option="--curate-receipt-uri",
+                allow_hf=False,
+            )
         validate_write_path(output_path, tool="encord verify-roundtrip", required=True)
         report = verify_roundtrip(
             receipt_uri=receipt_uri,
             manifest_uri=manifest_uri,
+            curate_receipt_uri=curate_receipt_uri,
             output_path=output_path,
             workflow_run=workflow_run,
         )

@@ -14,6 +14,7 @@ import-labels  Create an ontology and project, then save unreviewed video prelab
 render-labels  Verify exported Encord labels and render them over returned video bytes.
 push  Register or explicitly upload S3 media and write a durable receipt.
 pull  Materialize an Encord source to S3 with an exact lineage manifest.
+curate  Apply Encord metadata or ready quality-metric filters into a Collection.
 verify-roundtrip  Verify identity, destination existence, size, and compatible checksums.
 ```
 
@@ -31,6 +32,7 @@ verify-roundtrip  Verify identity, destination existence, size, and compatible c
 | `render-labels` | Verify exported Encord labels and render them over returned video bytes. |
 | `push` | Register or explicitly upload S3 media and write a durable receipt. |
 | `pull` | Materialize an Encord source to S3 with an exact lineage manifest. |
+| `curate` | Apply Encord metadata or ready quality-metric filters into a Collection. |
 | `verify-roundtrip` | Verify identity, destination existence, size, and compatible checksums. |
 
 ## Examples
