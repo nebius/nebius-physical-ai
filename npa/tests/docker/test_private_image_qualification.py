@@ -384,6 +384,19 @@ def test_receipt_bundle_has_exact_allowlist_and_no_policy_or_authorization(
         assert archive.getnames() == list(Q.RECEIPT_FILES)
 
 
+def test_receipt_digest_supports_python310(private_root, monkeypatch):
+    monkeypatch.delattr(Q.hashlib, "file_digest", raising=False)
+    summary = b'{"status":"passed"}\n'
+    Q._write(private_root / "summary.json", summary)
+
+    path, size, digest = Q._bundle(private_root)
+
+    assert size == path.stat().st_size
+    assert digest == Q._sha(path.read_bytes())
+    with tarfile.open(path) as archive:
+        assert archive.extractfile("summary.json").read() == summary
+
+
 def test_remote_receipt_is_opaque_private_and_cannot_overwrite(export, monkeypatch):
     payload = io.BytesIO()
     with tarfile.open(fileobj=payload, mode="w") as archive:
