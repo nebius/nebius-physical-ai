@@ -35,6 +35,7 @@ from npa.workflows.sim2real.workflow_stage import (
     _stage9,
     _stage9_existing_replay,
     _validate_stage7_cosmos3_coverage,
+    build_parser,
 )
 
 
@@ -256,6 +257,30 @@ def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:
     assert set(states) == expected
     assert states.count("stage-07-rollouts") == 1
     assert states.count("stage-09-ppo") == 1
+
+
+@pytest.mark.parametrize(
+    ("threshold", "early_exit"), [("0.50", "true"), ("0.73", "true"), ("0.73", "false")]
+)
+def test_finalization_uses_the_decision_gate_configuration(
+    threshold: str, early_exit: str
+) -> None:
+    spec = load_spec(SPEC)
+    spec.config.update(
+        threshold=threshold,
+        allow_early_exit=early_exit,
+        outer_iterations="1",
+        inner_iterations="1",
+    )
+    plan = build_plan(spec, run_id="gate-propagation", assume_decision="loop_back")
+    gates = [
+        build_parser().parse_args(step.argv[3:])
+        for step in plan.steps
+        if step.state in ("stage-11-decision", "stage-14-visualize")
+    ]
+    assert len(gates) == 2
+    assert all(gate.threshold == float(threshold) for gate in gates)
+    assert all(gate.allow_early_exit is (early_exit == "true") for gate in gates)
 
 
 @pytest.mark.parametrize(

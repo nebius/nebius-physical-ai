@@ -53,6 +53,7 @@ def test_completed_public_lerobot_v3_pipeline() -> None:
     _assert_example_timeline(read)
     _assert_paidf_live_artifacts(
         spec="paidf-cosmos3.yaml",
+        run_prefix_uri=uri,
         waves=runtime["waves"],
         bucket=parsed.netloc,
         run_id=run_id,

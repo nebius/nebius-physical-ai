@@ -76,6 +76,7 @@ def test_reference_workflow_rejects_dangling_next_before_planning(tmp_path, name
 @pytest.mark.parametrize(
     "name",
     [
+        "video-variant-sweep.yaml",
         "vlm-eval-single.yaml",
         "tokenfactory-rollout-judge.yaml",
         "sim2real.yaml",
