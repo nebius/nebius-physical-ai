@@ -1004,7 +1004,12 @@ def _short_event_socket_path(tmp_path: Path) -> Path:
     """Return a unique test socket path that fits Unix-domain socket limits."""
 
     digest = hashlib.sha256(os.fspath(tmp_path).encode()).hexdigest()[:16]
-    return Path(tempfile.gettempdir()) / f"npa-leisaac-{digest}.sock"
+    filename = f"npa-leisaac-{digest}.sock"
+    for directory in (Path(tempfile.gettempdir()), Path("/tmp")):
+        candidate = directory / filename
+        if len(os.fsencode(candidate)) < 108:
+            return candidate
+    raise RuntimeError("no supported Unix-domain socket path is short enough")
 
 
 def _prepare_runtime(monkeypatch, tmp_path: Path):
@@ -1049,6 +1054,20 @@ def _prepare_runtime(monkeypatch, tmp_path: Path):
     runtime.APPLIED_ACK_OFFSET = 0
     runtime.MODE_OWNER["client_id"] = ""
     return runtime
+
+
+def test_runtime_lifespan_falls_back_from_an_overlong_tmpdir(
+    monkeypatch, tmp_path: Path
+) -> None:
+    overlong_tmpdir = tmp_path / ("x" * 120)
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: os.fspath(overlong_tmpdir))
+    runtime = _prepare_runtime(monkeypatch, tmp_path)
+
+    assert runtime.IPC_EVENT_PATH.parent == Path("/tmp")
+    assert len(os.fsencode(runtime.IPC_EVENT_PATH)) < 108
+    with TestClient(runtime.build_app()):
+        assert runtime.IPC_EVENT_PATH.is_socket()
+    assert not runtime.IPC_EVENT_PATH.exists()
 
 
 def _runtime_headers() -> dict[str, str]:
