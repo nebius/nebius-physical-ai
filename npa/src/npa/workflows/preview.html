@@ -1,0 +1,1004 @@
+<!doctype html>
+<!-- Offline workflow evidence viewer; all media and measurements come from the run. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>@@TITLE@@</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font:
+          15px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        background: #090f16;
+        color: #eaf1f5;
+        --muted: #9bafbe;
+        --line: #263443;
+        --accent: #9df1ce;
+        --panel: #111d28;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button,
+      select {
+        cursor: pointer;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      a:focus-visible,
+      summary:focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 4px;
+      }
+      button,
+      select {
+        background: #182837;
+        border: 1px solid #344b5f;
+        color: #eaf1f5;
+        border-radius: 7px;
+        padding: 9px 14px;
+      }
+      button:hover,
+      select:hover {
+        border-color: var(--accent);
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      a {
+        color: var(--accent);
+      }
+      [hidden] {
+        display: none !important;
+      }
+      .masthead {
+        border-bottom: 1px solid var(--line);
+        padding: 19px max(24px, calc((100vw - 1440px) / 2));
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+      }
+      .brand {
+        font-size: 12px;
+        font-weight: 750;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      .brand i {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        background: var(--accent);
+        margin-right: 12px;
+      }
+      .mode-switch {
+        display: flex;
+        gap: 5px;
+      }
+      .mode-switch button {
+        font-size: 12px;
+        padding: 7px 12px;
+      }
+      .mode-switch button[aria-pressed="true"] {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #09251c;
+      }
+      .shell {
+        max-width: 1488px;
+        padding: 40px 24px 32px;
+        margin: auto;
+      }
+      .eyebrow {
+        color: var(--accent);
+        font-size: 11px;
+        font-weight: 750;
+        letter-spacing: 0.17em;
+        text-transform: uppercase;
+      }
+      h1 {
+        font-size: clamp(29px, 4vw, 58px);
+        line-height: 1.06;
+        letter-spacing: -0.045em;
+        margin: 15px 0 22px;
+        max-width: 1000px;
+        font-weight: 650;
+      }
+      .summary {
+        max-width: 1080px;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.7;
+        margin: 0 0 25px;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 1px;
+        background: var(--line);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        margin: 26px 0;
+      }
+      .metrics > div {
+        background: var(--panel);
+        padding: 22px;
+        min-width: 0;
+      }
+      .metrics dt {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+      .metrics dd {
+        font-size: clamp(19px, 2vw, 29px);
+        line-height: 1.2;
+        letter-spacing: -0.025em;
+        margin: 12px 0 0;
+        overflow-wrap: anywhere;
+        font-variant-numeric: tabular-nums;
+      }
+      .metrics dd.long {
+        font-size: 17px;
+        line-height: 1.4;
+      }
+      .metrics-toggle {
+        font-size: 12px;
+        margin-top: -12px;
+        margin-bottom: 24px;
+        background: transparent;
+      }
+      .section-nav {
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        margin: 10px 0 30px;
+        padding-bottom: 6px;
+      }
+      .section-nav a {
+        white-space: nowrap;
+        text-decoration: none;
+        color: var(--muted);
+        font-size: 12px;
+        padding: 8px 13px;
+        border: 1px solid var(--line);
+        border-radius: 30px;
+      }
+      .section-nav a:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+      .timeline {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+        margin: 0 0 28px;
+        overflow: hidden;
+        scroll-margin-top: 20px;
+      }
+      .section-heading {
+        padding: 23px 26px 17px;
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 20px;
+      }
+      .section-heading h2 {
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: -0.025em;
+        margin: 5px 0;
+      }
+      .section-index {
+        color: var(--accent);
+        font-size: 10px;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+      .frame-count {
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+        padding-top: 10px;
+      }
+      .scope {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.6;
+        padding: 0 26px;
+        margin: 0 0 22px;
+        max-width: 1150px;
+      }
+      .view-tools {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 26px 16px;
+        flex-wrap: wrap;
+      }
+      .view-tools label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .view-tools select {
+        max-width: 100%;
+        min-width: 0;
+        font-size: 12px;
+      }
+      .view-tools .hint {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .visuals {
+        background: #070c12;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        padding: 16px;
+        display: grid;
+        gap: 16px;
+      }
+      .visuals.with-cloud {
+        grid-template-columns: minmax(0, 1.65fr) minmax(260px, 1fr);
+      }
+      .images {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+        gap: 12px;
+        min-width: 0;
+        align-content: start;
+      }
+      .images.many {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .images.focused {
+        grid-template-columns: 1fr;
+      }
+      .images figure {
+        margin: 0;
+        border: 1px solid #223344;
+        border-radius: 8px;
+        overflow: hidden;
+        background: #0d1822;
+        min-width: 0;
+      }
+      .images img {
+        display: block;
+        width: 100%;
+        max-height: 660px;
+        object-fit: contain;
+        aspect-ratio: 16/10;
+        background: #050a0f;
+      }
+      .images.many img {
+        aspect-ratio: 16/9;
+      }
+      .images figcaption {
+        color: #b2c6d4;
+        padding: 8px 11px;
+        font-size: 11px;
+        overflow-wrap: anywhere;
+      }
+      .point-panel {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid #223344;
+        border-radius: 8px;
+        overflow: hidden;
+        background: radial-gradient(ellipse at 50% 35%, #142f3d, #070e17 75%);
+      }
+      .point-panel header {
+        padding: 13px 16px;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .point-panel canvas {
+        display: block;
+        width: 100%;
+        aspect-ratio: 1/1;
+        touch-action: none;
+        flex: 1;
+        min-height: 230px;
+      }
+      .point-panel footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 12px 14px;
+        border-top: 1px solid var(--line);
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .point-panel button {
+        font-size: 10px;
+        padding: 5px 9px;
+      }
+      .controls {
+        padding: 20px 26px;
+        display: grid;
+        grid-template-columns: auto auto auto minmax(80px, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+      }
+      .controls .play {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #09251c;
+        font-weight: 650;
+        min-width: 88px;
+      }
+      .controls .step {
+        padding: 9px 12px;
+      }
+      .controls input[type="range"] {
+        width: 100%;
+        accent-color: var(--accent);
+        cursor: pointer;
+      }
+      .controls select {
+        font-size: 12px;
+      }
+      .timeline-status {
+        padding: 0 26px 20px;
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        font-variant-numeric: tabular-nums;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .timeline-status output {
+        color: #e7f7ef;
+      }
+      .timeline:fullscreen {
+        overflow-y: auto;
+        background: #090f16;
+      }
+      .evidence-panel {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        margin-top: 24px;
+        padding: 22px;
+        background: var(--panel);
+      }
+      summary {
+        cursor: pointer;
+        color: var(--accent);
+        font-weight: 550;
+      }
+      pre {
+        font:
+          12px/1.6 ui-monospace,
+          SFMono-Regular,
+          monospace;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        max-height: 600px;
+        overflow: auto;
+        color: #bdceda;
+      }
+      .page-footer {
+        border-top: 1px solid var(--line);
+        margin-top: 35px;
+        padding-top: 20px;
+        font-size: 11px;
+        line-height: 1.8;
+        color: var(--muted);
+        display: flex;
+        justify-content: space-between;
+        gap: 40px;
+      }
+      .page-footer p {
+        margin: 0;
+        max-width: 760px;
+      }
+      .empty {
+        padding: 35px;
+        border: 1px dashed var(--line);
+        border-radius: 12px;
+        color: var(--muted);
+      }
+      @media (min-width: 1050px) {
+        .images.many {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+      }
+      @media (max-width: 850px) {
+        .visuals.with-cloud {
+          grid-template-columns: 1fr;
+        }
+        .point-panel canvas {
+          max-height: 420px;
+        }
+        .metrics {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .shell {
+          padding-top: 28px;
+        }
+        .section-heading {
+          padding: 20px;
+        }
+        .scope,
+        .view-tools {
+          padding-left: 20px;
+          padding-right: 20px;
+        }
+        .controls {
+          padding: 18px;
+        }
+        .view-tools .hint {
+          margin-left: 0;
+        }
+        .page-footer {
+          display: block;
+        }
+        .page-footer p + p {
+          margin-top: 15px;
+        }
+      }
+      @media (max-width: 480px) {
+        .masthead {
+          padding: 15px;
+          align-items: start;
+        }
+        .brand {
+          font-size: 10px;
+          padding-top: 9px;
+        }
+        .mode-switch button {
+          padding: 7px 9px;
+          font-size: 11px;
+        }
+        .shell {
+          padding: 25px 14px;
+        }
+        .metrics > div {
+          padding: 17px 14px;
+        }
+        .metrics dt {
+          font-size: 10px;
+        }
+        .section-heading h2 {
+          font-size: 19px;
+        }
+        .frame-count {
+          font-size: 10px;
+        }
+        .controls {
+          grid-template-columns: auto auto auto 1fr;
+          gap: 7px;
+        }
+        .controls input {
+          grid-column: 1/-1;
+          grid-row: 2;
+        }
+        .controls select {
+          justify-self: end;
+        }
+        .timeline-status {
+          padding: 0 18px 18px;
+          font-size: 11px;
+        }
+        .visuals {
+          padding: 9px;
+          gap: 9px;
+        }
+        .images {
+          gap: 8px;
+        }
+        .images figcaption {
+          font-size: 10px;
+          padding: 7px;
+        }
+        .images img {
+          aspect-ratio: 4/3;
+        }
+        .view-tools select {
+          width: 100%;
+        }
+        .view-tools .hint {
+          display: none;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          scroll-behavior: auto !important;
+        }
+      }
+      @media print {
+        .masthead,
+        .controls,
+        .view-tools,
+        .section-nav,
+        .metrics-toggle {
+          display: none;
+        }
+        .timeline {
+          break-inside: avoid;
+        }
+        .metrics > div {
+          display: block !important;
+        }
+        body {
+          color: #000;
+          background: white;
+        }
+        .shell {
+          padding: 0;
+        }
+        .summary,
+        .scope {
+          color: #333;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="masthead">
+      <div class="brand"><i></i>Nebius / Physical AI</div>
+      <div class="mode-switch" role="group" aria-label="Report view">
+        <button id="presentation-mode" aria-pressed="true">Walkthrough</button
+        ><button id="engineering-mode" aria-pressed="false">Engineering</button>
+      </div>
+    </header>
+    <div class="shell">
+      <div class="eyebrow">Workbench / Measured workflow outputs</div>
+      <h1>@@TITLE@@</h1>
+      <p class="summary">@@SUMMARY@@</p>
+      <dl class="metrics">@@METRICS@@</dl>
+      <button class="metrics-toggle" id="metrics-toggle" hidden>
+        Show all measurements
+      </button>
+      <nav
+        class="section-nav"
+        id="section-nav"
+        aria-label="Evidence timelines"
+      ></nav>
+      <main id="timelines"></main>
+      @@DETAILS@@
+      <footer class="page-footer">
+        <p>
+          Media and measurements are derived from recorded workflow outputs.
+          Preview sampling and playback speed do not change the experiment. Full
+          resolution data, calibration and provenance remain in the original
+          artifacts.
+        </p>
+        <p>
+          Offline report · No external requests<br />Native evidence /
+          Interactive inspection
+        </p>
+      </footer>
+    </div>
+    <!-- prettier-ignore -->
+    <script id="preview-data" type="application/json">@@DATA@@</script>
+    <script>
+      "use strict";
+      const groups = JSON.parse(
+        document.getElementById("preview-data").textContent,
+      );
+      const playbackStops = [];
+      function element(tag, text, className) {
+        const node = document.createElement(tag);
+        if (text !== undefined) node.textContent = text;
+        if (className) node.className = className;
+        return node;
+      }
+      function button(text, label, className) {
+        const node = element("button", text, className);
+        node.type = "button";
+        node.setAttribute("aria-label", label);
+        return node;
+      }
+      function configureMetrics() {
+        const cards = [...document.querySelectorAll(".metrics > div")];
+        const toggle = document.getElementById("metrics-toggle");
+        for (const value of document.querySelectorAll(".metrics dd")) {
+          if (value.textContent.length > 23) value.className = "long";
+        }
+        const setExpanded = (expanded) => {
+          cards.forEach((card, index) => {
+            card.hidden = index >= 4 && !expanded;
+          });
+          toggle.textContent = expanded
+            ? "Show key measurements"
+            : "Show all " + cards.length + " measurements";
+          toggle.setAttribute("aria-expanded", String(expanded));
+        };
+        toggle.hidden = cards.length <= 4;
+        toggle.onclick = () =>
+          setExpanded(toggle.getAttribute("aria-expanded") !== "true");
+        setExpanded(false);
+        return setExpanded;
+      }
+      function configureModes(setExpanded) {
+        const engineering = document.getElementById("engineering-mode");
+        const presentation = document.getElementById("presentation-mode");
+        const select = (active) => {
+          engineering.setAttribute("aria-pressed", String(active));
+          presentation.setAttribute("aria-pressed", String(!active));
+          setExpanded(active);
+          document.querySelectorAll("details").forEach((evidence) => {
+            evidence.open = active;
+          });
+        };
+        engineering.onclick = () => select(true);
+        presentation.onclick = () => select(false);
+      }
+      function showImages(panel, views, selected) {
+        panel.replaceChildren();
+        const visible =
+          selected === "all"
+            ? views
+            : views.filter((view) => view.label === selected);
+        panel.className =
+          "images" +
+          (visible.length > 2 ? " many" : "") +
+          (visible.length === 1 ? " focused" : "");
+        for (const view of visible) {
+          const figure = element("figure");
+          const image = element("img");
+          image.src = view.data;
+          image.alt = view.label;
+          image.decoding = "async";
+          figure.append(image, element("figcaption", view.label));
+          panel.append(figure);
+        }
+      }
+      function addPlayback(play, slider, speed, paint, count) {
+        let timer = null;
+        const stop = () => {
+          clearInterval(timer);
+          timer = null;
+          play.textContent = "Play";
+          play.setAttribute("aria-pressed", "false");
+        };
+        const start = () => {
+          playbackStops.forEach((pause) => pause());
+          play.textContent = "Pause";
+          play.setAttribute("aria-pressed", "true");
+          timer = setInterval(() => {
+            slider.value = (Number(slider.value) + 1) % count;
+            paint();
+          }, Number(speed.value));
+        };
+        play.onclick = () => (timer === null ? start() : stop());
+        speed.onchange = () => {
+          if (timer !== null) start();
+        };
+        slider.oninput = () => {
+          stop();
+          paint();
+        };
+        play.disabled = count < 2;
+        playbackStops.push(stop);
+        return stop;
+      }
+      function playbackSpeed(title) {
+        const select = element("select");
+        select.setAttribute("aria-label", "Playback speed: " + title);
+        const choices = [
+          [1000, "1 frame / s"],
+          [500, "2 frames / s"],
+          [250, "4 frames / s"],
+        ];
+        for (const [value, label] of choices) {
+          const option = element("option", label);
+          option.value = value;
+          select.append(option);
+        }
+        select.value = "500";
+        return select;
+      }
+      function stepControls(group, slider, stop, paint) {
+        const previous = button("←", "Previous frame: " + group.title, "step");
+        const next = button("→", "Next frame: " + group.title, "step");
+        const step = (amount) => {
+          stop();
+          const target = Number(slider.value) + amount;
+          slider.value = Math.max(0, Math.min(group.frames.length - 1, target));
+          paint();
+        };
+        previous.onclick = () => step(-1);
+        next.onclick = () => step(1);
+        previous.disabled = next.disabled = group.frames.length < 2;
+        return [previous, next];
+      }
+      function controls(group, paint) {
+        const row = element("div", undefined, "controls");
+        const slider = element("input");
+        Object.assign(slider, {
+          type: "range",
+          min: 0,
+          max: group.frames.length - 1,
+          value: 0,
+        });
+        slider.setAttribute("aria-label", group.title + " frame");
+        const play = button(
+          "Play",
+          "Play sampled frames: " + group.title,
+          "play",
+        );
+        play.setAttribute("aria-pressed", "false");
+        const speed = playbackSpeed(group.title);
+        const stop = addPlayback(
+          play,
+          slider,
+          speed,
+          paint,
+          group.frames.length,
+        );
+        row.append(
+          play,
+          ...stepControls(group, slider, stop, paint),
+          slider,
+          speed,
+        );
+        return { row, slider };
+      }
+      function fullscreenButton(section, title) {
+        const fullscreen = button("Expand", "Expand " + title);
+        fullscreen.onclick = async () => {
+          try {
+            if (document.fullscreenElement) await document.exitFullscreen();
+            else await section.requestFullscreen();
+          } catch {
+            fullscreen.textContent = "Fullscreen unavailable";
+          }
+        };
+        return fullscreen;
+      }
+      function capturedViews(group, index) {
+        const select = element("select");
+        select.id = "view-" + index;
+        const all = element("option", "All captured views");
+        all.value = "all";
+        select.append(all);
+        const labels = new Set(
+          group.frames.flatMap((frame) =>
+            frame.images.map((view) => view.label),
+          ),
+        );
+        for (const text of labels) {
+          const option = element("option", text);
+          option.value = text;
+          select.append(option);
+        }
+        return select;
+      }
+      function viewTools(group, paint, section, index) {
+        const row = element("div", undefined, "view-tools");
+        const label = element("label", "Inspect");
+        const select = capturedViews(group, index);
+        label.htmlFor = select.id;
+        select.onchange = paint;
+        row.append(label, select);
+        if (section.requestFullscreen)
+          row.append(fullscreenButton(section, group.title));
+        row.append(
+          element(
+            "span",
+            "Recorded frames · Use arrow keys on timeline to step",
+            "hint",
+          ),
+        );
+        return { row, select };
+      }
+      function pointControls(canvas, state, paint) {
+        let drag = null;
+        canvas.onpointerdown = (event) => {
+          drag = [event.clientX, event.clientY];
+          canvas.setPointerCapture(event.pointerId);
+        };
+        canvas.onpointermove = (event) => {
+          if (!drag) return;
+          state.angle += (event.clientX - drag[0]) * 0.01;
+          state.tilt = Math.max(
+            -1.5,
+            Math.min(1.5, state.tilt + (event.clientY - drag[1]) * 0.01),
+          );
+          drag = [event.clientX, event.clientY];
+          paint();
+        };
+        canvas.onpointerup = canvas.onpointercancel = () => {
+          drag = null;
+        };
+        canvas.onkeydown = (event) => {
+          const moves = {
+            ArrowLeft: [-0.1, 0],
+            ArrowRight: [0.1, 0],
+            ArrowUp: [0, -0.1],
+            ArrowDown: [0, 0.1],
+          };
+          if (!moves[event.key]) return;
+          event.preventDefault();
+          state.angle += moves[event.key][0];
+          state.tilt += moves[event.key][1];
+          paint();
+        };
+      }
+      function pointPanel(state, paint) {
+        const panel = element("div", undefined, "point-panel");
+        const header = element("header");
+        const count = element("span");
+        header.append(element("span", "DEPTH → WORLD POINTS"), count);
+        const canvas = element("canvas");
+        Object.assign(canvas, { width: 900, height: 900, tabIndex: 0 });
+        canvas.setAttribute(
+          "aria-label",
+          "Sampled colored points. Drag or use arrow keys to rotate.",
+        );
+        const footer = element("footer");
+        const reset = button("Reset view", "Reset point cloud orientation");
+        reset.onclick = () => {
+          state.angle = 0.6;
+          state.tilt = 0.7;
+          paint();
+        };
+        footer.append(
+          element("span", "Display sample · Drag to rotate"),
+          reset,
+        );
+        panel.append(header, canvas, footer);
+        pointControls(canvas, state, paint);
+        return { panel, canvas, count };
+      }
+      function rotatedPoint(point, center, state) {
+        const x = point[0] - center[0],
+          y = point[1] - center[1],
+          z = point[2] - center[2];
+        const a = x * Math.cos(state.angle) - y * Math.sin(state.angle);
+        const b = x * Math.sin(state.angle) + y * Math.cos(state.angle);
+        return [
+          a,
+          b * Math.sin(state.tilt) - z * Math.cos(state.tilt),
+          b * Math.cos(state.tilt) + z * Math.sin(state.tilt),
+          point.slice(3),
+        ];
+      }
+      function cloud(canvas, points, state) {
+        const context = canvas.getContext("2d");
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        if (!points.length) return;
+        const center = [0, 1, 2].map(
+          (axis) => points.reduce((sum, p) => sum + p[axis], 0) / points.length,
+        );
+        const rotated = points.map((point) =>
+          rotatedPoint(point, center, state),
+        );
+        const radius = rotated.reduce(
+          (value, p) => Math.max(value, Math.abs(p[0]), Math.abs(p[1])),
+          0.01,
+        );
+        const scale = (canvas.height * 0.43) / radius;
+        rotated.sort((a, b) => a[2] - b[2]);
+        for (const point of rotated) {
+          context.fillStyle = "rgb(" + point[3].join(",") + ")";
+          context.fillRect(
+            canvas.width / 2 + point[0] * scale,
+            canvas.height / 2 + point[1] * scale,
+            3,
+            3,
+          );
+        }
+      }
+      function timelineHeading(group, index) {
+        const heading = element("div", undefined, "section-heading");
+        const title = element("div");
+        const number =
+          "VISUAL EVIDENCE / " + String(index + 1).padStart(2, "0");
+        title.append(
+          element("div", number, "section-index"),
+          element("h2", group.title),
+        );
+        heading.append(
+          title,
+          element(
+            "span",
+            group.frames.length + " sampled frames",
+            "frame-count",
+          ),
+        );
+        return heading;
+      }
+      function paintCloud(model) {
+        const frame = model.group.frames[Number(model.control.slider.value)];
+        const points = frame.points || [];
+        cloud(model.points.canvas, points, model.orientation);
+        model.points.count.textContent =
+          points.length.toLocaleString() + " points";
+      }
+      function paintTimeline(model) {
+        const index = Number(model.control.slider.value);
+        const frame = model.group.frames[index];
+        model.label.textContent = frame.label;
+        model.position.textContent = `Frame ${index + 1} / ${model.group.frames.length} · Slideshow`;
+        model.control.slider.setAttribute("aria-valuetext", frame.label);
+        showImages(model.images, frame.images, model.views.select.value);
+        paintCloud(model);
+      }
+      function timelineModel(group, section, index) {
+        const model = { group, orientation: { angle: 0.6, tilt: 0.7 } };
+        model.images = element("div", undefined, "images");
+        model.label = element("output");
+        model.position = element("span");
+        model.control = controls(group, () => paintTimeline(model));
+        model.views = viewTools(
+          group,
+          () => paintTimeline(model),
+          section,
+          index,
+        );
+        model.points = pointPanel(model.orientation, () => paintCloud(model));
+        return model;
+      }
+      function timeline(group, index) {
+        const section = element("section", undefined, "timeline");
+        section.id = "timeline-" + index;
+        section.append(
+          timelineHeading(group, index),
+          element("p", group.note, "scope"),
+        );
+        const model = timelineModel(group, section, index);
+        const visual = element("div", undefined, "visuals");
+        visual.append(model.images);
+        if (group.frames.some((frame) => frame.points && frame.points.length)) {
+          visual.classList.add("with-cloud");
+          visual.append(model.points.panel);
+        }
+        const status = element("div", undefined, "timeline-status");
+        status.append(model.label, model.position);
+        section.append(model.views.row, visual, model.control.row, status);
+        document.getElementById("timelines").append(section);
+        const link = element("a", group.title);
+        link.href = "#" + section.id;
+        document.getElementById("section-nav").append(link);
+        paintTimeline(model);
+      }
+      groups.forEach(timeline);
+      if (!groups.length)
+        document
+          .getElementById("timelines")
+          .append(
+            element(
+              "p",
+              "No accepted media is available for this result. Read the recorded measurements and failure evidence below.",
+              "empty",
+            ),
+          );
+      configureModes(configureMetrics());
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) playbackStops.forEach((stop) => stop());
+      });
+      window.addEventListener("pagehide", () =>
+        playbackStops.forEach((stop) => stop()),
+      );
+    </script>
+  </body>
+</html>
