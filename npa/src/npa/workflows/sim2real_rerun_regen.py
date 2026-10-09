@@ -349,7 +349,8 @@ def _has_factual_heldout_scores(report: dict[str, Any] | None) -> bool:
         return False
     try:
         return all(
-            isinstance(item, dict) and item.get("score") is not None
+            isinstance(item, dict)
+            and item.get("score") is not None
             and math.isfinite(float(item["score"]))
             for item in evaluations
         )
