@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Illustrate optional team mode without connecting to an identity provider or cloud. -->
+<!-- Offline illustration of CLI-first team access; it does not connect to a service, identity provider, or cloud. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -9,7 +9,7 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
     />
-    <title>Workbench · Team access, in action</title>
+    <title>Workbench · Simulated team access</title>
     <style>
       :root {
         --ink: #172339;
@@ -683,7 +683,7 @@
     <div class="shell">
       <aside class="sidebar">
         <div class="brand"><span class="brandmark">w</span>workbench</div>
-        <div class="eyebrow">Team access</div>
+        <div class="eyebrow">Offline team-access illustration</div>
         <nav aria-label="Example sections">
           <button class="active" data-tab="playground">01 &nbsp; Try it</button
           ><button data-tab="access">02 &nbsp; People &amp; access</button
@@ -691,27 +691,28 @@
           ><button data-tab="evidence">04 &nbsp; Proof &amp; boundaries</button>
         </nav>
         <div class="side-note">
-          <strong>A local, interactive example.</strong>
+          <strong>Simulated policy walkthrough.</strong>
           <p>
-            No credentials, cloud calls, telemetry, or external assets. Reset
-            whenever you like.
+            No credentials, cloud calls, telemetry, external assets, or product
+            service. Reset whenever you like.
           </p>
           <button id="reset">Reset example ↺</button>
         </div>
       </aside>
       <main class="main">
         <header class="topbar">
-          <span class="eyebrow">Workbench / Shared execution</span
+          <span class="eyebrow">Workbench / CLI-first shared execution</span
           ><span class="pill amber"
             ><span class="dot"></span>Example · simulated infrastructure</span
           >
         </header>
         <section id="playground" aria-labelledby="title">
           <div class="section-head">
-            <h1 id="title">One team. Clear boundaries.</h1>
+            <h1 id="title">One team. Simulated boundaries.</h1>
             <p class="lead">
-              Use the same cluster without sharing everyone's permissions, GPU
-              budget, or data. Switch people and try the boundaries yourself.
+              This offline page illustrates how local accounts, allocations, and
+              personal key files keep shared execution separate. No real user or
+              infrastructure is represented here.
             </p>
           </div>
           <div class="scenarios" aria-label="Guided scenarios">
@@ -734,7 +735,7 @@
               <small>WORKSPACE</small
               ><strong id="workspace-metric">Robotics</strong
               ><small id="project-metric"
-                >Research project · East cluster</small
+                >Sample project · Sample cluster A</small
               >
             </div>
             <div class="card metric">
@@ -757,11 +758,11 @@
               <div class="controls">
                 <label
                   >ACT AS<select id="person">
-                    <option value="alice">Alice · researcher</option>
-                    <option value="bob">Bob · researcher</option>
-                    <option value="casey">Casey · reader</option>
-                    <option value="dana">Dana · awaiting allocation</option>
-                    <option value="eve">Eve · no grant</option>
+                    <option value="alice">Sample runner A</option>
+                    <option value="bob">Sample runner B</option>
+                    <option value="casey">Sample reader</option>
+                    <option value="dana">Sample pending allocation</option>
+                    <option value="eve">Sample without grant</option>
                   </select></label
                 ><label
                   >WORKSPACE<select id="workspace">
@@ -770,8 +771,8 @@
                   </select></label
                 ><label
                   >CLUSTER<select id="cluster">
-                    <option value="east">East · Research project</option>
-                    <option value="west">West · Pilot project</option>
+                    <option value="east">Sample cluster A</option>
+                    <option value="west">Sample cluster B</option>
                   </select></label
                 ><label
                   >GPUS PER STAGE<select id="gpus">
@@ -785,12 +786,12 @@
               <div class="row">
                 <button class="primary" id="submit">Submit workflow →</button
                 ><button id="retry">Retry last submission</button
-                ><small>Identity comes from the verified login token.</small>
+                ><small>Production CLI/API/SDK sends a personal key file as bearer authentication.</small>
               </div>
               <div id="notice" class="notice" role="status" aria-live="polite">
-                This browser illustrates the flow. GPU jobs and object storage
-                are simulated; real API receipts are in “Proof &amp;
-                boundaries”.
+                All interactive outcomes are simulated. GPU jobs, object
+                storage, accounts, and infrastructure are not live; local code
+                receipts are in “Proof &amp; boundaries”.
               </div>
               <div class="row between">
                 <h3>Your runs</h3>
@@ -818,7 +819,7 @@
               <div class="card">
                 <span class="eyebrow">Your execution boundary</span>
                 <h2 id="boundary-name" style="margin-top: 12px">
-                  Alice / Robotics
+                  Sample runner A / Robotics
                 </h2>
                 <div class="meter" id="gpu-meter"></div>
                 <dl class="facts" id="boundary-facts"></dl>
@@ -848,44 +849,44 @@
             <table>
               <thead>
                 <tr>
-                  <th>Person</th>
-                  <th>External group / role</th>
+                  <th>Sample local account</th>
+                  <th>Local group / role</th>
                   <th>Robotics capacity</th>
                   <th>Vision capacity</th>
-                  <th>Nebius account</th>
+                  <th>Cloud account</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td>Alice</td>
+                  <td>Sample runner A</td>
                   <td>researchers · runner<br />vision-team · runner</td>
                   <td>East 2 · West 1</td>
                   <td>East 1</td>
                   <td>Not required</td>
                 </tr>
                 <tr>
-                  <td>Bob</td>
+                  <td>Sample runner B</td>
                   <td>researchers · runner</td>
                   <td>East 2 · West 1</td>
                   <td>No grant</td>
                   <td>Not required</td>
                 </tr>
                 <tr>
-                  <td>Casey</td>
+                  <td>Sample reader</td>
                   <td>reviewers · reader</td>
                   <td>Can read their own existing runs</td>
                   <td>No grant</td>
                   <td>Not required</td>
                 </tr>
                 <tr>
-                  <td>Dana</td>
+                  <td>Sample pending allocation</td>
                   <td>researchers · runner</td>
                   <td>No allocation yet</td>
                   <td>No grant</td>
                   <td>Not required</td>
                 </tr>
                 <tr>
-                  <td>Eve</td>
+                  <td>Sample without grant</td>
                   <td>No matching group</td>
                   <td>No grant</td>
                   <td>No grant</td>
@@ -896,25 +897,24 @@
           </div>
           <div class="access-grid" style="margin-top: 20px">
             <div class="card">
-              <h2>Offboard Alice</h2>
+              <h2>Offboard sample runner A</h2>
               <p class="muted">
-                A local denylist blocks new API access, even with a previously
-                valid token. It stops later workflow waves after the next policy
-                check.
+                Disabling a local account blocks its personal keys. It stops
+                later workflow waves after the next policy check.
               </p>
               <div class="actions">
-                <button id="disable-alice" class="danger">Disable Alice</button
+                <button id="disable-alice" class="danger">Disable sample runner A</button
                 ><button id="enable-alice">Restore access</button
-                ><button id="operator-stop">Operator: stop Alice's runs</button>
+                ><button id="operator-stop">Operator: stop that sample's runs</button>
               </div>
               <div id="offboard-note" class="notice">
                 Access is enabled. Existing jobs are not destroyed by removing
                 membership.
               </div>
               <p class="footnote">
-                Cloud keys already delivered to a job need separate revocation
-                in cloud IAM. An identity-provider group change alone does not
-                revoke an admitted workflow's group snapshot.
+                Workload storage keys already delivered to a job need separate
+                revocation in cloud IAM. A local group change does not revoke an
+                admitted workflow's recorded authorization snapshot.
               </p>
             </div>
             <div class="card">
@@ -925,12 +925,12 @@
                 operations, not a shipped admin UI.
               </p>
               <pre>
-npa workbench team storage-create --project PROJECT \
-  --endpoint https://objects.example.com --output-dir /private/person
+npa workbench team account create --config /private/team.yaml \
+  --name sample-runner-a --group researchers
 npa workbench team render --config /private/team.yaml \
   --output-dir /private/rendered
 npa workbench team enroll --config /private/team.yaml \
-  --workspace robotics --cluster east --subject EXTERNAL_SUBJECT</pre>
+  --workspace robotics --cluster east --subject "$WORKBENCH_USER_ID"</pre>
             </div>
           </div>
           <div class="notice">
@@ -948,10 +948,10 @@ npa workbench team enroll --config /private/team.yaml \
           </p>
           <div class="flow">
             <div class="card">
-              <span class="pill">1</span><b>Existing identity</b>
+              <span class="pill">1</span><b>Personal key file</b>
               <p>
-                Company issuer signs a token. The gateway checks signature,
-                audience, subject, expiry, and groups.
+                A locally issued, revocable key authenticates the existing CLI,
+                API, and SDK. No browser sign-in is involved.
               </p>
             </div>
             <div class="card">
@@ -1010,7 +1010,7 @@ npa workbench team enroll --config /private/team.yaml \
 npa workbench team export-kubeconfig --config /private/team.yaml \
   --output-path /private/sky-kubeconfig.yaml
 npa workbench team render-service --namespace workbench-system \
-  --image private-registry.example.com/team:reviewed \
+  --image registry.example.invalid/team:reviewed \
   --secret team-config --claim team-state \
   --output-path /private/team-service.yaml</pre>
             </div>
@@ -1027,7 +1027,7 @@ npa workbench team run "$RUN_ID" --action cancel</pre>
               <pre>
 from npa.sdk.workbench.team import TeamClient, SubmitRequest
 
-client = TeamClient(endpoint, identity_token)
+client = TeamClient(endpoint, personal_key)
 try:
     result = client.submit(SubmitRequest(
         workspace="robotics", cluster="east",
@@ -1058,10 +1058,10 @@ finally:
                   </tr>
                   <tr>
                     <td>Identity + groups</td>
-                    <td>Verified external tokens mapped to workspaces</td>
+                    <td>Local accounts, groups, and personal key files</td>
                     <td>
-                      Optional live login portal; no directory sync or automatic
-                      personal provisioning
+                      No portal, directory sync, or automatic personal
+                      provisioning; optional external linking is explicit
                     </td>
                   </tr>
                   <tr>
@@ -1105,9 +1105,10 @@ finally:
         <section id="evidence" hidden>
           <h1>See what is actually proved.</h1>
           <p class="lead">
-            The interactive controls above simulate infrastructure. The receipts
-            below are captured from the actual team API and policy code using
-            synthetic signed identities.
+            The interactive controls above simulate every account, allocation,
+            job, and infrastructure outcome. The receipts below are captured
+            offline from local team API and policy code using synthetic local
+            accounts and access keys.
           </p>
           <div id="evidence-summary" class="notice"></div>
           <div id="receipts" class="evidence-grid"></div>
@@ -1125,10 +1126,10 @@ finally:
                 <tbody>
                   <tr>
                     <td>Identity and group access</td>
-                    <td>Switch Alice, Casey, Dana, Eve</td>
+                    <td>Switch sample accounts</td>
                     <td>
-                      Recorded JWT/API policy checks; this offline page does not
-                      perform SSO login
+                      Recorded local-key/API policy checks; this offline page
+                      does not authenticate a user or contact a service
                     </td>
                   </tr>
                   <tr>
@@ -1172,7 +1173,7 @@ finally:
                   </tr>
                   <tr>
                     <td>Offboarding</td>
-                    <td>Disable Alice; operator stop</td>
+                    <td>Disable a sample account; operator stop</td>
                     <td>
                       Real access revocation receipt; cloud key revocation
                       remains separate
@@ -1214,8 +1215,9 @@ finally:
           </div>
         </section>
         <footer>
-          Optional Workbench team mode · all people and resources in this
-          example are synthetic · no browser action provisions infrastructure.
+          Optional Workbench team mode · all people, keys, resources, and
+          outcomes in this example are synthetic · no control contacts or
+          provisions infrastructure.
         </footer>
       </main>
     </div>
@@ -1259,13 +1261,13 @@ finally:
       "title": "Placement is server-bound",
       "observed": "True",
       "passed": true,
-      "detail": "The actual workflow policy binds resources to the authenticated person's cluster context."
+      "detail": "The actual workflow policy binds resources to the authenticated local user's cluster context."
     },
     {
       "title": "Verified identity can submit",
       "observed": "HTTP 202",
       "passed": true,
-      "detail": "Actual signed JWT verification, authorization, parser, and run ledger; execution adapter is simulated."
+      "detail": "Actual local-key verification, authorization, parser, and run ledger; execution adapter is simulated."
     },
     {
       "title": "Identical retry returns the same run",
@@ -1280,100 +1282,100 @@ finally:
       "detail": "An existing idempotency key cannot silently become a different workflow."
     },
     {
-      "title": "Proxy headers do not authenticate",
+      "title": "Missing access key is rejected",
       "observed": "HTTP 401",
       "passed": true,
-      "detail": "Recorded response from the actual team API with a synthetic identity."
+      "detail": "Recorded response from the actual team API with a synthetic local key."
     },
     {
-      "title": "Wrong token audience is rejected",
+      "title": "Unknown personal key is rejected",
       "observed": "HTTP 401",
       "passed": true,
-      "detail": "Recorded response from the actual team API with a synthetic identity."
+      "detail": "Recorded response from the actual team API with a synthetic local key."
     },
     {
-      "title": "Missing workspace group is rejected",
+      "title": "Unassigned local user is rejected",
       "observed": "HTTP 403",
       "passed": true,
-      "detail": "Recorded response from the actual team API with a synthetic identity."
+      "detail": "Recorded response from the actual team API with a synthetic local key."
     },
     {
       "title": "Reader cannot submit",
       "observed": "HTTP 403",
       "passed": true,
-      "detail": "Recorded response from the actual team API with a synthetic identity."
+      "detail": "Recorded response from the actual team API with a synthetic local key."
     },
     {
       "title": "Group membership without allocation",
       "observed": "HTTP 403",
       "passed": true,
-      "detail": "Recorded response from the actual team API with a synthetic identity."
+      "detail": "Recorded response from the actual team API with a synthetic local key."
     },
     {
       "title": "Another person cannot access status",
       "observed": "HTTP 404",
       "passed": true,
-      "detail": "Bob cannot operate Alice's run, even though both have the same workspace group."
+      "detail": "A different local user cannot operate this sample runner's run, even with the same workspace group."
     },
     {
       "title": "Another person cannot access logs",
       "observed": "HTTP 404",
       "passed": true,
-      "detail": "Bob cannot operate Alice's run, even though both have the same workspace group."
+      "detail": "A different local user cannot operate this sample runner's run, even with the same workspace group."
     },
     {
       "title": "Another person cannot access artifacts",
       "observed": "HTTP 404",
       "passed": true,
-      "detail": "Bob cannot operate Alice's run, even though both have the same workspace group."
+      "detail": "A different local user cannot operate this sample runner's run, even with the same workspace group."
     },
     {
       "title": "Another person cannot access artifacts/output.txt",
       "observed": "HTTP 404",
       "passed": true,
-      "detail": "Bob cannot operate Alice's run, even though both have the same workspace group."
+      "detail": "A different local user cannot operate this sample runner's run, even with the same workspace group."
     },
     {
       "title": "Another person cannot access cancel",
       "observed": "HTTP 404",
       "passed": true,
-      "detail": "Bob cannot operate Alice's run, even though both have the same workspace group."
+      "detail": "A different local user cannot operate this sample runner's run, even with the same workspace group."
     },
     {
       "title": "Another person cannot access resume",
       "observed": "HTTP 404",
       "passed": true,
-      "detail": "Bob cannot operate Alice's run, even though both have the same workspace group."
+      "detail": "A different local user cannot operate this sample runner's run, even with the same workspace group."
     },
     {
       "title": "Explicit second cluster allocation",
       "observed": "HTTP 202",
       "passed": true,
-      "detail": "The same external person can target a separately allocated cluster; no cloud account is required."
+      "detail": "The same local account can target a separately allocated cluster; no cloud account is required."
     },
     {
       "title": "Local offboarding takes effect",
-      "observed": "HTTP 403",
+      "observed": "HTTP 401",
       "passed": true,
-      "detail": "The actual service checks the current denylist. Already issued cloud keys are not revoked by this check."
+      "detail": "The actual account registry rejects disabled local users. Already issued cloud keys are not revoked by this check."
     }
   ],
   "source_sha256": "684ba88e42adf7f6e0e0fca100a235f4563a2054bf4a7109d434a442c68aea32",
-  "scope": "20 real local API and policy checks passed. Synthetic JWT issuer; simulated execution and enrollment. No Kubernetes or cloud-storage calls."
+  "scope": "20 local API and policy checks passed. Synthetic local accounts and access keys; simulated execution and enrollment. No Kubernetes or cloud-storage calls."
 }</script>
     <script>
       /* Keep illustration state in this page; production authorization remains in the gateway. */
       const $ = (id) => document.getElementById(id);
       const people = {
         alice: {
-          name: "Alice",
+          name: "Sample runner A",
           groups: ["researchers", "vision-team"],
           role: "runner",
         },
-        bob: { name: "Bob", groups: ["researchers"], role: "runner" },
-        casey: { name: "Casey", groups: ["reviewers"], role: "reader" },
-        dana: { name: "Dana", groups: ["researchers"], role: "runner" },
-        eve: { name: "Eve", groups: [], role: "none" },
+        bob: { name: "Sample runner B", groups: ["researchers"], role: "runner" },
+        casey: { name: "Sample reader", groups: ["reviewers"], role: "reader" },
+        dana: { name: "Sample pending allocation", groups: ["researchers"], role: "runner" },
+        eve: { name: "Sample without grant", groups: [], role: "none" },
       };
       const stages = [
         "Prepare data",
@@ -1699,8 +1701,8 @@ finally:
           state.workspace === "robotics" ? "Robotics" : "Vision";
         $("project-metric").textContent =
           state.cluster === "east"
-            ? "Research project · East cluster"
-            : "Pilot project · West cluster";
+            ? "Sample project · Sample cluster A"
+            : "Sample project · Sample cluster B";
         $("gpu-metric").textContent = `${used} / ${limit}`;
         $("boundary-name").textContent =
           `${person.name} / ${$("workspace-metric").textContent}`;
@@ -1720,7 +1722,7 @@ finally:
       }
       function renderBoundaryFacts(person, limit) {
         const facts = [
-          ["Identity", `${person.name} · external issuer`],
+          ["Identity", `${person.name} · local account`],
           ["Groups", person.groups.join(", ") || "No matching group"],
           ["Namespace", limit ? namespace() : "Not allocated"],
           ["Worker token", "Not mounted"],
@@ -1826,18 +1828,18 @@ finally:
         workflow:
           "Submit, advance stages, then inspect logs and artifacts. Try a retry with the same key.",
         quota:
-          "Alice has two GPUs in East. A third concurrent request is blocked; Bob still has his own allocation.",
+          "Sample runner A has two simulated GPUs in sample cluster A. A third concurrent request is blocked; sample runner B still has a separate allocation.",
         projects:
-          "The same person can use two projects, but only their explicit cluster allocations. Vision grants do not spill over to Bob.",
+          "The same sample account can use two projects, but only its explicit cluster allocations. Vision grants do not spill over to another account.",
         privacy:
-          "Alice owns a run. You are now Bob: her run is absent from your list and direct access is denied.",
+          "Sample runner A owns a run. Sample runner B cannot list or directly access it.",
         recovery:
           "A gateway restart does not justify a second launch. Resume the existing recorded job.",
         lost: "A launch may have happened, but its acknowledgement is missing. Automatic retry would risk a duplicate.",
         offboard:
-          "Alice has a running job. Disable her access under People & access, then explicitly stop the job as an operator.",
+          "A sample runner has a running job. Disable the account, then explicitly stop the job as an operator.",
         reader:
-          "Casey has a reader grant. Submit is denied, and no one else’s runs become visible.",
+          "The sample reader has a reader grant. Submit is denied, and no one else’s runs become visible.",
       };
       function scenario(name) {
         state = fresh();
@@ -1875,14 +1877,14 @@ finally:
         if (name === "privacy")
           showDialog(
             "Another person’s run is private",
-            "Illustrated API response: 404 · run not found\n\nBob cannot read Alice’s status, logs, or artifacts, or cancel/resume her run. See the recorded real API checks under Proof & boundaries.",
+            "Illustrated API response: 404 · run not found\n\nSample runner B cannot read sample runner A’s status, logs, or artifacts, or cancel/resume that run. See the recorded local checks under Proof & boundaries.",
           );
       }
       function offboard(disabled) {
         state.disabled = disabled;
         $("offboard-note").textContent = disabled
-          ? "Alice is disabled. New access and future waves are refused; existing jobs and cloud keys need separate action."
-          : "Alice’s local access is enabled again.";
+          ? "Sample runner A is disabled. New access and future waves are refused; existing jobs and workload storage keys need separate action."
+          : "Sample runner A’s local access is enabled again.";
         event(
           disabled ? "Access revoked" : "Access restored",
           "Local policy is checked again for every API operation.",

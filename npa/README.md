@@ -12,18 +12,17 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
-Optional [team mode](../docs/workbench/team-access.md) adds authenticated shared
-execution through `npa workbench team` and `npa.sdk.workbench.team`. Existing users
-and groups receive workspace grants, personal namespaces, explicit GPU quotas,
-and scoped artifact storage. The guide covers configuration, credentials, CPU
-service deployment, and the live qualification required before production.
-Set `account_namespace` to enable persistent local users and personal access
-keys through `npa workbench team account`. Optional `browser_login` serves the
-live portal; neither Nebius SSO nor Keycloak is required. An external identity
-provider can be linked later without changing local ownership or allocations.
-`npa workbench team whoami` and
-`TeamClient.whoami()` report the same personal permissions; see the
-[identity setup and session guide](../docs/workbench/team-identity.md).
+Optional [team mode](../docs/workbench/team-access.md) adds CLI/API/SDK shared
+execution through `npa workbench team` and `npa.sdk.workbench.team`.
+Administrators create local users and groups, then assign explicit personal
+namespaces, GPU allocations, and scoped artifact storage. Users receive
+revocable personal key files for submit, status, logs, and artifacts; they do
+not receive scheduler or cluster credentials. Set `account_namespace` once to
+enable persistent local accounts through `npa workbench team account`.
+External JWT identities can be explicitly linked later without changing local
+ownership or allocations. Team mode has no standalone portal or browser-login
+flow. `npa workbench team whoami` and `TeamClient.whoami()` report the same
+personal permissions; see the [local account and key guide](../docs/workbench/team-identity.md).
 
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;

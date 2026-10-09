@@ -1,4 +1,4 @@
-"""Capture real local team API checks in a standalone illustrative HTML example."""
+"""Capture offline local team API checks in a standalone illustrative HTML example."""
 
 from __future__ import annotations
 
@@ -10,15 +10,12 @@ from pathlib import Path
 import re
 import tempfile
 import threading
-import time
 from types import SimpleNamespace
 
-import jwt
-from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from npa.workbench.team.api import create_app
-from npa.workbench.team.authentication import TokenVerifier
+from npa.workbench.team.accounts import Accounts
 from npa.workbench.team.authorization import bind_execution
 from npa.workbench.team.errors import AuthorizationError
 from npa.workbench.team.manifests import execution_manifests
@@ -28,14 +25,10 @@ from npa.workbench.team.storage import authorize_uri
 from npa.workbench.team.workflow_policy import prepare_document
 
 
-def _configuration(root):
+def _configuration(root, subjects):
     return TeamConfig.model_validate(
         {
-            "identity": {
-                "issuer": "https://identity.example.test",
-                "audience": "workbench",
-                "jwks_url": "https://identity.example.test/jwks",
-            },
+            "account_namespace": "00000000-0000-4000-8000-000000000001",
             "state_dir": root / "state",
             "sky_python": root / "unused-interpreter",
             "sky_endpoint": "http://127.0.0.1:46580",
@@ -55,7 +48,8 @@ def _configuration(root):
                     "gpu_limit": 6,
                     "gpu_limits": {"east": 4, "west": 2},
                     "allocations": [
-                        _allocation(root, name) for name in ("alice", "bob")
+                        _allocation(root, name, subjects[name])
+                        for name in ("runner_a", "runner_b")
                     ],
                 }
             },
@@ -63,14 +57,14 @@ def _configuration(root):
     )
 
 
-def _allocation(root, name):
+def _allocation(root, name, subject):
     return {
-        "subject": name,
+        "subject": subject,
         "gpu_limit": 3,
         "clusters": {"east": 2, "west": 1},
         "storage": {
             "endpoint": "https://objects.example.test",
-            "bucket": f"example-{name}",
+            "bucket": f"example-{name.replace('_', '-')}",
             "prefix": "personal",
             "principal": f"example-principal-{name}",
             "credentials_file": root / f"unused-{name}.json",
@@ -98,28 +92,23 @@ def _workflow():
     }
 
 
-def _identity(provider):
-    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    keys = SimpleNamespace(
-        get_signing_key_from_jwt=lambda token: SimpleNamespace(key=private.public_key())
-    )
-    verifier = TokenVerifier(provider, jwks_client=keys)
+def _local_credentials(config):
+    accounts = Accounts(config)
+    users = {
+        "runner_a": accounts.create("sample-runner-a", ["researchers"]),
+        "runner_b": accounts.create("sample-runner-b", ["researchers"]),
+        "reader": accounts.create("sample-reader", ["reviewers"]),
+        "pending": accounts.create("sample-pending", ["researchers"]),
+        "unassigned": accounts.create("sample-unassigned"),
+    }
+    keys = {
+        name: accounts.issue_key(user["id"])[1] for name, user in users.items()
+    }
 
-    def headers(subject="alice", groups=None, **overrides):
-        claims = {
-            "iss": provider.issuer,
-            "aud": provider.audience,
-            "sub": subject,
-            "iat": int(time.time()),
-            "exp": int(time.time()) + 300,
-            "groups": ["researchers"] if groups is None else groups,
-            **overrides,
-        }
-        return {
-            "Authorization": "Bearer " + jwt.encode(claims, private, algorithm="RS256")
-        }
+    def headers(name="runner_a"):
+        return {"Authorization": "Bearer " + keys[name]}
 
-    return verifier, headers
+    return accounts, users, headers
 
 
 def _record(checks, title, observed, expected, detail):
@@ -141,7 +130,7 @@ def _http(checks, client, title, method, path, expected, detail, **kwargs):
     return response
 
 
-def _api_checks(client, headers, checks, policy):
+def _api_checks(client, headers, checks, accounts, users):
     request = {
         "workspace": "robotics",
         "cluster": "east",
@@ -158,19 +147,19 @@ def _api_checks(client, headers, checks, policy):
         "POST",
         "/v1/runs",
         202,
-        "The same external person can target a separately allocated cluster; no cloud account is required.",
+        "The same local account can target a separately allocated cluster; no cloud account is required.",
         headers=headers(),
         json={**request, "cluster": "west", "idempotency_key": "second-cluster"},
     )
-    policy[0] = policy[0].model_copy(update={"disabled_subjects": ("alice",)})
+    accounts.update(users["runner_a"]["id"], disabled=True)
     _http(
         checks,
         client,
         "Local offboarding takes effect",
         "GET",
         f"/v1/runs/{run_id}",
-        403,
-        "The actual service checks the current denylist. Already issued cloud keys are not revoked by this check.",
+        401,
+        "The actual account registry rejects disabled local users. Already issued cloud keys are not revoked by this check.",
         headers=headers(),
     )
 
@@ -183,7 +172,7 @@ def _submission_checks(client, headers, checks, request):
         "POST",
         "/v1/runs",
         202,
-        "Actual signed JWT verification, authorization, parser, and run ledger; execution adapter is simulated.",
+        "Actual local-key verification, authorization, parser, and run ledger; execution adapter is simulated.",
         headers=headers(),
         json=request,
     )
@@ -214,11 +203,15 @@ def _submission_checks(client, headers, checks, request):
 
 def _identity_checks(client, headers, checks, request):
     cases = [
-        ("Proxy headers do not authenticate", {"X-Auth-Request-Email": "alice"}, 401),
-        ("Wrong token audience is rejected", headers(aud="another-application"), 401),
-        ("Missing workspace group is rejected", headers("eve", []), 403),
-        ("Reader cannot submit", headers("casey", ["reviewers"]), 403),
-        ("Group membership without allocation", headers("dana"), 403),
+        ("Missing access key is rejected", {}, 401),
+        (
+            "Unknown personal key is rejected",
+            {"Authorization": "Bearer npa_wb_" + "x" * 43},
+            401,
+        ),
+        ("Unassigned local user is rejected", headers("unassigned"), 403),
+        ("Reader cannot submit", headers("reader"), 403),
+        ("Group membership without allocation", headers("pending"), 403),
     ]
     for title, authentication, expected in cases:
         _http(
@@ -228,7 +221,7 @@ def _identity_checks(client, headers, checks, request):
             "POST",
             "/v1/runs",
             expected,
-            "Recorded response from the actual team API with a synthetic identity.",
+            "Recorded response from the actual team API with a synthetic local key.",
             headers=authentication,
             json=request,
         )
@@ -251,15 +244,12 @@ def _ownership_checks(client, headers, checks, run_id):
             method,
             f"/v1/runs/{run_id}{suffix}",
             404,
-            "Bob cannot operate Alice's run, even though both have the same workspace group.",
-            headers=headers("bob"),
+            "A different local user cannot operate this sample runner's run, even with the same workspace group.",
+            headers=headers("runner_b"),
         )
 
 
-def _boundary_checks(config, checks):
-    actor = Actor(
-        issuer=config.identity.issuer, subject="alice", groups={"researchers"}
-    )
+def _boundary_checks(config, checks, actor):
     binding = bind_execution(config, actor, "robotics", "east")
     _manifest_checks(binding, checks)
     _artifact_checks(binding, checks)
@@ -269,7 +259,7 @@ def _boundary_checks(config, checks):
         "Placement is server-bound",
         prepared["resources"]["cpu"]["region"].startswith(binding.namespace),
         True,
-        "The actual workflow policy binds resources to the authenticated person's cluster context.",
+        "The actual workflow policy binds resources to the authenticated local user's cluster context.",
     )
 
 
@@ -296,7 +286,7 @@ def _manifest_checks(binding, checks):
 def _artifact_checks(binding, checks):
     try:
         authorize_uri(
-            "s3://example-bob/personal/output.txt", binding.allocation.storage
+            "s3://example-runner-b/personal/output.txt", binding.allocation.storage
         )
     except AuthorizationError:
         denied = True
@@ -311,11 +301,23 @@ def _artifact_checks(binding, checks):
     )
 
 
-def _capture(root):
-    policy = [_configuration(root)]
-    verifier, headers = _identity(policy[0].identity)
-    release = threading.Event()
+def _active_policy(root, users):
+    policy = _configuration(
+        root,
+        {
+            "runner_a": users["runner_a"]["id"],
+            "runner_b": users["runner_b"]["id"],
+        },
+    )
+    actor = Actor(
+        issuer=policy.principal_issuer,
+        subject=users["runner_a"]["id"],
+        groups=frozenset({"researchers"}),
+    )
+    return policy, actor
 
+
+def _simulated_service(root, policy, release):
     def engine(*args, **kwargs):
         release.wait()
         return SimpleNamespace(status="succeeded")
@@ -323,23 +325,45 @@ def _capture(root):
     def backend(*args):
         return SimpleNamespace(root=root)
 
-    service = TeamService(
-        lambda: policy[0],
+    return TeamService(
+        lambda: policy,
         engine=engine,
         backend_factory=backend,
         enrollment_check=lambda binding: None,
     )
+
+
+def _capture(root):
+    provisional = _configuration(
+        root, {"runner_a": "pending-runner-a", "runner_b": "pending-runner-b"}
+    )
+    accounts, users, headers = _local_credentials(provisional)
+    policy, actor = _active_policy(root, users)
+    release = threading.Event()
+    service = _simulated_service(root, policy, release)
     checks = []
     try:
-        with TestClient(create_app(None, service=service, verifier=verifier)) as client:
-            _boundary_checks(policy[0], checks)
-            _api_checks(client, headers, checks, policy)
+        with TestClient(create_app(None, service=service)) as client:
+            _boundary_checks(policy, checks, actor)
+            _api_checks(client, headers, checks, accounts, users)
     finally:
         workers = list(service._workers.values())
         release.set()
         for worker in workers:
             worker.join()
     return checks
+
+
+def _evidence(repository, checks):
+    sources = repository / "npa/src/npa/workbench/team"
+    fingerprint = hashlib.sha256(
+        b"".join(path.read_bytes() for path in sorted(sources.glob("*.py")))
+    ).hexdigest()
+    return {
+        "checks": checks,
+        "source_sha256": fingerprint,
+        "scope": f"{len(checks)} local API and policy checks passed. Synthetic local accounts and access keys; simulated execution and enrollment. No Kubernetes or cloud-storage calls.",
+    }
 
 
 def main():
@@ -361,15 +385,7 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="npa-team-example-") as directory:
         checks = _capture(Path(directory))
-    sources = repository / "npa/src/npa/workbench/team"
-    fingerprint = hashlib.sha256(
-        b"".join(path.read_bytes() for path in sorted(sources.glob("*.py")))
-    ).hexdigest()
-    evidence = {
-        "checks": checks,
-        "source_sha256": fingerprint,
-        "scope": f"{len(checks)} real local API and policy checks passed. Synthetic JWT issuer; simulated execution and enrollment. No Kubernetes or cloud-storage calls.",
-    }
+    evidence = _evidence(repository, checks)
     encoded = json.dumps(evidence, indent=2).replace("<", "\\u003c")
     document, count = re.subn(
         r'(<script type="application/json" id="evidence-data">).*?(</script>)',

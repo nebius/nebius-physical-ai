@@ -42,7 +42,7 @@ async function capacityAndPrivacy(page) {
   await contains(page, "#run-count", /0 visible/);
   await page.click("#submit");
   await contains(page, "#run-count", /1 visible/);
-  await contains(page, "#boundary-name", /Bob/);
+  await contains(page, "#boundary-name", /Sample runner B/);
   await scenario(page, "privacy");
   await contains(page, "#dialog-body", /404/);
   await page.click("#close-dialog");
@@ -121,6 +121,11 @@ async function evidenceAndMobile(page) {
   }
 }
 
+async function simulatedOnly(page) {
+  await contains(page, ".topbar", /simulated infrastructure/);
+  await contains(page, "#notice", /All interactive outcomes are simulated/);
+}
+
 test("team example covers access, quotas, recovery, and offboarding offline", async () => {
   const browser = await chromium.launch({ channel: "chrome", headless: true });
   const errors = [],
@@ -134,6 +139,7 @@ test("team example covers access, quotas, recovery, and offboarding offline", as
       if (/^https?:/.test(request.url())) outbound.push(request.url());
     });
     await page.goto(example);
+    await simulatedOnly(page);
     await happyPath(page);
     await capacityAndPrivacy(page);
     await allocationAndRoleChecks(page);

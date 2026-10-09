@@ -6,13 +6,16 @@ Use `npa workbench <tool> <command>` for a capability and
 `npa workbench workflow` for a pipeline. Tools exchange artifacts through S3;
 Python and HTTP access follow each tool's documented contract.
 
-[Optional team mode](team-access.md) adds authenticated workspace access, personal
-GPU allocations and artifact storage for shared clusters, with a CPU gateway and
-private SkyPilot service. Its deployment still requires live qualification.
-Start with [local users and personal access keys](team-identity.md); SSO and
-Keycloak are optional, and explicit later linking preserves account ownership.
-The [interactive team example](../demos/team-access.html) illustrates the complete
-flow with synthetic infrastructure and recorded local API checks.
+[Optional team mode](team-access.md) adds shared execution through the existing
+CLI, API, and SDK. Administrators create local users/groups and explicit personal
+GPU allocations and artifact storage; users use revocable personal key files and
+never receive scheduler or cluster credentials. The CPU gateway and private
+SkyPilot service still require live qualification. Start with [local users and
+personal access keys](team-identity.md). External identities can be explicitly
+linked later without changing local ownership; there is no standalone portal or
+browser-login flow. The [offline team example](../demos/team-access.html)
+illustrates synthetic policy outcomes and recorded local checks, not a deployed
+service.
 
 PAIDF workflows select repaired public Cosmos3, Evaluator, and Curator
 candidates by immutable digest while the historical releases remain

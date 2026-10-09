@@ -1,284 +1,273 @@
 # Optional Workbench team mode
 
-Team mode adds an authenticated gateway for shared Kubernetes clusters. Local
-Workbench accounts or external identities receive workspace grants; each allocated
-person has a worker namespace, an explicit GPU quota, and a dedicated
-storage principal and bucket. Every stage stays inside its run's allocation.
+Team mode gives a shared Kubernetes installation a small authenticated execution
+boundary. Administrators create persistent local accounts, assign local groups
+and explicit allocations, and operate the service. Users keep using the
+existing CLI, HTTP API, or Python SDK with a personal access-key file.
 
-This implementation requires live deployment qualification before production.
-Local operator commands retain their existing behavior. Team users must use the
-gateway and must not receive its credentials or access to its private SkyPilot
-API. Cluster administrators remain trusted administrators.
+This is deliberately not a standalone Workbench portal or browser-login
+product. There is no self-service signup, browser session, cloud-account
+provisioning, or direct user access to the private scheduler.
 
-## Identity, projects, and configuration
+Each enrolled allocation has a personal worker namespace, an explicit
+concurrent-GPU cap, and a separately scoped storage principal and bucket. A
+workspace grant permits a role; an allocation supplies the cluster capacity and
+storage scope needed to submit. Both are required for execution.
 
-For a setup without SSO, configure a permanent `account_namespace` and create
-local users with `npa workbench team account`. Personal access keys authenticate
-API/CLI/SDK requests and browser sessions. Optional group membership is managed
-by the administrator. Follow the [local account setup guide](team-identity.md)
-for private key delivery, immediate revocation, and later SSO linking.
-Local users retain the same ownership ID when their login method changes.
+## Responsibilities and boundaries
 
-For external login, the gateway verifies JWT signatures, issuer, audience, subject and expiration
-against an administrator-configured HTTPS JWKS endpoint. It requires `iss`,
-`aud`, `sub`, `iat`, and `exp`. Groups must be a list of strings. RS256 and ES256
-are supported. Proxy email headers and request-body identities confer no access.
-Obtain a token for the Workbench audience through the organization's existing
-login flow. With local accounts enabled, an explicit operator-created link maps
-the verified issuer/subject to the permanent Workbench user. Local grants and
-groups remain authoritative. Configurations with only `identity` retain the
-legacy external-identity and group behavior.
+| Role | Uses | Does not receive |
+| --- | --- | --- |
+| Administrator | `npa workbench team account`, policy configuration, enrollment, and service deployment | User keys, worker tokens, or a user-facing portal |
+| User | A personal key file with the CLI, API, or SDK | Scheduler, Kubernetes, or administrator credentials |
+| Team service | TLS gateway, durable ownership ledger, and loopback private scheduler | A public scheduler API or a per-user controller |
 
-A workspace can span clusters in different projects or clouds. Users need
-workspace access, not a Nebius account. Membership in one workspace grants
-nothing in another. A compatible Nebius issuer can be configured after verifying
-its tokens and claims; Nebius IAM roles and SAML assertions are not automatically
-translated. There is no automatic Nebius membership synchronization.
+The gateway authorizes every request against the current local account and
+policy. Users can see and operate only their own runs. A reader can inspect only
+their own existing runs; a runner also needs an allocation before submitting.
+Group membership by itself does not create storage, a namespace, or GPU
+capacity.
 
-`GET /v1/me`, `npa workbench team whoami`, and `TeamClient.whoami()` report the
-verified identity and its current workspace permissions. Only the
-person's own allocations are returned. Membership without an allocation is
-reported explicitly and does not authorize job submission.
+The service is a trusted administrator of enrolled worker namespaces. Worker
+isolation protects users from other workers; it does not isolate a compromised
+gateway. The deployment and its workload boundaries still require live
+qualification before production use.
 
-Keep configuration and credentials private, and use absolute file paths. Example GPU values below are
-illustrative administrator choices, not defaults.
+## Administrator: establish local accounts and policy
+
+Set `account_namespace` once when creating an installation. It is the stable
+ownership domain for local accounts, allocations, runs, and explicitly linked
+external identities. Keep it unchanged for the life of the installation.
+
+Use private, absolute paths for state and credentials. The placeholders below
+are illustrative and are not an inventory of a real installation.
 
 ```yaml
 api_version: npa.team/v1
-identity:
-  issuer: https://identity.example.com
-  audience: workbench
-  jwks_url: https://identity.example.com/.well-known/jwks.json
-  groups_claim: groups
-  algorithms: [RS256]
-state_dir: /state/team
+account_namespace: <generate-and-retain-one-uuid>
+state_dir: /private/npa-team/state
 sky_endpoint: http://127.0.0.1:46580
-sky_python: /opt/sky/bin/python
-disabled_subjects: []
+sky_python: /private/npa-team/sky/bin/python
 clusters:
   training:
     context: training
-    kubeconfig: /etc/npa-team/training.yaml
+    kubeconfig: /private/npa-team/training-kubeconfig.yaml
 workspaces:
   robotics:
     grants:
-      - {kind: group, value: robotics-researchers, role: runner}
+      - {kind: group, value: researchers, role: runner}
+      - {kind: group, value: reviewers, role: reader}
     gpu_limit: 2
     gpu_limits: {training: 2}
     allocations:
-      - subject: example-external-subject
-        gpu_limit: 2
-        clusters: {training: 2}
+      - subject: <stable-user-id-from-account-create>
+        gpu_limit: 1
+        clusters: {training: 1}
         storage:
-          endpoint: https://objects.example.com
-          bucket: example-personal-artifacts
+          endpoint: https://objects.example.invalid
+          bucket: example-user-artifacts
           prefix: personal
-          credentials_file: /etc/npa-team/person-storage.json
-          principal: example-personal-storage-principal
-        shared_inputs: []
+          principal: example-user-storage-principal
+          credentials_file: /private/npa-team/user-storage.json
 ```
 
-The example above uses the legacy external-identity configuration. For local
-accounts, replace `identity` with `account_namespace` and use permanent user IDs
-in allocation subjects. `grants` select local user IDs and local groups in that
-mode; legacy grants select external `subject` or `group` values. Roles `reader`, `runner`,
-and `admin` are cumulative; run visibility remains personal for all three.
-Membership does not mint credentials or assign capacity: administrators add the
-person's allocation. GPU values are integers, including zero for CPU-only access.
-Personal cluster allocations must fit the person's `gpu_limit`; their workspace
-sums must fit `gpu_limits`, whose sum must fit the workspace `gpu_limit`.
-These are concurrent whole-NVIDIA-GPU caps, not reservations, GPU-hour budgets,
-MIG allocations, or fair queues.
-Reapply enrollment after quota changes; existing use can outlast a quota reduction.
-
-The scheduler uses the explicitly enrolled kubeconfig for each cluster. Default
-worker network policies allow traffic inside the same personal namespace,
-cluster DNS, and public HTTP/HTTPS. Private registries, private object endpoints,
-nonstandard DNS labels, or other private services require reviewed policy changes.
-Workers have no Kubernetes API credentials and cannot contact the private scheduler.
-
-Each allocation requires a distinct storage principal and bucket, with cloud IAM
-allowing only its bucket and explicit shared read-only inputs. Credential files
-are mode `0600` JSON with `aws_access_key_id`, `aws_secret_access_key`, and optional
-`aws_session_token`. `shared_inputs` lists full S3 prefixes; it permits declared
-workflow inputs but does not grant cloud IAM permissions. Optional
-`workload_secrets_file` references private JSON containing only `HF_TOKEN`,
-`HUGGING_FACE_HUB_TOKEN`, `NGC_API_KEY`, or `NVIDIA_API_KEY`. Secrets are assigned
-explicitly and never inherited from the operator's environment.
-
-Images without the NPA CLI also need an allocation's optional `source_s3_uri`:
-an unpacked NPA package staged beneath that person's storage prefix or an explicitly
-shared read-only input prefix. The worker installs it using its own storage
-credentials. The default is empty; use an image containing NPA in that case.
-The service never inherits a server-wide runtime source setting. Updating this
-allocation setting applies to new runs. Accessing or resuming an older run requires
-restoring its original allocation, including the source selection.
-
-## Provision and deploy
-
-Perform the normal administrator credential preflight. For a personal Nebius
-storage allocation, run:
+Create users and their local groups on the service host. The `create` response
+contains the generated stable `id`; record it privately and use that exact value
+as the allocation `subject`. The name is a local administration label, not an
+authentication credential.
 
 ```bash
-npa workbench team storage-create --project research \
-  --endpoint https://objects.example.com --output-dir /private/person-storage
+npa workbench team account create --config /private/npa-team/team.yaml \
+  --name researcher-a --group researchers
+npa workbench team account create --config /private/npa-team/team.yaml \
+  --name reviewer-a --group reviewers
+npa workbench team account list --config /private/npa-team/team.yaml
 ```
 
-This creates a fresh account, bucket, dedicated capability group and bucket-scoped
-`storage.object-editor` permit. It never uses the ordinary shared project storage
-group or falls back to tenant-wide editors. Add the generated storage fragment to
-the allocation. Partial provisioning retains a private recovery receipt without
-automatically deleting resources or data.
+An allocation is selected in configuration, then enrolled explicitly. Its GPU
+limit is a concurrent whole-GPU cap, not a reservation, GPU-hour budget, MIG
+allocation, fair queue, or cross-cluster entitlement. Per-cluster allocations
+must fit both the person's and workspace's configured limits.
 
 ```bash
-npa workbench team render --config /private/team.yaml --output-dir /private/team-rendered
-npa workbench team enroll --config /private/team.yaml \
-  --workspace robotics --cluster training --subject example-external-subject
-npa workbench team export-kubeconfig --config /private/team.yaml \
-  --output-path /private/sky-kubeconfig.yaml
+npa workbench team render --config /private/npa-team/team.yaml \
+  --output-dir /private/npa-team/rendered
+npa workbench team enroll --config /private/npa-team/team.yaml \
+  --workspace robotics --cluster training \
+  --subject "$WORKBENCH_USER_ID"
 ```
 
-Review rendered resources before enrollment. They include personal namespaces,
-fixed worker accounts, quotas, network policies, and validating admission rules.
-Workers receive no Kubernetes token and cannot select another account. The
-trusted scheduler receives execution access only in enrolled namespaces, read-only
-node/runtime-class discovery, and admission-policy inspection. It cannot write
-cluster-wide RBAC. Submissions verify installed resources and selected RBAC denials; missing
-controls reject new work. Admission support and an enforcing CNI are required.
-These checks do not establish that the CNI actually enforces the network policy.
+Review the rendered resources before applying them. They include personal
+namespaces, quotas, network policy, admission boundaries, and worker service
+accounts without Kubernetes API tokens. Each allocation needs a distinct
+storage principal and bucket whose cloud IAM permits only that allocation's
+scope. `shared_inputs` can name declared read-only inputs, but it cannot grant
+cloud IAM access by itself.
 
-Open the [interactive HTML example](../demos/team-access.html) locally to try
-user switching, workspace and cluster selection, GPU limits, run recovery,
-private artifacts, and offboarding. Its infrastructure is explicitly simulated;
-the evidence tab contains recorded checks from the actual local API and policy.
-Rebuild those receipts without cloud credentials using
-`npa/.venv/bin/python npa/scripts/build_team_demo.py --output-path /private/team-access.html`.
-The example's browser regression runs in `npm run cy:mock` from
-`npa/tests/browser/`. With its dependencies and Chrome installed, run only this
-example using `node --test team_demo.test.cjs` from that directory. It checks
-the desktop interactions, mobile layout, and absence of outgoing HTTP requests.
+Use `npa workbench team storage-create` only when its Nebius storage setup
+matches the deployment you operate; otherwise provide an equivalently narrow
+storage grant through the private configuration. Workload storage keys are
+separate from personal API access keys.
 
-The exported kubeconfig is **server-only**. Controllers instead use their own
-projected, rotating Kubernetes account token. Never upload operator credentials
-into workload images or shared artifact buckets.
+## Issue and deliver a personal key file
 
-Build `npa/docker/team-server/Dockerfile` privately from the repository root using
-the normal image security gates. Select a cluster-compatible kubectl image with
-the `KUBECTL_IMAGE` build argument. Render deployment resources:
+Issue a key after the account exists. `issue-key` creates a new file and
+refuses to overwrite one; its JSON response includes a credential ID and path,
+not the secret. Deliver the resulting mode-0600 file privately to the user.
+
+```bash
+npa workbench team account issue-key --config /private/npa-team/team.yaml \
+  --user "$WORKBENCH_USER_ID" \
+  --output-file /private/key-delivery/researcher-a.key
+```
+
+The service stores a digest of the key, not its plaintext. Do not place a key
+in a workflow, repository, shell history, URL, or shared configuration. Users
+need no Nebius account, Kubernetes credential, or scheduler credential.
+
+## User: submit and inspect work from a key file
+
+The CLI reads the bearer credential from `NPA_TEAM_TOKEN`; a user can load it
+from their privately delivered file in their shell. Command substitution removes
+the single trailing newline written by `issue-key`.
+
+```bash
+export NPA_TEAM_ENDPOINT=https://team.example.invalid
+TEAM_KEY_FILE="$HOME/.config/npa/team.key"
+export NPA_TEAM_TOKEN="$(<"$TEAM_KEY_FILE")"
+
+npa workbench team whoami
+npa workbench team submit --spec workflow.yaml --workspace robotics \
+  --cluster training --idempotency-key researcher-a-001
+```
+
+Retain the idempotency key. Retrying the same user, workspace, key, and
+document returns the same run; retrying a changed document conflicts rather
+than silently launching different work. Save the returned run ID, then use the
+same key-backed client for status, logs, artifacts, cancellation, and recovery.
+
+```bash
+npa workbench team list --workspace robotics
+npa workbench team run "$RUN_ID" --action status
+npa workbench team run "$RUN_ID" --action logs
+npa workbench team run "$RUN_ID" --action artifacts
+npa workbench team run "$RUN_ID" --action cancel
+npa workbench team run "$RUN_ID" --action resume
+unset NPA_TEAM_TOKEN
+```
+
+`resume` reconciles the recorded scheduler identity. If a launch acknowledgement
+is missing, do not submit a replacement blindly: retain the idempotency key and
+ask an administrator to reconcile the original run. A cancellation remains
+pending until provider state proves the job is terminal.
+
+The HTTP API uses the same key as a bearer credential. For example, a user can
+retrieve their own run status without receiving access to the scheduler:
+
+```bash
+curl --fail-with-body \
+  --header "Authorization: Bearer $NPA_TEAM_TOKEN" \
+  "$NPA_TEAM_ENDPOINT/v1/runs/$RUN_ID"
+```
+
+The SDK uses the same `TeamClient` boundary. It does not provide a second
+submission implementation or bypass authorization.
+
+```python
+from pathlib import Path
+
+import yaml
+
+from npa.sdk.workbench.team import SubmitRequest, TeamClient
+
+endpoint = "https://team.example.invalid"
+key = Path.home().joinpath(".config/npa/team.key").read_text().strip()
+document = yaml.safe_load(Path("workflow.yaml").read_text())
+
+client = TeamClient(endpoint, key)
+try:
+    result = client.submit(
+        SubmitRequest(
+            workspace="robotics",
+            cluster="training",
+            idempotency_key="researcher-a-001",
+            workflow=document,
+        )
+    )
+    print(client.run(result["id"], "status"))
+finally:
+    client.close()
+```
+
+## Offboarding and key lifecycle
+
+Revoke a specific key when it is lost or replaced. Disable the account to block
+all of its local keys and linked external identities. These actions take effect
+for future requests and new workflow waves; they do not cancel already admitted
+work or rotate workload storage keys.
+
+```bash
+npa workbench team account revoke-key --config /private/npa-team/team.yaml \
+  --key-id "$WORKBENCH_KEY_ID"
+npa workbench team account update --config /private/npa-team/team.yaml \
+  --user "$WORKBENCH_USER_ID" --disabled
+npa workbench team stop-run "$RUN_ID" --config /private/npa-team/team.yaml
+```
+
+Cancel known active runs separately and revoke or rotate any static storage
+credentials in the storage system. Local group changes are checked for future
+requests; they do not retroactively change a run's recorded authorization
+snapshot.
+
+## Optional external identity linking
+
+An installation may later configure an external issuer and HTTPS JWKS endpoint
+to verify externally minted JWTs. This is an optional API authentication path,
+not a browser-login setup: Workbench does not host an authorization-code
+callback, a login page, directory synchronization, or automatic account
+creation.
+
+After the administrator verifies the provider's immutable issuer and subject,
+they link it to the existing local account:
+
+```bash
+npa workbench team account link --config /private/npa-team/team.yaml \
+  --user "$WORKBENCH_USER_ID" \
+  --issuer "$EXTERNAL_ISSUER" --subject "$EXTERNAL_SUBJECT"
+```
+
+Unlinked external subjects are denied. An email address, display name, or
+matching group never creates a link. Local groups, allocations, ownership IDs,
+and storage scopes remain authoritative, so linking a credential does not move
+existing runs or data. Keep a local key until the external API path has been
+separately qualified.
+
+## Deploy and qualify the service
+
+Use the normal credential and image-security preflight before deploying. Render
+the CPU gateway and private scheduler sidecar into a private manifest, keep the
+scheduler loopback-only, and expose only the TLS gateway.
 
 ```bash
 npa workbench team render-service --namespace workbench-system \
-  --image private-registry.example.com/team-server:reviewed \
-  --secret workbench-team-config --claim workbench-team-state \
-  --output-path /private/team-service.yaml
+  --image registry.example.invalid/npa-team:reviewed \
+  --secret team-config --claim team-state \
+  --output-path /private/npa-team/service.yaml
 ```
 
-Supply a dedicated management namespace outside the execution namespaces, a
-Secret, a ReadWriteOnce PVC, and HTTPS ingress. The Secret contains `team.yaml`,
-`sky-server.yaml`, exported `sky-kubeconfig.yaml`, each enrolled kubeconfig, and
-referenced credential files. Configure their paths under `/etc/npa-team/`.
-An init container copies them into private files; roll out after Secret changes.
+The service needs a private configuration source, a persistent volume for its
+accounts and run ledger, and a single active replica. There is no separate
+server VM or per-user controller. Do not give users the rendered kubeconfig,
+private scheduler endpoint, or administrator configuration.
 
-One pod runs two CPU containers: the gateway and pinned SkyPilot 0.12.2, listening
-on loopback. Only the gateway has a Service. The PVC retains both ledgers and
-authoritative runtime state. One replica, `Recreate`, and a process lock prevent
-duplicate supervisors. No separate VM is required; active-active mode is absent.
+Before production, qualify the actual deployment with personal keys: valid and
+revoked keys, disabled accounts, foreign-run denial, GPU quota rejection,
+storage isolation, network policy, admission controls, restart/recovery, and
+TLS transport. Static workload storage credentials are scoped but are not
+automatic cloud federation; key revocation does not cancel running jobs or
+rotate those storage credentials.
 
-An existing private Linux host can also run the services. Install NPA, uvicorn
-and kubectl; install `skypilot[kubernetes]==0.12.2` in a separate environment.
-For in-cluster credentials, render `scheduler_access_manifests()` from
-`npa.workbench.team.scheduler_access` with that cluster's allocations and its
-existing management service account. Apply the returned RBAC as an administrator.
-It grants namespaced execution and exact worker impersonation for denial checks;
-it grants no cluster-wide mutation. Mount a projected token and CA into the trusted
-service, and reference `tokenFile` in its private kubeconfig. For additional
-clusters, enroll a separate scoped connection in each cluster; end users need
-neither cloud-project membership nor these credentials.
-
-Start `/opt/sky/bin/python -m sky.server.server --host 127.0.0.1 --port 46580`
-with `IS_SKYPILOT_SERVER=true`, `SKYPILOT_DISABLE_USAGE_COLLECTION=1`, a private
-`HOME`, the rendered `SKYPILOT_GLOBAL_CONFIG`, and exported `KUBECONFIG`. Then
-run `npa workbench team serve --config /private/team.yaml` behind HTTPS. The
-gateway defaults to `127.0.0.1:8443`; `--host` and `--port` change its listener.
-It clears inherited cloud credentials and source-overlay settings.
-
-## Submit, recover, and offboard
-
-```bash
-export NPA_TEAM_ENDPOINT=https://workbench.example.com
-# Supply NPA_TEAM_TOKEN from your private access-key file or connected login flow.
-npa workbench team submit --spec workflow.yaml --workspace robotics \
-  --cluster training --idempotency-key my-first-run
-npa workbench team run "$RUN_ID" --action status
-```
-
-`--endpoint` overrides `NPA_TEAM_ENDPOINT`. `--token-env` changes the default
-`NPA_TEAM_TOKEN` variable. Retain the idempotency key for retries: identical
-submissions return the same run, while changed documents conflict. `run --action`
-also supports `logs`, `artifacts`, `cancel`, and `resume`; `team list --workspace`
-lists personal runs. Commands emit JSON. The SDK exports `TeamClient` and
-`SubmitRequest` through `npa.sdk.workbench.team`, including streamed downloads.
-Agents and browser integrations must use these routes, not the scheduler API.
-
-Ownership and launch intents live in the private server ledger. S3 holds artifacts
-and readable runtime-record copies; those copies never authorize access or decide
-whether a job was already launched. Restarted runs become `recovery_required`.
-Resume reconciles exact scheduler IDs. Missing launch acknowledgements never
-trigger blind resubmission. Cancellation remains `cancelling` until observed
-provider state proves termination.
-
-Repeat cancellation to recheck a nonterminal result. Internal SkyPilot workspaces
-only select placement; the gateway owns authorization. They deliberately avoid
-SkyPilot's startup-only private-user registration policy. The scheduler's default
-role is `user`; native managed-job consolidation runs trusted job monitors inside
-its container. There are no per-person controller pods. SkyPilot 0.12.2 requires
-its standard loopback port, `46580`, for this mode. The gateway checks server
-health before SDK operations and initializes the SDK's client context so queue,
-cancel, and logs retain the allocation workspace. Keep the scheduler in its
-own container network namespace with the gateway; do not share an operator's
-local SkyPilot server. A container restart ends its child monitors, while the
-persistent volume retains scheduler state.
-
-The gateway and scheduler are trusted administrators of enrolled worker namespaces.
-A compromise of that shared service affects those namespaces. Personal namespace
-isolation protects against worker jobs; it does not isolate a compromised broker.
-
-For local accounts, `team account update --disabled` blocks all login methods;
-`team account revoke-key` blocks the selected key and its browser sessions.
-Local group changes are rechecked before each new workflow wave. For legacy
-external-only configurations, remove grants or add `disabled_subjects` to block access. Already-issued JWT group
-claims remain valid until expiration; use the denylist for immediate local
-revocation. An admitted workflow retains its verified group snapshot for its
-execution; each new wave still checks current local grants and the denylist.
-An identity-provider group change alone does not revoke that admitted workflow.
-Jobs are not automatically destroyed. A local operator with access
-to the private server configuration can cancel after offboarding:
-
-```bash
-npa workbench team stop-run "$RUN_ID" --config /private/team.yaml
-```
-
-Arbitrary pod configuration, server file mounts, public SkyPilot services, and
-workflow changes to cloud/context are rejected. All stages use the run namespace.
-Automatic cloud-token exchange and refresh are not implemented; rotate scoped
-storage credentials through the operator's existing process. An in-cluster
-scheduler can use a rotating projected Kubernetes service-account token. Removing Workbench access does not revoke
-cloud keys already issued to jobs: stop affected runs, revoke their recorded
-access keys through cloud IAM, and replace the private credential file before
-granting access again. The provisioning receipt records the exact key and account.
-
-Before production, qualify two real users: CPU/GPU jobs, quota rejection,
-cross-user status/log/artifact denial, cross-bucket read/write denial, rejected
-identity/token overrides, network isolation, restart/reconciliation, and
-offboarding/cancellation. The container, admission expressions, CNI, cloud IAM,
-optional OIDC provider, and actual SkyPilot managed-job execution require live evidence.
-Offline tests and schema validation alone do not prove production isolation.
-
-Set `RUN_ID` to the server-issued ID returned by submission. For opt-in admission,
-quota and storage checks, set `NPA_INTEGRATION_E2E=1`, `NPA_TEAM_LIVE_E2E=1`, and
-`NPA_TEAM_LIVE_CONFIG` to a private configuration containing two allocated people,
-then run `npa/.venv/bin/python -m pytest npa/tests/e2e/test_team_access_live.py`.
-The tests use Kubernetes server dry-run and create/remove isolated S3 probe keys.
-The separate `NPA_TEAM_SKY_PYTHON` test setting selects an isolated 0.12.2
-interpreter for `npa/tests/workbench/team/test_sky_compatibility.py`; that test
-uses a real local API with synthetic identities and no cluster credentials.
+For an offline illustration of the policy concepts, see the
+[team-access example](../demos/team-access.html). It is clearly simulated,
+contains no live endpoint or credential, makes no network request, and is not a
+product interface or deployment proof.
