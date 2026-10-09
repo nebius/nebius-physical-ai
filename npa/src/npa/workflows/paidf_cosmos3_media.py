@@ -180,11 +180,19 @@ def prepare_reference(
         raise VideoAlignmentError(
             "conditioning_fps must be an integer from 10 through 30"
         )
+    from npa.workflows.video_content_region import (
+        measure_scaled_size,
+    )
+    from npa.workflows.video_padding_detection import detect_source_padding
+
     original = probe_video(source)
+    scale_filter = f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease:force_divisible_by=2"
+    content_width, content_height = measure_scaled_size(source, scale_filter)
+    left, top = 2 * ((WIDTH - content_width) // 4), 2 * ((HEIGHT - content_height) // 4)
     filters = (
         f"setpts=PTS-STARTPTS,fps={fps}:start_time=0,"
-        f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
-        f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+        f"{scale_filter},format=yuv420p,"
+        f"pad={WIDTH}:{HEIGHT}:{left}:{top},setsar=1"
     )
     _command(
         [
@@ -223,6 +231,11 @@ def prepare_reference(
         "ffmpeg_filter": filters,
         "original": original,
         "prepared": prepared,
+        "source_content_region": detect_source_padding(
+            destination,
+            prepared,
+            [left, top, left + content_width, top + content_height],
+        ),
         "time_origin": "selected-source-start",
         "time_stretch": False,
     }
