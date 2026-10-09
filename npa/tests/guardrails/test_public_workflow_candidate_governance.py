@@ -69,6 +69,34 @@ def test_shipped_defaults_match_documented_quarantine_impact(monkeypatch) -> Non
     assert _blocked_shipped_defaults() == documented
 
 
+def test_documented_quarantine_summary_matches_inventory_tables() -> None:
+    report = IMPACT_REPORT.read_text()
+    blocked_section = report.split("## Still blocked shipped workflows", 1)[1].split(
+        "## Other quarantined images and Sim2Real", 1
+    )[0]
+    other_defaults_section = report.split(
+        "## Other defaults without an accepted public release", 1
+    )[1]
+    row_pattern = r"^\| `workflows/[^`]+\.yaml` \| `[^`]+` \|$"
+    blocked_rows = re.findall(row_pattern, blocked_section, flags=re.MULTILINE)
+    other_default_rows = re.findall(
+        row_pattern, other_defaults_section, flags=re.MULTILINE
+    )
+    summary = re.search(
+        r"After PAIDF's repaired defaults, (\d+) workflows still fail "
+        r"default image planning:\n(\d+) select the stale image families",
+        report,
+    )
+    blocked_summary = re.search(r"These (\d+) workflows need", blocked_section)
+
+    assert summary
+    assert blocked_summary
+    total, stale_family = (int(count) for count in summary.groups())
+    assert stale_family == len(blocked_rows)
+    assert int(blocked_summary.group(1)) == len(blocked_rows)
+    assert total == len(blocked_rows) + len(other_default_rows)
+
+
 @pytest.mark.parametrize(
     "tool", sorted(public_release_manifest()["workflow_validation_candidates"])
 )
