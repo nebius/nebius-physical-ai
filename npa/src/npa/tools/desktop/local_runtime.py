@@ -358,6 +358,8 @@ def local_status():
     if not path.exists():
         return {"installed": False, "runtime": "local"}
     config = json.loads(path.read_text())
+    from .remote import _chat_health
+
     return {
         "installed": True,
         "runtime": "local",
@@ -369,6 +371,7 @@ def local_status():
         else None,
         "credentials_file": config.get("password_file", str(_root() / "password")),
         "username": config["username"],
+        "chat_health": _chat_health(path),
     }
 
 

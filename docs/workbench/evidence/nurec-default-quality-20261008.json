@@ -1,0 +1,253 @@
+{
+  "qualification_date_utc": "2026-10-08",
+  "status": "passed",
+  "runtime_source_revision": "81693e67748296092eb73610b55c39a9be420968",
+  "runtime_base_main_revision": "220a70a87a556267a85c3ff96bb0d8346f398850",
+  "integrated_main_revision": "1248851f2e312288d72cbefceacf841bb5bf489b",
+  "integrated_source_revision": "ac6e242e0f928b97d0c91fe4a528e858950fb9c7",
+  "runtime_paths_unchanged_after_main_refresh": [
+    "npa/src/npa/workbench/nurec",
+    "npa/src/npa/cli/nurec",
+    "npa/src/npa/orchestration/npa_workflow",
+    "npa/src/npa/workflows",
+    "workflows/main/nurec-reconstruct.yaml"
+  ],
+  "workflow": "workflows/main/nurec-reconstruct.yaml",
+  "workflow_sha256": "366f6ef22133c50a1124aee2c98d9d57984a50f8205e7bff3a62757f89e8e1c4",
+  "invocation": "npa workbench workflow demo run nurec --project <project> --infra k8s/<rt-core-context>",
+  "native_image": "nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284",
+  "native_program_version": {
+    "git_commit_date": "2026-08-06T14:24:18-07:00",
+    "git_commit_sha_short": "af938b3f",
+    "git_tree_dirty": false,
+    "version_major": 26,
+    "version_minor": 4,
+    "version_patch": 149,
+    "version_string": "26.4.149-af938b3f"
+  },
+  "hardware": "one NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "input": {
+    "dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+    "dataset_revision": "2521064a3af6ab1c1caa2ba1b01ddde7eecded69",
+    "archive_sha256": "89e548419134697b97304104f393b94fe5ce7e533fa08bc38035418b2a742b63",
+    "variant": "auto",
+    "photos": 59,
+    "camera_frames": {
+      "camera1": 21,
+      "camera2": 38
+    },
+    "source_sfm_points": 17130
+  },
+  "training": {
+    "steps_completed": 30000,
+    "epochs": 1,
+    "source_resolution": true,
+    "ppisp": true,
+    "final_gaussians": 2000000,
+    "all_source_photos_and_encoded_bytes_preserved": true,
+    "photographic_pose_max_native_matrix_error": 1.5273690223693848e-07,
+    "timeline": "unique virtual photographic timestamps, not synchronized capture time"
+  },
+  "quality": {
+    "scope": "Native reconstruction validation on all 59 source photographs; these are not held-out novel-view scores.",
+    "aggregate": {
+      "test/psnr": 30.272693634033203,
+      "test/ssim": 0.8258700370788574,
+      "test/lpips": 0.25511541962623596
+    },
+    "per_camera": {
+      "camera1": {
+        "test/psnr": 30.959395090738933,
+        "test/ssim": 0.8374526018188113,
+        "test/lpips": 0.2584524757805325
+      },
+      "camera2": {
+        "test/psnr": 29.893199167753522,
+        "test/ssim": 0.8194691711350491,
+        "test/lpips": 0.253271259367466
+      }
+    },
+    "required": {
+      "test/psnr_min": 28.0,
+      "test/ssim_min": 0.8,
+      "test/lpips_max": 0.3
+    },
+    "baseline": {
+      "source_revision": "395765a74331fa13f07cf3f599d9033476a3975a",
+      "same_default_capture": true,
+      "test/psnr": 24.711318969726562,
+      "test/ssim": 0.7324400544166565,
+      "test/lpips": 0.4729260504245758
+    }
+  },
+  "novel_views": {
+    "cameras": 2,
+    "frames": 59,
+    "render_scale": 1.0,
+    "rig_translation_offset": [
+      0,
+      0.25,
+      0
+    ],
+    "calibration": "training-rig-poses-per-frame",
+    "replicate_training_views": false,
+    "visual_review": {
+      "status": "passed",
+      "source_revision": "81693e67748296092eb73610b55c39a9be420968",
+      "cameras_reviewed": [
+        "camera1",
+        "camera2"
+      ],
+      "sampling": "Five actual nonzero-offset renders from each camera: beginning, midpoint, end, and the two viewpoints with highest native validation LPIPS.",
+      "camera_frame_indices": {
+        "camera1": [
+          0,
+          8,
+          10,
+          19,
+          20
+        ],
+        "camera2": [
+          0,
+          19,
+          28,
+          33,
+          37
+        ]
+      },
+      "validation_global_indices_for_highest_lpips": {
+        "camera1": [
+          8,
+          19
+        ],
+        "camera2": [
+          49,
+          54
+        ]
+      },
+      "observations": [
+        "The sculpture silhouette, block separations and granite plinth texture are clearly visible in both camera sets.",
+        "The large diffuse foreground patches visible in the baseline initial camera views are absent from the corresponding new offset views.",
+        "Front, oblique and close views retain the sculpture structure at the nonzero offset.",
+        "Reflective water, glass and some fine silhouette edges retain localized softness; the output is not uniformly photographic.",
+        "Only the recorded ten novel-view samples were visually inspected; complete media decoding is a separate automated check."
+      ],
+      "images": [
+        {
+          "path": "novel_views/camera1/000000.png",
+          "sha256": "e621fb19b1d874227f4431c5adbb23c929f4819bc9400c348676ad51315a33c6",
+          "bytes": 2247014
+        },
+        {
+          "path": "novel_views/camera1/000008.png",
+          "sha256": "12633b902e7b7fd7f72ca71cb1068b9d07876d202846810e927e21673cff76f7",
+          "bytes": 2452502
+        },
+        {
+          "path": "novel_views/camera1/000010.png",
+          "sha256": "b69c6604bb6fc9816014f81b5fdfa0c7d504d40ffd5e62b1c420325135ae4d6b",
+          "bytes": 3213724
+        },
+        {
+          "path": "novel_views/camera1/000019.png",
+          "sha256": "4d49b3fce1decdf8f2fe963b9f2e5e745f4a29a84b1a9fc8e1c70f650002ba18",
+          "bytes": 2273634
+        },
+        {
+          "path": "novel_views/camera1/000020.png",
+          "sha256": "04c9c208b11275b76e6215636d4f1e42835e38dce6f5df116f06074bb78d3415",
+          "bytes": 3279849
+        },
+        {
+          "path": "novel_views/camera2/000000.png",
+          "sha256": "2a84fe3529cbbf9c0598c0fa8c7cac376450b697ce43daecba97499c7e705069",
+          "bytes": 2838608
+        },
+        {
+          "path": "novel_views/camera2/000019.png",
+          "sha256": "f45c57a699f079cfbe8655de2699b9c34408280eea519b36d1462fca763bd447",
+          "bytes": 3653399
+        },
+        {
+          "path": "novel_views/camera2/000028.png",
+          "sha256": "8491d3fb66e36e8fea2b4f17cce399863817da6ec670425808144c457994ba5f",
+          "bytes": 2598397
+        },
+        {
+          "path": "novel_views/camera2/000033.png",
+          "sha256": "9e23c9fe132c4ee90f249fe258640f93f5561107d95700c2a564b56245a7d3dc",
+          "bytes": 2642984
+        },
+        {
+          "path": "novel_views/camera2/000037.png",
+          "sha256": "f2c26ce5d779655d6892b59545ddbbaeb858533253fcfb99523be32c7d866601",
+          "bytes": 3701620
+        }
+      ]
+    }
+  },
+  "readback": {
+    "objects_read_back": 308,
+    "bytes_read_back": 1114923927,
+    "usdz_verified": true,
+    "rrd_decoded_and_matched_to_sources": true,
+    "offline_html_verified": true
+  },
+  "offline_report": {
+    "sha256": "b6877fba5fdf34006050758d768bb4d469de18e84196f2b53812dddbf7c62700",
+    "viewports": [
+      1440,
+      390
+    ],
+    "page_errors": [],
+    "external_network_requests": [],
+    "frame_controls_and_engineering_metrics": "passed"
+  },
+  "artifacts": [
+    {
+      "path": "novel_views/render_cli_args.json",
+      "bytes": 1238,
+      "sha256": "b2230a5f35a59fbe109a898644dd50954a30f8976ec85469cdf1909bcfb05bca"
+    },
+    {
+      "path": "reconstruction/last.usdz",
+      "bytes": 480760785,
+      "sha256": "890ea45575c02b2c1f0223eb3ff3757904bace4543e28be59d16467a25808b3f"
+    },
+    {
+      "path": "reconstruction/metrics.yaml",
+      "bytes": 33791,
+      "sha256": "49e938a47d7b021b794502be351c5dbb9493d5cceff81386163daae4e148561e"
+    },
+    {
+      "path": "reconstruction/parsed.yaml",
+      "bytes": 177442,
+      "sha256": "2772f63135a51719d0b51223d6e9f3f9c26019afb315329b7e8ccffb27cc8ab3"
+    },
+    {
+      "path": "reconstruction/photographic-timeline.json",
+      "bytes": 46621,
+      "sha256": "6f33a48908aa115aee0bf35af812b92a93a94b15048ade46cb83f8dc585a5ade"
+    },
+    {
+      "path": "reports/final.json",
+      "bytes": 798,
+      "sha256": "259f837ed3ccf851cb1d8f2d4c4bbccc3d5f39724ac1386f2c6481057b64504f"
+    },
+    {
+      "path": "reports/index.html",
+      "bytes": 29511270,
+      "sha256": "b6877fba5fdf34006050758d768bb4d469de18e84196f2b53812dddbf7c62700"
+    },
+    {
+      "path": "reports/sim2real.rrd",
+      "bytes": 4075300,
+      "sha256": "e960eb725d8e513094a264b32d25b99d1c5435abc59e12c188fb87fdcd36c979"
+    }
+  ],
+  "scope": [
+    "Canonical six-stage multi-pod workflow with staged source.",
+    "L40S, custom captures, physical rigs and custom recipes were not qualified by this run.",
+    "Raw operational evidence remains access-controlled; no live infrastructure identifiers are published."
+  ]
+}

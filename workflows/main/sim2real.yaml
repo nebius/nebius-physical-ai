@@ -400,7 +400,7 @@ states:
     description: Stage 14 - final report plus non-empty Rerun and MCAP with gold multi-camera lineage.
     resources: viewer-cpu
     run:
-      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "14", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{loop.outer-loop}}"]
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "14", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{loop.outer-loop}}", --threshold, "{{config.threshold}}", --allow-early-exit, "{{config.allow_early_exit}}"]
     outputs:
       - {uri: "{{config.root_uri}}/reports/sim2real-report.json", schema: npa.sim2real.e2e_report.v1}
       - {uri: "{{config.root_uri}}/reports/sim2real.rrd", schema: application/vnd.rerun.rrd}

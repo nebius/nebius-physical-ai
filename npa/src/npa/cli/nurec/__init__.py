@@ -984,6 +984,13 @@ def _publish_reconstruction(result: Any, output_uri: str) -> str:
     ):
         if local and Path(local).is_file():
             published.append(_publish(Path(local), _join_uri(output_uri, name)))
+    timeline = getattr(result, "photographic_timeline_path", "")
+    if timeline and Path(timeline).is_file():
+        published.append(
+            _publish(
+                Path(timeline), _join_uri(output_uri, "photographic-timeline.json")
+            )
+        )
     val_dir = Path(result.run_dir) / "val"
     if val_dir.is_dir():
         published.append(_publish(val_dir, _join_uri(output_uri, "val")))
