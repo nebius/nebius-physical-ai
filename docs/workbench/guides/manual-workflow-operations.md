@@ -305,6 +305,7 @@ CLI `s3 cp` reference](https://docs.aws.amazon.com/cli/latest/reference/s3/cp.ht
 set -euo pipefail
 umask 077
 PRIVATE_INGRESS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/npa-private-ingress.XXXXXX")"
+trap 'rm -rf -- "$PRIVATE_INGRESS_DIR"' EXIT
 chmod 700 "$PRIVATE_INGRESS_DIR"
 S3_ENDPOINT='<verified-selected-project-storage-endpoint>'
 S3_PROFILE='<private-scoped-ingress-aws-profile>'
@@ -344,6 +345,7 @@ that object back, and compare the complete bytes independently:
 set -euo pipefail
 umask 077
 PRIVATE_EGRESS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/npa-private-egress.XXXXXX")"
+trap 'rm -rf -- "$PRIVATE_EGRESS_DIR"' EXIT
 S3_ENDPOINT='<verified-selected-project-storage-endpoint>'
 S3_PROFILE='<private-scoped-egress-aws-profile>'
 OUTPUT_URI='<exact-s3-uri-from-npa-workflow-artifacts>'
