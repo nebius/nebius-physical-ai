@@ -398,3 +398,22 @@ def test_private_json_report_does_not_follow_a_symlink(tmp_path):
     }
     assert json.loads(full_result.stdout)["report_scope"] == "full"
     assert "archive_sha256" in json.loads(full_result.stdout)
+
+
+def test_native_cli_nonzero_codes_include_scan_and_usage_errors(tmp_path):
+    malformed = tmp_path / "not-a-docker-save.tar"
+    malformed.write_bytes(b"not a tar archive")
+
+    scan_error = subprocess.run(
+        [sys.executable, str(SCANNER_PATH), "--tarball", str(malformed)],
+        capture_output=True,
+        text=True,
+    )
+    usage_error = subprocess.run(
+        [sys.executable, str(SCANNER_PATH), "--tarball"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert scan_error.returncode == 1
+    assert usage_error.returncode == 2
