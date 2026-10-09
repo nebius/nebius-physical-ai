@@ -2950,6 +2950,7 @@ def test_preflight_images_reports_planning_failure_before_pull_checks(
 def test_preflight_images_keeps_candidate_disclosure_failure_observational(
     mocker,
     error_type,
+    caplog,
 ) -> None:
     mocker.patch(
         "npa.cli.workbench.workflow._plan_preflight_image_requirements",
@@ -2980,6 +2981,10 @@ def test_preflight_images_keeps_candidate_disclosure_failure_observational(
     assert result.exit_code == 0, result.output
     assert "images: none pinned by this spec" in result.output
     assert "candidate disclosure is unavailable" in result.stderr
+    assert (
+        "workflow validation candidate disclosure failed: synthetic candidate "
+        in caplog.text
+    )
     pulls.assert_not_called()
     contracts.assert_not_called()
 

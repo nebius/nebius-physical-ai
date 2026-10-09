@@ -135,8 +135,8 @@ Validate and plan the checked-in spec with my actual bucket. State the expected
 quarantine refusal and requested resources. Do not provision, preflight, or
 submit this stock spec. Explain that a separate operator-authorized immutable
 image and qualification are required before a run can proceed; offer a
-release-ready workload guide instead. Report the outcome, artifacts, and
-still-running resources, then offer the documented
+release-ready workload guide instead. Report the expected refusal and that no
+artifacts or resources were created, then offer the documented
 cancel-before-destroy cleanup path without destroying shared infrastructure.
 ```
 

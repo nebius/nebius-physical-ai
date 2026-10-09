@@ -201,21 +201,26 @@ candidate defaults across every reachable branch before decisions execute, so it
 can include a candidate from a branch that the completed run does not take. A
 `plan-spec --check-render --json` result also reports planned candidate
 selections; rendering proves resolution, not pullability or runtime capability.
-The matching
-`preflight-images --json` check adds `release_status` only when that checked
-image is a validation candidate, with `selection_scope: reachable_branches`.
+The matching `preflight-images --json` check adds `release_status` and
+`selection_scope: reachable_branches` when candidate disclosure succeeds and a
+checked image is a validation candidate. If stderr reports that candidate
+disclosure is unavailable, an omitted `release_status` is not evidence that an
+image is not a candidate; read the provenance from `submit` or
+`plan-spec --check-render` instead.
 Every successful `npa.workflow` submit JSON result reports
 `workflow_validation_candidates_status`: `available` means the list was
-computed, while `unavailable` means the list cannot establish provenance and
-normal rendering remains authoritative. Agent control planes must treat this as
-validation provenance, not release approval.
+computed for manifest-governed toolRefs whose effective images resolve, while
+`unavailable` means the list cannot establish provenance and normal rendering
+remains authoritative. Agent control planes must treat this as validation
+provenance, not release approval.
 Raw SkyPilot YAML submits report `not_applicable`, because they do not have
 `npa.workflow` candidate selection to compute.
 
+After an operator has authorized a separately qualified immutable image,
 `--runtime` supervises the workflow to its terminal state. Secret values resolve
 from the private environment or selected project's NPA credential store; only
 their names belong in the command. `HF_TOKEN` needs guardrail-model access for
-the default run.
+that guarded run.
 
 Official NPA images pull anonymously; no Docker registry credentials are needed.
 Use `--registry` only to select intentional custom images. A private registry

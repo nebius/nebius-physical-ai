@@ -2908,10 +2908,11 @@ def submit_cmd(
                         WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES
                     ),
                 )
-            except (NpaWorkflowError, ValueError):
+            except (NpaWorkflowError, ValueError) as exc:
                 # Candidate disclosure is observational. The runtime retains its
                 # established per-wave planner and error behavior when the
                 # conservative reachability view is not currently available.
+                _log_workflow_validation_candidate_disclosure_failure(exc)
                 workflow_validation_candidates = []
                 workflow_validation_candidates_status = (
                     WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE
@@ -3059,7 +3060,8 @@ def submit_cmd(
                 run_id=resolved_run_id,
                 options=npa_render_options,
             )
-        except (NpaWorkflowError, ValueError):
+        except (NpaWorkflowError, ValueError) as exc:
+            _log_workflow_validation_candidate_disclosure_failure(exc)
             workflow_validation_candidates = []
             workflow_validation_candidates_status = (
                 WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE
@@ -4164,6 +4166,13 @@ def _sanitized_failure_reason(exc: BaseException, *, secrets: Sequence[str]) -> 
     from npa.verification import sanitize_failure_reason
 
     return sanitize_failure_reason(exc, secrets=secrets)
+
+
+def _log_workflow_validation_candidate_disclosure_failure(exc: BaseException) -> None:
+    """Record a sanitized cause when optional candidate disclosure is unavailable."""
+
+    reason = _sanitized_failure_reason(exc, secrets=_SUBMIT_PRIVATE_REDACTIONS.get())
+    logger.warning("workflow validation candidate disclosure failed: %s", reason)
 
 
 def _accepted_submission_identity(*, state: object, job_id: object) -> bool:
@@ -10030,7 +10039,8 @@ def plan_spec_cmd(
                 run_id=resolved_run_id,
                 options=render_options,
             )
-        except (NpaWorkflowError, ValueError):
+        except (NpaWorkflowError, ValueError) as exc:
+            _log_workflow_validation_candidate_disclosure_failure(exc)
             workflow_validation_candidates_status = (
                 WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE
             )
@@ -10389,7 +10399,8 @@ def preflight_images_cmd(
             )
             if candidate["image"] in images
         ]
-    except (NpaWorkflowError, ValueError):
+    except (NpaWorkflowError, ValueError) as exc:
+        _log_workflow_validation_candidate_disclosure_failure(exc)
         workflow_validation_candidates = []
         typer.echo(
             "warning: workflow validation candidate disclosure is unavailable; "

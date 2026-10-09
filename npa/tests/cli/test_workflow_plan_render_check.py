@@ -169,6 +169,7 @@ def test_plan_spec_waves_json_includes_render_check(tmp_path: Path) -> None:
 def test_plan_spec_candidate_disclosure_failure_is_observational(
     tmp_path: Path,
     mocker,
+    caplog,
 ) -> None:
     workflow = _workflow(tmp_path, run_as_root=False)
     mocker.patch(
@@ -194,3 +195,7 @@ def test_plan_spec_candidate_disclosure_failure_is_observational(
     assert payload["workflow_validation_candidates"] == []
     assert payload["workflow_validation_candidates_status"] == "unavailable"
     assert "candidate disclosure is unavailable" not in result.stderr
+    assert (
+        "workflow validation candidate disclosure failed: synthetic candidate "
+        in caplog.text
+    )

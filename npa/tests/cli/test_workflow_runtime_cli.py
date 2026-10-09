@@ -17,6 +17,7 @@ import typer
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.cli.workbench import workflow as workflow_cli
 from npa.cli.workbench.workflow import (
     _execution_target_preflight as REAL_EXECUTION_TARGET_PREFLIGHT,
 )
@@ -33,6 +34,19 @@ FANOUT = SPECS / "token-factory-parallel-fanout.yaml"
 GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
 PAIDF_COSMOS3 = REPO_ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
 RUNNER = CliRunner()
+
+
+def test_candidate_disclosure_log_redacts_active_submit_values(caplog) -> None:
+    token = workflow_cli._SUBMIT_PRIVATE_REDACTIONS.set(("private-candidate-value",))
+    try:
+        workflow_cli._log_workflow_validation_candidate_disclosure_failure(
+            ValueError("candidate disclosure private-candidate-value failure")
+        )
+    finally:
+        workflow_cli._SUBMIT_PRIVATE_REDACTIONS.reset(token)
+
+    assert "private-candidate-value" not in caplog.text
+    assert "<redacted>" in caplog.text
 
 
 def _selected_storage_credentials():
@@ -1012,7 +1026,7 @@ def test_runtime_submit_json_reports_candidate_status(fake_runtime, mocker) -> N
 
 @pytest.mark.parametrize("error_type", [NpaWorkflowError, ValueError])
 def test_runtime_candidate_disclosure_planning_failure_is_observational(
-    fake_runtime, mocker, error_type
+    fake_runtime, mocker, error_type, caplog
 ) -> None:
     """A disclosure planning failure retains the runtime's established behavior."""
 
@@ -1047,9 +1061,15 @@ def test_runtime_candidate_disclosure_planning_failure_is_observational(
     assert payload["workflow_validation_candidates"] == []
     assert payload["workflow_validation_candidates_status"] == "unavailable"
     assert "candidate disclosure is unavailable" in result.stderr
+    assert (
+        "workflow validation candidate disclosure failed: synthetic candidate "
+        in caplog.text
+    )
 
 
-def test_submit_plan_candidate_disclosure_failure_is_observational(mocker) -> None:
+def test_submit_plan_candidate_disclosure_failure_is_observational(
+    mocker, caplog
+) -> None:
     mocker.patch(
         "npa.cli.workbench.workflow._workflow_validation_candidate_payload",
         side_effect=ValueError("synthetic candidate disclosure failure"),
@@ -1080,6 +1100,10 @@ def test_submit_plan_candidate_disclosure_failure_is_observational(mocker) -> No
     assert payload["workflow_validation_candidates"] == []
     assert payload["workflow_validation_candidates_status"] == "unavailable"
     assert "candidate disclosure is unavailable" in result.stderr
+    assert (
+        "workflow validation candidate disclosure failed: synthetic candidate "
+        in caplog.text
+    )
 
 
 def test_runtime_required_workflow_selects_runtime_automatically(

@@ -17,8 +17,11 @@ npa workbench workflow plan-spec "$workflow_spec" --run-id preview --json
 ```
 
 These commands launch no workload. The plan still contains the example bucket.
-For execution, complete [Workbench setup](getting-started.md) and the
-[Cosmos 3 prerequisites](cosmos3-generate.md#workflow), then set your actual target:
+The stock Cosmos3 sample is deliberately quarantined, so image preflight and
+submission of that exact spec refuse by design. For execution, choose a
+release-ready workload from the [workload guides](guides/README.md), complete
+its setup, replace `workflow_spec` with its documented path, then set your
+actual target:
 
 ```bash
 project_alias='<your-project-alias>'
@@ -70,9 +73,9 @@ npa workbench workflow submit "$workflow_spec" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-`--runtime` supervises execution to a terminal state. The default generation
-requires gated guardrail access through `HF_TOKEN`. Secrets resolve from the
-private environment or selected project's credential store; pass names only.
+`--runtime` supervises execution to a terminal state. Follow the selected
+workload's access requirements. Secrets resolve from the private environment or
+selected project's credential store; pass names only.
 Public images need no registry login. Use `--registry` only for custom images.
 
 Inspect the same run from another shell or after submission returns:
