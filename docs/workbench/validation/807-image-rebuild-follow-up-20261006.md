@@ -133,7 +133,7 @@ do not become proof of the rebuilt images.
 | `rgbd-scan-to-policy-demo.yaml` | Required exact `assembly_image`, `reconstruction_image` and `isaac_image`; reconstruction can use the explicitly supplied assembly image. |
 | `rgbd-scan-to-isaac.yaml` | Required exact `isaac_image`, also consumed by runtime-image provenance. |
 | `scan-to-isaac-navigation.yaml` | Required exact `isaac_image`, also consumed by runtime-image provenance. |
-| `multicamera-rgbd-warehouse.yaml` | GPU `isaac_image` uses governed `tool://isaac-lab` resolution. |
+| `multicamera-rgbd-warehouse.yaml` | Required exact `isaac_image`, also consumed by runtime-image provenance. |
 | `franka-rl-transfer.yaml` | GPU `isaac_image` uses governed `tool://isaac-lab` resolution. Its distinct optional LeRobot 0.6 CPU image is unchanged. |
 
 All six specs live under `workflows/testing/`. The exact original specs and
