@@ -1533,8 +1533,11 @@ def submit_cmd(
         from npa.orchestration.npa_workflow.image_inputs import (
             validate_immutable_image_inputs,
         )
-        from npa.orchestration.npa_workflow.interpreter import _make_context
+        from npa.orchestration.npa_workflow.interpreter import _make_context, build_plan
         from npa.orchestration.npa_workflow.presets import preset_overrides
+        from npa.orchestration.npa_workflow.skypilot_render import (
+            validate_immutable_image_override_bindings,
+        )
         from npa.orchestration.npa_workflow.spec import load_spec
         from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
@@ -1559,6 +1562,27 @@ def submit_cmd(
                     image_overrides=specific_image_overrides,
                     materialize_registry_secrets=False,
                 ),
+            )
+            early_image_overrides: dict[str, str] = {}
+            early_image_value = image.strip()
+            if early_image_value.lower() in {"none", "default", "-"}:
+                early_image_overrides["*"] = ""
+            elif early_image_value:
+                early_image_overrides["*"] = early_image_value
+            early_image_overrides.update(specific_image_overrides)
+            early_options = SkypilotRenderOptions(
+                image_overrides=early_image_overrides,
+                materialize_registry_secrets=False,
+            )
+            validate_immutable_image_override_bindings(
+                merged_npa_spec,
+                build_plan(
+                    merged_npa_spec,
+                    run_id=run_id or "preflight",
+                    assume_decision=assume_decision,
+                ).steps,
+                run_id=run_id or "preflight",
+                options=early_options,
             )
             if not plan_only and _is_dedicated_live_gate_spec(merged_npa_spec):
                 _refuse_dedicated_live_gate_execution(merged_npa_spec)

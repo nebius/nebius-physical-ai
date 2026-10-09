@@ -13,6 +13,7 @@ from npa.orchestration.npa_workflow import deploy
 ROOT = Path(__file__).resolve().parents[3]
 ISAAC = "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
 CPU = "registry.example.invalid/npa-sonic@sha256:" + "b" * 64
+OVERRIDE = "registry.example.invalid/npa-override@sha256:" + "c" * 64
 
 
 @pytest.mark.parametrize(
@@ -72,3 +73,34 @@ def test_submit_rejects_missing_exact_images_before_staging_or_provisioning(
     assert result.exit_code == 1
     assert "requires an explicit" in result.output
     assert "--var" in result.output
+
+
+def test_submit_rejects_override_of_required_image_before_staging_or_provisioning(
+    monkeypatch,
+):
+    path = ROOT / "workflows/testing/rgbd-scan-to-policy-demo.yaml"
+
+    def unexpected_side_effect(*_args, **_kwargs):
+        pytest.fail("required immutable images must fail before this side effect")
+
+    monkeypatch.setattr(deploy, "plan_infra_present", unexpected_side_effect)
+    monkeypatch.setattr(workflow, "_stage_npa_src_for_submit", unexpected_side_effect)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "submit",
+            str(path),
+            "--skip-preflight",
+            "--var",
+            f"isaac_image={ISAAC}",
+            "--var",
+            f"assembly_image={CPU}",
+            "--image",
+            OVERRIDE,
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "image override changes the execution image" in result.output
+    assert "config.assembly_image" in result.output

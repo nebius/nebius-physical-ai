@@ -13,8 +13,15 @@ from typing import Any, Mapping, Sequence
 import yaml
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-from npa.orchestration.npa_workflow.interpreter import ExecutionPlan, PlanStep  # noqa: F401
-from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
+from npa.orchestration.npa_workflow.interpreter import (  # noqa: F401
+    ExecutionPlan,
+    PlanStep,
+    _make_context,
+)
+from npa.orchestration.npa_workflow.scheduler import (
+    build_scheduler_task,
+    resources_for_step,
+)
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 from npa.workbench.model_cache import (
     RUNTIME_KUBERNETES,
@@ -938,6 +945,55 @@ def resolve_task_image(
             registry=options.registry or None,
         )
     return str(options.image_digest_pins.get(resolved, resolved)).strip()
+
+
+def validate_immutable_image_override_bindings(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+) -> None:
+    """Keep required image provenance bound to the image that executes a step.
+
+    ``config.required_immutable_images`` protects exact operator-selected images.
+    A global or tool-specific image override must not silently replace a step whose
+    resource profile is bound to one of those inputs: its argv may still name the
+    original digest while SkyPilot starts the replacement image.
+    """
+
+    if not options.image_overrides:
+        return
+
+    from npa.orchestration.npa_workflow.image_inputs import (
+        required_immutable_image_inputs,
+    )
+
+    keys_by_image: dict[str, list[str]] = {}
+    resolved_config = _make_context(spec, run_id=run_id).config
+    for key, image in required_immutable_image_inputs(resolved_config).items():
+        keys_by_image.setdefault(image, []).append(key)
+    if not keys_by_image:
+        return
+
+    for step in steps:
+        resources = resources_for_step(spec, step)
+        declared_image = str(resources.get("image") or "").strip()
+        protected_keys = keys_by_image.get(declared_image)
+        if not protected_keys:
+            continue
+        selected_image = resolve_task_image(
+            str(step.tool_ref or ""), resources, options=options
+        )
+        if selected_image == declared_image:
+            continue
+        key_names = ", ".join(f"config.{key}" for key in protected_keys)
+        raise NpaWorkflowRenderError(
+            "image override changes the execution image bound to required immutable "
+            f"input(s) {key_names} for state {step.state!r}: expected "
+            f"{declared_image!r}, selected {selected_image or '<SkyPilot default>'!r}. "
+            "Remove the override for this task or set it to the declared digest."
+        )
 
 
 #: How long to wait for a self-hosted model server to answer /health, and how often to ask.
@@ -2158,6 +2214,9 @@ def plan_images(
     """Return the distinct container images a plan's steps will pull, in order."""
 
     validate_image_override_selectors(spec, options)
+    validate_immutable_image_override_bindings(
+        spec, steps, run_id=run_id, options=options
+    )
     images: list[str] = []
     for step in steps:
         scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
@@ -2281,6 +2340,9 @@ def plan_image_pull_requirements(
     """Preserve VM and Kubernetes pull requirements for each exact image."""
 
     validate_image_override_selectors(spec, options)
+    validate_immutable_image_override_bindings(
+        spec, steps, run_id=run_id, options=options
+    )
     paths: dict[
         str,
         list[tuple[str, tuple[str, ...] | None, str | None, str]],
@@ -2397,6 +2459,9 @@ def build_skypilot_task_doc(
         NpaWorkflowRenderError: Selectors or task resources cannot be rendered.
     """
     validate_image_override_selectors(spec, options)
+    validate_immutable_image_override_bindings(
+        spec, (step,), run_id=run_id, options=options
+    )
     return _build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
 
 
@@ -2420,6 +2485,9 @@ def build_skypilot_task_docs(
         NpaWorkflowRenderError: Selectors or task resources cannot be rendered.
     """
     validate_image_override_selectors(spec, options)
+    validate_immutable_image_override_bindings(
+        spec, steps, run_id=run_id, options=options
+    )
     return [
         _build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
         for step in steps
