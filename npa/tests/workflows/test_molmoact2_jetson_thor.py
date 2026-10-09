@@ -304,9 +304,10 @@ def test_readiness_record_binds_workflow_and_target_blocker() -> None:
         in readiness["planning"]["task_fidelity"]["reason"]
     )
     assert readiness["prerequisites"]["target_runtime"]["status"] == "blocked"
-    assert "Before native acceptance" in readiness["prerequisites"]["target_runtime"][
-        "reason"
-    ]
+    assert (
+        "Before native acceptance"
+        in readiness["prerequisites"]["target_runtime"]["reason"]
+    )
 
 
 def test_workflow_argv_preserves_hostile_config_as_one_argument() -> None:
