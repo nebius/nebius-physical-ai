@@ -105,12 +105,18 @@ class RigPoseResult:
         }
 
 
-def _dynamic_camera_world_trajectories(reader: Any) -> dict[str, tuple[Any, Any]]:
+def _dynamic_camera_world_trajectories(
+    reader: Any, poses_component_group: str = ""
+) -> dict[str, tuple[Any, Any]]:
     """Read camera-to-world trajectories from NCore pose components."""
     from ncore.data.v4 import PosesComponent
 
     trajectories: dict[str, tuple[Any, Any]] = {}
-    for poses_reader in reader.open_component_readers(PosesComponent.Reader).values():
+    readers = reader.open_component_readers(PosesComponent.Reader)
+    selected = (
+        [readers[poses_component_group]] if poses_component_group else readers.values()
+    )
+    for poses_reader in selected:
         for (source, target), (poses, timestamps) in poses_reader.get_dynamic_poses():
             if target == WORLD_FRAME and source != RIG_FRAME:
                 trajectories[str(source)] = (poses, timestamps)
@@ -213,9 +219,38 @@ def camera_world_trajectories(ncore_json: Path | str) -> dict[str, tuple[Any, An
     Dynamic pose edges remain preferred. When none exist, validated per-frame
     ``T_sensor_worlds`` values from NCore camera components are used.
     """
+    from npa.workbench.nurec.nurec import read_rig_sidecar
+
     reader = _open_reader(ncore_json)
+    group = read_rig_sidecar(str(ncore_json)).get("poses_component_group", "")
+    if group:
+        return _dynamic_camera_world_trajectories(
+            reader, group
+        ) or _rig_camera_world_trajectories(reader, group)
     trajectories, _pose_source = _camera_world_trajectories(reader)
     return trajectories
+
+
+def _rig_camera_world_trajectories(
+    reader: Any, group: str
+) -> dict[str, tuple[Any, Any]]:
+    """Resolve static camera extrinsics against the selected virtual rig."""
+    from ncore.data.v4 import CameraSensorComponent, PosesComponent
+
+    poses = reader.open_component_readers(PosesComponent.Reader)[group]
+    dynamic = dict(poses.get_dynamic_poses())
+    static = dict(poses.get_static_poses())
+    if (RIG_FRAME, WORLD_FRAME) not in dynamic:
+        raise NurecError("selected photographic pose group has no rig trajectory")
+    rig, timestamps = dynamic[(RIG_FRAME, WORLD_FRAME)]
+    result = {}
+    for camera in reader.open_component_readers(CameraSensorComponent.Reader):
+        if (camera, RIG_FRAME) not in static:
+            raise NurecError(
+                f"selected photographic pose group has no extrinsic for {camera!r}"
+            )
+        result[camera] = (np.asarray(rig) @ static[(camera, RIG_FRAME)], timestamps)
+    return result
 
 
 def has_rig_edge(ncore_json: Path | str) -> bool:

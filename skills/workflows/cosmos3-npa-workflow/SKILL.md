@@ -22,6 +22,14 @@ submit matrix, so do not recreate a SkyPilot task template for this path.
 The npa.workflow spec resolves the container image, carries run-scoped S3 output
 URIs, and records declared outputs.
 
+The historical public Cosmos3 release remains quarantined. PAIDF video
+preparation and variant generation have a separately scoped repaired default;
+the general `workbench.cosmos3.generate` action still needs an explicit
+independently qualified operator image. Earlier successful runs do not accept
+the withdrawn public bytes. Check the
+[default-image impact audit](../../../docs/workbench/validation/public-default-quarantine-impact-20261005.md)
+before choosing a default image for another Cosmos3 action.
+
 ## Reference Spec
 
 For a complete source-video data factory, use `workflows/main/paidf-cosmos3.yaml`

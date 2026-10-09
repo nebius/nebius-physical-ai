@@ -15,8 +15,11 @@ The catalog keeps the three principal pipelines in `workflows/main/`:
 `sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`.
 Partner integrations live in `workflows/partners/<partner>/`; general reference
 workflows, component tests, and fixtures live in `workflows/testing/`.
-Keep catalog documentation in `workflows/README.md` and partner runbooks beside
-their specs.
+Keep the catalog overview in `workflows/README.md`. Maintain a
+`Workflow | Guide | Purpose` table in `workflows/main/README.md` and
+`workflows/testing/README.md`, beside the YAMLs. Link to the existing guide
+location instead of copying or moving it; label CLI or general-guide fallbacks
+explicitly. Keep partner indexes and runbooks beside their specs.
 
 ## When To Use
 

@@ -20,6 +20,7 @@ from npa.orchestration.npa_workflow.src_staging import (
     iter_source_files,
     resolve_src_uri_from_env,
     stage_npa_source,
+    staged_source_files,
     verify_staged_source,
 )
 
@@ -164,6 +165,53 @@ def test_iter_source_files_excludes_build_artifacts(tmp_path: Path) -> None:
     files = {path.as_posix() for path in iter_source_files(root)}
 
     assert files == {"pyproject.toml", "src/npa/__init__.py", "src/npa/cli.py"}
+
+
+def test_staging_includes_ignored_required_terraform_lock(tmp_path: Path) -> None:
+    """The staged editable install retains the lock required by Hatch."""
+    import subprocess
+
+    root = _fake_package(tmp_path / "npa")
+    relative = Path("src/npa/deploy/terraform/.terraform.lock.hcl")
+    lock = root / relative
+    lock.parent.mkdir(parents=True)
+    lock.write_text("provider hashes\n")
+    (root / ".gitignore").write_text(".terraform.lock.hcl\n*.txt\n")
+    (root / "private.txt").write_text("must stay local")
+    with (root / "pyproject.toml").open("a") as stream:
+        stream.write(
+            f'\n[tool.hatch.build.targets.wheel.force-include]\n"{relative}" = "npa/lock"\n'
+        )
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+
+    files = staged_source_files(root)
+
+    assert files[relative].read_text() == "provider hashes\n"
+    assert Path("private.txt") not in files
+    lock.unlink()
+    with pytest.raises(SrcStagingError, match="missing or unsafe"):
+        staged_source_files(root)
+
+
+@pytest.mark.parametrize("filename", ["credentials.json", "ignored.txt", "linked.txt"])
+def test_forced_build_inputs_do_not_bypass_source_privacy(
+    tmp_path: Path, filename: str
+) -> None:
+    import subprocess
+
+    root = _fake_package(tmp_path / "npa")
+    (root / ".gitignore").write_text("ignored.txt\n")
+    (root / "credentials.json").write_text("private")
+    (root / "ignored.txt").write_text("private")
+    (root / "linked.txt").symlink_to(root / "credentials.json")
+    with (root / "pyproject.toml").open("a") as stream:
+        stream.write(
+            f'\n[tool.hatch.build.targets.wheel.force-include]\n"{filename}" = "npa/asset"\n'
+        )
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+
+    with pytest.raises(SrcStagingError, match="Required package build input"):
+        staged_source_files(root)
 
 
 @pytest.mark.parametrize("source_view", ["walk", "untracked", "tracked"])

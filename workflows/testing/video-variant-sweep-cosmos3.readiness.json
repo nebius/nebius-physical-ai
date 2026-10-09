@@ -1,0 +1,64 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "bd1e7186b8032368ce5ee3cceccf839ff9f74b2315da29338f2a8c8b522a7ff7",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and wave planning passed.",
+      "evidence": [
+        "validate-spec; plan-spec --waves"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Native candidates cover all parameter combinations. Timed source descriptions and LLM-expanded appearance prompts use protected motion/contact constraints. Immutable hashes bind each shared prompt to its source and hint.",
+      "evidence": [
+        "npa/tests/workflows/test_video_sweep_cosmos3.py",
+        "npa/tests/workflows/test_video_sweep_matrix.py",
+        "npa/tests/workflows/test_video_sweep_augmentation.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The complete B200 matrix stored eight native videos, actual controls, paired review and lineage receipts. Four accepted clips were published with a next-run inventory; rejected clips remain excluded.",
+      "evidence": [
+        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation",
+        "npa/tests/e2e/test_video_sweep_live.py::test_reviewed_native_parameter_matrix"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Both B200 workers consumed the same 93-frame synthetic warehouse drive across all eight combinations. Native checkpoints verified the complete 24 fps timeline and controls; temporal correspondence does not prove physical fidelity.",
+      "evidence": [
+        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation",
+        "npa/tests/e2e/test_video_sweep_live.py::test_reviewed_native_parameter_matrix"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The executed configuration verified native Cosmos3 payload/guardrail access, MiniMaxAI/MiniMax-M3 description/review, Nemotron-3_5-Lightning augmentation, S3, Postgres and MLflow. The reference Cosmos3 reasoner was unavailable; use the explicit tested model selection documented in the guide.",
+      "evidence": [
+        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation",
+        "npa/tests/e2e/test_video_sweep_live.py::test_reviewed_native_parameter_matrix"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The rebuilt immutable candidate passed trusted image publication checks and both complete B200 matrices. The executed configuration explicitly pins the documented digest. The global old-release quarantine remains in place; unmodified catalog defaults are not the tested selection.",
+      "evidence": [
+        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation",
+        "npa/tests/e2e/test_video_sweep_live.py::test_reviewed_native_parameter_matrix"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "The standard runtime generated all eight Cartesian candidates on two reserved B200 workers on one node, with real VLM/LLM augmentation. The live integrity test passed; eight Postgres rows, eight finished MLflow runs and 64 exact paired judge images were independently verified. Four clips passed the unchanged 0.80 gate. Multi-node scaling, multi-window continuity, Cosmos3 reasoning and training-data qualification remain outside this evidence.",
+      "evidence": [
+        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation",
+        "npa/tests/e2e/test_video_sweep_live.py::test_reviewed_native_parameter_matrix"
+      ]
+    }
+  }
+}
