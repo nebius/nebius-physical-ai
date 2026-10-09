@@ -13,7 +13,7 @@ Commands
 create  Create a permanent user with optional locally managed groups.
 list  List local users and credential IDs without disclosing keys.
 issue-key  Deliver a new personal access key to a new mode-0600 file.
-revoke-key  Revoke a credential and the browser sessions created with it.
+revoke-key  Revoke a credential so it cannot authorize future API requests.
 update  Disable an account or replace its local group membership.
 link  Link a verified SSO subject to an existing account without changing ownership.
 ```
@@ -31,7 +31,7 @@ link  Link a verified SSO subject to an existing account without changing owners
 | `create` | Create a permanent user with optional locally managed groups. |
 | `list` | List local users and credential IDs without disclosing keys. |
 | `issue-key` | Deliver a new personal access key to a new mode-0600 file. |
-| `revoke-key` | Revoke a credential and the browser sessions created with it. |
+| `revoke-key` | Revoke a credential so it cannot authorize future API requests. |
 | `update` | Disable an account or replace its local group membership. |
 | `link` | Link a verified SSO subject to an existing account without changing ownership. |
 

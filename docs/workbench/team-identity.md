@@ -47,14 +47,15 @@ npa workbench team account issue-key --config /private/npa-team/team.yaml \
 
 Deliver the key file through an approved private channel. It is a bearer
 credential: never commit it, include it in a URL, paste it into a workflow, or
-share it between people. A user loads it locally before invoking the familiar
-team commands:
+share it between people. The team CLI reads the mode-0600 file directly with
+`--token-file`, so the key does not need to be exported into the shell
+environment:
 
 ```bash
 export NPA_TEAM_ENDPOINT=https://team.example.invalid
-export NPA_TEAM_TOKEN="$(<"$HOME/.config/npa/team.key")"
-npa workbench team whoami
-npa workbench team list --workspace robotics
+TEAM_KEY_FILE="$HOME/.config/npa/team.key"
+npa workbench team whoami --token-file "$TEAM_KEY_FILE"
+npa workbench team list --workspace robotics --token-file "$TEAM_KEY_FILE"
 ```
 
 See [team access](team-access.md#user-submit-and-inspect-work-from-a-key-file)

@@ -127,18 +127,19 @@ need no Nebius account, Kubernetes credential, or scheduler credential.
 
 ## User: submit and inspect work from a key file
 
-The CLI reads the bearer credential from `NPA_TEAM_TOKEN`; a user can load it
-from their privately delivered file in their shell. Command substitution removes
-the single trailing newline written by `issue-key`.
+Each user-facing team command accepts `--token-file`. It reads one personal key
+from a regular mode-0600 file and takes precedence over `--token-env`; prefer it
+to putting a bearer credential in an environment variable. Set the endpoint and
+keep the delivered file private.
 
 ```bash
 export NPA_TEAM_ENDPOINT=https://team.example.invalid
 TEAM_KEY_FILE="$HOME/.config/npa/team.key"
-export NPA_TEAM_TOKEN="$(<"$TEAM_KEY_FILE")"
 
-npa workbench team whoami
+npa workbench team whoami --token-file "$TEAM_KEY_FILE"
 npa workbench team submit --spec workflow.yaml --workspace robotics \
-  --cluster training --idempotency-key researcher-a-001
+  --cluster training --idempotency-key researcher-a-001 \
+  --token-file "$TEAM_KEY_FILE"
 ```
 
 Retain the idempotency key. Retrying the same user, workspace, key, and
@@ -147,13 +148,12 @@ than silently launching different work. Save the returned run ID, then use the
 same key-backed client for status, logs, artifacts, cancellation, and recovery.
 
 ```bash
-npa workbench team list --workspace robotics
-npa workbench team run "$RUN_ID" --action status
-npa workbench team run "$RUN_ID" --action logs
-npa workbench team run "$RUN_ID" --action artifacts
-npa workbench team run "$RUN_ID" --action cancel
-npa workbench team run "$RUN_ID" --action resume
-unset NPA_TEAM_TOKEN
+npa workbench team list --workspace robotics --token-file "$TEAM_KEY_FILE"
+npa workbench team run "$RUN_ID" --action status --token-file "$TEAM_KEY_FILE"
+npa workbench team run "$RUN_ID" --action logs --token-file "$TEAM_KEY_FILE"
+npa workbench team run "$RUN_ID" --action artifacts --token-file "$TEAM_KEY_FILE"
+npa workbench team run "$RUN_ID" --action cancel --token-file "$TEAM_KEY_FILE"
+npa workbench team run "$RUN_ID" --action resume --token-file "$TEAM_KEY_FILE"
 ```
 
 `resume` reconciles the recorded scheduler identity. If a launch acknowledgement
@@ -161,13 +161,17 @@ is missing, do not submit a replacement blindly: retain the idempotency key and
 ask an administrator to reconcile the original run. A cancellation remains
 pending until provider state proves the job is terminal.
 
-The HTTP API uses the same key as a bearer credential. For example, a user can
-retrieve their own run status without receiving access to the scheduler:
+The HTTP API uses the same key as a bearer credential. A raw client should read
+the private file only long enough to make its request, then discard the value.
+For example, a user can retrieve their own run status without receiving access
+to the scheduler:
 
 ```bash
+TEAM_TOKEN="$(<"$TEAM_KEY_FILE")"
 curl --fail-with-body \
-  --header "Authorization: Bearer $NPA_TEAM_TOKEN" \
+  --header "Authorization: Bearer $TEAM_TOKEN" \
   "$NPA_TEAM_ENDPOINT/v1/runs/$RUN_ID"
+unset TEAM_TOKEN
 ```
 
 The SDK uses the same `TeamClient` boundary. It does not provide a second
