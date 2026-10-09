@@ -50,6 +50,20 @@ RUN [[ "${NPA_LINGBOT_VA_PARENT_IMAGE}" =~ ^([a-z0-9]+([._]|__|[-]*[a-z0-9]+)*)(
         exit 64; \
     }
 
+# The neutral Wan parent can receive Debian security updates independently of
+# LingBot's runtime-fetched Torch/CUDA closure. Keep this remediation narrow:
+# upgrade only the parent packages with a currently available critical fix, do
+# not perform a broad distribution upgrade, and leave no package-list bytes in
+# the final image.
+RUN export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade \
+        libperl5.36 \
+        perl \
+        perl-base \
+        perl-modules-5.36 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Keep only source and project metadata from the exact Apache-2.0 revision.
 # The checkout intentionally has no .git directory, LFS objects, weights, or
 # dataset bytes in a layer.

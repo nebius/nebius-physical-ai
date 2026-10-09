@@ -491,6 +491,27 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
     assert "/usr/share/doc/npa-lingbot-va" in dockerfile
 
 
+def test_parent_os_security_patch_is_narrow_and_runtime_independent() -> None:
+    """Keep the child-layer remediation scoped to the fixed parent packages."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    security_patch = """RUN export DEBIAN_FRONTEND=noninteractive \\
+    && apt-get update \\
+    && apt-get install -y --no-install-recommends --only-upgrade \\
+        libperl5.36 \\
+        perl \\
+        perl-base \\
+        perl-modules-5.36 \\
+    && rm -rf /var/lib/apt/lists/*"""
+
+    assert security_patch in dockerfile
+    assert "apt-get upgrade" not in dockerfile
+    assert dockerfile.index(security_patch) < dockerfile.index(
+        "# Keep only source and project metadata"
+    )
+    assert "torch==2.13.0+cu126" not in security_patch
+    assert "NPA_LINGBOT_VA_PARENT_IMAGE" not in security_patch
+
+
 def _parent_reference_guard(dockerfile: str) -> str:
     """Extract the Dockerfile's actual fail-closed parent-reference shell guard."""
     start = dockerfile.index('RUN [[ "${NPA_LINGBOT_VA_PARENT_IMAGE}"')
