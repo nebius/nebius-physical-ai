@@ -470,6 +470,9 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
 
     assert manifest == baseline_workflow.OPENDM_IMPLEMENTATION
     assert 'validation-disposition="operator-private-no-publication"' in instructions
+    assert "AS dm05-sanitized-parent" in instructions
+    assert "FROM scratch\nCOPY --from=dm05-sanitized-parent / /" in instructions
+    assert 'ENTRYPOINT ["python", "-m", "npa.server.app"]' in instructions
     assert "checkout --detach 7d52f1591437332cb0157be3303c1c46da811344" in instructions
     assert "checkout --detach 789b87f50d9fadc7663d2e8bac057941221aab81" in instructions
     assert "checkout --detach 8f1084e3132a39270c3a13ebe37270a43ece2a01" in instructions
@@ -522,17 +525,22 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
         "PYTHONPATH=/opt/dexbotic-benchmark:/opt/dexbotic-benchmark/libero "
         "/opt/libero-venv/bin/python"
     ) in instructions
+    sanitized_parent_stage = instructions[
+        instructions.index("AS dm05-sanitized-parent") : instructions.index(
+            "\nFROM scratch"
+        )
+    ]
     parent_jwt_sanitizer = instructions[
         instructions.index(
             "# The pinned parent includes a static, sample-media JWT URL"
         ) : instructions.index(
-            "\n\nCOPY --chown=ubuntu:ubuntu",
+            "\nFROM scratch",
             instructions.index(
                 "# The pinned parent includes a static, sample-media JWT URL"
             ),
         )
     ]
-    assert "USER root" in parent_jwt_sanitizer
+    assert "USER root" in sanitized_parent_stage
     assert (
         "/opt/lerobot/venv/lib/python3.12/site-packages/skimage/data/_fetchers.py"
         in parent_jwt_sanitizer
@@ -540,9 +548,11 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     assert "grep -Eoc" in parent_jwt_sanitizer
     assert '" -eq 1' in parent_jwt_sanitizer
     assert "sed -Ei" in parent_jwt_sanitizer
-    assert "?token=redacted-static-jwt" in parent_jwt_sanitizer
+    assert "redacted-static-jwt" in parent_jwt_sanitizer
     assert "python3.10 -m py_compile" in parent_jwt_sanitizer
-    assert parent_jwt_sanitizer.rstrip().endswith("USER ubuntu")
+    assert parent_jwt_sanitizer.index('python3.10 -m py_compile "$fetcher"') < (
+        parent_jwt_sanitizer.index("# The parent has the original sample token")
+    )
     assert (
         "benchmark_root: /opt/dexbotic-benchmark/libero/libero/libero" in instructions
     )
@@ -564,19 +574,19 @@ def test_opendm_parent_jwt_sanitizer_executes_the_dockerfile_ere(tmp_path):
     unrelated_before = "before = 'leave-this-content-alone'\n"
     unrelated_after = "after = 'leave-this-content-alone-too'\n"
     fetcher.write_text(
-        f"{unrelated_before}sample_url = '?token={synthetic_token}'\n{unrelated_after}",
+        f"{unrelated_before}sample_token = '{synthetic_token}'\n{unrelated_after}",
         encoding="utf-8",
     )
-    grep_pattern = r"\?token=eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
+    grep_pattern = r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
     sed_expression = (
-        r"s#(\?token=)eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
-        r"#\1redacted-static-jwt#"
+        r"s#eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
+        r"#redacted-static-jwt#"
     )
     image_fetcher = (
         "/opt/lerobot/venv/lib/python3.12/site-packages/skimage/data/_fetchers.py"
     )
     sanitizer_start = f"RUN fetcher={image_fetcher}"
-    sanitizer_end = "\nUSER ubuntu"
+    sanitizer_end = "\nFROM scratch"
     sanitizer = instructions[
         instructions.index(sanitizer_start) + len("RUN ") : instructions.index(
             sanitizer_end, instructions.index(sanitizer_start)
@@ -609,7 +619,7 @@ def test_opendm_parent_jwt_sanitizer_executes_the_dockerfile_ere(tmp_path):
 
     assert completed.returncode == 0, completed.stderr
     sanitized = fetcher.read_text(encoding="utf-8")
-    assert "?token=redacted-static-jwt" in sanitized
+    assert "redacted-static-jwt" in sanitized
     assert synthetic_token not in sanitized
     assert unrelated_before in sanitized
     assert unrelated_after in sanitized

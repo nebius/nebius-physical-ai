@@ -1,18 +1,6 @@
 # Operator-private runtime for the released OpenDM DM05 LIBERO comparison
 # baseline. Checkpoint, model cache, dataset, and rollout bytes are runtime-only.
-FROM ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
-
-LABEL org.opencontainers.image.source="https://github.com/dexmal/opendm" \
-      org.opencontainers.image.revision="7d52f1591437332cb0157be3303c1c46da811344" \
-      org.opencontainers.image.licenses="Apache-2.0" \
-      org.nebius.npa.dexbotic.source="https://github.com/dexmal/dexbotic-benchmark" \
-      org.nebius.npa.dexbotic.revision="789b87f50d9fadc7663d2e8bac057941221aab81" \
-      org.nebius.npa.dexbotic.license="MIT" \
-      org.nebius.npa.libero.source="https://github.com/Lifelong-Robot-Learning/LIBERO" \
-      org.nebius.npa.libero.revision="8f1084e3132a39270c3a13ebe37270a43ece2a01" \
-      org.nebius.npa.libero.license="MIT" \
-      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
-      org.nebius.npa.validation-disposition="operator-private-no-publication"
+FROM ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643 AS dm05-sanitized-parent
 
 USER root
 
@@ -89,13 +77,34 @@ RUN /opt/libero-venv/bin/python --version \
 # The pinned parent includes a static, sample-media JWT URL in scikit-image's
 # documentation-only fetcher. It is not used by this baseline; redact that
 # one literal before scanning so the private image carries no token-shaped byte.
-USER root
 RUN fetcher=/opt/lerobot/venv/lib/python3.12/site-packages/skimage/data/_fetchers.py \
-    && test "$(grep -Eoc '\?token=eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' "$fetcher")" -eq 1 \
-    && sed -Ei 's#(\?token=)eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+#\1redacted-static-jwt#' "$fetcher" \
-    && grep -Fq '?token=redacted-static-jwt' "$fetcher" \
+    && test "$(grep -Eoc 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' "$fetcher")" -eq 1 \
+    && sed -Ei 's#eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+#redacted-static-jwt#' "$fetcher" \
+    && grep -Fq 'redacted-static-jwt' "$fetcher" \
     && python3.10 -m py_compile "$fetcher"
-USER ubuntu
+
+# The parent has the original sample token in an inherited layer. Copy its
+# sanitized filesystem into a final scratch stage so image-layer scanners see
+# only the redacted bytes, then restore the parent runtime metadata explicitly.
+FROM scratch
+COPY --from=dm05-sanitized-parent / /
+
+LABEL org.opencontainers.image.source="https://github.com/dexmal/opendm" \
+      org.opencontainers.image.revision="7d52f1591437332cb0157be3303c1c46da811344" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.nebius.npa.dexbotic.source="https://github.com/dexmal/dexbotic-benchmark" \
+      org.nebius.npa.dexbotic.revision="789b87f50d9fadc7663d2e8bac057941221aab81" \
+      org.nebius.npa.dexbotic.license="MIT" \
+      org.nebius.npa.libero.source="https://github.com/Lifelong-Robot-Learning/LIBERO" \
+      org.nebius.npa.libero.revision="8f1084e3132a39270c3a13ebe37270a43ece2a01" \
+      org.nebius.npa.libero.license="MIT" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
+      org.nebius.npa.validation-disposition="operator-private-no-publication"
+
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENTRYPOINT ["python", "-m", "npa.server.app"]
+
+USER root
 
 COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/dm05-opendm-baseline-runtime-manifest.json /opt/opendm/dm05-libero-baseline-runtime.json
 COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/DM05-OPENDM-BASELINE-ATTRIBUTION.md /opt/opendm/DM05-OPENDM-BASELINE-ATTRIBUTION.md
