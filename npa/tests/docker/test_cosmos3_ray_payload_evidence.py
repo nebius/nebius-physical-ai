@@ -445,4 +445,8 @@ def test_native_cli_nonzero_codes_include_scan_and_usage_errors(tmp_path):
     )
 
     assert scan_error.returncode == 1
+    assert scan_error.stdout == ""
+    assert json.loads(scan_error.stderr) == {"error": "scan-failed"}
+    assert str(malformed) not in scan_error.stderr
+    assert "not a tar archive" not in scan_error.stderr
     assert usage_error.returncode == 2

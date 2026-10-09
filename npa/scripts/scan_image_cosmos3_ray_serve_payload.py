@@ -344,6 +344,12 @@ def _emit_report(
     return 0 if report["verdict"] == "clean" else 1
 
 
+def _emit_scan_failure() -> int:
+    """Return a redacted nonzero result when archive scanning cannot complete."""
+    print(json.dumps({"error": "scan-failed"}), file=sys.stderr)
+    return 1
+
+
 def main() -> int:
     """Run the Cosmos3 Ray payload scanner as a command-line program.
 
@@ -362,16 +368,19 @@ def main() -> int:
     args = parser.parse_args()
     if bool(args.image) == bool(args.tarball):
         parser.error("provide exactly one of IMAGE or --tarball")
-    if args.tarball:
-        report = scan_tarball(args.tarball)
-    else:
-        with tempfile.TemporaryDirectory(prefix="npa-cosmos3-ray-scan-") as directory:
-            saved = Path(directory) / "image.tar"
-            subprocess.run(["docker", "pull", args.image], check=True)
-            subprocess.run(
-                ["docker", "save", "--output", saved, args.image], check=True
-            )
-            report = scan_tarball(saved)
+    try:
+        if args.tarball:
+            report = scan_tarball(args.tarball)
+        else:
+            with tempfile.TemporaryDirectory(prefix="npa-cosmos3-ray-scan-") as directory:
+                saved = Path(directory) / "image.tar"
+                subprocess.run(["docker", "pull", args.image], check=True)
+                subprocess.run(
+                    ["docker", "save", "--output", saved, args.image], check=True
+                )
+                report = scan_tarball(saved)
+    except (OSError, RuntimeError, subprocess.CalledProcessError, tarfile.TarError):
+        return _emit_scan_failure()
     return _emit_report(
         report,
         json.dumps(report, indent=2, sort_keys=True),
