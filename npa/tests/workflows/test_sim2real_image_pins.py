@@ -209,7 +209,7 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     assert "NPA_SOURCE_SHA" in dockerfile
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
-    assert "ARG DEBIAN_SNAPSHOT=20260801T000000Z" in dockerfile
+    assert "ARG DEBIAN_SNAPSHOT=20261002T000000Z" in dockerfile
     assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in dockerfile
     assert "npa-exact-source.pth" in dockerfile
     assert "env -u PYTHONPATH python -c" in dockerfile

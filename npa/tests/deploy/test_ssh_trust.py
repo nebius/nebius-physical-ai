@@ -86,7 +86,7 @@ def test_verified_instance_pins_key_privately_and_reuses_identical_evidence(prov
         == '{sp_resource_id="instance-fixture"} |= "NPA_SSH_HOST_KEY ' + "a" * 64 + ' "'
     )
     assert query[query.index("--project-id") + 1] == "project-fixture"
-    assert query[query.index("--bucket") + 1] == "sp_serial"
+    assert "--bucket" not in query
 
 
 @pytest.mark.parametrize(
