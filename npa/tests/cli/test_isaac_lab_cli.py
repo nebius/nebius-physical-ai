@@ -303,6 +303,8 @@ def test_isaac_lab_deploy_existing_alias_with_replace_prompts_confirmation(
             "--gpu-preset",
             "1gpu-40vcpu-160gb",
             "--replace",
+            "--image",
+            "registry.example.invalid/operator/npa-isaac-lab:rebuilt",
         ],
     )
 

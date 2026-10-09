@@ -55,6 +55,15 @@ npa workbench workflow plan-spec workflows/testing/cosmos3-generate.yaml --run-i
 Expect a valid spec and one `generate` stage. Its bucket is a placeholder;
 validation and planning do not verify model access, stage data, or reserve GPUs.
 
+Workflows that pass an image into provenance or native child launches declare
+`config.required_immutable_images: [<config-key>, ...]`. Supply each key through
+`--var <config-key>=<registry>/<repository>@sha256:<64-hex-digest>` when planning
+and submitting. Missing, tag-only, and `tool://` values fail before rendering or
+execution. Use digest-only references; this check binds the declared identity
+and does not qualify image bytes. Other image defaults still follow the central
+public-release quarantine. The public demo aliases accept the same repeatable
+`--var` syntax; their storage bucket and prefix remain selected by `--project`.
+
 For execution, follow the selected runbook in order:
 
 1. Configure the project and prepare its input, storage, credentials, and compute.

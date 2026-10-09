@@ -10,12 +10,14 @@ config:
   bucket: example-bucket
   prefix: rgbd-scan-to-policy-demo/{{run.id}}
   source_overlay: true
-  assembly_image: ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb
-  isaac_image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6
+  # Select qualified CPU and Isaac runtimes explicitly; provenance needs exact bytes.
+  required_immutable_images: [assembly_image, reconstruction_image, isaac_image]
+  assembly_image: ''
+  isaac_image: ''
   run_uri: s3://{{config.bucket}}/{{config.prefix}}
   assembled_uri: '{{config.run_uri}}/assembled'
   reports_uri: '{{config.run_uri}}/reports'
-  reconstruction_image: ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb
+  reconstruction_image: '{{config.assembly_image}}'
   reconstructed_uri: '{{config.run_uri}}/reconstructed'
   num_envs: 4000
   iterations: 500

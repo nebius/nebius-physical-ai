@@ -123,11 +123,17 @@ def eval_checkpoint_arg(
 
 
 def torch_install_pins(version: str | None = None) -> list[str]:
-    """Return optional torch/torchvision/diffusers pins after lerobot install."""
+    """Return optional runtime dependency pins after LeRobot installation."""
 
     entry = lerobot_version_entry(version)
     pins: list[str] = []
-    for key in ("torch_pin", "torchvision_pin", "diffusers_pin"):
+    for key in (
+        "torch_pin",
+        "torchvision_pin",
+        "torchcodec_pin",
+        "diffusers_pin",
+        "wandb_pin",
+    ):
         value = entry.get(key)
         if value:
             pins.append(str(value))

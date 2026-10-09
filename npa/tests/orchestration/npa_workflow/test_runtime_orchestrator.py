@@ -4721,6 +4721,81 @@ def test_resume_refuses_a_ledger_recorded_for_a_different_plan(tmp_path: Path) -
         )
 
 
+def test_resume_refuses_a_changed_required_immutable_image(tmp_path: Path) -> None:
+    image_a = "registry.example.invalid/runtime@sha256:" + "a" * 64
+    image_b = "registry.example.invalid/runtime@sha256:" + "b" * 64
+
+    def spec_with(image: str, name: str):
+        source = FANOUT_SPEC.replace(
+            '  prefix: "fanout/{{run.id}}"',
+            '  prefix: "fanout/{{run.id}}"\n'
+            "  required_immutable_images: [runtime_image]\n"
+            f'  runtime_image: "{image}"',
+        )
+        return load_spec(_write_spec(tmp_path, source, name=name))
+
+    initial = spec_with(image_a, "initial.yaml")
+    store = MemoryStore()
+    first = _executor(initial, run_id="rt-image-fingerprint", store=store)
+    assert (
+        run_workflow_runtime(
+            initial,
+            run_id="rt-image-fingerprint",
+            executor=first,
+            options=first.options,
+        ).status
+        == "succeeded"
+    )
+
+    changed = spec_with(image_b, "changed.yaml")
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        changed,
+        run_id="rt-image-fingerprint",
+        options=options,
+        store=store,
+        submitter=submitter,
+    )
+
+    with pytest.raises(NpaWorkflowError, match="different plan"):
+        run_workflow_runtime(
+            changed,
+            run_id="rt-image-fingerprint",
+            executor=resumed,
+            options=options,
+        )
+
+    assert not submitter.calls
+
+
+def test_undeclared_immutable_images_preserve_legacy_fingerprint(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    plan = build_plan(spec, run_id="rt-legacy-fingerprint")
+    legacy_payload = {
+        "workflow": spec.name,
+        "api_version": spec.api_version,
+        "steps": [
+            {
+                "state": step.state,
+                "iteration": step.iteration,
+                "group": step.group,
+                "argv": step.argv,
+                "shell": step.shell,
+                "resources": step.resources,
+            }
+            for step in plan.steps
+        ],
+    }
+    expected = hashlib.sha256(
+        json.dumps(legacy_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+
+    assert plan_fingerprint(spec, run_id="rt-legacy-fingerprint") == expected
+
+
 def test_resume_accepts_an_unchanged_plan(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     store = MemoryStore()

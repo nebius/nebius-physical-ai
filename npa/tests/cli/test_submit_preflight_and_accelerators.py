@@ -2071,6 +2071,24 @@ def test_parse_exact_image_overrides() -> None:
 
 
 @pytest.mark.parametrize(
+    ("image", "specific", "expected"),
+    [
+        ("", {}, {}),
+        ("cr.example.invalid/global:1", {}, {"*": "cr.example.invalid/global:1"}),
+        (
+            "none",
+            {"workbench.example": "cr.example.invalid/tool:1"},
+            {"*": "", "workbench.example": "cr.example.invalid/tool:1"},
+        ),
+    ],
+)
+def test_submit_image_overrides_have_one_shared_normalization(
+    image: str, specific: dict[str, str], expected: dict[str, str]
+) -> None:
+    assert workflow_cli._submit_image_overrides(image, specific) == expected
+
+
+@pytest.mark.parametrize(
     "values",
     [
         ["missing-equals"],

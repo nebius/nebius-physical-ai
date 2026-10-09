@@ -29,6 +29,25 @@ from .test_workbench_cli import *  # noqa: F401,F403
 _OPERATOR_LEROBOT_IMAGE = "registry.example.invalid/npa-lerobot:reviewed"
 
 
+@pytest.mark.parametrize(
+    ("reported", "expected"),
+    [
+        ("0.5.1+npa.secure1", "0.5.1"),
+        ("0.6.0+local.integration", "0.6.0"),
+    ],
+)
+def test_remote_version_probe_normalizes_pep440_local_version(
+    mocker, reported: str, expected: str
+) -> None:
+    ssh = mocker.Mock()
+    ssh.run.return_value = (0, reported + "\n", "")
+
+    assert (
+        lerobot._probe_remote_lerobot_version(ssh, SimpleNamespace(runtime="vm"))
+        == expected
+    )
+
+
 def _mock_serverless_train(
     mocker, *, existing: JobInfo | None = None, poll_status: str = "succeeded"
 ):

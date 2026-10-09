@@ -8,6 +8,11 @@ ARG DATASETS_VERSION=5.0.1
 ARG HUGGINGFACE_HUB_VERSION=1.14.0
 ARG PYARROW_VERSION=24.0.0
 ARG PILLOW_VERSION=12.3.0
+# FiftyOne 1.22's pinned Strawberry GraphQL release imports ExecutionContext,
+# which graphql-core 3.3 removed. Keep the compatible current 3.2 patch line
+# explicit so a future resolver update cannot produce an image that fails on
+# its first FiftyOne import.
+ARG GRAPHQL_CORE_VERSION=3.2.13
 # MongoDB server for FiftyOne's metadata DB. The prebuilt fiftyone_db wheel does
 # NOT ship a mongod binary for this platform (trixie), so real curation
 # (compute_uniqueness / compute_similarity / compute_visualization, which all need
@@ -104,10 +109,12 @@ RUN python -m venv "${FIFTYONE_VENV}" \
       "huggingface_hub==${HUGGINGFACE_HUB_VERSION}" \
       "pyarrow==${PYARROW_VERSION}" \
       "pillow==${PILLOW_VERSION}" \
+      "graphql-core==${GRAPHQL_CORE_VERSION}" \
       "paramiko==5.0.0" \
       "scikit-image==0.26.0" \
     && python /opt/npa-remove-scikit-image-recipe.py \
       --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+      --capability fiftyone \
     && curl --fail --location --silent --show-error \
       -o /tmp/mongodb.tgz "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz" \
     && echo "${MONGODB_SHA256}  /tmp/mongodb.tgz" | sha256sum -c - \

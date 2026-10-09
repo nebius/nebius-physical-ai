@@ -21,7 +21,10 @@ from typing import Any, Callable, Iterable, Sequence
 import yaml
 
 from npa.guardrails.skypilot import unresolved_image_placeholders
+from npa.workflows.sim2real.diagnostic_config import Sim2RealDiagnosticConfig
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+
+_HealthConfig = Sim2RealLoopConfig | Sim2RealDiagnosticConfig
 
 PASS = "PASS"
 WARN = "WARN"
@@ -300,7 +303,7 @@ def check_config(config: Sim2RealLoopConfig) -> CheckResult:
 # S3 ------------------------------------------------------------------------
 
 
-def check_s3(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckResult:
+def check_s3(config: _HealthConfig, *, probes: DoctorProbes) -> CheckResult:
     """Confirm the configured S3 endpoint and bucket are reachable with creds."""
 
     creds = probes.credentials
@@ -430,7 +433,7 @@ def check_registry(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> Check
 # Tokens --------------------------------------------------------------------
 
 
-def check_tokens(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckResult:
+def check_tokens(config: _HealthConfig, *, probes: DoctorProbes) -> CheckResult:
     """Confirm gated-repo tokens are present for the configured VLM path."""
 
     creds = probes.credentials
@@ -461,7 +464,7 @@ def check_tokens(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckRe
 # Cluster / GPU -------------------------------------------------------------
 
 
-def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckResult:
+def check_cluster(config: _HealthConfig, *, probes: DoctorProbes) -> CheckResult:
     """Confirm the active cluster is reachable and has schedulable GPUs.
 
     Surfaces the two recurring traps up front: an unpinned kube context pointing
@@ -714,6 +717,7 @@ ALL_CHECKS: tuple[str, ...] = (
     "tokens",
     "cluster",
 )
+IMAGE_DEPENDENT_CHECKS: tuple[str, ...] = ("config", "registry")
 
 
 def run_checks_concurrently(
@@ -750,7 +754,7 @@ def run_checks_concurrently(
 
 
 def _preflight_thunks(
-    config: Sim2RealLoopConfig,
+    config: _HealthConfig,
     *,
     repo_root: Path,
     probes: DoctorProbes,
@@ -758,6 +762,10 @@ def _preflight_thunks(
 ) -> list[Callable[[], CheckResult]]:
     """Build the zero-argument callable for each selected check, in order."""
 
+    if isinstance(config, Sim2RealDiagnosticConfig) and any(
+        name in selected for name in IMAGE_DEPENDENT_CHECKS
+    ):
+        raise ValueError("config and registry checks require resolved execution images")
     candidates: list[tuple[str, Callable[[], CheckResult]]] = [
         ("config", lambda: check_config(config)),
         ("coherence", lambda: check_coherence(repo_root)),
@@ -770,7 +778,7 @@ def _preflight_thunks(
 
 
 def run_preflight(
-    config: Sim2RealLoopConfig,
+    config: _HealthConfig,
     *,
     repo_root: Path,
     probes: DoctorProbes,
@@ -785,7 +793,8 @@ def run_preflight(
     list) the worker count here needs no separate cap.
 
     Args:
-        config: Resolved Sim2Real loop configuration each check reads from.
+        config: Resolved execution config, or image-free settings when neither
+            ``config`` nor ``registry`` is selected.
         repo_root: Repository root for the local ``coherence`` check.
         probes: Injectable side-effecting probes for the network/subprocess
             checks (S3, registry, tokens, cluster).
@@ -796,9 +805,9 @@ def run_preflight(
         One :class:`CheckResult` per selected check, in ``ALL_CHECKS`` order.
 
     Raises:
-        None. Individual checks report failure as a ``CheckResult`` rather
-        than raising, so callers should not expect this to raise for probe
-        failures; an unexpected exception from a check would still propagate.
+        ValueError: Image-dependent checks receive image-free diagnostic settings.
+            Individual checks report probe failures as a ``CheckResult``;
+            an unexpected exception from a check would still propagate.
     """
 
     selected = tuple(checks) if checks is not None else ALL_CHECKS
@@ -865,6 +874,7 @@ __all__ = [
     "CheckResult",
     "DoctorProbes",
     "IMAGE_FIELDS",
+    "IMAGE_DEPENDENT_CHECKS",
     "KubeResult",
     "SIM2REAL_SEAMS",
     "Seam",

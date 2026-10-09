@@ -44,6 +44,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from npa.orchestration.npa_workflow.decisions import normalize_decision
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.image_inputs import required_immutable_image_inputs
 from npa.orchestration.npa_workflow.interpreter import (
     ExecutionPlan,
     PlanStep,
@@ -720,24 +721,30 @@ def plan_fingerprint(
     import json as _json
 
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
-    payload = _json.dumps(
-        {
-            "workflow": spec.name,
-            "api_version": spec.api_version,
-            "steps": [
-                {
-                    "state": step.state,
-                    "iteration": step.iteration,
-                    "group": step.group,
-                    "argv": step.argv,
-                    "shell": step.shell,
-                    "resources": step.resources,
-                }
-                for step in plan.steps
-            ],
-        },
-        sort_keys=True,
+    immutable_image_inputs = required_immutable_image_inputs(
+        _resolved_config(spec, run_id)
     )
+    payload_data: dict[str, Any] = {
+        "workflow": spec.name,
+        "api_version": spec.api_version,
+        "steps": [
+            {
+                "state": step.state,
+                "iteration": step.iteration,
+                "group": step.group,
+                "argv": step.argv,
+                "shell": step.shell,
+                "resources": step.resources,
+            }
+            for step in plan.steps
+        ],
+    }
+    # Generic tool image resolution may legitimately vary between waves;
+    # explicit provenance inputs must instead remain identical for resume.
+    # Preserve legacy fingerprint bytes for specs that declare no such inputs.
+    if immutable_image_inputs:
+        payload_data["required_immutable_image_inputs"] = immutable_image_inputs
+    payload = _json.dumps(payload_data, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -3387,6 +3394,9 @@ def run_workflow_runtime(
     than stopping. Every real decision comes from S3 and is recorded in the ledger.
     """
 
+    resolved_config = _resolved_config(spec, run_id)
+    required_immutable_image_inputs(resolved_config)
+
     opts = options or RuntimeOptions()
     log = logger or (lambda message: None)
 
@@ -3401,7 +3411,7 @@ def run_workflow_runtime(
             )
     else:
         if store is None:
-            store = store_for_config(_resolved_config(spec, run_id), run_id=run_id)
+            store = store_for_config(resolved_config, run_id=run_id)
         if store is None:
             message = (
                 "config.bucket is not set, so no runtime ledger can be written: "

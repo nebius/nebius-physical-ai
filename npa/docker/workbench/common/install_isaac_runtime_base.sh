@@ -39,7 +39,7 @@ UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260820T000000Z}"
 UBUNTU_SUITE="${NPA_UBUNTU_SUITE:-jammy}"
 ISAAC_PYTHON_MINOR="${NPA_ISAAC_PYTHON_MINOR:-3.11}"
 LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-187.197}"
-PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.15-1+jammy1}"
+PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.17-1+jammy1}"
 DEADSNAKES_POOL="${NPA_DEADSNAKES_POOL:-https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/pool/main/p/python3.11}"
 # cu128 wheels carry sm_120 kernels, which RTX PRO 6000 Blackwell (compute capability
 # 12.0) requires. Verified in-pod: torch._C._cuda_getArchFlags() reports
@@ -136,14 +136,14 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ]; then
       --output "/tmp/npa-python311/${filename}"
     printf '%s  %s\n' "$digest" "/tmp/npa-python311/${filename}" | sha256sum --check --strict
   done <<'PYTHON311_DEBS'
-libpython3.11_3.11.15-1+jammy1_amd64.deb|1ef8897f4f56b7e90a2c4bc07b68a7074b77567e4b112ded3331365eb3c10fc2
-libpython3.11-dev_3.11.15-1+jammy1_amd64.deb|1adc394918add62fb6e497382046d67b66d4d73cc887cb8be597d9e623db98ad
-libpython3.11-minimal_3.11.15-1+jammy1_amd64.deb|2242dc4450d5ef4bb51aa162229dcae9f921f13c44322aefc1a132631afe9493
-libpython3.11-stdlib_3.11.15-1+jammy1_amd64.deb|4d9264d06f37fef6515da083efea8f4aed3225b6fcdfaf3ae69fdd22fbaa19fc
-python3.11_3.11.15-1+jammy1_amd64.deb|83432e1464c31af89c0e7df5ca9e4655db1eeb3f0cf2427efb3c4c41d64b9e2e
-python3.11-dev_3.11.15-1+jammy1_amd64.deb|f50550d76be43a305fa894ab001b76de635738ffbbccc381c43bd205b27efccb
-python3.11-minimal_3.11.15-1+jammy1_amd64.deb|7de0e5a79cb46d2c017b3a882980d2ff9d943b3cd2a2c6fdccab6010f1fcd736
-python3.11-venv_3.11.15-1+jammy1_amd64.deb|65edd1c51e458d118bee721d0815e0cbcb940ab351d851037a29f5f07a1beef8
+libpython3.11_3.11.17-1+jammy1_amd64.deb|37cf74d9a83c16aaff5212ba16a387ddfa6475c3d949c82e63e32269f3e11652
+libpython3.11-dev_3.11.17-1+jammy1_amd64.deb|ddfb00db5ad8a98a41b78d54801eeb9bdd166b45c9125d25e11ab854e2597df3
+libpython3.11-minimal_3.11.17-1+jammy1_amd64.deb|c43729651a145caa062c62dac63259512fac11e023a55a8666bc449e1af77c36
+libpython3.11-stdlib_3.11.17-1+jammy1_amd64.deb|e1f406d5f6a3b368aac2088dfdc0ae69a7d28ec2d71d2ed423396673b3b95a58
+python3.11_3.11.17-1+jammy1_amd64.deb|8f7452c61dcf1da97fd7adcfdaa71051329e2cbf8b85b1db1f39f3059c67198b
+python3.11-dev_3.11.17-1+jammy1_amd64.deb|345a09eb7f5de4ddd4f9c9041aecc7166ba2a7de96bf9a3b07039929a8366c84
+python3.11-minimal_3.11.17-1+jammy1_amd64.deb|dfef050f38aa2cd310b262712c7673a51dc08869f625abefcb3e5fcdc0f7b410
+python3.11-venv_3.11.17-1+jammy1_amd64.deb|0572285b02976487ee908ce58b865ec608ad181618b820ea22671d9ee02874a2
 PYTHON311_DEBS
   apt-get install -y --no-install-recommends /tmp/npa-python311/*.deb
   test "$(dpkg-query -W -f='${Version}' python3.11)" = "$PYTHON_VERSION"
