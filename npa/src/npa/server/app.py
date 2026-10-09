@@ -112,7 +112,8 @@ class PolicyState:
                 # environment to resolve PEFT feature shapes. Unlike an
                 # ordinary saved-shape checkpoint, this is caller-correctable.
                 raise CheckpointContractError(
-                    "PEFT checkpoints require --env-type to resolve feature shapes"
+                    "PEFT checkpoints require --env-type and an image with the "
+                    "LeRobot 'peft' extra to resolve feature shapes"
                 )
             else:
                 # The training factory requires dataset/env metadata and replaces

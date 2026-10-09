@@ -398,7 +398,7 @@ def test_policy_load_routes_environment_and_peft_checkpoints(
     if use_peft and not with_env:
         with pytest.raises(
             server_module.CheckpointContractError,
-            match="PEFT checkpoints require --env-type",
+            match="PEFT checkpoints require --env-type and an image with the LeRobot 'peft' extra",
         ):
             state.load("/checkpoint")
         assert not state.loaded
