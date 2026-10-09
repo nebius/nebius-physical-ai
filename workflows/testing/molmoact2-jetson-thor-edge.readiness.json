@@ -15,12 +15,13 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused tests exercise the connected observation, qualification, trace, numerical-evaluation, and Rerun artifact contracts; the workflow is explicit that target inference is an open-loop trace, not a closed-loop success claim.",
+      "reason": "Focused tests verify the five-stage graph prepares observations, then verifies externally produced qualification and action-trace receipts before numerical evaluation and Rerun rendering. The graph does not run target-qualify or target-action-trace; physical aarch64 Thor execution, device telemetry, and target/reference traces remain separate blocked prerequisites. It makes no closed-loop LIBERO success claim.",
       "evidence": [
         "2026-10-03: npa/.venv/bin/python -m pytest npa/tests/workflows/test_molmoact2_jetson_thor.py -q --tb=short (7 passed)",
         "2026-10-03: npa/.venv/bin/python -m pytest npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py npa/tests/smoke/test_all_workflow_yamls.py -q --tb=short (328 passed)",
         "2026-10-04: selected workflow, catalog argv, submit-matrix, and packaging audit (761 passed, 0 failed, 0 errors, 0 skipped)",
-        "2026-10-04: private image recipe, publication quarantine, workflow, and golden-eval manifest tests (539 passed; no target runtime assertion)"
+        "2026-10-04: private image recipe, publication quarantine, workflow, and golden-eval manifest tests (539 passed; no target runtime assertion)",
+        "2026-10-09: hash-bound source audit identified verify-qualification and verify-action-trace as receipt consumers, not physical target-qualify or target-action-trace execution; the audit is not native evidence."
       ]
     }
   },
@@ -59,11 +60,12 @@
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "The assigned VDI is x86_64 without Jetson or NVIDIA GPU runtime. The upstream engine bundle requires a Jetson AGX Thor Developer Kit (aarch64/sm_110a), JetPack R39 rev 2.1, and TensorRT 10.16.2.10; x86 cannot establish compatibility, policy execution, or latency.",
+      "reason": "The assigned VDI is x86_64 without Jetson or NVIDIA GPU runtime, and no supported physical-device route is configured. The workflow consumes external target receipts rather than launching target inference. Before native acceptance, a Jetson AGX Thor Developer Kit (aarch64/sm_110a), JetPack R39 rev 2.1, and TensorRT 10.16.2.10 must run target-qualify and target-action-trace against the prepared observations and exact engine/run, producing bound target/reference traces plus measured device and latency evidence. x86 or cloud execution cannot establish that evidence.",
       "evidence": [
         "2026-10-03: local system inspection found x86_64 and no Jetson release marker, tegrastats, or nvidia-smi.",
         "2026-10-04: manager private execution route confirms zero configured Thor SSH aliases and no verified Thor runtime; its available Kubernetes targets are amd64 and therefore ineligible for this validation.",
-        "Pinned upstream model card README Hardware and contents section; pinned vla-edge TensorRT-on-Thor recipe."
+        "Pinned upstream model card README Hardware and contents section; pinned vla-edge TensorRT-on-Thor recipe.",
+        "2026-10-09: hash-bound source audit confirms the workflow verifies external target receipts and does not invoke physical target inference."
       ]
     }
   }

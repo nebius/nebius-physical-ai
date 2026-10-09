@@ -279,6 +279,16 @@ def test_workflow_has_five_connected_real_stages() -> None:
         step.argv[:3] == ["python3", "-m", "npa.workflows.molmoact2_jetson_thor"]
         for step in plan.steps
     )
+    commands = [step.argv[3] for step in plan.steps]
+    assert commands == [
+        "prepare",
+        "verify-qualification",
+        "verify-action-trace",
+        "evaluate",
+        "visualize",
+    ]
+    assert "target-qualify" not in commands
+    assert "target-action-trace" not in commands
     assert (
         spec.states["visualize-target-evidence"].outputs[0].schema
         == "application/vnd.rerun.rrd"
@@ -289,7 +299,14 @@ def test_readiness_record_binds_workflow_and_target_blocker() -> None:
     readiness = json.loads(READINESS.read_text(encoding="utf-8"))
     assert readiness["workflow_sha256"] == _digest(SPEC)
     assert readiness["planning"]["validation"]["status"] == "verified"
+    assert (
+        "does not run target-qualify or target-action-trace"
+        in readiness["planning"]["task_fidelity"]["reason"]
+    )
     assert readiness["prerequisites"]["target_runtime"]["status"] == "blocked"
+    assert "Before native acceptance" in readiness["prerequisites"]["target_runtime"][
+        "reason"
+    ]
 
 
 def test_workflow_argv_preserves_hostile_config_as_one_argument() -> None:
