@@ -199,6 +199,11 @@ DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "workbench.marble.navigation_prepare": (
+        ('python:trimesh;assert(trimesh.__version__=="4.12.2")', "trimesh==4.12.2"),
+        ("python:pybullet", "pybullet==3.2.7"),
+        ("python:pxr.Usd;assert(pxr.Usd.GetVersion()==(0,26,8))", "usd-core==26.8"),
+    ),
     "workbench.marble.rover_collect": (
         ("python:gsplat", "gsplat==1.5.3"),
         (

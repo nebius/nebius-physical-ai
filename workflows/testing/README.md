@@ -17,6 +17,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | Workflow | Guide | Purpose |
 | --- | --- | --- |
+| [`marble-navigation-rl.yaml`](marble-navigation-rl.yaml) | [Guide](../../docs/workbench/guides/marble-navigation-rl.md) | Existing generated Marble collider → native ANYmal GPU physics/PPO → held-out checkpoint evaluation; qualified runtime required, GPU acceptance pending |
 | [`content-agents-rigid-object.yaml`](content-agents-rigid-object.yaml) | [Guide](../../docs/workbench/content-agents.md) | NVIDIA Content Agents with a public image and runtime-fetched OVRTX: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter |
 | [`cosmos-fetch.yaml`](cosmos-fetch.yaml) | [Access setup](../../docs/workbench/cosmos3-access-preflight.md) | Check Cosmos source/checkpoint access and materialize a local cache |
 | [`cosmos-synth-fanout-curation.yaml`](cosmos-synth-fanout-curation.yaml) | [General workflow guide](../../docs/workbench/npa-workflow-guide.md) | Cosmos synth fan-out + curation |

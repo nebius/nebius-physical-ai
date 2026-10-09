@@ -76,3 +76,23 @@ class RoverRequest(RunRequest):
         if 240 % value:
             raise ValueError("sensor_hz must divide the 240 Hz physics frequency")
         return value
+
+
+class NavigationRequest(BaseModel):
+    """Configure native navigation preparation from an existing generated world.
+
+    Args: Source/destination prefixes, identity, exact image, and native PPO parameters.
+    Returns: A validated preparation request.
+    Raises: ValueError for invalid paths, runtime identity, or experiment settings.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+    input_path: str
+    output_path: str
+    run_id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
+    image: str = Field(pattern=r"^[a-zA-Z0-9./:_-]+@sha256:[0-9a-f]{64}$")
+    num_envs: int = Field(default=4000, ge=2)
+    iterations: int = Field(default=500, ge=1)
+    episode_steps: int = Field(default=300, ge=1)
+    sampling_radius_m: float = Field(default=8.0, ge=3)
+    seed: int = Field(default=42, ge=0, le=4294967295)

@@ -39,7 +39,7 @@ licenses:
 skills:
   - name: marble
     category: tools
-    when_to_use: "Generate or import Marble worlds and run native CUDA capture or spatial-scan workflows with interactive HTML reports."
+    when_to_use: "Generate or import Marble worlds, collect CUDA sensor data, or prepare generated collision geometry for native navigation learning."
     path: skills/tools/marble/SKILL.md
     smoke:
       - type: file_exists
@@ -52,6 +52,7 @@ skills:
           - workflows/testing/marble-world-capture.yaml
           - workflows/testing/marble-spatial-scan.yaml
           - workflows/testing/marble-manufacturing-pallet-detection.yaml
+          - workflows/testing/marble-navigation-rl.yaml
   - name: ray-workbench
     category: tools
     when_to_use: "Choose or operate a supported Ray path: native Jobs/Core, guarded Train V2, Cosmos3 native Serve, or fixed CPU KubeRay; identify unsupported Ray libraries."

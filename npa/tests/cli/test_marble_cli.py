@@ -17,6 +17,7 @@ from npa.workbench.marble import runtime
         "pallet-preflight",
         "pallet-benchmark",
         "pallet-report",
+        "navigation-prepare",
     ],
 )
 def test_marble_command_registered(verb):

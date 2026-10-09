@@ -136,3 +136,40 @@ def test_rover_workflow_routes_both_sensors_to_one_real_gpu_stage(monkeypatch):
     assert "warp-lang==1.17.0" in jobs[1]["setup"]
     assert "gsplat==1.5.3" in jobs[1]["setup"]
     assert "accelerators" not in jobs[2]["resources"]
+
+
+def test_navigation_workflow_preserves_native_runtime_and_checkpoint_handoff(
+    monkeypatch,
+):
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+
+    image = "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
+    spec = load_spec(ROOT / "workflows/testing/marble-navigation-rl.yaml")
+    spec.config.update(world_uri="s3://example-bucket/world", isaac_image=image)
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="navigation-test"),
+        run_id="navigation-test",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    jobs = [doc for doc in yaml.safe_load_all(rendered) if doc and "run" in doc]
+    assert len(jobs) == 3
+    assert "accelerators" not in jobs[0]["resources"]
+    assert "navigation-prepare" in jobs[0]["run"]
+    assert "pybullet==3.2.7" in jobs[0]["setup"]
+    assert "usd-core==26.8" in jobs[0]["setup"]
+    for job in jobs[1:]:
+        assert job["resources"]["accelerators"] == "RTXPRO6000:1"
+        assert job["resources"]["image_id"] == "docker:" + image
+        assert job["envs"]["NPA_TASK_IMAGE"] == image
+        assert "npa.workflows.navigation.stages import run_stage" in job["run"]
+    assert "/training/" in jobs[2]["run"]
+    assert "/evaluation/" in jobs[2]["run"]

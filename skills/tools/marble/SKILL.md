@@ -5,6 +5,18 @@ description: Generate or import World Labs Marble worlds into NPA and run native
 
 # Marble
 
+For GPU learning beyond rendering, use `workflows/testing/marble-navigation-rl.yaml`
+and `docs/workbench/guides/marble-navigation-rl.md`. The
+`workbench.marble.navigation_prepare` adapter preserves a generated world's
+collision triangles, measures supported cases with disjoint goal locations,
+and seals inputs for the existing native ANYmal/Isaac/RSL-RL trainer. Training
+and evaluation use standard Workbench/SkyPilot stages and immutable S3 handoffs.
+Require an operator-qualified immutable Isaac image; do not default to the
+quarantined public release. This adapter's CPU preparation is verified against
+the real warehouse, but native GPU PPO and held-out evaluation remain unverified.
+The earlier sensor collection cannot establish navigation learning acceptance.
+`WLT_API_KEY` is needed for upstream generation, not for reusing its world bundle.
+
 For embodied warehouse collection, use
 `workflows/testing/marble-warehouse-rover.yaml` and
 `docs/workbench/guides/marble-warehouse-rover.md`. It requires real World API

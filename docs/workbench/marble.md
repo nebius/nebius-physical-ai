@@ -18,8 +18,9 @@ requires hosted generation and compares real-image detector accuracy.
 | [World Capture](../../workflows/testing/marble-world-capture.yaml) | gsplat Gaussian rasterization | RGB camera dataset, camera matrices, CUDA timings, interactive HTML |
 | [Spatial Scan](../../workflows/testing/marble-spatial-scan.yaml) | NVIDIA Warp ray/triangle intersection | raw depth NPZ, sampled hit cloud, camera matrices, CUDA timings, interactive HTML |
 | [Warehouse Rover](../../workflows/testing/marble-warehouse-rover.yaml) | gsplat RGB and Warp depth along actual wheel-driven motion | synchronized observations, actions, joints, contacts, poses, and standalone offline HTML |
+| [Navigation RL](../../workflows/testing/marble-navigation-rl.yaml) | native Isaac physics, ANYmal navigation inference and RSL-RL PPO updates | sealed scene/cases, policy checkpoint and held-out evaluation; new adapter GPU acceptance pending |
 
-Both use `acquire → capture/scan → report`, S3 handoffs, and one RTX PRO 6000
+Capture and scan use `acquire → capture/scan → report`, S3 handoffs, and one RTX PRO 6000
 GPU. The CPU acquisition/report stages request no GPU. The GPU consumers reuse
 the existing EnvGen CUDA/compiler image with its attested SkyPilot bootstrap.
 The specs enable source overlay for staged NPA code and install pinned runtime
@@ -28,6 +29,12 @@ Capture and scan execute gsplat or Warp. The rover combines both consumers
 with PyBullet CPU rigid-body dynamics in the same one-GPU worker; see the
 [headless collection guide](guides/marble-warehouse-rover.md).
 No Marble image or model weights are published.
+
+For GPU work beyond rendering, use the [navigation learning guide](guides/marble-navigation-rl.md).
+It reuses an existing generated world and the native navigation trainer, exposes
+`navigation-prepare` through CLI/SDK/catalog, and requires an operator-qualified
+Isaac image. Its input, training parameters, artifacts, and validation boundary
+are documented separately from the completed sensor collection.
 
 ## Which workloads benefit
 

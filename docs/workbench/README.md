@@ -24,6 +24,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Use FA4 in your own RTX PRO 6000 container | [RTX PRO 6000 adoption guide: base → application → validation → deployment](guides/rtx6000-fa4.md) |
 | Compare FA2 and FA4 on RTX PRO 6000 | [Build and tuning guide](guides/fa2-fa4-comparison.md) · [Latest speeds, cold-start cost and actual renders](fa4-rtx-optimization.md) |
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
+| Train navigation from a Marble world | [Marble → native ANYmal PPO guide](guides/marble-navigation-rl.md): GPU physics and learning, with explicit runtime and validation requirements |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
 | Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
 | Curate media with Encord | [S3 registration, pull, roundtrip verification, and a local MP4 demo](encord.md) |

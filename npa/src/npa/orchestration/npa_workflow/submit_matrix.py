@@ -72,6 +72,15 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "marble-navigation-rl.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-owned generated Marble world and a qualified immutable Isaac runtime image.",
+        notes="Actual collider preparation, native ANYmal GPU physics and PPO, and held-out checkpoint evaluation; acceptance is recorded separately.",
+    ),
+    SubmitLiveCase(
         "marble-manufacturing-pallet-detection.yaml",
         "gpu",
         secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

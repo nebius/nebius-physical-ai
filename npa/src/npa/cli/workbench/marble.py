@@ -9,6 +9,7 @@ from npa.workbench.marble import runtime
 from npa.workbench.marble.api import MarbleError
 from npa.workbench.marble.schemas import (
     AcquireRequest,
+    NavigationRequest,
     PalletBenchmarkRequest,
     RunRequest,
     RoverRequest,
@@ -18,6 +19,44 @@ app = typer.Typer(
     help="World Labs Marble worlds, CUDA camera datasets, and spatial scans.",
     no_args_is_help=True,
 )
+
+
+@app.command("navigation-prepare")
+@json_stdout_contract
+def navigation_prepare_cmd(
+    input_path: str = typer.Option(..., "--input-path"),
+    output_path: str = typer.Option(..., "--output-path"),
+    run_id: str = typer.Option(..., "--run-id"),
+    image: str = typer.Option(..., "--image"),
+    num_envs: int = typer.Option(4000, "--num-envs"),
+    iterations: int = typer.Option(500, "--iterations"),
+    episode_steps: int = typer.Option(300, "--episode-steps"),
+    sampling_radius_m: float = typer.Option(8.0, "--sampling-radius-m"),
+    seed: int = typer.Option(42, "--seed"),
+    output_format: str = typer.Option("json", "--output-format"),
+):
+    """Prepare a Marble collider for native ANYmal navigation learning.
+
+    Args: World/output paths, exact runtime image, identity, and training configuration.
+    Returns: None; writes native input preparation evidence as JSON.
+    Raises: typer.Exit when geometry, case support, provenance, or publication fails.
+    """
+    from npa.workbench.marble.navigation import navigation_prepare
+
+    _call(
+        navigation_prepare,
+        NavigationRequest(
+            input_path=input_path,
+            output_path=output_path,
+            run_id=run_id,
+            image=image,
+            num_envs=num_envs,
+            iterations=iterations,
+            episode_steps=episode_steps,
+            sampling_radius_m=sampling_radius_m,
+            seed=seed,
+        ),
+    )
 
 
 @app.command("rover-collect")
