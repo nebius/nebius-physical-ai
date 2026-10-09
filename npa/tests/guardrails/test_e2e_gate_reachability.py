@@ -25,10 +25,6 @@ def metadata_live_contract() -> dict[str, object]:
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
-    "NPA_TEAM_LIVE_E2E": (
-        "requires two operator-selected enrolled team allocations and private storage credentials; "
-        "runs admission dry-runs and writes temporary isolation probe objects as documented in docs/workbench/team-access.md"
-    ),
     "NPA_LINEAGE_POSTGRES_DSN": "requires operator-selected private Postgres and MLflow tracking services",
     "NPA_VIDEO_SWEEP_FULL_GPU": "requires real Transfer runtime, licensed model access, inputs and tracking services",
     "NPA_VIDEO_SWEEP_REASONER_MODEL": "requires an explicit available model for live paid hosted inference",
@@ -50,6 +46,10 @@ MANUAL_GATES = {
     "NPA_LIVE_MANAGED_JOB_POD_DIAGNOSTICS": (
         "read-only pod identity checks require an operator-selected existing controller, "
         "job, task, context, kubeconfig, and SkyPilot binary"
+    ),
+    "NPA_TEAM_LIVE_E2E": (
+        "requires two operator-selected enrolled team allocations and private storage credentials; "
+        "runs admission dry-runs and writes temporary isolation probe objects as documented in docs/workbench/team-access.md"
     ),
     "NPA_NAMESPACE_LIVE_E2E": (
         "requires an explicitly selected disposable cluster with administrator access; "
