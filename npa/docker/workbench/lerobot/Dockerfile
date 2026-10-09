@@ -169,11 +169,19 @@ USER root
 # vendor python stays reachable by absolute path, and the renderer's
 # TOOL_REF_VENDOR_INTERPRETERS installs npa into it and records it as the stage interpreter —
 # without that half, a tool importing `lerobot` would run under the system python and fail.
-# Only these three packages: this image purges linux-libc-dev as CVE hardening, so pulling
-# anything that depends on libc6-dev (python3-pip, openssh-client) breaks apt. The system
-# python3 the bootstrap needs is already present, so it is asserted rather than installed.
+# Install every bootstrap package before the hardening step. That step deliberately leaves
+# APT unable to resolve packages needing linux-libc-dev, so deferring sshd to SkyPilot's
+# runtime bootstrap would make an otherwise non-root image unschedulable. Remove the
+# package-generated host keys in this same layer; SkyPilot creates per-task keys later.
+# The system python3 the bootstrap needs is already present, so it is asserted rather than
+# installed.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends rsync sudo netcat-openbsd \
+    && apt-get install -y --no-install-recommends \
+      openssh-server \
+      rsync \
+      sudo \
+      netcat-openbsd \
+    && rm -f /etc/ssh/ssh_host_* \
     && rm -rf /var/lib/apt/lists/* \
     && printf '%s ALL=(ALL) NOPASSWD:ALL\n' ubuntu \
          > /etc/sudoers.d/99-npa-runtime-user \

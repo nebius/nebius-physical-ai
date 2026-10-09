@@ -11,12 +11,16 @@ DOCKERFILE = ROOT / "npa/docker/workbench/lerobot/Dockerfile"
 CORRECTION = "/opt/lerobot/remove-scikit-image-recipe.py"
 
 
-def _installation(text):
-    instructions = [
+def _instructions(text):
+    return [
         (match.group(1), match.group(2))
         for line in text.replace("\\\n", " ").splitlines()
         if (match := re.match(r"^([A-Z]+)\s+(.*)$", line))
     ]
+
+
+def _installation(text):
+    instructions = _instructions(text)
     index, body = next(
         (index, body)
         for index, (kind, body) in enumerate(instructions)
@@ -62,6 +66,28 @@ def test_both_versions_correct_the_reviewed_source_in_the_original_install_layer
     _installation(text)
     assert "NPA_LEROBOT_INTEGRATION_PROFILE" not in text
     assert "/opt/lerobot/source-integration.json" in text
+
+
+def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
+    """Keep the non-root SkyPilot contract runnable after libc header hardening."""
+
+    instructions = _instructions(DOCKERFILE.read_text())
+    prereq_index, prereq = next(
+        (index, body)
+        for index, (kind, body) in enumerate(instructions)
+        if kind == "RUN" and "netcat-openbsd" in body
+    )
+    hardening_index, hardening = next(
+        (index, body)
+        for index, (kind, body) in enumerate(instructions)
+        if kind == "RUN" and "dpkg --purge --force-depends linux-libc-dev" in body
+    )
+
+    assert "openssh-server" in prereq
+    assert "rm -f /etc/ssh/ssh_host_*" in prereq
+    assert prereq.index("openssh-server") < prereq.index("rm -f /etc/ssh/ssh_host_*")
+    assert prereq_index < hardening_index
+    assert "linux-libc-dev" in hardening
 
 
 @pytest.mark.parametrize(
