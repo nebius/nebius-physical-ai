@@ -21,8 +21,10 @@ ARG GROOT_REPO_REF=3df8b3825d67f755e69141446f4315f281b9b7e6
 ARG ISAAC_LAB_VERSION=2.3.2.post1
 ARG ISAAC_SIM_VERSION=5.1.0.0
 ARG ISAAC_LAB_SRC_COMMIT=37ddf626871758333d6ed89cf64ad702aef127d0
-# Keep userspace development headers on the fixed build available in both the
-# Jammy updates and security suites of this immutable Ubuntu snapshot.
+# The prior frozen snapshot retained linux-libc-dev 5.15.0-194.204, which is
+# vulnerable to CVE-2026-64535, CVE-2026-64564, and CVE-2026-74394. This newer
+# immutable snapshot contains the fixed 5.15.0-198.208 build in both Jammy
+# updates and security suites.
 ARG GROOT_UBUNTU_SNAPSHOT=20261008T000000Z
 ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-198.208
 ARG COSMOS_REASON_MODEL=nvidia/Cosmos-Reason2-2B

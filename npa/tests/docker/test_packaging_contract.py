@@ -596,6 +596,8 @@ def test_groot_uses_a_fixed_consistent_linux_headers_snapshot() -> None:
 
     assert "ARG GROOT_UBUNTU_SNAPSHOT=20261008T000000Z" in text
     assert "ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in text
+    for cve in ("CVE-2026-64535", "CVE-2026-64564", "CVE-2026-74394"):
+        assert cve in text
     assert "NPA_UBUNTU_SNAPSHOT=${GROOT_UBUNTU_SNAPSHOT}" in text
     assert "NPA_LINUX_LIBC_DEV_VERSION=${GROOT_LINUX_LIBC_DEV_VERSION}" in text
     assert '"linux-libc-dev=${GROOT_LINUX_LIBC_DEV_VERSION}"' in text
