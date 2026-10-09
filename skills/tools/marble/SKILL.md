@@ -5,6 +5,18 @@ description: Generate or import World Labs Marble worlds into NPA and run native
 
 # Marble
 
+For embodied warehouse collection, use
+`workflows/testing/marble-warehouse-rover.yaml` and
+`docs/workbench/guides/marble-warehouse-rover.md`. It requires real World API
+generation and aligned mesh/splat transforms. `workbench.marble.rover_collect`
+drives a four-wheel rover through PyBullet CPU rigid-body dynamics, then renders
+RGB with gsplat CUDA and raycasts depth with Warp CUDA on one Nebius GPU. It
+saves actions, joints, contacts, poses, raw depth, and a standalone HTML replay.
+The observer uses a CPU-rendered rover at recorded poses and CUDA mesh depth
+occlusion. Do not describe this as physical Spot collection or RL training.
+Run native runtime submission from a Linux operator and preserve its isolated
+SkyPilot identity for resume and cleanup.
+
 For a straightforward user walkthrough, use
 `docs/workbench/guides/marble-to-nebius.md`: World Labs generates the scene,
 the CPU acquisition stage downloads files to S3, and a Nebius GPU worker loads

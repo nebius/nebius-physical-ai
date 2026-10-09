@@ -10,6 +10,7 @@ World Labs Marble worlds, CUDA camera datasets, and spatial scans.
 Options
 --help  Show this message and exit.
 Commands
+rover-collect  Collect RGB, depth, actions, and contact states from a wheel-driven rover.
 acquire  Acquire a hosted world or the explicitly attributed upstream example.
 capture  Render real Gaussian splats with gsplat on a required CUDA GPU.
 scan  Measure depth and clearance against real mesh triangles on CUDA.
@@ -29,6 +30,7 @@ pallet-report  Publish the measured pallet comparison as static JSON and HTML.
 
 | Command | Description |
 | --- | --- |
+| `rover-collect` | Collect RGB, depth, actions, and contact states from a wheel-driven rover. |
 | `acquire` | Acquire a hosted world or the explicitly attributed upstream example. |
 | `capture` | Render real Gaussian splats with gsplat on a required CUDA GPU. |
 | `scan` | Measure depth and clearance against real mesh triangles on CUDA. |
@@ -41,7 +43,7 @@ pallet-report  Publish the measured pallet comparison as static JSON and HTML.
 
 ```bash
 npa workbench marble --help
-npa workbench marble acquire --help
+npa workbench marble rover-collect --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `marble`.

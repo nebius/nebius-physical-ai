@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'sha256-__SCRIPT_SHA256__'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Warehouse rover · Real collection</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #091016;
+        --panel: #111c24;
+        --line: #293844;
+        --muted: #92a8b9;
+        --green: #9ee9aa;
+        --orange: #ff974e;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: #eaf1f5;
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      button,
+      a.download {
+        background: #1e303d;
+        border: 1px solid #405463;
+        color: #eaf1f5;
+        border-radius: 8px;
+        padding: 9px 15px;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      button:hover {
+        background: #2b4556;
+      }
+      button:focus-visible,
+      input:focus-visible {
+        outline: 2px solid var(--green);
+        outline-offset: 3px;
+      }
+      .wrap {
+        max-width: 1480px;
+        margin: auto;
+        padding: 28px 32px 50px;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+      }
+      .brand {
+        font-size: 12px;
+        letter-spacing: 0.18em;
+        color: var(--muted);
+      }
+      .badge {
+        border: 1px solid #496553;
+        color: var(--green);
+        border-radius: 30px;
+        padding: 6px 12px;
+        font-size: 12px;
+      }
+      .title {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 32px;
+        margin: 26px 0 24px;
+      }
+      h1 {
+        font-size: clamp(28px, 3.4vw, 49px);
+        line-height: 1.12;
+        letter-spacing: -0.035em;
+        margin: 6px 0 10px;
+        font-weight: 620;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .eyebrow {
+        font:
+          11px ui-monospace,
+          monospace;
+        letter-spacing: 0.12em;
+        color: var(--orange);
+      }
+      .stats {
+        display: flex;
+        gap: 28px;
+        white-space: nowrap;
+      }
+      .stat strong {
+        font-size: 24px;
+        display: block;
+        font-weight: 500;
+      }
+      .stat span {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .flow {
+        display: grid;
+        grid-template-columns: 1fr 30px 1.4fr 30px 1fr;
+        align-items: center;
+        margin-bottom: 24px;
+      }
+      .flow article {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 13px 18px;
+        background: var(--panel);
+      }
+      .flow b {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .flow p {
+        font-size: 12px;
+      }
+      .arrow {
+        text-align: center;
+        color: var(--green);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 310px;
+        gap: 18px;
+      }
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: var(--panel);
+        overflow: hidden;
+      }
+      .panelhead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        font-size: 12px;
+      }
+      .panelhead span {
+        color: var(--muted);
+        font:
+          11px ui-monospace,
+          monospace;
+      }
+      .hero {
+        position: relative;
+        background: #050708;
+      }
+      .hero img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16/9;
+        object-fit: cover;
+      }
+      .overlay {
+        position: absolute;
+        left: 16px;
+        bottom: 15px;
+        background: #091016d9;
+        backdrop-filter: blur(8px);
+        padding: 10px 14px;
+        border: 1px solid #52627280;
+        border-radius: 8px;
+        max-width: 75%;
+      }
+      .overlay b {
+        display: block;
+        font-size: 13px;
+      }
+      .overlay span {
+        font-size: 11px;
+        color: #c6d3dd;
+      }
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 16px;
+      }
+      input[type="range"] {
+        accent-color: var(--green);
+        width: 100%;
+        min-width: 30px;
+      }
+      .time {
+        font:
+          12px ui-monospace,
+          monospace;
+        white-space: nowrap;
+      }
+      .side {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .map {
+        width: 100%;
+        aspect-ratio: 1;
+        background: #101923;
+        display: block;
+      }
+      .telemetry {
+        padding: 13px 17px;
+      }
+      .telemetry div {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 0;
+        border-bottom: 1px solid #24333d;
+        font-size: 12px;
+      }
+      .telemetry span {
+        color: var(--muted);
+      }
+      .telemetry b {
+        font:
+          12px ui-monospace,
+          monospace;
+      }
+      .sensors {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+        margin-top: 18px;
+      }
+      .sensors img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16/9;
+        object-fit: cover;
+      }
+      .caption {
+        padding: 12px 16px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .proof {
+        margin-top: 24px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+      .textpanel {
+        padding: 20px;
+      }
+      .textpanel h2 {
+        font-size: 17px;
+        margin: 0 0 10px;
+        font-weight: 600;
+      }
+      .textpanel p {
+        font-size: 13px;
+        margin: 9px 0;
+      }
+      .chip {
+        font:
+          11px ui-monospace,
+          monospace;
+        color: var(--green);
+      }
+      details {
+        border-top: 1px solid var(--line);
+        margin-top: 16px;
+        padding-top: 12px;
+      }
+      summary {
+        cursor: pointer;
+        color: #d2dfe8;
+      }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-all;
+        color: #bdd0dc;
+        font:
+          11px/1.6 ui-monospace,
+          monospace;
+        max-height: 280px;
+        overflow: auto;
+      }
+      .downloadrow {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 15px;
+      }
+      .footer {
+        margin-top: 24px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      @media (max-width: 1000px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .side {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+        }
+        .title {
+          display: block;
+        }
+        .stats {
+          margin-top: 20px;
+        }
+        .map {
+          max-height: 270px;
+        }
+        .flow {
+          grid-template-columns: 1fr;
+        }
+        .arrow {
+          transform: rotate(90deg);
+          padding: 3px;
+        }
+        .proof {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 600px) {
+        .wrap {
+          padding: 18px 14px;
+        }
+        .sensors,
+        .side {
+          grid-template-columns: 1fr;
+        }
+        .stats {
+          gap: 20px;
+        }
+        .badge {
+          font-size: 10px;
+        }
+        .controls {
+          gap: 8px;
+        }
+        .time {
+          font-size: 10px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <header>
+        <div class="brand">NEBIUS · PHYSICAL AI WORKBENCH</div>
+        <div class="badge">COMPLETED COLLECTION · OFFLINE REPLAY</div>
+      </header>
+      <div class="title">
+        <div>
+          <div class="eyebrow">WAREHOUSE INSPECTION / EMBODIED DATA</div>
+          <h1>
+            A rover. A real generated world.<br />Recorded GPU sensor data.
+          </h1>
+          <p>
+            World Labs Marble → wheel-driven simulation → synchronized RGB +
+            depth on Nebius.
+          </p>
+        </div>
+        <div class="stats">
+          <div class="stat">
+            <strong>1 GPU</strong><span>CUDA SENSOR WORKER</span>
+          </div>
+          <div class="stat">
+            <strong id="distance">—</strong><span>SIMULATED TRAVEL</span>
+          </div>
+          <div class="stat">
+            <strong id="count">—</strong><span>SENSOR PAIRS</span>
+          </div>
+        </div>
+      </div>
+      <section class="flow" aria-label="Executed workflow">
+        <article>
+          <b>01 · World Labs API</b>
+          <p>Generated warehouse · splats + collider</p>
+        </article>
+        <div class="arrow">→</div>
+        <article>
+          <b>02 · Nebius RTX worker</b>
+          <p>Wheel dynamics on CPU · gsplat RGB + Warp depth on CUDA</p>
+        </article>
+        <div class="arrow">→</div>
+        <article>
+          <b>03 · Collection artifacts</b>
+          <p>Frames · poses · wheel commands · contacts</p>
+        </article>
+      </section>
+      <section class="grid">
+        <div class="panel">
+          <div class="panelhead">
+            <b>Mission observer</b><span id="frame-label">FRAME —</span>
+          </div>
+          <div class="hero">
+            <img
+              id="observer"
+              alt="Recorded observer view of the rover in the generated warehouse"
+            />
+            <div class="overlay">
+              <b>Inspection rover · physical wheel motion</b
+              ><span
+                >Recorded simulation replay. GPU-rendered world; CPU-rendered
+                rover with mesh depth occlusion.</span
+              >
+            </div>
+          </div>
+          <div class="controls">
+            <button id="play" aria-label="Play collection">Play</button
+            ><input
+              id="scrub"
+              aria-label="Collection frame"
+              type="range"
+              min="0"
+              value="0"
+            /><span class="time" id="clock">—</span
+            ><button id="speed" aria-label="Playback speed">1×</button>
+          </div>
+        </div>
+        <aside class="side">
+          <div class="panel">
+            <div class="panelhead">
+              <b>Measured rover trajectory</b><span>TOP VIEW</span>
+            </div>
+            <canvas
+              id="map"
+              class="map"
+              width="620"
+              height="620"
+              aria-label="Recorded rover path in warehouse coordinates"
+            ></canvas>
+            <div class="caption">
+              Position comes from rigid-body dynamics. The route is checked
+              against the generated collider.
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panelhead">
+              <b>Frame telemetry</b><span>RECORDED</span>
+            </div>
+            <div class="telemetry">
+              <div><span>Position X / Y</span><b id="position">—</b></div>
+              <div><span>Wheel speed L / R</span><b id="wheel">—</b></div>
+              <div><span>Ground contacts</span><b id="contacts">—</b></div>
+              <div><span>Normal force</span><b id="force">—</b></div>
+              <div><span>RGB CUDA kernel</span><b id="rgb-ms">—</b></div>
+              <div><span>Depth CUDA kernel</span><b id="depth-ms">—</b></div>
+              <div><span>Depth hit coverage</span><b id="coverage">—</b></div>
+            </div>
+          </div>
+        </aside>
+      </section>
+      <section class="sensors">
+        <div class="panel">
+          <div class="panelhead">
+            <b>Onboard RGB</b><span>GSPLAT / CUDA</span>
+          </div>
+          <img id="rgb" alt="Actual onboard Gaussian-splat RGB observation" />
+          <div class="caption">
+            Pinhole camera attached to the simulated rover. Camera-to-world
+            matrices saved for every frame.
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panelhead">
+            <b>Onboard depth</b><span>NVIDIA WARP / CUDA</span>
+          </div>
+          <img id="depth" alt="Actual raycast depth observation" />
+          <div class="caption">
+            Triangle-mesh ray distance. Black means no return. Raw
+            floating-point depths are saved separately.
+          </div>
+        </div>
+      </section>
+      <section class="proof">
+        <article class="panel textpanel">
+          <span class="chip">MEASURED EXECUTION</span>
+          <h2 id="device">GPU evidence</h2>
+          <p id="compute">—</p>
+          <p id="geometry">—</p>
+          <p>
+            World generation runs behind World Labs’ API. Nebius loads the
+            downloaded assets and executes the sensor kernels. This page plays
+            those completed outputs; it does not start a cloud job.
+          </p>
+          <details>
+            <summary>Artifact hashes and execution evidence</summary>
+            <pre id="evidence"></pre>
+          </details>
+        </article>
+        <article class="panel textpanel">
+          <span class="chip">WHAT THIS COLLECTION SUPPORTS</span>
+          <h2>Perception and navigation experiments</h2>
+          <p>
+            Use synchronized images, depth, actions, and poses to prototype
+            visual odometry, mapping, obstacle perception, and
+            action-conditioned models. This rollout uses a scripted feedback
+            controller.
+          </p>
+          <p>
+            For RL, connect observations and actions to a task with rewards,
+            resets, and held-out evaluation. No RL policy was trained in this
+            collection. Geometry is approximate and uses the provider’s
+            estimated scale; physical-site accuracy and sim-to-real transfer
+            remain unmeasured.
+          </p>
+          <div class="downloadrow">
+            <button id="export-trajectory">Download trajectory</button
+            ><button id="export-evidence">Download evidence</button>
+          </div>
+        </article>
+      </section>
+      <p class="footer">
+        A simulated four-wheel inspection rover, not Boston Dynamics Spot or a
+        physical-site capture. All displayed frames derive from the completed
+        run. No external scripts, services, API keys, or cloud identifiers are
+        embedded.
+      </p>
+    </main>
+    <script id="collection" type="application/json">
+      __COLLECTION_DATA__
+    </script>
+    <script id="replay">
+      "use strict";
+      const data = JSON.parse(
+        document.getElementById("collection").textContent,
+      );
+      const el = (id) => document.getElementById(id),
+        trajectory = data.trajectory,
+        metrics = data.metrics;
+      let frame = 0,
+        playing = false,
+        speed = 1,
+        last = 0,
+        accumulator = 0;
+      const hz = metrics.physics.sensor_hz,
+        total = trajectory.length;
+      el("distance").textContent = metrics.physics.distance_m.toFixed(2) + " m";
+      el("count").textContent = total;
+      el("scrub").max = total - 1;
+      el("device").textContent = data.gpu.name;
+      const sum = (values) => values.reduce((a, b) => a + b, 0);
+      el("compute").textContent =
+        `CUDA ${data.gpu.cuda} · ${data.width} × ${data.height} · ${hz} Hz sensors · ${(sum(metrics.cuda_frame_ms) / 1000).toFixed(2)} seconds measured CUDA kernel time across onboard and observer passes.`;
+      el("geometry").textContent =
+        `${metrics.rgb.gaussians.toLocaleString()} splats · ${metrics.depth.triangles.toLocaleString()} collision triangles · ${metrics.depth.rays.toLocaleString()} onboard depth rays.`;
+      const evidence = {
+        world_model: data.world_model,
+        generated_with_real_api: data.world_generated,
+        gpu: data.gpu,
+        frames: total,
+        sensor_hz: hz,
+        physics: metrics.physics,
+        world_asset_hashes: data.asset_hashes,
+        limitations: data.limitations,
+      };
+      el("evidence").textContent = JSON.stringify(evidence, null, 2);
+      const ctx = el("map").getContext("2d"),
+        points = trajectory.map((row) => row.position_bullet);
+      const minX = Math.min(...points.map((p) => p[0])) - 1,
+        maxX = Math.max(...points.map((p) => p[0])) + 1,
+        minY = Math.min(...points.map((p) => p[1])) - 1,
+        maxY = Math.max(...points.map((p) => p[1])) + 1;
+      const scale = Math.min(500 / (maxX - minX), 500 / (maxY - minY));
+      const project = (p) => [
+        310 + (p[0] - (minX + maxX) / 2) * scale,
+        310 - (p[1] - (minY + maxY) / 2) * scale,
+      ];
+      function drawGrid() {
+        ctx.clearRect(0, 0, 620, 620);
+        ctx.strokeStyle = "#21323f";
+        ctx.lineWidth = 1;
+        for (let i = 30; i < 620; i += 40) {
+          ctx.beginPath();
+          ctx.moveTo(i, 0);
+          ctx.lineTo(i, 620);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(0, i);
+          ctx.lineTo(620, i);
+          ctx.stroke();
+        }
+      }
+      function drawPath(path, color, width) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        path.forEach((position, index) => {
+          const pixel = project(position);
+          if (index) ctx.lineTo(...pixel);
+          else ctx.moveTo(...pixel);
+        });
+        ctx.stroke();
+      }
+      function drawRover() {
+        const p = project(points[frame]),
+          q = trajectory[frame].orientation_xyzw_bullet,
+          yaw = Math.atan2(
+            2 * (q[3] * q[2] + q[0] * q[1]),
+            1 - 2 * (q[1] * q[1] + q[2] * q[2]),
+          );
+        ctx.save();
+        ctx.translate(...p);
+        ctx.rotate(-yaw);
+        ctx.fillStyle = "#ff974e";
+        ctx.fillRect(-17, -11, 34, 22);
+        ctx.fillStyle = "#eaf1f5";
+        ctx.fillRect(10, -5, 7, 10);
+        ctx.restore();
+        ctx.fillStyle = "#92a8b9";
+        ctx.font = "22px monospace";
+        ctx.fillText("+Y ↑   +X →", 22, 592);
+      }
+      function map() {
+        drawGrid();
+        drawPath(points, "#49616e", 7);
+        drawPath(points.slice(0, frame + 1), "#9ee9aa", 5);
+        drawRover();
+      }
+      function show(index) {
+        frame = Math.max(0, Math.min(total - 1, index));
+        for (const name of ["rgb", "depth", "observer"])
+          el(name).src = data.images[name][frame];
+        el("scrub").value = frame;
+        el("frame-label").textContent =
+          `FRAME ${String(frame + 1).padStart(4, "0")} / ${total}`;
+        const row = trajectory[frame];
+        el("clock").textContent =
+          `${row.time_seconds.toFixed(2)} / ${(total / hz).toFixed(2)} s`;
+        el("position").textContent =
+          row.position_bullet
+            .slice(0, 2)
+            .map((v) => v.toFixed(2))
+            .join(" / ") + " m";
+        el("wheel").textContent =
+          [row.wheel_states[0][1], row.wheel_states[2][1]]
+            .map((v) => v.toFixed(2))
+            .join(" / ") + " rad/s";
+        el("contacts").textContent = row.contacts;
+        el("force").textContent = row.contact_normal_force.toFixed(1) + " N";
+        el("rgb-ms").textContent =
+          metrics.rgb.cuda_frame_ms[frame].toFixed(2) + " ms";
+        el("depth-ms").textContent =
+          metrics.depth.cuda_frame_ms[frame].toFixed(2) + " ms";
+        el("coverage").textContent =
+          (metrics.depth.coverage[frame] * 100).toFixed(1) + "%";
+        map();
+      }
+      function play(value) {
+        playing = value;
+        el("play").textContent = playing ? "Pause" : "Play";
+        el("play").setAttribute(
+          "aria-label",
+          playing ? "Pause collection" : "Play collection",
+        );
+        last = 0;
+        accumulator = 0;
+      }
+      el("play").addEventListener("click", () => {
+        if (frame === total - 1) show(0);
+        play(!playing);
+      });
+      el("scrub").addEventListener("input", (event) => {
+        play(false);
+        show(Number(event.target.value));
+      });
+      el("speed").addEventListener("click", () => {
+        speed = speed === 1 ? 2 : speed === 2 ? 0.5 : 1;
+        el("speed").textContent = speed + "×";
+      });
+      function tick(now) {
+        if (playing) {
+          if (last) accumulator += (now - last) * speed;
+          while (accumulator >= 1000 / hz && playing) {
+            accumulator -= 1000 / hz;
+            if (frame === total - 1) play(false);
+            else show(frame + 1);
+          }
+          last = now;
+        }
+        requestAnimationFrame(tick);
+      }
+      function download(name, value) {
+        const link = document.createElement("a"),
+          url = URL.createObjectURL(
+            new Blob([JSON.stringify(value, null, 2)], {
+              type: "application/json",
+            }),
+          );
+        link.href = url;
+        link.download = name;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      el("export-trajectory").addEventListener("click", () =>
+        download("warehouse-rover-trajectory.json", trajectory),
+      );
+      el("export-evidence").addEventListener("click", () =>
+        download("warehouse-rover-evidence.json", evidence),
+      );
+      show(0);
+      requestAnimationFrame(tick);
+    </script>
+  </body>
+</html>

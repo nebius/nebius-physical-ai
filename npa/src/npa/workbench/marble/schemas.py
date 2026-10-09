@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AcquireRequest(BaseModel):
@@ -51,3 +51,28 @@ class PalletBenchmarkRequest(RunRequest):
     batch_size: int = Field(default=2, ge=1)
     learning_rate: float = Field(default=0.005, gt=0)
     seed: int = Field(default=42, ge=0, le=4294967295)
+
+
+class RoverRequest(RunRequest):
+    """Configure a wheel-driven collection with synchronized RGB and depth.
+
+    Args: World/result prefixes, frame count, image size, and sensor frequency.
+    Returns: A validated request with integral physics steps per observation.
+    Raises: ValueError when the sensor frequency does not divide 240 Hz.
+    """
+
+    frames: int = Field(default=240, ge=2)
+    sensor_hz: int = Field(default=12, ge=1, le=240)
+
+    @field_validator("sensor_hz")
+    @classmethod
+    def physics_divisor(cls, value):
+        """Require exact synchronization between sensor and physics clocks.
+
+        Args: Requested integer sensor frequency.
+        Returns: The accepted frequency.
+        Raises: ValueError for a fractional number of physics steps.
+        """
+        if 240 % value:
+            raise ValueError("sensor_hz must divide the 240 Hz physics frequency")
+        return value

@@ -12,6 +12,54 @@ from npa.workbench.marble.cameras import camera_sweep, transform_splats
 from npa.workbench.marble.demo import write_demo
 
 
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_completed_operation_resolves_live_and_documented_world_shapes(
+    monkeypatch, wrapped
+):
+    world = {"world_id": "existing-world", "assets": {"splats": {"spz_urls": {}}}}
+    calls = []
+
+    def request(method, route):
+        calls.append((method, route))
+        if route.startswith("operations/"):
+            return {"done": True, "response": {"world_id": "existing-world"}}
+        return {"world": world} if wrapped else world
+
+    monkeypatch.setattr(api, "api_request", request)
+    assert api.await_world("existing-operation")["id"] == "existing-world"
+    assert calls == [
+        ("GET", "operations/existing-operation"),
+        ("GET", "worlds/existing-world"),
+    ]
+
+
+def test_generated_mesh_and_splats_share_provider_metric_transform(monkeypatch):
+    monkeypatch.setattr(acquisition, "_generation_operation", lambda _: "accepted")
+    monkeypatch.setattr(
+        acquisition,
+        "await_world",
+        lambda _: {
+            "id": "test-world",
+            "assets": {
+                "splats": {
+                    "semantics_metadata": {
+                        "metric_scale_factor": 2.5,
+                        "ground_plane_offset": 1.5,
+                    },
+                    "spz_urls": {"500k": "https://example.org/world.spz"},
+                },
+                "mesh": {"collider_mesh_url": "https://example.org/collider.glb"},
+            },
+        },
+    )
+    world = acquisition._generated(_generation_request())
+    assert world["mesh_transform"] == world["splat_transform"]
+    assert world["mesh_transform"] == {
+        "scale": [2.5, -2.5, -2.5],
+        "translation": [0, 1.5, 0],
+    }
+
+
 def test_missing_key_fails_before_network(monkeypatch):
     monkeypatch.delenv("WLT_API_KEY", raising=False)
     monkeypatch.setattr(api, "load_credentials", lambda: SimpleNamespace(tokens={}))

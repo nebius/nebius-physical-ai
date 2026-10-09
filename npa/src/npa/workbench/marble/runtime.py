@@ -110,7 +110,12 @@ def report(request):
         root = Path(directory)
         result = _materialize(request.input_path, "result.json", root)
         validate_result(result, request.run_id)
-        write_demo(root, result)
+        if result.get("kind") == "rover":
+            from .rover_report import write_rover_report
+
+            write_rover_report(root, result)
+        else:
+            write_demo(root, result)
         _publish(root, request.output_path)
     return {"run_id": request.run_id, "report": "index.html", "verified": True}
 

@@ -11,12 +11,47 @@ from npa.workbench.marble.schemas import (
     AcquireRequest,
     PalletBenchmarkRequest,
     RunRequest,
+    RoverRequest,
 )
 
 app = typer.Typer(
     help="World Labs Marble worlds, CUDA camera datasets, and spatial scans.",
     no_args_is_help=True,
 )
+
+
+@app.command("rover-collect")
+@json_stdout_contract
+def rover_collect_cmd(
+    input_path: str = typer.Option(..., "--input-path"),
+    output_path: str = typer.Option(..., "--output-path"),
+    run_id: str = typer.Option(..., "--run-id"),
+    frames: int = typer.Option(240, "--frames"),
+    width: int = typer.Option(960, "--width"),
+    height: int = typer.Option(540, "--height"),
+    sensor_hz: int = typer.Option(12, "--sensor-hz"),
+    output_format: str = typer.Option("json", "--output-format"),
+):
+    """Collect RGB, depth, actions, and contact states from a wheel-driven rover.
+
+    Args: World/result prefixes, identity, dimensions, sensor rate, and format.
+    Returns: None; writes measured execution JSON.
+    Raises: typer.Exit on invalid geometry, physics, CUDA, or storage evidence.
+    """
+    from npa.workbench.marble.rover import rover_collect
+
+    _call(
+        rover_collect,
+        RoverRequest(
+            input_path=input_path,
+            output_path=output_path,
+            run_id=run_id,
+            frames=frames,
+            width=width,
+            height=height,
+            sensor_hz=sensor_hz,
+        ),
+    )
 
 
 def _call(operation, request):

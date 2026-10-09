@@ -1,0 +1,63 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: marble-warehouse-rover
+  description: Generate a warehouse with World Labs, simulate a wheel-driven rover, and collect synchronized CUDA RGB and depth on one Nebius GPU.
+config:
+  source_overlay: true
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/marble-rover"
+  world_source: generate
+  world_model: marble-1.1
+  world_prompt: A realistic industrial warehouse with a wide unobstructed central concrete aisle, blue steel pallet racks, orange beams, cardboard cartons and wrapped pallets on both sides, overhead white industrial lights, no people or robots. Eye-level centered view along the aisle. Flat continuous floor suitable for a small wheeled inspection robot.
+  frames: 240
+  width: 960
+  height: 540
+  sensor_hz: 12
+  world_uri: "s3://{{config.bucket}}/{{config.prefix}}/world/"
+  results_uri: "s3://{{config.bucket}}/{{config.prefix}}/results/"
+  reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 8Gi
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 32Gi
+initial: acquire
+states:
+  acquire:
+    description: Acquire generated splats and collider with a shared metric coordinate transform.
+    toolRef: workbench.marble.acquire
+    resources: cpu
+    outputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+    next: collect
+  collect:
+    description: Simulate wheel motors against the collider on CPU, render RGB with gsplat CUDA, and raycast depth with Warp CUDA.
+    toolRef: workbench.marble.rover_collect
+    resources: gpu
+    inputs:
+      - uri: "{{config.world_uri}}world.json"
+    outputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+      - uri: "{{config.results_uri}}trajectory.json"
+        schema: application/json
+      - uri: "{{config.results_uri}}depth.npz"
+        schema: application/octet-stream
+    next: report
+  report:
+    description: Verify output hashes and embed actual collection frames in a standalone HTML replay.
+    toolRef: workbench.marble.report
+    resources: cpu
+    inputs:
+      - uri: "{{config.results_uri}}result.json"
+    outputs:
+      - uri: "{{config.reports_uri}}index.html"
+        schema: text/html
+    terminal: true

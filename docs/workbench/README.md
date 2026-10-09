@@ -57,6 +57,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | BEHAVIOR 2026 household challenge | [Start here: one-file DEV setup](challenge-onboarding.md); [evaluation rules and runtime](behavior-challenge.md); [reusable campaigns and TRAIN recording](behavior-campaign.md); [CPU simulator source inspection](behavior-simulator-source-inspect.md); [matched π0.5 training results and limits](behavior-matched-results-2026-09-19.md); requires licensed runtime and fixed policy |
 | OpenArm simulation and RL | [OpenArm with MuJoCo and Isaac Lab](openarm.md) |
 | Generated worlds and GPU spatial datasets | [Marble to Nebius walkthrough](guides/marble-to-nebius.md) · [reference](marble.md) |
+| Wheel-driven warehouse collection with CUDA RGB and depth | [Marble inspection rover](guides/marble-warehouse-rover.md) |
 | Factory-background augmentation and real pallet detector evaluation | [Marble manufacturing experiment](marble-manufacturing.md) |
 | Isaac Lab versions | [Isaac Lab 3](isaac-lab-3.md) |
 | Policy evaluation in Isaac Lab | [Isaac Arena](isaac-arena.md) |

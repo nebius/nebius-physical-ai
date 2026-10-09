@@ -75,10 +75,19 @@ def await_world(operation_id):
             )
         if operation.get("done"):
             world = operation.get("response") or {}
-            world_id = world.get("id") or (operation.get("metadata") or {}).get(
-                "world_id"
+            world_id = (
+                world.get("id")
+                or world.get("world_id")
+                or (operation.get("metadata") or {}).get("world_id")
             )
             if not world_id:
                 raise MarbleError("Completed operation has no world identifier")
-            return api_request("GET", f"worlds/{world_id}")["world"]
+            response = api_request("GET", f"worlds/{world_id}")
+            result = response.get("world", response)
+            if not isinstance(result, dict) or not result.get("assets"):
+                raise MarbleError("World response omitted its asset record")
+            return {
+                **result,
+                "id": result.get("id") or result.get("world_id") or world_id,
+            }
         time.sleep(5)

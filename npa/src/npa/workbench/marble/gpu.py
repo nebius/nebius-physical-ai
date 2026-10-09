@@ -53,7 +53,7 @@ def _load_gaussians(root, world, torch):
     )
 
 
-def _capture(root, world, request, poses, intrinsic, torch):
+def _capture(root, world, request, poses, intrinsic, torch, frame_directory="frames"):
     from gsplat import rasterization
 
     gaussians = _load_gaussians(root, world, torch)
@@ -83,7 +83,9 @@ def _capture(root, world, request, poses, intrinsic, torch):
         torch.cuda.synchronize()
         milliseconds.append(start.elapsed_time(end))
         coverage.append(float((alpha > 0.5).float().mean().item()))
-        _save_frame(rendered[0].cpu().numpy(), root / f"frames/{index:04d}.jpg")
+        _save_frame(
+            rendered[0].cpu().numpy(), root / frame_directory / f"{index:04d}.jpg"
+        )
     return {
         "engine": "gsplat",
         "engine_version": importlib.metadata.version("gsplat"),

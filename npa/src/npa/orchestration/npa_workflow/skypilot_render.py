@@ -38,6 +38,7 @@ API_ONLY_VLM_AUDIT_TOOLS = frozenset(
 TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workbench.marble.capture": "envgen",
     "workbench.marble.scan": "envgen",
+    "workbench.marble.rover_collect": "envgen",
     "workbench.marble.pallet_benchmark": "detection-training",
     "workflow.video_sweep.generate": "cosmos2-transfer",
     "workflow.video_sweep.generate_cosmos3": "cosmos3",
@@ -198,6 +199,16 @@ DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "workbench.marble.rover_collect": (
+        ("python:gsplat", "gsplat==1.5.3"),
+        (
+            'python:spz;assert(hasattr(spz,"load_spz"))',
+            "spz @ git+https://github.com/nianticlabs/spz.git@affd0ecea7fbb4c265ee119475af7ee5b2997482",
+        ),
+        ('python:warp;assert(warp.__version__=="1.17.0")', "warp-lang==1.17.0"),
+        ('python:trimesh;assert(trimesh.__version__=="4.12.2")', "trimesh==4.12.2"),
+        ("python:pybullet", "pybullet==3.2.7"),
+    ),
     "workbench.marble.capture": (
         ("python:gsplat", "gsplat==1.5.3"),
         (
@@ -2015,7 +2026,11 @@ def render_setup_for_tool(
     from npa.orchestration.npa_workflow.nurec_setup import render_nurec_adapter_setup
 
     parts = [render_nurec_adapter_setup(tool_ref)]
-    if tool_ref in {"workbench.marble.capture", "workbench.marble.scan"}:
+    if tool_ref in {
+        "workbench.marble.capture",
+        "workbench.marble.scan",
+        "workbench.marble.rover_collect",
+    }:
         parts.append(_marble_runtime_setup())
     parts.append(default_npa_setup())
     if tool_ref == "workbench.token_factory.robot_sdg":

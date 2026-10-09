@@ -5,7 +5,9 @@ from npa.workbench.marble.schemas import (
     AcquireRequest,
     PalletBenchmarkRequest,
     RunRequest,
+    RoverRequest,
 )
+from npa.workbench.marble.rover import rover_collect
 from npa.workbench.marble.pallet_data import pallet_preflight
 from npa.workbench.marble.pallet_benchmark import pallet_benchmark
 from npa.workbench.marble.pallet_report import pallet_report
@@ -13,6 +15,8 @@ from npa.workbench.marble.pallet_report import pallet_report
 __all__ = [
     "AcquireRequest",
     "RunRequest",
+    "RoverRequest",
+    "rover_collect",
     "PalletBenchmarkRequest",
     "acquire",
     "capture",

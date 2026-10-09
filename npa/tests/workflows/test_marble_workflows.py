@@ -105,3 +105,34 @@ def test_sample_workflow_does_not_require_provider_key():
     assert marble_secret_names(spec) == ("WLT_API_KEY",)
     spec.config["world_source"] = "sample-hobbit"
     assert marble_secret_names(spec) == ()
+
+
+def test_rover_workflow_routes_both_sensors_to_one_real_gpu_stage(monkeypatch):
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.marble_credentials import marble_secret_names
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+
+    spec = load_spec(ROOT / "workflows/testing/marble-warehouse-rover.yaml")
+    assert marble_secret_names(spec) == ("WLT_API_KEY",)
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="test-rover"),
+        run_id="test-rover",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    jobs = [doc for doc in yaml.safe_load_all(rendered) if doc and "run" in doc]
+    assert len(jobs) == 3
+    assert "accelerators" not in jobs[0]["resources"]
+    assert jobs[1]["resources"]["accelerators"] == "RTXPRO6000:1"
+    assert "rover-collect" in jobs[1]["run"] and "--sensor-hz 12" in jobs[1]["run"]
+    assert "pybullet==3.2.7" in jobs[1]["setup"]
+    assert "warp-lang==1.17.0" in jobs[1]["setup"]
+    assert "gsplat==1.5.3" in jobs[1]["setup"]
+    assert "accelerators" not in jobs[2]["resources"]

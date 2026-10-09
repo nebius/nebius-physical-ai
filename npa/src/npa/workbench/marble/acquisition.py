@@ -128,12 +128,15 @@ def _generated(request):
         "model": request.model,
         "world_id": world["id"],
         "prompt": request.prompt,
-        "units": "meters for splats; collider native coordinates",
+        "units": "provider-estimated meters; not surveyed site calibration",
         "splat_transform": {
             "scale": [scale, -scale, -scale],
             "translation": [0, offset, 0],
         },
-        "mesh_transform": {"scale": [1, 1, 1], "translation": [0, 0, 0]},
+        "mesh_transform": {
+            "scale": [scale, -scale, -scale],
+            "translation": [0, offset, 0],
+        },
         "assets": {
             "world.spz": splats["spz_urls"]["500k"],
             "collider.glb": world["assets"]["mesh"]["collider_mesh_url"],
