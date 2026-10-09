@@ -11,10 +11,11 @@
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "The plan connects native task preparation, matched baseline and candidate rollouts, numerical deltas, and factual reporting; candidate input includes the exact baseline result.",
+      "status": "blocked",
+      "reason": "The graph is connected, but its checked-in default is mode=smoke with smoke-zero for both baseline and candidate. These zero-action simulator/IO smokes write smoke_only output and cannot establish learned-policy robustness or policy acceptance. Any policy-acceptance run needs real immutable module:function baseline and candidate adapters, learned-policy outputs, and the separately required upstream source grant.",
       "evidence": [
-        "npa/tests/workflows/test_libero_plus_robustness.py"
+        "npa/tests/workflows/test_libero_plus_robustness.py",
+        "docs/workbench/libero-plus.md"
       ]
     }
   },

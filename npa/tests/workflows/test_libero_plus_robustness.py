@@ -15,6 +15,7 @@ from npa.workflows import libero_plus
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "workflows/testing/libero-plus-robustness.yaml"
+READINESS = SPEC.with_suffix(".readiness.json")
 ADMISSION_DOCKERFILE = ROOT / "npa/docker/workbench/libero-plus/Dockerfile.admission"
 ADMISSION_BUILD = ROOT / "npa/docker/workbench/libero-plus/build-private.sh"
 ADMISSION_NOTICE = ROOT / "npa/docker/workbench/libero-plus/THIRD_PARTY_NOTICES.md"
@@ -43,6 +44,22 @@ def test_workflow_has_five_connected_substantive_stages() -> None:
         output["schema"] == "application/vnd.rerun.rrd"
         for output in states["emit-results"]["outputs"]
     )
+
+
+def test_checked_in_smoke_defaults_block_policy_acceptance() -> None:
+    """Smoke-zero defaults must not be represented as learned-policy evidence."""
+    workflow = yaml.safe_load(SPEC.read_text())
+    readiness = json.loads(READINESS.read_text())
+
+    assert workflow["config"]["mode"] == "smoke"
+    assert workflow["config"]["baseline_policy_adapter"] == "smoke-zero"
+    assert workflow["config"]["candidate_policy_adapter"] == "smoke-zero"
+    fidelity = readiness["planning"]["task_fidelity"]
+    assert fidelity["status"] == "blocked"
+    assert "smoke-zero" in fidelity["reason"]
+    assert "learned-policy" in fidelity["reason"]
+    assert "immutable module:function" in fidelity["reason"]
+    assert "source grant" in fidelity["reason"]
 
 
 def test_compare_requires_same_prepared_protocol_and_reports_all_dimensions(
