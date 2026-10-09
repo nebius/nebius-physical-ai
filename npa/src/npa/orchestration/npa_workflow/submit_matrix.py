@@ -81,6 +81,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Real World API generation, gsplat CUDA rendering, and matched-budget Faster R-CNN real-test comparison. No sample-world override.",
     ),
     SubmitLiveCase(
+        "marble-warehouse-rover.yaml",
+        "gpu",
+        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes=(
+            "Real World API warehouse generation, PyBullet wheel dynamics, "
+            "gsplat CUDA RGB and Warp CUDA depth, with a standalone HTML replay."
+        ),
+    ),
+    SubmitLiveCase(
         "marble-world-capture.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
