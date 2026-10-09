@@ -2973,6 +2973,7 @@ def test_preflight_images_keeps_candidate_disclosure_failure_observational(
             "workflow",
             "preflight-images",
             str(COSMOS3_SPEC),
+            "--json",
         ],
     )
 

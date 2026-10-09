@@ -10391,12 +10391,11 @@ def preflight_images_cmd(
         ]
     except (NpaWorkflowError, ValueError):
         workflow_validation_candidates = []
-        if not json_output:
-            typer.echo(
-                "warning: workflow validation candidate disclosure is unavailable; "
-                "normal rendering remains authoritative",
-                err=True,
-            )
+        typer.echo(
+            "warning: workflow validation candidate disclosure is unavailable; "
+            "normal rendering remains authoritative",
+            err=True,
+        )
     if not json_output:
         _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
     candidate_metadata = {
