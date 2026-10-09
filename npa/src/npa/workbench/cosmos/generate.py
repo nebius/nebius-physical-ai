@@ -616,6 +616,8 @@ def run_cosmos3_generate(
     )
     receipt_path = output_root / _GUARDRAIL_RECEIPT_NAME
     receipt_path.unlink(missing_ok=True)
+    if env.get("NPA_COSMOS3_NANO_REVISION"):
+        (output_root / ".npa-cosmos3-model-selection.json").unlink(missing_ok=True)
     requested = bool(plan["guardrails"])
     env[GUARDRAIL_RECEIPT_ENV] = str(receipt_path)
     env[GUARDRAILS_REQUESTED_ENV] = "1" if requested else "0"
@@ -678,6 +680,13 @@ def run_cosmos3_generate(
     )
     if transfer_evidence is not None:
         result["structural_transfer"] = transfer_evidence
+    if env.get("NPA_COSMOS3_NANO_REVISION") and transfer is not None:
+        model_selection = output_root / ".npa-cosmos3-model-selection.json"
+        if not model_selection.is_file():
+            raise Cosmos3GenerateError(
+                "immutable Nano generation has no native model-selection receipt"
+            )
+        result["native_model_selection"] = json.loads(model_selection.read_bytes())
     sample_outputs = sample_dir / "sample_outputs.json"
     if sample_outputs.is_file():
         try:
