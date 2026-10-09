@@ -101,7 +101,10 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            fastapi~=0.136.1 \
            num2words \
            tensorboard \
-           "uvicorn[standard]"; \
+           "uvicorn[standard]" \
+         && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
+           --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
+           > /opt/lerobot/dependency-source-correction.json; \
        elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then \
          /opt/lerobot/venv/bin/python /opt/lerobot/prepare-secure-wheel.py \
            --output-dir /opt/lerobot/secure-wheel \

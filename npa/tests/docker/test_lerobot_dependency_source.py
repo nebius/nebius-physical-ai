@@ -1,4 +1,4 @@
-"""The secure default integration must remove corrected dependency bytes in-layer."""
+"""Neither LeRobot version may retain corrected dependency bytes in an ancestor."""
 
 from pathlib import Path
 import re
@@ -40,16 +40,22 @@ def _installation(text):
     assert default_branch.count('"scikit-image==0.26.0"') == 1
     assert "pip uninstall -y wandb" not in optional_branch
     assert "pip uninstall -y wandb" not in default_branch
+    assert f"python {CORRECTION}" in optional_branch
     assert f"python {CORRECTION}" in default_branch
     assert (
         "--site-packages /opt/lerobot/venv/lib/python3.12/site-packages"
         in default_branch
     )
+    assert (
+        "--site-packages /opt/lerobot/venv/lib/python3.12/site-packages"
+        in optional_branch
+    )
+    assert "dependency-source-correction.json" in optional_branch
     assert "dependency-source-correction.json" in default_branch
     return body
 
 
-def test_default_integration_corrects_the_reviewed_source_in_the_install_layer():
+def test_both_versions_correct_the_reviewed_source_in_the_original_install_layer():
     text = DOCKERFILE.read_text()
     _installation(text)
     assert "NPA_LEROBOT_INTEGRATION_PROFILE" not in text
