@@ -57,5 +57,8 @@ ENV HOME=/home/ubuntu
 # Exercise the contract as the final user before attesting to its behavior.
 RUN /usr/local/bin/lyra2-entrypoint /bin/sh -c \
     'set -eu; test -w /tmp; test -w "$HOME"; command -v rsync; command -v service; command -v wget; command -v nc; command -v fusermount; command -v lspci; test -x /usr/sbin/sshd; sudo -n true; dpkg --audit' \
+    && dpkg-query -W -f='${Status}\n' openssh-server rsync sudo wget netcat-openbsd fuse pciutils \
+      | /opt/npa/.venv/bin/python -c 'import sys; assert sys.stdin.read().splitlines() == ["install ok installed"] * 7' \
+    && sudo -n grep -qx 'ubuntu ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/npa-skypilot \
     && test "$(/usr/local/bin/lyra2-entrypoint /usr/bin/printf '%s' 'argv with spaces')" = 'argv with spaces'
 ENTRYPOINT ["/usr/local/bin/lyra2-entrypoint"]
