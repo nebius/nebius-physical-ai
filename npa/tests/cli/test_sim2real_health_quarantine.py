@@ -14,7 +14,10 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.cli.workbench import health
 from npa.clients import credentials
+from npa.clients.config import ConfigError
+from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.deploy.images import container_image_for_tool
+from npa.lifecycle_intent import OperationIntent, current_intent
 from npa.workflows.sim2real import config as execution_config
 from npa.workflows.sim2real import diagnostic_config, models
 from npa.workflows.sim2real_health import (
@@ -226,7 +229,12 @@ def test_s3_uses_selected_project_storage_credentials(
         s3_access_key_id="project-access",
         s3_secret_access_key="project-secret",
     )
-    select_project = Mock(return_value=project_credentials)
+    observed_intents: list[OperationIntent] = []
+
+    def select_project(_project: str, _credentials: object) -> SimpleNamespace:
+        observed_intents.append(current_intent())
+        return project_credentials
+
     monkeypatch.setattr(health, "_project_credentials", select_project)
 
     result = runner.invoke(
@@ -248,14 +256,72 @@ def test_s3_uses_selected_project_storage_credentials(
     )
 
     assert result.exit_code == 0, result.output
-    select_project.assert_called_once_with(
-        "selected-project", diagnostic_spies.loaded.return_value
-    )
+    assert observed_intents == [OperationIntent.OBSERVE]
     diagnostic_spies.storage_factory.assert_called_once_with(
         endpoint_url="https://explicit.example.invalid",
         aws_access_key_id="project-access",
         aws_secret_access_key="project-secret",
     )
+    diagnostic_spies.execution.assert_not_called()
+    diagnostic_spies.image_inspector.assert_not_called()
+    diagnostic_spies.writes.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ConfigError("unknown project alias"),
+        ProjectCredentialStoreError("malformed project credential record"),
+    ],
+)
+def test_selected_project_storage_failure_is_structured_health_result(
+    diagnostic_spies: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+) -> None:
+    select_project = Mock(side_effect=failure)
+    monkeypatch.setattr(health, "_project_credentials", select_project)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "s3",
+            "--project",
+            "selected-project",
+            "--s3-bucket",
+            "example-bucket",
+            "--s3-endpoint",
+            "https://explicit.example.invalid",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["selected_checks"] == ["s3"]
+    assert payload["checks"] == [
+        {
+            "details": [],
+            "name": "s3",
+            "remedy": (
+                "Save a complete isolated storage record for --project, then rerun "
+                "the S3 health check."
+            ),
+            "status": "FAIL",
+            "summary": "Configured project storage could not be resolved.",
+        }
+    ]
+    assert "unknown project alias" not in result.output
+    assert "malformed project credential record" not in result.output
+    select_project.assert_called_once_with(
+        "selected-project", diagnostic_spies.loaded.return_value
+    )
+    diagnostic_spies.storage_factory.assert_not_called()
     diagnostic_spies.execution.assert_not_called()
     diagnostic_spies.image_inspector.assert_not_called()
     diagnostic_spies.writes.assert_not_called()

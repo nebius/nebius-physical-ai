@@ -20,7 +20,10 @@ For `rerun regen` and `rerun heldout-only`, `--s3-bucket` wins. With `--project`
 configured project storage is followed by that resolver's standard environment
 and host-credential fallbacks; only an unresolved project value leaves Sim2Real
 storage environment settings in effect. The endpoint follows the same
-explicit-project-resolution order.
+explicit-project-resolution order. For `workbench health sim2real`, `--project`
+selects only the isolated S3 credentials used for the reachability probe;
+supply the bucket and endpoint with `--s3-bucket` and `--s3-endpoint` (or their
+existing Sim2Real environment settings) so the target is explicit.
 See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
 
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich

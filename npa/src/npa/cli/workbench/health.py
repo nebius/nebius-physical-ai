@@ -497,6 +497,7 @@ def access_command(
 
 
 @app.command("sim2real")
+@intent_boundary(OperationIntent.OBSERVE)
 def sim2real_command(
     run_id: str = typer.Option(
         "sim2real-doctor", "--run-id", help="Run id for the probed config."
@@ -514,7 +515,10 @@ def sim2real_command(
         "",
         "--project",
         "-p",
-        help="Configured project alias whose isolated storage record supplies the S3 probe credentials.",
+        help=(
+            "Configured project alias whose isolated storage record supplies the S3 "
+            "probe credentials; set --s3-bucket and --s3-endpoint separately."
+        ),
     ),
     trigger_dataset_uri: str = typer.Option(
         "", "--trigger-dataset-uri", help="Trigger dataset path."
@@ -646,8 +650,20 @@ def sim2real_command(
         # leaking an unrendered exception (and only after validating --checks).
         raise typer.BadParameter(str(exc)) from exc
     credentials = load_credentials()
+    project_storage_failure: CheckResult | None = None
     if project.strip() and "s3" in selected:
-        credentials = _project_credentials(project.strip(), credentials)
+        try:
+            credentials = _project_credentials(project.strip(), credentials)
+        except (ConfigError, ProjectCredentialStoreError):
+            project_storage_failure = CheckResult(
+                name="s3",
+                status=FAIL,
+                summary="Configured project storage could not be resolved.",
+                remedy=(
+                    "Save a complete isolated storage record for --project, then "
+                    "rerun the S3 health check."
+                ),
+            )
 
     probes = DoctorProbes(
         s3_client_factory=lambda: StorageClient.from_environment(
@@ -660,9 +676,21 @@ def sim2real_command(
         kube_runner=_kube_runner_factory(config.k8s_context, config.k8s_kubeconfig),
     )
 
-    results = run_preflight(
-        config, repo_root=_repo_root(), probes=probes, checks=selected
+    probe_checks = (
+        [check for check in selected if check != "s3"]
+        if project_storage_failure is not None
+        else selected
     )
+    results = (
+        run_preflight(
+            config, repo_root=_repo_root(), probes=probes, checks=probe_checks
+        )
+        if probe_checks
+        else []
+    )
+    if project_storage_failure is not None:
+        results.append(project_storage_failure)
+        results.sort(key=lambda result: ALL_CHECKS.index(result.name))
 
     if output_json:
         payload = {
