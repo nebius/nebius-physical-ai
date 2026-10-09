@@ -59,17 +59,26 @@ def required_immutable_image_inputs(config: Mapping[str, Any]) -> dict[str, str]
     if "required_immutable_images" not in config:
         return {}
     inputs: dict[str, str] = {}
+    invalid_keys: list[str] = []
     for key in _required_keys(config["required_immutable_images"]):
         reference = config.get(key)
         if not _is_exact_image(reference):
-            raise NpaWorkflowError(
-                f"config.{key} requires an explicit registry-qualified immutable image; "
-                f"set --var {key}=<registry>/<repository>@sha256:<64-hex-digest>. "
-                "Use a qualified image for this workload; tool:// and tag-only "
-                "references cannot bind its provenance or child launches. Use a "
-                "digest-only reference; remove any :tag segment before @sha256:."
-            )
-        inputs[key] = reference
+            invalid_keys.append(key)
+        else:
+            inputs[key] = reference
+    if invalid_keys:
+        config_keys = ", ".join(f"config.{key}" for key in invalid_keys)
+        overrides = " ".join(
+            f"--var {key}=<registry>/<repository>@sha256:<64-hex-digest>"
+            for key in invalid_keys
+        )
+        raise NpaWorkflowError(
+            f"Each of {config_keys} requires an explicit registry-qualified immutable "
+            "image; "
+            f"set {overrides}. Use qualified images for this workload; tool:// and "
+            "tag-only references cannot bind their provenance or child launches. Use "
+            "digest-only references; remove any :tag segment before @sha256:."
+        )
     return inputs
 
 

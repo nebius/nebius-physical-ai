@@ -163,6 +163,9 @@ without it, submit refuses with "No shared controller owner is bound."
 using the selected kubeconfig identity. It does not impersonate the retired
 Sim2Real sibling-Job controller's `agent-sa`. Keep the same project, kubeconfig,
 and context for health checks and canonical `workflow submit --runtime`.
+When selecting only image-independent health checks, omit image, threshold, and
+S3-prefix overrides: the CLI rejects inputs those checks cannot use. Select the
+`config` or `registry` check when validating execution settings.
 
 ## 3. Add a schedulable CPU pool before GPU work
 

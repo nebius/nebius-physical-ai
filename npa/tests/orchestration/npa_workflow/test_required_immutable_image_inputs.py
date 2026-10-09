@@ -1,5 +1,6 @@
 """Reject withdrawn workflow defaults before work and preserve exact operator images."""
 
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -12,6 +13,7 @@ from npa.orchestration.npa_workflow.readiness import load_readiness_record
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     render_skypilot_yaml,
+    validate_immutable_image_override_bindings,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import merge_config_overrides
@@ -77,6 +79,24 @@ def test_invalid_provenance_image_fails_before_state_expansion(
     with pytest.raises(NpaWorkflowError, match="--var runtime="):
         interpreter.build_plan(spec)
     expand.assert_not_called()
+
+
+def test_all_invalid_required_images_are_reported_in_one_refusal(tmp_path):
+    spec = _spec(
+        tmp_path,
+        {
+            "required_immutable_images": ["cpu", "gpu"],
+            "cpu": "",
+            "gpu": "tool://isaac-lab",
+        },
+    )
+
+    with pytest.raises(NpaWorkflowError) as raised:
+        interpreter.build_plan(spec)
+
+    message = str(raised.value)
+    assert "Each of config.cpu, config.gpu requires" in message
+    assert "--var cpu=" in message and "--var gpu=" in message
 
 
 @pytest.mark.parametrize(
@@ -192,6 +212,45 @@ def _supplied_spec(name):
     }
     return merge_config_overrides(
         spec, {key: images[key] for key in spec.config["required_immutable_images"]}
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"workbench.open3d": ISAAC}, ISAAC),
+        ({"*": ""}, "<SkyPilot default>"),
+    ],
+)
+def test_required_image_override_binding_rejects_direct_renderer_bypass(
+    overrides, expected
+):
+    spec = _supplied_spec("rgbd-scan-to-policy-demo.yaml")
+    plan = interpreter.build_plan(spec, run_id="protected-image-override")
+    step = replace(plan.steps[0], tool_ref="workbench.open3d.register")
+
+    with pytest.raises(NpaWorkflowError, match="image override changes") as raised:
+        validate_immutable_image_override_bindings(
+            spec,
+            (step,),
+            run_id="protected-image-override",
+            options=SkypilotRenderOptions(image_overrides=overrides),
+        )
+
+    assert expected in str(raised.value)
+
+
+def test_required_image_override_binding_allows_the_declared_digest():
+    spec = _supplied_spec("rgbd-scan-to-policy-demo.yaml")
+    plan = interpreter.build_plan(spec, run_id="protected-image-allow")
+    step = replace(plan.steps[0], tool_ref="workbench.open3d.register")
+    declared = str(step.resources_profile["image"])
+
+    validate_immutable_image_override_bindings(
+        spec,
+        (step,),
+        run_id="protected-image-allow",
+        options=SkypilotRenderOptions(image_overrides={"workbench.open3d": declared}),
     )
 
 
