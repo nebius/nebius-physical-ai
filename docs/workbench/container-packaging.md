@@ -122,9 +122,9 @@ error, and 2 when a requested private report cannot be written or command-line
 usage is invalid; it refuses a symlink report target. Treat every nonzero exit
 as blocking: a report-write failure returns 2 even when the completed scan
 verdict is itself blocking.
-Its stderr JSON identifies only the portable errno class (for example, `ELOOP`)
-so an operator can distinguish a refusal from runner capacity without exposing a
-path or report content.
+For a report-write failure, stderr JSON identifies only the portable errno class
+(for example, `ELOOP`) so an operator can distinguish a refusal from runner
+capacity without exposing a path or report content.
 With an explicit local `--full-stdout` opt-in, that write failure still prints
 the completed full report so the archive need not be scanned again.
 Do not publish raw layers, extracted credential bytes, or a failed image archive
