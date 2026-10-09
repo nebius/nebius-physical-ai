@@ -29,7 +29,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Compare FA2 and FA4 on RTX PRO 6000 | [Build and tuning guide](guides/fa2-fa4-comparison.md) · [Latest speeds, cold-start cost and actual renders](fa4-rtx-optimization.md) |
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) · [manual lifecycle](guides/manual-workflow-operations.md) |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
-| Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
+| Inspect or recover | [Evaluator report inspection](cosmos-evaluator-report.md) · [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
 | Curate media with Encord | [S3 registration, pull, roundtrip verification, and a local MP4 demo](encord.md) |
 | Finish | [Teardown](../teardown.md) |
 

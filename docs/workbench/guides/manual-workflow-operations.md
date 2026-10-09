@@ -72,10 +72,27 @@ credential, or validation step and may not be suitable as an operational
 template without review. Read the adjacent guide and the YAML's `config`,
 `resources`, `inputs`, and `outputs` before selecting either kind.
 
-Batch plan/submit/status is a separate, unmerged proposal in
-[PR #913](https://github.com/nebius/nebius-physical-ai/pull/913); it is not a
-runnable substitute for the single-run lifecycle below. That foreground
-admission client does not establish autoscaling or scheduling capacity.
+For multiple episodes, use the shipped
+[dataset batch driver](paidf-dataset-batches.md). Its private manifest selects
+the workflow, inputs, episode/camera selectors, and configuration for independent
+runs. Choose concurrency for the available cluster capacity:
+
+```bash
+MAX_CONCURRENT_RUNS='<operator-selected-concurrency>'
+npa workbench workflow batch plan ./paidf-batch.yaml
+npa workbench workflow batch submit ./paidf-batch.yaml \
+  --state-dir ./private-batch-state --max-concurrent-runs "$MAX_CONCURRENT_RUNS"
+npa workbench workflow batch status '<batch-id>' \
+  --state-dir ./private-batch-state
+```
+
+Keep the manifest, checkout, and private state directory for recovery. Rerun
+the same `batch submit` command with `--resume` to reconcile started runs and
+recheck completed runs before admitting pending work. The foreground driver
+uses existing capacity; it does not provision or resize node groups. Its local
+status is a ledger of client outcomes, so inspect the original workflow run IDs
+when remote execution is uncertain. The single-run lifecycle below explains
+the planning, input, credential, and recovery checks that each run still needs.
 
 ## 3. Configure a checked-in workflow without copying YAML
 
@@ -123,13 +140,17 @@ availability. A `SKIP` result is not a successful access check.
 ```bash
 npa workbench health preflight \
   --project "$PROJECT_ALIAS" --checks nebius,s3,token_factory --json
-npa workbench health access --capability paidf --json
+npa workbench health access --capability cosmos3 --json
 npa workbench workflow prepare-run "$SPEC" --project "$PROJECT_ALIAS" --json
 ```
 
 Copy the returned run ID into the private `RUN_ID` value. `prepare-run` creates
 a fresh ID when `--resume-run` is absent; pass `--resume-run "$RUN_ID"` only to
 prepare scoped metadata for an existing ID.
+
+The access command above checks the selected Cosmos 3 model closure. Choose the
+matching capability when operating another workflow; its model or service access
+requirements can differ.
 
 Plan the actual submission configuration, then check every selected image path.
 For Kubernetes image verification, `--infra` needs the exact `k8s/<context>`
@@ -191,7 +212,11 @@ use the recorded run ID and same relevant flags. Do not combine `--run-id` and
 npa workbench workflow submit "$SPEC" \
   --resume-run "$RUN_ID" --project "$PROJECT_ALIAS" \
   --infra "k8s/$KUBE_CONTEXT" --runtime --durable-s3 \
-  --var bucket="$BUCKET" --var variant_count=1
+  --var bucket="$BUCKET" --var variant_count=1 \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN
 ```
 
 Follow the command's exact recovery message when it requires additional
@@ -201,7 +226,7 @@ a duplicate run or infer that a missing status response was a failed workload.
 Use these read-only commands to save the current schema and inspect one explicit
 evaluator report:
 
-```text
+```bash
 npa workbench workflow schema > ./workflow-schema.json
 npa workbench cosmos-evaluator report --input-path '<explicit-report>'
 ```
@@ -209,6 +234,8 @@ npa workbench cosmos-evaluator report --input-path '<explicit-report>'
 The schema command describes the declaration shape; it does not verify that a
 particular input, image, or scheduler request can run. The report command
 interprets the supplied evaluator report; it does not create evaluation evidence.
+See [report inspection](../cosmos-evaluator-report.md) for per-variant scores,
+required/advisory/unverified diagnostics, and incomplete-evidence handling.
 
 ## 5. PAIDF input and quality boundaries
 
@@ -221,10 +248,15 @@ require the explicit selection:
 ```bash
 npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" --project "$PROJECT_ALIAS" \
+  --infra "k8s/$KUBE_CONTEXT" --runtime --durable-s3 \
   --lerobot-uri 's3://<your-bucket>/<dataset-prefix>/' \
   --lerobot-camera 'observation.images.front' --lerobot-episode 0 \
   --require-explicit-lerobot-selection \
-  --var bucket="$BUCKET" --runtime
+  --var bucket="$BUCKET" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY \
+  --secret-env HF_TOKEN
 ```
 
 The LeRobot path reads the selected episode/camera video rather than treating a
@@ -261,18 +293,21 @@ credential between the external source and the S3-compatible destination.
 NPA workflow paths are `s3://` URIs. Do not claim `gs://` is a native PAIDF
 input. Stage one named Cloud Storage object through an owner-only local
 directory, verify it, then upload it to one named S3-compatible object. Use the
-selected NPA configuration to set the S3-compatible endpoint explicitly. The
+selected project's verified storage endpoint and private AWS credential profile
+explicitly. `configure --show --env` exports host defaults; it does not establish
+that its endpoint belongs to `PROJECT_ALIAS`. The
 syntax below follows the official [Google Cloud Storage
 reference](https://cloud.google.com/sdk/gcloud/reference/storage/cp) and [AWS
 CLI `s3 cp` reference](https://docs.aws.amazon.com/cli/latest/reference/s3/cp.html).
 
 ```bash
-eval "$(npa configure --show --env)"
-: "${NPA_S3_ENDPOINT:?Configure and select the project before staging objects}"
-
+(
+set -euo pipefail
 umask 077
 PRIVATE_INGRESS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/npa-private-ingress.XXXXXX")"
 chmod 700 "$PRIVATE_INGRESS_DIR"
+S3_ENDPOINT='<verified-selected-project-storage-endpoint>'
+S3_PROFILE='<private-scoped-ingress-aws-profile>'
 GCS_OBJECT='gs://<source-bucket>/<input-key>.mp4'
 LOCAL_INPUT="$PRIVATE_INGRESS_DIR/source.mp4"
 S3_READBACK="$PRIVATE_INGRESS_DIR/source.s3-readback.mp4"
@@ -282,40 +317,49 @@ INPUT_URI="s3://$S3_BUCKET/$S3_KEY"
 
 GCS_SOURCE_BYTES="$(gcloud storage objects describe "$GCS_OBJECT" --format='value(size)')"
 gcloud storage cp "$GCS_OBJECT" "$LOCAL_INPUT"
-LOCAL_SOURCE_BYTES="$(wc -c < "$LOCAL_INPUT")"
+LOCAL_SOURCE_BYTES="$(wc -c < "$LOCAL_INPUT" | awk '{print $1}')"
 test "$GCS_SOURCE_BYTES" = "$LOCAL_SOURCE_BYTES"
 SOURCE_SHA256="$(sha256sum "$LOCAL_INPUT" | awk '{print $1}')"
 
-aws --endpoint-url "$NPA_S3_ENDPOINT" s3 cp "$LOCAL_INPUT" "$INPUT_URI"
-aws --endpoint-url "$NPA_S3_ENDPOINT" s3 cp "$INPUT_URI" "$S3_READBACK"
-test "$(wc -c < "$S3_READBACK")" = "$LOCAL_SOURCE_BYTES"
+aws --profile "$S3_PROFILE" --endpoint-url "$S3_ENDPOINT" s3 cp "$LOCAL_INPUT" "$INPUT_URI"
+aws --profile "$S3_PROFILE" --endpoint-url "$S3_ENDPOINT" s3 cp "$INPUT_URI" "$S3_READBACK"
+test "$(wc -c < "$S3_READBACK" | awk '{print $1}')" = "$LOCAL_SOURCE_BYTES"
 test "$(sha256sum "$S3_READBACK" | awk '{print $1}')" = "$SOURCE_SHA256"
+)
 ```
 
 The first byte and hash checks prove that the exact input object survived the
 GCS-to-S3 staging path. Keep the source-provider and destination-provider
 credentials separate: the GCS ingress identity reads only `GCS_OBJECT`, while
 the S3 identity writes and reads only `INPUT_URI`. Give PAIDF only the staged
-`INPUT_URI` through `--input-uri`.
+exact destination URI through `--input-uri`. The subshell stops at any failed
+copy or verification; no later transfer proceeds after a mismatch.
 
 For egress, choose one exact durable output object after reviewing the run.
 Copy it with the egress identity to a separate Cloud Storage destination, read
 that object back, and compare the complete bytes independently:
 
 ```bash
+(
+set -euo pipefail
+umask 077
+PRIVATE_EGRESS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/npa-private-egress.XXXXXX")"
+S3_ENDPOINT='<verified-selected-project-storage-endpoint>'
+S3_PROFILE='<private-scoped-egress-aws-profile>'
 OUTPUT_URI='<exact-s3-uri-from-npa-workflow-artifacts>'
-LOCAL_OUTPUT="$PRIVATE_INGRESS_DIR/augmented_video.mp4"
+LOCAL_OUTPUT="$PRIVATE_EGRESS_DIR/augmented_video.mp4"
 GCS_OUTPUT='gs://<egress-bucket>/<run-scoped-prefix>/augmented_video.mp4'
-GCS_READBACK="$PRIVATE_INGRESS_DIR/augmented_video.gcs-readback.mp4"
+GCS_READBACK="$PRIVATE_EGRESS_DIR/augmented_video.gcs-readback.mp4"
 
-aws --endpoint-url "$NPA_S3_ENDPOINT" s3 cp "$OUTPUT_URI" "$LOCAL_OUTPUT"
+aws --profile "$S3_PROFILE" --endpoint-url "$S3_ENDPOINT" s3 cp "$OUTPUT_URI" "$LOCAL_OUTPUT"
 OUTPUT_BYTES="$(wc -c < "$LOCAL_OUTPUT")"
 OUTPUT_SHA256="$(sha256sum "$LOCAL_OUTPUT" | awk '{print $1}')"
 gcloud storage cp "$LOCAL_OUTPUT" "$GCS_OUTPUT"
 gcloud storage cp "$GCS_OUTPUT" "$GCS_READBACK"
 test "$(wc -c < "$GCS_READBACK")" = "$OUTPUT_BYTES"
 test "$(sha256sum "$GCS_READBACK" | awk '{print $1}')" = "$OUTPUT_SHA256"
-cmp --silent "$LOCAL_OUTPUT" "$GCS_READBACK"
+cmp -s "$LOCAL_OUTPUT" "$GCS_READBACK"
+)
 ```
 
 This egress step verifies the complete selected object rather than relying on a

@@ -10,6 +10,7 @@ Cosmos Evaluator checks plus NPA source-relative temporal and protected-appearan
 Options
 --help  Show this message and exit.
 Commands
+report  Inspect one existing evaluator report without running inference.
 evaluate  Grade every augmented variant of a run and write one evaluator report.
 hallucination  Score hallucinated motion in one augmented clip.
 attribute-verify  Verify one clip's augmented attributes with an LLM + VLM question pass.
@@ -26,6 +27,7 @@ engine  Report which evaluator engine this environment resolves to.
 
 | Command | Description |
 | --- | --- |
+| `report` | Inspect one existing evaluator report without running inference. |
 | `evaluate` | Grade every augmented variant of a run and write one evaluator report. |
 | `hallucination` | Score hallucinated motion in one augmented clip. |
 | `attribute-verify` | Verify one clip's augmented attributes with an LLM + VLM question pass. |
@@ -35,7 +37,7 @@ engine  Report which evaluator engine this environment resolves to.
 
 ```bash
 npa workbench cosmos-evaluator --help
-npa workbench cosmos-evaluator evaluate --help
+npa workbench cosmos-evaluator report --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `cosmos-evaluator`.

@@ -13,7 +13,7 @@ checks the declaration; each guide states what its live validation actually prov
 For a beginner-readable single-run lifecycle — saved configuration, candidate
 selection, `--var` configuration, preflight, submit, inspection, and recovery —
 start with [manual workflow operations](manual-workflow-operations.md). It also
-distinguishes the single-run lifecycle from the separate unmerged batch proposal.
+connects the single-run lifecycle to the shipped dataset batch driver.
 
 ## Robot and reconstruction guides
 

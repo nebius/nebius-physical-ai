@@ -76,7 +76,9 @@ def real_shaped_report() -> dict[str, Any]:
     }
 
 
-def test_summary_preserves_reported_gate_and_bounds_projection(real_shaped_report) -> None:
+def test_summary_preserves_reported_gate_and_bounds_projection(
+    real_shaped_report,
+) -> None:
     summary = summarize_evaluator_report(real_shaped_report)
 
     assert summary["reported_gate"] == {"score": 0.9, "passed": True, "threshold": 0.8}
@@ -120,7 +122,9 @@ def test_partial_degraded_report_exposes_unavailable_and_error_states(
     assert summary["evidence_complete"] is False
 
 
-def test_absent_legacy_diagnostics_are_explicitly_not_evaluated(real_shaped_report) -> None:
+def test_absent_legacy_diagnostics_are_explicitly_not_evaluated(
+    real_shaped_report,
+) -> None:
     report = copy.deepcopy(real_shaped_report)
     clip = report["clips"][0]
     clip.pop("temporal_consistency")
@@ -134,7 +138,9 @@ def test_absent_legacy_diagnostics_are_explicitly_not_evaluated(real_shaped_repo
     assert summary["evidence_complete"] is True
 
 
-def test_missing_enforcement_facts_are_unverified_not_advisory(real_shaped_report) -> None:
+def test_missing_enforcement_facts_are_unverified_not_advisory(
+    real_shaped_report,
+) -> None:
     report = copy.deepcopy(real_shaped_report)
     report["temporal_mode"] = "required"
     report["appearance_mode"] = "required"
@@ -192,7 +198,9 @@ def test_required_root_modes_apply_when_clip_flags_are_absent(
     summary = summarize_evaluator_report(report)
 
     diagnostic = "temporal" if mode == "temporal_mode" else "appearance"
-    assert summary["variants"][0]["diagnostics"][diagnostic]["enforcement"] == "required"
+    assert (
+        summary["variants"][0]["diagnostics"][diagnostic]["enforcement"] == "required"
+    )
 
 
 def test_empty_report_is_ungraded_and_incomplete(real_shaped_report) -> None:
@@ -219,7 +227,9 @@ def test_reader_uses_one_exact_s3_object(real_shaped_report, tmp_path: Path) -> 
     assert summary["reported_gate"]["score"] == 0.9
 
 
-def test_sdk_namespace_discovers_report_reader(real_shaped_report, tmp_path: Path) -> None:
+def test_sdk_namespace_discovers_report_reader(
+    real_shaped_report, tmp_path: Path
+) -> None:
     path = _write_report(tmp_path, real_shaped_report)
 
     assert "cosmos_evaluator" in sdk_workbench.__all__
@@ -228,7 +238,7 @@ def test_sdk_namespace_discovers_report_reader(real_shaped_report, tmp_path: Pat
     assert summary["schema"] == "npa.cosmos_evaluator.report.v1"
 
 
-@pytest.mark.parametrize("value", [True, float("inf"), 1.1])
+@pytest.mark.parametrize("value", [True, float("inf"), 1.1, 10**400])
 def test_reader_rejects_nonfinite_out_of_range_and_boolean_scores(
     real_shaped_report, value: Any
 ) -> None:
@@ -236,6 +246,20 @@ def test_reader_rejects_nonfinite_out_of_range_and_boolean_scores(
     report["score"] = value
 
     with pytest.raises(CosmosEvaluatorReportError, match="score"):
+        summarize_evaluator_report(report)
+
+
+@pytest.mark.parametrize("field", ["temporal_mode", "appearance_mode"])
+@pytest.mark.parametrize("value", [[], {}, True, None, "unknown"])
+def test_reader_rejects_malformed_enforcement_modes(
+    real_shaped_report, field: str, value: Any
+) -> None:
+    report = copy.deepcopy(real_shaped_report)
+    report[field] = value
+
+    with pytest.raises(
+        CosmosEvaluatorReportError, match="must be advisory or required"
+    ):
         summarize_evaluator_report(report)
 
 
@@ -321,7 +345,9 @@ def test_reader_rejects_passing_clips_with_failed_required_diagnostics(
         summarize_evaluator_report(failed_appearance)
 
 
-def test_reader_rejects_diagnostic_passes_below_their_threshold(real_shaped_report) -> None:
+def test_reader_rejects_diagnostic_passes_below_their_threshold(
+    real_shaped_report,
+) -> None:
     report = copy.deepcopy(real_shaped_report)
     diagnostic = report["clips"][0]["hallucination"]
     diagnostic.update(score=0.7, passed=True, threshold=0.8)

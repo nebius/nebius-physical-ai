@@ -26,8 +26,12 @@ def test_live_report_inspection_uses_one_explicit_object() -> None:
     cli_text = _run_cli(report_uri, "text")
 
     assert cli_summary == sdk_summary
-    assert cli_summary["reported_gate"]["score"] == sdk_summary["reported_gate"]["score"]
-    assert cli_summary["reported_gate"]["passed"] is sdk_summary["reported_gate"]["passed"]
+    assert (
+        cli_summary["reported_gate"]["score"] == sdk_summary["reported_gate"]["score"]
+    )
+    assert (
+        cli_summary["reported_gate"]["passed"] is sdk_summary["reported_gate"]["passed"]
+    )
     assert f"gate score: {sdk_summary['reported_gate']['score']}" in cli_text.stdout
     assert "score is not calibrated confidence" in cli_text.stdout
     assert "multi-view assessment is not evaluated" in cli_text.stdout
@@ -44,7 +48,9 @@ def _required_report_uri() -> str:
     if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.strip("/"):
         pytest.fail("NPA_COSMOS_EVALUATOR_REPORT_URI must name one exact S3 object")
     if parsed.path.endswith("/") or parsed.query or parsed.fragment:
-        pytest.fail("NPA_COSMOS_EVALUATOR_REPORT_URI must not be a prefix or URL variant")
+        pytest.fail(
+            "NPA_COSMOS_EVALUATOR_REPORT_URI must not be a prefix or URL variant"
+        )
     return report_uri
 
 

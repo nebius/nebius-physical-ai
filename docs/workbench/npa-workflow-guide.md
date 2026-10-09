@@ -83,6 +83,10 @@ npa workbench workflow logs "$run_id" --project "$project_alias"
 npa workbench workflow artifacts "$run_id" --project "$project_alias" --json
 ```
 
+Open the generated media and `generate.json`; a successful job alone does not
+prove output quality. Keep the run ID for [recovery](../run-lifecycle.md#restart-safety)
+and follow [teardown](../teardown.md) when finished with owned resources.
+
 ## Schema and editor completion
 
 Print the authoritative JSON Schema bundled with the installed NPA package when
@@ -100,10 +104,6 @@ same schema used by NPA, rather than a hand-maintained copy.
 The structural schema does not fully type arbitrary workflow `config` values,
 which depend on the selected tools and their inputs. Editor feedback therefore
 does not replace `validate-spec` and `plan-spec`; run both before submission.
-
-Open the generated media and `generate.json`; a successful job alone does not
-prove output quality. Keep the run ID for [recovery](../run-lifecycle.md#restart-safety)
-and follow [teardown](../teardown.md) when finished with owned resources.
 
 ### Source staging and run IDs
 

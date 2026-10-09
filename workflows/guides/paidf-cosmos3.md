@@ -13,7 +13,7 @@ For a compact, current manual lifecycle and exact installed command names, see
 That guide is the authority for the generic single-run command sequence,
 `--var` configuration, private local configuration, scoped external transfers,
 and the distinction between execution, optional authoring assistance, and
-the separate unmerged batch proposal.
+the shipped dataset batch driver.
 
 The workflow selects a robot video, captions it with a hosted vision-language
 model through Token Factory, generates appearance variants with Cosmos3-Nano

@@ -51,7 +51,9 @@ def inspect_evaluator_report(
     Raises:
         CosmosEvaluatorReportError: The artifact cannot be read or is invalid.
     """
-    return summarize_evaluator_report(_read_report_document(input_path, storage=storage))
+    return summarize_evaluator_report(
+        _read_report_document(input_path, storage=storage)
+    )
 
 
 def summarize_evaluator_report(report: Mapping[str, Any]) -> dict[str, Any]:
@@ -105,7 +107,9 @@ def _read_local_document(path: Path) -> dict[str, Any]:
         raise CosmosEvaluatorReportError("could not read the evaluator report") from exc
     try:
         document = json.loads(
-            text, object_pairs_hook=_reject_duplicate_keys, parse_constant=_reject_constant
+            text,
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_constant,
         )
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise CosmosEvaluatorReportError("evaluator report must be valid JSON") from exc
@@ -211,11 +215,16 @@ def _validate_status(
 
 def _validate_modes(document: Mapping[str, Any]) -> None:
     for field in ("temporal_mode", "appearance_mode"):
-        if field in document and document[field] not in {"advisory", "required"}:
+        if field in document and (
+            not isinstance(document[field], str)
+            or document[field] not in {"advisory", "required"}
+        ):
             raise CosmosEvaluatorReportError(f"{field} must be advisory or required")
 
 
-def _validate_optional_booleans(document: Mapping[str, Any], fields: tuple[str, ...]) -> None:
+def _validate_optional_booleans(
+    document: Mapping[str, Any], fields: tuple[str, ...]
+) -> None:
     for field in fields:
         if field in document:
             _require_bool(document[field], field)
@@ -262,9 +271,11 @@ def _validate_scores(document: dict[str, Any]) -> None:
 
 
 def _require_score(value: Any, location: str) -> None:
-    if type(value) not in {int, float} or not math.isfinite(float(value)):
+    if type(value) not in {int, float} or (
+        type(value) is float and not math.isfinite(value)
+    ):
         raise CosmosEvaluatorReportError(f"{location} must be a finite numeric score")
-    if not 0.0 <= float(value) <= 1.0:
+    if not 0 <= value <= 1:
         raise CosmosEvaluatorReportError(f"{location} must be between 0 and 1")
 
 
@@ -288,9 +299,13 @@ def _require_text(value: Any, location: str) -> str:
     return value
 
 
-def _validate_count_fields(document: Mapping[str, Any], fields: tuple[str, ...]) -> None:
+def _validate_count_fields(
+    document: Mapping[str, Any], fields: tuple[str, ...]
+) -> None:
     for field in fields:
-        if field in document and (type(document[field]) is not int or document[field] < 0):
+        if field in document and (
+            type(document[field]) is not int or document[field] < 0
+        ):
             raise CosmosEvaluatorReportError(f"{field} must be a non-negative integer")
 
 
@@ -354,11 +369,15 @@ def _validate_dispositions(document: dict[str, Any]) -> None:
 def _validate_report_threshold(document: dict[str, Any]) -> None:
     threshold = document.get("threshold")
     if document["passed"] and threshold is not None and document["score"] < threshold:
-        raise CosmosEvaluatorReportError("a passing report score is below its threshold")
+        raise CosmosEvaluatorReportError(
+            "a passing report score is below its threshold"
+        )
     if threshold is not None and any(
         clip["passed"] and clip["score"] < threshold for clip in document["clips"]
     ):
-        raise CosmosEvaluatorReportError("a passing clip score is below the report threshold")
+        raise CosmosEvaluatorReportError(
+            "a passing clip score is below the report threshold"
+        )
 
 
 def _summarize_clip(clip: dict[str, Any], report: Mapping[str, Any]) -> dict[str, Any]:
@@ -438,7 +457,9 @@ def _skipped_status(name: str, clip: Mapping[str, Any]) -> str:
     return "skipped"
 
 
-def _diagnostic_status(value: Mapping[str, Any], *, location: str = "diagnostic.status") -> str:
+def _diagnostic_status(
+    value: Mapping[str, Any], *, location: str = "diagnostic.status"
+) -> str:
     if "status" not in value:
         return ""
     return _require_text(value["status"], location)
@@ -469,10 +490,7 @@ def _add_diagnostic_counts(target: dict[str, Any], value: Mapping[str, Any]) -> 
 def _required_evidence_is_complete(diagnostics: Mapping[str, Any]) -> bool:
     return not any(
         value["enforcement"] == "unverified"
-        or (
-            value["enforcement"] == "required"
-            and value["status"] != "evaluated"
-        )
+        or (value["enforcement"] == "required" and value["status"] != "evaluated")
         for value in diagnostics.values()
     )
 
@@ -484,7 +502,9 @@ def _validate_required_evidence(
         raise CosmosEvaluatorReportError(
             "a passing clip has missing required diagnostic evidence"
         )
-    if any(item["passed"] and not _required_diagnostics_pass(item) for item in variants):
+    if any(
+        item["passed"] and not _required_diagnostics_pass(item) for item in variants
+    ):
         raise CosmosEvaluatorReportError(
             "a passing clip has a failed required diagnostic"
         )
@@ -492,8 +512,7 @@ def _validate_required_evidence(
 
 def _missing_required_evidence(variant: Mapping[str, Any]) -> bool:
     return any(
-        diagnostic["enforcement"] == "required"
-        and diagnostic["status"] != "evaluated"
+        diagnostic["enforcement"] == "required" and diagnostic["status"] != "evaluated"
         for diagnostic in variant["diagnostics"].values()
     )
 
@@ -515,12 +534,11 @@ def _report_projection(
         "reported_gate": _reported_gate(document),
         "score_is_calibrated_confidence": False,
         "evaluation_state": _evaluation_state(variants),
-        "evidence_complete": bool(variants) and all(
-            item["evidence_complete"] for item in variants
-        ),
+        "evidence_complete": bool(variants)
+        and all(item["evidence_complete"] for item in variants),
         "diagnostic_counts": _diagnostic_counts(variants),
         "multiview_assessment": _multiview_projection(document),
-        "limitations": _LIMITATIONS,
+        "limitations": list(_LIMITATIONS),
         "variants": variants,
     }
 
@@ -544,7 +562,9 @@ def _diagnostic_counts(variants: list[dict[str, Any]]) -> dict[str, dict[str, in
     counts: dict[str, dict[str, int]] = {}
     for name, _field in _DIAGNOSTIC_NAMES:
         statuses = [item["diagnostics"][name]["status"] for item in variants]
-        counts[name] = {status: statuses.count(status) for status in sorted(set(statuses))}
+        counts[name] = {
+            status: statuses.count(status) for status in sorted(set(statuses))
+        }
     return counts
 
 
@@ -564,4 +584,8 @@ _LIMITATIONS = [
 ]
 
 
-__all__ = ["CosmosEvaluatorReportError", "inspect_evaluator_report", "summarize_evaluator_report"]
+__all__ = [
+    "CosmosEvaluatorReportError",
+    "inspect_evaluator_report",
+    "summarize_evaluator_report",
+]

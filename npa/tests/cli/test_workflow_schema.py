@@ -61,9 +61,7 @@ def test_validate_spec_rejects_executable_yaml_tags(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    result = runner.invoke(
-        app, ["workbench", "workflow", "validate-spec", str(path)]
-    )
+    result = runner.invoke(app, ["workbench", "workflow", "validate-spec", str(path)])
 
     assert result.exit_code == 1, result.output
     assert not marker.exists()

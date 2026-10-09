@@ -57,7 +57,7 @@ validation and planning do not verify model access, stage data, or reserve GPUs.
 
 For execution, follow the selected runbook in order. The [manual operations
 guide](../docs/workbench/guides/manual-workflow-operations.md) gives the exact
-current single-run commands and identifies batch #913 as a separate unmerged proposal.
+current single-run commands and the shipped dataset batch driver.
 
 1. Configure the project and prepare its input, run-scoped storage, credentials, and compute.
 2. Validate and plan with the configuration overrides you will submit.
