@@ -525,7 +525,7 @@ def test_npa_workflow_runtime_live_reaches_terminal(
     }:
         _assert_paidf_live_artifacts(
             spec=case.spec,
-            spec_path=path,
+            run_prefix_uri=str(payload["run_prefix_uri"]),
             waves=waves,
             bucket=live_bucket(e2e_project),
             run_id=run_id,
@@ -862,7 +862,7 @@ def _assert_transfer_recording(client, bucket, prefix, folder, variants, read_js
 def _assert_paidf_live_artifacts(
     *,
     spec: str,
-    spec_path: Path,
+    run_prefix_uri: str,
     waves: list[dict],
     bucket: str,
     run_id: str,
@@ -870,14 +870,23 @@ def _assert_paidf_live_artifacts(
 ) -> None:
     """Prove real PAIDF waves, decision, component reports, and Rerun output."""
 
+    from urllib.parse import urlsplit
+
     from npa.clients.project_credentials import s3_client_for_project
-    from npa.orchestration.npa_workflow import load_spec
     from npa.workflows.paidf_upstream import (
         PAIDF_ORCHESTRATION_REVISION,
         PHYSICAL_AI_DATA_FACTORY_REVISION,
         SCHEMA as PAIDF_UPSTREAM_SCHEMA,
     )
 
+    selected = urlsplit(run_prefix_uri)
+    prefix = selected.path.strip("/") + "/"
+    assert selected.scheme == "s3" and selected.netloc == bucket, (
+        "PAIDF audit URI must identify the selected bucket"
+    )
+    assert prefix.strip("/").split("/")[-1] == run_id, (
+        "PAIDF audit URI must identify the selected run"
+    )
     states = [str(state) for wave in waves for state in wave.get("states", [])]
     direct_nvidia_vda = spec == "nvidia-paidf-vda-cosmos-transfer25.yaml"
     if spec == "paidf-cosmos3.yaml":
@@ -918,7 +927,6 @@ def _assert_paidf_live_artifacts(
     )
 
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
-    prefix = str(load_spec(spec_path).config["prefix"]).rstrip("/") + "/"
     required = [
         "configs/manifest.json",
         "cosmos_augmented/manifest.json",

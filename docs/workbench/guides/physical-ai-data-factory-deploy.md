@@ -92,11 +92,11 @@ RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
 
 npa workbench health preflight
 npa workbench health access --capability paidf
+npa skypilot bootstrap
 npa provision-if-absent --project "$PROJECT" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
-  --gpu-preset 1gpu-24vcpu-218gb --on-demand
-npa skypilot bootstrap
+  --gpu-preset 1gpu-24vcpu-218gb --on-demand --sky-smoke
 
 # Reload the kube context written by provision-if-absent, discover its actual
 # accelerator spelling, and validate/plan with the real bucket.
@@ -350,7 +350,7 @@ npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
   --gpu-preset 1gpu-24vcpu-218gb --on-demand \
-  --accelerator RTXPRO6000:1 --gpu-readiness-timeout 900
+  --accelerator RTXPRO6000:1 --gpu-readiness-timeout 900 --sky-smoke
 # The accelerator-gated provisioning transaction verifies the exact
 # project/context/provider cluster identity and atomically binds the shared
 # jobs-controller owner before waiting for GPU readiness. No separate bind is
@@ -516,8 +516,15 @@ npa provision-if-absent --project "<alias>" --dry-run --output-format json
 npa provision-if-absent --project "<alias>" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
-  --gpu-preset 1gpu-24vcpu-218gb --on-demand          # real
+  --gpu-preset 1gpu-24vcpu-218gb --on-demand --sky-smoke # real
 ```
+
+Keep `--sky-smoke` on the Linux operator host for a fresh cluster. It proves an
+actual GPU dispatch and initializes SkyPilot's normal ServiceAccount and RBAC.
+The subsequent image preflight verifies the exact ServiceAccount's pull
+authority; `npa skypilot verify` alone checks connectivity and does not create
+that account. If preflight reports `service_account_unverified`, complete the
+standard provisioning smoke against this same owned cluster before retrying.
 
 The default cluster it provisions is the small FTUE shape — **1× GPU node
 (`gpu-rtx6000`, `1gpu-24vcpu-218gb`) + 1× CPU node (`cpu-d3`, `8vcpu-32gb`),
@@ -633,8 +640,25 @@ Three stages pull a workbench image: `augment` needs `npa-cosmos2-transfer`,
 
 The public `ghcr.io/nebius/nebius-physical-ai` mirror is anonymously pullable
 and is the runtime default. A private project registry starts empty and is only
-used when you select it explicitly. Pick one path and preflight the same registry
-submit will use:
+used when you select it explicitly. PAIDF's public Evaluator and Curator defaults
+are repaired `dev-<full-source-sha>@sha256:<digest>` validation candidates from
+`npa/src/npa/deploy/public_release_manifest.json`, selected by `images.py`.
+The historical supported-tool tags below are for explicit private-registry builds;
+their old public bytes remain quarantined. Candidate selection does not promote
+a supported release or prove full workflow acceptance.
+
+The shipped PAIDF specs set `source_overlay: true`: workers use the submitted
+checkout's adapters with these pinned vendor images. Retain this setting in
+copies so an older baked SDK cannot restore stale report or viewer behavior.
+
+The action scope is temporary qualification policy: these images have trusted
+publication evidence for repaired bytes, while the validation claim covers PAIDF
+preparation, augmentation, evaluation, and curation. Other advertised actions keep
+their supported-release gate until separately qualified or release-promoted.
+The same scoped actions in a future workflow receive the same candidate; this is
+an image policy recorded centrally, not a workflow-name exception.
+
+Pick one path and preflight the same registry submit will use:
 
 ```bash
 npa workbench workflow preflight-images workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml \
@@ -654,8 +678,9 @@ alone is insufficient: preflight resolves the tag once, verifies the bootstrap
 contract against that immutable digest, and submits that digest. A historical
 tag that predates the contract is rejected even when `docker manifest inspect`
 succeeds. For a private registry, build and push what preflight reports missing
-or incompatible (tags below track
-`npa/src/npa/deploy/images.py`, which is what submit pulls):
+or incompatible. The private build tags below track `supported_tool_version()`
+in `npa/src/npa/deploy/images.py`; explicit private-registry submission pulls those
+tags. They are independent of the digest-bound public validation defaults:
 
 ```bash
 REGISTRY="<your-registry>/<namespace>"
