@@ -18,6 +18,10 @@ CUDA/PyTorch closure into the operator-writable Wan runtime cache before real
 case validation, generation, measurement, or visualization. The private image
 still contains no CUDA/PyTorch payload; this is the inherited Wan runtime-fetch
 mechanism, not a new SwitchWorld acceptance flag.
+Baseline, adapter, and measurement stages materialize the pinned SwitchWorld
+revision from a host-allowlisted HTTPS archive rather than a runtime `git
+clone`. NPA checks the archive's pinned byte size and SHA-256 before securely
+extracting it into the stage checkout.
 The private runtime appends a hash-locked PyAV 17.1.0 requirement to that same
 operator cache so preparation and evaluation can decode actual MP4 frames.
 PyAV source is BSD-3-Clause; its runtime-fetched wheel is never an image layer
@@ -46,7 +50,7 @@ resampling, and 16 fps generated MP4 share wall-clock dynamics.
 
 | Component | Pinned identity | Credit and license | Delivery |
 | --- | --- | --- | --- |
-| SwitchWorld code | [`yizhiqianbi/SwitchWorld@44d21478f2c15dcccf6423983cb78beee695db1c`](https://github.com/yizhiqianbi/SwitchWorld/tree/44d21478f2c15dcccf6423983cb78beee695db1c) | SwitchWorld contributors / yizhiqianbi, Apache-2.0 [LICENSE](https://github.com/yizhiqianbi/SwitchWorld/blob/44d21478f2c15dcccf6423983cb78beee695db1c/LICENSE), [NOTICE](https://github.com/yizhiqianbi/SwitchWorld/blob/44d21478f2c15dcccf6423983cb78beee695db1c/NOTICE), copyright 2026 SwitchWorld contributors | Runtime checkout |
+| SwitchWorld code | [`yizhiqianbi/SwitchWorld@44d21478f2c15dcccf6423983cb78beee695db1c`](https://github.com/yizhiqianbi/SwitchWorld/tree/44d21478f2c15dcccf6423983cb78beee695db1c) | SwitchWorld contributors / yizhiqianbi, Apache-2.0 [LICENSE](https://github.com/yizhiqianbi/SwitchWorld/blob/44d21478f2c15dcccf6423983cb78beee695db1c/LICENSE), [NOTICE](https://github.com/yizhiqianbi/SwitchWorld/blob/44d21478f2c15dcccf6423983cb78beee695db1c/NOTICE), copyright 2026 SwitchWorld contributors | Host-allowlisted HTTPS archive; SHA-256 and size checked |
 | Canonical adapters | [`PencilHu/SwitchWorld@5a01361ae1f9c9b1cfe115bef1c4d0377d922c1f`](https://huggingface.co/PencilHu/SwitchWorld/tree/5a01361ae1f9c9b1cfe115bef1c4d0377d922c1f) | PencilHu, Apache-2.0 model card | Runtime fetch, SHA-256 and size checked |
 | Verified alias, not executed | [`wangmingxinthu/SwitchWorld@c5b87e32d1f327f040db0d8d1ebf84d6a050ea5e`](https://huggingface.co/wangmingxinthu/SwitchWorld/tree/c5b87e32d1f327f040db0d8d1ebf84d6a050ea5e) | wangmingxinthu, Apache-2.0 model card | Never fetched by this workflow |
 | Base model | [`robbyant/lingbot-world-base-cam@6fc824ffc338d64c97c77e2eb8c0f4cfc24d82bd`](https://huggingface.co/robbyant/lingbot-world-base-cam/tree/6fc824ffc338d64c97c77e2eb8c0f4cfc24d82bd) | Robbyant Team / LingBot-World, Apache-2.0 card | Existing LingBot runtime fetch |
