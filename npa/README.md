@@ -97,6 +97,17 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
+PAIDF's native Nano structural generation now seals verified per-variant
+receipts so a recovered worker can reuse complete clips from the same run.
+The workflow's immutable `NPA_TASK_IMAGE` enables this path; standalone calls
+without that image identity, mutable image references, and custom checkpoints
+continue fresh generation. Set `variant_recovery=disabled` to intentionally
+regenerate after an operational runtime change.
+`NPA_COSMOS3_NANO_REVISION` is the internal full Hugging Face revision handoff
+from the sealed batch to the native interpreter, with no operator default.
+Let the coordinator set it. See the [recovery contract](../docs/workbench/guides/paidf-cosmos3.md#native-variant-recovery)
+for the source, weight, control and artifact checks and live qualification.
+
 For a first contest evaluation, use the [one-file BEHAVIOR DEV setup](../docs/workbench/challenge-onboarding.md)
 through `npa workbench workflow challenge init`, `check`, and `prepare`.
 The same helpers are available in `npa.sdk.workbench.workflow_challenge`.
