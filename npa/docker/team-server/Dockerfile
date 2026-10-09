@@ -2,6 +2,8 @@
 ARG KUBERNETES_SOURCE_REVISION=ad950d1cc78b0183c476bd4d3f1934c104229727
 FROM golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS kubectl
 ARG KUBERNETES_SOURCE_REVISION
+# Do not ship VCS checkout metadata; retain the exact release identity explicitly.
+# Backport the fixed x/net dependency before regenerating vendored build inputs.
 RUN apt-get update && apt-get install -y --no-install-recommends git make \
     && rm -rf /var/lib/apt/lists/* \
     && git init /src \
@@ -9,7 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends git make \
     && git -C /src fetch --depth=1 origin refs/tags/v1.36.5 \
     && git -C /src checkout FETCH_HEAD \
     && test "$(git -C /src rev-parse HEAD)" = "$KUBERNETES_SOURCE_REVISION" \
-    && make -C /src WHAT=cmd/kubectl
+    && rm -rf /src/.git \
+    && cd /src && go get golang.org/x/net@v0.60.0 && go work vendor \
+    && KUBE_GIT_VERSION=v1.36.5 KUBE_GIT_MAJOR=1 KUBE_GIT_MINOR=36 \
+      KUBE_GIT_COMMIT="$KUBERNETES_SOURCE_REVISION" KUBE_GIT_TREE_STATE=clean \
+      make -C /src WHAT=cmd/kubectl
 FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
 ARG NPA_REVISION
 LABEL org.opencontainers.image.revision=${NPA_REVISION}
