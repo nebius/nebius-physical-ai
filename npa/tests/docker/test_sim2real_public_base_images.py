@@ -172,7 +172,7 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     assert "ubuntu:22.04" in snapshot_config
     assert "ubuntu:24.04" in snapshot_config
     assert "configure-ubuntu-snapshot" in installer
-    assert 'linux_libc_dev_version="5.15.0-194.204"' in installer
+    assert 'linux_libc_dev_version="5.15.0-198.208"' in installer
     assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
     for relative in (
