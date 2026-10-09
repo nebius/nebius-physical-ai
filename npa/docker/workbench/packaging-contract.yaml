@@ -806,8 +806,9 @@ images:
       immutable rtfetch1 CUDA/Ubuntu/CPU closure and adds hash-pinned Ubuntu
       wget, netcat, FUSE and PCI packages so required SkyPilot startup tools
       are available even when runtime APT mirrors are unavailable.
-      The rtfetch1 release passed native B200 reconstruction; rtfetch2 requires
-      independent exact-digest GPU qualification before release promotion.
+      The rtfetch2 digest passed cold native reconstruction and decoded artifact
+      verification on preemptible RTX PRO 6000. The rtfetch1 release retains its
+      separate B200 qualification; rtfetch2 has not been run on B200 or B300.
   cosmos3:
     dockerfile: cosmos3/Dockerfile
     tier: job

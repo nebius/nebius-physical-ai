@@ -56,10 +56,10 @@
       "name": "npa-lyra2",
       "dockerfile": "lyra2/Dockerfile",
       "verdict": "ready",
-      "validation": "validated",
+      "validation": "pending-hardware",
       "redistribution": "public",
       "smoke": "Native Lyra 2 reconstruction of a checksummed RGB capture, with Gaussian PLY, predicted geometry, decoded rendered MP4 and offline HTML.",
-      "notes": "Exact public development digest completed cold runtime setup, native Lyra reconstruction, Gaussian rendering, offline HTML and verified S3 publication on one B200. The runtime Torch wheel and source-compiled gsplat kernels were checked on sm_100. RTX and B300 remain unverified.",
+      "notes": "Current rtfetch2 bytes completed cold runtime setup, native Lyra reconstruction, 320 rendered frames, offline HTML and verified S3 publication on preemptible RTX PRO 6000. Runtime Torch and source-compiled gsplat executed on sm_120. The earlier rtfetch1 digest retains separate B200 acceptance; current rtfetch2 B200/B300 inference remains unverified.",
       "measured_torch": "2.11.0+cu128",
       "measured_arch_list": [
         "sm_75",
@@ -69,9 +69,10 @@
         "sm_100",
         "sm_120"
       ],
-      "validated_digest": "sha256:cd76116ffac0f930bc8a4645ad92ea0848662426f3fe34c498050ae5bc5afc4d",
-      "validated_tag": "dev-5fe19717dc3bb9c0975f929342dc9bbf7386df31",
-      "qualification": "docs/workbench/validation/lyra2-b200-20261008.json"
+      "candidate_digest": "sha256:c959e2338409195b8b2082e5f199a84c782ff81f2b2dac794e10c70f233a5bf6",
+      "candidate_tag": "dev-51be9e81450233d6742489c95b2cd250ed482acc",
+      "qualification": "docs/workbench/validation/lyra2-rtx-20261009.json",
+      "historical_b200_qualification": "docs/workbench/validation/lyra2-b200-20261008.json"
     },
     {
       "name": "npa-mjlab",

@@ -87,10 +87,11 @@ evidence; report recovery must not change eligibility or consume final cases.
 For Lyra, `workflows/testing/lyra-reconstruction.yaml` is the standalone
 captured-video reconstruction workflow. The dedicated `npa-lyra2` recipe is at
 `npa/docker/workbench/lyra2/`; its model, source and inference environment are
-runtime fetches. The workflow pins the B200-qualified public release digest and
+runtime fetches. The workflow pins the RTX PRO 6000-qualified public release digest and
 baked NPA revision without a source overlay. Preserve the completed
 Gaussian/video/geometry/HTML outputs and
-the pinned model provenance. A reconstruction result does not qualify the
+the pinned model provenance. The earlier image retains separate B200 evidence;
+do not transfer that claim to the repaired image. A reconstruction result does not qualify the
 separate `lyra-scene-actions.yaml` physics or wrist-camera path. Follow the
 [Lyra guide](../../../docs/workbench/guides/lyra-physical-augmentation.md).
 

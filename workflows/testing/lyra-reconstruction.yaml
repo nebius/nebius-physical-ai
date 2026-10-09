@@ -10,10 +10,10 @@ config:
   source_overlay: false
   require_baked_npa: true
   baked_npa_import: npa.workflows.lyra_stage
-  source_sha: 5fe19717dc3bb9c0975f929342dc9bbf7386df31
+  source_sha: 51be9e81450233d6742489c95b2cd250ed482acc
   input_uri: s3://{{config.bucket}}/lyra-input/
   output_uri: s3://{{config.bucket}}/{{config.prefix}}/reconstruction/
-  accelerator: B200:1
+  accelerator: RTXPRO6000:1
   views: 128
   resolution: 640
 resources:
@@ -22,7 +22,7 @@ resources:
     accelerators: '{{config.accelerator}}'
     cpus: 16
     memory: 96Gi
-    image: ghcr.io/nebius/nebius-physical-ai/npa-lyra2@sha256:cd76116ffac0f930bc8a4645ad92ea0848662426f3fe34c498050ae5bc5afc4d
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lyra2@sha256:c959e2338409195b8b2082e5f199a84c782ff81f2b2dac794e10c70f233a5bf6
 initial: reconstruct
 states:
   reconstruct:

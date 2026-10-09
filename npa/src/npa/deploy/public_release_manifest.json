@@ -2,7 +2,7 @@
   "format": "npa_public_release_manifest_v1",
   "registry": "ghcr.io/nebius/nebius-physical-ai",
   "releases": {
-    "lyra2": {"tag": "2.0-rtfetch1", "published_digest": "sha256:cd76116ffac0f930bc8a4645ad92ea0848662426f3fe34c498050ae5bc5afc4d", "development_sha": "5fe19717dc3bb9c0975f929342dc9bbf7386df31"},
+    "lyra2": {"tag": "2.0-rtfetch2", "published_digest": "sha256:c959e2338409195b8b2082e5f199a84c782ff81f2b2dac794e10c70f233a5bf6", "development_sha": "51be9e81450233d6742489c95b2cd250ed482acc"},
     "cosmos": {"tag": "cu128-torch27-sm100-1.0.9-20260803T002017Z", "published_digest": "sha256:a7d2ba85ea4ad2d2036f6f8575b4e7a801d3f98ff202f6eb575329f1af9a41dd"},
     "cosmos2-transfer": {"tag": "2.5.1-sim2real-coherent-20260904", "published_digest": "sha256:0caddf68ccac1b69bd9fe3fb089bcc325a111059065452d31fdf0576629895d3", "development_sha": "c164fd3480f8a9ea8f9df9ccb9509502fd527996"},
     "cosmos3-reason": {"tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9"},

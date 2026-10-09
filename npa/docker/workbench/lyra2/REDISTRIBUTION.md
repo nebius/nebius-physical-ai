@@ -18,6 +18,11 @@ optional APT updates; Ubuntu's mutually exclusive FUSE 3 package is not baked.
 NPA source is replaced from the new build revision. Parent layers retain the
 earlier public NPA revision; no runtime-fetched artifacts enter either image.
 
+The repaired digest completed native reconstruction, Gaussian rendering and
+artifact verification on preemptible RTX PRO 6000. Its accepted evidence is
+`docs/workbench/validation/lyra2-rtx-20261009.json`. The earlier B200 qualification
+remains attached to the rtfetch1 digest.
+
 | Boundary | Delivery and terms |
 | --- | --- |
 | Source | NPA is Apache-2.0. Lyra source is fetched from `nv-tlabs/lyra` at `9fffc9adc37004091ecf26ef03abfb3abdf4d59a`; its Apache-2.0 license stays in the runtime checkout. The pinned DA3 submodule is `1ed6cb8eee386a3c94077d907b09c7aa1c312cd8`. |

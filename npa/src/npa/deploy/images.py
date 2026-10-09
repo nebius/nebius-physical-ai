@@ -386,8 +386,8 @@ PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
     "lyra2": {
-        "development_sha": "5fe19717dc3bb9c0975f929342dc9bbf7386df31",
-        "oci_digest": "sha256:cd76116ffac0f930bc8a4645ad92ea0848662426f3fe34c498050ae5bc5afc4d",
+        "development_sha": "51be9e81450233d6742489c95b2cd250ed482acc",
+        "oci_digest": "sha256:c959e2338409195b8b2082e5f199a84c782ff81f2b2dac794e10c70f233a5bf6",
     },
     "isaac-arena": {
         "development_sha": "ae5adea6ab895660996f513f14160c89d06f47e5",
@@ -459,7 +459,7 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
-    "lyra2": "2.0-rtfetch1",
+    "lyra2": "2.0-rtfetch2",
     "antioch": "0.1.0-cli0.4.289",
     "openpi": "pi05-full-droid-rlds-cu128-unbuilt",
     # Default LeRobot image release. Selectable package versions and their

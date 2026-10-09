@@ -536,7 +536,7 @@ image scanning, and capability evaluation before re-entering this table.
 | LingBot World v1 | `npa-lingbot-world` | `a43bec7-rtfetch-20260916` | 2026-09-16 | Camera-conditioned video generation, qualified on four B200s with positive attention/all-to-all execution on every rank and 161 decoded frames. Authored camera poses; no robot-action or calibrated-geometry claim. |
 | SAM 2.1 Small | `npa-sam2` | `2.1-rtfetch-20260916` | 2026-09-16 | Native CUDA video-mask propagation from a first-frame box; raw arrays and color-preserving visualization qualified on B200. Predicted masks are not ground truth. |
 | Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus upstream OpenArm Isaac Lab reach rollout and RSL-RL training. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches after the operator's EULA decision. The exact release digest passed byte/supply-chain gates and a complete RTX PRO 6000 dual-simulator workflow with independently checked traces, rendered video, checkpoint, and qualification report. See [OpenArm](openarm.md). |
-| Lyra 2 reconstruction | `npa-lyra2` | `2.0-rtfetch1` | 2026-10-08 | Dedicated CUDA/Python/NPA bootstrap with runtime-fetched Lyra source, inference dependencies and weights. Exact-digest native B200 reconstruction produced Gaussians, predicted geometry, fully decoded video and offline HTML. See the [guide](guides/lyra-physical-augmentation.md) and [qualification](validation/lyra2-b200-20261008.json). |
+| Lyra 2 reconstruction | `npa-lyra2` | `2.0-rtfetch2` | 2026-10-09 | Dedicated CUDA/Python/NPA bootstrap with baked SkyPilot startup packages and runtime-fetched Lyra source, inference dependencies and weights. Exact-digest reconstruction on preemptible RTX PRO 6000 produced 8.66 million Gaussians, predicted geometry, 320 decoded video frames and offline HTML. See the [guide](guides/lyra-physical-augmentation.md) and [RTX qualification](validation/lyra2-rtx-20261009.json). |
 
 ## External PAIDF runtime images
 
@@ -877,9 +877,11 @@ table. The independently rebuilt `sonic-mujoco:0.2.0-runtime` and zero-payload
 
 ## Verification scope
 
-`npa-lyra2:2.0-rtfetch1` promotes the exact scanned development digest that
-completed native reconstruction on one B200, with independent artifact readback
-and offline desktop/mobile HTML checks. RTX reconstruction is unverified.
+`npa-lyra2:2.0-rtfetch2` promotes the exact scanned development digest that
+completed native reconstruction on one preemptible RTX PRO 6000, with independent
+artifact readback and offline desktop/mobile HTML checks. The earlier
+`2.0-rtfetch1` tag retains its [B200 evidence](validation/lyra2-b200-20261008.json);
+that qualification does not transfer to the repaired rtfetch2 bytes.
 Its CUDA compiler and hash-locked NPA environment are independent of Isaac Lab;
 Lyra source, inference dependencies and model weights are fetched at runtime.
 See the [Lyra packaging record](../../npa/docker/workbench/lyra2/REDISTRIBUTION.md).

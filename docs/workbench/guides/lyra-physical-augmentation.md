@@ -16,24 +16,27 @@ quality remain separate validation work.
 
 ## Prepare captured video
 
-The public `npa-lyra2:2.0-rtfetch1` image packages the CUDA compiler, Python and
+The public `npa-lyra2:2.0-rtfetch2` image packages the CUDA compiler, Python and
 hash-locked NPA dependencies independently of Isaac Lab. The pinned Lyra/DA3
 source, inference dependencies and reconstruction checkpoint are fetched into
 a private temporary environment on each job. The image contains no weights or
 capture data. The workflow pins the accepted image digest and baked NPA source;
-it does not overlay local payload code. The exact image passed native B200
-reconstruction and artifact verification. See its
-[qualification record](../validation/lyra2-b200-20261008.json) and
+it does not overlay local payload code. The exact image passed native RTX PRO
+6000 reconstruction and artifact verification: 128 views, 8,658,944 Gaussians,
+320 rendered frames and an offline HTML review. Required SkyPilot startup tools
+are baked, so missing packages cannot block startup during a snapshot outage.
+See its [RTX qualification record](../validation/lyra2-rtx-20261009.json) and
 [packaging record](../../../npa/docker/workbench/lyra2/REDISTRIBUTION.md).
 
-Use a configured Workbench project with private object storage and a B200
-execution context. The standalone workflow defaults to `B200:1`. Native Isaac
-camera rendering uses the separate RTX workflow. Reconstruction can be placed
-on RTX with `--var accelerator=RTXPRO6000:1`, but this image's RTX path has not
-been qualified.
+Use a configured Workbench project with private object storage and an RTX PRO
+6000 execution context. The standalone workflow defaults to `RTXPRO6000:1`;
+the recorded run used preemptible capacity. The earlier `2.0-rtfetch1` image
+retains its [B200 qualification](../validation/lyra2-b200-20261008.json).
+That result does not qualify the repaired image on B200. Native Isaac camera
+rendering and action execution use the separate scene workflow.
 
 ```bash
-docker pull ghcr.io/nebius/nebius-physical-ai/npa-lyra2:2.0-rtfetch1
+docker pull ghcr.io/nebius/nebius-physical-ai/npa-lyra2:2.0-rtfetch2
 ```
 
 ```bash
