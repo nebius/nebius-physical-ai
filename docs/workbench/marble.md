@@ -17,13 +17,16 @@ requires hosted generation and compares real-image detector accuracy.
 | --- | --- | --- |
 | [World Capture](../../workflows/testing/marble-world-capture.yaml) | gsplat Gaussian rasterization | RGB camera dataset, camera matrices, CUDA timings, interactive HTML |
 | [Spatial Scan](../../workflows/testing/marble-spatial-scan.yaml) | NVIDIA Warp ray/triangle intersection | raw depth NPZ, sampled hit cloud, camera matrices, CUDA timings, interactive HTML |
+| [Warehouse Rover](../../workflows/testing/marble-warehouse-rover.yaml) | gsplat RGB and Warp depth along actual wheel-driven motion | synchronized observations, actions, joints, contacts, poses, and standalone offline HTML |
 
 Both use `acquire → capture/scan → report`, S3 handoffs, and one RTX PRO 6000
 GPU. The CPU acquisition/report stages request no GPU. The GPU consumers reuse
 the existing EnvGen CUDA/compiler image with its attested SkyPilot bootstrap.
 The specs enable source overlay for staged NPA code and install pinned runtime
 dependencies into a writable environment that inherits the baked CUDA libraries.
-They execute **gsplat or Warp**, not Genesis simulation.
+Capture and scan execute gsplat or Warp. The rover combines both consumers
+with PyBullet CPU rigid-body dynamics in the same one-GPU worker; see the
+[headless collection guide](guides/marble-warehouse-rover.md).
 No Marble image or model weights are published.
 
 ## Which workloads benefit
@@ -40,7 +43,7 @@ and per-world scale/ground metadata.
 | More camera rendering | SPZ → gsplat CUDA → RGB views and camera poses | Views cover the target camera distribution and pass image/pose checks | Capture consumer GPU-validated on the explicit sample; current path is a fixed exploratory sweep |
 | Depth and geometry inspection | GLB → Warp CUDA raycasts → depth and hit cloud | Geometry, coverage, and sensor conventions match the intended test | Scan consumer GPU-validated on the explicit sample; no planner or robot is evaluated |
 | Manufacturing perception | SPZ → CUDA backgrounds → labeled training composites → CUDA detector training/evaluation | Held-out real-image AP improves against the equal-update real-only baseline | Implemented testing workflow; funded API generation and real-data benchmark not yet run |
-| Factory mobile-robot RL | Aligned visual/collision scene + robot + goal task → GPU simulation and action-dependent sensors → PPO → unseen-world evaluation | Goal success, collision rate, and path efficiency improve against the same task without Marble variation | Proposed extension; Marble scene/task adapter is not implemented |
+| Factory mobile-robot RL | Aligned visual/collision scene + robot + goal task → simulation and action-dependent GPU sensors → PPO → unseen-world evaluation | Goal success, collision rate, and path efficiency improve against the same task without Marble variation | Wheel-driven collection is implemented; task rewards, resets, PPO training, and policy evaluation remain extensions |
 | Manipulation RL or imitation learning | Marble surroundings + validated robot/fixtures/parts → GPU simulation and rendering → PPO, or recorded demonstrations → policy training | Pick/place success improves on held-out scenes and real trials | Proposed extension; asset integration and episode recording are not implemented |
 
 For RL, a fixed camera sweep is insufficient. An implementation must import
@@ -153,8 +156,9 @@ SPZ decoding uses the pinned upstream Niantic library. Capture uses gsplat
 Scan uses Warp 1.17.0 and real collision triangles. No-return depth is NaN,
 not fabricated range. Sample distances are upstream scene units, not calibrated
 meters. Generated splat scale/ground metadata follows the
-[official conversion](https://docs.worldlabs.ai/api/rendering-spz); collider
-coordinates remain native and require calibration before robotics use.
+[official conversion](https://docs.worldlabs.ai/api/rendering-spz). Generated
+colliders receive the same scale, ground offset, and axis conversion as splats.
+These are provider-estimated meters; real-site calibration remains necessary.
 
 The camera sweep is exploratory. Neither workflow trains a robot, proves a
 collision-free path, or certifies simulation-ready physics. Generated meshes
@@ -164,6 +168,16 @@ The live-submit matrix selects the explicit imported example and real GPU
 execution. `world_source=generate` requires a separate funded-key live check.
 Tests reject missing CUDA evidence, missing frames, wrong identities, path
 traversal, and mismatched source/output hashes.
+
+The warehouse rover passed a separate real World API generation and native
+Nebius run on one RTX PRO 6000 Blackwell Server Edition. It collected 240
+RGB/depth pairs at 960 × 540 along 7.98 meters of simulated travel, with ground
+contacts in every recorded state. All 727 result assets passed download hash
+verification. The standalone replay passed offline Chromium playback, scrubbing,
+trajectory download, and mobile layout checks. This validates synthetic
+collection, not a physical robot or a trained policy. Warm CUDA event medians
+were 0.85 ms for RGB and 0.36 ms for depth; first-use intervals include compilation
+and initialization and do not measure active GPU residency.
 
 ## Live validation — 2026-10-03
 

@@ -140,6 +140,7 @@ modules from their public CDNs. Use another local port if 8768 is occupied.
 | --- | --- | --- |
 | [Camera capture](../../../workflows/testing/marble-world-capture.yaml) | gsplat rendering of 120 RGB views | GPU consumer validated on the imported sample |
 | [Spatial scan](../../../workflows/testing/marble-spatial-scan.yaml) | Warp raycasting for depth and a hit cloud | GPU consumer validated on the imported sample |
+| [Warehouse rover](marble-warehouse-rover.md) | gsplat RGB and Warp depth synchronized with CPU rigid-body motion | Real API generation and one-GPU collection validated: 240 observations over 7.98 simulated meters |
 | [Manufacturing pallet detection](../../../workflows/testing/marble-manufacturing-pallet-detection.yaml) | Render backgrounds, then train/evaluate two Faster R-CNN detectors | Implemented experiment; funded API key and real labeled data needed for live validation |
 
 The spatial-scan YAML uses `marble-scan` in its output prefix. It follows the
