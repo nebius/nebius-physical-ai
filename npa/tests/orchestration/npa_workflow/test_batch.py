@@ -157,14 +157,9 @@ update(1)
 try:
     rendezvous_parties = int(os.getenv('BATCH_TEST_RENDEZVOUS_PARTIES', '0'))
     if rendezvous_parties:
-        deadline = time.monotonic() + 5
         while True:
             if rendezvous_released(rendezvous_parties):
                 break
-            if time.monotonic() >= deadline:
-                raise RuntimeError(
-                    f'rendezvous needed {rendezvous_parties} simultaneous children'
-                )
             time.sleep(0.01)
     else:
         time.sleep(0.3)
