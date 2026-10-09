@@ -981,9 +981,10 @@ class SkyPilotWaveExecutor:
             and self.options.recover_managed_job_id
             and not self._explicit_terminal_recovery_consumed
         ):
+            prior = self.ledger.latest_wave(key)
             if self._has_recorded_explicit_terminal_recovery(key):
                 self._explicit_terminal_recovery_consumed = True
-            else:
+            elif prior is not None and str(prior.get("status") or "") == "failed":
                 attempt = self._recover_explicit_terminal_job(
                     key, steps, kind=kind, group=group
                 )

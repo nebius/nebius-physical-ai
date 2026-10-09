@@ -632,6 +632,34 @@ states:
     terminal: true
 """
 
+TWO_WAVE_EXPLICIT_RECOVERY_SPEC = """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: two-wave-explicit-terminal-recovery
+config:
+  bucket: example-bucket
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 1
+initial: prepare
+states:
+  prepare:
+    run:
+      shell: "echo prepare"
+    resources: cpu
+    next: export
+  export:
+    run:
+      shell: "echo export"
+    resources: cpu
+    outputs:
+      - uri: "s3://example-bucket/two-wave-explicit-recovery/result.json"
+        schema: npa.example.result.v1
+    terminal: true
+"""
+
 FANOUT_SPEC = """
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
@@ -4007,6 +4035,137 @@ def test_explicit_terminal_recovery_adopts_only_the_requested_exact_job(
     )
     assert replay.execute(step)["job_id"] == "2"
     assert replay._submitter.calls == []
+
+
+def test_explicit_terminal_recovery_skips_completed_waves_before_failed_wave(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, TWO_WAVE_EXPLICIT_RECOVERY_SPEC))
+    store = MemoryStore()
+    run_id = "rt-two-wave-exact-terminal-recovery"
+    initial = _executor(spec, run_id=run_id, store=store)
+    assert (
+        run_workflow_runtime(spec, run_id=run_id, executor=initial).status
+        == "succeeded"
+    )
+
+    state = store.read_runtime_state()
+    assert state is not None
+    failed = dict(state.waves[-1])
+    assert failed["states"] == ["export"]
+    assert failed["job_id"] == "2"
+    failed.update(
+        {
+            "status": "failed",
+            "sky_status": "FAILED_CONTROLLER",
+            "error": "stale controller projection",
+            "recovery_decision": "submitted_and_reconciled",
+        }
+    )
+    state.record_wave(failed)
+    store.write_runtime_state(state)
+
+    resumed_submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=resumed_submitter,
+        options=RuntimeOptions(
+            poll_seconds=0,
+            max_wait_seconds=60,
+            resume=True,
+            recover_managed_job_id="3",
+        ),
+        reconcile_fn=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found",
+            job_id=job_id,
+            status="SUCCEEDED",
+            workload_observable=True,
+        ),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id=run_id, executor=resumed, options=resumed.options
+    )
+
+    assert report.status == "succeeded"
+    assert resumed_submitter.calls == []
+    recovered = store.read_runtime_state().waves[-1]
+    assert recovered["states"] == ["export"]
+    assert recovered["job_id"] == "3"
+    assert recovered["recovery_history"][-1]["prior_job_id"] == "2"
+    assert recovered["recovery_history"][-1]["recovered_job_id"] == "3"
+
+
+def test_explicit_terminal_recovery_replays_a_prior_recovery_before_later_failure(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, TWO_WAVE_EXPLICIT_RECOVERY_SPEC))
+    store = MemoryStore()
+    run_id = "rt-two-wave-recovery-replay"
+    initial = _executor(spec, run_id=run_id, store=store)
+    assert (
+        run_workflow_runtime(spec, run_id=run_id, executor=initial).status
+        == "succeeded"
+    )
+
+    state = store.read_runtime_state()
+    assert state is not None
+    original_first = dict(state.waves[0])
+    original_second = dict(state.waves[1])
+    original_first.update(
+        {
+            "job_id": "3",
+            "status": "succeeded",
+            "sky_status": "SUCCEEDED",
+            "recovery_history": [
+                {
+                    "schema": "npa.workflow.exact-terminal-recovery.v1",
+                    "recovered_job_id": "3",
+                }
+            ],
+        }
+    )
+    original_second.update(
+        {
+            "status": "failed",
+            "sky_status": "FAILED_CONTROLLER",
+            "error": "later controller failure",
+            "recovery_decision": "submitted_and_reconciled",
+        }
+    )
+    state.record_wave(original_first)
+    state.record_wave(original_second)
+    store.write_runtime_state(state)
+
+    reconciled_ids: list[str] = []
+
+    def reconcile(_name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        reconciled_ids.append(job_id)
+        return ManagedJobEvidence("absent")
+
+    resumed = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        options=RuntimeOptions(resume=True, recover_managed_job_id="3"),
+        reconcile_fn=reconcile,
+    )
+    steps = build_plan(spec, run_id=run_id).steps
+
+    replayed = resumed._run_wave([steps[0]], kind="serial", group="")
+    later = resumed._run_wave([steps[1]], kind="serial", group="")
+
+    assert replayed.job_id == "3"
+    assert replayed.replayed is True
+    assert resumed._explicit_terminal_recovery_consumed is True
+    assert later.key != replayed.key
+    assert "3" not in reconciled_ids
 
 
 @pytest.mark.parametrize(
