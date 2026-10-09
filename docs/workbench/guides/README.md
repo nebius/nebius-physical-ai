@@ -1,5 +1,8 @@
 # Choose a Workbench workload
 
+For whole datasets, input diagnostics, private Python/image paths and capacity planning,
+follow [PAIDF dataset batches](paidf-dataset-batches.md).
+
 [Workbench docs](../README.md) · [Cookbooks](../cookbooks/README.md) · [Workflow catalog](../../../workflows/README.md)
 
 Choose the result you want, then follow that guide from inputs to inspected

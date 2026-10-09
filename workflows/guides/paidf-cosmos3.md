@@ -1,5 +1,8 @@
 # PAIDF with Cosmos 3: setup and run guide
 
+For whole-dataset submission, read-only input checks and private processing,
+see [PAIDF dataset batches](../../docs/workbench/guides/paidf-dataset-batches.md).
+
 Run the [Physical AI Data Factory (PAIDF) Cosmos 3 workflow](../main/paidf-cosmos3.yaml)
 on Nebius AI Cloud. This guide covers account prerequisites, local installation,
 project storage, Kubernetes setup, submission, and output inspection. Follow it

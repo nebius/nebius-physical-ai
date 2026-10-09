@@ -138,6 +138,7 @@ likewise predates its current coherent release.
 | `npa-robomimic` (quarantined neutral candidate) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; compatibility unknown; one-B200 hard gate deferred | unbuilt; not validated |
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
+| `npa-lyra2` (`2.0-rtfetch2`) | unverified | unverified | **verified** [native reconstruction](validation/lyra2-rtx-20261009.json) | **historical evidence** [rtfetch1](validation/lyra2-b200-20261008.json); rtfetch2 unverified | unverified |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
 | `npa-libero` (payload-free public-development staging permitted; not qualified) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
 | `npa-alpamayo2-super` | supported | supported | **verified** [78] | **verified** [77] | supported (same-major `sm_100` coverage; not measured) |

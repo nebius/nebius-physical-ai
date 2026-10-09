@@ -10,12 +10,14 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import yaml
 
 from npa.deploy import images
 from npa.orchestration.npa_workflow import load_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 from npa.deploy.images import SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS
+from npa.smoke.capabilities import GOLDEN_EVAL_CAPABILITIES
 from npa.workflows import lerobot_vla_jepa as vla
 
 
@@ -24,9 +26,41 @@ WORKFLOW = ROOT / "workflows" / "testing" / "lerobot-vla-jepa.yaml"
 READINESS = WORKFLOW.with_suffix(".readiness.json")
 DOCKERFILE = ROOT / "npa" / "docker" / "workbench" / "lerobot-vla-jepa" / "Dockerfile"
 BLACKWELL_MANIFEST = ROOT / "npa" / "docker" / "workbench" / "blackwell-dc-images.json"
+GOLDEN_EVALS = ROOT / "npa" / "src" / "npa" / "smoke" / "golden_evals.yaml"
+VLA_JEPA_BLACKWELL_MANIFEST_EVIDENCE = (
+    "npa/docker/workbench/blackwell-dc-images.json::npa-lerobot-vla-jepa-projection"
+)
 VLA_JEPA_IMAGE_CATALOG_EVIDENCE = (
     "npa/src/npa/deploy/images.py::lerobot-vla-jepa-neutral-candidate-projection"
 )
+VLA_JEPA_GOLDEN_EVAL_EVIDENCE = (
+    "npa/src/npa/smoke/golden_evals.yaml::lerobot-vla-jepa-projection"
+)
+VLA_JEPA_CAPABILITIES_EVIDENCE = (
+    "npa/src/npa/smoke/capabilities.py::lerobot-vla-jepa-projection"
+)
+
+
+def _vla_jepa_blackwell_manifest_projection() -> bytes:
+    """Serialize the VLA-JEPA record without binding unrelated image entries."""
+    manifest = json.loads(BLACKWELL_MANIFEST.read_text(encoding="utf-8"))
+    record = next(
+        item for item in manifest["images"] if item["name"] == "npa-lerobot-vla-jepa"
+    )
+    return json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _vla_jepa_golden_eval_projection() -> bytes:
+    """Serialize the VLA-JEPA smoke contract without binding other containers."""
+    document = yaml.safe_load(GOLDEN_EVALS.read_text(encoding="utf-8"))
+    projection = document["containers"]["lerobot-vla-jepa"]
+    return json.dumps(projection, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _vla_jepa_capabilities_projection() -> bytes:
+    """Serialize VLA-JEPA's capability list without binding other tools."""
+    projection = GOLDEN_EVAL_CAPABILITIES["lerobot-vla-jepa"]
+    return json.dumps(projection, separators=(",", ":")).encode()
 
 
 def _vla_jepa_image_catalog_projection() -> bytes:
@@ -354,14 +388,12 @@ def test_readiness_is_hash_bound_and_does_not_claim_live_acceptance() -> None:
         "npa/docker/workbench/lerobot-vla-jepa/entrypoint.sh": (
             DOCKERFILE.parent / "entrypoint.sh"
         ),
-        "npa/docker/workbench/blackwell-dc-images.json": BLACKWELL_MANIFEST,
+        VLA_JEPA_BLACKWELL_MANIFEST_EVIDENCE: (
+            _vla_jepa_blackwell_manifest_projection()
+        ),
         VLA_JEPA_IMAGE_CATALOG_EVIDENCE: _vla_jepa_image_catalog_projection(),
-        "npa/src/npa/smoke/golden_evals.yaml": (
-            ROOT / "npa/src/npa/smoke/golden_evals.yaml"
-        ),
-        "npa/src/npa/smoke/capabilities.py": (
-            ROOT / "npa/src/npa/smoke/capabilities.py"
-        ),
+        VLA_JEPA_GOLDEN_EVAL_EVIDENCE: _vla_jepa_golden_eval_projection(),
+        VLA_JEPA_CAPABILITIES_EVIDENCE: _vla_jepa_capabilities_projection(),
         "npa/src/npa/workflows/lerobot_vla_jepa.py": (
             ROOT / "npa/src/npa/workflows/lerobot_vla_jepa.py"
         ),
