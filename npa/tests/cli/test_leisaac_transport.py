@@ -1005,7 +1005,7 @@ def _short_event_socket_path(tmp_path: Path) -> Path:
 
     digest = hashlib.sha256(os.fspath(tmp_path).encode()).hexdigest()[:16]
     filename = f"npa-leisaac-{digest}.sock"
-    for directory in (Path(tempfile.gettempdir()), Path("/tmp")):
+    for directory in dict.fromkeys((Path(tempfile.gettempdir()), Path("/tmp"))):
         candidate = directory / filename
         if len(os.fsencode(candidate)) < 108:
             return candidate
