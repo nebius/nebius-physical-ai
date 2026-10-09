@@ -10136,7 +10136,8 @@ def preflight_images_cmd(
         "--image-pull-secret",
         help=(
             "Existing operator-managed Kubernetes dockerconfigjson Secret used by "
-            "bootstrap capability probes. Repeat for multiple Secrets."
+            "credentialed per-image pull checks and bootstrap capability probes. "
+            "Repeat for multiple Secrets."
         ),
     ),
     image_bootstrap_timeout_seconds: int = typer.Option(
