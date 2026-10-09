@@ -101,8 +101,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            fastapi~=0.136.1 \
            num2words \
            tensorboard \
-           "uvicorn[standard]" \
-         && /opt/lerobot/venv/bin/pip uninstall -y wandb; \
+           "uvicorn[standard]"; \
        elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then \
          /opt/lerobot/venv/bin/python /opt/lerobot/prepare-secure-wheel.py \
            --output-dir /opt/lerobot/secure-wheel \
@@ -120,11 +119,11 @@ RUN python3.12 -m venv /opt/lerobot/venv \
          && rm -rf /opt/lerobot/secure-wheel \
          && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
            --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
-           > /opt/lerobot/dependency-source-correction.json \
-         && /opt/lerobot/venv/bin/pip check; \
+           > /opt/lerobot/dependency-source-correction.json; \
        else \
          echo 'Unsupported LeRobot package version' >&2; exit 1; \
        fi \
+    && /opt/lerobot/venv/bin/pip check \
     && find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test "$(/opt/lerobot/venv/bin/python -c \

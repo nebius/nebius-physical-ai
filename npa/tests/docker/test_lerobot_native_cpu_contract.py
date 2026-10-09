@@ -61,11 +61,13 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     optional_branch, default_branch = recipe.split(
         'elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then', 1
     )
-    assert "pip uninstall -y wandb" in optional_branch
+    assert "pip uninstall -y wandb" not in optional_branch
     assert "pip uninstall -y wandb" not in default_branch
     assert '"torch==2.12.1"' not in recipe
     assert '"diffusers>=0.38.0"' not in recipe
-    assert "pip check" in recipe
+    check = "/opt/lerobot/venv/bin/pip check"
+    assert recipe.count(check) == 1
+    assert recipe.index(check) > recipe.index("Unsupported LeRobot package version")
     assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" not in recipe
     for copied_path in ("__init__.py", "clients", "server", "smoke"):
         assert (
