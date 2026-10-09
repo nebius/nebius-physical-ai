@@ -31,7 +31,10 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_TRAIN_FRACTION,
 )
 from npa.workflows.sim2real.config import build_config_from_env
-from npa.workflows.sim2real.artifact_config import build_artifact_config_from_env
+from npa.workflows.sim2real.artifact_config import (
+    Sim2RealArtifactConfig,
+    build_artifact_config_from_env,
+)
 from npa.workflows.sim2real.engine import (
     convert_vlm_eval_to_rl_signal,
     run_inner_loop,
@@ -84,7 +87,6 @@ def _resolve_rerun_storage(
     project: str,
     s3_bucket: str,
     s3_endpoint: str,
-    observe_project_storage: bool = False,
 ) -> tuple[str, str]:
     """Resolve explicit, project, then environment storage for a Rerun command.
 
@@ -92,8 +94,6 @@ def _resolve_rerun_storage(
         project: Optional project alias whose storage settings take precedence.
         s3_bucket: Explicit bucket override.
         s3_endpoint: Explicit endpoint override.
-        observe_project_storage: Read project credentials without legacy migration
-            or alias writes.
     Returns:
         The bucket and endpoint arguments for artifact configuration resolution.
     Raises:
@@ -103,10 +103,7 @@ def _resolve_rerun_storage(
 
     if not project:
         return s3_bucket, s3_endpoint
-    if observe_project_storage:
-        with operation_intent(OperationIntent.OBSERVE):
-            storage = resolve_project_storage(project)
-    else:
+    with operation_intent(OperationIntent.OBSERVE):
         storage = resolve_project_storage(project)
     if s3_bucket.strip() or storage.checkpoint_bucket:
         s3_bucket = resolve_storage_bucket(storage, override=s3_bucket)
@@ -851,16 +848,12 @@ def rerun_serve_command(
             report_uri=report_uri,
         )
         if local_record and not destroy:
-            try:
-                artifact_config = build_artifact_config_from_env(
-                    run_id=run_id,
-                    s3_bucket=config.s3_bucket,
-                    s3_prefix=config.s3_prefix,
-                    s3_endpoint=config.s3_endpoint,
-                )
-            except ValueError as exc:
-                typer.echo(f"Error: {exc}", err=True)
-                raise typer.Exit(1) from exc
+            artifact_config = Sim2RealArtifactConfig(
+                run_id=config.run_id,
+                s3_bucket=config.s3_bucket,
+                s3_prefix=config.s3_prefix,
+                s3_endpoint=config.s3_endpoint,
+            )
         if dry_run:
             manifest = build_rerun_serve_manifest(config)
             if output == OutputFormat.json:
@@ -967,7 +960,6 @@ def rerun_regen_command(
             project=project,
             s3_bucket=s3_bucket,
             s3_endpoint=s3_endpoint,
-            observe_project_storage=True,
         )
         config = build_artifact_config_from_env(
             run_id=run_id,
@@ -1044,7 +1036,6 @@ def rerun_heldout_only_command(
             project=project,
             s3_bucket=s3_bucket,
             s3_endpoint=s3_endpoint,
-            observe_project_storage=True,
         )
         config = build_config_from_env(
             run_id=run_id,

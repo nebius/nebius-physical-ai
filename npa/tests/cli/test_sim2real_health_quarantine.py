@@ -156,9 +156,12 @@ def test_image_independent_checks_do_not_construct_execution_images(
         ],
     )
     assert result.exit_code == 0, result.output
-    assert [
-        (row["name"], row["status"]) for row in json.loads(result.output)["checks"]
-    ] == [(name, "PASS")]
+    payload = json.loads(result.output)
+    assert [(row["name"], row["status"]) for row in payload["checks"]] == [
+        (name, "PASS")
+    ]
+    assert payload["selected_checks"] == [selected]
+    assert payload["image_policy_evaluated"] is False
     diagnostic_spies.defaults.assert_not_called()
     diagnostic_spies.execution.assert_not_called()
     diagnostic_spies.image_inspector.assert_not_called()
@@ -263,6 +266,9 @@ def test_explicit_images_remain_selected_for_registry_check(
         app, ["workbench", "health", "sim2real", "--checks", "registry", "--json"]
     )
     assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["selected_checks"] == ["registry"]
+    assert payload["image_policy_evaluated"] is True
     builder.assert_called_once()
     assert {
         call.args[0] for call in diagnostic_spies.image_inspector.call_args_list

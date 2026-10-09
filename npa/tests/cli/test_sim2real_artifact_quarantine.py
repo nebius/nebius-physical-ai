@@ -315,7 +315,7 @@ def test_serve_local_record_uses_resolved_viewer_storage(
     ]
 
 
-def test_serve_local_record_rejects_artifact_config_before_viewer_apply(
+def test_serve_local_record_ignores_unneeded_artifact_environment(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mocker
 ) -> None:
     config = RerunServeConfig(
@@ -333,11 +333,10 @@ def test_serve_local_record_rejects_artifact_config_before_viewer_apply(
         "--local-record",
         "--local-rrd-path",
         str(tmp_path / "local.rrd"),
+        "--dry-run",
     )
 
-    assert result.exit_code == 1
-    assert "Error: invalid literal for int()" in result.output
-    assert "Traceback" not in result.output
+    assert result.exit_code == 0, result.output
     apply.assert_not_called()
 
 

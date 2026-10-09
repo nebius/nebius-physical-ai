@@ -42,6 +42,9 @@ Selecting `config`, `registry`, or `all` still resolves the legacy execution
 configuration and enforces its image quarantine. Use the canonical workflow's
 `preflight-images` and submit preflight for its five immutable role images;
 the legacy health image fields do not validate that source-image contract.
+JSON reports include `selected_checks` and `image_policy_evaluated` so agent
+consumers can distinguish an image-independent diagnostic subset from a full
+execution-policy preflight.
 
 ## One seam, one value
 

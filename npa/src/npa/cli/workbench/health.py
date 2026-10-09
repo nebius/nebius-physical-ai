@@ -657,6 +657,10 @@ def sim2real_command(
     if output_json:
         payload = {
             "run_id": config.run_id,
+            "selected_checks": selected,
+            "image_policy_evaluated": any(
+                check in IMAGE_DEPENDENT_CHECKS for check in selected
+            ),
             "checks": [result.as_dict() for result in results],
             "ok": not has_failure(results),
         }
