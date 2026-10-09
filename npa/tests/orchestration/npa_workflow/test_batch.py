@@ -136,12 +136,40 @@ def update(delta):
         state['maximum'] = max(state['maximum'], state['active'])
         if delta > 0:
             state['calls'].append({'run_id': run_id, 'resume': resume, 'args': args})
+        elif state['active'] == 0:
+            state.pop('rendezvous_released', None)
         handle.seek(0)
         json.dump(state, handle)
         handle.truncate()
+
+def rendezvous_released(parties):
+    with path.open('r+') as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        state = json.load(handle)
+        if state['active'] >= parties:
+            state['rendezvous_released'] = True
+            handle.seek(0)
+            json.dump(state, handle)
+            handle.truncate()
+        return state.get('rendezvous_released', False)
+
 update(1)
-time.sleep(0.3)
-update(-1)
+try:
+    rendezvous_parties = int(os.getenv('BATCH_TEST_RENDEZVOUS_PARTIES', '0'))
+    if rendezvous_parties:
+        deadline = time.monotonic() + 5
+        while True:
+            if rendezvous_released(rendezvous_parties):
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f'rendezvous needed {rendezvous_parties} simultaneous children'
+                )
+            time.sleep(0.01)
+    else:
+        time.sleep(0.3)
+finally:
+    update(-1)
 if os.getenv('BATCH_TEST_FAILURE') == run_id and not resume:
     print('lost response')
     sys.exit(1)
@@ -156,45 +184,33 @@ print(json.dumps({'status': 'succeeded', 'run_id': run_id}))
 
 
 def test_real_children_obey_limit_and_completed_resume_reverifies(
-    manifest, children, tmp_path
+    manifest, children, tmp_path, monkeypatch
 ):
-    first_admission = []
+    monkeypatch.setenv("BATCH_TEST_RENDEZVOUS_PARTIES", "3")
     result = batch.run_batch(
         manifest[0],
         state_dir=tmp_path / "state",
         max_concurrent_runs=3,
-        reporter=first_admission.append,
     )
     assert all(record["status"] == "succeeded" for record in result["runs"].values())
     evidence = json.loads(children.read_text())
-    # Process scheduling can finish one short-lived child before a sibling has
-    # entered the test helper.  The scheduler's contract is a ceiling, while
-    # the driver's admission report proves it filled that ceiling.
-    assert 1 <= evidence["maximum"] <= 3
-    assert any(
-        message.endswith("active workflow runs: 3") for message in first_admission
-    )
+    assert evidence["maximum"] == 3
     assert len(evidence["calls"]) == 6
     assert all("--runtime" in call["args"] for call in evidence["calls"])
     assert all(
         call["args"][call["args"].index("--max-wait-seconds") + 1] == "0"
         for call in evidence["calls"]
     )
-    resumed_admission = []
     batch.run_batch(
         manifest[0],
         state_dir=tmp_path / "state",
         max_concurrent_runs=3,
         resume=True,
-        reporter=resumed_admission.append,
     )
     replay = json.loads(children.read_text())
     assert len(replay["calls"]) == 12
     assert all(call["resume"] for call in replay["calls"][6:])
-    assert 1 <= replay["maximum"] <= 3
-    assert any(
-        message.endswith("active workflow runs: 3") for message in resumed_admission
-    )
+    assert replay["maximum"] == 3
 
 
 def test_failure_stops_admission_and_resume_reconciles_first(
