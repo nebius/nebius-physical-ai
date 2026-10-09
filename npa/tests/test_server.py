@@ -342,7 +342,7 @@ def test_infer_endpoint_parses_observation_and_returns_actions(
 
 @pytest.mark.parametrize("with_env", [False, True])
 @pytest.mark.parametrize("use_peft", [None, False, True])
-def test_policy_load_preserves_checkpoint_features_without_environment(
+def test_policy_load_routes_environment_and_peft_checkpoints(
     server_module, monkeypatch, with_env, use_peft
 ):
     from unittest.mock import Mock
@@ -395,16 +395,26 @@ def test_policy_load_preserves_checkpoint_features_without_environment(
     )
 
     state = server_module.PolicyState()
-    state.load("/checkpoint", env_type="aloha" if with_env else None)
-
-    assert state.loaded and state.checkpoint == "/checkpoint"
-    assert state.preprocessor == "pre" and state.postprocessor == "post"
-    policy.to.assert_called_once()
-    policy.eval.assert_called_once()
-    if with_env or use_peft:
-        factory.assert_called_once_with(config, env_cfg=env if with_env else None)
+    if use_peft and not with_env:
+        with pytest.raises(
+            server_module.CheckpointContractError,
+            match="PEFT checkpoints require --env-type",
+        ):
+            state.load("/checkpoint")
+        assert not state.loaded
+        factory.assert_not_called()
         from_pretrained.assert_not_called()
     else:
+        state.load("/checkpoint", env_type="aloha" if with_env else None)
+
+        assert state.loaded and state.checkpoint == "/checkpoint"
+        assert state.preprocessor == "pre" and state.postprocessor == "post"
+        policy.to.assert_called_once()
+        policy.eval.assert_called_once()
+    if with_env:
+        factory.assert_called_once_with(config, env_cfg=env)
+        from_pretrained.assert_not_called()
+    elif not use_peft:
         get_policy_class.assert_called_once_with("act")
         from_pretrained.assert_called_once_with("/checkpoint", config=config)
         factory.assert_not_called()
