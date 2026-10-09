@@ -1506,6 +1506,18 @@ def default_npa_setup() -> str:
         "    return 1\n"
         "  fi\n"
         "}\n"
+        # Some immutable non-root images deliberately bake the exact source into
+        # the declared interpreter without installing the console script.  A
+        # private user-level shim preserves the CLI contract without attempting
+        # a writable-site reinstall in that image.
+        "if ! command -v npa >/dev/null 2>&1 && "
+        '[ "$npa_setup_python" = "${NPA_BAKED_PYTHON:-}" ] && '
+        "\"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
+        '  mkdir -p "$HOME/.local/bin"\n'
+        "  printf '%s\\n' '#!/bin/sh' 'exec \"$NPA_BAKED_PYTHON\" -m npa.cli.main \"$@\"' "
+        '> "$HOME/.local/bin/npa"\n'
+        '  chmod 0755 "$HOME/.local/bin/npa"\n'
+        "fi\n"
         "if ! command -v npa >/dev/null 2>&1; then\n"
         # The active runtime-fetch images intentionally ship the installable
         # project under /opt/npa but not a shell-visible `npa` launcher. Recording
