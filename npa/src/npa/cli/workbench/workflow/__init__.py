@@ -10001,6 +10001,10 @@ def plan_spec_cmd(
     resolved_run_id = run_id or f"{spec.name}-plan"
     from npa.orchestration.npa_workflow import build_plan
 
+    workflow_validation_candidates: list[dict[str, str]] = []
+    workflow_validation_candidates_status = (
+        WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE
+    )
     try:
         plan = build_plan(spec, run_id=resolved_run_id, assume_decision=assume_decision)
         render_options = SkypilotRenderOptions(materialize_registry_secrets=False)
@@ -10014,19 +10018,28 @@ def plan_spec_cmd(
             if check_render is True
             else None
         )
-        workflow_validation_candidates = (
-            _workflow_validation_candidate_payload(
+    except NpaWorkflowError as exc:
+        _fail(str(exc))
+        return
+
+    if render_check is not None:
+        try:
+            workflow_validation_candidates = _workflow_validation_candidate_payload(
                 spec,
                 plan.steps,
                 run_id=resolved_run_id,
                 options=render_options,
             )
-            if render_check is not None
-            else []
-        )
-    except NpaWorkflowError as exc:
-        _fail(str(exc))
-        return
+        except (NpaWorkflowError, ValueError):
+            workflow_validation_candidates_status = (
+                WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE
+            )
+            if not json_output:
+                typer.echo(
+                    "warning: workflow validation candidate disclosure is unavailable; "
+                    "normal rendering remains authoritative",
+                    err=True,
+                )
 
     if waves:
         from npa.orchestration.npa_workflow.waves import wave_plan_from_plan
@@ -10041,7 +10054,7 @@ def plan_spec_cmd(
                     workflow_validation_candidates
                 )
                 payload["workflow_validation_candidates_status"] = (
-                    WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE
+                    workflow_validation_candidates_status
                 )
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
             return
@@ -10069,7 +10082,7 @@ def plan_spec_cmd(
             payload["render_check"] = render_check
             payload["workflow_validation_candidates"] = workflow_validation_candidates
             payload["workflow_validation_candidates_status"] = (
-                WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE
+                workflow_validation_candidates_status
             )
         # The human warning is suppressed under --json to keep the document clean,
         # which made a placeholder plan look valid. Say it in the document instead.
@@ -10359,6 +10372,10 @@ def preflight_images_cmd(
             infra=infra,
             steps=steps,
         )
+    except (NpaWorkflowError, ValueError) as exc:
+        _fail(f"image preflight planning failed: {exc}")
+        return
+    try:
         workflow_validation_candidates = [
             candidate
             for candidate in _workflow_validation_candidate_payload(
@@ -10372,9 +10389,14 @@ def preflight_images_cmd(
             )
             if candidate["image"] in images
         ]
-    except (NpaWorkflowError, ValueError) as exc:
-        _fail(f"image preflight planning failed: {exc}")
-        return
+    except (NpaWorkflowError, ValueError):
+        workflow_validation_candidates = []
+        if not json_output:
+            typer.echo(
+                "warning: workflow validation candidate disclosure is unavailable; "
+                "normal rendering remains authoritative",
+                err=True,
+            )
     if not json_output:
         _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
     candidate_metadata = {

@@ -112,7 +112,8 @@ Do not infer one route's posture from another route's defaults.
 For containerized `generate`, the historical `1.2.2-cu130-r7` release resolves
 [#270](https://github.com/nebius/nebius-physical-ai/issues/270) but is quarantined.
 Official-default workflow planning uses a digest-pinned validation candidate only
-for its governed toolRefs; that candidate is not an accepted public release.
+for its governed toolRefs; `workbench.cosmos3.generate` is not one of them and
+remains quarantined. That candidate is not an accepted public release.
 The compatibility field `guardrails` records the request; inspect
 `guardrail_state` for discovered and evaluated prompt-input and generated-media
 safety models. Publication requires `status: passed` and `effective: true`.

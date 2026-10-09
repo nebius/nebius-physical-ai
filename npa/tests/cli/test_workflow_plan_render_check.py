@@ -164,3 +164,33 @@ def test_plan_spec_waves_json_includes_render_check(tmp_path: Path) -> None:
     payload = json.loads(result.output)
     assert payload["render_check"]["status"] == "valid"
     assert payload["render_check"]["tasks"] == 1
+
+
+def test_plan_spec_candidate_disclosure_failure_is_observational(
+    tmp_path: Path,
+    mocker,
+) -> None:
+    workflow = _workflow(tmp_path, run_as_root=False)
+    mocker.patch(
+        "npa.cli.workbench.workflow._workflow_validation_candidate_payload",
+        side_effect=ValueError("synthetic candidate disclosure failure"),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "plan-spec",
+            str(workflow),
+            "--check-render",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["render_check"]["status"] == "valid"
+    assert payload["workflow_validation_candidates"] == []
+    assert payload["workflow_validation_candidates_status"] == "unavailable"
+    assert "candidate disclosure is unavailable" not in result.stderr

@@ -2947,10 +2947,14 @@ def test_preflight_images_reports_planning_failure_before_pull_checks(
 
 
 @pytest.mark.parametrize("error_type", [ValueError, NpaWorkflowError])
-def test_preflight_images_reports_candidate_disclosure_failure_before_pull_checks(
+def test_preflight_images_keeps_candidate_disclosure_failure_observational(
     mocker,
     error_type,
 ) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._plan_preflight_image_requirements",
+        return_value=([], {}),
+    )
     mocker.patch(
         "npa.cli.workbench.workflow._workflow_validation_candidate_payload",
         side_effect=error_type("synthetic candidate disclosure failure"),
@@ -2972,11 +2976,9 @@ def test_preflight_images_reports_candidate_disclosure_failure_before_pull_check
         ],
     )
 
-    assert result.exit_code == 1
-    assert result.output == (
-        "Error: image preflight planning failed: "
-        "synthetic candidate disclosure failure\n"
-    )
+    assert result.exit_code == 0, result.output
+    assert "images: none pinned by this spec" in result.output
+    assert "candidate disclosure is unavailable" in result.stderr
     pulls.assert_not_called()
     contracts.assert_not_called()
 

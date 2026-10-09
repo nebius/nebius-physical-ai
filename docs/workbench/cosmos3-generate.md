@@ -8,11 +8,11 @@ image and video synthesis for Physical AI data — through the CLI, the SDK, and
 declarative `npa.workflow` spec that all share one implementation.
 
 The historical public release is quarantined. A digest-pinned validation
-candidate is selected for PAIDF video preparation and variant generation and for
-`workbench.cosmos3.generate` when the official default registry is used. It is
+candidate is selected for PAIDF video preparation and variant generation. It is
 not a supported public release, and every other action routed to `npa-cosmos3`
-still needs an explicit independently qualified operator image. Earlier
-execution evidence below does not accept the withdrawn public bytes. See the
+— including `workbench.cosmos3.generate` — still needs an explicit independently
+qualified operator image. Earlier execution evidence below does not accept the
+withdrawn public bytes. See the
 [default-image impact audit](validation/public-default-quarantine-impact-20261005.md).
 
 | Piece | Path |
@@ -204,11 +204,11 @@ selections; rendering proves resolution, not pullability or runtime capability.
 The matching
 `preflight-images --json` check adds `release_status` only when that checked
 image is a validation candidate, with `selection_scope: reachable_branches`.
-Every `npa.workflow` submit JSON result reports
+Every successful `npa.workflow` submit JSON result reports
 `workflow_validation_candidates_status`: `available` means the list was
-computed, while a runtime `unavailable` result means the runtime will select
-images per wave and the list cannot establish provenance. Agent control planes
-must treat this as validation provenance, not release approval.
+computed, while `unavailable` means the list cannot establish provenance and
+normal rendering remains authoritative. Agent control planes must treat this as
+validation provenance, not release approval.
 Raw SkyPilot YAML submits report `not_applicable`, because they do not have
 `npa.workflow` candidate selection to compute.
 
