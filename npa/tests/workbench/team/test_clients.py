@@ -8,8 +8,8 @@ import yaml
 from typer.testing import CliRunner
 
 from npa.cli.workbench import team as cli
-from npa.workbench.team.client import TeamClient
-from npa.workbench.team.errors import TeamError
+from npa.workbench.team.client import TeamClient, load_bearer_token
+from npa.workbench.team.errors import AuthenticationError, TeamError
 from npa.workbench.team.models import SubmitRequest
 
 
@@ -78,6 +78,9 @@ def test_sdk_does_not_follow_token_redirects():
 def test_cli_and_sdk_share_the_submission_contract(tmp_path, workflow, monkeypatch):
     path = tmp_path / "workflow.yaml"
     path.write_text(yaml.safe_dump(workflow))
+    token_file = tmp_path / "access-key"
+    token_file.write_text("test-token\n")
+    token_file.chmod(0o600)
     calls = []
 
     class Client:
@@ -92,7 +95,6 @@ def test_cli_and_sdk_share_the_submission_contract(tmp_path, workflow, monkeypat
             return None
 
     monkeypatch.setattr(cli, "TeamClient", Client)
-    monkeypatch.setenv("NPA_TEAM_TOKEN", "test-token")
     result = CliRunner().invoke(
         cli.app,
         [
@@ -107,6 +109,8 @@ def test_cli_and_sdk_share_the_submission_contract(tmp_path, workflow, monkeypat
             "first",
             "--endpoint",
             "https://team.example.test",
+            "--token-file",
+            str(token_file),
         ],
     )
     assert result.exit_code == 0, result.output
@@ -115,7 +119,11 @@ def test_cli_and_sdk_share_the_submission_contract(tmp_path, workflow, monkeypat
     assert "test-token" not in result.output
 
 
-def test_cli_whoami_uses_the_authenticated_client(monkeypatch):
+def test_cli_whoami_uses_the_authenticated_client(tmp_path, monkeypatch):
+    token_file = tmp_path / "access-key"
+    token_file.write_text("external-token\n")
+    token_file.chmod(0o600)
+
     class Client:
         def __init__(self, endpoint, token):
             assert endpoint == "https://team.example.test"
@@ -128,13 +136,66 @@ def test_cli_whoami_uses_the_authenticated_client(monkeypatch):
             return None
 
     monkeypatch.setattr(cli, "TeamClient", Client)
-    monkeypatch.setenv("NPA_TEAM_TOKEN", "external-token")
     result = CliRunner().invoke(
-        cli.app, ["whoami", "--endpoint", "https://team.example.test"]
+        cli.app,
+        [
+            "whoami",
+            "--endpoint",
+            "https://team.example.test",
+            "--token-file",
+            str(token_file),
+        ],
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["subject"] == "verified"
     assert "external-token" not in result.output
+
+
+def test_cli_list_and_run_accept_the_same_private_token_file(tmp_path, monkeypatch):
+    token_file = tmp_path / "access-key"
+    token_file.write_text("personal-token\n")
+    token_file.chmod(0o600)
+    observed = []
+
+    class Client:
+        def __init__(self, endpoint, token):
+            assert endpoint == "https://team.example.test"
+            assert token == "personal-token"
+
+        def list(self, workspace):
+            observed.append(("list", workspace))
+            return {"runs": []}
+
+        def run(self, run_id, action):
+            observed.append(("run", run_id, action))
+            return {"id": run_id, "status": "succeeded"}
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(cli, "TeamClient", Client)
+    runner = CliRunner()
+    common = [
+        "--endpoint",
+        "https://team.example.test",
+        "--token-file",
+        str(token_file),
+    ]
+    listed = runner.invoke(cli.app, ["list", "--workspace", "robotics", *common])
+    run_id = "run-" + "1" * 32
+    logged = runner.invoke(cli.app, ["run", run_id, "--action", "logs", *common])
+    assert listed.exit_code == 0, listed.output
+    assert logged.exit_code == 0, logged.output
+    assert observed == [("list", "robotics"), ("run", run_id, "logs")]
+    assert "personal-token" not in listed.output + logged.output
+
+
+def test_private_token_file_rejects_unsafe_permissions(tmp_path):
+    token_file = tmp_path / "access-key"
+    token_file.write_text("personal-token\n")
+    token_file.chmod(0o644)
+    with pytest.raises(AuthenticationError, match="mode-0600"):
+        load_bearer_token("NPA_TEAM_TOKEN", token_file)
 
 
 def test_render_cli_writes_private_files(config, tmp_path):

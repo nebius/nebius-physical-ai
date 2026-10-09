@@ -1,4 +1,4 @@
-"""Verify local keys, browser revocation, isolation, and stable ownership after SSO linking."""
+"""Verify local keys, API revocation, isolation, and stable ownership after SSO linking."""
 
 import json
 import sqlite3
@@ -15,9 +15,8 @@ from npa.workbench.team.account_authentication import AccountAuthentication
 from npa.workbench.team.accounts import Accounts
 from npa.workbench.team.api import create_app
 from npa.workbench.team.authorization import authorize, bind_execution
-from npa.workbench.team.browser_sessions import SESSION_COOKIE
 from npa.workbench.team.errors import AuthenticationError, ConflictError, TeamError
-from npa.workbench.team.models import BrowserLogin, SubmitRequest, TeamConfig
+from npa.workbench.team.models import SubmitRequest, TeamConfig
 from npa.workbench.team.service import TeamService, binding_snapshot
 
 
@@ -27,7 +26,6 @@ def local(config):
         update={
             "identity": None,
             "account_namespace": uuid.uuid4(),
-            "browser_login": BrowserLogin(public_url="https://testserver"),
         }
     )
     accounts = Accounts(config)
@@ -57,14 +55,6 @@ def _headers(local, index=0):
     return {"Authorization": "Bearer " + local.keys[index][1]}
 
 
-def _sign_in(local, index=0, **headers):
-    return local.client.post(
-        "/auth/key",
-        json={"access_key": local.keys[index][1]},
-        headers={"Origin": "https://testserver", "X-Workbench-Login": "1", **headers},
-    )
-
-
 def test_real_local_keys_persist_as_hashes_and_never_need_external_identity(local):
     assert local.config.identity is None
     profile = local.client.get("/v1/me", headers=_headers(local)).json()
@@ -81,51 +71,44 @@ def test_real_local_keys_persist_as_hashes_and_never_need_external_identity(loca
     assert local.accounts.path.stat().st_mode & 0o777 == 0o600
 
 
-def test_key_login_cookie_csrf_and_immediate_revocation(local):
-    response = _sign_in(local)
-    assert response.status_code == 204
-    assert all(
-        flag in response.headers["set-cookie"]
-        for flag in ("Secure", "HttpOnly", "SameSite=lax")
-    )
-    assert local.keys[0][1] not in response.text
-    profile = local.client.get("/v1/me").json()
+def test_configuration_rejects_retired_browser_login_setting(config):
+    policy = config.model_dump(mode="json")
+    policy["browser_login"] = {"public_url": "https://workbench.example.test"}
+    with pytest.raises(ValueError, match="browser_login"):
+        TeamConfig.model_validate(policy)
+
+
+def test_key_revocation_immediately_blocks_bearer_authentication(local):
+    profile = local.client.get("/v1/me", headers=_headers(local)).json()
     assert profile["display_name"] == "alice"
-    assert local.client.post("/auth/logout").status_code == 403
     local.accounts.revoke(local.keys[0][0])
-    assert local.client.get("/v1/me").status_code == 401
     assert local.client.get("/v1/me", headers=_headers(local)).status_code == 401
     assert local.client.get("/v1/me", headers=_headers(local, 1)).status_code == 200
 
 
-@pytest.mark.parametrize("origin", ["https://attacker.example.test", "null", ""])
-def test_key_login_cannot_be_forced_by_another_origin(local, origin):
-    assert _sign_in(local, Origin=origin).status_code == 403
-    assert SESSION_COOKIE not in local.client.cookies
-
-
-def test_invalid_keys_and_local_session_ids_are_not_credentials(local):
+def test_invalid_keys_and_cookie_values_are_not_credentials(local):
     for invalid in ("", "alice", local.keys[0][0], local.keys[0][1] + "x"):
         response = local.client.get(
             "/v1/me", headers={"Authorization": "Bearer " + invalid}
         )
         assert response.status_code == 401
         assert local.keys[0][1] not in response.text
-    assert _sign_in(local).status_code == 204
-    cookie = local.client.cookies.get(SESSION_COOKIE)
-    response = local.client.get("/v1/me", headers={"Authorization": "Bearer " + cookie})
+    response = local.client.get(
+        "/v1/me", headers={"Cookie": "__Host-workbench-session=forged"}
+    )
     assert response.status_code == 401
 
 
 def test_disable_and_group_changes_apply_to_sessions_and_admitted_work(local):
     actor = local.accounts.authenticate(local.keys[0][1])[0]
-    assert _sign_in(local).status_code == 204
     local.accounts.update(actor.subject, groups=[])
-    assert local.client.get("/v1/me").json()["workspaces"] == []
+    assert (
+        local.client.get("/v1/me", headers=_headers(local)).json()["workspaces"] == []
+    )
     with pytest.raises(TeamError):
         authorize(local.config, actor, "robotics", "runner")
     local.accounts.update(actor.subject, disabled=True)
-    assert local.client.get("/v1/me").status_code == 401
+    assert local.client.get("/v1/me", headers=_headers(local)).status_code == 401
     with pytest.raises(AuthenticationError):
         authorize(local.config, actor, "robotics", "runner")
 

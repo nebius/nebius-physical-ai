@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import typer
 import yaml
 
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
-from npa.workbench.team.client import TeamClient
+from npa.workbench.team.client import TeamClient, load_bearer_token
 from npa.workbench.team.errors import TeamError
 from npa.workbench.team.models import SubmitRequest, load_config
 from .team_accounts import app as accounts_app
@@ -156,12 +155,14 @@ def serve_cmd(
 def whoami_cmd(
     endpoint: str = typer.Option(..., "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
     token_env: str = typer.Option("NPA_TEAM_TOKEN", "--token-env"),
+    token_file: Path | None = typer.Option(None, "--token-file"),
     output_format: str = typer.Option("json", "--output-format"),
 ):
     """Show verified identity and workspace access without a personal cloud account.
 
     Args:
-        endpoint, token_env: HTTPS gateway and external bearer-token variable.
+        endpoint, token_env: HTTPS gateway and bearer-token environment variable.
+        token_file: Optional private mode-0600 file that overrides token_env.
         output_format: Required JSON response format.
     Returns:
         None; emits JSON to standard output.
@@ -169,7 +170,7 @@ def whoami_cmd(
         TeamError: Authentication, authorization, or transport fails.
     """
     _json_only(output_format)
-    client = TeamClient(endpoint, os.environ.get(token_env, ""))
+    client = _team_client(endpoint, token_env, token_file)
     try:
         typer.echo(json.dumps(client.whoami()))
     finally:
@@ -185,6 +186,7 @@ def submit_cmd(
     idempotency_key: str = typer.Option(..., "--idempotency-key"),
     endpoint: str = typer.Option(..., "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
     token_env: str = typer.Option("NPA_TEAM_TOKEN", "--token-env"),
+    token_file: Path | None = typer.Option(None, "--token-file"),
     output_format: str = typer.Option("json", "--output-format"),
 ):
     """Submit an NPA workflow through the authenticated team execution boundary.
@@ -194,6 +196,7 @@ def submit_cmd(
         workspace, cluster: Requested enrolled placement.
         idempotency_key: Caller-retained retry identity.
         endpoint, token_env: HTTPS gateway and bearer-token environment variable.
+        token_file: Optional private mode-0600 file that overrides token_env.
         output_format: Required JSON response format.
     Returns:
         None; emits JSON to standard output.
@@ -207,7 +210,7 @@ def submit_cmd(
         idempotency_key=idempotency_key,
         workflow=yaml.safe_load(spec.read_text()),
     )
-    client = TeamClient(endpoint, os.environ.get(token_env, ""))
+    client = _team_client(endpoint, token_env, token_file)
     try:
         typer.echo(json.dumps(client.submit(request)))
     finally:
@@ -223,6 +226,7 @@ def run_cmd(
     ),
     endpoint: str = typer.Option(..., "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
     token_env: str = typer.Option("NPA_TEAM_TOKEN", "--token-env"),
+    token_file: Path | None = typer.Option(None, "--token-file"),
     output_format: str = typer.Option("json", "--output-format"),
 ):
     """Inspect, cancel, or resume an owned run using the authenticated team API.
@@ -230,6 +234,7 @@ def run_cmd(
     Args:
         run_id, action: Owned run and supported operation.
         endpoint, token_env: HTTPS gateway and token environment variable.
+        token_file: Optional private mode-0600 file that overrides token_env.
         output_format: Required JSON response format.
     Returns:
         None; emits JSON to standard output.
@@ -237,7 +242,7 @@ def run_cmd(
         TeamError, OSError: Validation, authorization, operation, or local I/O fails.
     """
     _json_only(output_format)
-    client = TeamClient(endpoint, os.environ.get(token_env, ""))
+    client = _team_client(endpoint, token_env, token_file)
     try:
         typer.echo(json.dumps(client.run(run_id, action)))
     finally:
@@ -250,6 +255,7 @@ def list_cmd(
     workspace: str = typer.Option(..., "--workspace"),
     endpoint: str = typer.Option(..., "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
     token_env: str = typer.Option("NPA_TEAM_TOKEN", "--token-env"),
+    token_file: Path | None = typer.Option(None, "--token-file"),
     output_format: str = typer.Option("json", "--output-format"),
 ):
     """List the authenticated person's runs in one workspace.
@@ -257,6 +263,7 @@ def list_cmd(
     Args:
         workspace: Authorized workspace to list.
         endpoint, token_env: HTTPS gateway and token environment variable.
+        token_file: Optional private mode-0600 file that overrides token_env.
         output_format: Required JSON response format.
     Returns:
         None; emits JSON to standard output.
@@ -264,7 +271,7 @@ def list_cmd(
         TeamError, OSError: Validation, authorization, operation, or local I/O fails.
     """
     _json_only(output_format)
-    client = TeamClient(endpoint, os.environ.get(token_env, ""))
+    client = _team_client(endpoint, token_env, token_file)
     try:
         typer.echo(json.dumps(client.list(workspace)))
     finally:
@@ -274,6 +281,21 @@ def list_cmd(
 def _json_only(value):
     if value != "json":
         raise TeamError("--output-format must be json")
+
+
+def _team_client(endpoint: str, token_env: str, token_file: Path | None) -> TeamClient:
+    """Create a bearer-authenticated team client from one selected secret source.
+
+    Args:
+        endpoint: HTTPS team API endpoint.
+        token_env: Environment variable used when token_file is absent.
+        token_file: Optional mode-0600 file containing the personal bearer token.
+    Returns:
+        Authenticated client for one command invocation.
+    Raises:
+        AuthenticationError, TeamError: Secret source or endpoint is invalid.
+    """
+    return TeamClient(endpoint, load_bearer_token(token_env, token_file))
 
 
 @app.command("storage-create")

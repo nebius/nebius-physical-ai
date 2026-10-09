@@ -1,8 +1,11 @@
-"""Provide one authenticated client for CLI, SDK, agents, and browser integrations."""
+"""Provide one authenticated client for CLI, SDK, and agent integrations."""
 
 from __future__ import annotations
 
+import os
 import re
+import stat
+from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -12,10 +15,10 @@ from .models import SubmitRequest
 
 
 class TeamClient:
-    """Call team operations with an external identity token and no cloud credentials.
+    """Call team operations with a personal bearer token and no cloud credentials.
 
     Args:
-        endpoint, token: HTTPS gateway and external bearer token.
+        endpoint, token: HTTPS gateway and personal bearer token.
         transport: Optional HTTP transport for deterministic client tests.
     Returns:
         A TeamClient instance.
@@ -34,7 +37,7 @@ class TeamClient:
         ):
             raise TeamError("team endpoint must use HTTPS without embedded credentials")
         if not token or "\n" in token or "\r" in token:
-            raise AuthenticationError("an external identity bearer token is required")
+            raise AuthenticationError("a personal bearer token is required")
         self.http = httpx.Client(
             base_url=endpoint.rstrip("/") + "/",
             headers={"Authorization": f"Bearer {token}"},
@@ -72,7 +75,7 @@ class TeamClient:
         Args:
             None.
         Returns:
-            External identity, groups, and authorized workspaces.
+            Verified identity, groups, and authorized workspaces.
         Raises:
             TeamError: Authentication or transport fails.
         """
@@ -147,9 +150,43 @@ def _check_response(response):
     if response.is_success:
         return
     if response.status_code == 401:
-        raise AuthenticationError("identity token is invalid or expired")
+        raise AuthenticationError("bearer token is invalid, expired, or revoked")
     if response.status_code in {403, 404}:
         raise TeamError("operation is not authorized or run is unavailable")
     raise TeamError(
         f"team operation failed (HTTP {response.status_code}); reconcile before retrying"
     )
+
+
+def load_bearer_token(token_env: str, token_file: Path | None) -> str:
+    """Read a personal bearer token from an environment variable or private file.
+
+    Args:
+        token_env: Name of the environment variable used when no file is selected.
+        token_file: Optional mode-0600 regular file containing one bearer token.
+    Returns:
+        Bearer token without its terminal newline.
+    Raises:
+        AuthenticationError: The selected token source is unsafe or unavailable.
+    """
+    if token_file is None:
+        return os.environ.get(token_env, "")
+    try:
+        descriptor = os.open(token_file, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise AuthenticationError("token file could not be opened safely") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
+            raise AuthenticationError("token file must be a regular mode-0600 file")
+        with os.fdopen(descriptor) as stream:
+            descriptor = None
+            return stream.read().strip()
+    except OSError as exc:
+        raise AuthenticationError("token file could not be read") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)

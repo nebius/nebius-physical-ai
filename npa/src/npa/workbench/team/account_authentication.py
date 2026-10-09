@@ -1,4 +1,4 @@
-"""Accept local keys or explicitly linked OIDC logins as the same stable person."""
+"""Accept local keys or explicitly linked external JWTs as the same stable person."""
 
 from .accounts import KEY_PREFIX, Accounts
 from .authentication import TokenVerifier
@@ -12,13 +12,13 @@ class AccountAuthentication:
         config: Local-account configuration with an optional external issuer.
         external: Injectable external token verifier for acceptance tests.
     Returns:
-        Shared API and browser authentication boundary.
+        Shared API authentication boundary.
     Raises:
         TeamError: Account storage or issuer settings are invalid.
     """
 
     def __init__(self, config, *, external=None):
-        """Prepare local accounts and the optional OIDC verifier.
+        """Prepare local accounts and the optional external JWT verifier.
 
         Args:
             config, external: Installation and optional verified-token adapter.
@@ -48,22 +48,6 @@ class AccountAuthentication:
         if self.external is None:
             raise AuthenticationError("a valid Workbench access key is required")
         return self.accounts.resolve(self.external.verify(authorization))
-
-    def claims(self, authorization):
-        """Validate OIDC claims and require a link before creating a browser session.
-
-        Args:
-            authorization: External bearer ID token from the code exchange.
-        Returns:
-            Verified claims for nonce and audience checks.
-        Raises:
-            AuthenticationError: External authentication is unavailable or unlinked.
-        """
-        if self.external is None:
-            raise AuthenticationError("external login is not configured")
-        claims = self.external.claims(authorization)
-        self.verify(authorization)
-        return claims
 
 
 def current_actor(config, actor):

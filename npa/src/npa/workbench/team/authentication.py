@@ -55,7 +55,7 @@ class TokenVerifier:
         Args:
             authorization: Bearer authorization value.
         Returns:
-            Verified claims for authentication and browser nonce validation.
+            Verified claims for authentication and identity linking.
         Raises:
             AuthenticationError: Token or required claims are invalid.
         """

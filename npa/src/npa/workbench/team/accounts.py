@@ -163,7 +163,7 @@ class Accounts:
         return key_id, secret
 
     def revoke(self, key_id):
-        """Revoke an exact credential, including browser sessions made with that key.
+        """Revoke an exact credential before it can authorize another request.
 
         Args:
             key_id: Credential ID from issuance or the operator account list.
@@ -187,7 +187,7 @@ class Accounts:
         Args:
             secret: Untrusted bearer credential.
         Returns:
-            Current local actor and revocation handle for a browser session.
+            Current local actor and revocation handle.
         Raises:
             AuthenticationError: Key or user is invalid or revoked.
         """
@@ -203,24 +203,6 @@ class Accounts:
             if row is None:
                 raise AuthenticationError("access key could not be verified")
             return self._actor(self._user(db, row["user_id"])), row["id"]
-
-    def key_actor(self, key_id):
-        """Revalidate the credential behind a browser session on every request.
-
-        Args:
-            key_id: Server-held credential reference; never accepted as authentication input.
-        Returns:
-            Enabled account with current groups.
-        Raises:
-            AuthenticationError: Credential or person was revoked.
-        """
-        with self._transaction() as db:
-            row = db.execute(
-                "SELECT user_id FROM access_keys WHERE id=? AND revoked=0", (key_id,)
-            ).fetchone()
-            if row is None:
-                raise AuthenticationError("access key could not be verified")
-            return self._actor(self._user(db, row[0]))
 
     def refresh(self, actor):
         """Recheck account disablement and local groups during admitted workflows.

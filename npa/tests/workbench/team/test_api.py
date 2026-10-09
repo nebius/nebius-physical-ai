@@ -71,6 +71,54 @@ def test_no_proxy_header_or_body_identity_bypass(application, tokens, workflow):
 
 
 @pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", "/"),
+        ("GET", "/portal.js"),
+        ("GET", "/portal.css"),
+        ("GET", "/auth/login"),
+        ("GET", "/auth/callback"),
+        ("GET", "/auth/methods"),
+        ("POST", "/auth/key"),
+        ("POST", "/auth/logout"),
+    ],
+)
+def test_removed_portal_routes_cannot_authenticate(application, method, path):
+    response = application.client.request(
+        method,
+        path,
+        headers={"Cookie": "__Host-workbench-session=forged"},
+    )
+    assert response.status_code == 404
+    assert "set-cookie" not in response.headers
+
+
+def test_api_keeps_private_response_headers_without_cookie_auth(application, tokens):
+    response = application.client.get(
+        "/v1/me",
+        headers={
+            "Authorization": "Bearer " + tokens.sign(),
+            "Cookie": "__Host-workbench-session=forged",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["content-security-policy"] == (
+        "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+        "form-action 'none'"
+    )
+    denied = application.client.get(
+        "/v1/me", headers={"Cookie": "__Host-workbench-session=forged"}
+    )
+    assert denied.status_code == 401
+    assert denied.headers["cache-control"] == "no-store"
+    assert "set-cookie" not in denied.headers
+
+
+@pytest.mark.parametrize(
     "method,suffix",
     [
         ("GET", ""),

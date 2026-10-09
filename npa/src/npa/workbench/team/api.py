@@ -10,10 +10,9 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .authentication import TokenVerifier
 from .account_authentication import AccountAuthentication
 from .access_profile import access_profile
-from .browser import create_browser, install_browser, secure_response
+from .authentication import TokenVerifier
 from .enrollment import verify_enrollment
 from .errors import TeamError
 from .models import SubmitRequest, load_config
@@ -38,62 +37,68 @@ def create_app(config_path: Path, *, service=None, verifier=None):
         verifier = AccountAuthentication(service.initial, external=verifier)
     else:
         verifier = verifier or TokenVerifier(service.initial.identity)
-    browser = create_browser(service.initial, verifier)
-
     app = FastAPI(
         title="Workbench team API",
-        lifespan=_lifespan(service, browser),
+        lifespan=_lifespan(service),
         docs_url=None,
         redoc_url=None,
     )
-    actor = _authentication(service, verifier, browser)
+    actor = _authentication(service, verifier)
     _errors(app)
     _run_routes(app, service, actor)
     _artifact_routes(app, service, actor)
-    _access_routes(app, service, actor, browser)
+    _access_routes(app, service, actor)
     return app
 
 
-def _lifespan(service, browser):
+def _lifespan(service):
     @asynccontextmanager
     async def lifespan(app):
         with (service.initial.state_dir / "server.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             service.ledger.recover()
-            try:
-                yield
-            finally:
-                if browser and browser.provider:
-                    browser.provider.close()
+            yield
 
     return lifespan
 
 
-def _authentication(service, verifier, browser):
+def _authentication(service, verifier):
     def actor(request: Request):
         service.config()
-        authorization = request.headers.get("authorization", "")
-        if not authorization and browser:
-            return browser.actor(request)
-        return verifier.verify(authorization)
+        return verifier.verify(request.headers.get("authorization", ""))
 
     return actor
 
 
-def _access_routes(app, service, actor, browser):
+def _access_routes(app, service, actor):
     @app.middleware("http")
     async def privacy(request, call_next):
-        return secure_response(await call_next(request))
+        return _secure_response(await call_next(request))
 
     @app.get("/v1/me")
-    def me(request: Request, identity=Depends(actor)):
-        profile = access_profile(service.config(), identity)
-        if browser and not request.headers.get("authorization"):
-            profile.update(browser.details(request))
-        return profile
+    def me(identity=Depends(actor)):
+        return access_profile(service.config(), identity)
 
-    if browser:
-        install_browser(app, browser, actor)
+
+def _secure_response(response):
+    """Attach privacy and browser-hardening headers to every API response.
+
+    Args:
+        response: Completed HTTP response from the team API.
+    Returns:
+        Response with explicit cache and embedding protections.
+    Raises:
+        None.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+        "form-action 'none'"
+    )
+    return response
 
 
 def _errors(app):

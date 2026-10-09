@@ -87,7 +87,7 @@ def revoke_cmd(
     key_id: str = typer.Option(..., "--key-id"),
     output_format: str = typer.Option("json", "--output-format"),
 ):
-    """Revoke a credential and the browser sessions created with it.
+    """Revoke a credential so it cannot authorize future API requests.
 
     Args:
         config, key_id: Private installation and exact credential ID.
