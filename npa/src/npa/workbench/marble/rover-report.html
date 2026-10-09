@@ -458,8 +458,8 @@
               <div><span>Wheel speed L / R</span><b id="wheel">—</b></div>
               <div><span>Ground contacts</span><b id="contacts">—</b></div>
               <div><span>Normal force</span><b id="force">—</b></div>
-              <div><span>RGB CUDA kernel</span><b id="rgb-ms">—</b></div>
-              <div><span>Depth CUDA kernel</span><b id="depth-ms">—</b></div>
+              <div><span>RGB CUDA event</span><b id="rgb-ms">—</b></div>
+              <div><span>Depth CUDA event</span><b id="depth-ms">—</b></div>
               <div><span>Depth hit coverage</span><b id="coverage">—</b></div>
             </div>
           </div>
@@ -554,9 +554,14 @@
       el("count").textContent = total;
       el("scrub").max = total - 1;
       el("device").textContent = data.gpu.name;
-      const sum = (values) => values.reduce((a, b) => a + b, 0);
+      function warmMedian(values) {
+        const sorted = values.slice(1).sort((a, b) => a - b);
+        const middle = Math.floor(sorted.length / 2);
+        if (sorted.length % 2) return sorted[middle];
+        return (sorted[middle - 1] + sorted[middle]) / 2;
+      }
       el("compute").textContent =
-        `CUDA ${data.gpu.cuda} · ${data.width} × ${data.height} · ${hz} Hz sensors · ${(sum(metrics.cuda_frame_ms) / 1000).toFixed(2)} seconds measured CUDA kernel time across onboard and observer passes.`;
+        `CUDA ${data.gpu.cuda} · ${data.width} × ${data.height} · ${hz} Hz sensors. Median event intervals after the first observation: RGB ${warmMedian(metrics.rgb.cuda_frame_ms).toFixed(2)} ms; depth ${warmMedian(metrics.depth.cuda_frame_ms).toFixed(2)} ms. First-use intervals include compilation and initialization; these are not measurements of GPU residency or end-to-end throughput.`;
       el("geometry").textContent =
         `${metrics.rgb.gaussians.toLocaleString()} splats · ${metrics.depth.triangles.toLocaleString()} collision triangles · ${metrics.depth.rays.toLocaleString()} onboard depth rays.`;
       const evidence = {

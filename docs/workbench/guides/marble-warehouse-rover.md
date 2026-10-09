@@ -88,6 +88,11 @@ The `results/` prefix also includes:
 - `result.json`: actual GPU model, CUDA versions, per-frame CUDA events, physics
   summary, source manifest, and artifact SHA-256 hashes.
 
+CUDA event intervals bracket each sensor call. The first call includes lazy
+kernel compilation and initialization, so summing those intervals does not
+measure active GPU time. The HTML reports median intervals after the first
+observation and retains the original per-frame readings for inspection.
+
 World coordinates are Y-up; Bullet coordinates are Z-up. Conversion is
 `world = [bullet.x, bullet.z, -bullet.y]`. Camera axes are OpenCV. Both downloaded
 assets receive the same provider-estimated metric scale, Y/Z axis flip, and
