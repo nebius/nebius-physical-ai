@@ -506,6 +506,11 @@ def generate_variants_cmd(
         "--transfer-cfg-normalization",
         help="Native classifier-free guidance normalization: disabled or enabled. Requires edge transfer when enabled.",
     ),
+    variant_recovery: str = typer.Option(
+        "auto",
+        "--variant-recovery",
+        help="auto reuses only fully verified immutable same-run variants; disabled regenerates all variants.",
+    ),
 ) -> None:
     """Generate and publish real source-video-conditioned Cosmos 3 variants."""
 
@@ -545,6 +550,7 @@ def generate_variants_cmd(
             transfer_rgb_weight=transfer_rgb_weight,
             transfer_first_chunk_conditional_frames=transfer_first_chunk_conditional_frames,
             transfer_cfg_normalization=transfer_cfg_normalization,
+            variant_recovery=variant_recovery,
         )
     except (
         PaidfCosmos3Error,
