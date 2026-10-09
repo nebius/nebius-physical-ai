@@ -218,6 +218,49 @@ def test_tokens_and_s3_use_explicit_storage_without_image_resolution(
     diagnostic_spies.writes.assert_not_called()
 
 
+def test_s3_uses_selected_project_storage_credentials(
+    diagnostic_spies: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_credentials = SimpleNamespace(
+        s3_access_key_id="project-access",
+        s3_secret_access_key="project-secret",
+    )
+    select_project = Mock(return_value=project_credentials)
+    monkeypatch.setattr(health, "_project_credentials", select_project)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "s3",
+            "--project",
+            "selected-project",
+            "--s3-bucket",
+            "example-bucket",
+            "--s3-endpoint",
+            "https://explicit.example.invalid",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    select_project.assert_called_once_with(
+        "selected-project", diagnostic_spies.loaded.return_value
+    )
+    diagnostic_spies.storage_factory.assert_called_once_with(
+        endpoint_url="https://explicit.example.invalid",
+        aws_access_key_id="project-access",
+        aws_secret_access_key="project-secret",
+    )
+    diagnostic_spies.execution.assert_not_called()
+    diagnostic_spies.image_inspector.assert_not_called()
+    diagnostic_spies.writes.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "selected",
     [*IMAGE_DEPENDENT_CHECKS, "all", f"{IMAGE_DEPENDENT_CHECKS[0]},coherence"],

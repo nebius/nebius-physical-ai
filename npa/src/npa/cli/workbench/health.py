@@ -510,6 +510,12 @@ def sim2real_command(
     s3_endpoint: str = typer.Option(
         "", "--s3-endpoint", help="Non-default S3-compatible endpoint."
     ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        "-p",
+        help="Configured project alias whose isolated storage record supplies the S3 probe credentials.",
+    ),
     trigger_dataset_uri: str = typer.Option(
         "", "--trigger-dataset-uri", help="Trigger dataset path."
     ),
@@ -640,6 +646,8 @@ def sim2real_command(
         # leaking an unrendered exception (and only after validating --checks).
         raise typer.BadParameter(str(exc)) from exc
     credentials = load_credentials()
+    if project.strip() and "s3" in selected:
+        credentials = _project_credentials(project.strip(), credentials)
 
     probes = DoctorProbes(
         s3_client_factory=lambda: StorageClient.from_environment(
