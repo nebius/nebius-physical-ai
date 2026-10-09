@@ -2989,6 +2989,84 @@ def test_preflight_images_keeps_candidate_disclosure_failure_observational(
     contracts.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("candidate_payload", "expected_status", "candidate_selected"),
+    [
+        (
+            [
+                {
+                    "tool_ref": "workbench.cosmos3.generate_variants",
+                    "image": f"cr.example.invalid/npa@sha256:{'a' * 64}",
+                    "release_status": "workflow_validation_candidate",
+                    "selection_scope": "reachable_branches",
+                }
+            ],
+            "available",
+            True,
+        ),
+        ([], "available", False),
+        (ValueError("synthetic candidate disclosure failure"), "unavailable", False),
+    ],
+)
+def test_preflight_images_json_reports_candidate_disclosure_status_per_check(
+    mocker,
+    candidate_payload,
+    expected_status: str,
+    candidate_selected: bool,
+) -> None:
+    """Keep per-image JSON truthful when candidate disclosure is unavailable."""
+    from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
+
+    image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
+    mocker.patch("npa.cli.workbench.workflow._image_preflight_steps", return_value=[])
+    mocker.patch(
+        "npa.cli.workbench.workflow._plan_preflight_image_requirements",
+        return_value=([image], {image: ImagePullRequirements()}),
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[ImagePullCheck(image=image, status="ok", http_status=200)],
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+    candidate_payload_patch = mocker.patch(
+        "npa.cli.workbench.workflow._workflow_validation_candidate_payload"
+    )
+    if isinstance(candidate_payload, Exception):
+        candidate_payload_patch.side_effect = candidate_payload
+    else:
+        candidate_payload_patch.return_value = candidate_payload
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert isinstance(payload, list)
+    assert len(payload) == 1
+    check = payload[0]
+    assert check["image"] == image
+    assert check["status"] == "ok"
+    assert check["http_status"] == 200
+    assert check["workflow_validation_candidates_status"] == expected_status
+    if candidate_selected:
+        assert check["release_status"] == "workflow_validation_candidate"
+        assert check["selection_scope"] == "reachable_branches"
+    else:
+        assert "release_status" not in check
+        assert "selection_scope" not in check
+
+
 def test_preflight_images_uses_selected_cluster_context_for_pull_authority(
     mocker,
 ) -> None:

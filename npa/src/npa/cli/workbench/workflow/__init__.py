@@ -10407,6 +10407,9 @@ def preflight_images_cmd(
     except (NpaWorkflowError, ValueError) as exc:
         _fail(f"image preflight planning failed: {exc}")
         return
+    workflow_validation_candidates_status = (
+        WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE
+    )
     try:
         workflow_validation_candidates = [
             candidate
@@ -10424,6 +10427,9 @@ def preflight_images_cmd(
     except (NpaWorkflowError, ValueError) as exc:
         _log_workflow_validation_candidate_disclosure_failure(exc)
         workflow_validation_candidates = []
+        workflow_validation_candidates_status = (
+            WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE
+        )
         typer.echo(
             "warning: workflow validation candidate disclosure is unavailable; "
             "normal rendering remains authoritative",
@@ -10569,6 +10575,9 @@ def preflight_images_cmd(
                         "target_status": check.target_status,
                         "authority": check.authority,
                         "digest": check.digest,
+                        "workflow_validation_candidates_status": (
+                            workflow_validation_candidates_status
+                        ),
                         **(
                             candidate_metadata[check.image]
                             if check.image in candidate_metadata
