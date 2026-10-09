@@ -208,6 +208,33 @@ def test_real_children_obey_limit_and_completed_resume_reverifies(
     assert replay["maximum"] == 3
 
 
+def test_under_admission_fails_and_reaps_owned_children(
+    manifest, children, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("BATCH_TEST_RENDEZVOUS_PARTIES", "3")
+    launched = []
+    launch = batch._launch
+
+    def fail_after_two_actual_launches(*args):
+        if len(launched) == 2:
+            assert all(process.poll() is None for process in launched)
+            raise RuntimeError("forced parent under-admission")
+        process = launch(*args)
+        launched.append(process)
+        return process
+
+    monkeypatch.setattr(batch, "_launch", fail_after_two_actual_launches)
+    with pytest.raises(RuntimeError, match="forced parent under-admission"):
+        batch.run_batch(
+            manifest[0],
+            state_dir=tmp_path / "state",
+            max_concurrent_runs=3,
+        )
+    assert len(launched) == 2
+    assert all(process.returncode is not None for process in launched)
+    assert all(process.returncode < 0 for process in launched)
+
+
 def test_failure_stops_admission_and_resume_reconciles_first(
     manifest, children, tmp_path, monkeypatch
 ):
