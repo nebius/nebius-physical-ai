@@ -111,7 +111,7 @@ equivalent environment setting; an explicit CLI flag takes precedence.
 | Private Kubernetes API endpoint | Set `mk8s_cluster_public_endpoint = false`; the default is a public endpoint |
 | More GPUs | Increase `gpu_nodes_count` and select a matching `gpu_nodes_preset`; a multi-GPU task must fit on one node |
 | Multi-node InfiniBand | Set `enable_gpu_cluster = true` and the matching `infiniband_fabric` for a supported topology |
-| Preemptible nodes | Set `gpu_nodes_preemptible = true`; this changes the capacity pool, while disk/IP/instance quotas still apply |
+| Preemptible nodes | Set `gpu_nodes_preemptible = true`; GPU nodes follow the current spot price, while disk/IP/instance quotas still apply |
 | New shared filesystem | Set `enable_filestore = true` and its size; requires Shared Filesystem SSD quota and the approved CSI chart repository |
 | Existing shared filesystem | Set `existing_filestore`; it implies filesystem enablement and does not create a second filesystem |
 
@@ -138,7 +138,11 @@ common failures.
 ## Terraform reproducibility
 
 The vendored recipe is based on `main-v2026-05-25` with local reservation,
-managed-driver, and node-group patches. Provider checksums cover Linux and macOS
+managed-driver, spot-pricing, and node-group patches. Preemptible GPU nodes set
+`follows_spot_price = {}` as required by the
+[Nebius spot API](https://docs.nebius.com/compute/virtual-machines/preemptible);
+the operator's preemptible selection accepts the current spot price.
+Provider checksums cover Linux and macOS
 on AMD64 and ARM64. NPA checks the SHA-bound platform metadata, initializes with
 `-lockfile=readonly`, and stores provider caches outside this source directory.
 On a lock mismatch, intentionally regenerate and review the provider lock;

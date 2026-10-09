@@ -1,0 +1,132 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: video-variant-sweep-cosmos3
+  executionMode: runtime
+  description: >
+    Expand a Cartesian parameter sweep or explicit variants, describe source videos, merge appearance hints, run conditioned Cosmos3-Nano candidates in parallel, review paired video samples, record
+    Postgres and MLflow lineage, and publish only accepted clips.
+
+config:
+  bucket: example-bucket
+  prefix: "video-variant-sweep/{{run.id}}"
+  source_overlay: true
+  # This is the number of declared worker states, not a limit on variants.
+  workers: 2
+  accelerators: B200:1
+  worker: 0
+  # Explicit selection: no silent replacement when a hosted model is absent.
+  reasoner_model: nvidia/Cosmos3-Super-Reasoner
+  merge_model: nvidia/Nemotron-3_5-Lightning
+  samples: 8
+  threshold: 0.8
+
+  root_uri: "s3://{{config.bucket}}/{{config.prefix}}"
+  sources_uri: "s3://{{config.bucket}}/inputs/video-sources.json"
+  variants_uri: "s3://{{config.bucket}}/inputs/video-variants.json"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  transfer:
+    cloud: kubernetes
+    accelerators: "{{config.accelerators}}"
+    cpus: 16
+    memory: 64Gi
+
+initial: prepare
+
+states:
+  prepare:
+    description: >
+      VLM-describe each source, LLM-augment each distinct appearance hint, add protected
+      source-motion and preserve/avoid constraints, then bind the shared enhanced
+      prompt to every parameter combination. Explicit direct prompts bypass augmentation.
+    resources: cpu
+    toolRef: workflow.video_sweep.prepare
+    inputs:
+      - uri: "{{config.sources_uri}}"
+        schema: npa.video_sweep.sources.v1
+      - uri: "{{config.variants_uri}}"
+        # The consuming stage validates native v2 explicit rows or v3 base/axes.
+    outputs:
+      - uri: "{{config.root_uri}}/plan.json"
+        schema: npa.video_sweep.plan.v1
+    next: generate
+
+  generate:
+    description: Partition the full source-by-parameter Cartesian product across independent GPU workers.
+    parallel: [worker-0, worker-1]
+    parallelCount: "{{config.workers}}"
+    next: review
+
+  worker-0:
+    description: Generate the first disjoint partition with guarded full-source Cosmos3 transfer.
+    resources: transfer
+    toolRef: workflow.video_sweep.generate_cosmos3
+    params:
+      worker: 0
+    inputs:
+      - uri: "{{config.root_uri}}/plan.json"
+        schema: npa.video_sweep.plan.v1
+    outputs:
+      - uri: "{{config.root_uri}}/workers/0.json"
+        schema: npa.video_sweep.worker.v1
+
+  worker-1:
+    description: Generate the second disjoint partition with guarded full-source Cosmos3 transfer.
+    resources: transfer
+    toolRef: workflow.video_sweep.generate_cosmos3
+    params:
+      worker: 1
+    inputs:
+      - uri: "{{config.root_uri}}/plan.json"
+        schema: npa.video_sweep.plan.v1
+    outputs:
+      - uri: "{{config.root_uri}}/workers/1.json"
+        schema: npa.video_sweep.worker.v1
+
+  review:
+    description: Verify complete worker coverage and judge source/variant samples with a strict score gate.
+    needs: [generate, worker-0, worker-1]
+    resources: cpu
+    toolRef: workflow.video_sweep.review
+    inputs:
+      - uri: "{{config.root_uri}}/workers/0.json"
+        schema: npa.video_sweep.worker.v1
+      - uri: "{{config.root_uri}}/workers/1.json"
+        schema: npa.video_sweep.worker.v1
+    outputs:
+      - uri: "{{config.root_uri}}/review.json"
+        schema: npa.video_sweep.review.v1
+    next: lineage
+
+  lineage:
+    description: Commit every acceptance or rejection to Postgres and log its MLflow metrics.
+    resources: cpu
+    toolRef: workflow.video_sweep.lineage
+    inputs:
+      - uri: "{{config.root_uri}}/review.json"
+        schema: npa.video_sweep.review.v1
+    outputs:
+      - uri: "{{config.root_uri}}/lineage.json"
+        schema: npa.video_sweep.lineage.v1
+    next: publish
+
+  publish:
+    description: Publish accepted video bytes and a source inventory for an explicit subsequent run.
+    resources: cpu
+    toolRef: workflow.video_sweep.publish
+    inputs:
+      - uri: "{{config.root_uri}}/lineage.json"
+        schema: npa.video_sweep.lineage.v1
+    outputs:
+      - uri: "{{config.root_uri}}/dataset/manifest.json"
+        schema: npa.video_sweep.dataset.v1
+      - uri: "{{config.root_uri}}/dataset/next-sources.json"
+        schema: npa.video_sweep.sources.v1
+    # The data feedback path starts a new run; it is not an unbounded graph cycle.
+    terminal: true

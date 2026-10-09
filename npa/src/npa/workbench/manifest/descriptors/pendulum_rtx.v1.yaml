@@ -1,0 +1,80 @@
+apiVersion: manifest/v0.1
+name: pendulum-rtx
+version: 0.1.0
+description: >
+  Ray-traced Newton double-pendulum: the real XPBD sim on cuda:0, rendered
+  with Blender Cycles on the GPU (metallic links, studio lighting). Blender
+  4.2 LTS is fetched in-pod; the MP4 travels via the artifact store.
+  Descriptor-only onboarding, zero per-tool code.
+image:
+  repository: pytorch/pytorch
+  tag: 2.8.0-cuda12.8-cudnn9-runtime
+  digest: sha256:417bd75df6365104c283ea4c1651fb3530d9eb5a4c2fafa51943cff2a94e6385
+environment:
+  pip:
+    - newton==1.6.0
+  apt:
+    - libx11-6=2:1.8.7-1build1
+    - libxi6=2:1.8.1-1build1
+    - libxrender1=1:0.9.10-1.1build1
+    - libxfixes3=1:6.0.0-2build1
+    - libxkbcommon0=1.6.0-1build1
+    - libxxf86vm1=1:1.1.4-1build4
+    - libxext6=2:1.3.4-1build2
+    - libxdamage1=1:1.1.6-1build1
+    - libsm6=2:1.2.3-1build3
+    - libgl1=1.7.0-1build1
+inputs:
+  - name: blender
+    s3_uri: s3://my-bucket/manifest-mvp/deps/blender-4.2.3-linux-x64.tar.xz
+    container_path: /work/blender.tar.xz
+artifact_store:
+  type: s3
+  bucket: my-bucket  # operator overrides via MANIFEST_S3_BUCKET
+  prefix: manifest-mvp/pendulum-rtx/
+payload_files:
+  - container_path: /work/pendulum_sim.py
+    host_path: workloads/pendulum_sim.py
+  - container_path: /work/pendulum_rtx.py
+    host_path: workloads/pendulum_rtx.py
+commands:
+  run:
+    argv: ["python", "/work/pendulum_rtx.py", "--steps", "{{steps}}", "--stride", "{{stride}}", "--out-mp4", "{{mp4_path}}", "--out-json", "{{json_path}}"]
+    params:
+      steps:
+        type: integer
+        default: 600
+        min: 60
+      stride:
+        type: integer
+        default: 6
+        min: 1
+      mp4_path:
+        type: string
+        default: /work/pendulum_rtx.mp4
+      json_path:
+        type: string
+        default: /work/summary.json
+    outputs:
+      video:
+        path: /work/pendulum_rtx.mp4
+        format: binary
+        required: true
+      summary:
+        path: /work/summary.json
+        format: json
+        required: true
+resources:
+  gpu: 1
+  memory_gb: 16
+success:
+  checks:
+    - artifact: summary
+      json_path: device_ok
+      equals: true
+    - artifact: summary
+      json_path: renderer
+      equals: cycles-cuda
+    - artifact: summary
+      json_path: mp4_bytes
+      greater_than: 100000

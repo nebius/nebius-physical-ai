@@ -9,14 +9,24 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from packaging.requirements import InvalidRequirement, Requirement
-from packaging.utils import canonicalize_name
+from packaging.utils import canonicalize_name, parse_wheel_filename
 
 try:
     import tomllib
 except ImportError:
     import tomli as tomllib
+
+
+_MOVIEPY_SOURCE_URL = (
+    "https://github.com/Zulko/moviepy/archive/"
+    "97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz"
+    "#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9"
+)
+# The exact archive's pyproject declares 2.2.1; both its commit and bytes are pinned.
+_DIRECT_SOURCE_PINS = {("moviepy", _MOVIEPY_SOURCE_URL): "2.2.1"}
 
 
 def _run(arguments: list[str], directory: Path) -> None:
@@ -38,18 +48,79 @@ def _run(arguments: list[str], directory: Path) -> None:
         raise RuntimeError(f"{arguments[0]} failed; inspect private commands.log")
 
 
+def _wheel_url_pin(declaration: str) -> str | None:
+    parsed = urlsplit(declaration)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if not parsed.path.endswith(".whl") or not re.fullmatch(
+        r"sha256=[0-9a-fA-F]{64}", parsed.fragment
+    ):
+        raise ValueError(
+            "Direct dependency URLs require a parseable wheel and SHA-256 fragment"
+        )
+    try:
+        name, version, _, _ = parse_wheel_filename(unquote(Path(parsed.path).name))
+    except ValueError as error:
+        raise ValueError(
+            "Direct dependency URL has an invalid wheel filename"
+        ) from error
+    return f"{name}=={version}"
+
+
+def _direct_reference_pin(name: str, url: str) -> str:
+    normalized_name = canonicalize_name(name)
+    source_version = _DIRECT_SOURCE_PINS.get((normalized_name, url))
+    if source_version:
+        return f"{normalized_name}=={source_version}"
+    wheel_pin = _wheel_url_pin(url)
+    if wheel_pin is None:
+        raise ValueError("Direct dependency references require an HTTPS wheel")
+    wheel_name = wheel_pin.split("==", maxsplit=1)[0]
+    if canonicalize_name(wheel_name) != normalized_name:
+        raise ValueError("Direct dependency name does not match its wheel filename")
+    return wheel_pin
+
+
+def _bind_option_hash(url: str, hashes: list[str]) -> str:
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not hashes:
+        return url
+    unique_hashes = set(hashes)
+    if parsed.fragment:
+        fragment = re.fullmatch(r"sha256=([0-9a-fA-F]{64})", parsed.fragment)
+        if not fragment or unique_hashes != {fragment.group(1)}:
+            raise ValueError("Direct dependency URL has conflicting SHA-256 hashes")
+        return url
+    if len(unique_hashes) != 1:
+        raise ValueError("Direct dependency URLs require one exact SHA-256 hash")
+    return f"{url}#sha256={unique_hashes.pop()}"
+
+
 def _exact_pins(text: str) -> list[str]:
     pins = []
     for line in text.replace("\\\n", "").splitlines():
         declaration = re.split(r"\s+#", line, maxsplit=1)[0].strip()
+        option_hashes = re.findall(
+            r"\s+--hash(?:=|\s)sha256:([0-9a-fA-F]{64})(?=\s|$)", declaration
+        )
         declaration = re.split(
             r"\s+--(?:hash|config-settings)(?:=|\s)", declaration, maxsplit=1
         )[0]
         if not declaration or declaration.startswith(("#", "-")):
             continue
+        wheel_pin = _wheel_url_pin(_bind_option_hash(declaration, option_hashes))
+        if wheel_pin:
+            pins.append(wheel_pin)
+            continue
         try:
             requirement = Requirement(declaration)
         except InvalidRequirement:
+            if re.match(r"[A-Za-z][A-Za-z0-9+.-]*://", declaration):
+                raise ValueError("Unsupported direct dependency URL")
+            continue
+        if requirement.url:
+            url = _bind_option_hash(requirement.url, option_hashes)
+            pins.append(_direct_reference_pin(requirement.name, url))
             continue
         for constraint in requirement.specifier:
             if constraint.operator == "==" and "*" not in constraint.version:
@@ -60,6 +131,19 @@ def _exact_pins(text: str) -> list[str]:
 def _write_pins(destination: Path, pins: list[str]) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text("\n".join(sorted(set(pins))) + "\n")
+
+
+def _is_python_dependency_manifest(source: Path) -> bool:
+    """Recognize maintained Python requirement, constraint, and dependency pins."""
+    if source.suffix not in {".txt", ".lock", ".in"}:
+        return False
+    return (
+        "requirements" in source.name
+        or source.name.endswith("-deps.txt")
+        or source.name.endswith("constraints.txt")
+        or source.name.endswith("-overrides.txt")
+        or source.name.endswith("-wheels.txt")
+    )
 
 
 def _validate_npm_manifests(root: Path) -> None:
@@ -154,11 +238,7 @@ def _inventory(root: Path, output: Path, cache: Path) -> dict[str, str]:
             destination = output / "inputs" / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, destination)
-        elif "requirements" in source.name and source.suffix in {
-            ".txt",
-            ".lock",
-            ".in",
-        }:
+        elif _is_python_dependency_manifest(source):
             destination = output / "inputs" / relative / "requirements.txt"
             _write_pins(destination, _exact_pins(source.read_text()))
         elif source.name == "pyproject.toml":
@@ -243,7 +323,7 @@ def _validate_coverage(report: dict, inventory: dict[str, str], output: Path) ->
 
 
 def _scanner_versions(output: Path) -> None:
-    for scanner, expected in (("trivy", "Version: 0.74.0"), ("uv", "uv 0.12.17")):
+    for scanner, expected in (("trivy", "Version: 0.74.0"), ("uv", "uv 0.12.18")):
         result = subprocess.run(
             [scanner, "--version"], check=True, capture_output=True, text=True
         )

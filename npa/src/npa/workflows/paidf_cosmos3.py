@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 
 
@@ -695,6 +695,7 @@ def prepare_input(
                 if key != "timestamps"
             }
             payload["conditioning_fps"] = conditioning_fps
+            payload["source_content_region"] = timeline["source_content_region"]
         payload["written_uri"] = _write_json(payload, provenance_uri, storage=client)
     print(
         json.dumps(
@@ -980,7 +981,77 @@ def _variant_metadata(
     if metadata.get("temporal_alignment") is not None:
         payload["temporal_alignment"] = metadata["temporal_alignment"]
         payload["structural_control"] = "edge"
+    if "source_content_region" in metadata:
+        payload["source_content_region"] = metadata["source_content_region"]
+    if "padding_preservation" in metadata:
+        payload["padding_preservation"] = metadata["padding_preservation"]
     return payload
+
+
+def _retain_raw_metadata(artifact, record, metadata, base, storage):
+    _write_json(
+        {
+            "schema": "npa.video.raw-model-output.v1",
+            "status": "retained",
+            "sha256": _sha256(artifact),
+            "source_sha256": record["source_sha256"],
+            "temporal_alignment": metadata.get("temporal_alignment"),
+            "guardrails": metadata["guardrails"],
+        },
+        base + "raw_model_metadata.json",
+        storage=storage,
+    )
+
+
+def _prepare_publication_padding(artifact, source, metadata, root):
+    """Create final publication bytes before choosing an immutable prefix."""
+    from npa.workflows.video_padding_preservation import preserve_source_padding
+    from npa.workflows.paidf_cosmos3_media import verify_pair
+
+    record = metadata.get("source_content_region")
+    if record is None:
+        return artifact, metadata, None
+    width, height = record["canvas"]
+    if record["bounds"] == [0, 0, width, height]:
+        return artifact, metadata, None
+    if source is None:
+        raise PaidfCosmos3Error("Padding preservation requires the prepared source")
+    destination = root / "padding_preserved.mp4"
+    receipt = preserve_source_padding(source, artifact, destination, record)
+    updated = {
+        **metadata,
+        "padding_preservation": receipt,
+    }
+    if metadata.get("temporal_alignment") is not None:
+        updated["temporal_alignment"] = verify_pair(
+            source, destination, metadata["temporal_alignment"]["fps"]
+        )
+    return destination, updated, artifact
+
+
+def _preserve_publication_padding(artifact, source, metadata, base, storage, root):
+    """Prepare and retain the raw model output on the ordinary path."""
+    record = metadata.get("source_content_region")
+    retains_raw = False
+    if record is not None:
+        width, height = record["canvas"]
+        retains_raw = record["bounds"] != [0, 0, width, height]
+    if retains_raw:
+        raw_uri = base + "raw_model_video.mp4"
+        storage.upload_file(str(artifact), raw_uri)
+        _retain_raw_metadata(artifact, record, metadata, base, storage)
+    published, updated, raw = _prepare_publication_padding(
+        artifact, source, metadata, root
+    )
+    if raw is None:
+        return published, updated
+    return published, {
+        **updated,
+        "padding_preservation": {
+            **updated["padding_preservation"],
+            "raw_model_video_uri": raw_uri,
+        },
+    }
 
 
 def _publish_variant(
@@ -991,6 +1062,8 @@ def _publish_variant(
     variables: Mapping[str, Any],
     metadata: Mapping[str, Any],
     storage: Any,
+    source_video: Path | None = None,
+    publication_factory: Callable[[Path], Any] | None = None,
 ) -> dict[str, Any]:
     if not _is_s3(output_uri):
         raise PaidfCosmos3Error(
@@ -1000,8 +1073,36 @@ def _publish_variant(
     artifact = Path(str(result["output_path"]))
     if not artifact.is_file() or artifact.stat().st_size <= 0:
         raise PaidfCosmos3Error("Cosmos 3 returned an empty video artifact")
-    storage.upload_file(str(artifact), base + "augmented_video.mp4")
     with tempfile.TemporaryDirectory(prefix="npa-paidf-c3-publish-") as tmp:
+        if publication_factory is None:
+            artifact, metadata = _preserve_publication_padding(
+                artifact, source_video, metadata, base, storage, Path(tmp)
+            )
+        else:
+            raw_metadata = dict(metadata)
+            artifact, metadata, raw = _prepare_publication_padding(
+                artifact, source_video, metadata, Path(tmp)
+            )
+            storage = publication_factory(artifact)
+            base = storage.prefix
+            if raw is not None:
+                raw_uri = base + "raw_model_video.mp4"
+                storage.upload_file(str(raw), raw_uri)
+                _retain_raw_metadata(
+                    raw,
+                    metadata["source_content_region"],
+                    raw_metadata,
+                    base,
+                    storage,
+                )
+                metadata = {
+                    **metadata,
+                    "padding_preservation": {
+                        **metadata["padding_preservation"],
+                        "raw_model_video_uri": raw_uri,
+                    },
+                }
+        storage.upload_file(str(artifact), base + "augmented_video.mp4")
         frames = _extract_frames(artifact, Path(tmp) / "frames")
         for frame in frames:
             storage.upload_file(str(frame), base + frame.name)
@@ -1012,19 +1113,38 @@ def _publish_variant(
             transfer["control_uri"] = storage.upload_file(
                 str(control_path), base + "source_edges.mkv"
             )
+            if transfer.get("rgb_conditioning"):
+                rgb = dict(transfer["rgb_conditioning"])
+                rgb_path = Path(rgb.pop("control_path"))
+                rgb["control_uri"] = storage.upload_file(
+                    str(rgb_path), base + "source_rgb.mkv"
+                )
+                transfer["rgb_conditioning"] = rgb
             _write_json(transfer, base + "transfer.json", storage=storage)
             clip_meta["transfer_uri"] = base + "transfer.json"
+        if result.get("native_model_selection") is not None:
+            from npa.workflows.paidf_variant_recovery import _native_receipt
+
+            _write_json(
+                _native_receipt(result), base + "native_execution.json", storage=storage
+            )
+            clip_meta["native_execution_uri"] = base + "native_execution.json"
         _write_json(clip_meta, base + "metadata.json", storage=storage)
     return {
         "clip": clip,
         "augmented_video_uri": base + "augmented_video.mp4",
-        "video_bytes": artifact.stat().st_size,
+        "video_bytes": clip_meta["video_bytes"],
         "frame_count": clip_meta["frame_count"],
         "seed": clip_meta["seed"],
         "guidance": clip_meta["guidance"],
         "steps": clip_meta["steps"],
         "variables": dict(variables),
         "motion_preservation": None,
+        **(
+            {"padding_preservation": clip_meta["padding_preservation"]}
+            if "padding_preservation" in clip_meta
+            else {}
+        ),
         **(
             {"temporal_alignment": metadata["temporal_alignment"]}
             if "temporal_alignment" in metadata
@@ -1069,6 +1189,7 @@ def generate_variants(
     transfer_rgb_weight: float = 0.0,
     transfer_first_chunk_conditional_frames: int = 1,
     transfer_cfg_normalization: str = "disabled",
+    variant_recovery: str = "auto",
 ) -> dict[str, Any]:
     """Run one real Cosmos 3 video2video inference per configured variant."""
 
@@ -1137,7 +1258,7 @@ def generate_variants(
     if motion_weight != 0.0:
         raise PaidfCosmos3Error(
             "source_motion_weight must be 0: source/model blending creates "
-            "ghosting and does not preserve motion; publish unmodified model output"
+            "ghosting and does not preserve motion; preserve generated scene pixels"
         )
     client = storage or _storage()
     attempt, prior = _load_attempt(attempt_uri, scores_uri, storage=client)
@@ -1170,9 +1291,10 @@ def generate_variants(
         raise PaidfCosmos3Error(
             "config manifest has fewer augmentation prompts than variant_count"
         )
-    caption = _caption_text(
-        _read_json(captions_uri.rstrip("/") + "/captions.json", storage=client)
+    caption_report = _read_json(
+        captions_uri.rstrip("/") + "/captions.json", storage=client
     )
+    caption = _caption_text(caption_report)
     provenance = _read_json(input_provenance_uri, storage=client)
     if not isinstance(provenance, dict) or provenance.get("status") != "prepared":
         raise PaidfCosmos3Error("input provenance is missing or incomplete")
@@ -1185,6 +1307,58 @@ def generate_variants(
 
     run_generate = generator or generate_and_publish
     local_input = materialize_vision_input(input_video_uri)
+    from npa.workflows.video_padding_preservation import resolve_source_content_region
+
+    if (
+        "source_content_region" in provenance
+        and provenance["source_content_region"] is None
+    ):
+        raise PaidfCosmos3Error("Recorded content-region provenance is null")
+    content_region = resolve_source_content_region(
+        Path(local_input), provenance.get("source_content_region")
+    )
+    from npa.workflows.paidf_variant_recovery import VariantRecovery, recovery_enabled
+
+    generation_env = dict(environ if environ is not None else os.environ)
+    recovery = None
+    requests = _variant_requests(
+        combos[:count],
+        prompt,
+        caption,
+        negative_prompt,
+        base_seed + attempt * seed_stride,
+        effective_guidance,
+        effective_steps,
+        transfer,
+    )
+    if recovery_enabled(
+        checkpoint, structural_control, run_id, generation_env, variant_recovery
+    ):
+        generation_env.setdefault("HF_HOME", str(Path.home() / ".cache/huggingface"))
+        recovery = VariantRecovery(
+            storage=client,
+            output_uri=output_uri,
+            attempt=attempt,
+            identity={
+                "run_id": run_id,
+                "output_uri": output_uri,
+                "input_sha256": _sha256(Path(local_input)),
+                "input_video_uri": input_video_uri,
+                "input_provenance_uri": input_provenance_uri,
+                "captions_uri": captions_uri,
+                "configs_uri": configs_uri,
+                "input_provenance": provenance,
+                "source_content_region": content_region,
+                "config_manifest": config_manifest,
+                "caption_report": caption_report,
+                "caption": caption,
+                "requests": requests,
+                "parallelism_preset": parallelism_preset,
+                "attempt": attempt,
+            },
+            environ=generation_env,
+        )
+        generation_env = recovery.generation_environ()
     work_root = Path(tempfile.mkdtemp(prefix="npa-paidf-c3-generate-"))
 
     def run_one(index: int) -> tuple[int, dict[str, Any], dict[str, Any], str]:
@@ -1193,7 +1367,7 @@ def generate_variants(
             prompt, caption, str(combo.get("prompt") or "")
         )
         variant_seed = base_seed + attempt * seed_stride + index
-        env = dict(environ if environ is not None else os.environ)
+        env = dict(generation_env)
         with _generation_gpu(available_gpus) as gpu:
             env["CUDA_VISIBLE_DEVICES"] = gpu
             result = run_generate(
@@ -1223,7 +1397,14 @@ def generate_variants(
 
     def publish_one(generated):
         index, result, combo, variant_prompt = generated
-        return _publish_variant(
+        published: dict[str, Any] = {}
+
+        def immutable_publication(artifact: Path) -> Any:
+            publication = recovery.publication(index, artifact)
+            published["publication"] = publication
+            return publication
+
+        variant = _publish_variant(
             result=result,
             output_uri=output_uri,
             clip=f"variant-{index:04d}",
@@ -1237,6 +1418,7 @@ def generate_variants(
                 "guardrails": True,
                 "attempt": attempt,
                 "input_provenance_uri": input_provenance_uri,
+                "source_content_region": content_region,
                 **(
                     {"temporal_alignment": result["temporal_alignment"]}
                     if transfer is not None
@@ -1244,14 +1426,45 @@ def generate_variants(
                 ),
             },
             storage=client,
+            source_video=Path(local_input),
+            publication_factory=immutable_publication if recovery else None,
         )
+        if recovery:
+            return recovery.complete(
+                index,
+                requests[index],
+                Path(local_input),
+                result,
+                variant,
+                published["publication"],
+            )
+        return variant
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
-            futures = {pool.submit(run_one, index): index for index in range(count)}
+            recovered = (
+                {
+                    index: recovery.recover(index, requests[index], Path(local_input))
+                    for index in range(count)
+                }
+                if recovery
+                else {}
+            )
+            futures = {
+                pool.submit(run_one, index): index
+                for index in range(count)
+                if not recovered.get(index)
+            }
+            for index, variant in recovered.items():
+                if variant is not None:
+                    completed = concurrent.futures.Future()
+                    completed.set_result(variant)
+                    futures[completed] = index
             variants = _publish_completed_variants(
                 futures,
-                publish_one,
+                lambda generated: (
+                    generated if isinstance(generated, dict) else publish_one(generated)
+                ),
                 output_uri=output_uri,
                 storage=client,
                 attempt=attempt,
@@ -1281,6 +1494,17 @@ def generate_variants(
         },
         "run_id": run_id,
         "structural_control": structural_control,
+        **(
+            {
+                "verified_variant_recovery": True,
+                "recovered_variant_count": sum(
+                    value is not None for value in recovered.values()
+                ),
+                "recovery_batch_sha256": recovery.batch_sha256,
+            }
+            if recovery
+            else {}
+        ),
         "motion_preservation": {
             "enabled": bool(motion_weight),
             "source_weight": motion_weight,
@@ -1317,6 +1541,51 @@ def generate_variants(
         )
     )
     return manifest
+
+
+def _variant_requests(
+    combos, prompt, caption, negative, seed, guidance, steps, transfer
+):
+    from npa.workflows.data_factory_appearance import generation_prompt
+
+    requests = []
+    for index, combo in enumerate(combos):
+        sample = {
+            "name": f"variant-{index:04d}",
+            "model_mode": VIDEO_MODE,
+            "prompt": generation_prompt(
+                prompt, caption, str(combo.get("prompt") or "")
+            ),
+            "negative_prompt": negative,
+            "seed": seed + index,
+            "num_steps": steps,
+            "guidance": guidance,
+        }
+        if transfer:
+            sample.update(_transfer_sample_controls(transfer))
+        requests.append(
+            {
+                "sample": sample,
+                "variables": dict(combo),
+                "rgb_weight": transfer.rgb_weight if transfer else 0,
+                "edge_threshold": transfer.edge_threshold if transfer else "",
+            }
+        )
+    return requests
+
+
+def _transfer_sample_controls(transfer):
+    from npa.workbench.cosmos.structural_transfer import cfg_normalization_enabled
+
+    return {
+        "fps": transfer.fps,
+        "num_frames": transfer.chunk_frames,
+        "num_video_frames_per_chunk": transfer.chunk_frames,
+        "num_conditional_frames": 5,
+        "control_guidance": transfer.control_guidance,
+        "num_first_chunk_conditional_frames": transfer.first_chunk_conditional_frames,
+        "normalize_cfg": cfg_normalization_enabled(transfer.cfg_normalization),
+    }
 
 
 def reject_quality(disposition_uri: str) -> None:

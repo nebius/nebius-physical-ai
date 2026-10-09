@@ -103,6 +103,12 @@ def test_the_quick_start_forwards_the_hugging_face_token() -> None:
     assert "--secret-env HF_TOKEN" in quick_start
 
 
+def test_fresh_cluster_quick_start_initializes_the_image_pull_service_account() -> None:
+    quick_start = DEPLOY_GUIDE.read_text().split("## 5. Submit", 1)[0]
+    assert "--sky-smoke" in quick_start
+    assert "ServiceAccount" in quick_start
+
+
 def test_shell_examples_do_not_let_a_pipe_swallow_a_failed_submit() -> None:
     # `npa ... | tee run.log` reports 0 for a submit that printed `Error:`.
     guide = DEPLOY_GUIDE.read_text(encoding="utf-8")

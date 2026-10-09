@@ -81,6 +81,8 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "physical-ai-data-factory/{{run.id}}"
+  # Use the submitted adapters, including portable Rerun report projection.
+  source_overlay: true
   # Planning preview only. The runtime orchestrator still reads the real decision
   # artifact after each gate; this default makes bare plan-spec show the happy path.
   plan_assume_decision: promote_checkpoint

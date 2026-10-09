@@ -1,10 +1,20 @@
 # Workbench documentation
 
+For dataset submission, robot input diagnosis and private processing, see
+[PAIDF dataset batches](guides/paidf-dataset-batches.md).
+
 [All docs](../README.md) · [Quickstart](../quickstart.md) · [CLI reference](../cli/workbench.md)
 
 Use `npa workbench <tool> <command>` for a capability and
 `npa workbench workflow` for a pipeline. Tools exchange artifacts through S3;
 Python and HTTP access follow each tool's documented contract.
+
+PAIDF workflows select repaired public Cosmos3, Evaluator, and Curator
+candidates by immutable digest while the historical releases remain
+quarantined. See the [PAIDF image-selection notes](guides/physical-ai-data-factory.md)
+for validation scope and operator overrides.
+The [public default quarantine audit](validation/public-default-quarantine-impact-20261005.md)
+lists other affected images and shipped workflows, including the Sim2Real seams.
 
 ## Start and operate a run
 
