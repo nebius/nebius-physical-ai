@@ -6,6 +6,7 @@ import contextlib
 import importlib.metadata
 import json
 import os
+from pathlib import Path
 import sys
 from urllib.request import ProxyHandler, build_opener
 
@@ -72,15 +73,26 @@ def _execute(request):
         sky.get(sky.jobs.cancel(job_ids=request["job_ids"]))
         return {"cancel_requested": True}
     if operation == "logs":
-        paths = sky.jobs.download_logs(
-            name=None,
-            job_id=request["job_id"],
-            refresh=False,
-            controller=False,
-            local_dir=request["directory"],
-        )
-        return {"paths": paths}
+        return _download_logs(request)
     raise ValueError("unsupported SkyPilot bridge operation")
+
+
+def _download_logs(request):
+    import sky
+
+    paths = sky.jobs.download_logs(
+        name=None,
+        job_id=request["job_id"],
+        refresh=False,
+        controller=False,
+        local_dir=request["directory"],
+    )
+    # Expand in this isolated client's HOME, not the gateway's HOME.
+    return {
+        "paths": {
+            key: str(Path(value).expanduser().resolve()) for key, value in paths.items()
+        }
+    }
 
 
 def _job_row(row):

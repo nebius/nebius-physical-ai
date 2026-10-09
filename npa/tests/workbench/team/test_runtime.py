@@ -12,7 +12,7 @@ from npa.workbench.team.errors import BackendError, ConflictError
 from npa.workbench.team.ledger import TeamLedger
 from npa.workbench.team.models import Allocation, SubmitRequest
 from npa.workbench.team.service import binding_snapshot
-from npa.workbench.team.sky_backend import SkyBackend
+from npa.workbench.team.sky_backend import SkyBackend, _read_log_paths
 from npa.workbench.team.workflow_policy import worker_context
 
 
@@ -167,3 +167,19 @@ def test_exact_wave_cannot_cancel_other_run(config, actor, binding, workflow):
     with pytest.raises(ConflictError):
         backend.cancel(job_id="another-wave")
     assert scheduler.calls == []
+
+
+def test_log_reader_keeps_paths_and_symlinks_inside_private_destination(tmp_path):
+    destination = tmp_path / "sky_logs"
+    job = destination / "job"
+    job.mkdir(parents=True)
+    (job / "run.log").write_text("real worker output")
+    assert _read_log_paths({"7": str(job)}, destination) == ["real worker output"]
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.log").write_text("must not escape")
+    with pytest.raises(BackendError, match="escaped"):
+        _read_log_paths({"7": str(outside)}, destination)
+    (job / "linked.log").symlink_to(outside / "secret.log")
+    with pytest.raises(BackendError, match="symlink escaped"):
+        _read_log_paths({"7": str(job)}, destination)

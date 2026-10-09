@@ -192,7 +192,9 @@ class SkyBackend:
         Raises:
             BackendError: Logs are unavailable or returned outside their destination.
         """
-        destination = self.root / "logs"
+        # The pinned SDK downloads into ~/sky_logs regardless of local_dir.
+        # Its process HOME is this run's private directory.
+        destination = self.root / "sky_logs"
         destination.mkdir(exist_ok=True, mode=0o700)
         chunks = []
         for wave in self.ledger.waves(self.run_id):

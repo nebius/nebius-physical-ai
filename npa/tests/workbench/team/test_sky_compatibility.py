@@ -54,6 +54,28 @@ with patch('sky.server.common.make_authenticated_request', return_value=response
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_pinned_log_paths_expand_inside_the_run_home(config, binding, tmp_path):
+    backend = SkyBackend(config, binding, TeamLedger(config.state_dir), "run-logs")
+    program = r"""
+import os, runpy, sys
+from unittest.mock import patch
+from pathlib import Path
+bridge = runpy.run_path(sys.argv[1])
+destination = Path.home() / 'sky_logs'
+with patch('sky.api_info'), patch('sky.jobs.download_logs', return_value={7:'~/sky_logs/job/run'}):
+    result = bridge['_execute']({'operation':'logs','job_id':7,'directory':str(destination)})
+assert result['paths'][7] == str(destination / 'job/run')
+"""
+    result = subprocess.run(
+        [os.environ["NPA_TEAM_SKY_PYTHON"], "-c", program, sky_bridge.__file__],
+        env=backend._bridge_environment(),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_real_private_server_accepts_new_synthetic_identity(config, binding, tmp_path):
     executable = Path(os.path.abspath(os.environ["NPA_TEAM_SKY_PYTHON"]))
     settings = tmp_path / "sky-server.yaml"
