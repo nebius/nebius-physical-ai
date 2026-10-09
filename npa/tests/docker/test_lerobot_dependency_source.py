@@ -38,6 +38,7 @@ def _installation(text):
     assert (
         "--site-packages /opt/lerobot/venv/lib/python3.12/site-packages" in correction
     )
+    assert "--capability lerobot" in correction
     assert "dependency-source-correction.json" in correction
     return body
 

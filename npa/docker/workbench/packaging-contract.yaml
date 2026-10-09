@@ -1127,7 +1127,9 @@ images:
       Genesis/LeRobot metadata edges for those absent optional dependencies;
       a repository-owned fail-closed import shim rejects tetrahedralization,
       while build-time imports and pip consistency checks protect the reduced
-      contract.
+      contract. The same build layer applies the exact-hash, AST-preserving
+      scikit-image dependency-source correction and emits its receipt before
+      the flattened public runtime is produced.
     redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
   rerun-viewer:

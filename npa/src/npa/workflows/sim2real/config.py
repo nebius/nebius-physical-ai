@@ -10,18 +10,19 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_ENV_COUNT,
     DEFAULT_ENVGEN_SHARD_COUNT,
+    DEFAULT_K8S_GPU_PRODUCT,
+    DEFAULT_K8S_GPU_RESOURCE,
+    DEFAULT_K8S_ISAAC_CACHE_PVC,
     DEFAULT_K8S_MAX_PARALLEL_GPUS,
     DEFAULT_INNER_ITERATIONS,
     DEFAULT_ISAAC_TASK,
     DEFAULT_LEROBOT_DATASET_ID,
     DEFAULT_LOOP_OF_LOOPS_ITERATIONS,
     DEFAULT_OUTER_ITERATIONS,
-    DEFAULT_PREFIX,
     DEFAULT_REFERENCE_VLM_MODEL,
     DEFAULT_REASON2_MODEL,
     DEFAULT_COSMOS3_MODEL,
     DEFAULT_ROLLOUT_COUNT,
-    DEFAULT_S3_ENDPOINT,
     DEFAULT_SIM_BACKEND,
     DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
     DEFAULT_STEPS_PER_ROLLOUT,
@@ -29,6 +30,13 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_TRAIN_FRACTION,
     DEFAULT_HELDOUT_ENVS,
     DEFAULT_VALIDATION_ENVS,
+)
+from npa.workflows.sim2real.artifact_config import (
+    resolve_artifact_bucket,
+    resolve_artifact_endpoint,
+    resolve_artifact_prefix,
+    resolve_run_id,
+    resolve_trigger_dataset_uri,
 )
 from npa.workflows.sim2real.models import (
     Sim2RealLoopConfig,
@@ -39,7 +47,6 @@ from npa.workflows.sim2real.models import (
     default_policy_image,
     default_trainer_image,
     default_vlm_image,
-    new_run_id,
 )
 from npa.workflows.sim2real.utils import (
     _bool_value,
@@ -51,25 +58,14 @@ from npa.workflows.sim2real.utils import (
 def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
     """Build a Sim2Real loop config from explicit values and env fallbacks."""
 
-    run_id = str(
-        overrides.get("run_id") or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id()
-    )
-    bucket = str(
-        overrides.get("s3_bucket")
-        or os.environ.get("NPA_SIM2REAL_BUCKET")
-        or os.environ.get("NPA_S3_BUCKET")
-        or os.environ.get("S3_BUCKET")
-        or ""
-    )
+    run_id = resolve_run_id(str(overrides.get("run_id") or ""))
+    bucket = resolve_artifact_bucket(str(overrides.get("s3_bucket") or ""))
     registry = str(
         overrides.get("registry") or os.environ.get("NPA_SIM2REAL_REGISTRY") or ""
     ).strip()
-    if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
-        s3_prefix = str(overrides["s3_prefix"])
-    elif "NPA_SIM2REAL_PREFIX" in os.environ:
-        s3_prefix = os.environ.get("NPA_SIM2REAL_PREFIX", "")
-    else:
-        s3_prefix = DEFAULT_PREFIX
+    s3_prefix = resolve_artifact_prefix(
+        str(overrides["s3_prefix"]) if overrides.get("s3_prefix") is not None else None
+    )
     action_rollouts_uri = str(
         overrides.get("action_rollouts_uri")
         or os.environ.get("ACTION_ROLLOUTS_URI")
@@ -82,17 +78,11 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         else None,
         s3_bucket=bucket,
         s3_prefix=s3_prefix,
-        s3_endpoint=str(
-            overrides.get("s3_endpoint")
-            or os.environ.get("AWS_ENDPOINT_URL")
-            or os.environ.get("S3_ENDPOINT_URL")
-            or DEFAULT_S3_ENDPOINT
-        ),
-        trigger_dataset_uri=str(
-            overrides.get("trigger_dataset_uri")
-            or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_URI")
-            or os.environ.get("TRIGGER_DATASET_URI")
-            or (f"s3://{bucket}/sim2real-triggers/{run_id}/" if bucket else "")
+        s3_endpoint=resolve_artifact_endpoint(str(overrides.get("s3_endpoint") or "")),
+        trigger_dataset_uri=resolve_trigger_dataset_uri(
+            str(overrides.get("trigger_dataset_uri") or ""),
+            s3_bucket=bucket,
+            run_id=run_id,
         ),
         trigger_dataset_id=str(
             overrides.get("trigger_dataset_id")
@@ -403,17 +393,17 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         k8s_isaac_cache_pvc=str(
             overrides.get("k8s_isaac_cache_pvc")
             or os.environ.get("NPA_SIM2REAL_ISAAC_CACHE_PVC")
-            or "npa-sim2real-isaac-cache"
+            or DEFAULT_K8S_ISAAC_CACHE_PVC
         ),
         k8s_gpu_resource=str(
             overrides.get("k8s_gpu_resource")
             or os.environ.get("NPA_SIM2REAL_K8S_GPU_RESOURCE")
-            or "nvidia.com/gpu"
+            or DEFAULT_K8S_GPU_RESOURCE
         ),
         k8s_gpu_product=str(
             overrides.get("k8s_gpu_product")
             or os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT")
-            or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+            or DEFAULT_K8S_GPU_PRODUCT
         ),
         k8s_gpu_candidates=tuple(
             _split_csv(

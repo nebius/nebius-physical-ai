@@ -5,7 +5,15 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from npa.workflows.sim2real.artifact_config import _artifact_bucket, _artifact_endpoint
+from npa.workflows.sim2real.artifact_config import (
+    resolve_artifact_bucket,
+    resolve_artifact_endpoint,
+)
+from npa.workflows.sim2real.constants import (
+    DEFAULT_K8S_GPU_PRODUCT,
+    DEFAULT_K8S_GPU_RESOURCE,
+    DEFAULT_K8S_ISAAC_CACHE_PVC,
+)
 from npa.workflows.sim2real.models import new_run_id
 from npa.workflows.sim2real.utils import _serviceaccount_namespace, _split_csv
 
@@ -69,8 +77,8 @@ def build_diagnostic_config_from_env(
 
     return _diagnostic_config(
         run_id or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id(),
-        _artifact_bucket(s3_bucket),
-        _artifact_endpoint(s3_endpoint),
+        resolve_artifact_bucket(s3_bucket),
+        resolve_artifact_endpoint(s3_endpoint),
         k8s_namespace,
         k8s_context,
         k8s_kubeconfig,
@@ -98,11 +106,11 @@ def _diagnostic_config(
         or os.environ.get("KUBECONFIG")
         or os.environ.get("NPA_SIM2REAL_KUBECONFIG", ""),
         k8s_isaac_cache_pvc=os.environ.get("NPA_SIM2REAL_ISAAC_CACHE_PVC")
-        or "npa-sim2real-isaac-cache",
+        or DEFAULT_K8S_ISAAC_CACHE_PVC,
         k8s_gpu_resource=os.environ.get("NPA_SIM2REAL_K8S_GPU_RESOURCE")
-        or "nvidia.com/gpu",
+        or DEFAULT_K8S_GPU_RESOURCE,
         k8s_gpu_product=os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT")
-        or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        or DEFAULT_K8S_GPU_PRODUCT,
         k8s_gpu_candidates=tuple(
             _split_csv(os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES", ""))
         ),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import hashlib
 import shlex
@@ -16,6 +17,7 @@ from npa.clients.storage import StorageClient, StorageError
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
+from npa.workflows.sim2real.utils import _artifact_root_uri
 from npa.workflows.sim2real_viz import (
     Sim2RealVizResult,
     emit_sim2real_mcap_if_enabled,
@@ -94,9 +96,7 @@ def run_prefix_uri(config: Sim2RealLoopConfig | Sim2RealArtifactConfig) -> str:
         None.
     """
 
-    parts = [part for part in (config.s3_prefix.strip("/"), config.run_id) if part]
-    root = f"s3://{config.s3_bucket}/{'/'.join(parts)}"
-    return f"{root.rstrip('/')}/"
+    return f"{_artifact_root_uri(config).rstrip('/')}/"
 
 
 def _gold_eval_relative_dir(
@@ -272,6 +272,12 @@ def sync_heldout_renders(
         lineage = dict((heldout_report or {}).get("render_lineage") or {})
         canonical = str(lineage.get("renders_s3_uri") or "").strip()
         if not canonical:
+            # A sealed score-only evaluation must never be paired with guessed
+            # camera renders.  It can still contribute the factual per-env
+            # scores that the Rerun emitter records, so permit that diagnostic
+            # shape without claiming a held-out camera observation.
+            if _has_factual_heldout_scores(heldout_report):
+                return False
             raise Sim2RealRerunRegenError(
                 "sealed gold report has no exact render_lineage.renders_s3_uri"
             )
@@ -333,6 +339,23 @@ def sync_heldout_renders(
             _write_report_render_manifest(config, local_dir, heldout_report, manifest)
             return True
     return _has_camera_pngs(renders_dir)
+
+
+def _has_factual_heldout_scores(report: dict[str, Any] | None) -> bool:
+    """Return whether a report has numeric per-environment score evidence."""
+
+    evaluations = (report or {}).get("per_env") or []
+    if not isinstance(evaluations, list) or not evaluations:
+        return False
+    try:
+        return all(
+            isinstance(item, dict)
+            and item.get("score") is not None
+            and math.isfinite(float(item["score"]))
+            for item in evaluations
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def _has_camera_pngs(renders_dir: Path) -> bool:
@@ -623,7 +646,7 @@ def regen_sim2real_rrd(
     )
     rerun_duration_s = round(time.monotonic() - rerun_started, 3)
     if report:
-        from npa.workflows.sim2real.engine import gpu_fallback_report_contract
+        from npa.workflows.sim2real.gpu_fallback import gpu_fallback_report_contract
 
         report["policy_access"] = policy_access
         report["progress_metrics"] = build_progress_metrics(work_dir, outer_history)
@@ -847,9 +870,9 @@ def _regen_result_from_viz(
     mcap_result: dict[str, Any] | None = None,
     mcap_upload_uri: str = "",
 ) -> RegenResult:
-    if result.heldout_frame_count <= 0:
+    if not result.has_factual_observation_evidence:
         raise Sim2RealRerunRegenError(
-            "regenerated .rrd has heldout_frame_count=0; sync eval/heldout/renders or rerun held-out eval"
+            "regenerated .rrd has no factual rollout observations, held-out cameras, or held-out scores"
         )
     mcap = mcap_result or {}
     return RegenResult(

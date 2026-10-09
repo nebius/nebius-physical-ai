@@ -18,7 +18,7 @@ fi
 . /etc/os-release
 case "${ID}:${VERSION_ID}" in
   ubuntu:22.04)
-    linux_libc_dev_version="5.15.0-190.200"
+    linux_libc_dev_version="5.15.0-198.208"
     ;;
   ubuntu:24.04)
     linux_libc_dev_version="6.8.0-139.139"

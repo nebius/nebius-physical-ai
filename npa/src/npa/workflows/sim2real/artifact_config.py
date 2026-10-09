@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Any
 
 from npa.workflows.sim2real.constants import (
+    DEFAULT_K8S_GPU_PRODUCT,
     DEFAULT_OUTER_ITERATIONS,
     DEFAULT_PREFIX,
     DEFAULT_S3_ENDPOINT,
 )
+from npa.workflows.sim2real.models import new_run_id
 from npa.workflows.sim2real.utils import _split_csv
 
 
@@ -37,7 +40,7 @@ class Sim2RealArtifactConfig:
     s3_prefix: str = DEFAULT_PREFIX
     s3_endpoint: str = DEFAULT_S3_ENDPOINT
     outer_iterations: int = DEFAULT_OUTER_ITERATIONS
-    k8s_gpu_product: str = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+    k8s_gpu_product: str = DEFAULT_K8S_GPU_PRODUCT
     k8s_gpu_candidates: tuple[str, ...] = ()
 
 
@@ -45,16 +48,22 @@ def build_artifact_config_from_env(
     *,
     run_id: str,
     s3_bucket: str = "",
-    s3_prefix: str = DEFAULT_PREFIX,
+    s3_prefix: str | None = None,
     s3_endpoint: str = "",
+    outer_iterations: int | None = None,
+    k8s_gpu_product: str = "",
+    k8s_gpu_candidates: Any = "",
 ) -> Sim2RealArtifactConfig:
     """Resolve artifact settings while leaving execution image policy untouched.
 
     Args:
         run_id: Existing run identifier.
         s3_bucket: Explicit bucket, or the existing environment fallback.
-        s3_prefix: Parent prefix containing the run.
+        s3_prefix: Explicit parent prefix, otherwise the existing environment fallback.
         s3_endpoint: Explicit endpoint, or the existing environment fallback.
+        outer_iterations: Explicit final outer iteration, or the environment fallback.
+        k8s_gpu_product: Explicit GPU product, or the environment fallback.
+        k8s_gpu_candidates: Explicit GPU alternatives, or the environment fallback.
     Returns:
         Image-free settings for artifact download or visualization regeneration.
     Raises:
@@ -62,22 +71,73 @@ def build_artifact_config_from_env(
     """
 
     return Sim2RealArtifactConfig(
-        run_id=run_id,
-        s3_bucket=_artifact_bucket(s3_bucket),
-        s3_prefix=s3_prefix,
-        s3_endpoint=_artifact_endpoint(s3_endpoint),
+        run_id=resolve_run_id(run_id),
+        s3_bucket=resolve_artifact_bucket(s3_bucket),
+        s3_prefix=resolve_artifact_prefix(s3_prefix),
+        s3_endpoint=resolve_artifact_endpoint(s3_endpoint),
         outer_iterations=int(
-            os.environ.get("OUTER_ITERATIONS", DEFAULT_OUTER_ITERATIONS)
+            outer_iterations
+            if outer_iterations is not None
+            else os.environ.get("OUTER_ITERATIONS", DEFAULT_OUTER_ITERATIONS)
         ),
-        k8s_gpu_product=os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT")
-        or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        k8s_gpu_product=k8s_gpu_product
+        or os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT")
+        or DEFAULT_K8S_GPU_PRODUCT,
         k8s_gpu_candidates=tuple(
-            _split_csv(os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES", ""))
+            _split_csv(
+                k8s_gpu_candidates
+                or os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES", "")
+            )
         ),
     )
 
 
-def _artifact_bucket(override: str) -> str:
+def resolve_run_id(override: str) -> str:
+    """Resolve an explicit run identifier or create one when none is configured.
+
+    Args:
+        override: Explicit run identifier, if any.
+    Returns:
+        The selected run identifier.
+    Raises:
+        None.
+    """
+
+    return override or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id()
+
+
+def resolve_trigger_dataset_uri(override: str, *, s3_bucket: str, run_id: str) -> str:
+    """Resolve the trigger dataset URI from the shared Sim2Real precedence policy.
+
+    Args:
+        override: Explicit trigger dataset URI, if any.
+        s3_bucket: Resolved artifact bucket used by the generated default.
+        run_id: Resolved run identifier used by the generated default.
+    Returns:
+        The selected trigger dataset URI, or an empty string without a bucket.
+    Raises:
+        None.
+    """
+
+    return (
+        override
+        or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_URI")
+        or os.environ.get("TRIGGER_DATASET_URI")
+        or (f"s3://{s3_bucket}/sim2real-triggers/{run_id}/" if s3_bucket else "")
+    )
+
+
+def resolve_artifact_bucket(override: str) -> str:
+    """Resolve an explicit artifact bucket or its supported environment fallbacks.
+
+    Args:
+        override: Explicit bucket name, if any.
+    Returns:
+        The selected bucket name, or an empty string when none is configured.
+    Raises:
+        None.
+    """
+
     return (
         override
         or os.environ.get("NPA_SIM2REAL_BUCKET")
@@ -86,7 +146,33 @@ def _artifact_bucket(override: str) -> str:
     )
 
 
-def _artifact_endpoint(override: str) -> str:
+def resolve_artifact_prefix(override: str | None) -> str:
+    """Resolve an explicit artifact prefix or its supported environment fallback.
+
+    Args:
+        override: Explicit prefix; ``None`` permits the environment fallback.
+    Returns:
+        The selected artifact prefix.
+    Raises:
+        None.
+    """
+
+    if override is not None:
+        return override
+    return os.environ.get("NPA_SIM2REAL_PREFIX", DEFAULT_PREFIX)
+
+
+def resolve_artifact_endpoint(override: str) -> str:
+    """Resolve an explicit artifact endpoint or its supported environment fallbacks.
+
+    Args:
+        override: Explicit endpoint URL, if any.
+    Returns:
+        The selected endpoint URL, or the configured default.
+    Raises:
+        None.
+    """
+
     return (
         override
         or os.environ.get("AWS_ENDPOINT_URL")

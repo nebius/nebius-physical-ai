@@ -16,6 +16,15 @@ Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
 artifacts without resolving execution image defaults. Regeneration therefore
 remains available after an old runtime is quarantined. Executing new workloads,
 including `rerun heldout-only`, still requires qualified component images.
+For `rerun regen` and `rerun heldout-only`, explicit `--s3-bucket` and
+`--s3-endpoint` override their corresponding project coordinates. With
+`--project`, a complete isolated project record supplies the remaining bucket,
+endpoint, and client credentials; an unknown or incomplete record refuses rather
+than falling back to host credentials or environment settings. Without
+`--project`, the existing Sim2Real environment settings apply. For `workbench
+health sim2real`, `--project` applies when the selected checks include `s3`: it
+supplies the reachability-probe target and isolated credentials unless the
+corresponding S3 flag is explicit. It has no effect on selections without `s3`.
 See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
 
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
@@ -349,7 +358,8 @@ Genesis, Isaac Lab, and LeRobot container deployment resolves the selected image
 before bootstrapping an environment, provisioning a VM, or writing service
 credentials. A quarantined default fails with an actionable CLI error even in
 `--dry-run`; supply `--image` with an independently qualified operator image.
-Infrastructure-only deployment and teardown do not need a runnable app image.
+Isaac Lab and LeRobot infrastructure-only deployment, and all teardown paths,
+do not need a runnable app image.
 
 ## SDK examples
 

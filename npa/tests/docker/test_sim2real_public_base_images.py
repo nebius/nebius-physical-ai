@@ -156,7 +156,8 @@ def test_envgen_corrects_inert_dependency_recipe_before_flattening() -> None:
     assert text.index("FROM ${BASE_IMAGE} AS sanitized") < correction
     assert correction < text.index("FROM scratch AS runtime")
     assert text.index("COPY --from=sanitized / /") > correction
-    assert "--site-packages /opt/npa/venv/lib/python3.11/site-packages" in text
+    assert 'import sysconfig; print(sysconfig.get_path("purelib"))' in text
+    assert "--capability envgen" in text
     assert "/usr/share/doc/npa-envgen/dependency-source-correction.json" in text
 
 
@@ -171,7 +172,7 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     assert "ubuntu:22.04" in snapshot_config
     assert "ubuntu:24.04" in snapshot_config
     assert "configure-ubuntu-snapshot" in installer
-    assert 'linux_libc_dev_version="5.15.0-190.200"' in installer
+    assert 'linux_libc_dev_version="5.15.0-198.208"' in installer
     assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
     for relative in (
@@ -179,11 +180,10 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
         "sim2real-eval/Dockerfile",
     ):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
-        assert "ARG UBUNTU_SNAPSHOT=20261001T000000Z" in text, relative
-        assert (
-            'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" 5.15.0-194.204'
-            in text
-        ), relative
+        assert "ARG UBUNTU_SNAPSHOT=20261002T000000Z" in text, relative
+        assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \\' in text, (
+            relative
+        )
         assert "configure_ubuntu_snapshot.sh" in text, relative
 
 
@@ -211,7 +211,9 @@ def test_sim2real_cpu_images_upgrade_inherited_packages_from_fixed_snapshot() ->
     for relative in ("sim2real-control/Dockerfile", "rerun-viewer/Dockerfile"):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
         assert "ARG DEBIAN_SNAPSHOT=20261002T000000Z" in text, relative
+        assert "ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1" in text, relative
         assert "apt-get upgrade -y --no-install-recommends" in text, relative
+        assert '"perl-base=${MIN_PERL_BASE_VERSION}"' in text, relative
 
 
 def test_transfer_uses_the_hash_verified_pyjwt_signature_fix() -> None:

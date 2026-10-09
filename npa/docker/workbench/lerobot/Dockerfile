@@ -112,6 +112,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
        fi \
     && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
       --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
+      --capability lerobot \
       > /opt/lerobot/dependency-source-correction.json \
     && /opt/lerobot/venv/bin/pip uninstall -y wandb \
     && find /opt/lerobot/venv -type f \
