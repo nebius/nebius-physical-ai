@@ -1547,30 +1547,57 @@ def test_plan_only_skips_runtime_only_prerequisites(
     assert "example-bucket" in result.output
 
 
-def test_plan_only_reports_quarantined_default_as_cli_error() -> None:
+@pytest.mark.parametrize("spec_path", [SPEC, COSMOS3_SPEC, NVIDIA_VDA_SPEC])
+def test_paidf_plan_only_uses_repaired_public_defaults(spec_path: Path) -> None:
     result = runner.invoke(
         app,
         [
             "workbench",
             "workflow",
             "submit",
-            str(SPEC),
+            str(spec_path),
             "--run-id",
-            "quarantine-cli-contract",
+            "repaired-public-images",
             "--assume-decision",
             "promote_checkpoint",
             "--no-deploy-if-absent",
             "--plan-only",
+            "--infra",
+            "k8s/paidf-test",
             "--var",
             "bucket=real-bucket",
         ],
     )
 
-    assert result.exit_code == 1
-    assert result.output.startswith("Error: ")
-    assert "no consumable public release" in result.output
-    assert "operator-controlled registry/image" in result.output
-    assert not isinstance(result.exception, ValueError)
+    assert result.exit_code == 0, result.output
+    assert "status: PLANNED" in result.output
+    assert "no consumable public release" not in result.output
+
+
+def test_plan_only_reports_quarantined_default_as_cli_error() -> None:
+    spec_path = SPEC.parents[2] / "workflows/testing/cosmos3-generate.yaml"
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(spec_path),
+            "--run-id",
+            "quarantined-default",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--no-deploy-if-absent",
+            "--plan-only",
+            "--infra",
+            "k8s/paidf-test",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "Error:" in result.output
+    assert "quarantined" in result.output
+    assert "ValueError" not in result.output
+    assert "Traceback" not in result.output
 
 
 def test_plan_only_without_source_uri_is_read_only(

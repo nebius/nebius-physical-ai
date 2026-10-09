@@ -18,6 +18,8 @@ export function pendingRequests(ipc, approvals) {
 function thread(chat) {
   return {id: chat.id, name: chat.title, preview: chat.title, cwd: chat.cwd, source: chat.source,
     model: chat.model, reasoningEffort: chat.effort, serviceTier: chat.serviceTier,
+    ...(chat.approvalPolicy !== undefined ? {approvalPolicy: chat.approvalPolicy} : {}),
+    ...(chat.sandboxPolicy !== undefined ? {sandboxPolicy: chat.sandboxPolicy} : {}),
     mode: chat.mode, updatedAt: chat.updatedAt, owner: chat.owner, archived: Boolean(chat.archived),
     status: {type: chat.active || chat.status === 'active' ? 'active' : 'idle'}};
 }
@@ -65,7 +67,9 @@ async function configure(context, params) {
   const result = await context.handlers.configure({id: params.threadId,
     model: params.model ?? current.model, effort: params.effort ?? current.effort,
     serviceTier: params.serviceTier === undefined ? current.serviceTier : params.serviceTier,
-    mode: params.collaborationMode?.mode ?? params.mode ?? current.mode});
+    mode: params.collaborationMode?.mode ?? params.mode ?? current.mode,
+    ...(params.approvalPolicy !== undefined ? {approvalPolicy: params.approvalPolicy} : {}),
+    ...(params.sandboxPolicy !== undefined ? {sandboxPolicy: params.sandboxPolicy} : {})});
   return result;
 }
 

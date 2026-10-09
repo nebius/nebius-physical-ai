@@ -1,5 +1,10 @@
 """Resolve mobile model controls from the shared Codex runtime's live catalog."""
 
+try:
+    from .chat_permissions import permission_settings
+except ImportError:
+    from chat_permissions import permission_settings
+
 
 def available_models(rpc):
     """Read every visible model and its supported reasoning options.
@@ -22,7 +27,7 @@ def available_models(rpc):
 
 
 def model_selection(rpc, body, thread):
-    """Validate an explicit model change without accepting permission overrides.
+    """Validate explicit model settings and named permission choices.
 
     Args:
         rpc: Authenticated local Codex connection.
@@ -34,9 +39,9 @@ def model_selection(rpc, body, thread):
         ValueError: The requested model, effort, or field is unsupported.
         RuntimeError: Codex cannot provide its catalog.
     """
-    if set(body) - {"id", "model", "effort", "serviceTier", "mode"}:
+    if set(body) - {"id", "model", "effort", "serviceTier", "mode", "permissionMode"}:
         raise ValueError(
-            "Only model and reasoning settings, speed, and mode can be changed here."
+            "Choose model, reasoning, speed, mode, or a supported permission option."
         )
     name = body.get("model", thread.get("model"))
     model = next((m for m in available_models(rpc) if m["model"] == name), None)
@@ -49,6 +54,8 @@ def model_selection(rpc, body, thread):
             raise ValueError("This model does not support that reasoning effort.")
         effort = model["defaultReasoningEffort"]
     result = {"threadId": body["id"], "model": name, "effort": effort}
+    if "permissionMode" in body:
+        result.update(permission_settings(body["permissionMode"]))
     _speed(result, body, model)
     _mode(rpc, result, body, thread)
     return result

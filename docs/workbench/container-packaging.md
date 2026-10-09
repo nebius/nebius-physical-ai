@@ -100,6 +100,26 @@ tool's artifact independently; the preflight and renderer share that same map.
 
 ## Inventory
 
+The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
+snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three
+fixable critical findings in the prior CPU builds. EnvGen clears inherited NPA
+source and workflow directories before copying the selected source revision;
+Docker directory copies otherwise preserve files removed from that revision.
+These build changes require new immutable images and fresh validation before
+release promotion.
+
+Both CPU builds also upgrade the system Python bootstrap from an exact shared
+lock and replace pip's vendored MessagePack and urllib3 with the actual
+`msgpack==1.2.1` and `urllib3==2.8.0` wheel bytes while retaining their licenses. Upgrading only the
+viewer virtualenv leaves the system bootstrap vulnerable; installing a newer
+external MessagePack package leaves pip's independent vendor copy unchanged.
+The replacement also updates pip's vendor inventory and CycloneDX dependency
+references to describe the installed bytes. The pinned Python 3.11 CPU images
+use pip's default importlib metadata backend and remove the unused legacy
+`pkg_resources` subset; opting into that removed backend is unsupported. See
+[pip's metadata backend migration](https://pip.pypa.io/en/stable/news/#v22-1).
+Both builds upgrade inherited Debian packages against the same fixed snapshot.
+
 All first-class images live under `npa/docker/workbench/`:
 
 | Image / role | Dockerfile | Default exposure |
