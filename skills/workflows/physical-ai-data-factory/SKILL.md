@@ -202,6 +202,17 @@ For pinned cup, coffee and cube-lift source selections and matched experiments,
 use `docs/workbench/guides/paidf-lerobot-realism.md`. Preserve the baseline's
 captions and appearance manifest when changing a sampling parameter, and review
 transparent objects, small contacts and generated padding separately.
+New Cosmos 3 preparation records `source_content_region` in input provenance
+and variant metadata. Source analysis also detects persistent paired black edge
+bands across every frame, including embedded source bars; ambiguous boundaries
+remain in the scene. Publication restores only known or detected padding from
+the source and verifies exact generated-scene pixel preservation after lossless
+encoding. Keep `raw_model_video.mp4` and the `padding_preservation` receipt.
+Evaluation validates the reference hash, keeps full-frame alignment checks, and
+excludes verified padding from all four scene checks. `spatial_evidence.padding`
+is a separate advisory diagnostic. Legacy outputs without region provenance keep
+full-frame scoring; malformed or stale provenance fails closed. Interior dark
+objects must remain in the scene. No additional recipe setting is needed. See `docs/workbench/guides/paidf-appearance-12.md` for details.
 `transfer_cfg_normalization` accepts `disabled` (default) or `enabled` with
 edge transfer and forwards native `normalize_cfg` sampling. Compare matched
 sources, captions, profiles and seeds; inspect the receipt's effective boolean
@@ -260,6 +271,15 @@ appearance profiles. Verify actual source-to-output changes separately: the
 existing output attribute check does not enforce minimum augmentation strength.
 Keep per-run storage/API/config isolation and report the actual concurrency;
 single-GPU evidence does not qualify multi-GPU fan-out.
+
+For a complete opt-in twelve-profile configuration, use
+`docs/workbench/examples/paidf-appearance-12.yaml` and its guide at
+`docs/workbench/guides/paidf-appearance-12.md`. Apply its `config` overlay to the
+canonical workflow or pass the values through existing `--var` arguments.
+Submit with `--max-wait-seconds 0`: the CLI's default one-hour per-wave deadline
+can cancel a healthy twelve-variant generation stage.
+The recipe is scoped to visible stationary work surfaces and emits separate
+MP4s; keep task-specific adaptations and private proof media outside Git.
 
 For operator setup, verify `command -v nebius` and `nebius version` after selecting
 `PATH` and after any environment activation. Health preflight proves profile
