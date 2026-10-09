@@ -433,6 +433,7 @@ def test_paidf_cosmos3_schema_and_real_component_contract() -> None:
     argv = TOOL_CATALOG[states["generate-variants"]["toolRef"]].argv_template
     assert argv[:4] == ["npa", "workbench", "cosmos3", "generate-variants"]
     assert "--input-path" in argv and "--guardrails" in argv
+    assert "--variant-recovery" in argv
     assert "echo" not in argv
 
 
@@ -485,6 +486,7 @@ def test_configuration_surface_and_privacy_defaults() -> None:
         "steps",
         "variant_count",
         "variant_parallelism",
+        "variant_recovery",
         "augmentation_seed",
         "input_kind",
         "input_episode",
@@ -497,6 +499,7 @@ def test_configuration_surface_and_privacy_defaults() -> None:
     ):
         assert key in config
     assert config["cosmos3_mode"] == "video2video"
+    assert config["variant_recovery"] == "auto"
     assert float(config["source_motion_weight"]) == 0.0
     assert float(config["grade_threshold"]) == 0.2
     assert float(config["attribute_threshold"]) == 0.25
@@ -573,6 +576,7 @@ def test_cosmos3_cli_exposes_conditioned_variant_commands() -> None:
         "--variant-count",
         "--retry-seed-stride",
         "--guardrails",
+        "--variant-recovery",
     ):
         assert flag in result.output
     prepare = runner.invoke(
