@@ -71,6 +71,8 @@ RUN set -eux; \
     install -d -m 0750 -o ubuntu -g ubuntu /workspace/npa-setup-venv; \
     sudo -u ubuntu /opt/openwam-libero/bin/python -m venv --system-site-packages /workspace/npa-setup-venv; \
     sudo -u ubuntu /workspace/npa-setup-venv/bin/python -m pip --version; \
+    sudo -u ubuntu /workspace/npa-setup-venv/bin/python -m pip install --no-cache-dir PyYAML==6.0.3; \
+    sudo -u ubuntu /workspace/npa-setup-venv/bin/python -c "import yaml"; \
     install -d -m 0750 -o ubuntu -g ubuntu /workspace/.cache/npa-model; \
     test ! -e /workspace/.cache/npa-model/libero-plus-assets; \
     ! find /opt/npa -type f \( -iname '*.zip' -o -iname '*.mp4' -o -iname '*.hdf5' -o -iname '*.pth' -o -iname '*.ckpt' \) -print -quit | grep -q .

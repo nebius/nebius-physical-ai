@@ -269,6 +269,13 @@ def test_private_camera_image_is_runtime_fetch_only_and_refuses_public_targets()
         "sudo -u ubuntu /opt/openwam-libero/bin/python -m venv --system-site-packages "
         "/workspace/npa-setup-venv"
     ) in dockerfile
+    assert (
+        "sudo -u ubuntu /workspace/npa-setup-venv/bin/python -m pip install --no-cache-dir "
+        "PyYAML==6.0.3"
+    ) in dockerfile
+    assert (
+        'sudo -u ubuntu /workspace/npa-setup-venv/bin/python -c "import yaml"'
+    ) in dockerfile
     assert "scanner-quarantined" in dockerfile
     assert "imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2" in dockerfile
     assert "chmod 0444 /opt/npa/src/npa/workflows/libero_plus_assets.py" in dockerfile
