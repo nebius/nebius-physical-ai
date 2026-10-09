@@ -121,7 +121,9 @@ def test_exact_correction_preserves_loader_and_notices_and_updates_record(instal
     assert calls == ["data/grass.png", "data/grass.png"]
 
 
-@pytest.mark.parametrize("capability", ["curobo", "envgen", "fiftyone", "lerobot"])
+@pytest.mark.parametrize(
+    "capability", ["curobo", "envgen", "fiftyone", "genesis", "lerobot"]
+)
 def test_correction_receipt_uses_a_shared_schema_and_declared_capability(
     installed, capability
 ):
@@ -281,6 +283,8 @@ def test_correction_consumers_declare_their_capabilities() -> None:
         "curobo/Dockerfile": "--capability curobo",
         "sim2real-envgen/Dockerfile": "--capability envgen",
         "fiftyone/Dockerfile": "--capability fiftyone",
+        "genesis/Dockerfile": "--capability genesis",
+        "genesis/Dockerfile.sm120": "--capability genesis",
         "lerobot/Dockerfile": "--capability lerobot",
     }
     workbench = IMAGE.parent

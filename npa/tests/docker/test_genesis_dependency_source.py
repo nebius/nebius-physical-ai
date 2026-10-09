@@ -45,6 +45,7 @@ def _assert_installation_contract(text, version, site_packages):
     assert f'"scikit-image=={version}"' in installation
     assert f"python {CORRECTION}" in installation
     assert f"--site-packages {site_packages}" in installation
+    assert "--capability genesis" in installation
     assert installation.rfind("pip install") < installation.index(
         f"python {CORRECTION}"
     )

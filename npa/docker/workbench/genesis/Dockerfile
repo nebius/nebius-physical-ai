@@ -127,6 +127,7 @@ RUN python3 -m venv /opt/genesis/venv \
       'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
     && /opt/genesis/venv/bin/python /opt/genesis/remove-scikit-image-recipe.py \
       --site-packages /opt/genesis/venv/lib/python3.10/site-packages \
+      --capability genesis \
       > /opt/genesis/dependency-source-correction.json
 
 ENV PATH=/opt/genesis/venv/bin:$PATH \
