@@ -17,7 +17,10 @@ test("real Workbench accounts sign in without an identity provider", {
     const key = certificate.publicKey.export({ type: "spki", format: "der" });
     args.push(`--ignore-certificate-errors-spki-list=${crypto.createHash("sha256").update(key).digest("base64")}`);
   }
-  const browser = await chromium.launch({ channel: "chrome", headless: true, args });
+  const browser = await chromium.launch({
+    channel: "chrome", headless: true, args,
+    proxy: settings.proxy ? { server: settings.proxy } : undefined,
+  });
   try {
     assert.ok(settings.accounts.length >= 2);
     for (const account of settings.accounts) await verifyAccount(browser, settings, account);

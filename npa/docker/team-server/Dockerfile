@@ -5,7 +5,7 @@ FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3
 ARG NPA_REVISION
 LABEL org.opencontainers.image.revision=${NPA_REVISION}
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates git openssh-client rsync \
+      ca-certificates git openssh-client rsync socat netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 COPY npa/pyproject.toml /opt/npa/pyproject.toml
