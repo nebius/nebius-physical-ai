@@ -866,6 +866,7 @@ _WORKFLOW_RECOVERY_VALUE_OPTIONS = (
     ("poll_seconds", "--poll-seconds"),
     ("max_wait_seconds", "--max-wait-seconds"),
     ("retries", "--retries"),
+    ("recover_managed_job_id", "--recover-managed-job-id"),
     ("max_infrastructure_recoveries", "--max-infrastructure-recoveries"),
     ("max_concurrency", "--max-concurrency"),
     ("image_bootstrap_timeout_seconds", "--image-bootstrap-timeout-seconds"),
@@ -1140,6 +1141,16 @@ def submit_cmd(
             "With --runtime and explicit resume: recover a controller-lost exact "
             "attempt without resubmission only when its durable ledger reached "
             "RUNNING and every declared output validates. Disabled by default."
+        ),
+    ),
+    recover_managed_job_id: str = typer.Option(
+        "",
+        "--recover-managed-job-id",
+        help=(
+            "With --runtime and explicit --resume-run: recover only this exact "
+            "terminal managed-job ID from a retained same-run launch receipt. "
+            "NPA verifies its exact name, immutable inputs, observable terminal "
+            "success, and declared outputs without submitting another job."
         ),
     ),
     poll_seconds: int = typer.Option(
@@ -1681,6 +1692,9 @@ def submit_cmd(
                 )
                 return
     runtime = bool(runtime)
+    if recover_managed_job_id and not runtime:
+        _fail("--recover-managed-job-id requires --runtime")
+        return
     if image_override and not is_npa_spec:
         _fail(
             "--image-override/--tool-image is supported only for "
@@ -1746,6 +1760,12 @@ def submit_cmd(
         return
     if adopt_absent_in_flight_outputs and not (resume_run or (resume and run_id)):
         _fail("--adopt-absent-in-flight-outputs requires an explicit --resume-run ID")
+        return
+    if recover_managed_job_id and not resume_run:
+        _fail("--recover-managed-job-id requires an explicit --resume-run ID")
+        return
+    if recover_managed_job_id and not recover_managed_job_id.isdecimal():
+        _fail("--recover-managed-job-id must be one decimal managed-job ID")
         return
     if not project:
         from npa.clients.config import default_project_name
@@ -3011,6 +3031,7 @@ def submit_cmd(
                 allow_terminal_plan_migration=allow_terminal_plan_migration,
                 plan_migration_reason=plan_migration_reason,
                 adopt_absent_in_flight_outputs=adopt_absent_in_flight_outputs,
+                recover_managed_job_id=recover_managed_job_id,
                 preflight_evidence=runtime_preflight_evidence,
                 pre_submit_hook=refresh_runtime_preflight,
                 output_format=output_format,
@@ -3962,6 +3983,7 @@ def _run_npa_workflow_runtime(
     allow_terminal_plan_migration: bool,
     plan_migration_reason: str,
     adopt_absent_in_flight_outputs: bool,
+    recover_managed_job_id: str,
     preflight_evidence: Mapping[str, str],
     pre_submit_hook: Callable[[Path], None] | None,
     output_format: "OutputFormat",
@@ -4047,6 +4069,7 @@ def _run_npa_workflow_runtime(
         allow_terminal_plan_migration=allow_terminal_plan_migration,
         plan_migration_reason=plan_migration_reason,
         adopt_absent_in_flight_outputs=adopt_absent_in_flight_outputs,
+        recover_managed_job_id=recover_managed_job_id,
         project=project or "default",
         sky_bin=effective_sky_bin,
         # The preflight and every wave use the same selected principal. A new

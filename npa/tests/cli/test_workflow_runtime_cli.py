@@ -663,6 +663,70 @@ def test_submit_runtime_resume_flag_is_forwarded(fake_runtime) -> None:
     assert fake_runtime["options"].resume is True
 
 
+def test_submit_runtime_forwards_explicit_terminal_recovery_id(fake_runtime) -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--resume-run",
+            "rt-cli-terminal-recovery",
+            "--runtime",
+            "--recover-managed-job-id",
+            "2",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["options"].resume is True
+    assert fake_runtime["options"].recover_managed_job_id == "2"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (
+            ["--runtime", "--recover-managed-job-id", "2"],
+            "requires an explicit --resume-run ID",
+        ),
+        (
+            [
+                "--resume-run",
+                "rt-cli-terminal-recovery",
+                "--runtime",
+                "--recover-managed-job-id",
+                "job-two",
+            ],
+            "must be one decimal managed-job ID",
+        ),
+    ],
+)
+def test_explicit_terminal_recovery_requires_resume_and_exact_id(
+    arguments: list[str], message: str
+) -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            *arguments,
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert message in result.output
+
+
 @pytest.fixture()
 def gpu_then_cpu_spec(tmp_path: Path) -> Path:
     spec = tmp_path / "gpu-then-cpu.yaml"
