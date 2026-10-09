@@ -9,6 +9,8 @@ Python and HTTP access follow each tool's documented contract.
 [Optional team mode](team-access.md) adds authenticated workspace access, personal
 GPU allocations and artifact storage for shared clusters, with a CPU gateway and
 private SkyPilot service. Its deployment still requires live qualification.
+Start with [local users and personal access keys](team-identity.md); SSO and
+Keycloak are optional, and explicit later linking preserves account ownership.
 The [interactive team example](../demos/team-access.html) illustrates the complete
 flow with synthetic infrastructure and recorded local API checks.
 

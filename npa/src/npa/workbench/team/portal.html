@@ -15,20 +15,24 @@
     </header>
     <main>
       <section class="intro">
-        <p class="eyebrow">YOUR TEAM. YOUR EXISTING LOGIN.</p>
+        <p class="eyebrow">YOUR TEAM. YOUR WORK.</p>
         <h1>One sign-in.<br />Your workspaces.</h1>
         <p class="lead">
-          Sign in through your organization to see what you can access. You do
-          not need a Nebius user account.
+          Sign in to see your workspaces, jobs and GPU allowance.
+          You do not need a Nebius user account.
         </p>
       </section>
       <section id="signed-out" class="card">
-        <h2>Start with your identity</h2>
-        <p>
-          Your identity provider handles your password. Workbench checks your
-          verified identity and group membership.
-        </p>
-        <a class="button" href="/auth/login">Sign in</a>
+        <h2>Sign in to Workbench</h2>
+        <form id="key-login" hidden>
+          <label for="access-key">Your personal access key</label>
+          <p>Use the key your administrator provided. Keep it private.</p>
+          <div class="input-row">
+            <input id="access-key" type="password" required autocomplete="off" spellcheck="false" />
+            <button type="submit">Sign in with access key</button>
+          </div>
+        </form>
+        <a id="organization-login" class="button" href="/auth/login" hidden>Sign in</a>
       </section>
       <section id="signed-in" hidden>
         <div class="card identity">
@@ -78,7 +82,7 @@
         <div>
           <span>01</span>
           <h3>Your sign-in</h3>
-          <p>Your organization manages people and groups.</p>
+          <p>Use your personal access key or your connected company login.</p>
         </div>
         <div>
           <span>02</span>

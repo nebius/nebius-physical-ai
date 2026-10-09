@@ -38,7 +38,9 @@ def allocations(config):
     """
     for workspace, policy in config.workspaces.items():
         for allocation in policy.allocations:
-            name = execution_name(config.identity.issuer, workspace, allocation.subject)
+            name = execution_name(
+                config.principal_issuer, workspace, allocation.subject
+            )
             for cluster in allocation.clusters:
                 yield ExecutionBinding(
                     workspace, cluster, name, allocation, config.clusters[cluster]

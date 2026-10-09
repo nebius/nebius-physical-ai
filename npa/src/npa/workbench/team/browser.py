@@ -5,9 +5,10 @@ from pathlib import Path
 
 from fastapi import Depends, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from pydantic import BaseModel, Field, SecretStr
 
 from .browser_sessions import SESSION_COOKIE, STATE_COOKIE, BrowserSessions
-from .errors import AuthenticationError
+from .errors import AuthenticationError, AuthorizationError
 from .oidc import OidcProvider
 
 
@@ -23,8 +24,10 @@ def create_browser(config, verifier):
     """
     if config.browser_login is None:
         return None
-    provider = OidcProvider(config.identity, config.browser_login)
-    return BrowserSessions(provider, verifier)
+    provider = (
+        OidcProvider(config.identity, config.browser_login) if config.identity else None
+    )
+    return BrowserSessions(provider, verifier, browser=config.browser_login)
 
 
 def install_browser(app, sessions, actor):
@@ -43,6 +46,7 @@ def install_browser(app, sessions, actor):
         return HTMLResponse(Path(__file__).with_name("portal.html").read_text())
 
     _assets(app)
+    _key_login(app, sessions)
 
     @app.get("/auth/login")
     def login():
@@ -57,10 +61,45 @@ def install_browser(app, sessions, actor):
 
     @app.post("/auth/logout")
     def logout(request: Request, identity=Depends(actor)):
-        sessions.authorization(request)
+        sessions.actor(request)
         sessions.discard(request.cookies.get(SESSION_COOKIE))
         response = Response(status_code=204)
         response.delete_cookie(SESSION_COOKIE, path="/", secure=True, httponly=True)
+        return response
+
+
+class KeyLogin(BaseModel):
+    """Accept a secret only in the HTTPS login request body.
+
+    Args:
+        access_key: Personal credential, omitted from representations and errors.
+    Returns:
+        Parsed login input.
+    Raises:
+        ValidationError: Credential is missing or too large.
+    """
+
+    access_key: SecretStr = Field(min_length=1, max_length=128)
+
+
+def _key_login(app, sessions):
+    @app.get("/auth/methods")
+    def methods():
+        return {
+            "access_key": hasattr(sessions.verifier, "accounts"),
+            "oidc": sessions.provider is not None,
+        }
+
+    @app.post("/auth/key")
+    def key_login(payload: KeyLogin, request: Request):
+        if request.headers.get("origin") != sessions.browser.public_url.rstrip("/"):
+            raise AuthorizationError("same-origin login is required")
+        if request.headers.get("x-workbench-login") != "1":
+            raise AuthorizationError("explicit browser login is required")
+        session, expires = sessions.sign_in_key(payload.access_key.get_secret_value())
+        sessions.discard(request.cookies.get(SESSION_COOKIE))
+        response = Response(status_code=204)
+        _cookie(response, SESSION_COOKIE, session, int(expires - time.time()))
         return response
 
 

@@ -13,11 +13,14 @@ from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_c
 from npa.workbench.team.client import TeamClient
 from npa.workbench.team.errors import TeamError
 from npa.workbench.team.models import SubmitRequest, load_config
+from .team_accounts import app as accounts_app
 
 app = typer.Typer(
     help="Optional team access and authenticated workflow execution.",
     no_args_is_help=True,
 )
+
+app.add_typer(accounts_app, name="account")
 
 
 @app.command("stop-run")

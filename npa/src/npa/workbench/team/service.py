@@ -63,6 +63,7 @@ class TeamService:
         config = self.configuration()
         fields = (
             "identity",
+            "account_namespace",
             "browser_login",
             "state_dir",
             "sky_endpoint",

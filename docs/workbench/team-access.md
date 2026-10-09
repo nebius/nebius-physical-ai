@@ -1,7 +1,7 @@
 # Optional Workbench team mode
 
-Team mode adds an authenticated gateway for shared Kubernetes clusters. Existing
-identity-provider users and groups receive workspace grants; each allocated
+Team mode adds an authenticated gateway for shared Kubernetes clusters. Local
+Workbench accounts or external identities receive workspace grants; each allocated
 person has worker/controller namespaces, an explicit GPU quota, and a dedicated
 storage principal and bucket. Every stage stays inside its run's allocation.
 
@@ -12,15 +12,22 @@ API. Cluster administrators remain trusted administrators.
 
 ## Identity, projects, and configuration
 
-The gateway verifies JWT signatures, issuer, audience, subject and expiration
+For a setup without SSO, configure a permanent `account_namespace` and create
+local users with `npa workbench team account`. Personal access keys authenticate
+API/CLI/SDK requests and browser sessions. Optional group membership is managed
+by the administrator. Follow the [local account setup guide](team-identity.md)
+for private key delivery, immediate revocation, and later SSO linking.
+Local users retain the same ownership ID when their login method changes.
+
+For external login, the gateway verifies JWT signatures, issuer, audience, subject and expiration
 against an administrator-configured HTTPS JWKS endpoint. It requires `iss`,
 `aud`, `sub`, `iat`, and `exp`. Groups must be a list of strings. RS256 and ES256
 are supported. Proxy email headers and request-body identities confer no access.
 Obtain a token for the Workbench audience through the organization's existing
-login flow. Optional browser sign-in uses that same identity provider; Workbench
-does not maintain passwords or a separate people/group directory. Follow the
-[guide for users without Nebius accounts](team-identity.md) to connect company
-SSO or a self-hosted Keycloak installation and use the live access portal.
+login flow. With local accounts enabled, an explicit operator-created link maps
+the verified issuer/subject to the permanent Workbench user. Local grants and
+groups remain authoritative. Configurations with only `identity` retain the
+legacy external-identity and group behavior.
 
 A workspace can span clusters in different projects or clouds. Users need
 workspace access, not a Nebius account. Membership in one workspace grants
@@ -29,7 +36,7 @@ its tokens and claims; Nebius IAM roles and SAML assertions are not automaticall
 translated. There is no automatic Nebius membership synchronization.
 
 `GET /v1/me`, `npa workbench team whoami`, and `TeamClient.whoami()` report the
-verified external identity and its current workspace permissions. Only the
+verified identity and its current workspace permissions. Only the
 person's own allocations are returned. Membership without an allocation is
 reported explicitly and does not authorize job submission.
 
@@ -74,7 +81,10 @@ workspaces:
         shared_inputs: []
 ```
 
-`grants` select external `subject` or `group` values. Roles `reader`, `runner`,
+The example above uses the legacy external-identity configuration. For local
+accounts, replace `identity` with `account_namespace` and use permanent user IDs
+in allocation subjects. `grants` select local user IDs and local groups in that
+mode; legacy grants select external `subject` or `group` values. Roles `reader`, `runner`,
 and `admin` are cumulative; run visibility remains personal for all three.
 Membership does not mint credentials or assign capacity: administrators add the
 person's allocation. GPU values are integers, including zero for CPU-only access.
@@ -183,7 +193,7 @@ It clears inherited cloud credentials and source-overlay settings.
 
 ```bash
 export NPA_TEAM_ENDPOINT=https://workbench.example.com
-# Supply NPA_TEAM_TOKEN through the organization's approved login flow.
+# Supply NPA_TEAM_TOKEN from your private access-key file or connected login flow.
 npa workbench team submit --spec workflow.yaml --workspace robotics \
   --cluster training --idempotency-key my-first-run
 npa workbench team run "$RUN_ID" --action status
@@ -210,7 +220,10 @@ SkyPilot's startup-only private-user registration policy. The scheduler's defaul
 role is `user`, controller consolidation is disabled, and its non-default
 loopback port prevents the SDK from auto-starting an unmanaged replacement server.
 
-Remove grants or add `disabled_subjects` to block access. Already-issued JWT group
+For local accounts, `team account update --disabled` blocks all login methods;
+`team account revoke-key` blocks the selected key and its browser sessions.
+Local group changes are rechecked before each new workflow wave. For legacy
+external-only configurations, remove grants or add `disabled_subjects` to block access. Already-issued JWT group
 claims remain valid until expiration; use the denylist for immediate local
 revocation. An admitted workflow retains its verified group snapshot for its
 execution; each new wave still checks current local grants and the denylist.

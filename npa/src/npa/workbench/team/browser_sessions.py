@@ -21,8 +21,9 @@ class BrowserSessions:
         None.
     """
 
-    def __init__(self, provider, verifier):
+    def __init__(self, provider, verifier, *, browser=None):
         self.provider, self.verifier = provider, verifier
+        self.browser = browser or provider.browser
         self.pending, self.sessions = {}, {}
         self.lock = threading.RLock()
 
@@ -36,6 +37,8 @@ class BrowserSessions:
         Raises:
             None.
         """
+        if self.provider is None:
+            raise AuthenticationError("external login is not configured")
         state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
         with self.lock:
             self._prune()
@@ -86,14 +89,59 @@ class BrowserSessions:
         Raises:
             AuthenticationError, AuthorizationError: Session or CSRF proof is invalid.
         """
+        session = self._authorized_session(request)
+        if "token" not in session:
+            raise AuthenticationError("this session uses a local access key")
+        return "Bearer " + session["token"]
+
+    def actor(self, request):
+        """Resolve a browser session while rechecking its original credential.
+
+        Args:
+            request: Cookie-authenticated request with CSRF proof on writes.
+        Returns:
+            Current verified account identity.
+        Raises:
+            AuthenticationError, AuthorizationError: Session or credential is invalid.
+        """
+        session = self._authorized_session(request)
+        if "key_id" in session:
+            return self.verifier.accounts.key_actor(session["key_id"])
+        return self.verifier.verify("Bearer " + session["token"])
+
+    def sign_in_key(self, credential):
+        """Exchange a local access key for an opaque, revocable browser session.
+
+        Args:
+            credential: Secret supplied once in an HTTPS request body.
+        Returns:
+            Random session cookie and expiration, without retaining the access key.
+        Raises:
+            AuthenticationError: Local keys are disabled or the credential is invalid.
+        """
+        if not hasattr(self.verifier, "accounts"):
+            raise AuthenticationError("local accounts are not configured")
+        actor, key_id = self.verifier.accounts.authenticate(credential)
+        session, expires = secrets.token_urlsafe(32), time.time() + 8 * 60 * 60
+        with self.lock:
+            self._prune()
+            self.sessions[session] = {
+                "key_id": key_id,
+                "expires": expires,
+                "csrf": secrets.token_urlsafe(32),
+                "display_name": actor.display_name or actor.subject,
+            }
+        return session, expires
+
+    def _authorized_session(self, request):
         session = self._session(request)
         if request.method not in ("GET", "HEAD", "OPTIONS"):
-            origin = self.provider.browser.public_url.rstrip("/")
+            origin = self.browser.public_url.rstrip("/")
             if request.headers.get("origin") != origin or not _matches_secret(
                 request.headers.get("x-workbench-csrf", ""), session["csrf"]
             ):
                 raise AuthorizationError("same-origin session proof is required")
-        return "Bearer " + session["token"]
+        return session
 
     def details(self, request):
         """Return display identity and CSRF proof after session authentication.

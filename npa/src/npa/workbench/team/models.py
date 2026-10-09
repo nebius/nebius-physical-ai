@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import yaml
 from pydantic import (
@@ -99,7 +100,7 @@ class BrowserLogin(Contract):
     """
 
     public_url: str
-    client_id: str = Field(min_length=1)
+    client_id: str | None = Field(default=None, min_length=1)
     client_secret_file: AbsolutePath | None = None
     scopes: tuple[str, ...] = ("openid", "profile", "email", "groups")
 
@@ -319,7 +320,8 @@ class TeamConfig(Contract):
     """
 
     api_version: Literal["npa.team/v1"] = "npa.team/v1"
-    identity: IdentityProvider
+    identity: IdentityProvider | None = None
+    account_namespace: UUID | None = None
     browser_login: BrowserLogin | None = None
     clusters: dict[Name, Cluster]
     workspaces: dict[Name, Workspace]
@@ -339,9 +341,14 @@ class TeamConfig(Contract):
         Raises:
             ValueError: A policy constraint is violated.
         """
+        if self.identity is None and self.account_namespace is None:
+            raise ValueError(
+                "configure local accounts or an external identity provider"
+            )
         if (
             self.browser_login
-            and self.browser_login.client_id != self.identity.audience
+            and self.identity
+            and (self.browser_login.client_id != self.identity.audience)
         ):
             raise ValueError(
                 "browser client ID must equal the configured token audience"
@@ -363,6 +370,21 @@ class TeamConfig(Contract):
             )
         return self
 
+    @property
+    def principal_issuer(self) -> str:
+        """Return the permanent ownership domain independent of login credentials.
+
+        Args:
+            None.
+        Returns:
+            Local account domain, or the legacy external ownership domain.
+        Raises:
+            None.
+        """
+        if self.account_namespace is not None:
+            return f"urn:npa:team:{self.account_namespace}"
+        return self.identity.issuer
+
 
 class Actor(Contract):
     """Carry identity claims only after issuer, signature, and audience verification.
@@ -378,6 +400,7 @@ class Actor(Contract):
     issuer: str
     subject: str
     groups: frozenset[str] = frozenset()
+    display_name: str | None = None
 
 
 class SubmitRequest(Contract):

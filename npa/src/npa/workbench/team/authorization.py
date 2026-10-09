@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from .errors import AuthorizationError
+from .account_authentication import current_actor
 from .models import Actor, Allocation, Cluster, TeamConfig, Workspace, execution_name
 
 _ROLES = {"reader": 1, "runner": 2, "admin": 3}
@@ -40,9 +41,10 @@ def authorize(config: TeamConfig, actor: Actor, workspace: str, role: str) -> Wo
     Raises:
         AuthorizationError: The identity or requested grant is not permitted.
     """
+    actor = current_actor(config, actor)
     selected = config.workspaces.get(workspace)
     if (
-        actor.issuer != config.identity.issuer
+        actor.issuer != config.principal_issuer
         or actor.subject in config.disabled_subjects
     ):
         raise AuthorizationError("identity is not authorized")

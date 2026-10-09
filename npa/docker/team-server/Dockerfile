@@ -1,7 +1,9 @@
 # Package the CPU-only team gateway and its isolated, pinned scheduler client.
-ARG KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.36.5
+ARG KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.36.5@sha256:0667e3f3e6ef435d7cd4c16684244703ebd67314c17511c2a9f87ea44f6cdf6b
 FROM ${KUBECTL_IMAGE} AS kubectl
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
+ARG NPA_REVISION
+LABEL org.opencontainers.image.revision=${NPA_REVISION}
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates git openssh-client rsync \
     && rm -rf /var/lib/apt/lists/*

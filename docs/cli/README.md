@@ -2,6 +2,7 @@
 
 Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 
+- [npa workbench team account](account.md)
 - [npa adapter](adapter.md)
 - [npa agent](agent.md)
 - [npa workbench alpamayo2-super](alpamayo2-super.md)

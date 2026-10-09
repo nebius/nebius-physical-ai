@@ -3,6 +3,32 @@
 let csrf = "";
 const element = (id) => document.getElementById(id);
 
+async function loginMethods() {
+  const response = await fetch("/auth/methods", { cache: "no-store" });
+  if (!response.ok) throw new Error("Sign-in options are unavailable.");
+  const methods = await response.json();
+  element("key-login").hidden = !methods.access_key;
+  element("organization-login").hidden = !methods.oidc;
+}
+
+element("key-login").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const credential = element("access-key");
+  const body = JSON.stringify({ access_key: credential.value.trim() });
+  credential.value = "";
+  try {
+    const response = await fetch("/auth/key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Workbench-Login": "1" },
+      body,
+    });
+    if (!response.ok) throw new Error("Sign-in failed. Check your access key with your administrator.");
+    await refreshAccess();
+  } catch (error) {
+    showError(error);
+  }
+});
+
 async function refreshAccess() {
   element("message").textContent = "";
   const response = await fetch("/v1/me", { cache: "no-store" });
@@ -95,4 +121,4 @@ element("sign-out").addEventListener("click", async () => {
     showError(error);
   }
 });
-refreshAccess().catch(showError);
+loginMethods().then(refreshAccess).catch(showError);

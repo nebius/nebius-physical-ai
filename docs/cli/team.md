@@ -21,6 +21,7 @@ run  Inspect, cancel, or resume an owned run using the authenticated team API.
 list  List the authenticated person's runs in one workspace.
 storage-create  Create a personal Nebius bucket and narrowly scoped storage principal.
 render-service  Render a CPU-only gateway and private SkyPilot sidecar into a new YAML file.
+account  Operator-managed users, personal keys, and optional SSO links.
 ```
 
 ## Options
@@ -44,6 +45,7 @@ render-service  Render a CPU-only gateway and private SkyPilot sidecar into a ne
 | `list` | List the authenticated person's runs in one workspace. |
 | `storage-create` | Create a personal Nebius bucket and narrowly scoped storage principal. |
 | `render-service` | Render a CPU-only gateway and private SkyPilot sidecar into a new YAML file. |
+| `account` | Operator-managed users, personal keys, and optional SSO links. |
 
 ## Examples
 

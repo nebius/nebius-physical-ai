@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .authentication import TokenVerifier
+from .account_authentication import AccountAuthentication
 from .access_profile import access_profile
 from .browser import create_browser, install_browser, secure_response
 from .enrollment import verify_enrollment
@@ -33,7 +34,10 @@ def create_app(config_path: Path, *, service=None, verifier=None):
     service = service or TeamService(
         lambda: load_config(config_path), enrollment_check=verify_enrollment
     )
-    verifier = verifier or TokenVerifier(service.config().identity)
+    if service.initial.account_namespace:
+        verifier = AccountAuthentication(service.initial, external=verifier)
+    else:
+        verifier = verifier or TokenVerifier(service.initial.identity)
     browser = create_browser(service.initial, verifier)
 
     app = FastAPI(
@@ -59,7 +63,7 @@ def _lifespan(service, browser):
             try:
                 yield
             finally:
-                if browser:
+                if browser and browser.provider:
                     browser.provider.close()
 
     return lifespan
@@ -70,7 +74,7 @@ def _authentication(service, verifier, browser):
         service.config()
         authorization = request.headers.get("authorization", "")
         if not authorization and browser:
-            authorization = browser.authorization(request)
+            return browser.actor(request)
         return verifier.verify(authorization)
 
     return actor

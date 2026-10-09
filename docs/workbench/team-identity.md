@@ -1,17 +1,86 @@
 # Workbench access without personal Nebius accounts
 
-People sign in with the organization's identity provider. Workbench maps their
-verified subject or group membership to workspace permissions. The administrator
-connects the clusters and provisions scoped workload storage credentials. The
-researchers do not need Nebius user accounts, Nebius group membership, or cloud
-administrator credentials.
+Start with administrator-managed Workbench accounts and personal access keys.
+Neither Nebius user accounts nor SSO nor Keycloak is required. The existing
+gateway holds the account database on its persistent volume; there is no extra
+identity server or VM. Administrators connect clusters and provision each
+person's scoped workload storage credentials.
 
-For teams without existing company SSO, a separately operated Keycloak instance
-can hold real accounts and groups. Workbench remains an application using those
-identities. This is the same login protocol used when connecting company SSO;
-the identity provider is not bundled into the Workbench service.
+## Start with local accounts
 
-## Connect an identity provider
+Generate one UUID for `account_namespace` and retain it for the lifetime of the
+installation. Add these settings to the private configuration from the
+[team deployment guide](team-access.md):
+
+```yaml
+account_namespace: 3e1f832d-b0e5-426b-97aa-7535f1c6bbfa # example; generate your own once
+browser_login:
+  public_url: https://workbench.example.com
+```
+
+Omit `identity` and `browser_login.client_id`. The portal offers an access-key
+sign-in form. Omitting `browser_login` retains API/CLI/SDK authentication without
+serving a login page. These are persistent accounts, not a persona selector.
+
+Run account administration on the server against its authoritative state:
+
+```bash
+npa workbench team account create --config /private/team.yaml --name alice --group researchers
+npa workbench team account issue-key --config /private/team.yaml --user "$WORKBENCH_USER_ID" --output-file /private/alice-key
+npa workbench team account list --config /private/team.yaml
+```
+
+The create response contains the permanent user ID. Use it in the workspace's
+`subject` grants and allocations; group grants refer to local groups.
+Membership does not allocate compute or storage. The key command creates a
+new mode-0600 file and prints only its credential ID and path. Deliver the key
+privately to that person. API/CLI callers use it as a bearer credential
+(`NPA_TEAM_TOKEN`); SDK callers pass it to `TeamClient`.
+
+Browser users enter the key once to obtain a Secure, HttpOnly session cookie.
+The key never enters a URL or browser storage and is not retained in the
+browser session. The database stores only SHA-256 hashes of randomly generated
+256-bit keys, not passwords or recoverable key values.
+
+```bash
+npa workbench team account revoke-key --config /private/team.yaml --key-id "$WORKBENCH_KEY_ID"
+npa workbench team account update --config /private/team.yaml --user "$WORKBENCH_USER_ID" --disabled
+npa workbench team account update --config /private/team.yaml --user "$WORKBENCH_USER_ID" --group reviewers
+```
+
+Revocation rejects the key and its browser sessions on the next request.
+Disabling the person also rejects linked SSO logins and stops new workflow
+waves. Local group changes apply on the next request or workflow wave.
+Revoking one key does not disable the person or stop already admitted jobs.
+Job cancellation and storage-key revocation remain separate offboarding steps.
+There is no self-service signup, email recovery or password database; the
+operator issues a replacement key when needed. Back up `accounts.sqlite3`
+together with `team.sqlite3`, private configuration and scheduler state.
+
+## Add SSO later without changing ownership
+
+Keep `account_namespace`, the account database, allocations and user IDs.
+Configure the optional external provider below and restart the gateway. After
+verifying the person's exact issuer and immutable provider subject, link it:
+
+```bash
+npa workbench team account link --config /private/team.yaml --user "$WORKBENCH_USER_ID" --issuer "$OIDC_ISSUER" --subject "$OIDC_SUBJECT"
+```
+
+Both login methods now resolve to the same person, namespaces, jobs and data.
+Unlinked SSO users are denied. Matching email addresses or names never create
+a link. Local groups and workspace grants remain authoritative: enabling SSO
+does not import external roles or group membership. Retain local keys or
+explicitly revoke them after verifying SSO access. The SDK exposes the same
+administration through `Accounts`, `issue_key_file` and `link_identity` in
+`npa.sdk.workbench.team`.
+
+Legacy installations configured only with `identity` continue to use external
+issuer/subject ownership and external group claims. Adding `account_namespace`
+to an already-used legacy installation is not an automatic migration: do not
+change its ownership domain while it has existing runs or allocations.
+
+## Connect an optional identity provider
 
 Register an OpenID Connect application with authorization-code flow and S256
 PKCE. Set its exact callback to `https://<workbench-host>/auth/callback` and
@@ -38,7 +107,7 @@ browser_login:
 
 `browser_login` is optional and disabled when omitted. `public_url` must be the
 HTTPS origin without a path, query, or credentials. `client_id` must match
-`identity.audience`. The default scopes are `openid`, `profile`, `email`, and
+`identity.audience` when an external provider is enabled. The default scopes are `openid`, `profile`, `email`, and
 `groups`; override them with the provider's supported scopes. For a confidential
 client, set `browser_login.client_secret_file` to an absolute path to a mode-0600
 file containing the client secret. Public clients use PKCE without that file.
@@ -58,7 +127,7 @@ personal run access. It has no impersonation selector or administrator controls.
 It does not launch GPU jobs. Use the existing team submit API, CLI, or SDK for
 execution once the administrator has enrolled the person's allocation.
 
-## Keycloak account and group setup
+## Optional Keycloak setup
 
 Using the [Keycloak account setup guide](https://www.keycloak.org/getting-started/getting-started-zip):
 
@@ -89,7 +158,9 @@ isolation has been tested.
 
 ## Session and offboarding behavior
 
-Browser sessions expire with the identity provider's ID token. There is no
+Local access-key browser sessions expire after eight hours; revocation or user
+disablement can invalidate them earlier. External browser sessions expire with
+the identity provider's ID token. There is no
 automatic refresh; sign in again to receive fresh group claims. Restarting the
 single gateway process ends browser sessions but preserves the run ledger.
 Signing out invalidates that Workbench session, including copied cookies. It
@@ -102,6 +173,24 @@ jobs and revoking workload storage keys remain separate administrator actions,
 as described in the [offboarding guide](team-access.md#submit-recover-and-offboard).
 
 ## Live browser qualification
+
+For local accounts, `npa/tests/browser/team_local_live.test.cjs` signs in with
+real access keys against a running HTTPS gateway, with no identity provider.
+Set `NPA_TEAM_LOCAL_LIVE_CONFIG` to a private JSON file containing `endpoint`
+and at least two `accounts`. Each account supplies `name`, `access_key`,
+permanent `subject`, `groups` and `workspaces` (workspace names mapped to roles).
+Optional `runs` verifies that real recorded run IDs appear in the account's
+own listing. Optional `certificate` pins only the selected test certificate's
+public key in Chrome; optional `screenshot` writes a private screenshot.
+Keep all of these files outside Git.
+
+```bash
+cd npa/tests/browser
+NPA_TEAM_LOCAL_LIVE_CONFIG=/private/local-browser.json npm run team:local-live
+```
+
+The test checks wrong-key rejection, real permissions, secure cookies, CSRF
+rejection, logout and mobile layout. It does not simulate an identity or job.
 
 `npa/tests/browser/team_identity_live.test.cjs` performs real browser sign-ins
 against running HTTPS services. Provide a private JSON file through
