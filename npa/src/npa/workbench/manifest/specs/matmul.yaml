@@ -1,0 +1,7 @@
+# YAML invocation spec: translated by the yaml surface into Runtime.invoke.
+tool: cuda-matmul
+version: 0.1.0
+command: run
+inputs:
+  size: 8192
+  seed: 0

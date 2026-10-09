@@ -4,5 +4,5 @@ torch==2.14.0
 onnxruntime<1.24; python_version < '3.11'
 # Reject the OAuthLib releases affected by CVE-2026-49264 and CVE-2026-49265.
 oauthlib>=4.0.0
-# Reject Werkzeug versions affected by CVE-2026-102598.
+# Keep Flask's Windows safe_join dependency above CVE-2026-102598.
 werkzeug>=3.1.9

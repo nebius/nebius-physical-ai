@@ -50,6 +50,7 @@ from npa.workbench.cosmos_evaluator.appearance_fidelity import (
     DEFAULT_THRESHOLD as APPEARANCE_FIDELITY_THRESHOLD,
     AppearanceFidelityResult,
     check_appearance_fidelity,
+    parse_regions as parse_appearance_regions,
 )
 from npa.workbench.cosmos_evaluator.hallucination import (
     DEFAULT_THRESHOLD as HALLUCINATION_THRESHOLD,
@@ -62,6 +63,11 @@ from npa.workbench.cosmos_evaluator.temporal_consistency import (
     DEFAULT_THRESHOLD as TEMPORAL_CONSISTENCY_THRESHOLD,
     TemporalConsistencyResult,
     check_temporal_consistency,
+    parse_regions as parse_temporal_regions,
+)
+from npa.workbench.cosmos_evaluator.spatial_evidence import (
+    prepare_spatial_evidence,
+    remap_regions,
 )
 from npa.workbench.cosmos_evaluator.upstream import (
     UPSTREAM_LICENSE,
@@ -111,6 +117,7 @@ class ClipEvaluation:
     appearance_fidelity: dict[str, Any] | None = None
     skipped: list[str] = field(default_factory=list)
     temporal_alignment: dict[str, Any] | None = None
+    spatial_evidence: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -482,6 +489,34 @@ def _evaluate_clip(
                 ],
                 temporal_alignment={"status": "failed", "reason": str(exc)},
             )
+    try:
+        if (
+            "source_content_region" in metadata
+            and metadata["source_content_region"] is None
+        ):
+            raise ValueError("Recorded content-region provenance is null")
+        source_clip, video, spatial = prepare_spatial_evidence(
+            metadata.get("source_content_region"), source_clip, video, workdir
+        )
+        temporal_regions_json = remap_regions(
+            temporal_regions_json, spatial, parse_temporal_regions
+        )
+        appearance_regions_json = remap_regions(
+            appearance_regions_json, spatial, parse_appearance_regions
+        )
+    except (ValueError, OSError, RuntimeError) as exc:
+        warnings.append(f"spatial evidence failed for {clip_id}: {exc}")
+        return ClipEvaluation(
+            clip_id=clip_id,
+            score=0.0,
+            passed=False,
+            input_conditioned=input_conditioned,
+            status="degraded",
+            variables=variables,
+            skipped=["invalid spatial evidence; no quality score was measured"],
+            temporal_alignment=alignment,
+            spatial_evidence={"status": "failed", "reason": str(exc)},
+        )
     frame = None
     if video is None:
         frame = _download_first_frame(clip_uri, workdir, store=store)
@@ -637,6 +672,7 @@ def _evaluate_clip(
         ),
         skipped=skipped,
         temporal_alignment=alignment,
+        spatial_evidence=spatial,
     )
 
 

@@ -1,0 +1,267 @@
+"""Opt-in live checks for hosted prompts, paired review, S3, and tracking services."""
+
+from __future__ import annotations
+
+import os
+import uuid
+from pathlib import Path
+from types import SimpleNamespace
+
+import av
+import numpy as np
+import pytest
+
+from npa.workflows.video_sweep import (
+    artifacts,
+    checkpoints,
+    execution,
+    matrix,
+    planning,
+    tracking,
+)
+
+pytestmark = pytest.mark.token_factory_e2e
+
+
+def _video(path: Path) -> None:
+    with av.open(str(path), "w") as container:
+        stream = container.add_stream("mpeg4", rate=8)
+        stream.width, stream.height, stream.pix_fmt = 128, 128, "yuv420p"
+        for step in range(24):
+            pixels = np.full((128, 128, 3), 150, dtype=np.uint8)
+            pixels[45:75, 15 + step : 45 + step] = (230, 20, 20)
+            frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+
+def _args(tmp_path):
+    return SimpleNamespace(
+        root_uri=str(tmp_path / "run"),
+        run_id="video-sweep-live-" + uuid.uuid4().hex,
+        sources_uri=str(tmp_path / "sources.json"),
+        variants_uri=str(tmp_path / "variants.json"),
+        workers=1,
+        worker=0,
+        samples=4,
+        threshold=0.8,
+        reasoner_model=os.environ["NPA_VIDEO_SWEEP_REASONER_MODEL"],
+        merge_model=os.environ.get(
+            "NPA_VIDEO_SWEEP_MERGE_MODEL", "nvidia/Nemotron-3_5-Lightning"
+        ),
+    )
+
+
+@pytest.fixture
+def live_review(tmp_path):
+    if not os.environ.get("NPA_VIDEO_SWEEP_REASONER_MODEL"):
+        pytest.skip("Select an exact hosted model with NPA_VIDEO_SWEEP_REASONER_MODEL")
+    args = _args(tmp_path)
+    source = tmp_path / "procedural.mp4"
+    _video(source)
+    artifacts.write_json(
+        args.sources_uri,
+        {"schema": "npa.video_sweep.sources.v1", "clips": [str(source)]},
+    )
+    variant = {
+        "hint": "Keep the existing neutral lighting and red block unchanged.",
+        "seed": 7,
+        "control": "edge",
+        "control_weight": 1.0,
+        "guidance": 3.0,
+    }
+    artifacts.write_json(
+        args.variants_uri,
+        {"schema": "npa.video_sweep.variants.v1", "variants": [variant]},
+    )
+    planning.prepare(args)
+    plan = artifacts.read_json(args.root_uri + "/plan.json")
+    item = plan["items"][0]
+    # A procedural identity pair tests the real judge; it is not Transfer evidence.
+    candidate = {
+        "id": item["id"],
+        "uri": str(source),
+        "sha256": artifacts.file_digest(source),
+        "engine": "procedural-identity-pair",
+    }
+    artifacts.write_json(
+        args.root_uri + "/workers/0.json",
+        {"plan_sha256": artifacts.digest(plan), "worker": 0, "items": [candidate]},
+    )
+    execution.review(args)
+    return args
+
+
+def test_hosted_description_merge_and_paired_judge(live_review):
+    plan, report = execution.reviewed(live_review)
+    assert plan["items"][0]["prompt"].strip()
+    assert report["items"][0]["judge_provenance"]["request_id"]
+    assert report["items"][0]["judge_provenance"]["model"] == live_review.reasoner_model
+    assert type(report["items"][0]["accepted"]) is bool
+
+
+def test_hosted_augmented_prompt_fans_out_over_parameters(tmp_path):
+    if not os.environ.get("NPA_VIDEO_SWEEP_REASONER_MODEL"):
+        pytest.skip("Select an exact hosted model with NPA_VIDEO_SWEEP_REASONER_MODEL")
+    args = _args(tmp_path)
+    args.workers = 2
+    args.samples = 8
+    source = os.environ.get("NPA_VIDEO_SWEEP_PROMPT_SOURCE")
+    if not source:
+        source = str(tmp_path / "synthetic-source.mp4")
+        _video(Path(source))
+    _write_prompt_matrix_inputs(args, source)
+    planning.prepare(args)
+    plan = execution.load_plan(args)
+    assert len(plan["items"]) == 8
+    assert len({item["prompt"] for item in plan["items"]}) == 1
+    provenance = plan["items"][0]["merge_provenance"]
+    assert provenance["mode"] == "llm-augmented" and provenance["request_id"]
+    assert provenance["model"] == args.merge_model
+    assert all(item["merge_provenance"] == provenance for item in plan["items"])
+    assert provenance["preserve_count"] > 0 and provenance["avoid_count"] > 0
+    assert plan["items"][0]["source"]["description_provenance"]["request_id"]
+
+
+def _write_prompt_matrix_inputs(args, source):
+    operator_sweep = {
+        "base": {
+            "hint": "Warm warehouse lighting; preserve all objects and motion.",
+            "num_steps": 35,
+            "cfg_normalization": "enabled",
+            "edge_threshold": "medium",
+            "first_chunk_conditional_frames": 1,
+        },
+        "axes": {
+            "control_guidance": [1.0, 1.5],
+            "guidance": [3.0, 5.0],
+            "seed": [23, 41],
+        },
+    }
+    artifacts.write_json(
+        args.sources_uri, {"schema": "npa.video_sweep.sources.v1", "clips": [source]}
+    )
+    artifacts.write_json(
+        args.variants_uri,
+        {
+            "schema": "npa.video_sweep.variants.v3",
+            "generator": "cosmos3-nano",
+            "sweep": operator_sweep,
+        },
+    )
+
+
+def test_postgres_and_mlflow_commit_and_replay(live_review):
+    if not all(
+        os.environ.get(name)
+        for name in (
+            "NPA_LINEAGE_POSTGRES_DSN",
+            "MLFLOW_TRACKING_URI",
+            "MLFLOW_EXPERIMENT_ID",
+        )
+    ):
+        pytest.skip("Requires explicit private Postgres and MLflow services")
+    tracking.lineage(live_review)
+    first = artifacts.read_json(live_review.root_uri + "/lineage.json")
+    tracking.lineage(live_review)
+    assert artifacts.read_json(live_review.root_uri + "/lineage.json") == first
+    assert len(first["items"]) == 1
+
+
+def test_private_s3_artifact_roundtrip(tmp_path):
+    prefix = os.environ.get("NPA_VIDEO_SWEEP_TEST_S3_URI", "")
+    if not prefix:
+        pytest.skip("Requires an explicit private test S3 prefix")
+    uri = prefix.rstrip("/") + "/" + uuid.uuid4().hex + "/artifact.json"
+    document = {"schema": "npa.video_sweep.test.v1", "procedural": True}
+    try:
+        artifacts.write_json(uri, document)
+        assert artifacts.read_json(uri) == document
+        artifacts.write_json(uri, document)
+        with pytest.raises(ValueError, match="different stage result"):
+            artifacts.write_json(uri, {**document, "procedural": False})
+    finally:
+        bucket, key = artifacts._object(uri)
+        artifacts._client().delete_object(Bucket=bucket, Key=key)
+
+
+def test_full_gpu_stages_require_the_selected_generator(tmp_path):
+    if os.environ.get("NPA_VIDEO_SWEEP_FULL_GPU") != "1":
+        pytest.skip("Run inside the selected Cosmos runtime with full GPU opt-in")
+    args = _args(tmp_path)
+    args.root_uri = (
+        os.environ["NPA_VIDEO_SWEEP_TEST_S3_URI"].rstrip("/") + "/" + args.run_id
+    )
+    args.sources_uri = os.environ["NPA_VIDEO_SWEEP_SOURCES_URI"]
+    args.variants_uri = os.environ["NPA_VIDEO_SWEEP_VARIANTS_URI"]
+    variants = artifacts.read_json(args.variants_uri)
+    args.generator = variants.get("generator", "cosmos-transfer2.5")
+    from npa.workflows.video_sweep.publication import publish
+
+    planning.prepare(args)
+    execution.generate(args)
+    execution.review(args)
+    tracking.lineage(args)
+    publish(args)
+    dataset = artifacts.read_json(args.root_uri + "/dataset/manifest.json")
+    assert dataset["clips"]
+    report = artifacts.read_json(args.root_uri + "/review.json")
+    assert all(row["engine"] == args.generator for row in report["items"])
+    if args.generator == "cosmos3-nano":
+        _assert_native_transfer(args, report)
+
+
+def _assert_native_transfer(args, report):
+    for row in report["items"]:
+        uri = args.root_uri + "/candidates/" + row["id"] + "/generation.json"
+        evidence = artifacts.read_json(uri)
+        assert artifacts.digest(evidence) == row["generation_sha256"]
+        assert evidence["guardrail_state"]["effective"] is True
+        assert evidence["guardrail_state"]["status"] == "passed"
+        assert evidence["structural_transfer"]["video_guardrail_passed"] is True
+        assert evidence["artifacts"]["edge"] == row["controls"]["edge"]
+
+
+def test_export_published_run(tmp_path):
+    from npa.workflows.video_sweep.demo import export_demo
+
+    root = os.environ.get("NPA_VIDEO_SWEEP_DEMO_ROOT_URI", "")
+    run_id = os.environ.get("NPA_VIDEO_SWEEP_DEMO_RUN_ID", "")
+    if not root or not run_id:
+        pytest.skip("Select a private completed run for read-only demo export")
+    plan = artifacts.read_json(root + "/plan.json")
+    args = SimpleNamespace(root_uri=root, run_id=run_id, workers=plan["workers"])
+    output = tmp_path / "demo"
+    summary = export_demo(args, output)
+    assert len(summary["candidates"]) == len(plan["items"])
+    assert summary["accepted"] > 0
+    assert root not in (output / "index.html").read_text()
+    assert run_id not in (output / "index.html").read_text()
+    with av.open(str(output / "demo.mp4")) as video:
+        assert sum(1 for _ in video.decode(video=0)) > 24 * 9
+
+
+def test_reviewed_native_parameter_matrix():
+    """Verify an actual matrix run, including tracked all-rejected outcomes."""
+    from npa.workflows.video_sweep import publication
+
+    root = os.environ.get("NPA_VIDEO_SWEEP_MATRIX_ROOT_URI", "")
+    run_id = os.environ.get("NPA_VIDEO_SWEEP_MATRIX_RUN_ID", "")
+    if not root or not run_id:
+        pytest.skip("Select an existing private native matrix run")
+    stored = artifacts.read_json(root + "/plan.json")
+    args = SimpleNamespace(root_uri=root, run_id=run_id, workers=stored["workers"])
+    plan, report = execution.reviewed(args)
+    assert len(plan["sweep"]["axes"]) >= 2
+    matrix.validate_plan(plan)
+    generated = {row["id"]: row for row in execution._join(args, plan)}
+    assert len(generated) == len(plan["items"])
+    for item in plan["items"]:
+        checkpoints._verify(generated[item["id"]], item, root, plan)
+    _assert_native_transfer(args, report)
+    publication._verify_lineage(artifacts.read_json(root + "/lineage.json"), report)
+    if not any(row["accepted"] for row in report["items"]):
+        assert not artifacts.exists(root + "/dataset/manifest.json")
+        assert not artifacts.exists(root + "/dataset/next-sources.json")
