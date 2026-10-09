@@ -590,6 +590,9 @@ skills:
     path: skills/tools/insights/SKILL.md
     smoke:
       - type: cli_help
+        args: ["workbench", "insights", "report", "--help"]
+        contains: "input-path"
+      - type: cli_help
         args: ["workbench", "insights", "query", "--help"]
         contains: "input-path"
       - type: cli_help

@@ -293,7 +293,7 @@ Use the [documentation index](docs/README.md) to find setup, operations, and
 contributor references. For workflow operations, start with
 [manual runs](docs/workbench/guides/manual-workflow-operations.md),
 [episode batches and capacity](docs/workbench/guides/paidf-dataset-batches.md), or
-[evaluator reports](docs/workbench/cosmos-evaluator-report.md).
+[quality reports](docs/workbench/insights-reports.md).
 
 Report a broken example with its command, `npa` version,
 and redacted error in [GitHub Issues](https://github.com/nebius/nebius-physical-ai/issues).

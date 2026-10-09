@@ -20,7 +20,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Choose a workload | [Robot and workflow guides](guides/README.md) · [workflow catalog](../../workflows/README.md) |
 | Run or resume a workflow manually | [Manual workflow operations](guides/manual-workflow-operations.md) |
 | Submit episode batches and choose concurrency | [Dataset batches](guides/paidf-dataset-batches.md) · [capacity planning](guides/paidf-dataset-batches.md#concurrency-and-existing-capacity) |
-| Inspect augmentation scores and diagnostics | [Evaluator report inspection](cosmos-evaluator-report.md) |
+| Inspect supported quality reports | [Shared report inspection](insights-reports.md) |
 | Copy selected GCS/S3 inputs or outputs | [Scoped storage transfers](guides/scoped-storage-transfers.md) |
 | Run public samples | [Four workflow demos](guides/public-workflow-demos.md): qualified scan-to-policy, industrial sensors and NuRec; RL comparison with a measured rejection report |
 | Use your coding agent | [First-run prompts](agent-first-run.md) · [workflow operations](agent-workflow-operations.md) |

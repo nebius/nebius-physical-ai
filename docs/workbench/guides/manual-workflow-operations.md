@@ -214,11 +214,12 @@ a missing status response is not evidence that the workload failed.
 Inspect the exact evaluator artifact listed by `artifacts`:
 
 ```bash
-npa workbench cosmos-evaluator report --input-path '<exact-local-or-s3-report>'
+npa workbench insights report --input-path '<exact-local-or-s3-report>'
 ```
 
-The [report guide](../cosmos-evaluator-report.md) explains scores, diagnostic
-roles and incomplete evidence. Inspection reads existing evidence; it does not
+The [shared report guide](../insights-reports.md) explains the response and
+supported formats; [Cosmos evidence](../cosmos-evaluator-report.md) covers
+diagnostic roles and incomplete evidence. Inspection reads existing evidence; it does not
 run evaluation.
 
 ## 5. Submit episode batches

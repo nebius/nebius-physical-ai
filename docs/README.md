@@ -20,7 +20,7 @@ prepare its project and compute, then inspect the result.
 | --- | --- |
 | Run or resume a workflow manually | [Manual workflow operations](workbench/guides/manual-workflow-operations.md) |
 | Submit episode batches and choose concurrency | [Dataset batches and capacity](workbench/guides/paidf-dataset-batches.md) |
-| Inspect augmentation scores and diagnostics | [Evaluator report inspection](workbench/cosmos-evaluator-report.md) |
+| Inspect supported quality reports | [Shared report inspection](workbench/insights-reports.md) |
 | Copy selected GCS/S3 inputs or outputs | [Scoped storage transfers](workbench/guides/scoped-storage-transfers.md) |
 | Author and submit YAML | [Workflow guide](workbench/npa-workflow-guide.md) · [toolRef catalog](workbench/npa-workflow-tool-catalog.md) |
 | Use CLI, Python, or HTTP | [CLI reference](cli/README.md) · [SDK surface](sdk/README.md) · [SDK walkthrough](workbench/cli-sdk-yaml-walkthrough.md) · [SDK errors](sdk/errors.md) |

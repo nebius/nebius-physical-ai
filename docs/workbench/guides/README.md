@@ -13,7 +13,7 @@ checks the declaration; each guide states what its live validation actually prov
 | --- | --- |
 | Configure, submit, inspect or resume a workflow | [Manual workflow operations](manual-workflow-operations.md) |
 | Batch episodes and choose concurrency | [Dataset batches and capacity](paidf-dataset-batches.md) |
-| Read augmentation scores and diagnostics | [Evaluator report inspection](../cosmos-evaluator-report.md) |
+| Inspect supported quality reports | [Shared report inspection](../insights-reports.md) |
 | Copy selected GCS/S3 objects | [Scoped storage transfers](scoped-storage-transfers.md) |
 
 ## Robot and reconstruction guides

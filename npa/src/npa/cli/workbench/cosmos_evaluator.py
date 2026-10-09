@@ -98,7 +98,7 @@ def report_cmd(
         help="Render a concise table or one JSON diagnostic projection.",
     ),
 ) -> None:
-    """Inspect one existing evaluator report without running inference.
+    """Inspect a Cosmos report; use insights report for the shared interface.
 
     Args:
         input_path: Exact local JSON path or exact S3 evaluator-report object.

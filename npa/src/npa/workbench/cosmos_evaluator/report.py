@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import math
-import tempfile
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from npa.workbench.cosmos_evaluator.evaluate import REPORT_SCHEMA
 from npa.workbench.cosmos_evaluator.upstream import CosmosEvaluatorError
+from npa.workbench.report_document import ReportDocumentError, read_report_document
 
 
 class CosmosEvaluatorReportError(CosmosEvaluatorError):
@@ -51,9 +48,11 @@ def inspect_evaluator_report(
     Raises:
         CosmosEvaluatorReportError: The artifact cannot be read or is invalid.
     """
-    return summarize_evaluator_report(
-        _read_report_document(input_path, storage=storage)
-    )
+    try:
+        document = read_report_document(input_path, storage=storage)
+    except ReportDocumentError as exc:
+        raise CosmosEvaluatorReportError(str(exc)) from exc
+    return summarize_evaluator_report(document)
 
 
 def summarize_evaluator_report(report: Mapping[str, Any]) -> dict[str, Any]:
@@ -73,85 +72,6 @@ def summarize_evaluator_report(report: Mapping[str, Any]) -> dict[str, Any]:
     variants = [_summarize_clip(clip, document) for clip in document["clips"]]
     _validate_required_evidence(document, variants)
     return _report_projection(document, variants)
-
-
-def _read_report_document(input_path: str, *, storage: Any | None) -> dict[str, Any]:
-    if not isinstance(input_path, str):
-        raise CosmosEvaluatorReportError("--input-path must be a local path or S3 URI")
-    value = input_path.strip()
-    if not value:
-        raise CosmosEvaluatorReportError("--input-path is required")
-    if value.startswith("s3://"):
-        return _read_s3_document(value, storage=storage)
-    return _read_local_document(Path(_local_path(value)))
-
-
-def _read_s3_document(input_path: str, *, storage: Any | None) -> dict[str, Any]:
-    _validate_exact_s3_uri(input_path)
-    store = storage if storage is not None else _storage()
-    with tempfile.TemporaryDirectory(prefix="npa-cosmos-evaluator-report-") as temp_dir:
-        local_path = Path(temp_dir) / "report.json"
-        try:
-            store.download_file(input_path, str(local_path))
-        except Exception as exc:  # noqa: BLE001 - storage errors are sanitized for output
-            raise CosmosEvaluatorReportError(
-                "could not read the evaluator report from object storage"
-            ) from exc
-        return _read_local_document(local_path)
-
-
-def _read_local_document(path: Path) -> dict[str, Any]:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise CosmosEvaluatorReportError("could not read the evaluator report") from exc
-    try:
-        document = json.loads(
-            text,
-            object_pairs_hook=_reject_duplicate_keys,
-            parse_constant=_reject_constant,
-        )
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise CosmosEvaluatorReportError("evaluator report must be valid JSON") from exc
-    if not isinstance(document, dict):
-        raise CosmosEvaluatorReportError("evaluator report must be a JSON object")
-    return document
-
-
-def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate JSON object key")
-        result[key] = value
-    return result
-
-
-def _reject_constant(value: str) -> None:
-    raise ValueError(f"invalid JSON numeric constant: {value}")
-
-
-def _validate_exact_s3_uri(input_path: str) -> None:
-    parsed = urlparse(input_path)
-    if (
-        parsed.scheme != "s3"
-        or not parsed.netloc
-        or not parsed.path.lstrip("/")
-        or parsed.path.endswith("/")
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise CosmosEvaluatorReportError("--input-path must be an exact S3 object URI")
-
-
-def _local_path(value: str) -> str:
-    return value[len("file://") :] if value.startswith("file://") else value
-
-
-def _storage() -> Any:
-    from npa.clients.storage import LazyStorageClient
-
-    return LazyStorageClient()
 
 
 def _validate_report(document: dict[str, Any]) -> None:

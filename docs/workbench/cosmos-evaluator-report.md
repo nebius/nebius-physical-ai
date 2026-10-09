@@ -6,15 +6,18 @@ Read an existing `npa.cosmos_evaluator.report.v1` artifact to see each variant's
 score, reported pass/fail and attribute, hallucination, temporal and appearance
 diagnostics. Inspection does not run inference or change the report.
 
+Start with the shared [Insights report command](insights-reports.md), which also
+supports dataset validation reports. This page explains Cosmos-specific evidence.
+
 ## Inspect a report
 
 Choose the exact local file or S3 object listed in your run's artifacts:
 
 ```bash
-npa workbench cosmos-evaluator report \
+npa workbench insights report \
   --input-path ./cosmos_evaluator.json
 
-npa workbench cosmos-evaluator report \
+npa workbench insights report \
   --input-path 's3://<bucket>/<exact-report-key>' \
   --output-format json
 ```
@@ -22,6 +25,9 @@ npa workbench cosmos-evaluator report \
 The default is a readable table. Use `--output-format json` for scripts.
 Both formats omit source URIs, prompts and arbitrary metadata. The command
 reads only the selected report; it does not scan a prefix or select the latest.
+The shared response puts Cosmos-specific details under `summary`; the gate and
+evidence state are also available at the top level. The original
+`cosmos-evaluator report` command retains its original Cosmos-only response.
 
 ## Interpret the result
 
@@ -58,11 +64,12 @@ assessment remains `not_evaluated` even when the input claims it.
 ## Python SDK
 
 ```python
-from npa.sdk.workbench import cosmos_evaluator
+from npa.sdk.workbench import insights
 
-summary = cosmos_evaluator.report(
+result = insights.report(
     input_path="s3://<bucket>/<exact-report-key>"
 )
+summary = result["summary"]
 ```
 
 The SDK returns the same diagnostic projection and reads only the selected object.
