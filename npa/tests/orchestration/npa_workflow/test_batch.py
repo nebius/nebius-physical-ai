@@ -432,3 +432,11 @@ def test_planned_storage_is_pinned_against_ambient_submit_defaults(
     assert "bucket=test-bucket" in args
     assert "prefix=batch-test/{{run.id}}" in args
     assert all("ambient-" not in value for value in args)
+
+
+def test_yaml_object_construction_is_rejected_without_execution(manifest, tmp_path):
+    marker = tmp_path / "unexpected-execution"
+    manifest[0].write_text(f"!!python/object/apply:os.system ['touch {marker}']\n")
+    with pytest.raises(yaml.YAMLError):
+        plan_batch(manifest[0])
+    assert not marker.exists()

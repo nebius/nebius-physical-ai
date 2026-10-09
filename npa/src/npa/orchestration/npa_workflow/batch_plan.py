@@ -182,7 +182,11 @@ def _check_output_isolation(runs: list[dict]) -> None:
 
 
 def _read_manifest(path: Path) -> _BatchManifest:
-    payload = yaml.load(path.read_text(), Loader=_BatchLoader)
+    loader = _BatchLoader(path.read_text())
+    try:
+        payload = loader.get_single_data()
+    finally:
+        loader.dispose()
     return _BatchManifest.model_validate(payload)
 
 
