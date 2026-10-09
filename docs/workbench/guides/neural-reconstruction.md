@@ -9,9 +9,9 @@ That is **NuRec** — NVIDIA's Neural Reconstruction Engine (NRE). This guide ru
 it on Nebius + SkyPilot as one declarative workflow: real capture in, renderable
 USDZ and novel views out, and a Rerun recording the NPA agent displays for you.
 
-Here is the actual output of the run this guide describes — five views rendered
-from the trained Gaussians at an offset rig pose, i.e. viewpoints that were never
-photographed:
+The historical single-camera run below produced these five views from trained
+Gaussians at an offset rig pose. The current default includes both photographic
+cameras; see the separate qualification in Promotion evidence.
 
 ![Novel views rendered from the trained Gaussians](../../assets/nurec-novel-views.png)
 
@@ -36,6 +36,42 @@ digest of the decoded source fields, and binds it to the exported PLY. Export
 rejects source geometry changed after planning. CPU round trips prove this
 conversion; they do not establish reconstruction quality or training coverage.
 
+The main demo and single-pod example select `struktur28_auto`: all 59
+photographs from its two cameras. The separate `standard` variant contains
+518 HDR exposure-bracketed photographs; it remains an explicit input choice
+for photometric calibration work, rather than the default viewing sample.
+The object-centric recipe trains at source resolution
+and enables NVIDIA's PPISP camera-response model; the native 30,000-step budget
+is retained. Novel views render at source resolution, and the offline report
+embeds previews up to 1600 pixels wide. Explicit Hydra overrides still take
+precedence, and custom recipes retain their own settings.
+
+For independent photographic cameras, the USDZ also carries a checked capture
+trajectory. Rendering uses each photograph's exact camera pose, preserves its
+intrinsics and timestamps, and applies the novel-view offset in that camera's
+local frame. This avoids treating independent COLMAP cameras as a rigid vehicle
+rig. Native model bytes and original rig metadata are retained. Explicit custom
+trajectories and native rigid-rig captures keep their original rendering path.
+
+For derived multi-camera photographic captures, reconstruction prepares a separate
+training input with one unique virtual timestamp per photograph. The virtual rig
+visits each photograph's original camera pose, and camera-to-rig transforms are
+static identities. This matters during training as well as rendering: NRE 26.04
+otherwise interpolates every camera against one reference camera's rig trajectory.
+Original camera images remain byte-identical, intrinsics and sparse-point stores
+are retained, and the fetched or converted source generation is unchanged.
+These timestamps describe photographic ordering, not synchronized capture time.
+The published `reconstruction/photographic-timeline.json` records all source and
+training timestamps, camera poses, image hashes, and retained-store hashes.
+The preparation currently requires instantaneous photographic frames in separate
+camera stores; it rejects incompatible layouts instead of losing source data.
+Native physical rigs and custom recipes retain their own input representation.
+
+The default object recipe allows two million Gaussians
+(`model.strategy.add.max_n_gaussians=2000000`) to retain detail across both
+full-resolution photographic cameras. The native 30,000-step training recipe
+still applies. An explicit Hydra override selects a different model capacity.
+
 ## Ingredients
 
 | | |
@@ -43,7 +79,7 @@ conversion; they do not establish reconstruction quality or training coverage.
 | **Input** | `nvidia/PhysicalAI-NuRec-PPISP` at revision `2521064a3af6ab1c1caa2ba1b01ddde7eecded69` — automatically downloaded, ungated, CC-BY-4.0, real photos of a sculpture, already in NCore V4 |
 | **Engine** | `nvcr.io/nvidia/nre/nre-ga:26.04` from NGC (pulled, never rebuilt) |
 | **GPU** | One RTX PRO 6000 Blackwell (or L40S). **Must have RT cores** |
-| **Time** | ~45 minutes end to end |
+| **Time** | ~70 minutes in the qualified multi-pod run, including worker setup |
 | **Credentials** | `NGC_API_KEY` and S3 keys; `HF_TOKEN` only for gated/private dataset overrides |
 
 > **Why RT cores?** Gaussian rasterization and ray tracing are RT-core work.
@@ -118,6 +154,11 @@ This probes actual **download authorization**, not just visibility — a gated
 Hugging Face repo still answers `200` on its metadata endpoint, so "I can see it"
 is not "I can fetch it".
 
+The four native NRE stages install the NPA adapter in a separate Python virtual
+environment. This keeps source staging and adapter dependency upgrades away from
+the vendor container's Debian packages and native NRE runtime. CPU report stages
+retain their existing image interpreter.
+
 ## Go bigger: the real GPU run
 
 Complete [Workbench setup](../getting-started.md) for your RT-core cluster.
@@ -148,7 +189,8 @@ Watch it:
 npa workbench workflow status "$RUN_ID" --project "<project-alias>" --watch
 ```
 
-A healthy run looks like this — `reconstruct` is the long pole:
+The historical timing below illustrates the stage sequence; the current
+two-camera qualification took about 70 minutes including worker setup:
 
 ```
 check 4m26s → fetch 3m31s → reconstruct 25m33s → render → visualize → finalize
@@ -176,7 +218,7 @@ automatically. Entities you get:
 | `gaussians/summary` | PSNR / SSIM / LPIPS |
 | `pipeline/*` | Per-stage reports, including how the rig pose edge was derived |
 
-The `.usdz` is offered as a **download**, not an inline preview — it is ~240 MB
+The `.usdz` is offered as a **download**, not an inline preview — the qualified two-million-Gaussian scene is ~481 MB
 and belongs in Omniverse, Isaac Sim, or CARLA.
 
 The default public sample's access check and download use the same pinned HF
@@ -195,20 +237,51 @@ npa workbench nurec status \
   --output json
 ```
 
-Expect `PSNR ≈ 31`, `SSIM ≈ 0.83`, `LPIPS ≈ 0.27` on the default scene.
+The default quality readback requires `PSNR ≥ 28`, `SSIM ≥ 0.8`, and
+`LPIPS ≤ 0.3`, together with all 59 photographic poses and the full-resolution
+settings. Inspect novel views from both cameras as well: native validation
+metrics alone do not establish quality at an unseen viewpoint.
 
 ## Promotion evidence
 
+The [October 8 default-quality qualification](../evidence/nurec-default-quality-20261008.json)
+completed all six stages through the canonical demo command on one RTX PRO 6000
+Blackwell. It used all 59 normalized photographs from both cameras, exact
+photographic training poses, full-resolution training, PPISP, two million
+Gaussians, and the native 30,000-step recipe.
+
+| Native validation | Earlier default | Qualified default |
+| --- | ---: | ---: |
+| PSNR, higher is better | 24.711319 | 30.272694 |
+| SSIM, higher is better | 0.732440 | 0.825870 |
+| LPIPS, lower is better | 0.472926 | 0.255115 |
+
+These are reconstruction measurements on the 59 source photographs, not held-out
+novel-view scores. The run also rendered all 59 views at source resolution with
+offset `[0, 0.25, 0]` and training-view replication disabled. Ten offset views
+were visually inspected across both cameras, including their weakest validation
+viewpoints. Sculpture edges and granite texture are clear; reflective water,
+glass and some fine silhouette edges retain localized softness.
+
+Independent readback verified all 308 stored objects, the USDZ, every novel-view
+frame and both videos, and the Rerun recording against its source images. The
+29.5 MB offline report passed image decoding and interactive-control checks at
+1440-pixel and 390-pixel browser widths without external requests. The receipt
+binds these results to the actual runtime source and artifact hashes. A later
+main refresh changed desktop and appearance-recipe code; the NuRec tool, CLI,
+workflow runner, preview code and workflow spec remained byte-identical.
+
+### Historical single-camera qualifications
+
 The [September 28 public demo qualification](../evidence/public-demos/README.md)
-completed the current pinned-input workflow through `workflow demo run`: 30,000
+completed the historical single-camera workflow through `workflow demo run`: 30,000
 verified training steps, 38 novel views, decoded Rerun output, and a working
 offline report. Its receipt distinguishes the original native report from the
 subsequent CPU correction of its metric display. The earlier evidence below is
 preserved for its own source revision.
 
-The main workflow preserves the parsed YAML from the completed September 8,
-2026 multi-pod run; the move changes only the quickstart path comment. The saved
-testing YAML had SHA-256
+The earlier September 8, 2026 multi-pod run used the saved testing YAML with
+SHA-256
 `a7d317382e05da80cd947bbeca2f3d0c4671d39e3bcd137678681ebca0880b0d`.
 The [readiness record](../../../workflows/main/nurec-reconstruct.readiness.json)
 binds planning checks to the promoted file and records future-run prerequisites.
@@ -226,7 +299,7 @@ outputs with NRE 26.4.149, using the vendor image digest
 | Viewer | 1,429,920-byte RRD decoded with required run entities; authenticated agent served the same recording hash |
 | Completion | Durable runtime and stage records succeeded; final report confirmed USDZ, novel views, and RRD |
 
-This evidence covers the default sample and single-GPU execution. L40S and
+This historical evidence covers its single-camera sample and single-GPU execution. L40S and
 other captures were not tested in this run, and GPU utilization history was not
 retained. The original controller endpoint was unavailable at the later status
 check; completion evidence comes from durable records and validated outputs.
@@ -275,13 +348,12 @@ the missing `sudo`, the 64 MB `/dev/shm` — see the troubleshooting table in
 automatically; the table tells you which.
 
 Native object-centric captures can store their SfM points in a LiDAR component,
-such as `virtual_lidar`, instead of a `PointCloudsComponent`. The stock native
-initializer supports one camera for those captures. When no camera selection is
-provided, Workbench uses the derived rig's reference camera and emits a warning
-listing the excluded cameras. Select a camera explicitly with `--camera-id` to
-make that scope part of the command. An explicit multi-camera selection is never
-silently narrowed. Converted captures with a verified point-cloud inventory keep
-their existing multi-camera initialization path.
+such as `virtual_lidar`, instead of a `PointCloudsComponent`. The verified export
+described above lets the default train both cameras from those points. Captures
+that do not satisfy that export contract retain the existing native
+single-camera initializer: its automatic reference-camera selection emits a
+warning naming excluded cameras, and an explicit multi-camera selection fails
+instead of silently narrowing the input.
 
 ## Dig deeper
 

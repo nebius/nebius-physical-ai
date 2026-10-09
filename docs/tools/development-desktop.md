@@ -214,7 +214,7 @@ Archived chats remain read-only until restored. A running turn must finish or
 be stopped before archiving; renaming does not start or interrupt a turn.
 
 On phones, tap the compact **Settings** control above the composer to choose
-**Model**, **Reasoning**, **Speed**, and **Mode**. It shows the current model and
+**Model**, **Reasoning**, **Speed**, **Mode**, and **Permissions**. It shows the current model and
 reasoning level, plus Plan or Fast when selected. Focusing the message field
 collapses these controls to leave room for the conversation and keyboard. On
 larger screens the controls remain visible. Choices come from the
@@ -223,6 +223,13 @@ model. Changes apply to the next turn of the same conversation and update the
 connected VS Code picker. Changes made in VS Code update the mobile controls too.
 The browser tab, favicon, chat header, and session list show when Codex is working;
 an outstanding approval or question changes the tab title to **Needs input**.
+
+Permissions apply to subsequent turns in the same chat. **Read only** and
+**Workspace** use on-request approvals with their respective sandbox policies.
+**Full permissions** allows unrestricted access without approval prompts.
+Changing model, speed, or mode preserves the existing permissions. Unknown
+settings remain unselected, and policies with custom restrictions appear as
+**Custom permissions** until you explicitly choose a preset.
 
 Loading earlier messages preserves your reading position. Live refreshes keep
 that history and additional session-list pages available. If opening a chat
@@ -257,6 +264,28 @@ every route, and rejects cross-origin mutations. The gateway protects the page,
 assets, session history, and control endpoints. Prompts render as text; returned
 HTML cannot execute scripts. No credentials are embedded in the web assets or
 URLs. Chat history stays in the existing Codex home and its encrypted backup.
+
+### Check health and maintain an existing setup
+
+`desktop status` includes authenticated loopback chat readiness, model count,
+and a read-only history check for VS Code records whose transcript files are
+missing. A running service alone does not prove the engine is connected.
+`local-status` includes the same chat checks; remote status also reports disk
+capacity and free bytes. Probe failures return a generic error without account
+credentials or transcript paths.
+
+Before cleanup, inspect disk usage and running work. Remove only known disposable
+package caches; preserve model downloads, containers, volumes, project files,
+chat databases, and backup repositories. Recover missing transcripts into a
+private staging directory, validate their session identities, then restore only
+absent files without overwriting current history.
+
+Treat an engine upgrade separately from refreshing chat assets. Check loaded
+turns, pending approvals, and the service's entire process group: background jobs
+can outlive a chat turn. Do not restart a service containing those jobs. Preserve
+their ownership separately and verify that only the idle engine remains before
+restarting. Back up the private runtime configuration, keep it outside Git, and
+verify authenticated chat, models, saved history, and the desktop afterward.
 
 Repeated setup preserves the running Codex engine; it refreshes the lightweight
 web service. Refresh browser tabs after an update. To undo IDE integration,
