@@ -7,6 +7,7 @@ ARG LEROBOT_VERSION=0.4.4
 ARG RSL_RL_VERSION=5.5.1
 ARG TORCH_VERSION=2.6.0
 ARG TORCHVISION_VERSION=0.21.0
+ARG UBUNTU_SNAPSHOT=20261002T000000Z
 
 LABEL npa.tool="genesis" \
       npa.version="${GENESIS_VERSION}"
@@ -140,6 +141,10 @@ COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_env.py /opt/npa/docker/workbench/genesis/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_functional.py /opt/npa/docker/workbench/genesis/smoke_functional.py
 COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_public_cpu.py /opt/npa/docker/workbench/genesis/smoke_public_cpu.py
+COPY --chmod=0555 docker/workbench/common/configure_ubuntu_snapshot.sh \
+    /usr/local/bin/configure-ubuntu-snapshot
+COPY --chmod=0555 docker/workbench/common/install_workflow_runtime_prereqs.sh \
+    /usr/local/bin/install-workflow-runtime-prereqs
 
 RUN python -m pip install --no-deps -e /opt/npa \
     && python - <<'PY'
@@ -157,6 +162,11 @@ PY
 RUN python /opt/npa/docker/workbench/genesis/smoke_public_cpu.py
 
 USER root
+
+# The normal NPA/SkyPilot runtime starts its controller bootstrap in this
+# non-root container. Reuse the pinned shared closure rather than a local
+# approximation so rsync, sudo, and sshd retain the verified user/key contract.
+RUN install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade gpgv openssl libssl3 \
