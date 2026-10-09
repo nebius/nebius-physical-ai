@@ -30,6 +30,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.marble.acquire` | `npa workbench marble acquire` | World API prompt or explicit upstream example | hashed SPZ/GLB world bundle | no |
 | `workbench.marble.capture` | `npa workbench marble capture` | world bundle and camera dimensions | gsplat CUDA RGB frames, camera poses and timings | no |
 | `workbench.marble.scan` | `npa workbench marble scan` | world collision mesh and scan dimensions | Warp CUDA depth arrays, point cloud and timings | no |
+| `workbench.marble.rover_collect` | `npa workbench marble rover-collect` | generated world, sensor dimensions and frequency | wheel-driven CPU simulation, CUDA RGB/depth, actions, poses and contacts | no |
 | `workbench.marble.report` | `npa workbench marble report` | verified GPU results | interactive HTML and downloadable artifacts | no |
 | `workbench.marble.pallet_preflight` | `npa workbench marble pallet-preflight` | World API token and real pallet manifest | verified train/test/cutout snapshot | no |
 | `workbench.marble.pallet_benchmark` | `npa workbench marble pallet-benchmark` | generated-world captures and real pallet snapshot | matched-update CUDA Faster R-CNN comparison on real held-out images | no |
