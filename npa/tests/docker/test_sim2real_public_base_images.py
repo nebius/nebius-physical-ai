@@ -180,7 +180,7 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
         "sim2real-eval/Dockerfile",
     ):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
-        assert "ARG UBUNTU_SNAPSHOT=20261001T000000Z" in text, relative
+        assert "ARG UBUNTU_SNAPSHOT=20261002T000000Z" in text, relative
         assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \\' in text, (
             relative
         )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -82,20 +83,56 @@ app = typer.Typer(
 )
 
 
+@dataclass(frozen=True)
+class _RerunStorage:
+    """The effective Rerun storage target and optional scoped client."""
+
+    bucket: str
+    endpoint: str
+    client: StorageClient | None = None
+
+
+def _selected_project_storage(project: str):
+    """Read one complete, isolated project storage record."""
+
+    with operation_intent(OperationIntent.OBSERVE):
+        if project not in list_projects():
+            raise ConfigError(
+                "Unknown project alias. Pass an alias saved by `npa configure`."
+            )
+        storage = resolve_project_storage(
+            project,
+            include_shared_credentials=False,
+            include_environment=False,
+        )
+    if not all(
+        (
+            storage.checkpoint_bucket,
+            storage.endpoint_url,
+            storage.aws_access_key_id,
+            storage.aws_secret_access_key,
+        )
+    ):
+        raise ConfigError(
+            "Configure a bucket, endpoint, and S3 key pair for this project."
+        )
+    return storage
+
+
 def _resolve_rerun_storage(
     *,
     project: str,
     s3_bucket: str,
     s3_endpoint: str,
-) -> tuple[str, str]:
-    """Resolve explicit, project, then environment storage for a Rerun command.
+) -> _RerunStorage:
+    """Resolve explicit coordinates and project-scoped authority for Rerun.
 
     Args:
         project: Optional project alias whose storage settings take precedence.
         s3_bucket: Explicit bucket override.
         s3_endpoint: Explicit endpoint override.
     Returns:
-        The bucket and endpoint arguments for artifact configuration resolution.
+        The effective bucket, endpoint, and selected-project client when requested.
     Raises:
         ConfigError: The selected project configuration cannot be read.
         ProjectCredentialStoreError: The selected project credential record is invalid.
@@ -103,16 +140,19 @@ def _resolve_rerun_storage(
 
     project = project.strip()
     if not project:
-        return s3_bucket, s3_endpoint
-    with operation_intent(OperationIntent.OBSERVE):
-        if project not in list_projects():
-            raise ConfigError(
-                "Unknown project alias. Pass an alias saved by `npa configure`."
-            )
-        storage = resolve_project_storage(project)
-    if s3_bucket.strip() or storage.checkpoint_bucket:
-        s3_bucket = resolve_storage_bucket(storage, override=s3_bucket)
-    return s3_bucket, s3_endpoint.strip() or storage.endpoint_url or ""
+        return _RerunStorage(bucket=s3_bucket, endpoint=s3_endpoint)
+    storage = _selected_project_storage(project)
+    endpoint = s3_endpoint.strip() or storage.endpoint_url
+    client = StorageClient.from_environment(
+        endpoint_url=endpoint,
+        aws_access_key_id=storage.aws_access_key_id,
+        aws_secret_access_key=storage.aws_secret_access_key,
+    )
+    return _RerunStorage(
+        bucket=resolve_storage_bucket(storage, override=s3_bucket),
+        endpoint=endpoint,
+        client=client,
+    )
 
 
 @app.command("run")
@@ -961,16 +1001,16 @@ def rerun_regen_command(
 ) -> None:
     """Regenerate reports/sim2real.rrd + sim2real.mcap from S3 artifacts (held-out PNG sync included)."""
     try:
-        s3_bucket, s3_endpoint = _resolve_rerun_storage(
+        storage = _resolve_rerun_storage(
             project=project,
             s3_bucket=s3_bucket,
             s3_endpoint=s3_endpoint,
         )
         config = build_artifact_config_from_env(
             run_id=run_id,
-            s3_bucket=s3_bucket,
+            s3_bucket=storage.bucket,
             s3_prefix=s3_prefix,
-            s3_endpoint=s3_endpoint,
+            s3_endpoint=storage.endpoint,
         )
     except (ConfigError, ProjectCredentialStoreError, ValueError) as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -984,6 +1024,7 @@ def rerun_regen_command(
             local_rrd_path=local_rrd_path,
             upload=upload,
             sync_inputs=not no_sync,
+            client=storage.client,
         )
     except Sim2RealRerunRegenError as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -1037,16 +1078,16 @@ def rerun_heldout_only_command(
 ) -> None:
     """Re-run Isaac held-out eval (stage 10) on cluster for an existing run (~5–15 min)."""
     try:
-        s3_bucket, s3_endpoint = _resolve_rerun_storage(
+        storage = _resolve_rerun_storage(
             project=project,
             s3_bucket=s3_bucket,
             s3_endpoint=s3_endpoint,
         )
         config = build_config_from_env(
             run_id=run_id,
-            s3_bucket=s3_bucket,
+            s3_bucket=storage.bucket,
             s3_prefix=s3_prefix,
-            s3_endpoint=s3_endpoint,
+            s3_endpoint=storage.endpoint,
         )
     except (ConfigError, ProjectCredentialStoreError, ValueError) as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -1059,6 +1100,7 @@ def rerun_heldout_only_command(
             local_dir=work_dir,
             outer_iteration=outer_iteration,
             publish=not no_publish,
+            client=storage.client,
         )
     except Sim2RealRerunRegenError as exc:
         typer.echo(f"Error: {exc}", err=True)

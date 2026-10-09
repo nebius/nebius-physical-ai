@@ -517,7 +517,7 @@ def sim2real_command(
         "-p",
         help=(
             "Configured project alias whose isolated storage record supplies the S3 "
-            "probe credentials; set --s3-bucket and --s3-endpoint separately."
+            "probe target and credentials; explicit S3 flags take precedence."
         ),
     ),
     trigger_dataset_uri: str = typer.Option(
@@ -642,18 +642,16 @@ def sim2real_command(
             f"unknown check(s): {', '.join(unknown)}. Choices: {', '.join(ALL_CHECKS)}."
         )
 
-    try:
-        config = _sim2real_preflight_config(selected, overrides)
-    except ValueError as exc:
-        # Image resolution deliberately fails closed for quarantined public
-        # releases. Surface that policy as an actionable CLI error instead of
-        # leaking an unrendered exception (and only after validating --checks).
-        raise typer.BadParameter(str(exc)) from exc
-    credentials = load_credentials()
+    credentials = None
     project_storage_failure: CheckResult | None = None
     if project.strip() and "s3" in selected:
+        credentials = load_credentials()
         try:
             credentials = _project_credentials(project.strip(), credentials)
+            if not s3_bucket.strip():
+                overrides["s3_bucket"] = credentials.s3_bucket
+            if not s3_endpoint.strip():
+                overrides["s3_endpoint"] = credentials.s3_endpoint
         except (ConfigError, ProjectCredentialStoreError):
             project_storage_failure = CheckResult(
                 name="s3",
@@ -664,6 +662,16 @@ def sim2real_command(
                     "rerun the S3 health check."
                 ),
             )
+
+    try:
+        config = _sim2real_preflight_config(selected, overrides)
+    except ValueError as exc:
+        # Image resolution deliberately fails closed for quarantined public
+        # releases. Surface that policy as an actionable CLI error instead of
+        # leaking an unrendered exception (and only after validating --checks).
+        raise typer.BadParameter(str(exc)) from exc
+    if credentials is None:
+        credentials = load_credentials()
 
     probes = DoctorProbes(
         s3_client_factory=lambda: StorageClient.from_environment(

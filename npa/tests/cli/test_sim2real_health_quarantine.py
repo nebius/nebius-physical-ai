@@ -226,6 +226,8 @@ def test_s3_uses_selected_project_storage_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_credentials = SimpleNamespace(
+        s3_bucket="s3://project-bucket",
+        s3_endpoint="https://project.example.invalid",
         s3_access_key_id="project-access",
         s3_secret_access_key="project-secret",
     )
@@ -265,6 +267,50 @@ def test_s3_uses_selected_project_storage_credentials(
     diagnostic_spies.execution.assert_not_called()
     diagnostic_spies.image_inspector.assert_not_called()
     diagnostic_spies.writes.assert_not_called()
+
+
+def test_s3_project_selection_replaces_conflicting_ambient_target(
+    diagnostic_spies: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_credentials = SimpleNamespace(
+        s3_bucket="s3://project-bucket",
+        s3_endpoint="https://project.example.invalid",
+        s3_access_key_id="project-access",
+        s3_secret_access_key="project-secret",
+    )
+    monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "ambient-bucket")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://ambient.example.invalid")
+    monkeypatch.setattr(
+        health,
+        "_project_credentials",
+        lambda _project, _credentials: project_credentials,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "s3",
+            "--project",
+            "selected-project",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    diagnostic_spies.storage_factory.assert_called_once_with(
+        endpoint_url="https://project.example.invalid",
+        aws_access_key_id="project-access",
+        aws_secret_access_key="project-secret",
+    )
+    diagnostic_spies.storage.list_checkpoints.assert_called_once_with(
+        "s3://project-bucket/"
+    )
+    assert "project-secret" not in result.output
 
 
 @pytest.mark.parametrize(

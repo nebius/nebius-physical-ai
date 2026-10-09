@@ -89,10 +89,18 @@ def test_regen_project_resolves_storage_without_execution_images(
     storage = SimpleNamespace(
         checkpoint_bucket="s3://project-bucket",
         endpoint_url="https://project.example.invalid",
+        aws_access_key_id="project-access",
+        aws_secret_access_key="project-secret",
     )
+    project_client = object()
+    client_settings: list[dict[str, str]] = []
 
-    def resolve_storage(_project: str) -> SimpleNamespace:
+    def resolve_storage(_project: str, **kwargs: object) -> SimpleNamespace:
         assert current_intent() == OperationIntent.OBSERVE
+        assert kwargs == {
+            "include_shared_credentials": False,
+            "include_environment": False,
+        }
         return storage
 
     monkeypatch.setattr(
@@ -103,9 +111,18 @@ def test_regen_project_resolves_storage_without_execution_images(
         lambda: {"operator-project": {}},
     )
     monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.StorageClient.from_environment",
+        lambda **kwargs: client_settings.append(kwargs) or project_client,
+    )
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ambient-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "ambient-secret")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://ambient.example.invalid")
+    clients: list[object] = []
+    monkeypatch.setattr(
         "npa.cli.workbench.sim2real.regen_sim2real_rrd",
-        lambda config, **_kwargs: (
+        lambda config, **kwargs: (
             seen.append(config)
+            or clients.append(kwargs["client"])
             or RegenResult(config.run_id, str(tmp_path), "review.rrd", "", 4, 1, 4)
         ),
     )
@@ -122,30 +139,34 @@ def test_regen_project_resolves_storage_without_execution_images(
     assert result.exit_code == 0, result.output
     assert seen[0].s3_bucket == "project-bucket"
     assert seen[0].s3_endpoint == "https://project.example.invalid"
+    assert clients == [project_client]
+    assert client_settings == [
+        {
+            "endpoint_url": "https://project.example.invalid",
+            "aws_access_key_id": "project-access",
+            "aws_secret_access_key": "project-secret",
+        }
+    ]
 
 
-def test_regen_project_keeps_sim2real_bucket_fallback(
+def test_regen_project_refuses_incomplete_storage_without_ambient_fallback(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _reject_execution_images(monkeypatch)
-    seen: list[Sim2RealArtifactConfig] = []
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "environment-bucket")
     monkeypatch.setattr(
         "npa.cli.workbench.sim2real.resolve_project_storage",
-        lambda _project: SimpleNamespace(checkpoint_bucket="", endpoint_url=""),
+        lambda _project, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="",
+            endpoint_url="",
+            aws_access_key_id="",
+            aws_secret_access_key="",
+        ),
     )
     monkeypatch.setattr(
         "npa.cli.workbench.sim2real.list_projects",
         lambda: {"operator-project": {}},
     )
-    monkeypatch.setattr(
-        "npa.cli.workbench.sim2real.regen_sim2real_rrd",
-        lambda config, **_kwargs: (
-            seen.append(config)
-            or RegenResult(config.run_id, str(tmp_path), "review.rrd", "", 4, 1, 4)
-        ),
-    )
-
     result = _invoke_rerun(
         "regen",
         "--project",
@@ -155,15 +176,15 @@ def test_regen_project_keeps_sim2real_bucket_fallback(
         "--no-sync",
         "--no-upload",
     )
-    assert result.exit_code == 0, result.output
-    assert seen[0].s3_bucket == "environment-bucket"
+    assert result.exit_code == 1, result.output
+    assert "Configure a bucket, endpoint, and S3 key pair" in result.output
 
 
 @pytest.mark.parametrize("error_type", [ConfigError, ProjectCredentialStoreError])
 def test_regen_project_configuration_errors_are_cli_errors(
     monkeypatch: pytest.MonkeyPatch, error_type: type[Exception]
 ) -> None:
-    def reject_storage(_project: str):
+    def reject_storage(_project: str, **_kwargs: object):
         raise error_type("invalid project storage")
 
     monkeypatch.setattr(
@@ -217,13 +238,21 @@ def test_heldout_only_uses_project_storage(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     seen: list[object] = []
+    clients: list[object] = []
+    project_client = object()
     monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example.invalid/operator")
 
-    def resolve_storage(_project: str) -> SimpleNamespace:
+    def resolve_storage(_project: str, **kwargs: object) -> SimpleNamespace:
         assert current_intent() == OperationIntent.OBSERVE
+        assert kwargs == {
+            "include_shared_credentials": False,
+            "include_environment": False,
+        }
         return SimpleNamespace(
             checkpoint_bucket="s3://project-bucket",
             endpoint_url="https://project.example.invalid",
+            aws_access_key_id="project-access",
+            aws_secret_access_key="project-secret",
         )
 
     monkeypatch.setattr(
@@ -234,9 +263,14 @@ def test_heldout_only_uses_project_storage(
         lambda: {"operator-project": {}},
     )
     monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.StorageClient.from_environment",
+        lambda **_kwargs: project_client,
+    )
+    monkeypatch.setattr(
         "npa.cli.workbench.sim2real.rerun_heldout_eval_only",
-        lambda config, **_kwargs: (
+        lambda config, **kwargs: (
             seen.append(config)
+            or clients.append(kwargs["client"])
             or {"success_rate": 1.0, "render_manifest": {}, "sim_backend": "isaac"}
         ),
     )
@@ -252,6 +286,7 @@ def test_heldout_only_uses_project_storage(
     assert result.exit_code == 0, result.output
     assert seen[0].s3_bucket == "project-bucket"
     assert seen[0].s3_endpoint == "https://project.example.invalid"
+    assert clients == [project_client]
 
 
 @pytest.mark.parametrize("command", ["regen", "heldout-only"])
