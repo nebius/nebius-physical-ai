@@ -372,7 +372,9 @@ def main() -> int:
         if args.tarball:
             report = scan_tarball(args.tarball)
         else:
-            with tempfile.TemporaryDirectory(prefix="npa-cosmos3-ray-scan-") as directory:
+            with tempfile.TemporaryDirectory(
+                prefix="npa-cosmos3-ray-scan-"
+            ) as directory:
                 saved = Path(directory) / "image.tar"
                 subprocess.run(["docker", "pull", args.image], check=True)
                 subprocess.run(
