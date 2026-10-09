@@ -1041,7 +1041,10 @@ def rerun_heldout_only_command(
     """Re-run Isaac held-out eval (stage 10) on cluster for an existing run (~5–15 min)."""
     try:
         s3_bucket, s3_endpoint = _resolve_rerun_storage(
-            project=project, s3_bucket=s3_bucket, s3_endpoint=s3_endpoint
+            project=project,
+            s3_bucket=s3_bucket,
+            s3_endpoint=s3_endpoint,
+            observe_project_storage=True,
         )
         config = build_config_from_env(
             run_id=run_id,

@@ -206,12 +206,16 @@ def test_heldout_only_uses_project_storage(
 ) -> None:
     seen: list[object] = []
     monkeypatch.setenv("NPA_SIM2REAL_REGISTRY", "registry.example.invalid/operator")
-    monkeypatch.setattr(
-        "npa.cli.workbench.sim2real.resolve_project_storage",
-        lambda _project: SimpleNamespace(
+
+    def resolve_storage(_project: str) -> SimpleNamespace:
+        assert current_intent() == OperationIntent.OBSERVE
+        return SimpleNamespace(
             checkpoint_bucket="s3://project-bucket",
             endpoint_url="https://project.example.invalid",
-        ),
+        )
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.resolve_project_storage", resolve_storage
     )
     monkeypatch.setattr(
         "npa.cli.workbench.sim2real.rerun_heldout_eval_only",
@@ -312,7 +316,7 @@ def test_serve_local_record_uses_resolved_viewer_storage(
 
 
 def test_serve_local_record_rejects_artifact_config_before_viewer_apply(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mocker: pytest.MockFixture
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mocker
 ) -> None:
     config = RerunServeConfig(
         run_id="archived-run",
