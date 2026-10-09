@@ -650,6 +650,19 @@ def test_private_receipt_transport_failure_prevents_success(
         Q._retain([], private_root, export[1], "789-1")
 
 
+def test_receipt_digest_supports_python310(private_root, monkeypatch):
+    monkeypatch.delattr(Q.hashlib, "file_digest", raising=False)
+    summary = b'{"status":"passed"}\n'
+    Q._write(private_root / "summary.json", summary)
+
+    path, size, digest = Q._bundle(private_root)
+
+    assert size == path.stat().st_size
+    assert digest == Q._sha(path.read_bytes())
+    with tarfile.open(path) as archive:
+        assert archive.extractfile("summary.json").read() == summary
+
+
 def test_private_failure_receipt_distinguishes_capacity_and_hides_exception_text(
     export, private_root, monkeypatch, capsys
 ):
