@@ -108,7 +108,10 @@ def _act_round_trip(root: Path, dataset) -> None:
 
     torch.manual_seed(0)
     configuration = _act_configuration()
-    policy = make_policy(configuration)
+    # LeRobot 0.4.4 derives the actual policy feature contract from dataset
+    # metadata. Supplying the real converted dataset keeps this smoke on the
+    # public CPU path and prevents a factory refusal before the ACT round trip.
+    policy = make_policy(configuration, ds_meta=dataset.meta)
     assert isinstance(policy, ACTPolicy)
     policy = policy.eval()
     preprocessor, postprocessor = make_pre_post_processors(

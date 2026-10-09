@@ -115,4 +115,4 @@ def test_stock_recipe_enforces_reduced_closure_in_the_install_layer():
         "from lerobot.policies.factory import make_policy, make_pre_post_processors"
         in smoke
     )
-    assert "policy = make_policy(configuration)" in smoke
+    assert "policy = make_policy(configuration, ds_meta=dataset.meta)" in smoke
