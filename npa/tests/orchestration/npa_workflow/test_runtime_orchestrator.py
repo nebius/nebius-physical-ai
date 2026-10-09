@@ -4053,7 +4053,9 @@ def test_explicit_terminal_recovery_rejects_unverified_replacement(
             "found",
             job_id=("1" if job_id == "1" else str(evidence["job_id"])),
             status=("SUCCEEDED" if job_id == "1" else str(evidence["status"])),
-            workload_observable=(True if job_id == "1" else bool(evidence["observable"])),
+            workload_observable=(
+                True if job_id == "1" else bool(evidence["observable"])
+            ),
         ),
     )
 
