@@ -10,7 +10,7 @@ from typing import Optional
 
 import typer
 
-from npa.clients.config import ConfigError, resolve_project_storage
+from npa.clients.config import ConfigError, list_projects, resolve_project_storage
 from npa.clients.credentials import load_credentials
 from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.clients.storage import StorageClient
@@ -101,9 +101,14 @@ def _resolve_rerun_storage(
         ProjectCredentialStoreError: The selected project credential record is invalid.
     """
 
+    project = project.strip()
     if not project:
         return s3_bucket, s3_endpoint
     with operation_intent(OperationIntent.OBSERVE):
+        if project not in list_projects():
+            raise ConfigError(
+                "Unknown project alias. Pass an alias saved by `npa configure`."
+            )
         storage = resolve_project_storage(project)
     if s3_bucket.strip() or storage.checkpoint_bucket:
         s3_bucket = resolve_storage_bucket(storage, override=s3_bucket)

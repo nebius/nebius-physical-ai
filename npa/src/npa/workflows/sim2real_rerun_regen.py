@@ -846,9 +846,9 @@ def _regen_result_from_viz(
     mcap_result: dict[str, Any] | None = None,
     mcap_upload_uri: str = "",
 ) -> RegenResult:
-    if result.heldout_frame_count <= 0:
+    if not result.has_factual_observation_evidence:
         raise Sim2RealRerunRegenError(
-            "regenerated .rrd has heldout_frame_count=0; sync eval/heldout/renders or rerun held-out eval"
+            "regenerated .rrd has no factual rollout observations, held-out cameras, or held-out scores"
         )
     mcap = mcap_result or {}
     return RegenResult(

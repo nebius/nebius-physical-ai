@@ -689,8 +689,9 @@ def sim2real_command(
         else []
     )
     if project_storage_failure is not None:
-        results.append(project_storage_failure)
-        results.sort(key=lambda result: ALL_CHECKS.index(result.name))
+        selected_check_order = [check for check in ALL_CHECKS if check in selected]
+        s3_position = selected_check_order.index("s3")
+        results.insert(s3_position, project_storage_failure)
 
     if output_json:
         payload = {

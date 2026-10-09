@@ -99,6 +99,10 @@ def test_regen_project_resolves_storage_without_execution_images(
         "npa.cli.workbench.sim2real.resolve_project_storage", resolve_storage
     )
     monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.list_projects",
+        lambda: {"operator-project": {}},
+    )
+    monkeypatch.setattr(
         "npa.cli.workbench.sim2real.regen_sim2real_rrd",
         lambda config, **_kwargs: (
             seen.append(config)
@@ -131,6 +135,10 @@ def test_regen_project_keeps_sim2real_bucket_fallback(
         lambda _project: SimpleNamespace(checkpoint_bucket="", endpoint_url=""),
     )
     monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.list_projects",
+        lambda: {"operator-project": {}},
+    )
+    monkeypatch.setattr(
         "npa.cli.workbench.sim2real.regen_sim2real_rrd",
         lambda config, **_kwargs: (
             seen.append(config)
@@ -160,6 +168,10 @@ def test_regen_project_configuration_errors_are_cli_errors(
 
     monkeypatch.setattr(
         "npa.cli.workbench.sim2real.resolve_project_storage", reject_storage
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.list_projects",
+        lambda: {"operator-project": {}},
     )
     result = _invoke_rerun("regen", "--project", "operator-project")
     assert result.exit_code == 1
@@ -218,6 +230,10 @@ def test_heldout_only_uses_project_storage(
         "npa.cli.workbench.sim2real.resolve_project_storage", resolve_storage
     )
     monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.list_projects",
+        lambda: {"operator-project": {}},
+    )
+    monkeypatch.setattr(
         "npa.cli.workbench.sim2real.rerun_heldout_eval_only",
         lambda config, **_kwargs: (
             seen.append(config)
@@ -236,6 +252,42 @@ def test_heldout_only_uses_project_storage(
     assert result.exit_code == 0, result.output
     assert seen[0].s3_bucket == "project-bucket"
     assert seen[0].s3_endpoint == "https://project.example.invalid"
+
+
+@pytest.mark.parametrize("command", ["regen", "heldout-only"])
+def test_rerun_unknown_project_refuses_before_storage_or_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    calls: list[str] = []
+
+    def reject_storage(_project: str) -> None:
+        calls.append("storage")
+        raise AssertionError("storage resolution must not run")
+
+    def reject_regen(*_args: object, **_kwargs: object) -> None:
+        calls.append("regen")
+        raise AssertionError("regen must not run")
+
+    def reject_heldout(*_args: object, **_kwargs: object) -> None:
+        calls.append("heldout")
+        raise AssertionError("heldout evaluation must not run")
+
+    monkeypatch.setattr("npa.cli.workbench.sim2real.list_projects", lambda: {})
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.resolve_project_storage", reject_storage
+    )
+    monkeypatch.setattr("npa.cli.workbench.sim2real.regen_sim2real_rrd", reject_regen)
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.rerun_heldout_eval_only", reject_heldout
+    )
+
+    result = _invoke_rerun(command, "--project", "unknown-project")
+
+    assert result.exit_code == 1
+    assert "Unknown project alias" in result.output
+    assert "Traceback" not in result.output
+    assert calls == []
 
 
 def test_heldout_only_does_not_reclassify_execution_value_errors(

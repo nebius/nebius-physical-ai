@@ -9,6 +9,7 @@ from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real.utils import _artifact_root_uri
+from npa.workflows.sim2real_loop import generate_action_rollouts
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
     _ensure_policy_access_metadata,
@@ -64,7 +65,7 @@ def test_run_prefix_uri_delegates_to_the_shared_artifact_root(
     assert run_prefix_uri(config) == f"{root}/"
 
 
-def test_regen_sim2real_rrd_requires_heldout_frames(
+def test_regen_sim2real_rrd_requires_factual_observation_evidence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     local_dir = tmp_path / "run"
@@ -84,13 +85,15 @@ def test_regen_sim2real_rrd_requires_heldout_frames(
         heldout_frame_count = 0
         rollout_count = 0
         frame_count = 0
+        heldout_env_count = 0
+        has_factual_observation_evidence = False
 
     monkeypatch.setattr(
         "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
         lambda **_kwargs: FakeResult(),
     )
 
-    with pytest.raises(Sim2RealRerunRegenError, match="heldout_frame_count=0"):
+    with pytest.raises(Sim2RealRerunRegenError, match="no factual rollout"):
         regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
 
 
@@ -115,6 +118,8 @@ def test_regen_sim2real_rrd_success(
         heldout_frame_count = 4
         rollout_count = 0
         frame_count = 0
+        heldout_env_count = 0
+        has_factual_observation_evidence = True
 
     monkeypatch.setattr(
         "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
@@ -126,6 +131,56 @@ def test_regen_sim2real_rrd_success(
     )
     assert result.heldout_frame_count == 4
     assert result.local_rrd_path.endswith("sim2real.rrd")
+
+
+def test_regen_accepts_ppm_rollouts_and_heldout_scores_without_camera_renders(
+    tmp_path: Path,
+) -> None:
+    local_dir = tmp_path / "run"
+    actions_dir = local_dir / "actions" / "train" / "outer-01" / "iter-01"
+    generate_action_rollouts(
+        actions_dir,
+        count=1,
+        steps_per_rollout=2,
+        seed=7,
+        quality=0.5,
+    )
+    evidence_path = local_dir / "inner_loop" / "outer-01" / "evidence.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema": "npa.sim2real.inner_loop_evidence.v1",
+                "iterations": [{"iteration": 1, "actions_dir": str(actions_dir)}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = local_dir / "eval" / "heldout" / "report.json"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text(
+        json.dumps(
+            {
+                "success_rate": 2 / 3,
+                "per_env": [
+                    {"env_id": "heldout-0000", "score": 0.7, "success": True},
+                    {"env_id": "heldout-0001", "score": 0.6, "success": True},
+                    {"env_id": "heldout-0002", "score": 0.5, "success": False},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = regen_sim2real_rrd(
+        _config(), local_dir=local_dir, sync_inputs=False, upload=False
+    )
+
+    assert result.rollout_count == 1
+    assert result.frame_count == 2
+    assert result.heldout_frame_count == 0
+    assert Path(result.local_rrd_path).is_file()
+    assert Path(result.local_rrd_path).stat().st_size > 0
 
 
 def _regen_fixture(tmp_path: Path) -> Path:
@@ -147,6 +202,8 @@ def _patch_rrd_emit(monkeypatch: pytest.MonkeyPatch, local_dir: Path) -> None:
         heldout_frame_count = 4
         rollout_count = 1
         frame_count = 4
+        heldout_env_count = 0
+        has_factual_observation_evidence = True
 
     monkeypatch.setattr(
         "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",

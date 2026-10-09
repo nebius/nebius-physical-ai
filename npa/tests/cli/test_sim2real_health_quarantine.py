@@ -327,6 +327,44 @@ def test_selected_project_storage_failure_is_structured_health_result(
     diagnostic_spies.writes.assert_not_called()
 
 
+def test_selected_project_storage_failure_keeps_coherence_result_order(
+    diagnostic_spies: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        health,
+        "_project_credentials",
+        Mock(side_effect=ConfigError("unknown project alias")),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "coherence,s3",
+            "--project",
+            "selected-project",
+            "--s3-bucket",
+            "example-bucket",
+            "--s3-endpoint",
+            "https://explicit.example.invalid",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert [(row["name"], row["status"]) for row in payload["checks"]] == [
+        ("compositional-workflow-coherence", "PASS"),
+        ("s3", "FAIL"),
+    ]
+    assert "Traceback" not in result.output
+    diagnostic_spies.storage_factory.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "selected",
     [*IMAGE_DEPENDENT_CHECKS, "all", f"{IMAGE_DEPENDENT_CHECKS[0]},coherence"],
