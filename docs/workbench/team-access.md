@@ -106,6 +106,14 @@ workflow inputs but does not grant cloud IAM permissions. Optional
 `HUGGING_FACE_HUB_TOKEN`, `NGC_API_KEY`, or `NVIDIA_API_KEY`. Secrets are assigned
 explicitly and never inherited from the operator's environment.
 
+Images without the NPA CLI also need an allocation's optional `source_s3_uri`:
+an unpacked NPA package staged beneath that person's storage prefix or an explicitly
+shared read-only input prefix. The worker installs it using its own storage
+credentials. The default is empty; use an image containing NPA in that case.
+The service never inherits a server-wide runtime source setting. Updating this
+allocation setting applies to new runs. Accessing or resuming an older run requires
+restoring its original allocation, including the source selection.
+
 ## Provision and deploy
 
 Perform the normal administrator credential preflight. For a personal Nebius

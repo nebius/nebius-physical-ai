@@ -203,6 +203,7 @@ class Allocation(Contract):
     storage: StorageGrant
     shared_inputs: tuple[str, ...] = ()
     workload_secrets_file: AbsolutePath | None = None
+    source_s3_uri: str = ""
 
     @model_validator(mode="after")
     def validate_total(self):
@@ -217,6 +218,15 @@ class Allocation(Contract):
         """
         if sum(self.clusters.values()) > self.gpu_limit:
             raise ValueError("cluster allocations exceed the individual's GPU limit")
+        if self.source_s3_uri:
+            from .storage import authorize_uri
+
+            try:
+                authorize_uri(self.source_s3_uri, self.storage, self.shared_inputs)
+            except TeamError as exc:
+                raise ValueError(
+                    "runtime source must use an allocated input scope"
+                ) from exc
         return self
 
 

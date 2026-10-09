@@ -190,6 +190,7 @@ def execute_run(config, binding, record, backend, check, *, resume=False, storag
     render = SkypilotRenderOptions(
         aws_endpoint_url=binding.allocation.storage.endpoint,
         materialize_registry_secrets=False,
+        source_s3_uri=binding.allocation.source_s3_uri,
     )
     ledger = RuntimeLedger(
         store,

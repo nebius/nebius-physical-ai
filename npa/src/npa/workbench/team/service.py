@@ -281,6 +281,11 @@ def binding_snapshot(binding):
         "connection": binding.connection.model_dump(mode="json"),
         "storage": storage.model_dump(mode="json"),
         "shared_inputs": list(binding.allocation.shared_inputs),
+        **(
+            {"source_s3_uri": binding.allocation.source_s3_uri}
+            if binding.allocation.source_s3_uri
+            else {}
+        ),
     }
 
 

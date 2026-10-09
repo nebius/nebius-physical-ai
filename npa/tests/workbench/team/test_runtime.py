@@ -1,6 +1,7 @@
 """Exercise the real NPA renderer and runtime through the private team scheduler adapter."""
 
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -9,7 +10,7 @@ import yaml
 from npa.workbench.team.engine import execute_run
 from npa.workbench.team.errors import BackendError, ConflictError
 from npa.workbench.team.ledger import TeamLedger
-from npa.workbench.team.models import SubmitRequest
+from npa.workbench.team.models import Allocation, SubmitRequest
 from npa.workbench.team.service import binding_snapshot
 from npa.workbench.team.sky_backend import SkyBackend
 from npa.workbench.team.workflow_policy import worker_context
@@ -99,6 +100,38 @@ def test_canonical_workflow_runtime_binds_every_launch(
     assert resumed.status == "succeeded"
     assert len(scheduler.payloads) == 1
     assert any(key.endswith("workflow.yaml") for key in objects)
+
+
+@pytest.mark.parametrize("source", ["", "s3://team-test-alice/personal/runtime/npa"])
+def test_runtime_source_is_scoped_and_never_inherited(
+    config, actor, binding, workflow, monkeypatch, source
+):
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://server-private/runtime")
+    allocation = Allocation.model_validate(
+        {**binding.allocation.model_dump(), "source_s3_uri": source}
+    )
+    binding = replace(binding, allocation=allocation)
+    record, backend, scheduler = _backend(config, actor, binding, workflow)
+    storage = SimpleNamespace(client=SimpleNamespace(put_object=lambda **kwargs: None))
+    report = execute_run(
+        config, binding, record, backend, lambda: None, storage=storage
+    )
+    assert report.status == "succeeded", report.error
+    task = next(item for item in scheduler.payloads[0] if "resources" in item)
+    assert task["envs"].get("NPA_SRC_S3_URI", "") == source
+    assert "server-private" not in json.dumps(scheduler.payloads)
+    assert json.loads(record["binding"]).get("source_s3_uri", "") == source
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["s3://team-test-bob/personal/runtime", "s3://team-test-alice/personal/../runtime"],
+)
+def test_runtime_source_cannot_escape_personal_scope(binding, source):
+    values = binding.allocation.model_dump()
+    values["source_s3_uri"] = source
+    with pytest.raises(ValueError, match="allocated input scope"):
+        Allocation.model_validate(values)
 
 
 def test_lost_launch_ack_never_blindly_retries(
