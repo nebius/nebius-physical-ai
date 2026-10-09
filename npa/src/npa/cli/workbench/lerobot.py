@@ -2368,10 +2368,13 @@ def deploy(
 
     container_image = ""
     if not destroy and not skip_app and runtime_uses_container(runtime):
-        container_image = image.strip() or container_image_for_tool(
-            "lerobot",
-            tag=resolved_lerobot_version,
-        )
+        try:
+            container_image = image.strip() or container_image_for_tool(
+                "lerobot",
+                tag=resolved_lerobot_version,
+            )
+        except ValueError as exc:
+            _fail(str(exc))
     cloud_init_workbench_type = (
         "lerobot-container" if runtime_uses_container(runtime) else "lerobot"
     )

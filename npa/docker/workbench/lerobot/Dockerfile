@@ -97,6 +97,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
     && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \
          /opt/lerobot/venv/bin/pip install \
            "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]==${LEROBOT_VERSION}" \
+           "scikit-image==0.26.0" \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
@@ -104,6 +105,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            "uvicorn[standard]" \
          && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
            --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
+           --capability lerobot \
            > /opt/lerobot/dependency-source-correction.json; \
        elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then \
          /opt/lerobot/venv/bin/python /opt/lerobot/prepare-secure-wheel.py \
@@ -122,6 +124,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
          && rm -rf /opt/lerobot/secure-wheel \
          && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
            --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
+           --capability lerobot \
            > /opt/lerobot/dependency-source-correction.json; \
        else \
          echo 'Unsupported LeRobot package version' >&2; exit 1; \

@@ -7,10 +7,16 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
-from npa.workflows.sim2real.models import Sim2RealLoopConfig, Sim2RealLoopError
+from npa.workflows.sim2real.models import Sim2RealLoopError
+
+
+class _ArtifactCoordinates(Protocol):
+    s3_bucket: str
+    s3_prefix: str
+    run_id: str
 
 
 def _split_csv(value: Any) -> list[str]:
@@ -30,7 +36,7 @@ def _serviceaccount_namespace() -> str:
     return ""
 
 
-def _artifact_root_uri(config: Sim2RealLoopConfig) -> str:
+def _artifact_root_uri(config: _ArtifactCoordinates) -> str:
     parts = [part for part in (config.s3_prefix.strip("/"), config.run_id) if part]
     return f"s3://{config.s3_bucket}/{'/'.join(parts)}"
 

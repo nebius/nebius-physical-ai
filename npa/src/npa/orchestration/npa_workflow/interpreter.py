@@ -17,6 +17,7 @@ from npa.orchestration.npa_workflow.decisions import (
     refresh_context_decision,
 )
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.image_inputs import validate_immutable_image_inputs
 from npa.orchestration.npa_workflow.predicates import evaluate_predicate
 from npa.orchestration.npa_workflow.run_state import (
     RunManifest,
@@ -126,6 +127,7 @@ def build_plan(
 ) -> ExecutionPlan:
     assume = _resolve_assume(spec, assume_decision)
     ctx = _make_context(spec, run_id=run_id)
+    validate_immutable_image_inputs(ctx.config)
     plan = ExecutionPlan(
         workflow=spec.name,
         api_version=spec.api_version,
@@ -225,6 +227,7 @@ def run_workflow(
     """
     assume = _resolve_assume(spec, assume_decision)
     ctx = _make_context(spec, run_id=run_id)
+    validate_immutable_image_inputs(ctx.config)
     store = state_store
     if store is None and persist_state:
         store = store_for_config(ctx.config, run_id=run_id)

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
 
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 
 
 Kubectl = Callable[..., Any]
@@ -45,7 +46,8 @@ class CandidatePlan:
 
 
 def gpu_fallback_report_contract(
-    config: Sim2RealLoopConfig, components: list[dict[str, Any]]
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
+    components: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Return the public fail-closed placement contract and component evidence."""
 

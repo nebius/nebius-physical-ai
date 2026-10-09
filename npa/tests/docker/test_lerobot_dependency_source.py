@@ -36,7 +36,7 @@ def _installation(text):
         'elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then', 1
     )
     default_branch = default_branch.split("else", 1)[0]
-    assert optional_branch.count('"scikit-image==0.26.0"') == 0
+    assert optional_branch.count('"scikit-image==0.26.0"') == 1
     assert default_branch.count('"scikit-image==0.26.0"') == 1
     assert "pip uninstall -y wandb" not in optional_branch
     assert "pip uninstall -y wandb" not in default_branch
@@ -50,6 +50,8 @@ def _installation(text):
         "--site-packages /opt/lerobot/venv/lib/python3.12/site-packages"
         in optional_branch
     )
+    assert "--capability lerobot" in optional_branch
+    assert "--capability lerobot" in default_branch
     assert "dependency-source-correction.json" in optional_branch
     assert "dependency-source-correction.json" in default_branch
     return body

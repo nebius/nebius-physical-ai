@@ -261,10 +261,18 @@ failures. The shared Franka Kit lifecycle ensures shutdown cannot hide them.
 prepares the complete public warehouse, captures it, and validates the uploaded
 data through the standard workflow runtime:
 
+The GPU profile requires an operator-supplied, registry-qualified immutable
+`isaac_image`; the public Isaac release remains quarantined. Set
+`NPA_ISAAC_IMAGE` to an independently qualified immutable image for native
+warehouse collection and RTX capture, and use it when planning and submitting:
+
 ```bash
 npa workbench workflow validate-spec workflows/testing/multicamera-rgbd-warehouse.yaml
+npa workbench workflow plan-spec workflows/testing/multicamera-rgbd-warehouse.yaml \
+  --check-render --var "isaac_image=$NPA_ISAAC_IMAGE"
 npa workbench workflow submit workflows/testing/multicamera-rgbd-warehouse.yaml \
   --run-id '<unique-run-id>' --stage-src --var 'bucket=<your-bucket>' \
+  --var "isaac_image=$NPA_ISAAC_IMAGE" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
