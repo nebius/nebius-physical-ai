@@ -550,13 +550,13 @@
     },
     {
       "name": "hydra-core",
-      "version": "1.3.4",
-      "filename": "hydra_core-1.3.4-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/ed/cd/a568610bafe991fdd3f628fb606316b3b2be52ded019284e895d9beb3a1e/hydra_core-1.3.4-py3-none-any.whl",
-      "sha256": "e58683692904a09f1fdfffa1a9b86bfd94e215b59f1ee17e7cd7d92738090d33",
-      "size_bytes": 155478,
+      "version": "1.3.7",
+      "filename": "hydra_core-1.3.7-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/25/0c/21890c10cc94da917c8e47efc1c55cd3e56a1d25ab5947bdd35abaf9fdc1/hydra_core-1.3.7-py3-none-any.whl",
+      "sha256": "83606c4a05c770f1e026e0489875f28989829d151799eabd8cfa8cbe82164515",
+      "size_bytes": 168790,
       "license_expression": "MIT",
-      "metadata_source": "https://pypi.org/pypi/hydra-core/1.3.4/json"
+      "metadata_source": "https://pypi.org/pypi/hydra-core/1.3.7/json"
     },
     {
       "name": "idna",
@@ -1460,13 +1460,13 @@
     },
     {
       "name": "urllib3",
-      "version": "2.7.0",
-      "filename": "urllib3-2.7.0-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl",
-      "sha256": "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897",
-      "size_bytes": 131087,
+      "version": "2.8.0",
+      "filename": "urllib3-2.8.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+      "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+      "size_bytes": 135717,
       "license_expression": "MIT",
-      "metadata_source": "https://pypi.org/pypi/urllib3/2.7.0/json"
+      "metadata_source": "https://pypi.org/pypi/urllib3/2.8.0/json"
     },
     {
       "name": "wandb",
@@ -1480,13 +1480,13 @@
     },
     {
       "name": "werkzeug",
-      "version": "3.1.8",
-      "filename": "werkzeug-3.1.8-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/93/8c/2e650f2afeb7ee576912636c23ddb621c91ac6a98e66dc8d29c3c69446e1/werkzeug-3.1.8-py3-none-any.whl",
-      "sha256": "63a77fb8892bf28ebc3178683445222aa500e48ebad5ec77b0ad80f8726b1f50",
-      "size_bytes": 226459,
+      "version": "3.1.9",
+      "filename": "werkzeug-3.1.9-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/a1/38/df03f564f43cec2684823f3cccae1a652ee7face1cbaa76fb223096e64d7/werkzeug-3.1.9-py3-none-any.whl",
+      "sha256": "6392e50c78460ba618e5b21f08a71f59c99ce99cdc6cf6e3dd7e6ccca8754fab",
+      "size_bytes": 228700,
       "license_expression": "BSD-3-Clause",
-      "metadata_source": "https://pypi.org/pypi/werkzeug/3.1.8/json"
+      "metadata_source": "https://pypi.org/pypi/werkzeug/3.1.9/json"
     },
     {
       "name": "wheel",
