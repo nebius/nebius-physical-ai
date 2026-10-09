@@ -217,15 +217,14 @@ def test_fastwam_image_removes_the_known_inert_scikit_image_recipe_in_its_instal
     assert install_layer.index("python -m pip check") > install_layer.index(correction)
 
 
-def test_fastwam_image_keeps_the_libero_extra_dependency_consistent() -> None:
-    """Do not remove the transitive dependency after validating the image."""
+def test_fastwam_image_retains_wandb_as_a_required_transitive_dependency() -> None:
+    """Keep the dependency available through the final image validation."""
 
     dockerfile = FASTWAM_DOCKERFILE.read_text()
     start = dockerfile.index("RUN python3.12 -m venv /opt/lerobot/venv")
     end = dockerfile.index("\n\n", start)
     install_layer = dockerfile[start:end]
 
-    assert "lerobot[training,evaluation,pusht,libero," in install_layer
     assert "pip uninstall -y wandb" not in install_layer
     assert install_layer.index("python -m pip check") > install_layer.index(
         "lerobot[training,evaluation,pusht,libero,"
