@@ -287,8 +287,12 @@ def _pod_validations():
 
 
 def _whole_gpu_validation(field):
+    # ResourceRequirements contains Quantity-valued maps. Some Kubernetes
+    # OpenAPI versions omit these fields from CEL's static type description;
+    # dynamic access preserves the runtime validation of every resource key.
+    requests = "dyn(c.resources).requests"
     return {
-        "expression": f"!has(object.spec.{field}) || object.spec.{field}.all(c, !has(c.resources) || !has(c.resources.requests) || c.resources.requests.all(k, !k.startsWith('nvidia.com/') || k == 'nvidia.com/gpu'))",
+        "expression": f"!has(object.spec.{field}) || object.spec.{field}.all(c, !has(c.resources) || !has({requests}) || {requests}.all(k, !k.startsWith('nvidia.com/') || k == 'nvidia.com/gpu'))",
         "message": "team quotas currently support whole NVIDIA GPUs only",
     }
 

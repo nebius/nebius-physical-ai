@@ -98,6 +98,18 @@ def test_real_quota_rejects_personal_overallocation(live_allocations):
     )
 
 
+@pytest.mark.parametrize("field", ["containers", "initContainers"])
+def test_real_admission_rejects_unaccounted_gpu_resources(live_allocations, field):
+    binding = live_allocations[0]
+    pod = _pod(binding)
+    if field == "initContainers":
+        pod["spec"][field] = [dict(pod["spec"]["containers"][0], name="initialize")]
+    pod["spec"][field][0]["resources"] = {"limits": {"nvidia.com/gpu.shared": 1}}
+    result = _admit(binding, pod)
+    assert result.returncode != 0
+    assert "team quotas currently support whole NVIDIA GPUs only" in result.stderr
+
+
 def test_real_storage_principals_cannot_read_or_write_each_others_objects(
     live_allocations,
 ):

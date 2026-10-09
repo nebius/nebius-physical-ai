@@ -115,10 +115,53 @@ def test_enrollment_requires_current_quota_and_admission(binding, monkeypatch):
 
     monkeypatch.setattr(enrollment, "kubectl", exact)
     enrollment.verify_enrollment(binding)
+    admission["status"].pop("typeChecking")
+    probes = []
+    monkeypatch.setattr(
+        enrollment,
+        "_check_admission_requests",
+        lambda selected: probes.append(selected),
+    )
+    enrollment.verify_enrollment(binding)
+    assert probes == [binding]
     quota = next(item for item in desired if item["kind"] == "ResourceQuota")
     quota["spec"]["hard"]["requests.nvidia.com/gpu"] = "99"
     with pytest.raises(BackendError):
         enrollment.verify_enrollment(binding)
+
+
+@pytest.mark.parametrize("denial", ["", "Forbidden: caller cannot create pods"])
+def test_admission_proof_rejects_allowed_or_unrelated_denials(
+    binding, monkeypatch, denial
+):
+    calls = []
+
+    def transport(selected, *arguments, **kwargs):
+        assert arguments[:2] == ("create", "--dry-run=server")
+        pod = json.loads(kwargs["input"])
+        calls.append(pod)
+        return SimpleNamespace(
+            returncode=int(len(calls) > 1 and bool(denial)),
+            stdout="",
+            stderr=denial if len(calls) > 1 else "",
+        )
+
+    monkeypatch.setattr(enrollment, "kubectl", transport)
+    with pytest.raises(BackendError, match="denial could not be verified"):
+        enrollment._check_admission_requests(binding)
+    assert len(calls) == 2
+
+
+def test_admission_proof_requires_positive_admission(binding, monkeypatch):
+    monkeypatch.setattr(
+        enrollment,
+        "kubectl",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1, stdout="", stderr="invalid"
+        ),
+    )
+    with pytest.raises(BackendError, match="valid worker dry run"):
+        enrollment._check_admission_requests(binding)
 
 
 def test_operator_can_cancel_after_offboarding(config, actor, binding, workflow):

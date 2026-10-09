@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import copy
+import uuid
 
 import yaml
 
@@ -89,6 +91,7 @@ def verify_enrollment(binding):
     Raises:
         BackendError: Any required resource or explicit denial is missing.
     """
+    probe_admission = False
     for desired in admission_manifests() + execution_manifests(binding):
         metadata = desired["metadata"]
         arguments = ["get", desired["kind"], metadata["name"], "-o", "json"]
@@ -101,8 +104,10 @@ def verify_enrollment(binding):
         if not _contains(actual, desired):
             raise BackendError("team cluster enrollment differs from current policy")
         if desired["kind"] == "ValidatingAdmissionPolicy":
-            _check_admission(actual)
+            probe_admission = _check_admission(actual)
     _check_denials(binding)
+    if probe_admission:
+        _check_admission_requests(binding)
 
 
 def _contains(actual, desired):
@@ -127,10 +132,65 @@ def _check_admission(actual):
     status = actual.get("status", {})
     if status.get("observedGeneration") != actual["metadata"].get("generation"):
         raise BackendError("team admission policy has not been checked by Kubernetes")
-    if "typeChecking" not in status or status["typeChecking"].get("expressionWarnings"):
+    if status.get("typeChecking", {}).get("expressionWarnings"):
         raise BackendError(
             "team admission policy did not pass Kubernetes expression checks"
         )
+    # Some managed API responses omit an empty typeChecking object. Current
+    # generation alone is insufficient: require positive and negative admission
+    # requests before treating this response as verified.
+    return "typeChecking" not in status
+
+
+def _check_admission_requests(binding):
+    pod = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": "npa-team-check-" + uuid.uuid4().hex[:12],
+            "namespace": binding.namespace,
+        },
+        "spec": {
+            "serviceAccountName": WORKER_ACCOUNT,
+            "automountServiceAccountToken": False,
+            "restartPolicy": "Never",
+            "containers": [
+                {
+                    "name": "check",
+                    "image": "registry.k8s.io/pause:3.10",
+                    "resources": {"limits": {"nvidia.com/gpu": 0}},
+                }
+            ],
+        },
+    }
+    if _admission_request(binding, pod).returncode:
+        raise BackendError("team admission rejected a valid worker dry run")
+    identity = copy.deepcopy(pod)
+    identity["spec"]["serviceAccountName"] = "default"
+    token = copy.deepcopy(pod)
+    token["spec"]["automountServiceAccountToken"] = True
+    shared_gpu = copy.deepcopy(pod)
+    shared_gpu["spec"]["containers"][0]["resources"] = {
+        "limits": {"nvidia.com/gpu.shared": 1}
+    }
+    for invalid, message in (
+        (identity, "team workload identity is fixed"),
+        (token, "worker Kubernetes tokens are disabled"),
+        (shared_gpu, "team quotas currently support whole NVIDIA GPUs only"),
+    ):
+        result = _admission_request(binding, invalid)
+        if (
+            not result.returncode
+            or "npa-team-pods" not in result.stderr
+            or message not in result.stderr
+        ):
+            raise BackendError("team admission denial could not be verified")
+
+
+def _admission_request(binding, pod):
+    return kubectl(
+        binding, "create", "--dry-run=server", "-f", "-", input=json.dumps(pod)
+    )
 
 
 def _check_denials(binding):
