@@ -5,6 +5,19 @@ on the Isaac Lab image and ships no Lyra model, source checkout, input video,
 inference output or populated runtime cache. Source and model delivery are
 separate from permission to redistribute the image.
 
+The `2.0-rtfetch2` recipe derives from the immutable `2.0-rtfetch1` digest
+`sha256:cd76116ffac0f930bc8a4645ad92ea0848662426f3fe34c498050ae5bc5afc4d`.
+That parent supplies the pinned CUDA, Ubuntu and hash-locked CPU Python closure.
+The repair adds Ubuntu's `wget`, `netcat-openbsd`, `fuse`, `pciutils` and their
+dependencies from exact URLs and SHA-256 hashes in `bootstrap-packages.lock`,
+verified against Ubuntu-signed Noble package indexes. Installed package
+copyright/license notices remain under `/usr/share/doc`; corresponding source
+packages are available from the same Ubuntu archive. Required SkyPilot startup
+tools no longer depend on the Ubuntu snapshot service. SkyPilot may still try
+optional APT updates; Ubuntu's mutually exclusive FUSE 3 package is not baked.
+NPA source is replaced from the new build revision. Parent layers retain the
+earlier public NPA revision; no runtime-fetched artifacts enter either image.
+
 | Boundary | Delivery and terms |
 | --- | --- |
 | Source | NPA is Apache-2.0. Lyra source is fetched from `nv-tlabs/lyra` at `9fffc9adc37004091ecf26ef03abfb3abdf4d59a`; its Apache-2.0 license stays in the runtime checkout. The pinned DA3 submodule is `1ed6cb8eee386a3c94077d907b09c7aa1c312cd8`. |

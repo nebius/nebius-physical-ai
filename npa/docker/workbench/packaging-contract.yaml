@@ -802,8 +802,12 @@ images:
       model cache. Lyra and DA3 source, PyTorch cu128, gsplat and the exact Lyra
       reconstruction checkpoint are fetched into a private per-job temporary
       environment. The model remains subject to NVIDIA's Internal Scientific
-      Research and Development Model License. Exact release bytes passed the
-      publication gates and native B200 reconstruction; RTX is not qualified.
+      Research and Development Model License. The rtfetch2 recipe inherits the
+      immutable rtfetch1 CUDA/Ubuntu/CPU closure and adds hash-pinned Ubuntu
+      wget, netcat, FUSE and PCI packages so required SkyPilot startup tools
+      are available even when runtime APT mirrors are unavailable.
+      The rtfetch1 release passed native B200 reconstruction; rtfetch2 requires
+      independent exact-digest GPU qualification before release promotion.
   cosmos3:
     dockerfile: cosmos3/Dockerfile
     tier: job
