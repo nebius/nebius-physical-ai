@@ -960,6 +960,18 @@ def validate_immutable_image_override_bindings(
     A global or tool-specific image override must not silently replace a step whose
     resource profile is bound to one of those inputs: its argv may still name the
     original digest while SkyPilot starts the replacement image.
+
+    Args:
+        spec: Workflow containing declared immutable-image inputs.
+        steps: Resolved planned steps whose resource profiles will be rendered.
+        run_id: Run identity used to resolve config tokens consistently with planning.
+        options: Image-selection controls, including global and tool-specific overrides.
+
+    Returns:
+        None.
+
+    Raises:
+        NpaWorkflowRenderError: An image override changes a protected execution image.
     """
 
     if not options.image_overrides:

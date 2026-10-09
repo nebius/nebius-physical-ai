@@ -83,5 +83,15 @@ def required_immutable_image_inputs(config: Mapping[str, Any]) -> dict[str, str]
 
 
 def validate_immutable_image_inputs(config: Mapping[str, Any]) -> None:
-    """Require declared provenance image inputs to be exact digest references."""
+    """Require declared provenance image inputs to be exact digest references.
+
+    Args:
+        config: Workflow config after token resolution and operator overrides.
+
+    Returns:
+        None.
+
+    Raises:
+        NpaWorkflowError: A declared required image is not an exact digest.
+    """
     required_immutable_image_inputs(config)

@@ -81,8 +81,8 @@ digest-only `registry/repository@sha256:<64-hex-digest>` references. The CPU ima
 must retain the reconstruction interpreter and Open3D/SciPy dependencies; the
 Isaac image must support the requested native physics, learning and graphics
 capabilities. The real-to-sim and RL improvement presets require these explicit
-inputs before planning. The synthetic-data preset uses governed Isaac defaults,
-which remain quarantined, and accepts the same exact operator override:
+inputs before planning. The synthetic-data preset requires the same explicit
+`isaac_image` input before planning:
 
 ```bash
 npa workbench workflow demo run real-to-sim --project '<project>' --infra 'k8s/<rtx-context>' \
