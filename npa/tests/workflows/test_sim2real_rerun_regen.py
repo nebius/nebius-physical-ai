@@ -513,3 +513,22 @@ def test_gold_render_sync_rejects_missing_or_validation_lineage(tmp_path: Path) 
             },
             client=UnusedStorage(),
         )
+
+
+def test_gold_score_only_sync_does_not_guess_camera_lineage(tmp_path: Path) -> None:
+    class UnusedStorage:
+        def download_directory(self, *_args, **_kwargs):
+            raise AssertionError("score-only evidence must not fetch guessed renders")
+
+    assert not sync_heldout_renders(
+        _config("gold-score-only"),
+        tmp_path,
+        heldout_report={
+            "evaluation_split": "gold_heldout",
+            "per_env": [
+                {"env_id": "heldout-0000", "score": 0.7},
+                {"env_id": "heldout-0001", "score": 0.6},
+            ],
+        },
+        client=UnusedStorage(),
+    )

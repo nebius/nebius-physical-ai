@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import hashlib
 import shlex
@@ -271,6 +272,12 @@ def sync_heldout_renders(
         lineage = dict((heldout_report or {}).get("render_lineage") or {})
         canonical = str(lineage.get("renders_s3_uri") or "").strip()
         if not canonical:
+            # A sealed score-only evaluation must never be paired with guessed
+            # camera renders.  It can still contribute the factual per-env
+            # scores that the Rerun emitter records, so permit that diagnostic
+            # shape without claiming a held-out camera observation.
+            if _has_factual_heldout_scores(heldout_report):
+                return False
             raise Sim2RealRerunRegenError(
                 "sealed gold report has no exact render_lineage.renders_s3_uri"
             )
@@ -332,6 +339,22 @@ def sync_heldout_renders(
             _write_report_render_manifest(config, local_dir, heldout_report, manifest)
             return True
     return _has_camera_pngs(renders_dir)
+
+
+def _has_factual_heldout_scores(report: dict[str, Any] | None) -> bool:
+    """Return whether a report has numeric per-environment score evidence."""
+
+    evaluations = (report or {}).get("per_env") or []
+    if not isinstance(evaluations, list) or not evaluations:
+        return False
+    try:
+        return all(
+            isinstance(item, dict) and item.get("score") is not None
+            and math.isfinite(float(item["score"]))
+            for item in evaluations
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def _has_camera_pngs(renders_dir: Path) -> bool:
