@@ -1,0 +1,109 @@
+# Opt-in config overlay for workflows/main/paidf-cosmos3.yaml.
+# Apply to a copy of that workflow; this file is not a standalone workflow.
+# Copy-paste run instructions: ../guides/paidf-appearance-12.md
+# Current main detects and preserves verified padding automatically; no extra key.
+config:
+  variant_count: '12'
+  variant_parallelism: '1'
+  augmentation_seed: '30'
+  seed: '17'
+  guidance: '5.0'
+  steps: '35'
+  control_guidance: '1.0'
+  transfer_edge_threshold: low
+  transfer_rgb_weight: 0.25
+  transfer_first_chunk_conditional_frames: '0'
+  transfer_cfg_normalization: enabled
+  grade_threshold: '0.75'
+  attribute_threshold: '1.0'
+  alignment_mode: required
+  temporal_consistency_mode: advisory
+  appearance_fidelity_mode: advisory
+  augment_subject: the robot task visible in the source video
+  prompt: Apply the selected material and lighting only to the existing stationary work surface.
+    Preserve its exact plane, outline and position. Preserve all original robot parts, movable
+    objects, containers, tools, counts, identity colors, markings, transparency, trajectories,
+    contacts, occlusions, camera, timing and task outcome. Do not add a work surface where none
+    is visible. Treat image padding as outside the scene and retain it unchanged.
+  negative_prompt: deformed robot, extra parts, duplicate objects, changed task-object colors,
+    missing markings, opaque transparent objects, changed geometry, floating objects, interpenetration,
+    flicker, ghosting, overexposure, cartoon, unsafe content
+  caption_instruction: Describe visible robot parts, task objects and contacts in one or two
+    factual sentences. Do not infer brands, customers, facilities or people. State uncertainty
+    about unclear or occluded features. Do not infer motion or task completion from a single
+    frame.
+  appearance_profiles_json: |-
+    [
+      {
+        "lighting": "soft diffuse daylight with neutral exposure and coherent contact shadows",
+        "background": "the existing stationary work surface has pale oak wood grain, retaining its exact plane and boundaries",
+        "color_grade": "neutral balanced white balance; pale beige restricted to the stationary work surface",
+        "surface_finish": "dry matte oak with subtle lengthwise grain, no seams or planks"
+      },
+      {
+        "lighting": "soft warm studio illumination with gentle coherent shadows",
+        "background": "the existing stationary work surface has dark brown walnut grain, retaining its exact plane and boundaries",
+        "color_grade": "gently warm white balance while preserving original robot and task-object colors",
+        "surface_finish": "satin walnut with restrained wood sheen, no seams or planks"
+      },
+      {
+        "lighting": "bright neutral overhead laboratory illumination with coherent contact shadows",
+        "background": "the existing stationary work surface is silver brushed aluminum, retaining its exact plane and boundaries",
+        "color_grade": "neutral balanced white balance with silver-gray confined to the stationary work surface",
+        "surface_finish": "finely brushed metal with broad soft specular reflections, not a mirror"
+      },
+      {
+        "lighting": "cool diffuse laboratory illumination with coherent contact shadows",
+        "background": "the existing stationary work surface is stainless steel, retaining its exact plane and boundaries",
+        "color_grade": "slightly cool white balance without recoloring robot parts or task objects",
+        "surface_finish": "smooth satin stainless steel with subtle broad reflections, not a mirror"
+      },
+      {
+        "lighting": "broad overcast daylight with soft coherent contact shadows",
+        "background": "the existing stationary work surface is fine-grained medium-gray granite, retaining its exact plane and boundaries",
+        "color_grade": "neutral low-saturation white balance preserving foreground identity colors",
+        "surface_finish": "honed stone with fine natural speckles and low gloss, no cracks or seams"
+      },
+      {
+        "lighting": "warm directional light from the upper left with coherent soft-edged shadows",
+        "background": "the existing stationary work surface is muted terracotta-colored stone, retaining its exact plane and boundaries",
+        "color_grade": "warm natural white balance with orange-brown restricted to the stationary work surface",
+        "surface_finish": "dry matte terracotta with very fine pores, no tiles or grout lines"
+      },
+      {
+        "lighting": "large neutral softbox illumination preserving visibility of dark robot joints",
+        "background": "the existing stationary work surface has a charcoal-black rubber surface, retaining its exact plane and boundaries",
+        "color_grade": "neutral balanced white balance with readable shadows and no crushed blacks",
+        "surface_finish": "fine-grained matte rubber with low reflectivity, no added mat or raised edges"
+      },
+      {
+        "lighting": "soft diffuse daylight with coherent contact shadows",
+        "background": "the existing stationary work surface is warm tan cork, retaining its exact plane and boundaries",
+        "color_grade": "neutral balanced white balance with tan restricted to the stationary work surface",
+        "surface_finish": "matte fine-grained cork with subtle natural pores, no seams or added objects"
+      },
+      {
+        "lighting": "bright broad neutral overhead light with highlight detail retained",
+        "background": "the existing stationary work surface is ivory-white ceramic, retaining its exact plane and boundaries",
+        "color_grade": "neutral high-key exposure without clipping bright surfaces or transparent task objects",
+        "surface_finish": "smooth glazed ceramic with soft restrained highlights, no tiles or seams"
+      },
+      {
+        "lighting": "soft neutral daylight with coherent contact shadows",
+        "background": "the existing stationary work surface is muted green laminate, retaining its exact plane and boundaries",
+        "color_grade": "neutral white balance with muted green restricted to the stationary work surface",
+        "surface_finish": "smooth matte laminate with uniform low gloss and no pattern or seams"
+      },
+      {
+        "lighting": "warm low-angle light from the left with longer coherent soft-edged shadows",
+        "background": "the existing stationary work surface remains a plain medium-gray surface with its exact original boundaries",
+        "color_grade": "warm late-afternoon white balance with preserved foreground identity colors",
+        "surface_finish": "matte gray surface with a subtle directional sheen and no added texture"
+      },
+      {
+        "lighting": "cool blue-hour ambient illumination with a soft neutral overhead fill and readable contact shadows",
+        "background": "the existing stationary work surface remains a plain medium-gray surface with its exact original boundaries",
+        "color_grade": "cool low-key treatment with visible dark joints and unclipped bright robot parts",
+        "surface_finish": "matte gray surface with soft low-gloss highlights and no added texture"
+      }
+    ]

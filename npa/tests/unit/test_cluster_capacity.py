@@ -53,10 +53,12 @@ def _advice(*, on_demand_level: str, preemptible_available: int) -> str:
                         },
                         "on_demand": {
                             "availability_level": on_demand_level,
+                            "data_state": "DATA_STATE_FRESH",
                             "limit": 0,
                         },
                         "preemptible": {
                             "availability_level": "AVAILABILITY_LEVEL_HIGH",
+                            "data_state": "DATA_STATE_FRESH",
                             "available": preemptible_available,
                         },
                     },
@@ -113,7 +115,7 @@ def test_exhausted_quota_reports_the_numbers_and_the_preemptible_option() -> Non
     assert "requests 1" in message
     assert "QuotaFailure" in message
     # The live capacity numbers make the remedy concrete.
-    assert "on-demand LIMIT_REACHED (limit 0)" in message
+    assert "on-demand LIMIT_REACHED (available 0, limit 0)" in message
     assert "preemptible HIGH (available 44)" in message
     assert "gpu_nodes_preemptible = true" in message
     assert "resource-advice list" in message
@@ -377,3 +379,145 @@ def test_capacity_block_group_unreadable_fails_closed() -> None:
         )
         is not None
     )
+
+
+def _row(level: str, state: str = "DATA_STATE_FRESH", **fields) -> dict:
+    row = {"availability_level": f"AVAILABILITY_LEVEL_{level}", **fields}
+    if state:
+        row["data_state"] = state
+    return row
+
+
+def test_summary_reports_zero_available_for_fresh_low_rows() -> None:
+    """`available` is a proto3 uint32, so JSON output omits a zero."""
+    entry = {
+        "status": {
+            "on_demand": _row("LOW", limit=2),
+            "preemptible": _row("MEDIUM", available=3, limit=128),
+            "reserved": _row("LIMIT_REACHED"),
+        }
+    }
+
+    summary = capacity.capacity_summary(entry)
+
+    assert "on-demand LOW (available 0, limit 2)" in summary
+    assert "preemptible MEDIUM (available 3, limit 128)" in summary
+    assert "reserved LIMIT_REACHED" in summary
+
+
+def test_summary_never_invents_a_zero() -> None:
+    entry = {
+        "status": {
+            "on_demand": _row("HIGH", limit=100),
+            "preemptible": _row("LOW", state="DATA_STATE_STALE", limit=8),
+            "reserved": _row("LOW", available="N/A", limit=8),
+        }
+    }
+    unknown = {"status": {"on_demand": _row("UNKNOWN", limit=8)}}
+    missing = {"status": {"on_demand": {"limit": 8}}}
+
+    summary = capacity.capacity_summary(entry)
+
+    assert "on-demand HIGH (available unknown, limit 100)" in summary
+    assert "preemptible LOW (available unknown, limit 8, stale)" in summary
+    assert "reserved LOW (available unknown, limit 8)" in summary
+    assert "on-demand UNKNOWN (available unknown, limit 8)" in (
+        capacity.capacity_summary(unknown)
+    )
+    assert "on-demand UNKNOWN (available unknown, limit 8)" in (
+        capacity.capacity_summary(missing)
+    )
+
+
+def _gpu_advice(*, preemptible: dict, preset: dict | None = None) -> str:
+    return json.dumps(
+        {
+            "items": [
+                {
+                    "spec": {
+                        "region": "us-central1",
+                        "compute_instance": {
+                            "platform": "gpu-h200-sxm",
+                            "preset": preset
+                            or {
+                                "name": "8gpu-128vcpu-1600gb",
+                                "resources": {"gpu_count": 8},
+                            },
+                        },
+                    },
+                    "status": {
+                        "on_demand": _row("LIMIT_REACHED"),
+                        "preemptible": preemptible,
+                    },
+                }
+            ]
+        }
+    )
+
+
+def _h200_quota() -> str:
+    return json.dumps(
+        {
+            "metadata": {"name": "compute.instance.gpu.h200"},
+            "spec": {"limit": "0", "region": "us-central1"},
+            "status": {"unit": "count"},
+        }
+    )
+
+
+def _h200_error(advice: str, required_gpus: int) -> str | None:
+    return capacity.gpu_capacity_error(
+        _capture(_h200_quota(), advice),
+        nebius_bin="nebius",
+        tenant_id="tenant-a",
+        region="us-central1",
+        platform="gpu-h200-sxm",
+        preset="8gpu-128vcpu-1600gb",
+        required_gpus=required_gpus,
+    )
+
+
+_PREEMPTIBLE_REMEDY = "gpu_nodes_preemptible = true` in terraform.tfvars"
+
+
+def test_preemptible_option_counts_gpus_per_vm() -> None:
+    """`available` counts VMs of the preset, and the request counts GPUs."""
+    advice = _gpu_advice(preemptible=_row("LOW", available=1, limit=128))
+
+    assert _PREEMPTIBLE_REMEDY in (_h200_error(advice, 8) or "")
+    assert _PREEMPTIBLE_REMEDY not in (_h200_error(advice, 16) or "")
+
+
+def test_preemptible_option_falls_back_to_the_preset_name() -> None:
+    advice = _gpu_advice(
+        preemptible=_row("LOW", available=1, limit=128),
+        preset={"name": "8gpu-128vcpu-1600gb"},
+    )
+
+    assert _PREEMPTIBLE_REMEDY in (_h200_error(advice, 8) or "")
+
+
+def test_preemptible_option_normalizes_matching_preset_names() -> None:
+    advice = _gpu_advice(
+        preemptible=_row("LOW", available=1, limit=128),
+        preset={"name": " 8GPU-128VCPU-1600GB "},
+    )
+
+    assert _PREEMPTIBLE_REMEDY in (_h200_error(advice, 8) or "")
+
+
+def test_preemptible_option_does_not_scale_fallback_preset_availability() -> None:
+    advice = _gpu_advice(
+        preemptible=_row("LOW", available=1, limit=128),
+        preset={"name": "1gpu-16vcpu-128gb", "resources": {"gpu_count": 1}},
+    )
+
+    assert _PREEMPTIBLE_REMEDY not in (_h200_error(advice, 8) or "")
+
+
+def test_preemptible_option_needs_fresh_advice() -> None:
+    advice = _gpu_advice(
+        preemptible=_row("LOW", state="DATA_STATE_STALE", available=1, limit=128)
+    )
+
+    assert _PREEMPTIBLE_REMEDY not in (_h200_error(advice, 8) or "")
