@@ -14,14 +14,68 @@ from npa.cluster.gpu_health import (
     GpuHealthConfig,
     GpuHealthError,
     probe_gpu_health,
+    resolve_graphics_smoke_image,
     validate_gpu_health,
 )
 
 
-def test_graphics_smoke_uses_the_anonymously_pullable_public_catalog_path() -> None:
-    assert DEFAULT_GRAPHICS_SMOKE_IMAGE.startswith(
-        "ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:"
+def test_graphics_smoke_default_respects_public_quarantine() -> None:
+    assert DEFAULT_GRAPHICS_SMOKE_IMAGE == "tool://sonic"
+    with pytest.raises(ValueError, match="quarantined public release"):
+        resolve_graphics_smoke_image(DEFAULT_GRAPHICS_SMOKE_IMAGE)
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "registry.example/graphics:operator",
+        "registry.example/graphics@sha256:" + "1" * 64,
+    ],
+)
+def test_graphics_smoke_preserves_explicit_operator_image(image) -> None:
+    assert resolve_graphics_smoke_image(image) == image
+
+
+def test_graphics_default_refusal_precedes_any_kubernetes_call(tmp_path) -> None:
+    def unexpected_capture(*_args, **_kwargs):
+        pytest.fail("quarantined default must fail before Kubernetes reads or writes")
+
+    with pytest.raises(ValueError, match="gpu-graphics-smoke-image"):
+        validate_gpu_health(
+            unexpected_capture,
+            kubectl_bin="kubectl",
+            kubeconfig_path=tmp_path / "kubeconfig",
+            config=_config(
+                driver_mode="operator",
+                graphics_smoke=True,
+                graphics_smoke_image=DEFAULT_GRAPHICS_SMOKE_IMAGE,
+            ),
+        )
+
+
+def test_disabled_graphics_probe_does_not_resolve_default(monkeypatch) -> None:
+    def unexpected_resolver(*_args, **_kwargs):
+        pytest.fail("disabled graphics probe must not resolve an image")
+
+    monkeypatch.setattr(
+        "npa.cluster.gpu_health.container_image_for_tool", unexpected_resolver
     )
+    _config(
+        graphics_smoke=False, graphics_smoke_image=DEFAULT_GRAPHICS_SMOKE_IMAGE
+    ).validate()
+
+
+def test_cpu_only_health_does_not_resolve_unused_graphics_default(monkeypatch):
+    monkeypatch.setattr(
+        "npa.cluster.gpu_health.container_image_for_tool",
+        lambda *_args: pytest.fail("CPU-only health must not resolve a GPU image"),
+    )
+    _config(
+        expected_gpu_nodes=0,
+        driver_mode="operator",
+        graphics_smoke=True,
+        graphics_smoke_image=DEFAULT_GRAPHICS_SMOKE_IMAGE,
+    ).validate()
 
 
 def _node(
@@ -182,6 +236,7 @@ def _config(**overrides) -> GpuHealthConfig:
         "poll_seconds": 1,
         "timeout_seconds": 10,
         "cuda_smoke": False,
+        "graphics_smoke_image": "registry.example/graphics:operator",
     }
     values.update(overrides)
     return GpuHealthConfig(**values)

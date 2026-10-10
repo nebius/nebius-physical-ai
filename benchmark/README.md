@@ -1,16 +1,20 @@
 # Workbench benchmarks
 
-Benchmarks pair runnable Workbench workflows with measured results, fixed
+Workbench benchmarks pair runnable workflows with measured results, fixed
 workload controls, and an explanation of what the measurements establish.
+Clearly labeled reference-only records may omit workflow YAMLs when they document
+their pinned external harness, source records, and reproduction limits.
 
 | Benchmark | Hardware | What it measures |
 | --- | --- | --- |
 | [Cosmos3-Super](cosmos3-super/README.md) | Eight-GPU HGX B200 and HGX H200 nodes on Nebius | Request latency versus technically valid video output per node-hour across four serving topologies |
+| [Cosmos3-Nano](cosmos3-nano/README.md) | One eight-GPU HGX H200 node on Nebius | Reference results without a Workbench workflow: technically valid video output per node-hour for Nano across ten cells, against the Cosmos3-Super reference |
 
-Each benchmark should include its workflow YAMLs, hardware and software pins,
-request and validation protocol, results with units and source dates, and
-reproduction instructions. Keep published reference results distinct from new
-Workbench runs and single-GPU checks distinct from full-node measurements.
+Each runnable benchmark should include its workflow YAMLs. All entries should
+document hardware and software pins, request and validation protocol, results
+with units and source dates, and reproduction instructions. Keep published
+reference results distinct from new Workbench runs and single-GPU checks distinct
+from full-node measurements.
 Credit the authors and link every upstream repository used for its methodology,
 software, or results; preserve applicable licenses when adapting material.
 

@@ -1,6 +1,6 @@
-ARG NPA_ISAAC_LAB_BASE_DIGEST=sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46
+ARG NPA_ISAAC_LAB_BASE_IMAGE
 
-FROM ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@${NPA_ISAAC_LAB_BASE_DIGEST}
+FROM ${NPA_ISAAC_LAB_BASE_IMAGE}
 
 ARG BYOF_RUN_ID=placeholder
 

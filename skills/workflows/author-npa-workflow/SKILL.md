@@ -12,8 +12,10 @@ Load when creating or editing **NPA workflow YAML** under
 transitions, or when helping agents/users convert SkyPilot bash pipelines into
 specs.
 
-Keep `workflows/main/` limited to `sim2real.yaml`, `paidf-cosmos3.yaml`, and
-`nurec-reconstruct.yaml`.
+Keep promoted principal pipelines in `workflows/main/`; the
+[main catalog](../../../workflows/README.md#main-workflows) records the selection
+and validation scope. Promotion must retain the adjacent readiness record and
+update catalog discovery tests, guides, and skill references together.
 Add partner integrations under `workflows/partners/<partner>/` and other
 reference specs under `workflows/testing/`. Add each YAML and its guide to the
 README beside the spec; `workflows/README.md` is the catalog overview. Keep
@@ -67,8 +69,21 @@ such as `"yes"`. State names are unique; a duplicate key is rejected rather than
 silently overwriting an earlier state. Quote `{{config.*}}` tokens where YAML
 scalar parsing could otherwise assign a type before token resolution.
 
-Always run `validate-spec` on generator output and again with the intended
-`--var` overrides before planning or submission.
+Run `validate-spec` on generator output; it accepts `--preset`, not `--var`.
+Use `plan-spec` with the intended repeatable `--var KEY=VALUE` overrides to
+check the resolved configuration before submission.
+
+For editor completion, export the installed package's authoritative schema:
+
+```bash
+npa/.venv/bin/npa workbench workflow schema > ./workflow-schema.json
+```
+
+Associate that file with workflow YAML in the editor. Arbitrary tool-specific
+`config` values still require validation and planning. For saved configuration,
+the installed CLI lifecycle, shipped dataset batches, and scoped input/output
+transfers, follow
+[manual workflow operations](../../../docs/workbench/guides/manual-workflow-operations.md).
 
 ## Validation Hardening (v0.0.1)
 

@@ -30,7 +30,7 @@ dependencies = [
     "paramiko>=5.0,<6.0",
     # Directly verifies customer/control-plane-signed LIBERO authorizations;
     # keep the operator verifier version aligned with CI.
-    "cryptography==50.0.1",
+    "cryptography==50.0.2",
     "bcrypt>=5.0,<6.0",
     "pyyaml>=6.0,<7.0",
     # Structure-aware edits of owned Terraform provider defaults.
@@ -69,7 +69,7 @@ dependencies = [
     # (`npa rerun`, sim-viz adapters).
     "rerun-sdk==0.38.1",
     # Formerly the `server` extra: FastAPI policy/eval + agent backend server.
-    "fastapi>=0.136.1,<0.142.0",
+    "fastapi>=0.136.1,<0.143.0",
     # Antioch's supported declared-port bridge uses bounded, authenticated WSS
     # on both legs. Keep the operator transport matched to the sim dependency.
     "websockets==16.1.1",
@@ -98,7 +98,7 @@ full = []
 # The former optional package was imported only to report its presence.
 agent-eval = []
 agent-specialists = [
-    "langgraph==1.2.11",
+    "langgraph==1.2.12",
     "langgraph-checkpoint-sqlite==3.1.1",
     "uvicorn>=0.52.4",
 ]
@@ -153,7 +153,7 @@ sonic = [
 # standard (non-e2e) test suite collects without pulling in the GPU-heavy
 # extras (genesis, groot, sonic).
 dev = [
-    "langgraph==1.2.11",
+    "langgraph==1.2.12",
     "langgraph-checkpoint-sqlite==3.1.1",
     # Parse real raw USD layers/variants in sensor-rig scene preflight tests.
     "usd-core==26.8",
@@ -162,7 +162,7 @@ dev = [
     # The served agent audit explicitly selects Uvicorn's websockets protocol.
     "websockets>=10,<18",
     # Daily public DROID staging tests use the OpenPI image's GCS client.
-    "google-cloud-storage==3.14.1",
+    "google-cloud-storage==3.16.0",
     # Test-only media runtime for the LeIsaac dataset/PAIDF integration tests.
     # Keep this explicit development dependency out of core and `full`; the
     # LeIsaac image separately removes and scans bundled static FFmpeg bytes.
@@ -187,13 +187,13 @@ dev = [
 
 [dependency-groups]
 dev = [
-    "langgraph==1.2.11",
+    "langgraph==1.2.12",
     "langgraph-checkpoint-sqlite==3.1.1",
     "usd-core==26.8",
     "uvicorn>=0.52.4",
     "websockets>=10,<18",
-    "google-cloud-storage==3.14.1",
-    "fastapi>=0.136.1,<0.142.0",
+    "google-cloud-storage==3.16.0",
+    "fastapi>=0.136.1,<0.143.0",
     # Mirrors project.optional-dependencies.dev for `uv sync --group dev`.
     "imageio-ffmpeg==0.6.0",
     "h5py==3.16.0",

@@ -19,6 +19,24 @@ from npa.orchestration.skypilot.workflow_state import (
 )
 
 
+def schema() -> dict[str, Any]:
+    """Return the authoritative JSON Schema for workflow editor integrations.
+
+    Args:
+        None.
+
+    Returns:
+        A fresh parsed JSON Schema for supported ``npa.workflow`` documents.
+
+    Raises:
+        FileNotFoundError: The bundled schema is unavailable from the installation.
+        ValueError: The bundled schema is not a JSON object.
+    """
+    from npa.orchestration.npa_workflow.schema_export import load_workflow_schema
+
+    return load_workflow_schema()
+
+
 def status(
     run_id: str,
     *,
@@ -130,6 +148,7 @@ __all__ = [
     "artifacts",
     "logs",
     "runs",
+    "schema",
     "status",
     "plan_batch",
     "run_batch",

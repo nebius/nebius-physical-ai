@@ -131,7 +131,10 @@ def _kernel_metrics(kernels, start, stop):
 def _summarize(path):
     steps, kernels, start, stop = _trace(path)
     with path.open("rb") as stream:
-        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        digest_state = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest_state.update(chunk)
+        digest = digest_state.hexdigest()
     return {
         "trace_sha256": digest,
         "trace_bytes": path.stat().st_size,
