@@ -1608,10 +1608,19 @@ def graph(fd, length, verification, expected_id):
     """Rebind metadata to the accepted exact archive before scanning its layers."""
     if verification.get("schema_version") in (
         "npa.ncore.oci-verification.v1",
+        "npa.image.oci-verification.v1",
+        "npa.image.registry-manifest-verification.v1",
         "npa.robotwin.image-verification.v1",
     ):
         if verification["schema_version"] == "npa.robotwin.image-verification.v1":
             from . import robotwin_verification as N
+        elif (
+            verification["schema_version"]
+            == "npa.image.registry-manifest-verification.v1"
+        ):
+            from . import registry_manifest_verification as N
+        elif verification["schema_version"] == "npa.image.oci-verification.v1":
+            from . import oci_verification as N
         else:
             from . import ncore_verification as N
         result = N.inspect(fd, length, expected_id)
@@ -1867,6 +1876,8 @@ def verification_archive_digest(verification):
         in (
             "npa.curobo.image-verification.v1",
             "npa.ncore.oci-verification.v1",
+            "npa.image.oci-verification.v1",
+            "npa.image.registry-manifest-verification.v1",
             "npa.robotwin.image-verification.v1",
         ),
         "verification_schema",
@@ -1985,10 +1996,19 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
     try:
         if verification["schema_version"] in (
             "npa.ncore.oci-verification.v1",
+            "npa.image.oci-verification.v1",
+            "npa.image.registry-manifest-verification.v1",
             "npa.robotwin.image-verification.v1",
         ):
             if verification["schema_version"] == "npa.robotwin.image-verification.v1":
                 from . import robotwin_verification as N
+            elif (
+                verification["schema_version"]
+                == "npa.image.registry-manifest-verification.v1"
+            ):
+                from . import registry_manifest_verification as N
+            elif verification["schema_version"] == "npa.image.oci-verification.v1":
+                from . import oci_verification as N
             else:
                 from . import ncore_verification as N
             result = N.inspect(fd, initial.st_size, authorization["expected_image_id"])

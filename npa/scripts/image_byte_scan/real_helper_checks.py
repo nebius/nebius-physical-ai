@@ -18,6 +18,8 @@ if __package__ in {None, ""}:
 else:
     from . import core as W, prepare as P, synthetic as F
 
+from image_byte_scan import registry_manifest_checks
+
 
 def cancellation_check(authorization, directory):
     """Interrupt a synthetic scan using the actual helper and selected matcher."""
@@ -482,6 +484,9 @@ def checks(args, directory):
     )
     F.write(directory / "tools.json", args.tools_receipt.read_bytes())
     duplex = duplex_check(helper, config, directory)
+    registry_checks = registry_manifest_checks.checks(
+        directory / "registry-manifests", args.tools_receipt, engine_binding
+    )
     W.recheck_snapshots(snapshots)
     result = {
         "schema_version": "npa.image-byte-native-checks.v1",
@@ -491,6 +496,7 @@ def checks(args, directory):
         "native": native_receipt,
         "archive_checks": image_results,
         "duplex_check": duplex,
+        "registry_manifest_checks": registry_checks,
         "helper_sha256": helper["sha256"],
         "source_bindings": W.source_bindings(),
     }
