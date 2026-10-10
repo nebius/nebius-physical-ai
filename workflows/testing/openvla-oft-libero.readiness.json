@@ -46,11 +46,11 @@
       ]
     },
     "source_image": {
-      "status": "verified",
-      "reason": "The committed neutral private bootstrap was built with SBOM/provenance, pushed only to the operator-private registry, independently pulled by immutable digest, manifest/config inspected, and streamed through the full layer scanner with no restricted runtime or build-history hit. Its numeric nonroot user passed SkyPilot's rsync/passwordless-sudo bootstrap, readable notices, the native preparation parser, and a persistent-default-command probe. It remains publication-quarantined.",
+      "status": "unverified",
+      "reason": "The retained original private bootstrap has complete graph/archive provenance, but its latest complete byte-policy scan ended not-qualified. Exact public-byte provenance for some Debian-library and Python-wheel members establishes origin only; it does not waive findings, and retained original SBOM/provenance subjects prevent that unchanged graph from satisfying current public-byte policy. Preserve the original evidence and publication quarantine. A separately built neutral-subject digest needs complete graph closure, policy qualification, and runtime validation before it can support a private-QA progression or any public-release determination.",
       "evidence": [
         "npa/docker/workbench/openvla-oft/build.sh",
-        "npa/scripts/scan_image_omniverse_payload.py --docker-image <operator-private-immutable-digest>",
+        "operator-private canonical complete-byte policy receipt (retained outside source control)",
         "docs/workbench/openvla-oft.md"
       ]
     },
