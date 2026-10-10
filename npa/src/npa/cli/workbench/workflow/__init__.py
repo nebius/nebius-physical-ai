@@ -71,6 +71,26 @@ _SUBMIT_PRIVATE_REDACTIONS: ContextVar[tuple[str, ...]] = ContextVar(
 )
 
 
+@app.command("schema")
+@resolve_typer_defaults
+def schema_cmd() -> None:
+    """Print the authoritative workflow JSON Schema as one JSON document.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+
+    Raises:
+        FileNotFoundError: The bundled schema is unavailable from the installation.
+        ValueError: The bundled schema is not a JSON object.
+    """
+    from npa.orchestration.npa_workflow.schema_export import load_workflow_schema
+
+    typer.echo(json.dumps(load_workflow_schema(), indent=2, sort_keys=True))
+
+
 def _robotwin_render_process(
     connection: Any,
     spec: Any,

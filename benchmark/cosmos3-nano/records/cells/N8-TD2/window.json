@@ -1,0 +1,111 @@
+{
+  "boundary": "first production dispatch to final response persisted; validation excluded",
+  "comparison_basis": "nano_h200_p2_cell",
+  "concurrency": 1,
+  "derived": {
+    "attempts": 24,
+    "clip_video_seconds": 4.0333,
+    "clips_per_node_hour": 55.9,
+    "max_client_wall_s": 515.848,
+    "median_client_wall_s": 509.458,
+    "p95_client_wall_s": 515.704,
+    "valid_attempts": 24,
+    "video_seconds_per_node_hour": 225.5,
+    "window_seconds": 1545.681
+  },
+  "dispatch_schedule": "synchronized_rounds",
+  "expected": {
+    "fps": 30.0,
+    "frames": 121,
+    "height": 720,
+    "max_seconds": 4.113333333333333,
+    "min_seconds": 3.953333333333333,
+    "width": 1280
+  },
+  "expected_adopted_from_warmup": true,
+  "node_gpu_count": 8,
+  "prompt_hashes": {
+    "negative_prompt": "a5a4a056c865eb1ae9b6f1c5ca65a1f7d6f99eb6dcbc0cea22d7c4f58d11b089",
+    "prompt": "ec80ae447b940b84b17ad783d98e999c26d130704d249063bcf9b920de96f85a"
+  },
+  "protocol_version": "v1-p2-runlocal",
+  "replica_ports": [
+    8100,
+    8101,
+    8102,
+    8103,
+    8104,
+    8105,
+    8106,
+    8107
+  ],
+  "replicas": 8,
+  "rounds": [
+    {
+      "attempt_index_start": 0,
+      "attempt_index_stop": 1,
+      "finished_utc": "2026-10-06T00:22:36.636786Z",
+      "requests": 8,
+      "round": 0,
+      "started_utc": "2026-10-06T00:14:00.930123Z"
+    },
+    {
+      "attempt_index_start": 1,
+      "attempt_index_stop": 2,
+      "finished_utc": "2026-10-06T00:31:12.487740Z",
+      "requests": 8,
+      "round": 1,
+      "started_utc": "2026-10-06T00:22:36.636809Z"
+    },
+    {
+      "attempt_index_start": 2,
+      "attempt_index_stop": 3,
+      "finished_utc": "2026-10-06T00:39:46.610853Z",
+      "requests": 8,
+      "round": 2,
+      "started_utc": "2026-10-06T00:31:12.487764Z"
+    }
+  ],
+  "spec": {
+    "extra_params": {
+      "control_guidance": 1.5,
+      "depth": {
+        "control_path": "inputs/transfer/depth/control_depth.mp4"
+      },
+      "guardrails": false,
+      "max_frames": 121,
+      "num_video_frames_per_chunk": 121,
+      "resolution": "720",
+      "use_duration_template": false,
+      "use_resolution_template": false
+    },
+    "negative_compact_json": true,
+    "negative_file": "inputs/transfer/negative_prompt.json",
+    "note": "NVIDIA transfer cookbook depth asset and vLLM-Omni request settings; expected output adopted from warmup",
+    "prompt_compact_json": true,
+    "prompt_file": "inputs/transfer/depth/prompt.json",
+    "shape": {
+      "flow_shift": "10.0",
+      "fps": 30,
+      "guidance_scale": "3.0",
+      "max_sequence_length": "4096",
+      "num_frames": 121,
+      "num_inference_steps": 50,
+      "size": "1280x720"
+    }
+  },
+  "validation_run_id": "validation-2026-10-06T00:39:46.610958Z",
+  "warmup_rounds": [
+    {
+      "attempt_index_start": 0,
+      "attempt_index_stop": 1,
+      "finished_utc": "2026-10-06T00:13:55.637192Z",
+      "requests": 8,
+      "round": 0,
+      "started_utc": "2026-10-06T00:05:18.934890Z"
+    }
+  ],
+  "window_end_utc": "2026-10-06T00:39:46.610951Z",
+  "window_seconds": 1545.680836,
+  "window_start_utc": "2026-10-06T00:14:00.930110Z"
+}

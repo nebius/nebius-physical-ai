@@ -613,7 +613,22 @@ def test_flex_pi_validation_binds_both_blackwell_targets_to_release_bytes(
     assert evidence["validated_tag"] == flex_pi["published_tag"]
     assert evidence["validated_digest"] == flex_pi["published_digest"]
     assert evidence["development_sha"] == flex_pi["development_sha"]
-    assert set(evidence["validated_gpus"]) == {"B200", "RTX PRO 6000"}
+    assert set(evidence["validated_gpus"]) == {"B200", "RTX PRO 6000", "H200"}
+
+    # H200 ran one eager inference in a direct Docker smoke, so it is held to
+    # the inference contract only, not the compiled workflow contract below.
+    hopper = evidence["validated_gpus"]["H200"]
+    assert hopper["platform"] == "gpu-h200-sxm"
+    assert hopper["capability"] == "9.0"
+    assert hopper["result"] == "FLEX_PI_REAL_INFERENCE_PASSED"
+    assert hopper["observed_image_digest"] == evidence["validated_digest"]
+    assert hopper["gpu_count"] == 1
+    assert hopper["torch_compile"] is False
+    assert hopper["finite_action_shape"] == [32, 14]
+    assert hopper["inference_seconds"] > 0
+    assert hopper["peak_memory_bytes"] > 0
+    assert hopper["readback_verified_objects"] == 0
+    assert "not the Workbench workflow" in hopper["execution"]
 
     for gpu, platform, capability in (
         ("B200", "gpu-b200-sxm", "10.0"),
