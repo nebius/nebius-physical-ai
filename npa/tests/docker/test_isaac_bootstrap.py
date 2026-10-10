@@ -1107,6 +1107,7 @@ def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     )
     for package in expected_python311_debs:
         assert package in text
+    assert text.count("3.11.17-1+jammy1") >= 9
     for requirement in (
         "pip==26.2.1",
         "setuptools==84.0.0",
