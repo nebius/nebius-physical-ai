@@ -46,6 +46,7 @@ def _prepare_verified_cache(
     tmp_path: Path,
     *,
     installed_libero_version: str,
+    libero_import_source: str = "",
 ) -> tuple[dict[str, str], Path]:
     """Build only the runtime imports and package metadata the shell verifies."""
     cache_root = tmp_path / "cache"
@@ -83,7 +84,7 @@ def _prepare_verified_cache(
     _write_module(site_packages, "wan_va/__init__.py")
     _write_module(site_packages, "wan_va/modules/__init__.py")
     _write_module(site_packages, "wan_va/modules/model.py")
-    _write_module(site_packages, "libero/__init__.py")
+    _write_module(site_packages, "libero/__init__.py", libero_import_source)
     metadata = site_packages / f"libero-{installed_libero_version}.dist-info"
     metadata.mkdir()
     (metadata / "METADATA").write_text(
@@ -145,6 +146,20 @@ def test_offline_runtime_rejects_wrong_installed_libero_metadata(
 
     assert result.returncode != 0
     assert "AssertionError" in result.stderr
+
+
+def test_offline_runtime_rejects_broken_installed_libero_import(tmp_path: Path) -> None:
+    """A matching metadata record cannot make an unimportable package complete."""
+    environment, _ = _prepare_verified_cache(
+        tmp_path,
+        installed_libero_version="0.1.0",
+        libero_import_source="raise ImportError('fixture broken libero import')\n",
+    )
+
+    result = _run_offline_ensure(environment)
+
+    assert result.returncode != 0
+    assert "fixture broken libero import" in result.stderr
 
 
 def test_offline_runtime_rejects_stale_source_inventory_cache_binding(

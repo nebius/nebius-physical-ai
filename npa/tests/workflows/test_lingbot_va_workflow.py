@@ -540,6 +540,7 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
         'assert package_version("libero") == os.environ["NPA_LINGBOT_VA_LIBERO_VERSION"]'
         in runtime_script
     )
+    assert "import libero" in runtime_script
     assert 'pip install --no-cache-dir -r "$SOURCE_REQUIREMENTS"' not in runtime_script
     assert "lerobot==0.3.3" in runtime_script
     assert "--no-deps" in runtime_script

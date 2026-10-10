@@ -58,6 +58,7 @@ from importlib.metadata import version as package_version
 
 import torch
 import datasets
+import libero
 assert torch.__version__.split('+', 1)[0] == '2.13.0', torch.__version__
 assert torch.version.cuda == '13.0', torch.version.cuda
 assert datasets.__version__ == '5.0.1', datasets.__version__
