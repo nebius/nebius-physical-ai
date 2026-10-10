@@ -165,7 +165,7 @@ padding exists, it restores those borders from the prepared source and writes
 a lossless `augmented_video.mp4`, retaining `raw_model_video.mp4` separately.
 The preservation receipt records the raw and published hashes and exact pixel
 checks. Without verified padding, the model bytes pass through unchanged.
-See [padding behavior and output checks](paidf-appearance-12.md#5-download-the-videos-and-verify-padding-preservation).
+See [padding behavior and output checks](paidf-appearance-12.md#7-download-the-videos-and-verify-padding-preservation).
 The check lives in the shared generation implementation, so custom workflows
 using `workbench.cosmos3.generate_variants` and direct CLI callers receive the
 same protection for any dataset. New submissions of the canonical workflow use
@@ -301,10 +301,12 @@ supported.
 
 From the repository root, activate the virtual environment created during
 [installation](../../install.md). These examples check the spec and render plans
-with placeholder inputs; they do not launch the workflow. For execution, use the
-[coding-agent workflow prompt](../agent-first-run.md#run-paidf-with-cosmos-3),
-which covers real inputs, resource planning, image checks, submission, and output
-inspection.
+with placeholder inputs; they do not launch the workflow. For manual execution,
+follow the [setup and run guide](../../../workflows/guides/paidf-cosmos3.md).
+For twelve profiles from your MP4 or pinned public ALOHA cup-opening data, use
+the [manual twelve-profile recipe](paidf-appearance-12.md#apply-the-recipe)
+after setup. Both cover real input selection, planning, image checks,
+submission, output inspection and cleanup.
 
 ```bash
 SPEC=workflows/main/paidf-cosmos3.yaml
