@@ -91,3 +91,9 @@ The submit path fails before launch when storage, secret propagation, gated
 model access, the dedicated CPU capacity, Isaac cache PVC,
 immutable images, or real image pulls are not ready. The linked runbook gives
 copy-paste setup, expected results, and remediation without duplicating it here.
+
+`workflow preflight-images` requires all five immutable image inputs and their
+source attestation for Sim2Real; an empty image plan cannot establish readiness.
+Cache checks use the namespace in the selected Kubernetes context, including
+contexts prepared with `workbench namespace context`. An unreadable context
+blocks cache lookup instead of checking another namespace.

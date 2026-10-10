@@ -3,13 +3,13 @@
 [Guides](README.md) · [Workbench documentation](../README.md)
 
 Run the canonical [14-stage workflow](../../../workflows/main/sim2real.yaml)
-from a terminal on an always-on operator machine. This guide uses the public
+from a terminal on an always-on Linux operator machine. This guide uses the public
 Franka seed and stock robot; no agent deployment or private operator scripts
 are required. Stage 12 records the external physical-robot validation seam.
 Completing the simulated workflow does not establish real-robot success.
 
-Run the commands from the checkout root in **one Bash shell**. On macOS, start
-`bash` before using the argument arrays below. Replace quoted placeholders with
+Run the commands from the checkout root in **one Bash shell** on Linux with
+`/proc` mounted. Replace quoted placeholders with
 your private values. Keep the run settings outside Git so the same arguments
 can be restored after a shell or machine restart.
 
@@ -29,8 +29,9 @@ can be restored after a shell or machine restart.
 Install [host prerequisites](../../install.md): Git, Python 3.12, Nebius CLI,
 Terraform, and `kubectl`. A local GPU, Isaac installation, Docker daemon, and
 AWS CLI are unnecessary for this operator path. Engines run in cluster images.
-Use Linux, macOS, or WSL2; an always-on Linux operator VM is preferable for
-long-running submission.
+macOS can install, validate, and plan. Perform execution, monitoring, recovery,
+and cleanup on Linux: the isolated SkyPilot API verifies process ownership
+through `/proc`. WSL2 must remain running throughout the submission.
 
 ```bash
 git clone https://github.com/nebius/nebius-physical-ai.git
@@ -108,6 +109,9 @@ provider project ID; the context may differ from the provider cluster name.
 ```bash
 export NPA_PROJECT='<local-project-alias>'
 export NPA_CLUSTER='<npa-cluster-context>'
+export NPA_CONFIG_DIR="$HOME/.npa/sim2real-operator"
+mkdir -p "$NPA_CONFIG_DIR"
+chmod 700 "$NPA_CONFIG_DIR"
 npa/.venv/bin/npa configure --project-alias "$NPA_PROJECT"
 npa/.venv/bin/npa configure --show
 ```
@@ -175,7 +179,7 @@ Choose **one** cluster path below. Bootstrap pinned SkyPilot before provisioning
 because cluster readiness includes its GPU smoke task:
 
 ```bash
-npa/.venv/bin/npa skypilot bootstrap
+npa/.venv/bin/npa skypilot bootstrap --path "$NPA_CONFIG_DIR/skypilot-venv"
 export NPA_SKYPILOT_BIN="$(npa/.venv/bin/npa skypilot status --bin-path)"
 ```
 
@@ -242,29 +246,61 @@ npa/.venv/bin/npa cluster node-group add-cpu \
   --platform cpu-e2 --preset 16vcpu-64gb --node-count 1 --wait
 ```
 
-### Verify context and controller ownership
+For an adopted cluster, retain its owner's filesystem configuration when
+repeating `provision-if-absent` readiness. If its default StorageClass is
+`csi-mounted-fs-path-sc`, set `TF_VAR_enable_filestore=true` in the private
+shell settings. Otherwise the validator expects `compute-csi-default-sc` and
+waits for a configuration that does not describe this cluster. Use the exact
+existing CPU/GPU node counts and shapes, its adopted context and kubeconfig,
+and `--gpu-workload-profile rtx-rendering --sky-smoke --skip-s3`. The cached
+kubeconfig is reused; the command checks stability, CUDA, graphics, and actual
+SkyPilot GPU dispatch. Inspect `--dry-run` first and require
+`provider_mutation=false`. This does not replace adoption or create a missing
+filesystem attachment.
+
+### Select a private workload namespace and verify the target
 
 For either path, use the kubeconfig printed by NPA. The default location is:
 
 ```bash
-export KUBECONFIG="$HOME/.npa/clusters/$NPA_CLUSTER/kubeconfig"
+export KUBECONFIG="$NPA_CONFIG_DIR/clusters/$NPA_CLUSTER/kubeconfig"
 kubectl config use-context "$NPA_CLUSTER"
 kubectl config current-context
 kubectl get nodes -L nvidia.com/gpu.product,nebius.com/driverful,nvidia.com/gpu.deploy.operands
 kubectl get storageclass csi-mounted-fs-path-sc
-npa/.venv/bin/npa skypilot bind-controller \
-  --project "$NPA_PROJECT" --context "$NPA_CLUSTER"
-"$NPA_SKYPILOT_BIN" check kubernetes
-npa/.venv/bin/npa workbench workflow gpus --cluster "$NPA_CLUSTER" --json
+```
+
+Create a namespace for this operator run and prepare its authenticated context
+through the supported [namespace command](../namespaces.md). Choose new names
+and a new private destination; `namespace context` refuses existing destinations.
+
+```bash
+export NPA_NAMESPACE=sim2real-manual
+export NPA_CLIENT_DIR="$NPA_CONFIG_DIR/$NPA_NAMESPACE-client"
+npa/.venv/bin/npa workbench namespace apply "$NPA_NAMESPACE" --context "$NPA_CLUSTER"
+npa/.venv/bin/npa workbench namespace context "$NPA_NAMESPACE" \
+  --context "$NPA_CLUSTER" --output-dir "$NPA_CLIENT_DIR"
+export KUBECONFIG="$NPA_CLIENT_DIR/kubeconfig"
+export SKYPILOT_GLOBAL_CONFIG="$NPA_CLIENT_DIR/sky.yaml"
+export NPA_SKYPILOT_ISOLATED_CONFIG_DIR="$NPA_CLIENT_DIR/runtime"
+npa/.venv/bin/npa skypilot verify \
+  --cluster "$NPA_CLUSTER" --kubeconfig "$KUBECONFIG" --output-format json
+npa/.venv/bin/npa workbench workflow gpus \
+  --cluster "$NPA_CLUSTER" --project "$NPA_PROJECT" --json
 ```
 
 Expected: the intended context is selected, CPU and RTX nodes are Ready,
-Isaac-eligible RTX nodes report `nvidia.com/gpu.deploy.operands=true`, Kubernetes
-is enabled, and GPU discovery reports requestable capacity. An excluded managed
+the renderer-facing graphics gate passed, Kubernetes is enabled, and GPU
+discovery reports requestable capacity. Newly provisioned operator nodes report
+`nvidia.com/gpu.deploy.operands=true`; labels on an older external cluster do not
+replace the actual GLX/EGL/Vulkan check. An excluded managed
 compute pool can coexist with the render pool. A StorageClass name alone does
 not prove its filesystem attachment; see [shared-cache diagnostics](../model-weight-cache.md).
-Controller ownership and NPA cluster identity must match the project/context.
-Do not rebind another user's controller to clear an ownership error.
+The isolated state derives its own stable controller identity; do not call
+`bind-controller` or use another operator's runtime directory. Keep all four
+configuration exports above on this Linux machine and restore them in every
+shell used for submit, status, logs, resume, or cleanup. NPA cluster identity
+must still match the selected project/context. See [SkyPilot setup](../../orchestration/skypilot-setup.md).
 
 ## 5. Warm the selected Isaac image
 
@@ -279,10 +315,10 @@ chmod 700 "$CACHE_SETUP_DIR"
 sed "s|image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:<64-hex-digest>|image: $ISAAC_IMAGE|" \
   npa/docker/workbench/common/warm-isaac-cache.yaml \
   > "$CACHE_SETUP_DIR/warm-isaac-cache.yaml"
-kubectl apply -f "$CACHE_SETUP_DIR/warm-isaac-cache.yaml"
-kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
-kubectl logs job/npa-warm-isaac-cache
-kubectl get pvc npa-isaac-cache
+kubectl --namespace "$NPA_NAMESPACE" apply -f "$CACHE_SETUP_DIR/warm-isaac-cache.yaml"
+kubectl --namespace "$NPA_NAMESPACE" wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
+kubectl --namespace "$NPA_NAMESPACE" logs job/npa-warm-isaac-cache
+kubectl --namespace "$NPA_NAMESPACE" get pvc npa-isaac-cache
 ```
 
 Private-registry users must include the prepared pull secret in the generated
@@ -294,7 +330,7 @@ Keep the rendered manifest outside Git because it can contain private registry
 locations. The checked-in template remains unchanged.
 
 After changing images, verify the old warming Job is terminal, delete only that
-Job (`kubectl delete job npa-warm-isaac-cache`), and apply the newly rendered
+Job (`kubectl --namespace "$NPA_NAMESPACE" delete job npa-warm-isaac-cache`), and apply the newly rendered
 template. Keep the PVC and older versioned trees. The selected image's
 `isaac-bootstrap status` must report `ready=yes` for its own `expected_tree`;
 matching wheel pins alone do not prove compatibility. See
@@ -310,8 +346,7 @@ must establish capacity; a wave plan does not reserve it.
 ```bash
 RUN_ID="sim2real-$(date -u +%Y%m%d-%H%M%S)"
 NPA_GPU_CONCURRENCY=1
-WORKFLOW_ARGS=(
-  --preset public-franka-lift
+CONFIG_ARGS=(
   --var bucket="$NPA_BUCKET"
   --var source_sha="$SOURCE_SHA"
   --var controller_image="$CONTROLLER_IMAGE"
@@ -323,13 +358,14 @@ WORKFLOW_ARGS=(
   --var gpu_concurrency="$NPA_GPU_CONCURRENCY"
   --var cosmos3_model=MiniMaxAI/MiniMax-M3
 )
+WORKFLOW_ARGS=(--preset public-franka-lift "${CONFIG_ARGS[@]}")
 TARGET_ARGS=(--project "$NPA_PROJECT" --infra "k8s/$NPA_CLUSTER")
 SECRET_ARGS=(
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
   --secret-env HF_TOKEN --secret-env NEBIUS_TOKEN_FACTORY_KEY
 )
 npa/.venv/bin/npa workbench workflow preflight-images "$SPEC" \
-  "${TARGET_ARGS[@]}" "${WORKFLOW_ARGS[@]}" \
+  "${TARGET_ARGS[@]}" "${CONFIG_ARGS[@]}" \
   --assume-decision promote_checkpoint --json
 ```
 
@@ -337,6 +373,8 @@ Expected: every image pull and bootstrap path passes under the actual context,
 ServiceAccount, placement, and pull secrets. Large cold images can use
 `--image-bootstrap-timeout-seconds 0` to remove the observation deadline;
 provenance, capability checks, and verified probe cleanup remain required.
+`preflight-images` accepts configuration overrides, but has no `--preset`
+option. `WORKFLOW_ARGS` adds the seed preset for planning, submit, and resume.
 For a custom hosted endpoint, append its credential name to `SECRET_ARGS` and
 keep the evaluator setting consistent. Retain all arrays and values privately
 for exact reuse after a shell restart.
@@ -372,9 +410,9 @@ source actions are not silently reused as PPO inputs. See [data contracts](sim2r
 
 ### Use your own seed instead
 
-Before staging/planning, remove `--preset public-franka-lift` from
-`WORKFLOW_ARGS` and append verified `dataset_id`, `trigger_uri`, and
-`seed_manifest_uri` overrides. Your manifest and objects must already be
+Before image preflight/staging/planning, append verified `dataset_id`,
+`trigger_uri`, and `seed_manifest_uri` overrides to `CONFIG_ARGS`, then set
+`WORKFLOW_ARGS=("${CONFIG_ARGS[@]}")` to omit the public preset. Your manifest and objects must already be
 readable in S3. Follow [customer assets](sim2real-customer-assets.md) and
 [RobotSpec](sim2real-robot-spec.md) for robot/scene inputs. Use those same
 arguments for all later commands; do not change inputs during resume.

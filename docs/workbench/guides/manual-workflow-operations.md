@@ -10,7 +10,9 @@ which starts with installation and the qualified-image gate before provisioning.
 
 Before a cloud run, complete [Workbench setup](../getting-started.md), select a
 compatible GPU cluster, and read the [PAIDF setup guide](../../../workflows/guides/paidf-cosmos3.md).
-Run the examples from the checkout root in the same Bash shell. Replace quoted
+Execute isolated workflows on an always-on Linux host with `/proc` mounted;
+macOS supports validation and planning. Run the examples from the checkout root
+in the same Bash shell. Replace quoted
 placeholders with your private values. For release-specific options, use
 `npa workbench workflow <command> --help`.
 
