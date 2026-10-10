@@ -12,7 +12,8 @@ zarr==2.18.4
 numcodecs==0.15.1
 cbor2==5.9.0
 universal-pathlib==0.3.6
-fsspec==2025.10.0
+fsspec==2026.6.0
+urllib3==2.8.0
 typing-extensions==4.16.0
 
 # Existing NPA CLI/request/S3 modules, without installing the NPA distribution.

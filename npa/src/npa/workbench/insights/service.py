@@ -26,6 +26,7 @@ from .analytics import (
     traverse_lineage,
 )
 from .integrations import InsightsIntegrationError
+from .reports import InsightsReportError, inspect_report
 from .schemas import (
     CompareRequest,
     CompareResponse,
@@ -40,6 +41,7 @@ from .schemas import (
     QueryResponse,
     RecordRequest,
     RecordResponse,
+    ReportRequest,
 )
 from .storage import InsightsStorageError
 from .store import (
@@ -113,6 +115,19 @@ def create_app(
     ) -> dict[str, Any]:
         await require_auth(request, authorization)
         return {"status": "ok", "stores": len(STORES)}
+
+    @app.post("/report")
+    async def report(
+        body: ReportRequest,
+        request: Request,
+        authorization: str = Header(default=""),
+    ) -> dict[str, Any]:
+        """Inspect one report under the service's existing auth and storage scope."""
+        await require_auth(request, authorization)
+        try:
+            return inspect_report(body.input_path)
+        except InsightsReportError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/system-info")
     async def system_info(

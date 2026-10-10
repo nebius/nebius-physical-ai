@@ -311,7 +311,7 @@ def test_commit_failure_rolls_back_both_resolution_and_history(team, monkeypatch
             if kind is None and self.in_transaction:
                 self.rollback()
                 failure = sqlite3.OperationalError("private failed fsync")
-                failure.sqlite_errorcode = sqlite3.SQLITE_IOERR_FSYNC
+                failure.sqlite_errorcode = 1034  # Stable SQLite extended I/O code.
                 failure.sqlite_errorname = "SQLITE_IOERR_FSYNC"
                 raise failure
             return super().__exit__(kind, error, traceback)
@@ -435,7 +435,11 @@ def test_real_receipt_failure_keeps_classification_and_safe_diagnostic(team):
     with pytest.raises(StorageFailure) as failure:
         executor.execute(_call())
     assert failure.value.diagnostic["phase"] == "tool_receipt"
-    assert failure.value.diagnostic["sqlite_errorname"] == "SQLITE_CONSTRAINT_TRIGGER"
+    # Native exception metadata was introduced in Python 3.11.
+    expected_name = (
+        "SQLITE_CONSTRAINT_TRIGGER" if hasattr(sqlite3, "SQLITE_CONSTRAINT") else None
+    )
+    assert failure.value.diagnostic["sqlite_errorname"] == expected_name
     assert "secret" not in str(failure.value)
     assert team.store._calls("task")[0]["status"] == "started"
     assert team.store._calls("task")[0]["classification"]["observation_only"] is True
@@ -452,7 +456,7 @@ def test_sqlite_failure_is_classified_without_raw_text(team, monkeypatch, phase)
     def fail(*args, **kwargs):
         error = sqlite3.OperationalError("credential=private-secret path=/private/file")
         error.sqlite_errorcode, error.sqlite_errorname = (
-            sqlite3.SQLITE_IOERR,
+            10,  # Stable SQLite primary I/O code, also exercised on Python 3.10.
             "SQLITE_IOERR",
         )
         raise error
@@ -468,7 +472,7 @@ def test_sqlite_failure_is_classified_without_raw_text(team, monkeypatch, phase)
                 pytest.fail("graph opened unavailable storage")
     assert failure.value.diagnostic == {
         "phase": phase,
-        "sqlite_errorcode": sqlite3.SQLITE_IOERR,
+        "sqlite_errorcode": 10,
         "sqlite_errorname": "SQLITE_IOERR",
     }
     assert "private" not in str(failure.value)
