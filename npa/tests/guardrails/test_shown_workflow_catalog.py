@@ -51,7 +51,13 @@ def test_shown_catalog_has_npa_workflow_specs() -> None:
     specs = iter_npa_workflow_specs()
     assert specs, "expected npa.workflow specs under the shown catalog"
     assert all(detect_submit_format(path) == "npa.workflow" for path in specs)
-    for name in ("sim2real.yaml", "paidf-cosmos3.yaml", "nurec-reconstruct.yaml"):
+    for name in (
+        "sim2real.yaml",
+        "paidf-cosmos3.yaml",
+        "nurec-reconstruct.yaml",
+        "groot-1-7-finetune.yaml",
+        "rgbd-scan-to-policy-demo.yaml",
+    ):
         expected = NPA_WORKFLOWS / "main" / name
         assert [path for path in specs if path.name == name] == [expected]
         assert not (NPA_WORKFLOWS / "testing" / name).exists()
