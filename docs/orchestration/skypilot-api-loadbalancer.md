@@ -30,7 +30,8 @@ disable it for new deployments. Replacing an existing ingress-nginx deployment
 requires its own migration plan.
 
 The LoadBalancer belongs to the HTTPS ingress/Gateway. The API Service stays
-`ClusterIP`, with port 46580 internal. Nebius LoadBalancer Services have public
+`ClusterIP`, serving port 80 and forwarding to container port 46580 internally.
+Nebius LoadBalancer Services have public
 IPs by default. A private endpoint requires the Service annotation
 `nebius.com/load-balancer-type: internal` and verified team connectivity. Retain
 an IP across Service recreation with a reusable allocation through
@@ -99,7 +100,10 @@ review and explicitly approve the chart's Kubernetes permissions. SkyPilot
 0.12.2 defaults `rbac.manageRbacPolicies` to `true`, which grants the API pod's
 Kubernetes service account wildcard verbs on `clusterroles` and
 `clusterrolebindings`, plus namespaced `roles`, `rolebindings`, and
-`serviceaccounts`. These grants allow the API identity to create and bind
+`serviceaccounts`. With the default `rbac.manageSystemComponents: true`, the
+chart also grants policy and DaemonSet management in `skypilot-system` and
+permissions to get, list, watch, and create that namespace. These grants allow
+the API identity to create and bind
 cluster-wide permissions, including cluster-admin permissions. A dedicated
 namespace does not constrain this grant. `auth.serviceAccount.enabled: false`
 controls SkyPilot API client authentication and does not restrict Kubernetes
