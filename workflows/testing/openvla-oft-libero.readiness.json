@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "d3057750df2985b980f411e06e256fadb52bde84d8d1b4b7e9d7c953c1e64811",
+  "workflow_sha256": "a1fc596ccaae6b7aceacf6a0b37de4d3c939ada52798bc776b4a9a159c0b82cb",
   "planning": {
     "validation": {
       "status": "verified",
@@ -56,7 +56,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The original controlled prepare controller is terminally cancelled after its ray-node exec failed before payload. A target diagnostic showed that dropping all container capabilities prevents the required passwordless-sudo set-id transition; the workflow now drops all capabilities except explicit SETGID and SETUID while retaining nonroot, RuntimeDefault seccomp, privileged=false, and no service-account token. A later pre-admission audit also found that the pinned SkyPilot secret channel persisted storage values in client task artifacts, so this workflow requires a complete task-owned Kubernetes secretKeyRef instead. Re-run exact target preflight and the full controlled workflow before claiming any OFT setup, simulator metric, benchmark, convergence, or physical-robot result.",
+      "reason": "The controlled prepare was cancelled after its ray-node bootstrap failed before payload. A same-context diagnostic of the retained image proved passwordless sudo and the set-id operations work, while moving the user-owned bootstrap file from $HOME into /etc/profile.d fails without DAC_OVERRIDE; that old image also lacks sshd and sshd_config. The workflow now keeps drop ALL with only DAC_OVERRIDE, SETGID, and SETUID, and the source recipe adds the SSH prerequisite, but a rebuilt image must still pass target bootstrap qualification before any OFT setup, simulator metric, benchmark, convergence, or physical-robot claim.",
       "evidence": [
         "docs/workbench/openvla-oft.md"
       ]
