@@ -17,7 +17,7 @@ from uuid import uuid4
 
 
 _BUILDKIT_IMAGE = (
-    "moby/buildkit:v0.33.0@sha256:"
+    "mirror.gcr.io/moby/buildkit:v0.33.0@sha256:"
     "6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3"
 )
 _NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]+")
@@ -67,6 +67,27 @@ class _BuilderCleanupError(RuntimeError):
     """Keep the owned builder receipt when its disk cleanup is incomplete."""
 
 
+def _docker_hub_mirror_reference(image: str) -> str:
+    """Route an unqualified Docker Hub digest through its public mirror."""
+
+    if "/" not in image:
+        return f"mirror.gcr.io/library/{image}"
+    registry, repository = image.split("/", 1)
+    if registry in {
+        "docker.io",
+        "index.docker.io",
+        "registry-1.docker.io",
+        "registry.docker.io",
+        "registry.hub.docker.com",
+    }:
+        if "/" not in repository:
+            repository = f"library/{repository}"
+        return f"mirror.gcr.io/{repository}"
+    if "." in registry or ":" in registry or registry == "localhost":
+        return image
+    return f"mirror.gcr.io/{image}"
+
+
 def preparation_command(
     entry: dict[str, object], builder: str, archive: Path, context: Path
 ) -> list[str] | None:
@@ -95,7 +116,7 @@ def preparation_command(
         "--no-cache",
     ]
     for name, value in (
-        ("BASE_IMAGE", entry["image"]),
+        ("BASE_IMAGE", _docker_hub_mirror_reference(str(entry["image"]))),
         ("PURGE_LINUX_LIBC_DEV", str(entry["purge_linux_libc_dev"]).lower()),
         ("UPGRADE_OS", str(entry["upgrade_os"]).lower()),
     ):
@@ -145,7 +166,7 @@ def prepare_target(entry: dict[str, object], root: Path) -> str | Path:
     context = root / "context"
     command = preparation_command(entry, builder, archive, context)
     if command is None:
-        return str(entry["image"])
+        return _docker_hub_mirror_reference(str(entry["image"]))
     context.mkdir(mode=0o700)
     environment = _create_builder(builder, root)
     try:
