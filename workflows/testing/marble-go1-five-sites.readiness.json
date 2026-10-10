@@ -1,0 +1,49 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "2f8a08f6b486f872a689a016d3a9ce0abbea5620b23abab1c8ef312c1348bb6a",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Native schema validation, planning, wave construction and SkyPilot worker rendering passed; 14 focused preset checks passed.",
+      "evidence": [
+        "npa/tests/workflows/test_marble_presets.py",
+        "docs/workbench/guides/marble-robot-presets.md"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Resolved operations invoke real hosted world acquisition, Go1 collection and HTML reporting. Five-site fan-out has three waves of five isolated tasks; these presets do not implement ANYmal.",
+      "evidence": [
+        "npa/tests/workflows/test_marble_presets.py",
+        "docs/workbench/guides/marble-robot-presets.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The example bucket must be replaced and storage access verified for the selected project.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The generation prompt is wired into the World API stage; no world has been generated or route-qualified for this new preset.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Requires funded WLT_API_KEY plus operator Nebius and S3 access; no new credential or credit check was performed.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Uses the existing EnvGen image and staged checkout bootstrap; new preset worker execution is not yet accepted.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Requires Linux SkyPilot and schedulable RTX PRO 6000 workers. Earlier warehouse collection is historical component evidence, not a completed run of this preset.",
+      "evidence": []
+    }
+  }
+}

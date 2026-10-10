@@ -1049,6 +1049,67 @@ def test_expected_parallel_tasks_matches_the_spec_fan_out() -> None:
         )
 
 
+def _recorded_parallel_wave(group, start, count=5, offset=0):
+    states = [f"{group}-{index + offset}" for index in range(count)]
+    return {
+        "kind": "parallel",
+        "group": group,
+        "states": states,
+        "tasks": [
+            {"task_name": state, "start_at": start, "end_at": start + 10}
+            for state in states
+        ],
+    }
+
+
+def test_live_parallel_evidence_accepts_three_groups_ending_in_reports():
+    waves = [
+        _recorded_parallel_wave(group, index * 20 + 1)
+        for index, group in enumerate(("acquire", "collect", "report"))
+    ]
+    _load_live_helpers().assert_parallel_run(waves, 5)
+
+
+def test_live_parallel_evidence_counts_batches_within_one_group():
+    waves = [
+        _recorded_parallel_wave("collect", 1, 2),
+        _recorded_parallel_wave("collect", 21, 2, offset=2),
+    ]
+    _load_live_helpers().assert_parallel_run(waves, 4)
+
+
+@pytest.mark.parametrize("broken_boundary", [0, 1])
+def test_live_parallel_evidence_rejects_each_early_downstream_group(broken_boundary):
+    waves = [
+        _recorded_parallel_wave(group, index * 20 + 1)
+        for index, group in enumerate(("acquire", "collect", "report"))
+    ]
+    waves[broken_boundary + 1]["tasks"][0]["start_at"] = 1
+    with pytest.raises(AssertionError, match="before preceding wave finished"):
+        _load_live_helpers().assert_parallel_run(waves, 5)
+
+
+def test_live_parallel_evidence_rejects_serialized_report_group():
+    waves = [
+        _recorded_parallel_wave(group, index * 20 + 1)
+        for index, group in enumerate(("acquire", "collect", "report"))
+    ]
+    for index, task in enumerate(waves[-1]["tasks"]):
+        task.update(start_at=41 + index * 20, end_at=51 + index * 20)
+    with pytest.raises(AssertionError, match="report never ran concurrently"):
+        _load_live_helpers().assert_parallel_run(waves, 5)
+
+
+def test_live_parallel_evidence_rejects_missing_barrier_timings():
+    waves = [
+        _recorded_parallel_wave("acquire", 1),
+        _recorded_parallel_wave("collect", 21),
+    ]
+    waves[0]["tasks"][0].pop("end_at")
+    with pytest.raises(AssertionError, match="missing parallel end timings"):
+        _load_live_helpers().assert_parallel_run(waves, 5)
+
+
 def test_specs_with_a_parallel_group_are_registered_as_runtime_cases() -> None:
     """A `parallel:` spec submitted one-shot would silently serialize; forbid it."""
 

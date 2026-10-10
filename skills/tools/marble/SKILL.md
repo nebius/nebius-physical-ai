@@ -5,6 +5,17 @@ description: Generate or import World Labs Marble worlds into NPA and run native
 
 # Marble
 
+For five generated-site Go1 presets, use
+`docs/workbench/guides/marble-robot-presets.md` and
+`workflows/testing/marble-go1-five-sites.yaml`. Individual site YAMLs select
+warehouse, shipyard, home, factory or utility. Each includes hosted generation
+with `WLT_API_KEY`, GPU collection and standalone HTML reporting. The combined
+spec runs three native parallel waves of five tasks, with one RTX PRO 6000 per
+collector and separate S3 paths. These are Go1 presets, not ANYmal or Spot.
+The existing warehouse run proves the collector only; each new generated route
+and the complete fan-out require their own live acceptance. Do not advertise
+thermal inspection, defect detection, household manipulation or RL training.
+
 For detailed quadruped collection, use
 `workflows/testing/marble-warehouse-quadruped.yaml` and
 `docs/workbench/guides/marble-warehouse-quadruped.md`. Reuse an existing generated
