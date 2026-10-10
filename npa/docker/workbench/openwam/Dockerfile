@@ -84,9 +84,10 @@ RUN python3 -m venv /opt/openwam-venv \
     && DS_BUILD_OPS=0 /opt/openwam-venv/bin/python -m pip install --no-cache-dir --no-build-isolation \
       -r /opt/openwam/docker/requirements-cu128.txt \
     && /opt/openwam-venv/bin/python -m pip install --no-cache-dir --no-deps -e /opt/openwam \
-    && /opt/openwam-venv/bin/python -m pip install --no-cache-dir boto3==1.42.91 rerun-sdk==0.38.1 \
+    && /opt/openwam-venv/bin/python -m pip install --no-cache-dir \
+      boto3==1.42.91 rerun-sdk==0.38.1 PyYAML==6.0.3 \
     && find /opt/openwam-venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
-    && /opt/openwam-venv/bin/python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
+    && /opt/openwam-venv/bin/python -c 'import importlib.metadata as m, imageio_ffmpeg, yaml; assert m.version("PyYAML") == "6.0.3"; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"; assert yaml is not None' \
     && /opt/openwam-venv/bin/python -m pip check
 
 RUN git clone --filter=blob:none --no-checkout "${LIBERO_SOURCE_URL}" /opt/openwam-libero-source \

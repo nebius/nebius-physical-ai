@@ -32,6 +32,7 @@ LIBERO_REPOSITORY = "https://github.com/Lifelong-Robot-Learning/LIBERO"
 LIBERO_SOURCE_REF = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
 LIBERO_LICENSE = "MIT"
 LIBERO_DATA_LICENSE = "CC-BY-4.0"
+_NORMALIZATION_OFF_VALUES = (None, "", "none", "null")
 
 
 class OpenWAMPipelineError(RuntimeError):
@@ -301,7 +302,7 @@ def _normalization_required(config: Path) -> bool:
         raise OpenWAMPipelineError(
             f"OpenWAM checkpoint dataloader config is not a mapping: {config}"
         )
-    return dataloader.get("normalize_mode") not in (None, "", "none", "null")
+    return dataloader.get("normalize_mode") not in _NORMALIZATION_OFF_VALUES
 
 
 def _checkpoint_record(root: Path) -> dict[str, Any]:

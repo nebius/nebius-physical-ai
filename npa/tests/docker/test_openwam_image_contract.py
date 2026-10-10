@@ -34,6 +34,7 @@ def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
     assert "transformers==4.21.1" not in dockerfile
     assert "hydra-core==1.3.7" in dockerfile
     assert "hydra-core==1.2.0" not in dockerfile
+    assert "PyYAML==6.0.3" in dockerfile
     libero_requirements = (
         "/opt/openwam-libero/bin/python -m pip install --no-cache-dir "
         "-r /opt/openwam-libero-source/requirements.txt"
@@ -45,6 +46,7 @@ def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
     assert dockerfile.index(libero_requirements) < dockerfile.index(fixed_dependencies)
     assert 'm.version("transformers") == "4.36.0"' in dockerfile
     assert 'm.version("hydra-core") == "1.3.7"' in dockerfile
+    assert 'm.version("PyYAML") == "6.0.3"' in dockerfile
 
 
 def test_openwam_removes_observed_base_image_critical_footprint() -> None:

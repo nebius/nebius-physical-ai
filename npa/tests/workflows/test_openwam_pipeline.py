@@ -18,6 +18,23 @@ from npa.workflows import openwam_pipeline as pipeline
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "workflows" / "testing" / "openwam-libero-four-stage.yaml"
 DIGEST_IMAGE = "registry.example.invalid/operator/openwam@sha256:" + "0" * 64
+FOUNDATION_DATALOADER_EXCERPT = """\
+dataloader:
+  datasets:
+    agibotworld:
+      normalize_mode: quantile
+  type: mixture
+  weight_strategy: proportional
+  seed: 42
+"""
+
+
+def _checkpoint_with_config(root: Path, config: str) -> Path:
+    root.mkdir(exist_ok=True)
+    checkpoint = root / "checkpoint_step_154000.safetensors"
+    checkpoint.write_bytes(b"foundation-checkpoint")
+    (root / "config.yaml").write_text(config, encoding="utf-8")
+    return checkpoint
 
 
 def test_runtime_image_provenance_accepts_equivalent_digest_references(
@@ -60,14 +77,10 @@ def test_openwam_sources_are_pinned_to_the_documented_architecture() -> None:
 
 def test_checkpoint_record_follows_saved_normalization_contract(tmp_path: Path) -> None:
     foundation = tmp_path / "foundation"
-    foundation.mkdir()
-    checkpoint = foundation / "checkpoint_step_154000.safetensors"
-    checkpoint.write_bytes(b"foundation-checkpoint")
+    checkpoint = _checkpoint_with_config(foundation, FOUNDATION_DATALOADER_EXCERPT)
     config = foundation / "config.yaml"
-    # The pinned foundation config has dataset-level settings, but no root
-    # dataloader.normalize_mode. The upstream loader disables its normalizer in
-    # exactly that configuration and does not require a stats sidecar.
-    config.write_text("dataloader:\n  datasets: {}\n", encoding="utf-8")
+    # This is the relevant documented excerpt from the pinned foundation config:
+    # normalization is configured per dataset, but not at dataloader root.
 
     record = pipeline._checkpoint_record(foundation)
 
@@ -77,10 +90,9 @@ def test_checkpoint_record_follows_saved_normalization_contract(tmp_path: Path) 
     assert "normalization_sha256" not in record
 
     active = tmp_path / "active-normalization"
-    active.mkdir()
-    (active / checkpoint.name).write_bytes(b"normalized-checkpoint")
-    (active / "config.yaml").write_text(
-        "dataloader:\n  normalize_mode: quantile\n", encoding="utf-8"
+    _checkpoint_with_config(
+        active,
+        "dataloader:\n  normalize_mode: quantile\n",
     )
     with pytest.raises(
         pipeline.OpenWAMPipelineError, match="enables action normalization"
@@ -92,6 +104,45 @@ def test_checkpoint_record_follows_saved_normalization_contract(tmp_path: Path) 
     active_record = pipeline._checkpoint_record(active)
     assert active_record["normalization_required"] is True
     assert active_record["normalization_sha256"] == pipeline._sha256_file(stats)
+
+
+@pytest.mark.parametrize(
+    ("normalize_mode", "required"),
+    [
+        ("null", False),
+        ('""', False),
+        ("none", False),
+        ("false", True),
+        ("0", True),
+        ("quantile", True),
+    ],
+)
+def test_normalization_sentinel_matches_pinned_upstream_loader(
+    tmp_path: Path, normalize_mode: str, required: bool
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"dataloader:\n  normalize_mode: {normalize_mode}\n", encoding="utf-8"
+    )
+
+    assert pipeline._normalization_required(config) is required
+
+
+@pytest.mark.parametrize(
+    ("config_text", "message"),
+    [
+        ("dataloader: [\n", "not valid YAML"),
+        ("- checkpoint\n", "config is not a mapping"),
+        ("dataloader: []\n", "dataloader config is not a mapping"),
+    ],
+)
+def test_checkpoint_record_rejects_invalid_saved_configs(
+    tmp_path: Path, config_text: str, message: str
+) -> None:
+    _checkpoint_with_config(tmp_path, config_text)
+
+    with pytest.raises(pipeline.OpenWAMPipelineError, match=message):
+        pipeline._checkpoint_record(tmp_path)
 
 
 def test_workflow_has_five_connected_substantive_stages() -> None:
