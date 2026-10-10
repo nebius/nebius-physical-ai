@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from npa.workbench.curobo import audit, runner
+from npa.workbench.curobo import audit, query_binding, runner
 from npa.workbench.curobo.artifacts import (
     CuroboError,
     canonical,
@@ -33,6 +33,8 @@ def benchmark_rows(modes=("kinematic",)):
                 if invalid
                 else {
                     "query": {
+                        "robot": "franka.yml",
+                        "scene": {"cuboid": {}},
                         "start": [0.0] * 7,
                         "goal_pose": {
                             "position_xyz": [0.1, 0.0, 0.0],
@@ -50,7 +52,29 @@ def benchmark_rows(modes=("kinematic",)):
 
 
 def report_for(rows, kind="benchmark"):
+    modes = sorted({r["mode"] for r in rows})
+    manifest = {
+        "schema_version": "npa.curobo.benchmark.v1",
+        "modes": modes,
+        "dataset_revision": DATASET_REVISION,
+    }
+    if kind == "plan":
+        manifest = {
+            "schema_version": "npa.curobo.plan.v1",
+            "robot": "franka.yml",
+            "problems": [
+                {
+                    "id": r["problem_id"],
+                    "start": r["query"]["start"],
+                    "goal_pose": r["query"]["goal_pose"],
+                    "cuboids": r["query"]["scene"]["cuboid"],
+                }
+                for r in rows
+            ],
+        }
     return {
+        "input_manifest": manifest,
+        "input_sha256": hashlib.sha256(canonical(manifest)).hexdigest(),
         "schema_version": "npa.curobo.result.v1",
         "engine": "nvidia-curobo-v2",
         "source_revision": SOURCE_REVISION,
@@ -214,6 +238,7 @@ def solved_row(monkeypatch):
         ),
     )
     problem = {
+        "obstacles": {"cuboid": {}},
         "start": [0.0] * 7,
         "goal_pose": {
             "position_xyz": [0.1, 0.0, 0.0],
@@ -319,10 +344,19 @@ def test_actual_runner_benchmark_record_matches_strict_metrics_contract(solved_r
     "modes", [("kinematic",), ("dynamics",), ("kinematic", "dynamics")]
 )
 def test_independent_audit_accepts_full_requested_synthetic_population(
-    solved_row, modes
+    solved_row, modes, monkeypatch
 ):
     rows = benchmark_rows(modes)
     solution = solved_row(benchmark=True)
+    # These numerical-audit fixtures do not claim to be real benchmark queries.
+    # Real pinned-byte loading and whole-query substitution have separate tests.
+    expected_queries = {
+        (r["dataset"], r["problem_id"]): None
+        if r["status"] == "invalid"
+        else deepcopy(solution["query"])
+        for r in rows
+    }
+    monkeypatch.setattr(query_binding, "benchmark_queries", lambda: expected_queries)
     for row in rows:
         if row["status"] != "invalid":
             row.update(deepcopy(solution))
@@ -341,6 +375,28 @@ def test_independent_audit_accepts_full_requested_synthetic_population(
         for mode in modes
         for dataset in ("motion_benchmaker", "mpinets")
     }
+
+
+def test_independent_audit_rejects_cloned_query_population(solved_row, monkeypatch):
+    rows = benchmark_rows()
+    solution = solved_row(benchmark=True)
+    expected = {}
+    for row in rows:
+        identity = (row["dataset"], row["problem_id"])
+        expected[identity] = None
+        if row["status"] != "invalid":
+            row.update(deepcopy(solution))
+            expected[identity] = deepcopy(solution["query"])
+    # Preserve every ID and the invalid mask while changing an expected task.
+    expected[("motion_benchmaker", "bookshelf_small_panda/1")]["goal_pose"][
+        "position_xyz"
+    ][0] += 0.1
+    monkeypatch.setattr(query_binding, "benchmark_queries", lambda: expected)
+    report = report_for(rows)
+    journal = b"".join(canonical(row) + b"\n" for row in rows)
+    report["journal_sha256"] = hashlib.sha256(journal).hexdigest()
+    with pytest.raises(audit.AuditError, match="executed query differs"):
+        audit.audit_bytes(canonical(report), journal, run_id="report-test")
 
 
 def test_full_interpolation_retains_fingers_and_orders_active_joints_for_fk(solved_row):

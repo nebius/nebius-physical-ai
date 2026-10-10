@@ -151,7 +151,12 @@ def _validate_query(row: dict[str, Any]) -> None:
             raise CuroboError("excluded benchmark input cannot carry an executed query")
         return
     query = row.get("query")
-    if not isinstance(query, dict) or set(query) != {"start", "goal_pose"}:
+    if (
+        not isinstance(query, dict)
+        or set(query) != {"robot", "start", "goal_pose", "scene"}
+        or query["robot"] != "franka.yml"
+        or not isinstance(query["scene"], dict)
+    ):
         raise CuroboError("planner row lacks the executed start and goal query")
     start = np.asarray(query["start"], dtype=float)
     goal = query["goal_pose"]

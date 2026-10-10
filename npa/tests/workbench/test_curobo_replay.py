@@ -206,10 +206,12 @@ def test_replay_rows_executes_independent_fk_path(monkeypatch):
             ],
         },
         "query": {
+            "robot": "franka.yml",
+            "scene": {"cuboid": {}},
             "goal_pose": {
                 "position_xyz": [0.5, 0.0, 0.3],
                 "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
-            }
+            },
         },
     }
     result = replay.replay_rows([row], {"kind": "plan"})

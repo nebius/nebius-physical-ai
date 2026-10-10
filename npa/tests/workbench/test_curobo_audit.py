@@ -25,6 +25,8 @@ def plan_row():
         "problem_id": "pose",
         "status": "success",
         "query": {
+            "robot": "franka.yml",
+            "scene": {"cuboid": {}},
             "start": [0.0] * 7,
             "goal_pose": {
                 "position_xyz": [0.1, 0.0, 0.0],
@@ -72,6 +74,20 @@ def plan_bytes():
         "journal_sha256": hashlib.sha256(journal).hexdigest(),
         "summary": summarize([row]),
     }
+    manifest = {
+        "schema_version": "npa.curobo.plan.v1",
+        "robot": "franka.yml",
+        "problems": [
+            {
+                "id": "pose",
+                "start": row["query"]["start"],
+                "goal_pose": row["query"]["goal_pose"],
+                "cuboids": {},
+            }
+        ],
+    }
+    report["input_manifest"] = manifest
+    report["input_sha256"] = hashlib.sha256(canonical(manifest)).hexdigest()
     return canonical(report), journal
 
 

@@ -49,6 +49,18 @@ not hardware-execution permission. No upstream published performance number is
 presented as a Nebius measurement. Planner feasibility is not independent
 collision certification.
 
+Results retain the canonical `input_manifest` and its `input_sha256`. Each
+executed query includes the fixed robot, start, goal and complete input scene
+(before the benchmark's documented OBB conversion). Completion compares operator
+queries against the requested manifest before publishing. Independent benchmark
+validation reads the hash-pinned YAML in `NPA_CUROBO_DATASET_SOURCE` (default
+`/opt/robometrics`); matching IDs alone cannot establish query provenance. Missing
+or changed dataset bytes fail closed, with no network fallback. Older journals
+without this request/scene evidence cannot receive a current validation receipt.
+Accepted near-unit goal and obstacle quaternions are normalized before execution
+and request hashing. Audit rejection uses the shared operation error contract
+(CLI exit 1; authenticated API HTTP 400), not a generic server error.
+
 For custom inputs, write a `npa.curobo.plan.v1` JSON manifest to S3:
 
 ```json

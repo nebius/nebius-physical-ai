@@ -19,7 +19,7 @@ from npa.workbench.dataset.storage import read_bytes_uri, uri_join, write_bytes_
 from npa.workbench.dataset import storage as dataset_storage
 from npa.workbench.storage_scope import authorize_uri
 
-from .audit import audit_bytes
+from .audit import AuditError, audit_bytes
 from .artifacts import (
     CuroboError,
     build_rrd,
@@ -29,6 +29,7 @@ from .artifacts import (
     validate_report,
 )
 from .replay import ReplayError, replay_rows
+from .query_binding import QueryBindingError, validate_query_binding
 from .schemas import BenchmarkManifest, PlanManifest, PrepareRequest, RunRequest
 
 
@@ -233,6 +234,11 @@ def _completed_output(
             raise CuroboError("operator plan cannot exclude a validated input problem")
     report["subprocess_wall_seconds"] = time.perf_counter() - started
     report["input_sha256"] = hashlib.sha256(canonical(manifest)).hexdigest()
+    report["input_manifest"] = manifest
+    try:
+        validate_query_binding(report, rows)
+    except QueryBindingError as exc:
+        raise CuroboError(str(exc)) from exc
     report["journal_sha256"] = hashlib.sha256(
         (root / "output/problems.jsonl").read_bytes()
     ).hexdigest()
@@ -321,7 +327,10 @@ def validate(request: RunRequest):
         result_bytes, journal, report, rows = _download_artifacts(
             request, Path(directory)
         )
-        result = audit_bytes(result_bytes, journal, run_id=request.run_id)
+        try:
+            result = audit_bytes(result_bytes, journal, run_id=request.run_id)
+        except AuditError as exc:
+            raise CuroboError(f"independent artifact audit failed: {exc}") from exc
         try:
             replay = replay_rows(rows, report)
         except ReplayError as exc:

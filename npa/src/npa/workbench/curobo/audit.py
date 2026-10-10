@@ -15,6 +15,7 @@ from .trajectory_binding import require_dynamics_path
 
 from .benchmark_inventory import benchmark_identities
 from .schemas import DATASET_REVISION, SOURCE_REVISION
+from .query_binding import QueryBindingError, validate_query_binding
 
 
 class AuditError(RuntimeError):
@@ -412,6 +413,10 @@ def audit_bytes(
     ):
         raise AuditError("operator-plan scope differs")
     terminal_distances = []
+    try:
+        validate_query_binding(report, rows)
+    except QueryBindingError as exc:
+        raise AuditError(str(exc)) from exc
     terminal_orientations = []
     for row in rows:
         if row["status"] != "invalid":

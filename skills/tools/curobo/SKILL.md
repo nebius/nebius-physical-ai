@@ -64,6 +64,12 @@ real pose; it does not prove full-benchmark completion.
   derived from the pinned YAML with file hashes. The runner checks those bytes,
   and report validation requires the known metrics for every status plus sample
   timeline consistency. Do not accept a self-consistent but invented journal.
+- Results retain the canonical input manifest and hash. Executed queries include
+  robot/start/goal and the full input scene before OBB conversion. Completion
+  binds operator queries to the request; independent benchmark validation reads
+  the hash-pinned local YAML, not the producer's identity labels or query claims.
+  Missing/changed dataset bytes and older journals lacking request/scene evidence
+  fail closed. Accepted near-unit quaternions are normalized before execution.
 - Energy is a Pinocchio inverse-dynamics proxy on the optimized joint trajectory.
   Validators bind all interior joint positions and derivatives to the retained
   path using the pinned cubic interpolation/retiming law, not endpoint-only or

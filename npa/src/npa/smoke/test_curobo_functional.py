@@ -89,6 +89,7 @@ def _run_workload(
             },
         ]
     }
+    manifest = PlanManifest.model_validate(manifest).model_dump(mode="json")
     (root / "input.json").write_bytes(canonical(manifest))
     report = execute("plan", manifest, root / "output", run_id=run_id)
     rows = read_journal(root / "output/problems.jsonl")

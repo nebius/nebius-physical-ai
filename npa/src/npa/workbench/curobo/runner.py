@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import hashlib
 import importlib
 import importlib.util
@@ -24,6 +25,7 @@ from .artifacts import (
     validate_trajectory,
 )
 from .benchmark_inventory import DATASET_FILES
+from .query_binding import planner_query
 from .schemas import DATASET_REVISION, SOURCE_REVISION, BenchmarkManifest, PlanManifest
 
 
@@ -349,17 +351,7 @@ def _solve(
     elapsed = time.perf_counter() - start
     record = {
         "status": "failed",
-        "query": {
-            "start": [float(value) for value in problem["start"]],
-            "goal_pose": {
-                "position_xyz": [
-                    float(value) for value in problem["goal_pose"]["position_xyz"]
-                ],
-                "quaternion_wxyz": [
-                    float(value) for value in problem["goal_pose"]["quaternion_wxyz"]
-                ],
-            },
-        },
+        "query": planner_query(problem, benchmark=benchmark_module is not None),
         "metrics": {"wall_plan_seconds": elapsed},
     }
     if result is None or not bool(result.success.item()):
@@ -508,7 +500,7 @@ def execute(kind: str, manifest: dict, output: Path, *, run_id: str):
                                     )
                                     continue
                                 world = SceneCfg.create(
-                                    problem["obstacles"]
+                                    deepcopy(problem["obstacles"])
                                 ).get_obb_world()
                                 planner.scene_collision_checker.clear_cache()
                                 planner.update_world(world)
@@ -527,6 +519,10 @@ def execute(kind: str, manifest: dict, output: Path, *, run_id: str):
                         finally:
                             planner.destroy()
     report = {
+        "input_manifest": inputs.model_dump(mode="json"),
+        "input_sha256": hashlib.sha256(
+            canonical(inputs.model_dump(mode="json"))
+        ).hexdigest(),
         "requested_modes": list(inputs.modes) if kind == "benchmark" else ["kinematic"],
         "schema_version": "npa.curobo.result.v1",
         "run_id": run_id,

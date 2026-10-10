@@ -43,6 +43,8 @@ def row():
         "problem_id": "case",
         "status": "success",
         "query": {
+            "robot": "franka.yml",
+            "scene": {"cuboid": {}},
             "start": [0.0],
             "goal_pose": {
                 "position_xyz": [0.1, 0.0, 0.0],
@@ -726,7 +728,7 @@ def completed_plan(monkeypatch, tmp_path):
                 "id": "case",
                 "start": [0, 0, 0, 0, 0, 0, 0],
                 "goal_pose": {
-                    "position_xyz": [0.5, 0, 0.3],
+                    "position_xyz": [0.1, 0, 0],
                     "quaternion_wxyz": [1, 0, 0, 0],
                 },
             }
@@ -881,6 +883,19 @@ def test_validation_recomputes_facts_and_detects_hash_tampering(monkeypatch):
         "s3://example-bucket/input/problems.jsonl": journal,
         "s3://example-bucket/input/result.json": canonical(report),
     }
+    manifest = PlanManifest(
+        problems=[
+            {
+                "id": "case",
+                "start": plan_row()["query"]["start"],
+                "goal_pose": plan_row()["query"]["goal_pose"],
+                "cuboids": {},
+            }
+        ]
+    ).model_dump(mode="json")
+    report["input_manifest"] = manifest
+    report["input_sha256"] = hashlib.sha256(canonical(manifest)).hexdigest()
+    objects["s3://example-bucket/input/result.json"] = canonical(report)
     monkeypatch.setattr(runtime, "read_bytes_uri", lambda uri: objects[uri])
     monkeypatch.setattr(
         runtime,
@@ -1231,12 +1246,21 @@ def test_functional_smoke_retains_complete_positive_and_failure_evidence(
         ]
         solved = plan_row()
         solved["problem_id"] = "franka-pose"
+        from npa.workbench.curobo.query_binding import planner_query
+
+        solved["query"] = planner_query(manifest["problems"][0])
+        initial = manifest["problems"][0]["start"]
+        solved["trajectory"]["position"] = [
+            [value + start for value, start in zip(sample, initial)]
+            for sample in solved["trajectory"]["position"]
+        ]
+        solved["trajectory"]["tool_position"] = [[0.4, 0.0, 0.3], [0.5, 0.0, 0.3]]
         failed = {
             "mode": "kinematic",
             "dataset": "operator",
             "problem_id": "blocked-goal-control",
             "status": "failed",
-            "query": copy.deepcopy(solved["query"]),
+            "query": planner_query(manifest["problems"][1]),
             "metrics": {"wall_plan_seconds": 0.02},
         }
         rows = [solved, failed]
@@ -1260,6 +1284,8 @@ def test_functional_smoke_retains_complete_positive_and_failure_evidence(
             },
             "summary": summarize(rows),
             "limitations": ["unit fixture"],
+            "input_manifest": manifest,
+            "input_sha256": hashlib.sha256(canonical(manifest)).hexdigest(),
         }
         (output / "result.json").write_bytes(canonical(report))
         return report
@@ -1528,7 +1554,7 @@ def test_plan_result_requires_exact_requested_population(
     monkeypatch.setenv("NPA_CUROBO_WORK_DIR", str(tmp_path))
     template = {
         "start": [0, 0, 0, 0, 0, 0, 0],
-        "goal_pose": {"position_xyz": [0.5, 0, 0.3], "quaternion_wxyz": [1, 0, 0, 0]},
+        "goal_pose": {"position_xyz": [0.1, 0, 0], "quaternion_wxyz": [1, 0, 0, 0]},
     }
     manifest = PlanManifest(
         problems=[{"id": "first", **template}, {"id": "second", **template}]
