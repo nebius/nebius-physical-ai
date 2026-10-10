@@ -287,6 +287,13 @@ PVC is `Bound` with `RWX`. Exit 78 means acceptance was explicitly disabled;
 image pull failures are handled in the next gate. See
 [runtime-fetch packaging](../container-packaging.md#runtime-fetched-isaac-sim-why-the-isaac-images-are-publishable).
 
+The current Isaac Sim 6 wheel closure occupies about 18 GiB before runtime
+outputs. The template requests 64 GiB so a new pinned tree can be installed beside
+the previous tree. Cold installation depends on download bandwidth and shared
+filesystem metadata throughput; the historical 111-second estimate is obsolete.
+The warm job sets `PIP_COMPILE=0` to avoid precompiling the SDK's Python modules.
+Ordinary workload pods execute the verified tree with read-only/offline access.
+
 After changing the image, check `isaac-bootstrap status` from that exact digest
 against the PVC: its `expected_tree` must report `ready=yes`. The cache stamp
 also includes the bootstrap script, so matching wheel versions alone are not

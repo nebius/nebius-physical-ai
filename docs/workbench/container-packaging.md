@@ -471,7 +471,7 @@ pod pay its generation's cold fetch. Warm a **shared** volume once instead:
 
 ```bash
 kubectl apply -f npa/docker/workbench/common/warm-isaac-cache.yaml
-kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=30m
+kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
 ```
 
 Then run workload pods against the same volume with `NPA_ISAAC_CACHE_READONLY=1`, so the
