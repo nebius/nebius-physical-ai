@@ -59,6 +59,7 @@ a standalone HTML report.
 | Robot policy walkthroughs | [Franka / Genesis](guides/franka-pick-and-place-genesis.md) · [PushT SDK smoke](guides/pusht-sim-to-real.md) · [Reachy 2 / LeRobot](guides/reachy2-lerobot-policy.md) · [subtask labeling](guides/lerobot-subtask-labeling.md) |
 | Locomotion | [G1 / SONIC](guides/g1-humanoid-walk-sonic.md) · [quadruped / Isaac Lab](guides/quadruped-isaac-lab.md) |
 | GR00T fine-tuning | [GR00T N1.7](cookbooks/groot-1-7-training.md) |
+| Public-data VLA training | [SmolVLA → task adaptation → LIBERO evaluation](cookbooks/public-vla-training.md), on MK8s or Slurm/Soperator |
 | OpenPI policy training | [Pi0.5 / Polaris](openpi-pi05-polaris.md) |
 | Simulation-to-policy pipeline | [Sim2Real runbook](guides/sim2real-workflow.md) · [data contracts](guides/sim2real-data-contracts.md) · [customer assets](guides/sim2real-customer-assets.md) · [robot spec](guides/sim2real-robot-spec.md) |
 | Browser teleoperation | [LeIsaac](leisaac-teleoperation.md) · [latency measurement](guides/leisaac-transport-latency.md) |
