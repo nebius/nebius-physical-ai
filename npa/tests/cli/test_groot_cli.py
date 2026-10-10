@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import re
 import shlex
 from concurrent.futures import ThreadPoolExecutor
@@ -1026,6 +1027,13 @@ def test_groot_container_scanned_dependency_layers_do_not_commit_package_caches(
     uv_layer_end = dockerfile.index("\n\n", uv_layer_start)
     uv_layer = dockerfile[uv_layer_start:uv_layer_end]
     assert "uv sync --python 3.10" in uv_layer
+    sanitizer = (
+        "python3.10 /opt/npa/docker/workbench/groot/sanitize_scikit_image_grass.py"
+    )
+    assert "docker/workbench/groot/sanitize_scikit_image_grass.py" in dockerfile
+    assert sanitizer in uv_layer
+    assert '--python "${GROOT_VENV}/bin/python"' in uv_layer
+    assert uv_layer.index("uv sync --python 3.10") < uv_layer.index(sanitizer)
     assert 'rm -rf "${UV_CACHE_DIR}"' in uv_layer
     assert uv_layer.index("uv sync --python 3.10") < uv_layer.index(
         'rm -rf "${UV_CACHE_DIR}"'
@@ -1038,6 +1046,54 @@ def test_groot_container_scanned_dependency_layers_do_not_commit_package_caches(
         'RUN uv pip install --no-cache --python "${GROOT_VENV}/bin/python" '
         "--no-deps -e /opt/npa"
     ) in dockerfile
+
+
+def _scikit_image_sanitizer_module():
+    path = PACKAGE_ROOT / "docker/workbench/groot/sanitize_scikit_image_grass.py"
+    spec = importlib.util.spec_from_file_location("groot_scikit_image_sanitizer", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_groot_scikit_image_sanitizer_removes_only_scoped_documentation_token(
+    tmp_path: Path,
+) -> None:
+    module = _scikit_image_sanitizer_module()
+    token = "eyJexample.payload.signature"
+    fetchers = tmp_path / "_fetchers.py"
+    fetchers.write_text(
+        "def grass():\n"
+        '    """The public function docstring stays untouched."""\n'
+        f'    """Standalone historical note: {token}"""\n'
+        "    return 'grass-result'\n"
+    )
+
+    assert module.sanitize_fetchers_module(fetchers) == 1
+
+    sanitized = fetchers.read_text()
+    assert token not in sanitized
+    assert "[redacted-token]" in sanitized
+    namespace: dict[str, object] = {}
+    exec(compile(sanitized, str(fetchers), "exec"), namespace)
+    assert namespace["grass"]() == "grass-result"
+
+
+def test_groot_scikit_image_sanitizer_rejects_ambiguous_upstream_literals(
+    tmp_path: Path,
+) -> None:
+    module = _scikit_image_sanitizer_module()
+    fetchers = tmp_path / "_fetchers.py"
+    fetchers.write_text(
+        "def grass():\n"
+        '    """The public function docstring stays untouched."""\n'
+        '    """eyJfirst.payload.signature eyJsecond.payload.signature"""\n'
+        "    return 'grass-result'\n"
+    )
+
+    with pytest.raises(module.ScikitImageSanitizationError, match="exactly one"):
+        module.sanitize_fetchers_module(fetchers)
 
 
 def test_groot_install_command_never_inlines_service_env() -> None:

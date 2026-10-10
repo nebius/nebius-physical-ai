@@ -135,6 +135,9 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && test "$(git -C "${GROOT_REPO}" rev-parse HEAD)" = "${GROOT_REPO_REF}" \
     && git -C "${GROOT_REPO}" submodule update --init --recursive
 
+COPY --chown=ubuntu:ubuntu docker/workbench/groot/sanitize_scikit_image_grass.py \
+    /opt/npa/docker/workbench/groot/sanitize_scikit_image_grass.py
+
 RUN python3.10 - <<'PY'
 from pathlib import Path
 import os
@@ -232,6 +235,8 @@ PY
 RUN export UV_CACHE_DIR=/tmp/groot-uv-cache \
     && cd "${GROOT_REPO}" \
     && uv sync --python 3.10 \
+    && python3.10 /opt/npa/docker/workbench/groot/sanitize_scikit_image_grass.py \
+      --python "${GROOT_VENV}/bin/python" \
     && uv pip install --python "${GROOT_VENV}/bin/python" \
       boto3==1.42.91 \
       fastapi==0.136.1 \
