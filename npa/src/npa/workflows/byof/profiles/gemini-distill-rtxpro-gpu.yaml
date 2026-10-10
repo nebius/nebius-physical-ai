@@ -38,13 +38,19 @@ stages:
 
   - name: train
     uses: npa.workflows.byof.gemini_robotics_distill:train_student
-    description: Behavior-clone the student policy (PyTorch).
+    description: Behavior-clone the student policy (PyTorch on Nebius GPU).
     resources:
       # *** Real Nebius GPU usage is here. ***
-      # The train stage requests a GPU; without it, training falls back to CPU.
-      accelerators: RTXPRO-6000:1
+      accelerators: H100:1
       cpus: 8+
       memory: 32+
+    # Turnkey GPU execution: the runner submits this stage as a Nebius job.
+    nebius_image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+    nebius_script: /home/ubuntu/gpu_full.py
+    nebius_files:
+      - /home/ubuntu/gpu_full.py:/data/gpu_full.py
+      - /home/ubuntu/scene.xml:/data/scene.xml
+    nebius_command: "pip install -q mujoco && python3 -u /data/gpu_full.py"
 
   - name: eval
     uses: npa.workflows.byof.gemini_robotics_distill:eval_student

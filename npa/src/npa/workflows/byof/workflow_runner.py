@@ -35,6 +35,64 @@ def _load_stage(dotted: str):
     return getattr(module, func_name)
 
 
+
+def _submit_nebius_gpu_job(stage: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """Submit a GPU stage to Nebius and wait for completion. Returns job logs."""
+    import subprocess
+    import time
+
+    name = stage["name"]
+    resources = stage.get("resources", {})
+    accelerators = resources.get("accelerators", "")
+    platform = "gpu-h100-sxm"
+    if "rtxpro" in accelerators.lower() or "rtx" in accelerators.lower():
+        platform = "gpu-l40s-d"
+
+    image = stage.get("nebius_image", "pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime")
+    files = stage.get("nebius_files", [])
+    command = stage["nebius_command"]
+
+    cmd = [
+        "nebius", "--profile", "agent-sa", "ai", "job", "create",
+        "--name", f"workflow-{name}",
+        "--image", image,
+        "--platform", platform,
+        "--preset", "1gpu-16vcpu-200gb",
+        "--subnet-id", "NEBIUS_SUBNET_ID_PLACEHOLDER",
+    ]
+    for f in files:
+        cmd += ["--inject-file", f]
+    cmd += ["--container-command", command, "--async"]
+
+    print(f"  submitting Nebius GPU job for stage '{name}'...")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError(f"Nebius job submit failed: {result.stderr}")
+    job_id = result.stdout.strip().split(": ")[1]
+    print(f"  job ID: {job_id}")
+
+    for _ in range(60):
+        time.sleep(30)
+        r = subprocess.run(
+            ["nebius", "--profile", "agent-sa", "ai", "job", "list"],
+            capture_output=True, text=True, timeout=30,
+        )
+        for line in r.stdout.split("\n"):
+            if job_id in line:
+                if "COMPLETED" in line:
+                    print(f"  job {job_id} COMPLETED")
+                    lr = subprocess.run(
+                        ["nebius", "--profile", "agent-sa", "ai", "job", "logs",
+                         job_id, "--tail", "100"],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    return {"job_id": job_id, "logs": lr.stdout, "platform": platform}
+                elif "FAILED" in line:
+                    raise RuntimeError(f"Nebius job {job_id} FAILED")
+                break
+    raise RuntimeError(f"Nebius job {job_id} timed out")
+
+
 def run_workflow(
     yaml_path: str, params: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -55,13 +113,13 @@ def run_workflow(
         print(f"  uses: {uses}")
         if resources:
             print(f"  resources: {json.dumps(resources)}")
+        if "accelerators" in resources and "nebius_script" in stage:
+            outputs = _submit_nebius_gpu_job(stage, context)
+        else:
             if "accelerators" in resources:
-                print(
-                    "  -> GPU stage: submit to Nebius GPU job for real "
-                    "acceleration; running in-process here."
-                )
-        func = _load_stage(uses)
-        outputs = func(context)
+                print("  -> GPU requested but no nebius_script; running in-process.")
+            func = _load_stage(uses)
+            outputs = func(context)
         if isinstance(outputs, dict):
             context.update(outputs)
         print(f"  done: {name}")
