@@ -13,19 +13,42 @@ from pathlib import Path
 from typing import Any, Callable
 
 from npa.cluster.gpu_driver import gpus_per_node, is_nvswitch_topology
+from npa.deploy.images import container_image_for_tool
 
 DEFAULT_STABILIZATION_SECONDS = 120
 DEFAULT_POLL_SECONDS = 10
 DEFAULT_CUDA_SMOKE_IMAGE = (
     "nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04"
 )
-DEFAULT_GRAPHICS_SMOKE_IMAGE = (
-    "ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:"
-    "c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb"
-)
+DEFAULT_GRAPHICS_SMOKE_IMAGE = "tool://sonic"
 _FABRIC_SUCCESS = frozenset({"complete", "completed", "success", "successful"})
 
 CaptureFn = Callable[..., Any]
+
+
+def resolve_graphics_smoke_image(image: str) -> str:
+    """Resolve the governed graphics image or preserve an operator image.
+
+    Args:
+        image: The tool reference or explicit operator container image.
+
+    Returns:
+        The container reference to use for the graphics probe.
+
+    Raises:
+        ValueError: The default release is quarantined or the image is empty.
+    """
+    if not image.strip():
+        raise ValueError("graphics smoke image cannot be empty when enabled")
+    if image != DEFAULT_GRAPHICS_SMOKE_IMAGE:
+        return image
+    try:
+        return container_image_for_tool("sonic")
+    except ValueError as exc:
+        raise ValueError(
+            f"{exc} Supply an operator-controlled gpu_graphics_smoke_image "
+            "or --gpu-graphics-smoke-image."
+        ) from exc
 
 
 class GpuHealthError(RuntimeError):
@@ -132,6 +155,8 @@ class GpuHealthConfig:
             raise ValueError(
                 "graphics smoke image cannot be empty when graphics smoke is enabled"
             )
+        if self.graphics_smoke and self.expected_gpu_nodes > 0:
+            resolve_graphics_smoke_image(self.graphics_smoke_image)
 
 
 def _run_json(
@@ -883,7 +908,7 @@ def validate_gpu_health(
                         kubectl_bin=kubectl_bin,
                         kubeconfig_path=kubeconfig_path,
                         node_name=node_name,
-                        image=config.graphics_smoke_image,
+                        image=resolve_graphics_smoke_image(config.graphics_smoke_image),
                         timeout_seconds=remaining,
                         sleep_fn=sleep_fn,
                         monotonic_fn=monotonic_fn,
