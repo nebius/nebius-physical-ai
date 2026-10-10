@@ -400,6 +400,7 @@ def test_raw_sky_recovery_argv_replays_same_journal_and_launch_options(
     assert first.exit_code == 1, first.output
     [journal_path] = raw_recovery_case.operation_root.glob("*/journal.json")
     initial = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert initial["phase"] == "recovery-required"
     recovery_argv = initial["recovery_commands"]["resume_argv"]
 
     resumed = runner.invoke(app, recovery_argv[1:])
@@ -417,6 +418,35 @@ def test_raw_sky_recovery_argv_replays_same_journal_and_launch_options(
     assert replay.args[1] == "raw-recovery-run"
     assert replay.kwargs["infra"] == "k8s/synthetic-context"
     assert replay.kwargs["controller_backend"] == "kubernetes"
+
+
+def test_verified_prelaunch_submit_failure_rolls_back_new_journal(
+    raw_recovery_case,
+) -> None:
+    """A proven pre-launch error never strands a recoverable operation."""
+    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+
+    raw_recovery_case.submit.side_effect = SkyPilotSubmitError(
+        "synthetic isolated API identity refusal", launch_attempted=False
+    )
+
+    result = runner.invoke(
+        app,
+        _raw_recovery_submit_args(
+            raw_recovery_case.yaml_path,
+            raw_recovery_case.isolated_dir,
+            raw_recovery_case.config_path,
+        ),
+    )
+
+    assert result.exit_code == 1, result.output
+    [journal_path] = raw_recovery_case.operation_root.glob("*/journal.json")
+    final = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert final["phase"] == "rolled-back"
+    assert final["rollback"]["attempted"] is False
+    assert final["rollback"]["completed"] is True
+    assert final["events"][-1]["details"]["launch_attempted"] is False
+    raw_recovery_case.submit.assert_called_once()
 
 
 def test_secret_shaped_var_fails_cleanly_before_launch(raw_recovery_case) -> None:

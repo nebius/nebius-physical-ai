@@ -34,6 +34,7 @@ from npa.orchestration.skypilot.launch_transaction import (
 
 
 _REAL_RUN_LAUNCH_TRANSACTION = workflow_module.run_launch_transaction
+_REAL_ENSURE_ISOLATED_API = workflow_module._ensure_isolated_api
 
 
 @pytest.mark.parametrize("task_ids", ([0], [0, 0], [0, 1, 2], [False, 1]))
@@ -4088,6 +4089,52 @@ def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> No
     assert captured_env["HOME"] == str(tmp_path / "isolated" / "home")
     assert captured_env["SKY_RUNTIME_DIR"] == str(tmp_path / "isolated" / "sky-runtime")
     assert re.fullmatch(r"npa-[0-9a-f]{12}", captured_env["SKYPILOT_USER_ID"])
+
+
+def test_isolated_api_identity_refusal_is_proven_prelaunch(
+    monkeypatch, tmp_path
+) -> None:
+    """An identity guard cannot be confused with a launch outcome."""
+    from npa.orchestration.skypilot.local_api import IsolatedApiError
+
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    isolated = tmp_path / "isolated"
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_API_DIR", str(isolated))
+
+    def reject_identity(**_kwargs):
+        raise IsolatedApiError(
+            "running isolated SkyPilot API has a different executing identity"
+        )
+
+    monkeypatch.setattr(
+        workflow_module, "_ensure_isolated_api", _REAL_ENSURE_ISOLATED_API
+    )
+    monkeypatch.setattr(local_api_module, "ensure_isolated_api", reject_identity)
+    monkeypatch.setattr(
+        workflow_module,
+        "run_launch_transaction",
+        lambda **_kwargs: pytest.fail("identity refusal reached launch transaction"),
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_run_launch",
+        lambda *_args, **_kwargs: pytest.fail(
+            "identity refusal reached sky jobs launch"
+        ),
+    )
+
+    with pytest.raises(
+        SkyPilotSubmitError, match="different executing identity"
+    ) as raised:
+        submit_workflow(
+            yaml_path,
+            "isolated-identity-refusal",
+            isolated_config_dir=isolated,
+            sky_bin=_fake_sky(tmp_path),
+        )
+
+    assert raised.value.launch_attempted is False
 
 
 def test_sky_environment_preserves_explicit_user_id(monkeypatch, tmp_path) -> None:

@@ -882,7 +882,10 @@ def _ensure_isolated_api(**kwargs) -> ApiDaemonCwdProbe:
     try:
         return ApiDaemonCwdProbe(**ensure_isolated_api(**kwargs))
     except IsolatedApiError as exc:
-        raise SkyPilotSubmitError(str(exc)) from None
+        # This guard runs before ``run_launch_transaction`` or any SkyPilot
+        # launch command.  Its identity refusal is therefore a proven
+        # pre-launch failure, rather than an ambiguous provider outcome.
+        raise SkyPilotSubmitError(str(exc), launch_attempted=False) from None
 
 
 def ensure_local_api_daemon_health(
