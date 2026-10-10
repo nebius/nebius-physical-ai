@@ -30,6 +30,7 @@ from npa.workflows.sim2real.pi05_contract import (
     MAX_GRIPPER_WIDTH_M,
     OBJECT_INITIAL_X_RANGE_M,
     OBJECT_INITIAL_Y_RANGE_M,
+    PROXIMAL_FINGER_CLEARANCE_M,
     WRIST_MOUNT_QUATERNION_XYZW,
     WRIST_MOUNT_TARGET_LOCAL_M,
     WRIST_MOUNT_TRANSLATION_M,
@@ -831,9 +832,7 @@ def _finger_bounds(native: Any) -> dict[str, Any]:
     return result
 
 
-def _finger_grasp_reference_geometry(native: Any) -> dict[str, Any]:
-    """Measure the finger-link centroid reference in the live hand frame."""
-
+def _finger_points_in_hand_frame(native: Any) -> tuple[Any, Any]:
     import numpy as np
 
     robot = native.scene["robot"]
@@ -842,22 +841,63 @@ def _finger_grasp_reference_geometry(native: Any) -> dict[str, Any]:
     hand_position = hand_position.detach().cpu().numpy()
     hand_xyzw = _proxy_torch(robot.data.body_quat_w)[0, hand_index]
     hand_wxyz = _xyzw_to_wxyz(hand_xyzw.detach().cpu().numpy())
-    centers = [
-        np.mean(value["world_corners_m"], axis=0)
-        for value in _finger_bounds(native).values()
-    ]
-    world_midpoint = np.mean(centers, axis=0)
+    world = np.concatenate(
+        [value["world_corners_m"] for value in _finger_bounds(native).values()]
+    )
     inverse = hand_wxyz * np.asarray([1.0, -1.0, -1.0, -1.0])
-    local = _rotate_vector(inverse, world_midpoint - hand_position)
-    if np.linalg.norm(local[:2]) > 0.03 or not 0.04 <= local[2] <= 0.14:
+    local = np.asarray(
+        [_rotate_vector(inverse, point - hand_position) for point in world]
+    )
+    return world, local
+
+
+def _finger_grasp_reference_geometry(native: Any) -> dict[str, Any]:
+    """Measure the complete finger-link interval in the live hand frame."""
+
+    import numpy as np
+
+    world, local_points = _finger_points_in_hand_frame(native)
+    local = np.mean(local_points, axis=0)
+    interval = [float(local_points[:, 2].min()), float(local_points[:, 2].max())]
+    if (
+        np.linalg.norm(local[:2]) > 0.03
+        or not 0.04 <= interval[0] < local[2] < interval[1] <= 0.16
+    ):
         raise RuntimeError("measured Franka grasp reference is outside hand geometry")
     return {
         "hand_to_finger_link_centroid_local_m": local.astype(float).tolist(),
-        "measured_finger_link_centroid_world_m": world_midpoint.astype(float).tolist(),
+        "finger_link_hand_axis_interval_m": interval,
+        "measured_finger_link_centroid_world_m": np.mean(world, axis=0)
+        .astype(float)
+        .tolist(),
         "hand_pose_source": "ArticulationData.body_pos_w/body_quat_w XYZW",
         "finger_geometry_source": "live link poses plus untransformed USD bounds",
-        "contact_geometry_claim": "link-centroid reference; bilateral contact required",
+        "contact_geometry_claim": (
+            "complete-link interval, not pad geometry; bilateral contact required"
+        ),
     }
+
+
+def _object_grasp_geometry(geometry: dict[str, Any], height: float) -> dict[str, Any]:
+    import math
+
+    result = dict(geometry)
+    centroid = float(result["hand_to_finger_link_centroid_local_m"][2])
+    proximal = float(result["finger_link_hand_axis_interval_m"][0])
+    shift = height / 2.0 + proximal + PROXIMAL_FINGER_CLEARANCE_M - centroid
+    if not all(math.isfinite(value) for value in (height, centroid, proximal, shift)):
+        raise RuntimeError("size-aware grasp geometry is not finite")
+    if height <= 0.0 or shift <= 0.0:
+        raise RuntimeError("size-aware grasp geometry is outside the object")
+    result.update(
+        {
+            "object_height_m": height,
+            "proximal_finger_clearance_m": PROXIMAL_FINGER_CLEARANCE_M,
+            "contact_reference_above_object_center_m": shift,
+            "contact_hand_origin_above_object_center_m": shift + centroid,
+        }
+    )
+    return result
 
 
 def _finger_in_frustum(native: Any) -> dict[str, Any]:
@@ -1786,10 +1826,12 @@ def _camera_time(native: Any, name: str) -> float:
 
 
 def _expert_waypoints(
-    object_position: Any, target: Any, grasp_reference_local: Any
+    object_position: Any, target: Any, geometry: dict[str, Any]
 ) -> list[tuple[str, Any, float]]:
     import numpy as np
 
+    grasp_reference_local = geometry["hand_to_finger_link_centroid_local_m"]
+    reference_shift = geometry["contact_reference_above_object_center_m"]
     world_offset = _rotate_vector(
         _xyzw_to_wxyz(DOWNWARD_HAND_QUATERNION_XYZW), grasp_reference_local
     )
@@ -1797,15 +1839,17 @@ def _expert_waypoints(
     def hand_goal(grasp_reference_goal: Any) -> Any:
         return np.asarray(grasp_reference_goal, dtype=float) - world_offset
 
+    contact = object_position + [0.0, 0.0, reference_shift]
+    destination = target + [0.0, 0.0, reference_shift]
     return [
-        ("approach", hand_goal(object_position + [0.0, 0.0, 0.14]), 0.0),
-        ("contact", hand_goal(object_position), 0.0),
-        ("grasp", hand_goal(object_position), 1.0),
-        ("lift", hand_goal(object_position + [0.0, 0.0, 0.16]), 1.0),
-        ("transport", hand_goal(target + [0.0, 0.0, 0.16]), 1.0),
-        ("lower", hand_goal(target), 1.0),
-        ("release", hand_goal(target), 0.0),
-        ("retreat", hand_goal(target + [0.0, 0.0, 0.16]), 0.0),
+        ("approach", hand_goal(contact + [0.0, 0.0, 0.14]), 0.0),
+        ("contact", hand_goal(contact), 0.0),
+        ("grasp", hand_goal(contact), 1.0),
+        ("lift", hand_goal(contact + [0.0, 0.0, 0.16]), 1.0),
+        ("transport", hand_goal(destination + [0.0, 0.0, 0.16]), 1.0),
+        ("lower", hand_goal(destination), 1.0),
+        ("release", hand_goal(destination), 0.0),
+        ("retreat", hand_goal(destination + [0.0, 0.0, 0.16]), 0.0),
     ]
 
 
@@ -2424,7 +2468,9 @@ def _attempt_context(
 ) -> dict[str, Any]:
     total_dim, arm_start, grip_start = _action_layout(native)
     robot = native.scene["robot"]
-    grasp_geometry = _finger_grasp_reference_geometry(native)
+    grasp_geometry = _object_grasp_geometry(
+        _finger_grasp_reference_geometry(native), object_height_m
+    )
     return {
         "native": native,
         "env": env,
@@ -2531,7 +2577,7 @@ def _run_expert_waypoints(context: dict[str, Any]) -> None:
     for phase, goal, intent in _expert_waypoints(
         context["initial_object_position"],
         context["target"],
-        reference["hand_to_finger_link_centroid_local_m"],
+        reference,
     ):
         _run_phase(context, phase, goal, intent)
 

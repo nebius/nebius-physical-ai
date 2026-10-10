@@ -52,7 +52,7 @@ PARSER_FACTORIES = {
     "npa.workflows.byof.openpi_service": "build_parser",
     "npa.workflows.byof.openpi_service_lifecycle": "build_parser",
     "npa.workflows.sim2real.pi05_collect_all": "build_parser",
-    "npa.workflows.sim2real.pi05_closed_loop": "build_parser",
+    "npa.workflows.sim2real.pi05_closed_loop_entry": "build_parser",
     "npa.workflows.sim2real.pi05_data": "build_parser",
     "npa.workflows.sim2real.pi05_stage": "build_parser",
     "npa.workflows.content_agents": "build_parser",

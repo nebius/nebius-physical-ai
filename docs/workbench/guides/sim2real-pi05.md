@@ -84,12 +84,15 @@ Each expert and policy episode begins with the same two 15 Hz control intervals
 outside the training/evaluation rows. The receipt records both object poses,
 speeds, support forces, and episode-local command/result clocks; admission
 requires the second sample to be supported and below 0.03 m/s. The expert also
-measures the centroid reference of the two complete finger-link bounds in the
-live `panda_hand` frame and transforms that offset through the commanded
-downward hand orientation. This is explicitly a link-geometry grasp reference,
-not a claimed pad center; live bilateral contact is still required. Contact and
-lower waypoints align that measured reference with the object center rather
-than treating half the cube height as a tool offset.
+measures the complete two-finger link interval and its centroid in the live
+`panda_hand` frame, then transforms those offsets through the commanded downward
+hand orientation. This is explicitly link geometry, not a claimed pad center;
+live bilateral contact is still required. Contact and lower waypoints are
+size-aware: the proximal measured finger-link plane stays 8 mm above the
+measured object top while the rest of the finger interval overlaps the object
+side. The receipt records the measured interval, object height, clearance,
+reference plane, and resulting hand-origin target. This avoids driving the palm
+through taller held-out cubes without relaxing waypoint or success thresholds.
 The stock task's frame sensor and differential-IK action otherwise use distinct
 nonzero tool offsets from `panda_hand`. This variant explicitly sets both to the
 hand origin before environment construction, applies the same sensor-frame
@@ -180,7 +183,11 @@ This reuse is a dependency-closure choice, not evidence that any image or the
 whole workflow has passed live qualification. The OpenPI recipe gates all
 model-side module entrypoints in its upstream environment and keeps the minimal
 Rerun worker isolated; the Rerun Viewer recipe gates all three CPU roles. A
-developer-venv import does not substitute for those Docker `RUN` checks.
+developer-venv import does not substitute for those Docker `RUN` checks. The
+Isaac recipe separately runs the real msgpack/WebSocket image codec and creates,
+decodes, and removes a synthetic MP4/Rerun pair in its own interpreter. The
+workflow's non-Kit evaluator parent also reads back the declared report and
+rejects a missing, failure-schema, or incomplete result even if Kit exits zero.
 
 ## One or two eight-GPU RTX PRO 6000 nodes
 

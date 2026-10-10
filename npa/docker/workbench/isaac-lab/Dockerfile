@@ -81,6 +81,7 @@ COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
     /usr/local/bin/npa-workflow-entrypoint
 COPY docker/workbench/isaac-lab/smoke_env.py /opt/npa/docker/workbench/isaac-lab/smoke_env.py
 COPY docker/workbench/isaac-lab/smoke_functional.py /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
+COPY docker/workbench/isaac-lab/verify_pi05_runtime.py /opt/npa/docker/workbench/isaac-lab/verify_pi05_runtime.py
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
@@ -142,7 +143,9 @@ RUN find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && /opt/npa/sim/venv/bin/python -c \
       "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
     && env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c \
-      'import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation, npa.workflows.sim2real.workflow_stage'
+      'import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation, npa.workflows.sim2real.workflow_stage' \
+    && env -u PYTHONPATH /opt/npa/sim/venv/bin/python \
+      /opt/npa/docker/workbench/isaac-lab/verify_pi05_runtime.py
 
 RUN /opt/npa/sim/venv/bin/python -m \
       npa.workflows.sim2real.install_isaac_runtime /opt/npa/isaac-runtime \

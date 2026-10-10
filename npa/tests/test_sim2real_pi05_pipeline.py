@@ -17,7 +17,12 @@ from npa.workflows.byof.openpi_pipeline import (
     _single_host_runtime_evidence,
 )
 from npa.workflows.byof import openpi_service_lifecycle
-from npa.workflows.sim2real import pi05_closed_loop, pi05_data, pi05_isaac
+from npa.workflows.sim2real import (
+    pi05_closed_loop,
+    pi05_closed_loop_entry,
+    pi05_data,
+    pi05_isaac,
+)
 from npa.workflows.byof.openpi_service_lifecycle import (
     _inject_checkpoint_probe,
     _patch_private_s3_checkpoint,
@@ -1149,3 +1154,72 @@ def test_closed_loop_closes_app_and_temporary_directory_on_failure(
     with pytest.raises(RuntimeError, match="receipt failed"):
         pi05_closed_loop.run(Namespace())
     assert lifecycle == {"app_closed": True, "temp_exited": True}
+
+
+def _closed_loop_report_args() -> Namespace:
+    return Namespace(
+        output_uri="s3://fixture/gold/report.json",
+        checkpoint_role="base",
+        split="gold",
+        episodes=2,
+        wrist_ablation_modes=["fresh", "frozen", "pixel_channel_shuffle"],
+    )
+
+
+def _successful_closed_loop_report() -> dict:
+    return {
+        "schema": "npa.sim2real.pi05.closed_loop_eval.v1",
+        "checkpoint_role": "base",
+        "split": "gold",
+        "episode_count": 6,
+        "episodes": [{"scenario_seed": index} for index in range(6)],
+        "review_artifacts": {
+            "mp4": {"bytes": 10},
+            "rrd": {"bytes": 20},
+        },
+    }
+
+
+def test_closed_loop_entry_rejects_green_kit_exit_without_success_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _closed_loop_report_args()
+    monkeypatch.setattr(pi05_closed_loop_entry, "parse_args", lambda _argv: args)
+    monkeypatch.setattr(
+        pi05_closed_loop_entry.subprocess,
+        "run",
+        lambda *_args, **_kwargs: Namespace(returncode=0),
+    )
+    monkeypatch.setattr(
+        pi05_closed_loop_entry,
+        "read_json",
+        lambda *_args, **_kwargs: {
+            "schema": "npa.sim2real.pi05.closed_loop_failure.v1"
+        },
+    )
+    with pytest.raises(RuntimeError, match="absent, failed, or incomplete"):
+        pi05_closed_loop_entry.main(["--fixture"])
+
+
+def test_closed_loop_entry_accepts_only_complete_readback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _closed_loop_report_args()
+    captured = {}
+    monkeypatch.setattr(pi05_closed_loop_entry, "parse_args", lambda _argv: args)
+
+    def run(command, **kwargs):
+        captured.update(command=command, **kwargs)
+        return Namespace(returncode=0)
+
+    monkeypatch.setattr(pi05_closed_loop_entry.subprocess, "run", run)
+    monkeypatch.setattr(
+        pi05_closed_loop_entry,
+        "read_json",
+        lambda uri, **_kwargs: (
+            _successful_closed_loop_report() if uri == args.output_uri else {}
+        ),
+    )
+    assert pi05_closed_loop_entry.main(["--fixture"]) == 0
+    assert captured["env"]["NPA_PI05_CLOSED_LOOP_CHILD"] == "1"
+    assert captured["command"][2] == "npa.workflows.sim2real.pi05_closed_loop"

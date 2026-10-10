@@ -39,6 +39,7 @@ WHEELS = COMMON / "isaac-nvidia-wheels.txt"
 OSS_DEPS = COMMON / "isaac-oss-deps.txt"
 ISAAC3_WHEELS = COMMON / "isaac3-nvidia-wheels.txt"
 ISAAC3_OSS_DEPS = COMMON / "isaac3-oss-deps.txt"
+PI05_RUNTIME_SMOKE = COMMON.parent / "isaac-lab" / "verify_pi05_runtime.py"
 
 EX_CONFIG = 78
 EX_UNAVAILABLE = 69
@@ -702,6 +703,23 @@ def test_isaac3_oss_closure_merges_the_workflow_runtime_security_pins() -> None:
         assert requirement in lines
         assert requirement in shared
     assert "msal==1.38.0" in lines
+
+
+def test_isaac3_image_gates_pi05_native_client_and_artifact_runtime() -> None:
+    dependencies = ISAAC3_OSS_DEPS.read_text(encoding="utf-8")
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    smoke = PI05_RUNTIME_SMOKE.read_text(encoding="utf-8")
+
+    assert "msgpack==1.2.1" in dependencies
+    assert "websockets==12.0" in dependencies
+    assert "rerun-sdk==0.38.1" in dependencies
+    assert "verify_pi05_runtime.py" in dockerfile
+    assert "_write_review_artifacts" in smoke
+    assert "pi05_closed_loop_entry import build_parser" in smoke
+    assert "msgpack.packb" in smoke
+    assert '{"additional_headers", "compression", "max_size"}' in smoke
 
 
 def test_baked_imageio_uses_snapshot_ffmpeg_without_nested_executable() -> None:

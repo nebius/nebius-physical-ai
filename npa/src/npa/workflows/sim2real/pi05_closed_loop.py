@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -1281,8 +1283,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Run the CLI. Args: argv. Returns: Exit status. Raises: RuntimeError."""
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse and validate the closed-loop CLI contract."""
     parser = build_parser()
     args = parser.parse_args(argv)
     args.wrist_ablation_modes = args.wrist_ablation_modes.split(",")
@@ -1296,8 +1298,44 @@ def main(argv: list[str] | None = None) -> int:
     expected_output = f"{args.artifact_root_uri.rstrip('/')}/report.json"
     if args.output_uri != expected_output:
         parser.error("--output-uri must be <artifact-root-uri>/report.json")
-    result = run(args)
+    return args
+
+
+def validate_success_report(report: dict[str, Any], args: argparse.Namespace) -> None:
+    """Reject absent, failed, or incomplete post-Kit output."""
+    expected = args.episodes * len(args.wrist_ablation_modes)
+    artifacts = report.get("review_artifacts") or {}
+    if (
+        report.get("schema") != "npa.sim2real.pi05.closed_loop_eval.v1"
+        or report.get("checkpoint_role") != args.checkpoint_role
+        or report.get("split") != args.split
+        or report.get("episode_count") != expected
+        or len(report.get("episodes") or []) != expected
+    ):
+        raise RuntimeError("closed-loop report is absent, failed, or incomplete")
+    for name in ("mp4", "rrd"):
+        if int((artifacts.get(name) or {}).get("bytes", 0)) < 1:
+            raise RuntimeError(f"closed-loop report lacks decoded {name} evidence")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run inside Kit. The outer entrypoint validates remote report bytes."""
+    args = parse_args(argv)
+    try:
+        result = run(args)
+        validate_success_report(result, args)
+    except Exception:
+        if os.environ.get("NPA_PI05_CLOSED_LOOP_CHILD") == "1":
+            import traceback
+
+            traceback.print_exc()
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(1)
+        raise
     print(json.dumps(result, sort_keys=True), flush=True)
+    if os.environ.get("NPA_PI05_CLOSED_LOOP_CHILD") == "1":
+        os._exit(0)
     return 0
 
 

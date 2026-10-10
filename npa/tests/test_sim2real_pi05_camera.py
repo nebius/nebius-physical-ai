@@ -24,6 +24,7 @@ from npa.workflows.sim2real.pi05_isaac import (
     _hand_origin_control_receipt,
     _multiply_xyzw,
     _object_asset_geometry,
+    _object_grasp_geometry,
     _robot_plant_receipt,
     _launch_camera_app,
     _live_gravity_receipt,
@@ -1249,12 +1250,41 @@ def test_downward_orientation_and_measured_grasp_reference_waypoints() -> None:
     assert np.linalg.norm(_axis_angle_error_xyzw(target, target)) < 1.0e-8
 
     grasp_reference = np.asarray([0.01, -0.02, 0.0854166])
-    waypoints = _expert_waypoints(np.zeros(3), np.ones(3), grasp_reference)
+    geometry = _object_grasp_geometry(
+        {
+            "hand_to_finger_link_centroid_local_m": grasp_reference.tolist(),
+            "finger_link_hand_axis_interval_m": [0.058533, 0.1123],
+        },
+        0.072,
+    )
+    waypoints = _expert_waypoints(np.zeros(3), np.ones(3), geometry)
     contact = next(goal for phase, goal, _intent in waypoints if phase == "contact")
     downward = _xyzw_to_wxyz([1.0, 0.0, 0.0, 0.0])
     reconstructed_reference = contact + _rotate_vector(downward, grasp_reference)
-    assert reconstructed_reference == pytest.approx([0.0, 0.0, 0.0])
-    assert contact == pytest.approx([-0.01, -0.02, 0.0854166])
+    assert reconstructed_reference == pytest.approx(
+        [0.0, 0.0, geometry["contact_reference_above_object_center_m"]]
+    )
+    assert contact == pytest.approx([-0.01, -0.02, 0.102533])
+
+
+@pytest.mark.parametrize("height", [0.048, 0.060, 0.072])
+def test_size_aware_contact_keeps_proximal_finger_clear_of_cube_top(height) -> None:
+    geometry = _object_grasp_geometry(
+        {
+            "hand_to_finger_link_centroid_local_m": [0.0, 0.0, 0.0854166],
+            "finger_link_hand_axis_interval_m": [0.058533, 0.1123],
+        },
+        height,
+    )
+    waypoints = _expert_waypoints(
+        np.asarray([0.5, 0.0, height / 2]), np.zeros(3), geometry
+    )
+    contact = next(goal for phase, goal, _intent in waypoints if phase == "contact")
+
+    assert contact[2] == pytest.approx(height + 0.058533 + 0.008)
+    assert geometry["contact_hand_origin_above_object_center_m"] == pytest.approx(
+        height / 2 + 0.058533 + 0.008
+    )
 
 
 def test_grasp_reference_recovers_selected_asset_link_centroid(monkeypatch) -> None:
@@ -1270,7 +1300,10 @@ def test_grasp_reference_recovers_selected_asset_link_centroid(monkeypatch) -> N
         ),
     )
     corners = np.asarray(
-        [hand + local + [-0.005, -0.005, -0.01], hand + local + [0.005, 0.005, 0.01]]
+        [
+            hand + [local[0] - 0.005, local[1] - 0.005, 0.058533],
+            hand + [local[0] + 0.005, local[1] + 0.005, 0.1123001968],
+        ]
     )
     bounds = {side: {"world_corners_m": corners} for side in ("left", "right")}
     monkeypatch.setattr(pi05_isaac, "_finger_bounds", lambda _native: bounds)
@@ -1278,6 +1311,9 @@ def test_grasp_reference_recovers_selected_asset_link_centroid(monkeypatch) -> N
     receipt = _finger_grasp_reference_geometry(SimpleNamespace(scene={"robot": robot}))
 
     assert receipt["hand_to_finger_link_centroid_local_m"] == pytest.approx(local)
+    assert receipt["finger_link_hand_axis_interval_m"] == pytest.approx(
+        [0.058533, 0.1123001968]
+    )
     assert "bilateral contact required" in receipt["contact_geometry_claim"]
 
 

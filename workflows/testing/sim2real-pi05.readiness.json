@@ -12,8 +12,8 @@
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "Offline contracts and tests prove the absolute-joint/DROID-gripper bridge, dense camera/action alignment, strict packed-semantic rules, measured object geometry, one-body support, split isolation, and released-support metric. An exact-source live train-size run admitted eight of eight physics-qualified expert demonstrations with 808 dense causal rows. Independent readback verified every saved exterior and wrist RGB hash, all phases retained actual object and both-finger pixels, reset poses stayed inside the declared range, and the strict ordered contact/grasp/lift/transport/release/support/stability evidence passed without threshold changes. This verifies the expert task and camera/control contract, not policy success or held-out size generalization; validation and gold cohorts remain execution prerequisites.",
+      "status": "unverified",
+      "reason": "Offline contracts and tests prove the absolute-joint/DROID-gripper bridge, dense camera/action alignment, strict packed-semantic rules, measured object geometry, one-body support, split isolation, and released-support metric. An exact-source live 48 mm run admitted eight of eight physics-qualified expert demonstrations with 808 dense causal rows, independently verified RGB hashes, phase visibility, reset range and strict ordered success. Held-out execution then admitted only one of eight 60 mm episodes and zero of eight 72 mm episodes: camera gates passed, but the old complete-link centroid target drove the hand into taller objects before contact or stable release. This revision instead records the full finger-link hand-axis interval and sets a size-aware contact plane above the measured object top. That correction still requires live 48/60/72 mm qualification without threshold changes.",
       "evidence": [
         "npa/tests/test_sim2real_pi05_contract.py",
         "npa/tests/test_sim2real_pi05_pipeline.py"
@@ -30,29 +30,29 @@
     },
     "worker_input": {
       "status": "blocked",
-      "reason": "All 27 authoritative public Polaris checkpoint objects and the separate public tokenizer were downloaded anonymously and integrity-verified at exact generations. A historical corrected image loaded the real checkpoint and ran deterministic fixed-noise inference on an actual post-motion wrist capture, proving model consumption and input sensitivity but not helpful control. Exact-source train-size expert collection now has eight admitted demonstrations with verified dense camera rows. The full workflow still needs successful validation and gold cohorts plus dataset export/readback before training input is complete.",
+      "reason": "All 27 authoritative public Polaris checkpoint objects and the separate public tokenizer were downloaded anonymously and integrity-verified at exact generations. A historical corrected image loaded the real checkpoint and ran deterministic fixed-noise inference on actual captures, proving model consumption and input sensitivity but not helpful control. The 48 mm collection has eight admitted demonstrations, but historical held-out collection produced only one valid 60 mm episode and no valid 72 mm episode. The size-aware successor must produce complete validation and gold cohorts before dataset export/readback and training input can be complete.",
       "evidence": [
         "Private public-artifact receipts record 27 complete checkpoint objects and the separate tokenizer payload with exact generation, byte count, authoritative MD5, and computed SHA256 without credentials.",
         "Private live receipts retain real checkpoint load/inference and failed expert/camera attempts without publishing infrastructure identifiers."
       ]
     },
     "credentials": {
-      "status": "unverified",
-      "reason": "Earlier Nebius and storage credentials passed, and public Polaris uses anonymous authoritative-GCS access with no NPA consent variable or HF token. The revised private policy data path also requires an operator-managed Kubernetes Secret with an auth_token key; its presence and mount have not been verified on a live target. An explicitly selected gated HF alternative would require the operator's own token and exact-revision payload probe.",
+      "status": "verified",
+      "reason": "Nebius and storage credentials passed, and public Polaris uses anonymous authoritative-GCS access with no NPA consent variable or HF token. An owned private service and calibrated Isaac client completed four authenticated fixed-noise WebSocket requests through the operator-managed auth_token Secret without putting token bytes in payload receipts. Each new service run must still bind its own scoped Secret. An explicitly selected gated HF alternative would require the downloader's own token and exact-revision payload probe.",
       "evidence": [
         "Sanitized private health-preflight conclusion; public Polaris artifact preflight remains an execution check rather than a credential gate."
       ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "Historical exact-source Isaac, OpenPI, and shared CPU/Rerun Viewer prototypes built and passed their scoped byte or packaging gates, and the workflow retains three immutable image roles. The current source changes those bytes and all checked-in image values remain non-runnable placeholders. OpenPI training/serving defaults still route to B200/SM100, so this is not a qualified RTX-only deployment.",
+      "reason": "Historical exact-source Isaac, OpenPI, and shared CPU/Rerun Viewer prototypes built and passed their scoped byte or packaging gates, and the workflow retains three immutable image roles. A historical Isaac image lacked msgpack in the interpreter used by the native pi0.5 client and stopped before its first policy request. The current recipe closes that dependency and build-smokes the actual msgpack/WebSocket plus MP4/Rerun paths, but the changed bytes are unbuilt and all checked-in image values remain non-runnable placeholders. OpenPI training/serving defaults still route to B200/SM100, so this is not a qualified RTX-only deployment.",
       "evidence": [
         "workflows/testing/sim2real-pi05.yaml"
       ]
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "The isolated route has two one-GPU RTX PRO 6000 workers that passed CUDA, GLX/EGL, NVIDIA Vulkan, and 120-second stability checks with runtimeClass nvidia. Exact-source train-size collection admitted eight of eight expert demonstrations and verified 808 dense causal rows, but the run used a separately identified historical Isaac image with a source overlay rather than final same-source image bytes. Historical source also loaded the real checkpoint and ran fixed-noise inference, not closed-loop control. Typed capacity evidence records that an eight-GPU node was not placed; no eight-GPU or multi-host training claim is made. The interpreter has no finally/on_failure transition, so an owned failure monitor or real failure transition remains required before service operation. Validation/gold collection, dataset export, fine-tuning, selected-checkpoint reload, matched closed-loop ablations, MP4 and Rerun outputs remain unverified.",
+      "reason": "The isolated route has two one-GPU RTX PRO 6000 workers that passed CUDA, GLX/EGL, NVIDIA Vulkan, and 120-second stability checks with runtimeClass nvidia. Historical source-overlay runs qualified the 48 mm expert/camera path, real checkpoint loading, authenticated fixed-noise WebSocket inference and same-state wrist sensitivity. Held-out 60/72 mm expert execution failed physical waypoint admission despite valid camera evidence, and the size-aware successor has not run. A later base closed-loop launch stopped before its first request because the historical Isaac interpreter lacked msgpack; no episode report or policy outcome exists. The successor adds the missing exact dependency plus an independent post-Kit report readback gate, but neither has live final-image evidence. Typed capacity evidence records that an eight-GPU node was not placed; no eight-GPU or multi-host training claim is made. The interpreter has no finally/on_failure transition, so an owned failure monitor or real failure transition remains required before service operation. Complete cohorts, dataset export, fine-tuning, selected-checkpoint reload, matched closed-loop outcomes, MP4 and Rerun outputs remain unverified.",
       "evidence": [
         "Sanitized private helper preflight, image-launch, and reset-failure receipts are retained outside Git; no live resource identifiers are committed."
       ]

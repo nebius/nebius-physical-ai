@@ -34,6 +34,7 @@ MAX_GRIPPER_WIDTH_M = 0.08
 CONTROL_HZ = 15.0
 ACTION_HORIZON = 15
 EXECUTION_PREFIX = 8
+PROXIMAL_FINGER_CLEARANCE_M = 0.008
 OBJECT_INITIAL_X_RANGE_M = (0.42, 0.55)
 OBJECT_INITIAL_Y_RANGE_M = (-0.25, -0.08)
 WRIST_MOUNT_TRANSLATION_M = (0.09, 0.0, 0.015)
@@ -54,6 +55,15 @@ def _sha(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def _expert_grasp_contract() -> dict[str, Any]:
+    return {
+        "source": "live_complete_finger_link_bounds_in_panda_hand_frame",
+        "object_height": "measured_runtime_usd_extent",
+        "proximal_finger_clearance_m": PROXIMAL_FINGER_CLEARANCE_M,
+        "admission": "bilateral_rendered_contact_and_object_motion_required",
+    }
 
 
 def _task_contract() -> dict[str, Any]:
@@ -90,6 +100,7 @@ def _task_contract() -> dict[str, Any]:
                 "robot_gravity": "disabled",
                 "expert_policy_parity": "runtime actuator and rigid-body receipt equality",
             },
+            "expert_grasp_geometry": _expert_grasp_contract(),
         },
         "success": _surface_success_contract(),
     }

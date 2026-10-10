@@ -223,7 +223,7 @@ def _pi05_closed_loop_argv(role: str) -> list[str]:
     return [
         "/opt/npa/sim/venv/bin/python",
         "-m",
-        "npa.workflows.sim2real.pi05_closed_loop",
+        "npa.workflows.sim2real.pi05_closed_loop_entry",
         "--service-receipt-uri",
         f"{{{{config.{role}_service_start_uri}}}}",
         "--gold-collection-uri",
