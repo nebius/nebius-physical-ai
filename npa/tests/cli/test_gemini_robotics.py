@@ -6,6 +6,7 @@ All HTTP is mocked through httpx.MockTransport — no live API calls, no key.
 from __future__ import annotations
 
 import json
+import os
 
 import httpx
 import pytest
@@ -26,6 +27,13 @@ def _client(handler, **kwargs) -> GeminiRoboticsClient:
     config = GeminiRoboticsConfig(PROVISIONAL_API_BASE_URL, "test-key", 5.0)
     http = httpx.Client(transport=httpx.MockTransport(handler))
     return GeminiRoboticsClient(config, http_client=http, **kwargs)
+
+
+def _use_missing_credentials_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Keep missing-key tests independent of the operator's saved credentials."""
+    import npa.clients.credentials as creds_mod
+
+    monkeypatch.setattr(creds_mod, "CREDENTIALS_PATH", tmp_path / "missing.yaml")
 
 
 def test_resolve_config_missing_key_fails_closed() -> None:
@@ -55,6 +63,47 @@ def test_resolve_config_uses_env_key() -> None:
     assert config.base_url == "https://example.test"
 
 
+def test_resolve_config_falls_back_to_credentials_file(tmp_path, monkeypatch) -> None:
+    """tokens.GOOGLE_API_KEY in ~/.npa/credentials.yaml is used when env is absent."""
+    import npa.clients.credentials as creds_mod
+
+    creds_file = tmp_path / "credentials.yaml"
+    creds_file.write_text("tokens:\n  GOOGLE_API_KEY: file-key\n", encoding="utf-8")
+    monkeypatch.setattr(creds_mod, "CREDENTIALS_PATH", creds_file)
+    monkeypatch.delenv(API_KEY_ENV, raising=False)
+    config = resolve_config(base_url="https://example.test")
+    assert config.api_key == "file-key"
+    assert API_KEY_ENV not in os.environ
+
+
+def test_resolve_config_env_beats_credentials_file(tmp_path, monkeypatch) -> None:
+    """An exported GOOGLE_API_KEY takes precedence over the credentials file."""
+    import npa.clients.credentials as creds_mod
+
+    creds_file = tmp_path / "credentials.yaml"
+    creds_file.write_text("tokens:\n  GOOGLE_API_KEY: file-key\n", encoding="utf-8")
+    monkeypatch.setattr(creds_mod, "CREDENTIALS_PATH", creds_file)
+    monkeypatch.setenv(API_KEY_ENV, "env-key")
+    config = resolve_config(base_url="https://example.test")
+    assert config.api_key == "env-key"
+
+
+def test_resolve_config_hides_malformed_saved_credential_details(
+    tmp_path, monkeypatch
+) -> None:
+    """A malformed saved store fails as a typed error without echoing its contents."""
+    import npa.clients.credentials as creds_mod
+
+    creds_file = tmp_path / "credentials.yaml"
+    creds_file.write_text("tokens: [not-valid", encoding="utf-8")
+    monkeypatch.setattr(creds_mod, "CREDENTIALS_PATH", creds_file)
+    monkeypatch.delenv(API_KEY_ENV, raising=False)
+
+    with pytest.raises(GeminiRoboticsError, match="Could not read saved") as exc:
+        resolve_config(base_url="https://example.test")
+    assert "not-valid" not in str(exc.value)
+
+
 def test_resolve_config_missing_base_url_fails_closed() -> None:
     """The provisional base URL is never used implicitly."""
     with pytest.raises(GeminiRoboticsError, match=BASE_URL_ENV):
@@ -66,7 +115,7 @@ def test_resolve_config_missing_base_url_fails_closed() -> None:
 @pytest.mark.parametrize("command", ["plan", "eval"])
 @pytest.mark.parametrize("missing", ["api_key", "api_base_url", "model"])
 def test_cli_rejects_missing_config_before_storage_or_http(
-    monkeypatch: pytest.MonkeyPatch, command: str, missing: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path, command: str, missing: str
 ) -> None:
     """CLI preflight rejects incomplete Gemini settings before side effects."""
     from npa.cli.workbench import gemini_robotics as cli
@@ -102,6 +151,7 @@ def test_cli_rejects_missing_config_before_storage_or_http(
 
     monkeypatch.setattr(StorageClient, "from_environment", classmethod(storage_factory))
     monkeypatch.setattr(httpx.Client, "request", http_request)
+    _use_missing_credentials_file(monkeypatch, tmp_path)
     monkeypatch.delenv(API_KEY_ENV, raising=False)
     monkeypatch.delenv(BASE_URL_ENV, raising=False)
     if missing != "api_key":

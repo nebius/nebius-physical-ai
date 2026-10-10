@@ -44,6 +44,38 @@ class GeminiRoboticsError(RuntimeError):
     """Report invalid Gemini Robotics configuration or a failed API request."""
 
 
+def _resolve_env(environ: Mapping[str, str] | None) -> dict[str, str]:
+    """Build config environment with a non-exporting saved-key fallback.
+
+    Args:
+        environ: Explicit environment mapping, if supplied by a caller.
+
+    Returns:
+        A copied environment with a saved Gemini key when available.
+
+    Raises:
+        GeminiRoboticsError: If the saved credential store cannot be read safely.
+    """
+
+    if environ is not None:
+        return dict(environ)
+    from npa.clients.credentials import CredentialStoreError, load_credentials
+
+    env = dict(os.environ)
+    if env.get(API_KEY_ENV):
+        return env
+    try:
+        file_key = load_credentials(environ=env).tokens.get(API_KEY_ENV, "")
+    except CredentialStoreError as exc:
+        raise GeminiRoboticsError(
+            "Could not read saved Gemini credentials. Fix ~/.npa/credentials.yaml "
+            f"or set {API_KEY_ENV} in the environment."
+        ) from exc
+    if file_key:
+        env[API_KEY_ENV] = file_key
+    return env
+
+
 def _server_message(payload: Any) -> str:
     if isinstance(payload, dict):
         error = payload.get("error")
@@ -96,8 +128,10 @@ def resolve_config(
     """Resolve explicit Gemini settings and reject missing key or endpoint first.
 
     The base URL is never guessed: pass ``base_url`` / ``--api-base-url`` or set
-    the ``GEMINI_ROBOTICS_BASE_URL`` environment variable. PROVISIONAL_API_BASE_URL
-    is documentation only and is never used implicitly.
+    the ``GEMINI_ROBOTICS_BASE_URL`` environment variable. When no explicit
+    key is present, ``tokens.GOOGLE_API_KEY`` in the saved credential file is a
+    non-exporting fallback. PROVISIONAL_API_BASE_URL is documentation only and
+    is never used implicitly.
 
     Args:
         api_key: Explicit API key, if not read from the environment.
@@ -111,11 +145,12 @@ def resolve_config(
         GeminiRoboticsError: If the API key or base URL is absent.
     """
 
-    env = environ if environ is not None else os.environ
+    env = _resolve_env(environ)
     key = (api_key if api_key is not None else env.get(API_KEY_ENV, "")).strip()
     if not key:
         raise GeminiRoboticsError(
             f"Missing Gemini API key: set the {API_KEY_ENV} environment variable "
+            "or add it under tokens: in ~/.npa/credentials.yaml "
             "before calling Gemini Robotics endpoints."
         )
     resolved_base = (

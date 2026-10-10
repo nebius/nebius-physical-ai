@@ -129,6 +129,13 @@ def _config(**kwargs) -> GeminiRoboticsPipelineConfig:
     return GeminiRoboticsPipelineConfig(**values)
 
 
+def _use_missing_credentials_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Keep missing-key tests independent of the operator's saved credentials."""
+    import npa.clients.credentials as creds_mod
+
+    monkeypatch.setattr(creds_mod, "CREDENTIALS_PATH", tmp_path / "missing.yaml")
+
+
 def test_planning_stage_writes_conditional_s3_receipt() -> None:
     storage = FakeStorage()
     receipt = run_er_planning_stage(_config(), FakeClient(), storage)
@@ -256,7 +263,7 @@ def test_pipeline_main_rejects_missing_overrides() -> None:
 @pytest.mark.parametrize("stage", ["plan", "eval"])
 @pytest.mark.parametrize("missing", ["api_key", "api_base_url", "model"])
 def test_pipeline_stages_reject_missing_config_before_storage_or_http(
-    monkeypatch: pytest.MonkeyPatch, stage: str, missing: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path, stage: str, missing: str
 ) -> None:
     """SDK stage defaults fail before selecting storage or provider transport."""
     from npa.workflows.byof import gemini_robotics_pipeline as pipe
@@ -293,6 +300,7 @@ def test_pipeline_stages_reject_missing_config_before_storage_or_http(
         pipe.StorageClient, "from_environment", classmethod(storage_factory)
     )
     monkeypatch.setattr(httpx.Client, "request", http_request)
+    _use_missing_credentials_file(monkeypatch, tmp_path)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_ROBOTICS_BASE_URL", raising=False)
     if missing != "api_key":
@@ -327,7 +335,7 @@ def test_pipeline_stages_reject_missing_config_before_storage_or_http(
 @pytest.mark.parametrize("command", ["plan", "eval"])
 @pytest.mark.parametrize("missing", ["api_key", "api_base_url", "model"])
 def test_pipeline_main_rejects_missing_config_before_storage_or_http(
-    monkeypatch: pytest.MonkeyPatch, command: str, missing: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path, command: str, missing: str
 ) -> None:
     """Pipeline entrypoints reject incomplete config before storage side effects."""
     from npa.workflows.byof import gemini_robotics_pipeline as pipe
@@ -362,6 +370,7 @@ def test_pipeline_main_rejects_missing_config_before_storage_or_http(
 
     monkeypatch.setattr(pipe, "_storage_or_default", storage_factory)
     monkeypatch.setattr(httpx.Client, "request", http_request)
+    _use_missing_credentials_file(monkeypatch, tmp_path)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     if missing != "api_key":
         monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
