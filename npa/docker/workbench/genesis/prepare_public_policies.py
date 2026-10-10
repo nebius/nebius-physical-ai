@@ -19,6 +19,9 @@ SOURCE_HASHES = {
     "lerobot/policies/factory.py": "79caf2df45cce4d1b1551a156063f2098b5fa29ffc9e3ed62de60fc64d5f1c95",
 }
 UNSUPPORTED = "This public Genesis image supports native ACT only; use a qualified operator image for other policy families."
+POLICY_MODIFICATION_NOTICE = (
+    "# Modified by Nebius: restricts this public Genesis runtime to native ACT policies.\n"
+)
 
 
 def _statement(source: str) -> ast.stmt:
@@ -107,7 +110,12 @@ def _replacement(name: str, original: bytes) -> bytes:
         tree.body = [*imports, _statement("__all__ = ['ACTConfig']")]
     else:
         tree = _factory(tree)
-    return (header + ast.unparse(ast.fix_missing_locations(tree)) + "\n").encode()
+    return (
+        header
+        + POLICY_MODIFICATION_NOTICE
+        + ast.unparse(ast.fix_missing_locations(tree))
+        + "\n"
+    ).encode()
 
 
 def _changes(root: Path) -> list[tuple[str, bytes, bytes]]:

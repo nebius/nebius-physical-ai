@@ -145,7 +145,12 @@ def test_policy_source_record_and_notice_rows_are_preserved(
     receipt = source_module.prepare(tmp_path, check_only=False)
     assert len(receipt) == 2 and all(row["record_updated"] for row in receipt)
     for name in source_module.SOURCE_HASHES:
-        assert (tmp_path / name).read_text().startswith("# retained Apache notice")
+        content = (tmp_path / name).read_text()
+        assert content.startswith("# retained Apache notice")
+        assert source_module.POLICY_MODIFICATION_NOTICE in content
+        assert content.index(source_module.POLICY_MODIFICATION_NOTICE) < content.index(
+            "from "
+        )
     rows = list(
         csv.reader(
             io.StringIO((tmp_path / "lerobot-0.4.4.dist-info/RECORD").read_text())
