@@ -38,7 +38,7 @@ npa workbench workflow submit workflows/main/rgbd-scan-to-policy-demo.yaml \
 
 The configured project, credentials, GPU capacity, and applicable Isaac runtime
 access must be ready. The workflow fetches the public sample itself; it requires
-no Hugging Face token. The CPU image must supply `/opt/npa/venv/bin/python` and
+no Hugging Face token. The CPU image must supply `/opt/npa/sim/venv/bin/python` and
 the Open3D/SciPy stack. USD assembly adds `usd-core==26.8` into an isolated
 temporary site directory. The Isaac image must support the native physics,
 training, and renderer workload. `reconstruction_image` defaults to the supplied
