@@ -809,7 +809,10 @@ def test_production_qualification_audit_binds_complete_readback(
 
 
 def test_qualification_usd_runtime_matches_development_pin():
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10 uses the declared tomli fallback.
+        import tomli as tomllib
 
     from npa.workbench.nurec.qualification_audit import USD_RUNTIME_VERSION
 
