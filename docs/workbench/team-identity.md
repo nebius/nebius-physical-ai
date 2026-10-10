@@ -108,6 +108,22 @@ directory, create new accounts, or establish a browser-login path. Unlinked
 external identities are denied, and local group and allocation policy remains
 the authorization source.
 
+To change providers, remove the exact old link and then link the new verified
+identity. `unlink` also accepts a retired issuer after the service configuration
+has changed. It preserves local keys, grants, namespace placement, and run
+ownership; the removed identity fails authentication on its next request.
+Already admitted work continues unless separately cancelled.
+
+```bash
+npa workbench team account unlink --config /private/npa-team/team.yaml \
+  --user "$WORKBENCH_USER_ID" \
+  --issuer "$OLD_ISSUER" --subject "$OLD_EXTERNAL_SUBJECT"
+```
+
+Repeating the exact removal returns `unlinked: false`. A mismatched account,
+issuer, or subject never removes another link. Disabling the account first is
+optional; administrators can also unlink a disabled account during offboarding.
+
 ### Native Nebius human identity
 
 Native Nebius verification is optional and must retain `account_namespace` so

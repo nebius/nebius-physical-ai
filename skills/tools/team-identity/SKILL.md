@@ -26,6 +26,11 @@ An external identity is only a credential for an already-created local account:
   provider-verified immutable subject. There is no auto-enrolment, email match,
   cloud-group import, or cloud-role-to-Workbench-grant mapping.
 
+Use `account unlink` with the exact local user, old issuer, and old subject
+before replacing an external provider link. It works for a retired issuer or
+disabled account, preserves local ownership and keys, and revokes that login
+on the next request. It does not cancel already admitted work.
+
 Native Nebius browser SSO happens in the person's Nebius CLI/identity provider.
 Workbench only verifies the resulting short-lived IAM bearer token. A linked
 account's local groups, grants, allocations, ownership, and disabled state stay

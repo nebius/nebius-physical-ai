@@ -56,6 +56,22 @@ def link_identity(config, user_id, issuer, subject):
     return {"user_id": user_id, "linked": True}
 
 
+def unlink_identity(config, user_id, issuer, subject):
+    """Remove an exact identity link, even after changing the configured provider.
+
+    Args:
+        config: Authoritative local-account installation configuration.
+        user_id: Existing permanent account selected by the operator.
+        issuer, subject: Exact external identity to remove, including a retired issuer.
+    Returns:
+        Account ID and whether a link was removed, without external attributes.
+    Raises:
+        TeamError: Account is absent or the identity is incomplete.
+    """
+    removed = Accounts(config).unlink(user_id, issuer, subject)
+    return {"user_id": user_id, "unlinked": removed}
+
+
 def _configured_identity_issuer(config):
     if config.identity is not None:
         return config.identity.issuer

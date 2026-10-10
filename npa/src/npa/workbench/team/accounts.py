@@ -250,6 +250,30 @@ class Accounts:
         except sqlite3.IntegrityError as exc:
             raise ConflictError("external identity is already linked") from exc
 
+    def unlink(self, user_id, issuer, subject):
+        """Remove only the selected external link without changing the local account.
+
+        Args:
+            user_id: Exact account selected by the local operator, including disabled users.
+            issuer, subject: Exact existing external identity, including a retired provider.
+        Returns:
+            Whether a matching link was removed; repeated removal is a no-op.
+        Raises:
+            TeamError, AuthenticationError: Identity is incomplete or the account is absent.
+        """
+        if not issuer or not subject:
+            raise TeamError("issuer and immutable external subject are required")
+        with self._transaction() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._user(db, user_id, active=False)
+            changed = db.execute(
+                "DELETE FROM external_identities WHERE user_id=? AND issuer=? AND subject=?",
+                (user_id, issuer, subject),
+            ).rowcount
+            if changed:
+                self._audit(db, "identity-unlink", user_id)
+        return bool(changed)
+
     def resolve(self, external):
         """Map a verified external identity to an explicitly linked local person.
 

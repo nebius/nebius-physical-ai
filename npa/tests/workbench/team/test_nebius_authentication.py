@@ -10,7 +10,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from npa.workbench.team.account_administration import link_identity
+from npa.workbench.team.account_administration import link_identity, unlink_identity
 from npa.workbench.team.account_authentication import AccountAuthentication
 from npa.workbench.team.accounts import Accounts
 from npa.workbench.team.api import create_app
@@ -349,3 +349,26 @@ def test_link_only_accepts_the_native_provider_and_never_changes_ownership(nativ
         )
     assert native.accounts.authenticate(native.keys[0][1])[0] == owner
     assert native.accounts.list()[0]["id"] == before[0]["id"]
+
+
+def test_unlink_denies_nebius_login_but_preserves_local_access_and_namespace(native):
+    owner = native.accounts.authenticate(native.keys[0][1])[0]
+    link_identity(native.config, owner.subject, NEBIUS_ISSUER, HUMAN_SUBJECT)
+    verifier = _profile_verifier(
+        native.config.nebius_identity, lambda _: httpx.Response(200, json=_profile())
+    )
+    app = create_app(
+        None, service=TeamService(lambda: native.config), verifier=verifier
+    )
+    before = bind_execution(native.config, owner, "robotics", "east").namespace
+    with TestClient(app) as client:
+        human = {"Authorization": "Bearer human-token"}
+        local = {"Authorization": "Bearer " + native.keys[0][1]}
+        assert client.get("/v1/me", headers=human).status_code == 200
+        assert unlink_identity(
+            native.config, owner.subject, NEBIUS_ISSUER, HUMAN_SUBJECT
+        )["unlinked"]
+        assert client.get("/v1/me", headers=human).status_code == 401
+        assert client.get("/v1/me", headers=local).status_code == 200
+    assert native.accounts.authenticate(native.keys[0][1])[0] == owner
+    assert bind_execution(native.config, owner, "robotics", "east").namespace == before
