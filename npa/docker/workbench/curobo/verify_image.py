@@ -16,6 +16,7 @@ import tarfile
 
 
 CONTRACT = Path(__file__).with_name("runtime-payload.json")
+CLEAN_ROOT_CONFIG = Path(__file__).with_name("clean-root-config.json")
 _SDK_NAME = re.compile(r"(?i)(?:cudnn\w*\.(?:h|hpp|hxx|cuh)|libcudnn\w*\.(?:a|lib))$")
 _RUNTIME_NAME = re.compile(r"(?i)libcudnn\w*\.so(?:\.\d+)*$")
 _MANIFEST_TYPES = {
@@ -150,6 +151,58 @@ def _oci_graph(archive, members, config_member, config_hash, layers):
     return descriptor["digest"], described_layers
 
 
+def _clean_root_runtime_matches(config, expected):
+    actual = config.get("config")
+    if not isinstance(actual, dict):
+        return False
+    labels = actual.get("Labels", {})
+    if not isinstance(labels, dict):
+        return False
+    revision = labels.get("org.opencontainers.image.revision")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        return False
+    environment = actual.get("Env")
+    if not isinstance(environment, list) or not all(
+        isinstance(value, str) for value in environment
+    ):
+        return False
+    pinned_environment = [
+        value.replace("${NPA_SOURCE_SHA}", revision) for value in expected["Env"]
+    ]
+    if sorted(environment) != sorted(pinned_environment):
+        return False
+    return all(
+        actual.get(key) == value for key, value in expected.items() if key != "Env"
+    )
+
+
+def _clean_root_findings(config, layers, contract, layer_identities):
+    pinned_hash = contract.get("clean_root_config_sha256")
+    if pinned_hash is None:
+        return []
+    raw = CLEAN_ROOT_CONFIG.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != pinned_hash:
+        raise ImageVerificationError("clean-root runtime contract digest mismatch")
+    expected = json.loads(raw)
+    if expected["schema_version"] != "npa.curobo.clean-root-config.v1":
+        raise ImageVerificationError("unsupported clean-root runtime contract")
+    findings = []
+    # BuildKit may encode WORKDIR after COPY as this exact empty gzip/tar.
+    # Both compressed bytes and the verified uncompressed diff ID are pinned:
+    # an arbitrary empty tar, hidden gzip metadata, or a whiteout is not allowed.
+    canonical_empty_tail = (
+        len(layers) == expected["layer_count"] + 1
+        and layer_identities[-1] == expected["optional_empty_metadata_layer"]
+    )
+    if len(layers) != expected["layer_count"] and not canonical_empty_tail:
+        findings.append({"code": "clean_root_layer_population_mismatch"})
+    if any(config.get(key) != value for key, value in expected["platform"].items()):
+        findings.append({"code": "clean_root_platform_mismatch"})
+    if not _clean_root_runtime_matches(config, expected["config"]):
+        findings.append({"code": "clean_root_runtime_config_mismatch"})
+    return findings
+
+
 def verify_image(
     tarball: Path, *, expected_image_id: str, contract: dict | None = None
 ) -> dict:
@@ -169,6 +222,46 @@ def verify_image(
         )
     notice = contract["nvshmem_notice"]
     expected[_path(notice["path"])] = notice
+    libgomp = contract["libgomp"]
+    libgomp_payload = [libgomp["runtime"], *libgomp["license_files"]]
+    if len(libgomp_payload) != 3:
+        raise ImageVerificationError(
+            "expected libgomp runtime, package copyright and GPL text"
+        )
+    for row in libgomp_payload:
+        expected[_path(row["path"])] = row
+    libgomp_soname = _path(libgomp["runtime"]["soname_path"])
+    expected_links = {
+        libgomp_soname: libgomp["runtime"]["soname_target"],
+    }
+    runtime_import_receipt = contract["runtime_import_receipt"]
+    expected[_path(runtime_import_receipt["path"])] = runtime_import_receipt
+    distro = contract["distro_source_closure"]
+    distro_manifest = distro["manifest"]
+    expected[_path(distro_manifest["path"])] = distro_manifest
+    versioned = {}
+    for row in distro["copyright_files"]:
+        path = _path(row["path"])
+        if path in expected and any(
+            row[key] != expected[path][key] for key in ("sha256", "size")
+        ):
+            raise ImageVerificationError("conflicting distro notice identities")
+        expected[path] = row
+        versioned[path] = {
+            (entry["sha256"], entry["size"]) for entry in row["ancestor_versions"]
+        }
+        if (row["sha256"], row["size"]) not in versioned[path]:
+            raise ImageVerificationError("final notice is absent from its history")
+    databases = {row["sha256"]: row for row in distro["package_databases"]}
+    if not databases or len(databases) != len(distro["package_databases"]):
+        raise ImageVerificationError("missing or repeated distro package databases")
+    final_database = databases[distro["final_dpkg_database_sha256"]]
+    database_path = "var/lib/dpkg/status"
+    expected[database_path] = final_database
+    versioned[database_path] = {
+        (row["sha256"], row["size"]) for row in databases.values()
+    }
+    observed_databases = set()
     # PyTorch's generated cuDNN operator declarations are BSD-licensed adapters,
     # not NVIDIA SDK headers. Only exact independently verified wheel bytes at
     # these exact paths qualify, together with the wheel's complete license.
@@ -216,9 +309,12 @@ def verify_image(
         )
     }
     ancestors = {
-        str(parent) for path in expected for parent in PurePosixPath(path).parents
+        str(parent)
+        for path in (*expected, *expected_links)
+        for parent in PurePosixPath(path).parents
     }
     observed = {}
+    observed_links = {}
     findings = []
     entries_read = regular_files_read = content_bytes_read = 0
 
@@ -274,6 +370,7 @@ def verify_image(
             raise ImageVerificationError(
                 "config and complete layer population disagree"
             )
+        layer_identities = []
         for layer_index, layer_name in enumerate(layers):
             member = members[_path(layer_name)]
             if not member.isfile():
@@ -302,8 +399,16 @@ def verify_image(
                     )
             if _layer_diff_id(archive.extractfile(member)) != diff_ids[layer_index]:
                 raise ImageVerificationError("saved-image layer diff ID mismatch")
+            layer_identities.append(
+                {
+                    "blob_sha256": blob_hash,
+                    "blob_bytes": blob_size,
+                    "diff_id": diff_ids[layer_index],
+                }
+            )
             # Whiteouts affect lower layers, including when recorded after new files.
             current = {}
+            current_links = {}
             seen_paths = set()
             # Use exactly the same decoding for the diff ID and tar contents.
             # Auto-detection here would accept an undeclared bz2/xz codec while
@@ -334,6 +439,11 @@ def verify_image(
                             for p, v in observed.items()
                             if directory != "." and not p.startswith(directory + "/")
                         }
+                        observed_links = {
+                            p: v
+                            for p, v in observed_links.items()
+                            if directory != "." and not p.startswith(directory + "/")
+                        }
                     elif whiteout:
                         target = str(PurePosixPath(directory) / basename[4:])
                         observed = {
@@ -341,10 +451,17 @@ def verify_image(
                             for p, v in observed.items()
                             if p != target and not p.startswith(target + "/")
                         }
+                        observed_links = {
+                            p: v
+                            for p, v in observed_links.items()
+                            if p != target and not p.startswith(target + "/")
+                        }
                     else:
                         # Every type replacement invalidates proof of that exact file.
                         observed.pop(path, None)
+                        observed_links.pop(path, None)
                         current.pop(path, None)
+                        current_links.pop(path, None)
                         if not entry.isdir():
                             observed = {
                                 p: v
@@ -354,6 +471,16 @@ def verify_image(
                             current = {
                                 p: v
                                 for p, v in current.items()
+                                if not p.startswith(path + "/")
+                            }
+                            observed_links = {
+                                p: v
+                                for p, v in observed_links.items()
+                                if not p.startswith(path + "/")
+                            }
+                            current_links = {
+                                p: v
+                                for p, v in current_links.items()
                                 if not p.startswith(path + "/")
                             }
                         # Required files may not be reached through links or a regular
@@ -368,6 +495,8 @@ def verify_image(
                             issue(
                                 "retained_payload_not_regular", layer_index, entry_index
                             )
+                        if path in expected_links and not entry.issym():
+                            issue("retained_link_not_symlink", layer_index, entry_index)
                         # Ancestor bytes remain distributed even if later hidden.
                         if not entry.isdir():
                             if _SDK_NAME.fullmatch(basename) and path not in adapters:
@@ -403,6 +532,18 @@ def verify_image(
                                 "nvidia_cudnn"
                             ) and basename.lower().endswith(".whl"):
                                 issue("cached_cudnn_wheel", layer_index, entry_index)
+                        if path in expected_links and entry.issym():
+                            matches = entry.linkname == expected_links[path]
+                            current_links[path] = {
+                                "target": entry.linkname,
+                                "matches": matches,
+                            }
+                            if not matches:
+                                issue(
+                                    "retained_link_target_mismatch",
+                                    layer_index,
+                                    entry_index,
+                                )
                     if entry.isfile():
                         digest, size = _hash_stream(layer.extractfile(entry))
                         if size != entry.size:
@@ -427,18 +568,38 @@ def verify_image(
                                 "size": size,
                                 "matches": matches,
                             }
-                            if not matches:
+                            if path == database_path:
+                                observed_databases.add(digest)
+                            allowed_version = (digest, size) in versioned.get(
+                                path, set()
+                            )
+                            if not matches and not allowed_version:
                                 issue(
                                     "retained_payload_hash_mismatch",
                                     layer_index,
                                     entry_index,
                                 )
             observed.update(current)
+            observed_links.update(current_links)
+        findings.extend(
+            _clean_root_findings(config, layers, contract, layer_identities)
+        )
         for path in expected:
             if path not in observed:
                 # Expected names originate in reviewed code, never the image.
                 findings.append(
                     {"code": "required_payload_missing", "expected_path": path}
+                )
+            elif not observed[path]["matches"]:
+                findings.append(
+                    {"code": "final_payload_hash_mismatch", "expected_path": path}
+                )
+        if observed_databases != set(databases):
+            findings.append({"code": "distro_package_history_mismatch"})
+        for path in expected_links:
+            if path not in observed_links:
+                findings.append(
+                    {"code": "required_link_missing", "expected_path": path}
                 )
     return {
         "schema_version": "npa.curobo.image-verification.v1",
@@ -448,9 +609,11 @@ def verify_image(
         "expected_image_id": expected_image_id,
         "image_manifest_digest": manifest_digest,
         "verified_layer_diff_ids": diff_ids,
+        "verified_layer_identities": layer_identities,
         "contract_sha256": hashlib.sha256(
             json.dumps(contract, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
+        "clean_root_config_sha256": contract.get("clean_root_config_sha256"),
         "cudnn_source_wheel_sha256": cudnn["wheel_sha256"],
         "torch_source_wheel_sha256": torch_contract["wheel_sha256"]
         if torch_contract is not None
@@ -466,6 +629,27 @@ def verify_image(
             path in observed and observed[path]["matches"]
             for path in expected
             if expected[path].get("kind") == "runtime"
+        ),
+        "verified_libgomp_payload_count": sum(
+            row["path"] in observed and observed[row["path"]]["matches"]
+            for row in libgomp_payload
+        ),
+        "verified_libgomp_soname_link": (
+            libgomp_soname in observed_links
+            and observed_links[libgomp_soname]["matches"]
+        ),
+        "runtime_import_receipt_verified": (
+            runtime_import_receipt["path"] in observed
+            and observed[runtime_import_receipt["path"]]["matches"]
+        ),
+        "verified_distro_database_versions": len(observed_databases & set(databases)),
+        "verified_distro_copyright_files": sum(
+            row["path"] in observed and observed[row["path"]]["matches"]
+            for row in distro["copyright_files"]
+        ),
+        "distro_source_manifest_verified": (
+            distro_manifest["path"] in observed
+            and observed[distro_manifest["path"]]["matches"]
         ),
         "required_payload_count": len(expected),
         "findings": findings,

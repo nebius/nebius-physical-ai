@@ -26,6 +26,14 @@ SPEC = importlib.util.spec_from_file_location(
 )
 VERIFIER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VERIFIER)
+PAYLOAD_SPEC = importlib.util.spec_from_file_location(
+    "curobo_payload_binding",
+    ROOT / "npa/scripts/scan_image_omniverse_payload.py",
+)
+assert PAYLOAD_SPEC and PAYLOAD_SPEC.loader
+PAYLOAD_SCANNER = importlib.util.module_from_spec(PAYLOAD_SPEC)
+sys.modules[PAYLOAD_SPEC.name] = PAYLOAD_SCANNER
+PAYLOAD_SPEC.loader.exec_module(PAYLOAD_SCANNER)
 
 
 def digest(data):
@@ -52,6 +60,9 @@ def tar_bytes(entries):
 def payload():
     """Tiny independent contract; no proprietary payload or fabricated GPU output."""
     contract = copy.deepcopy(json.loads((IMAGE / "runtime-payload.json").read_text()))
+    # Layout/config controls below exercise the clean-root contract separately;
+    # the original layer, whiteout and payload corpus must still test its paths.
+    contract.pop("clean_root_config_sha256")
     contract.pop(
         "torch_cudnn_adapters"
     )  # Adapter qualification has separate exact-byte fixtures.
@@ -74,6 +85,52 @@ def payload():
     notice = b"Synthetic complete NVSHMEM notice including third-party licenses."
     contract["nvshmem_notice"].update(sha256=digest(notice), size=len(notice))
     entries.append(entry(contract["nvshmem_notice"]["path"], notice))
+    libgomp = contract["libgomp"]
+    for index, row in enumerate([libgomp["runtime"], *libgomp["license_files"]]):
+        data = f"Synthetic reviewed libgomp runtime or license {index}.".encode()
+        row.update(sha256=digest(data), size=len(data))
+        entries.append(entry(row["path"], data))
+    entries.append(
+        entry(
+            libgomp["runtime"]["soname_path"],
+            kind=tarfile.SYMTYPE,
+            link=libgomp["runtime"]["soname_target"],
+        )
+    )
+    receipt = b"Synthetic real benchmark import receipt."
+    contract["runtime_import_receipt"].update(sha256=digest(receipt), size=len(receipt))
+    entries.append(entry(contract["runtime_import_receipt"]["path"], receipt))
+    source_manifest = b"Synthetic complete package/source/notice contract."
+    notice = b"Synthetic complete distro copyright notice."
+    database = b"Synthetic exact package database."
+    contract["distro_source_closure"] = {
+        "manifest": {
+            "path": "usr/share/doc/npa-curobo/distro-source-closure.json",
+            "size": len(source_manifest),
+            "sha256": digest(source_manifest),
+        },
+        "package_databases": [
+            {"sha256": digest(database), "size": len(database), "package_count": 1}
+        ],
+        "final_dpkg_database_sha256": digest(database),
+        "copyright_files": [
+            {
+                "path": "usr/share/doc/example/copyright",
+                "size": len(notice),
+                "sha256": digest(notice),
+                "ancestor_versions": [{"size": len(notice), "sha256": digest(notice)}],
+            }
+        ],
+    }
+    entries.extend(
+        [
+            entry(
+                contract["distro_source_closure"]["manifest"]["path"], source_manifest
+            ),
+            entry("usr/share/doc/example/copyright", notice),
+            entry("var/lib/dpkg/status", database),
+        ]
+    )
     return contract, entries, excluded
 
 
@@ -88,8 +145,11 @@ def save_image(
     config_path=None,
     layer_replacement=None,
     outer_entries=(),
+    layer_overrides=None,
 ):
     raw_layers = [tar_bytes(layer) for layer in layers]
+    for index, (raw, _) in (layer_overrides or {}).items():
+        raw_layers[index] = raw
     config = {
         "rootfs": {
             "type": "layers",
@@ -108,6 +168,8 @@ def save_image(
     layer_data = [
         gzip.compress(layer, mtime=0) if compressed else layer for layer in raw_layers
     ]
+    for index, (_, packed) in (layer_overrides or {}).items():
+        layer_data[index] = packed
     layer_names = [
         ("blobs/sha256/" + digest(data) if oci_paths else f"layer-{index}/layer.tar")
         for index, data in enumerate(layer_data)
@@ -146,6 +208,248 @@ def codes(report):
     return {finding["code"] for finding in report["findings"]}
 
 
+def clean_root_config(config):
+    expected = json.loads((IMAGE / "clean-root-config.json").read_text())
+    config.update(expected["platform"])
+    config["config"] = expected["config"]
+    config["config"]["Env"] = [
+        value.replace("${NPA_SOURCE_SHA}", "1" * 40)
+        for value in config["config"]["Env"]
+    ]
+    config["config"]["Labels"] = {"org.opencontainers.image.revision": "1" * 40}
+
+
+def use_clean_root_contract(payload):
+    payload[0]["clean_root_config_sha256"] = digest(
+        (IMAGE / "clean-root-config.json").read_bytes()
+    )
+
+
+def test_clean_root_retains_runtime_contract_and_all_payloads(tmp_path, payload):
+    use_clean_root_contract(payload)
+    report = verify(tmp_path, payload, config_update=clean_root_config)
+    assert report["valid"] is True
+    assert report["clean_root_config_sha256"] == digest(
+        (IMAGE / "clean-root-config.json").read_bytes()
+    )
+
+
+def test_clean_root_rejects_superseded_layer_even_after_whiteout(tmp_path, payload):
+    use_clean_root_contract(payload)
+    layers = [
+        [entry("superseded-libssl.so", b"old vulnerable object")],
+        [*payload[1], entry(".wh.superseded-libssl.so")],
+    ]
+    report = verify(tmp_path, payload, layers, config_update=clean_root_config)
+    assert report["valid"] is False
+    assert "clean_root_layer_population_mismatch" in codes(report)
+
+
+EMPTY_METADATA_GZIP = bytes.fromhex(
+    "1f8b08000000000000ff621805a360148c5800080000ffff2eafb5ef00040000"
+)
+
+
+def test_clean_root_accepts_only_exact_measured_empty_metadata_tail(tmp_path, payload):
+    use_clean_root_contract(payload)
+    raw = gzip.decompress(EMPTY_METADATA_GZIP)
+    assert raw == b"\x00" * 1024
+    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as archive:
+        assert archive.getmembers() == []
+    report = verify(
+        tmp_path,
+        payload,
+        [payload[1], []],
+        config_update=clean_root_config,
+        layer_overrides={1: (raw, EMPTY_METADATA_GZIP)},
+    )
+    assert report["valid"] is True
+    assert report["layer_count"] == 2
+    expected = json.loads((IMAGE / "clean-root-config.json").read_text())
+    assert (
+        report["verified_layer_identities"][-1]
+        == expected["optional_empty_metadata_layer"]
+    )
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "alternate_gzip",
+        "raw_tar",
+        "padding",
+        "file",
+        "whiteout",
+        "symlink",
+        "hidden_gzip_name",
+        "extra_tail",
+        "prefix_tail",
+    ],
+)
+def test_clean_root_rejects_other_metadata_layer_forms(tmp_path, payload, kind):
+    use_clean_root_contract(payload)
+    raw = b"\x00" * 1024
+    packed = EMPTY_METADATA_GZIP
+    layers = [payload[1], []]
+    if kind == "alternate_gzip":
+        packed = gzip.compress(raw, mtime=0)
+    elif kind == "raw_tar":
+        packed = raw
+    elif kind == "padding":
+        raw = b"\x00" * 10240
+        packed = gzip.compress(raw, mtime=0)
+    elif kind in {"file", "whiteout", "symlink"}:
+        entries = {
+            "file": [entry("unexpected", b"payload")],
+            "whiteout": [entry(".wh.absent")],
+            "symlink": [entry("unexpected", kind=tarfile.SYMTYPE, link="absent")],
+        }[kind]
+        raw = tar_bytes(entries)
+        packed = gzip.compress(raw, mtime=0)
+    elif kind == "hidden_gzip_name":
+        stream = io.BytesIO()
+        with gzip.GzipFile(
+            filename="unexpected-metadata", mode="wb", fileobj=stream, mtime=0
+        ) as zipped:
+            zipped.write(raw)
+        packed = stream.getvalue()
+    overrides = {1: (raw, packed)}
+    if kind == "extra_tail":
+        layers.append([])
+        overrides[2] = (raw, packed)
+    elif kind == "prefix_tail":
+        layers = [[], payload[1]]
+        overrides = {0: (raw, packed)}
+    report = verify(
+        tmp_path,
+        payload,
+        layers,
+        config_update=clean_root_config,
+        layer_overrides=overrides,
+    )
+    assert report["valid"] is False
+    assert "clean_root_layer_population_mismatch" in codes(report)
+
+
+def test_clean_root_empty_tail_identity_cannot_mask_different_bytes(tmp_path, payload):
+    use_clean_root_contract(payload)
+    raw = tar_bytes([entry("unexpected", b"payload")])
+
+    def forged(config):
+        clean_root_config(config)
+        config["rootfs"]["diff_ids"][-1] = "sha256:" + digest(b"\x00" * 1024)
+
+    with pytest.raises(VERIFIER.ImageVerificationError, match="diff ID mismatch"):
+        verify(
+            tmp_path,
+            payload,
+            [payload[1], []],
+            config_update=forged,
+            layer_overrides={1: (raw, gzip.compress(raw, mtime=0))},
+        )
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("User", "root"),
+        ("WorkingDir", "/"),
+        ("Entrypoint", ["sh"]),
+        ("Cmd", ["version"]),
+        ("Healthcheck", {}),
+        ("Shell", ["/bin/sh", "-c"]),
+        ("ExposedPorts", {}),
+        ("Labels", []),
+        ("Labels", {"org.opencontainers.image.revision": "main"}),
+        ("Labels", {"org.opencontainers.image.revision": "2" * 40}),
+    ],
+)
+def test_clean_root_rejects_changed_launch_metadata(tmp_path, payload, key, value):
+    use_clean_root_contract(payload)
+
+    def changed(config):
+        clean_root_config(config)
+        config["config"][key] = value
+
+    report = verify(tmp_path, payload, config_update=changed)
+    assert report["valid"] is False
+    assert "clean_root_runtime_config_mismatch" in codes(report)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "PATH",
+        "NVARCH",
+        "NVIDIA_REQUIRE_CUDA",
+        "NV_CUDA_CUDART_VERSION",
+        "CUDA_VERSION",
+        "LD_LIBRARY_PATH",
+        "NVIDIA_VISIBLE_DEVICES",
+        "NVIDIA_DRIVER_CAPABILITIES",
+        "NPA_BAKED_PYTHON",
+        "NPA_IMAGE_SOURCE_SHA",
+        "NPA_CUROBO_SOURCE",
+        "NPA_CUROBO_WORK_DIR",
+        "CUDA_HOME",
+    ],
+)
+def test_clean_root_rejects_changed_runtime_environment(tmp_path, payload, name):
+    use_clean_root_contract(payload)
+
+    def changed(config):
+        clean_root_config(config)
+        config["config"]["Env"] = [
+            name + "=changed" if value.startswith(name + "=") else value
+            for value in config["config"]["Env"]
+        ]
+
+    assert "clean_root_runtime_config_mismatch" in codes(
+        verify(tmp_path, payload, config_update=changed)
+    )
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "duplicate", "not-string"])
+def test_clean_root_rejects_ambiguous_environment(tmp_path, payload, mutation):
+    use_clean_root_contract(payload)
+
+    def changed(config):
+        clean_root_config(config)
+        environment = config["config"]["Env"]
+        if mutation == "missing":
+            environment.pop()
+        elif mutation == "extra":
+            environment.append("UNKNOWN=unexpected")
+        elif mutation == "duplicate":
+            environment.append(environment[0])
+        else:
+            environment.append(None)
+
+    assert "clean_root_runtime_config_mismatch" in codes(
+        verify(tmp_path, payload, config_update=changed)
+    )
+
+
+@pytest.mark.parametrize("key,value", [("architecture", "arm64"), ("os", "windows")])
+def test_clean_root_rejects_changed_platform(tmp_path, payload, key, value):
+    use_clean_root_contract(payload)
+
+    def changed(config):
+        clean_root_config(config)
+        config[key] = value
+
+    assert "clean_root_platform_mismatch" in codes(
+        verify(tmp_path, payload, config_update=changed)
+    )
+
+
+def test_clean_root_rejects_changed_contract_bytes(tmp_path, payload):
+    use_clean_root_contract(payload)
+    payload[0]["clean_root_config_sha256"] = "0" * 64
+    with pytest.raises(VERIFIER.ImageVerificationError, match="contract digest"):
+        verify(tmp_path, payload, config_update=clean_root_config)
+
+
 @pytest.mark.parametrize(
     "compressed,oci_paths", [(False, False), (False, True), (True, True)]
 )
@@ -155,12 +459,136 @@ def test_complete_image_binds_config_all_diff_ids_and_independent_bytes(
     report = verify(tmp_path, payload, compressed=compressed, oci_paths=oci_paths)
     assert report["valid"] is True
     assert report["retained_runtime_count"] == 8
-    assert report["required_payload_count"] == 10
+    assert report["verified_libgomp_payload_count"] == 3
+    assert report["verified_libgomp_soname_link"] is True
+    assert report["runtime_import_receipt_verified"] is True
+    assert report["required_payload_count"] == 17
+    assert report["verified_distro_database_versions"] == 1
+    assert report["verified_distro_copyright_files"] == 1
+    assert report["distro_source_manifest_verified"] is True
     assert report["layer_count"] == 1
     assert len(report["verified_layer_diff_ids"]) == 1
-    assert report["regular_files_read"] == 10
+    assert report["regular_files_read"] == 17
     assert report["content_bytes_read"] == sum(len(row[1]) for row in payload[1])
     assert report["docker_save_sha256"] == digest((tmp_path / "image.tar").read_bytes())
+
+
+def test_classic_verifier_report_drives_truthful_payload_identity(tmp_path, payload):
+    contract, entries, _ = payload
+    archive, image_id = save_image(tmp_path, [entries])
+    graph = VERIFIER.verify_image(
+        archive, expected_image_id=image_id, contract=contract
+    )
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(json.dumps(graph))
+
+    report = PAYLOAD_SCANNER.scan(
+        None,
+        archive,
+        verification_report=graph_path,
+    )
+
+    assert graph["image_manifest_digest"] is None
+    assert report.clean
+    assert report.digest == graph["image_config_digest"]
+    assert report.archive_binding["archive_format"] == "docker-save-classic"
+    assert report.archive_binding["content_identity_kind"] == "image-config-digest"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "usr/share/doc/npa-curobo/distro-source-closure.json",
+        "usr/share/doc/example/copyright",
+        "var/lib/dpkg/status",
+    ],
+)
+@pytest.mark.parametrize("replacement", [None, b"unreviewed bytes"])
+def test_distro_required_bytes_cannot_be_missing_or_modified(
+    tmp_path, payload, path, replacement
+):
+    rows = [row for row in payload[1] if row[0] != path]
+    if replacement is not None:
+        rows.append(entry(path, replacement))
+    report = verify(tmp_path, payload, [rows])
+    assert not report["valid"]
+    assert (
+        "required_payload_missing"
+        if replacement is None
+        else "retained_payload_hash_mismatch"
+    ) in codes(report)
+
+
+def test_reviewed_ancestor_notice_requires_correct_final_notice(tmp_path, payload):
+    row = payload[0]["distro_source_closure"]["copyright_files"][0]
+    older = b"Explicitly reviewed older distro notice."
+    row["ancestor_versions"].append({"sha256": digest(older), "size": len(older)})
+    report = verify(tmp_path, payload, [[entry(row["path"], older)], payload[1]])
+    assert report["valid"]
+    assert report["verified_distro_copyright_files"] == 1
+    report = verify(tmp_path, payload, [payload[1], [entry(row["path"], older)]])
+    assert not report["valid"]
+    assert "final_payload_hash_mismatch" in codes(report)
+    assert "retained_payload_hash_mismatch" not in codes(report)
+
+
+def test_unknown_ancestor_notice_is_rejected_even_after_final_repair(tmp_path, payload):
+    path = payload[0]["distro_source_closure"]["copyright_files"][0]["path"]
+    report = verify(tmp_path, payload, [[entry(path, b"unknown notice")], payload[1]])
+    assert not report["valid"]
+    assert "retained_payload_hash_mismatch" in codes(report)
+    assert report["verified_distro_copyright_files"] == 1
+
+
+def test_all_reviewed_package_database_versions_are_required(tmp_path, payload):
+    older = b"Older complete package database."
+    distro = payload[0]["distro_source_closure"]
+    distro["package_databases"].append(
+        {"sha256": digest(older), "size": len(older), "package_count": 1}
+    )
+    report = verify(
+        tmp_path, payload, [[entry("var/lib/dpkg/status", older)], payload[1]]
+    )
+    assert report["valid"]
+    assert report["verified_distro_database_versions"] == 2
+    report = verify(tmp_path, payload)
+    assert not report["valid"]
+    assert "distro_package_history_mismatch" in codes(report)
+    report = verify(
+        tmp_path, payload, [payload[1], [entry("var/lib/dpkg/status", older)]]
+    )
+    assert not report["valid"]
+    assert "final_payload_hash_mismatch" in codes(report)
+
+
+def test_unreviewed_package_database_is_not_hidden_by_final_replacement(
+    tmp_path, payload
+):
+    report = verify(
+        tmp_path,
+        payload,
+        [[entry("var/lib/dpkg/status", b"unreviewed package database")], payload[1]],
+    )
+    assert not report["valid"]
+    assert "retained_payload_hash_mismatch" in codes(report)
+    assert "distro_package_history_mismatch" in codes(report)
+
+
+def test_notice_history_cannot_omit_final_hash(tmp_path, payload):
+    payload[0]["distro_source_closure"]["copyright_files"][0]["ancestor_versions"] = []
+    with pytest.raises(
+        VERIFIER.ImageVerificationError, match="absent from its history"
+    ):
+        verify(tmp_path, payload)
+
+
+def test_overlapping_distro_and_libgomp_notice_contracts_must_agree(tmp_path, payload):
+    libgomp_notice = payload[0]["libgomp"]["license_files"][0]
+    payload[0]["distro_source_closure"]["copyright_files"][0]["path"] = libgomp_notice[
+        "path"
+    ]
+    with pytest.raises(VERIFIER.ImageVerificationError, match="conflicting distro"):
+        verify(tmp_path, payload)
 
 
 def test_normal_root_and_system_links_are_never_extracted_or_followed(
@@ -184,6 +612,59 @@ def test_rejects_changed_or_empty_required_runtime(tmp_path, payload, replacemen
     report = verify(tmp_path, payload, [entries])
     assert not report["valid"]
     assert "retained_payload_hash_mismatch" in codes(report)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "usr/lib/x86_64-linux-gnu/libgomp.so.1.0.0",
+        "usr/share/doc/gcc-14-base/copyright",
+        "usr/share/common-licenses/GPL-3",
+        "usr/share/doc/npa-curobo/runtime-import.json",
+    ],
+)
+def test_rejects_changed_libgomp_closure_or_runtime_import_receipt(
+    tmp_path, payload, path
+):
+    entries = []
+    for item in payload[1]:
+        entries.append(
+            entry(item[0], b"changed required byte") if item[0] == path else item
+        )
+    report = verify(tmp_path, payload, [entries])
+    assert not report["valid"]
+    assert "retained_payload_hash_mismatch" in codes(report)
+
+
+@pytest.mark.parametrize(
+    ("replacement", "expected_code"),
+    [
+        (None, "required_link_missing"),
+        (
+            entry(
+                "usr/lib/x86_64-linux-gnu/libgomp.so.1",
+                kind=tarfile.SYMTYPE,
+                link="changed-libgomp.so",
+            ),
+            "retained_link_target_mismatch",
+        ),
+        (
+            entry("usr/lib/x86_64-linux-gnu/libgomp.so.1", b"not a symlink"),
+            "retained_link_not_symlink",
+        ),
+    ],
+)
+def test_rejects_missing_changed_or_non_symlink_libgomp_soname(
+    tmp_path, payload, replacement, expected_code
+):
+    soname = payload[0]["libgomp"]["runtime"]["soname_path"]
+    entries = [item for item in payload[1] if item[0] != soname]
+    if replacement is not None:
+        entries.append(replacement)
+    report = verify(tmp_path, payload, [entries])
+    assert not report["valid"]
+    assert expected_code in codes(report)
+    assert report["verified_libgomp_soname_link"] is False
 
 
 def test_full_notice_is_verified_independently_of_image_authored_manifest(
@@ -427,6 +908,40 @@ def test_production_contract_matches_locked_artifacts_and_notice():
         and notice["url"] in docker
         and "/" + notice["path"] in docker
     )
+    libgomp = contract["libgomp"]
+    packages = {row["name"]: row for row in libgomp["binary_packages"]}
+    assert packages["libgomp1"] == {
+        "name": "libgomp1",
+        "version": "14.2.0-4ubuntu2~24.04.1",
+        "architecture": "amd64",
+        "url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/libgomp1_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+        "sha256": "e8a95ec58125b4933597f30ff56c2ae10edf90f287262e366d4b6edea3019144",
+        "size": 148062,
+    }
+    assert "libgomp1=14.2.0-4ubuntu2~24.04.1" in docker
+    assert libgomp["runtime"]["sha256"] == (
+        "135f3c8f006d2fe5e68e51281c7974cb991a03de3bfb3593d68d174dfcf854d1"
+    )
+    assert libgomp["runtime"]["soname_target"] == "libgomp.so.1.0.0"
+    assert libgomp["license_expression"] == ("GPL-3.0-or-later WITH GCC-exception-3.1")
+    assert {row["sha256"] for row in libgomp["license_files"]} == {
+        "20390f8a6f3b1e4d7cb45dd8652dabb259bbef688cbad839bcdb0b9ba7252f79",
+        "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    }
+    assert {row["sha256"] for row in libgomp["source_package"]["artifacts"]} == {
+        "768c314c11eeab56ccebb91eb42ec4a41122fa94f0d83400126401942622197b",
+        "cfece214c2fb790ef5f3baffb9a53e40618e7ae12d053610b251e94d77d08ade",
+        "50950080874a6ec6780dd60c243e21d9cda9d736bb32bca98d16095d27cc01b5",
+    }
+    redistribution = (IMAGE / "REDISTRIBUTION.md").read_text()
+    assert "`libgomp.so.1` to remain an exact" in redistribution
+    assert "`libgomp.so.1.0.0`" in redistribution
+    for row in [
+        *libgomp["binary_packages"],
+        *libgomp["license_files"],
+        *libgomp["source_package"]["artifacts"],
+    ]:
+        assert row["sha256"] in redistribution
 
 
 def test_trusted_workflow_checks_local_bytes_before_push_and_exact_pushed_bytes():
@@ -450,6 +965,19 @@ def test_trusted_workflow_checks_local_bytes_before_push_and_exact_pushed_bytes(
     )
     assert '--docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar"' in commands[second:]
     assert commands.count("npa/scripts/scan_image_omniverse_payload.py") == 2
+    assert commands.count("--verification-report") >= 4
+    assert (
+        '--verification-report "$RUNNER_TEMP/${TOOL}-curobo-payload.json"'
+        in commands[:push]
+    )
+    assert "--expected-manifest-digest" not in commands[:push]
+    assert "--registry-image" not in commands[:push]
+    assert (
+        '--verification-report "$RUNNER_TEMP/${TOOL}-pushed-curobo-payload.json"'
+        in commands[push:]
+    )
+    assert '--registry-image "$exact"' in commands[push:]
+    assert '--expected-manifest-digest "$DIGEST"' in commands[push:]
 
 
 def test_no_member_size_cap_and_no_required_file_sample(tmp_path, payload):
@@ -461,7 +989,7 @@ def test_no_member_size_cap_and_no_required_file_sample(tmp_path, payload):
     assert report["content_bytes_read"] == len(data) + sum(
         len(row[1]) for row in payload[1]
     )
-    assert report["regular_files_read"] == 11
+    assert report["regular_files_read"] == 18
 
 
 def test_same_layer_directory_replacement_invalidates_regular_proof(tmp_path, payload):
@@ -524,7 +1052,7 @@ def test_duplicate_canonical_inner_paths_are_rejected(tmp_path, payload, alias):
     duplicate = entry(("./" if alias else "") + original[0], original[1])
     report = verify(tmp_path, payload, [[*payload[1], duplicate]])
     assert "duplicate_layer_path" in codes(report)
-    assert report["regular_files_read"] == 11  # Duplicate bytes are still scanned.
+    assert report["regular_files_read"] == 18  # Duplicate bytes are still scanned.
     assert report["retained_runtime_count"] == 8
     assert not report["valid"]
 
@@ -655,7 +1183,7 @@ def test_oci_graph_binds_manifest_and_classic_ids_with_repeated_ordered_blobs(
     assert report["verified_layer_diff_ids"][0] == report["verified_layer_diff_ids"][2]
     assert report["image_config_digest"] == classic_id
     assert report["image_manifest_digest"] == manifest_id
-    assert report["regular_files_read"] == 10
+    assert report["regular_files_read"] == 17
 
 
 def test_repeated_nonempty_blob_is_scanned_for_every_occurrence(tmp_path, payload):
@@ -664,7 +1192,7 @@ def test_repeated_nonempty_blob_is_scanned_for_every_occurrence(tmp_path, payloa
         archive, expected_image_id=image_id, contract=payload[0]
     )
     assert report["valid"]
-    assert report["regular_files_read"] == 20
+    assert report["regular_files_read"] == 34
     assert report["content_bytes_read"] == 2 * sum(len(row[1]) for row in payload[1])
 
 
@@ -784,8 +1312,8 @@ def test_reviewed_torch_adapter_bytes_and_complete_license_pass(
     report = verify(tmp_path, adapter_payload)
     assert report["valid"]
     assert report["verified_torch_adapter_count"] == 52
-    assert report["required_payload_count"] == 160
-    assert report["regular_files_read"] == 160
+    assert report["required_payload_count"] == 167
+    assert report["regular_files_read"] == 167
 
 
 @pytest.mark.parametrize(
@@ -846,7 +1374,7 @@ def test_unknown_header_under_torch_namespace_is_still_rejected(
 def test_ancestor_adapter_tampering_remains_rejected_after_valid_replacement(
     tmp_path, adapter_payload
 ):
-    path = adapter_payload[1][10][0]
+    path = next(item[0] for item in adapter_payload[1] if "/torch/include/" in item[0])
     report = verify(
         tmp_path,
         adapter_payload,
@@ -858,7 +1386,9 @@ def test_ancestor_adapter_tampering_remains_rejected_after_valid_replacement(
 
 
 def test_adapter_whiteout_cannot_keep_prior_proof(tmp_path, adapter_payload):
-    path = Path(adapter_payload[1][10][0])
+    path = Path(
+        next(item[0] for item in adapter_payload[1] if "/torch/include/" in item[0])
+    )
     report = verify(
         tmp_path,
         adapter_payload,

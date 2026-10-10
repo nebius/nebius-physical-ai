@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -15,20 +16,24 @@ from pathlib import Path
 
 from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.workbench.dataset.storage import read_bytes_uri, uri_join, write_bytes_uri
+from npa.workbench.dataset import storage as dataset_storage
 from npa.workbench.storage_scope import authorize_uri
 
+from .audit import audit_bytes
 from .artifacts import (
     CuroboError,
     build_rrd,
     canonical,
+    decode_rrd,
     read_journal,
-    summarize,
     validate_report,
 )
+from .replay import ReplayError, replay_rows
 from .schemas import BenchmarkManifest, PlanManifest, PrepareRequest, RunRequest
 
 
 _LOGGER = logging.getLogger(__name__)
+_FAILURE_NAMESPACE = "_failures"
 
 
 def _paths(request: RunRequest):
@@ -44,6 +49,35 @@ def _publish(uri: str, payload: bytes):
         raise CuroboError("artifact S3 read-after-write digest mismatch")
 
 
+def _stream_digest(stream):
+    digest, size = hashlib.sha256(), 0
+    while chunk := stream.read(1024 * 1024):
+        digest.update(chunk)
+        size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _publish_file(uri: str, path: Path):
+    target = authorize_uri(uri, operation="write")
+    authorize_uri(uri, operation="read")
+    if target.kind != "s3":
+        raise CuroboError("cuRobo evidence publication requires S3")
+    client = dataset_storage._s3_client()
+    with path.open("rb") as stream:
+        expected = _stream_digest(stream)
+        stream.seek(0)
+        client.put_object(
+            Bucket=target.bucket, Key=target.key, Body=stream, ContentLength=expected[1]
+        )
+    body = client.get_object(Bucket=target.bucket, Key=target.key)["Body"]
+    try:
+        observed = _stream_digest(body)
+    finally:
+        body.close()
+    if expected != observed:
+        raise CuroboError("artifact S3 read-after-write digest mismatch")
+
+
 def prepare(request: PrepareRequest):
     validate_write_path(request.output_path, tool="curobo", required=True)
     modes = ["kinematic", "dynamics"] if request.mode == "both" else [request.mode]
@@ -56,20 +90,19 @@ def prepare(request: PrepareRequest):
     }
 
 
-def _run(kind: str, request: RunRequest):
-    _paths(request)
-    manifest = json.loads(read_bytes_uri(request.input_path))
-    model = BenchmarkManifest if kind == "benchmark" else PlanManifest
-    manifest = model.model_validate(manifest).model_dump(mode="json")
+def _runtime_root(manifest: dict) -> Path:
     root = Path(
         tempfile.mkdtemp(
             prefix="npa-curobo-", dir=os.environ.get("NPA_CUROBO_WORK_DIR")
         )
     )
     root.chmod(0o700)
-    # Retain local facts on solver/upload failure; telemetry retries never replay a GPU run.
     (root / "input.json").write_bytes(canonical(manifest))
-    command = [
+    return root
+
+
+def _runner_command(kind: str, request: RunRequest, root: Path) -> list[str]:
+    return [
         os.environ.get("NPA_CUROBO_PYTHON", sys.executable),
         "-m",
         "npa.workbench.curobo.runner",
@@ -82,15 +115,106 @@ def _run(kind: str, request: RunRequest):
         "--run-id",
         request.run_id,
     ]
-    started = time.perf_counter()
+
+
+def _invoke_runner(kind: str, request: RunRequest, root: Path):
+    command = _runner_command(kind, request, root)
     with (root / "runtime.log").open("wb") as log:
-        completed = subprocess.run(
+        return subprocess.run(
             command, cwd=root, stdout=log, stderr=subprocess.STDOUT, check=False
         )
-    if completed.returncode:
+
+
+def _evidence_record(role: str, path: str, payload: bytes, **facts) -> dict:
+    return {
+        "role": role,
+        "path": path,
+        "bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        **facts,
+    }
+
+
+def _partial_journal(root: Path):
+    path = root / "output/problems.jsonl"
+    if not path.is_file() or path.is_symlink():
+        return None
+    digest, size = hashlib.sha256(), 0
+    physical_lines, complete_records = 0, 0
+    with path.open("rb") as stream:
+        for line in stream:
+            digest.update(line)
+            size += len(line)
+            physical_lines += 1
+            try:
+                complete_records += isinstance(json.loads(line), dict)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+    return path, {
+        "role": "partial_journal",
+        "path": "partial-problems.jsonl",
+        "bytes": size,
+        "sha256": digest.hexdigest(),
+        "partial": True,
+        "physical_line_count": physical_lines,
+        "complete_record_count": complete_records,
+    }
+
+
+def _file_evidence_record(role: str, path: Path) -> dict:
+    with path.open("rb") as stream:
+        digest, size = _stream_digest(stream)
+    return {"role": role, "path": path.name, "bytes": size, "sha256": digest}
+
+
+def _publish_failure_evidence(
+    kind: str, request: RunRequest, root: Path, exit_code: int
+) -> str:
+    namespace = uri_join(request.output_path, _FAILURE_NAMESPACE, request.run_id)
+    runtime_log = root / "runtime.log"
+    artifacts = [_file_evidence_record("runtime_log", runtime_log)]
+    _publish_file(uri_join(namespace, "runtime.log"), runtime_log)
+    partial = _partial_journal(root)
+    if partial is not None:
+        path, record = partial
+        _publish_file(uri_join(namespace, record["path"]), path)
+        artifacts.append(record)
+    receipt = canonical(
+        {
+            "schema_version": "npa.curobo.failure.v1",
+            "status": "failed",
+            "failure_type": "subprocess_exit",
+            "kind": kind,
+            "run_id": request.run_id,
+            "subprocess_exit_code": exit_code,
+            "artifacts": artifacts,
+        }
+    )
+    _publish(uri_join(namespace, "failure.json"), receipt)
+    return f"{_FAILURE_NAMESPACE}/{request.run_id}/failure.json"
+
+
+def _raise_runner_failure(
+    kind: str, request: RunRequest, root: Path, exit_code: int
+) -> None:
+    primary = f"upstream cuRobo {kind} failed with exit code {exit_code}"
+    try:
+        receipt = _publish_failure_evidence(kind, request, root, exit_code)
+    except Exception as evidence_error:
+        error_type = type(evidence_error).__name__
         raise CuroboError(
-            f"upstream cuRobo {kind} failed with exit code {completed.returncode}; retained local journal and log"
-        )
+            f"{primary}; failure evidence publication failed ({error_type})"
+        ) from None
+    raise CuroboError(f"{primary}; durable failure receipt: {receipt}")
+
+
+def _completed_output(
+    kind: str,
+    request: RunRequest,
+    root: Path,
+    manifest: dict,
+    started: float,
+):
     rows = read_journal(root / "output/problems.jsonl")
     report = json.loads((root / "output/result.json").read_text())
     validate_report(report, rows, run_id=request.run_id)
@@ -112,19 +236,40 @@ def _run(kind: str, request: RunRequest):
     report["journal_sha256"] = hashlib.sha256(
         (root / "output/problems.jsonl").read_bytes()
     ).hexdigest()
-    for filename in ("problems.jsonl", "result.json"):
-        data = (
-            canonical(report)
-            if filename == "result.json"
-            else (root / "output" / filename).read_bytes()
-        )
+    return report
+
+
+def _publish_completed(request: RunRequest, root: Path, report: dict) -> None:
+    journal = (root / "output/problems.jsonl").read_bytes()
+    for filename, data in (
+        ("problems.jsonl", journal),
+        ("result.json", canonical(report)),
+    ):
         _publish(uri_join(request.output_path, filename), data)
-    # Both artifacts are durable and verified. Only remove this call's directory;
-    # cleanup failure must not turn successful GPU work into a replayable failure.
+
+
+def _cleanup_completed(root: Path) -> None:
     try:
         shutil.rmtree(root)
     except Exception:
         _LOGGER.warning("cuRobo artifacts verified; local working-file cleanup failed")
+
+
+def _run(kind: str, request: RunRequest):
+    _paths(request)
+    model = BenchmarkManifest if kind == "benchmark" else PlanManifest
+    manifest = model.model_validate(
+        json.loads(read_bytes_uri(request.input_path))
+    ).model_dump(mode="json")
+    root = _runtime_root(manifest)
+    # Telemetry retries must never replay GPU work, so every failure retains this root.
+    started = time.perf_counter()
+    completed = _invoke_runner(kind, request, root)
+    if completed.returncode:
+        _raise_runner_failure(kind, request, root, completed.returncode)
+    report = _completed_output(kind, request, root, manifest, started)
+    _publish_completed(request, root, report)
+    _cleanup_completed(root)
     return report
 
 
@@ -138,54 +283,76 @@ def plan(request: RunRequest):
 
 def _download_artifacts(request: RunRequest, root: Path):
     _paths(request)
+    if _FAILURE_NAMESPACE in request.input_path.rstrip("/").split("/"):
+        raise CuroboError("failure evidence is not an accepted cuRobo result")
     journal = read_bytes_uri(uri_join(request.input_path, "problems.jsonl"))
-    report = json.loads(read_bytes_uri(uri_join(request.input_path, "result.json")))
+    result_bytes = read_bytes_uri(uri_join(request.input_path, "result.json"))
+    report = json.loads(result_bytes)
     (root / "problems.jsonl").write_bytes(journal)
+    (root / "result.json").write_bytes(result_bytes)
     rows = read_journal(root / "problems.jsonl")
     validate_report(report, rows, run_id=request.run_id)
     if report["journal_sha256"] != hashlib.sha256(journal).hexdigest():
         raise CuroboError("artifact journal hash mismatch")
     if not any(row["status"] == "success" for row in rows):
         raise CuroboError("no successful trajectory exists for review")
-    return rows
+    return result_bytes, journal, report, rows
+
+
+def _require_replay_tolerance(replay: dict) -> None:
+    values = (
+        (replay.get("terminal_goal_distance_m", {}).get("max"), 0.005),
+        (replay.get("terminal_goal_orientation_rad", {}).get("max"), 0.05),
+    )
+    for value, limit in values:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value > limit
+        ):
+            raise CuroboError("independent terminal goal replay exceeds tolerance")
 
 
 def validate(request: RunRequest):
-    with tempfile.TemporaryDirectory(prefix="npa-curobo-validate-") as directory:
-        rows = _download_artifacts(request, Path(directory))
-        result = {
-            "schema_version": "npa.curobo.validation.v1",
-            "run_id": request.run_id,
-            "problem_count": len(rows),
-            "summary": summarize(rows),
-            "valid": True,
-        }
+    with tempfile.TemporaryDirectory(
+        prefix="npa-curobo-validate-", dir=os.environ.get("NPA_CUROBO_WORK_DIR")
+    ) as directory:
+        result_bytes, journal, report, rows = _download_artifacts(
+            request, Path(directory)
+        )
+        result = audit_bytes(result_bytes, journal, run_id=request.run_id)
+        try:
+            replay = replay_rows(rows, report)
+        except ReplayError as exc:
+            raise CuroboError(
+                "independent kinematics or dynamics replay failed"
+            ) from exc
+        _require_replay_tolerance(replay)
+        result["independent_replay"] = replay
         _publish(request.output_path, canonical(result))
         return result
 
 
 def visualize(request: RunRequest):
-    with tempfile.TemporaryDirectory(prefix="npa-curobo-viz-") as directory:
+    with tempfile.TemporaryDirectory(
+        prefix="npa-curobo-viz-", dir=os.environ.get("NPA_CUROBO_WORK_DIR")
+    ) as directory:
         root = Path(directory)
-        _download_artifacts(request, root)
+        result_bytes, _journal, _report, rows = _download_artifacts(request, root)
+        del _journal
         result = build_rrd(
             root / "problems.jsonl", root / "planning.rrd", run_id=request.run_id
         )
-        # Decode/verify the recording, not just its extension or producer success.
-        sibling = Path(sys.executable).with_name("rerun")
-        rerun = str(sibling) if sibling.is_file() else shutil.which("rerun")
-        if not rerun:
-            raise CuroboError("Rerun CLI is unavailable")
-        checked = subprocess.run(
-            [rerun, "rrd", "verify", str(root / "planning.rrd")],
-            capture_output=True,
-            check=False,
+        result["result_sha256"] = hashlib.sha256(result_bytes).hexdigest()
+        result["decode"] = decode_rrd(
+            root / "planning.rrd",
+            rows=rows,
+            run_id=request.run_id,
         )
-        if checked.returncode:
-            raise CuroboError("Rerun rejected the generated recording")
-        _publish(
+        _publish_file(
             uri_join(request.output_path, "planning.rrd"),
-            (root / "planning.rrd").read_bytes(),
+            root / "planning.rrd",
         )
         _publish(uri_join(request.output_path, "rrd-manifest.json"), canonical(result))
         return result

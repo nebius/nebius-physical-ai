@@ -246,10 +246,18 @@ def test_cli_serverless_forwards_candidate_image_overrides(
     assert submit.call_args.kwargs["tag"] == "candidate-123"
 
 
-def test_cli_rejects_candidate_override_without_serverless() -> None:
+@pytest.mark.parametrize("execute", [False, True])
+@pytest.mark.parametrize(
+    "option,value",
+    [("--tag", "candidate-123"), ("--expected-image-digest", "sha256:" + "a" * 64)],
+)
+def test_cli_rejects_candidate_override_without_serverless(
+    execute, option, value
+) -> None:
     result = CliRunner().invoke(
         app,
-        ["workbench", "golden-eval", "run", "lerobot", "--tag", "candidate-123"],
+        ["workbench", "golden-eval", "run", "lerobot", option, value]
+        + (["--execute"] if execute else []),
     )
     assert result.exit_code == 2
     assert "require --serverless" in result.output
@@ -280,6 +288,36 @@ def test_finite_serverless_evaluation_keeps_existing_explicit_timeout(
     monkeypatch.setattr(serverless_runner, "submit_golden_eval", submit)
     assert batch.run_container_eval(spec.name, serverless=True, timeout="9m").ok
     assert submit.call_args.kwargs["timeout"] == "9m"
+
+
+def test_cli_forwards_candidate_and_independently_frozen_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = _spec(monkeypatch, 45)
+    monkeypatch.setattr(cli, "container", lambda _name: spec)
+    submit = Mock(return_value={"ok": True})
+    monkeypatch.setattr(serverless_runner, "submit_golden_eval", submit)
+    digest = "sha256:" + "a" * 64
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "golden-eval",
+            "run",
+            spec.name,
+            "--serverless",
+            "--registry",
+            "ghcr.io/example",
+            "--tag",
+            digest,
+            "--expected-image-digest",
+            digest,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert submit.call_args.kwargs["registry"] == "ghcr.io/example"
+    assert submit.call_args.kwargs["tag"] == digest
+    assert submit.call_args.kwargs["expected_image_digest"] == digest
 
 
 def test_direct_unlimited_serverless_call_refuses_before_config_or_credentials(
