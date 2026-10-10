@@ -57,8 +57,11 @@ No published image or measured performance is claimed by this record.
   AST, primary documentation and image-loading call remain identical; original
   notices are retained. The same installation RUN removes the affected old
   bytecode, regenerates it from the corrected source and updates the wheel's
-  `RECORD`. `/usr/share/doc/npa-curobo/dependency-source-correction.json` records
-  the source, resulting source, bytecode and before/after metadata hashes.
+  `RECORD`. `/usr/share/doc/npa-curobo/dependency-source-correction.json` uses
+  the generic `npa.dependency-source-correction.v2` schema and records the
+  capability, source, resulting source, bytecode and before/after metadata
+  hashes. This supersedes the cuRobo-specific v1 receipt identifier; already
+  published images retain their historical receipts.
   A later-layer deletion would leave the original bytes distributed, so this
   correction must finish before the installation layer commits. It is not a
   scanner-rule exception, and the resulting image still requires all scans.

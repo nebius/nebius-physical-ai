@@ -1552,7 +1552,14 @@ def submit_cmd(
     merged_npa_spec = None
     robotwin_submit_context = None
     if is_npa_spec:
+        from npa.orchestration.npa_workflow.image_inputs import (
+            validate_immutable_image_inputs,
+        )
+        from npa.orchestration.npa_workflow.interpreter import _make_context, build_plan
         from npa.orchestration.npa_workflow.presets import preset_overrides
+        from npa.orchestration.npa_workflow.skypilot_render import (
+            validate_immutable_image_override_bindings,
+        )
         from npa.orchestration.npa_workflow.spec import load_spec
         from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
@@ -1568,12 +1575,31 @@ def submit_cmd(
             merged_npa_spec = load_spec_for_submit(
                 yaml_path, config_overrides=substitutions
             )
+            validate_immutable_image_inputs(
+                _make_context(merged_npa_spec, run_id=run_id or "preflight").config
+            )
             validate_image_override_selectors(
                 merged_npa_spec,
                 SkypilotRenderOptions(
                     image_overrides=specific_image_overrides,
                     materialize_registry_secrets=False,
                 ),
+            )
+            early_options = SkypilotRenderOptions(
+                image_overrides=_submit_image_overrides(
+                    image, specific_image_overrides
+                ),
+                materialize_registry_secrets=False,
+            )
+            validate_immutable_image_override_bindings(
+                merged_npa_spec,
+                build_plan(
+                    merged_npa_spec,
+                    run_id=run_id or "preflight",
+                    assume_decision=assume_decision,
+                ).steps,
+                run_id=run_id or "preflight",
+                options=early_options,
             )
             if not plan_only and _is_dedicated_live_gate_spec(merged_npa_spec):
                 _refuse_dedicated_live_gate_execution(merged_npa_spec)
@@ -1796,18 +1822,9 @@ def submit_cmd(
                 config_overrides=substitutions,
                 options=SkypilotRenderOptions(
                     registry=_resolve_submit_registry(registry, project),
-                    image_overrides={
-                        **(
-                            {"*": image}
-                            if str(image or "").strip().lower()
-                            not in {"", "none", "default", "-"}
-                            else {"*": ""}
-                            if str(image or "").strip().lower()
-                            in {"none", "default", "-"}
-                            else {}
-                        ),
-                        **specific_image_overrides,
-                    },
+                    image_overrides=_submit_image_overrides(
+                        image, specific_image_overrides
+                    ),
                     gpu_target=gpu_target,
                     image_variant=image_variant,
                     materialize_registry_secrets=False,
@@ -2103,16 +2120,9 @@ def submit_cmd(
                 config_overrides=substitutions,
                 options=SkypilotRenderOptions(
                     registry=_resolve_submit_registry(registry, project),
-                    image_overrides={
-                        **(
-                            {"*": image}
-                            if image_pins_all_tasks
-                            else {"*": ""}
-                            if image_value_for_source in {"none", "default", "-"}
-                            else {}
-                        ),
-                        **specific_image_overrides,
-                    },
+                    image_overrides=_submit_image_overrides(
+                        image, specific_image_overrides
+                    ),
                     gpu_target=gpu_target,
                     image_variant=image_variant,
                     materialize_registry_secrets=False,
@@ -2474,16 +2484,9 @@ def submit_cmd(
 
         # Image reachability and the complete cumulative infrastructure plan are
         # both read before source/input upload or any run/journal state exists.
-        image_overrides_for_preflight: dict[str, str] = {}
-        image_value_for_preflight = image.strip()
-        if image_value_for_preflight.lower() in {"none", "default", "-"}:
-            image_overrides_for_preflight["*"] = ""
-        elif image_value_for_preflight:
-            image_overrides_for_preflight["*"] = image_value_for_preflight
-        image_overrides_for_preflight.update(specific_image_overrides)
         image_preflight_options = SkypilotRenderOptions(
             registry=_resolve_submit_registry(registry, project),
-            image_overrides=image_overrides_for_preflight,
+            image_overrides=_submit_image_overrides(image, specific_image_overrides),
             gpu_target=gpu_target,
             image_variant=image_variant,
             materialize_registry_secrets=False,
@@ -2823,15 +2826,7 @@ def submit_cmd(
                 os.environ["NPA_SRC_S3_URI"] = staged_uri
             source_action = "reused" if staged_uri == existing_source_uri else "staged"
         _warn_placeholder_bucket(spec_config, quiet=output_format == OutputFormat.json)
-        image_overrides: dict[str, str] = {}
-        # ``none`` / ``default`` clears workbench image pins so tasks use the
-        # SkyPilot default image (needed when registry images fail k8s apt-ssh).
-        image_value = image.strip()
-        if image_value.lower() in {"none", "default", "-"}:
-            image_overrides["*"] = ""
-        elif image_value:
-            image_overrides["*"] = image_value
-        image_overrides.update(specific_image_overrides)
+        image_overrides = _submit_image_overrides(image, specific_image_overrides)
 
         render_endpoint = (
             s3_endpoint
@@ -5497,13 +5492,19 @@ def _record_unentered_workflow_submit_failure(operation, exc: BaseException) -> 
     )
 
 
-def _parse_submit_vars(var: list[str]) -> dict[str, str]:
+def _parse_submit_vars(
+    var: list[str], *, error_type: type[Exception] | None = None
+) -> dict[str, str]:
     substitutions: dict[str, str] = {}
     for item in var:
         if "=" not in item:
+            if error_type is not None:
+                raise error_type("Invalid --var format. Use KEY=VALUE.")
             _fail("Invalid --var format. Use KEY=VALUE.")
         key, value = item.split("=", 1)
         if not key:
+            if error_type is not None:
+                raise error_type("Invalid --var format. Use KEY=VALUE.")
             _fail("Invalid --var format. Use KEY=VALUE.")
         substitutions[key] = value
     return substitutions
@@ -5556,6 +5557,27 @@ def _parse_image_overrides(items: list[str]) -> dict[str, str]:
         overrides[tool_ref] = (
             "" if image_ref.lower() in {"none", "default", "-"} else image_ref
         )
+    return overrides
+
+
+def _submit_image_overrides(
+    image: str,
+    specific_image_overrides: Mapping[str, str],
+) -> dict[str, str]:
+    """Build the one image-selection mapping used by every submit preflight.
+
+    ``none``, ``default``, and ``-`` intentionally clear the global image so
+    tasks select SkyPilot's default. Exact per-tool overrides take precedence
+    over the global fallback in :func:`resolve_task_image`.
+    """
+
+    image_value = str(image or "").strip()
+    overrides: dict[str, str] = {}
+    if image_value.lower() in {"none", "default", "-"}:
+        overrides["*"] = ""
+    elif image_value:
+        overrides["*"] = image_value
+    overrides.update(specific_image_overrides)
     return overrides
 
 

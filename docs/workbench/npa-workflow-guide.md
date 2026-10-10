@@ -173,6 +173,25 @@ Reference specs (all pytest-guarded):
 This excerpt illustrates the schema. Use a complete spec from the catalog for
 execution; each `toolRef` also requires its own configuration and inputs.
 
+When a stage records an exact image in provenance or submits native child jobs,
+declare the corresponding config keys in `required_immutable_images`:
+
+```yaml
+config:
+  required_immutable_images: [runtime_image]
+  runtime_image: ''
+```
+
+Supply `--var runtime_image=<registry>/<repository>@sha256:<64-hex-digest>` to
+planning and execution commands. The engine checks these inputs after config
+overrides and token expansion, before rendering, run-state writes or stage
+execution. References must be digest-only and registry-qualified; missing,
+tagged and `tool://` values fail with an actionable CLI error. This opt-in check
+binds declared identity. Image-byte, licensing and native workload qualification
+remain required, and ordinary public defaults still obey the governed release
+quarantine. Public demo aliases forward the same repeatable `--var` parameters,
+with project-managed bucket and prefix values.
+
 ```yaml
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow

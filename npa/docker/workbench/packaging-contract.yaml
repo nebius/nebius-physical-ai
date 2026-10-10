@@ -426,6 +426,18 @@ images:
     ports: [8080]
     passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     redistribution: public
+    notes: >-
+      The generic 0.5.1 path builds the explicitly versioned NPA integration
+      0.5.1+npa.secure1 from hash-verified upstream commit
+      1396b9fab7aecddd10006c33c47a487ffdcb54b4. Native model source and the
+      Apache-2.0 license are retained; reviewed dependency declarations select
+      the patched Torch/Diffusers/W&B stack and matching TorchCodec decoder.
+      One explicit hash-bound logger patch uses W&B's supported Run.url property;
+      the receipt identifies that changed source file separately from native model code.
+      Real offline default-camera, ACT, Diffusion, server and native logger gates precede
+      publication. GPU/default acceptance remains a separate qualification.
+      Optional 0.6.0 retains W&B and must pass its own image-security gate; it
+      and the additive B300 recipe retain distinct source scopes.
   lerobot-policy:
     dockerfile: lerobot-policy/Dockerfile
     tier: service
@@ -993,6 +1005,16 @@ images:
     dockerfile: genesis/Dockerfile
     tier: interactive
     redistribution: public
+    notes: >-
+      The stock public runtime retains rigid Panda/Box teacher, export, camera
+      demo conversion, native PyAV dataset reading and ACT dependencies. It
+      excludes TetGen, Diffusers, W&B and incompatible TorchCodec in the original
+      dependency installation layer, binds the reduced metadata to reviewed
+      wheel sources, updates RECORD and runs pip consistency plus native CPU
+      dataset/ACT round trips. A fail-closed shim rejects tetrahedralization;
+      NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act rejects Diffusion/SmolVLA before
+      framework imports. Additional policies require a separately qualified
+      operator image. CPU checks do not qualify real GPU physics or rendering.
   isaac-lab:
     dockerfile: isaac-lab/Dockerfile
     isaac_runtime_fetch: true
@@ -1137,7 +1159,9 @@ images:
       Genesis/LeRobot metadata edges for those absent optional dependencies;
       a repository-owned fail-closed import shim rejects tetrahedralization,
       while build-time imports and pip consistency checks protect the reduced
-      contract.
+      contract. The same build layer applies the exact-hash, AST-preserving
+      scikit-image dependency-source correction and emits its receipt before
+      the flattened public runtime is produced.
     redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
   rerun-viewer:

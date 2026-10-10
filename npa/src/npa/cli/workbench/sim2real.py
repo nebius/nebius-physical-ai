@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Optional
 
 import typer
 
+from npa.clients.config import ConfigError, list_projects, resolve_project_storage
 from npa.clients.credentials import load_credentials
+from npa.clients.project_credential_store import ProjectCredentialStoreError
+from npa.clients.storage import StorageClient
+from npa.lifecycle_intent import OperationIntent, operation_intent
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_ENVGEN_SHARD_COUNT,
@@ -27,6 +32,10 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_TRAIN_FRACTION,
 )
 from npa.workflows.sim2real.config import build_config_from_env
+from npa.workflows.sim2real.artifact_config import (
+    Sim2RealArtifactConfig,
+    build_artifact_config_from_env,
+)
 from npa.workflows.sim2real.engine import (
     convert_vlm_eval_to_rl_signal,
     run_inner_loop,
@@ -52,6 +61,7 @@ from npa.workflows.rerun_serve import (
     destroy_rerun_serve,
     redact_rerun_serve_manifest,
     resolve_cluster_name_from_config,
+    resolve_storage_bucket,
     require_kubeconfig,
 )
 from npa.workflows.sim2real import onboarding as onboarding_svc
@@ -71,6 +81,78 @@ app = typer.Typer(
     help="Sim2Real VLM-to-RL loop and threshold-gated workflow.",
     no_args_is_help=True,
 )
+
+
+@dataclass(frozen=True)
+class _RerunStorage:
+    """The effective Rerun storage target and optional scoped client."""
+
+    bucket: str
+    endpoint: str
+    client: StorageClient | None = None
+
+
+def _selected_project_storage(project: str):
+    """Read one complete, isolated project storage record."""
+
+    with operation_intent(OperationIntent.OBSERVE):
+        if project not in list_projects():
+            raise ConfigError(
+                "Unknown project alias. Pass an alias saved by `npa configure`."
+            )
+        storage = resolve_project_storage(
+            project,
+            include_shared_credentials=False,
+            include_environment=False,
+        )
+    if not all(
+        (
+            storage.checkpoint_bucket,
+            storage.endpoint_url,
+            storage.aws_access_key_id,
+            storage.aws_secret_access_key,
+        )
+    ):
+        raise ConfigError(
+            "Configure a bucket, endpoint, and S3 key pair for this project."
+        )
+    return storage
+
+
+def _resolve_rerun_storage(
+    *,
+    project: str,
+    s3_bucket: str,
+    s3_endpoint: str,
+) -> _RerunStorage:
+    """Resolve explicit coordinates and project-scoped authority for Rerun.
+
+    Args:
+        project: Optional project alias whose storage settings take precedence.
+        s3_bucket: Explicit bucket override.
+        s3_endpoint: Explicit endpoint override.
+    Returns:
+        The effective bucket, endpoint, and selected-project client when requested.
+    Raises:
+        ConfigError: The selected project configuration cannot be read.
+        ProjectCredentialStoreError: The selected project credential record is invalid.
+    """
+
+    project = project.strip()
+    if not project:
+        return _RerunStorage(bucket=s3_bucket, endpoint=s3_endpoint)
+    storage = _selected_project_storage(project)
+    endpoint = s3_endpoint.strip() or storage.endpoint_url
+    client = StorageClient.from_environment(
+        endpoint_url=endpoint,
+        aws_access_key_id=storage.aws_access_key_id,
+        aws_secret_access_key=storage.aws_secret_access_key,
+    )
+    return _RerunStorage(
+        bucket=resolve_storage_bucket(storage, override=s3_bucket),
+        endpoint=endpoint,
+        client=client,
+    )
 
 
 @app.command("run")
@@ -719,7 +801,7 @@ def rerun_serve_command(
     rrd_uri: str = typer.Option(
         "",
         "--rrd-uri",
-        help="Explicit s3:// URI for reports/sim2real.rrd (no local download).",
+        help="Explicit s3:// URI for reports/sim2real.rrd; --local-record downloads it locally.",
     ),
     report_uri: str = typer.Option(
         "",
@@ -810,6 +892,13 @@ def rerun_serve_command(
             rrd_s3_uri=rrd_uri,
             report_uri=report_uri,
         )
+        if local_record and not destroy:
+            artifact_config = Sim2RealArtifactConfig(
+                run_id=config.run_id,
+                s3_bucket=config.s3_bucket,
+                s3_prefix=config.s3_prefix,
+                s3_endpoint=config.s3_endpoint,
+            )
         if dry_run:
             manifest = build_rerun_serve_manifest(config)
             if output == OutputFormat.json:
@@ -850,18 +939,21 @@ def rerun_serve_command(
             err=True,
         )
     if local_record and not destroy:
-        loop_config = build_config_from_env(
-            run_id=run_id,
-            s3_bucket=s3_bucket,
-            s3_prefix=s3_prefix,
-            s3_endpoint=s3_endpoint,
-        )
         dest = resolve_local_rrd_path(
             run_id,
             override=str(local_rrd_path) if local_rrd_path is not None else "",
         )
         try:
-            download_rrd_from_s3(loop_config, dest_path=dest)
+            download_rrd_from_s3(
+                artifact_config,
+                dest_path=dest,
+                rrd_uri=config.rrd_s3_uri,
+                client=StorageClient.from_environment(
+                    endpoint_url=config.s3_endpoint,
+                    aws_access_key_id=access_key,
+                    aws_secret_access_key=secret_key,
+                ),
+            )
         except Sim2RealRerunRegenError as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(1) from exc
@@ -909,19 +1001,30 @@ def rerun_regen_command(
 ) -> None:
     """Regenerate reports/sim2real.rrd + sim2real.mcap from S3 artifacts (held-out PNG sync included)."""
     try:
-        config = build_config_from_env(
-            run_id=run_id,
+        storage = _resolve_rerun_storage(
+            project=project,
             s3_bucket=s3_bucket,
-            s3_prefix=s3_prefix,
             s3_endpoint=s3_endpoint,
         )
-        work_dir = local_dir or default_regen_local_dir(run_id)
+        config = build_artifact_config_from_env(
+            run_id=run_id,
+            s3_bucket=storage.bucket,
+            s3_prefix=s3_prefix,
+            s3_endpoint=storage.endpoint,
+        )
+    except (ConfigError, ProjectCredentialStoreError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    work_dir = local_dir or default_regen_local_dir(run_id)
+    try:
         result = regen_sim2real_rrd(
             config,
             local_dir=work_dir,
             local_rrd_path=local_rrd_path,
             upload=upload,
             sync_inputs=not no_sync,
+            client=storage.client,
         )
     except Sim2RealRerunRegenError as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -975,18 +1078,29 @@ def rerun_heldout_only_command(
 ) -> None:
     """Re-run Isaac held-out eval (stage 10) on cluster for an existing run (~5–15 min)."""
     try:
-        config = build_config_from_env(
-            run_id=run_id,
+        storage = _resolve_rerun_storage(
+            project=project,
             s3_bucket=s3_bucket,
-            s3_prefix=s3_prefix,
             s3_endpoint=s3_endpoint,
         )
-        work_dir = local_dir or default_regen_local_dir(run_id)
+        config = build_config_from_env(
+            run_id=run_id,
+            s3_bucket=storage.bucket,
+            s3_prefix=s3_prefix,
+            s3_endpoint=storage.endpoint,
+        )
+    except (ConfigError, ProjectCredentialStoreError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    work_dir = local_dir or default_regen_local_dir(run_id)
+    try:
         report = rerun_heldout_eval_only(
             config,
             local_dir=work_dir,
             outer_iteration=outer_iteration,
             publish=not no_publish,
+            client=storage.client,
         )
     except Sim2RealRerunRegenError as exc:
         typer.echo(f"Error: {exc}", err=True)

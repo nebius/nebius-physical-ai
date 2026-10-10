@@ -1,0 +1,97 @@
+"""Validate exact operator image inputs before planning or executing a workflow."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+import re
+from typing import Any
+
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+
+
+# Match distribution/reference path and domain components, including repeated
+# dashes, double underscores and bracketed IPv6 authorities.
+# https://github.com/distribution/reference/blob/main/regexp.go
+_REPOSITORY = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+_DOMAIN_COMPONENT = r"(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])"
+_DOMAIN = rf"{_DOMAIN_COMPONENT}(?:\.{_DOMAIN_COMPONENT})*"
+_QUALIFIED_DOMAIN = rf"{_DOMAIN_COMPONENT}(?:\.{_DOMAIN_COMPONENT})+"
+_IPV6 = r"\[[a-fA-F0-9]*:[a-fA-F0-9:]+\]"
+_REGISTRY = (
+    rf"(?:(?:localhost|{_QUALIFIED_DOMAIN}|{_IPV6})(?::[0-9]+)?|{_DOMAIN}:[0-9]+)"
+)
+# Shared by exact provenance consumers, including their serialized field schema.
+IMMUTABLE_IMAGE_REFERENCE_PATTERN = (
+    rf"{_REGISTRY}/(?:{_REPOSITORY}/)*{_REPOSITORY}@sha256:[0-9a-f]{{64}}"
+)
+_DIGEST_REFERENCE = re.compile(IMMUTABLE_IMAGE_REFERENCE_PATTERN)
+
+
+def _required_keys(value: Any) -> list[str]:
+    if not isinstance(value, list) or any(
+        not isinstance(key, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]+", key)
+        for key in value
+    ):
+        raise NpaWorkflowError(
+            "config.required_immutable_images must be a list of config keys"
+        )
+    if len(set(value)) != len(value):
+        raise NpaWorkflowError(
+            "config.required_immutable_images must contain unique config keys"
+        )
+    return value
+
+
+def _is_exact_image(reference: Any) -> bool:
+    return isinstance(reference, str) and bool(_DIGEST_REFERENCE.fullmatch(reference))
+
+
+def required_immutable_image_inputs(config: Mapping[str, Any]) -> dict[str, str]:
+    """Return declared provenance image inputs after exact-reference validation.
+
+    Args:
+        config: Workflow config after overrides and token resolution.
+    Returns:
+        Exact operator image references keyed by their config field.
+    Raises:
+        NpaWorkflowError: The declaration or a required image input is invalid.
+    """
+    if "required_immutable_images" not in config:
+        return {}
+    inputs: dict[str, str] = {}
+    invalid_keys: list[str] = []
+    for key in _required_keys(config["required_immutable_images"]):
+        reference = config.get(key)
+        if not _is_exact_image(reference):
+            invalid_keys.append(key)
+        else:
+            inputs[key] = reference
+    if invalid_keys:
+        config_keys = ", ".join(f"config.{key}" for key in invalid_keys)
+        overrides = " ".join(
+            f"--var {key}=<registry>/<repository>@sha256:<64-hex-digest>"
+            for key in invalid_keys
+        )
+        raise NpaWorkflowError(
+            f"Each of {config_keys} requires an explicit registry-qualified immutable "
+            "image; "
+            f"set {overrides}. Use qualified images for this workload; tool:// and "
+            "tag-only references cannot bind their provenance or child launches. Use "
+            "digest-only references; remove any :tag segment before @sha256:."
+        )
+    return inputs
+
+
+def validate_immutable_image_inputs(config: Mapping[str, Any]) -> None:
+    """Require declared provenance image inputs to be exact digest references.
+
+    Args:
+        config: Workflow config after token resolution and operator overrides.
+
+    Returns:
+        None.
+
+    Raises:
+        NpaWorkflowError: A declared required image is not an exact digest.
+    """
+    required_immutable_image_inputs(config)

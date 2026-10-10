@@ -13,8 +13,13 @@ and checked against the [3.0 beta installation guidance](https://isaac-sim.githu
 
 The public `npa-isaac-lab:3.0.0b2.post1` image contains the Ubuntu 24.04,
 Python 3.12, CUDA 12.8, PyTorch 2.11, NPA, and OSS training dependency layers.
-Its accepted release digest is
+Its historical release digest is
 `sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46`.
+This release is now quarantined and is unavailable through governed public
+defaults. Select an operator-controlled immutable image only after the
+[current image qualification procedure](container-image-catalog.md); a rebuilt
+candidate is not accepted merely because it has a digest. Historical capability
+evidence applies to the bytes and source it records.
 It contains no Isaac Sim or Isaac Lab wheels, Omniverse Client, or proprietary
 NVIDIA runtime payload. The pinned Isaac Lab 3.0.0b2.post1 wheel declares
 `License: BSD-3-Clause` in its exact `METADATA` bytes (wheel SHA-256

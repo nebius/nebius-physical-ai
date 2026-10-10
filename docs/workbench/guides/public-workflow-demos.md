@@ -21,8 +21,8 @@ existing Workbench EULA policy; optional telemetry remains off.
 
 Check the [current image acceptance status](../container-image-catalog.md#2026-09-24-ssh-host-identity-quarantine)
 before starting a new run. The recorded Isaac Lab and SONIC image pins are now
-quarantined under the repository's image-security policy. They remain in these
-recipes to identify the historical GPU experiments; those results do not
+quarantined under the repository's image-security policy. They remain in the
+archived receipts to identify the historical GPU experiments; those results do not
 qualify the images for current use. New navigation and synthetic-data execution
 requires replacement images that pass the catalog's acceptance procedure.
 NuRec uses its separately access-controlled NVIDIA NRE image.
@@ -76,10 +76,21 @@ your SkyPilot configuration.
 
 ## Run a demo
 
+Set `NPA_SCAN_CPU_IMAGE` and `NPA_ISAAC_IMAGE` to independently qualified,
+digest-only `registry/repository@sha256:<64-hex-digest>` references. The CPU image
+must retain the reconstruction interpreter and Open3D/SciPy dependencies; the
+Isaac image must support the requested native physics, learning and graphics
+capabilities. The real-to-sim and RL improvement presets require these explicit
+inputs before planning. The synthetic-data preset requires the same explicit
+`isaac_image` input before planning:
+
 ```bash
-npa workbench workflow demo run real-to-sim --project '<project>' --infra 'k8s/<rtx-context>'
-npa workbench workflow demo run synthetic-data --project '<project>' --infra 'k8s/<rtx-context>'
-npa workbench workflow demo run rl-improvement --project '<project>' --infra 'k8s/<rtx-context>'
+npa workbench workflow demo run real-to-sim --project '<project>' --infra 'k8s/<rtx-context>' \
+  --var "assembly_image=$NPA_SCAN_CPU_IMAGE" --var "isaac_image=$NPA_ISAAC_IMAGE"
+npa workbench workflow demo run synthetic-data --project '<project>' --infra 'k8s/<rtx-context>' \
+  --var "isaac_image=$NPA_ISAAC_IMAGE"
+npa workbench workflow demo run rl-improvement --project '<project>' --infra 'k8s/<rtx-context>' \
+  --var "reconstruction_image=$NPA_SCAN_CPU_IMAGE" --var "navigation_image=$NPA_ISAAC_IMAGE"
 npa workbench workflow demo run nurec --project '<project>' --infra 'k8s/<rtx-context>'
 ```
 
@@ -88,6 +99,13 @@ standard scheduler handles available GPU capacity. No manual sample archive,
 baseline checkpoint, case file, source URL, or bucket substitution is required.
 The configured project supplies the storage destination. The native workflow
 specification owns the stages and full workload sizes.
+
+Repeat `--var KEY=VALUE` for other workflow parameters. Demo storage remains
+selected by `--project`; use direct `workflow submit` for custom bucket or prefix
+values. A supplied immutable reference is a declared identity, not image
+acceptance or verification of the running pod's bytes. The archived readiness
+records and live evidence qualify their original workflows only; current
+records await replacement-image workload qualification.
 
 Demo launch and viewing both use that project's complete saved storage
 credentials. Unrelated shell storage credentials and source pointers are
@@ -147,7 +165,8 @@ A newer driver may reject the previous run's saved source or image identity.
 
 ```bash
 npa workbench workflow demo run synthetic-data --project '<project>' \
-  --infra 'k8s/<rtx-context>' --resume-run '<run-id>'
+  --infra 'k8s/<rtx-context>' --resume-run '<run-id>' \
+  --var "isaac_image=$NPA_ISAAC_IMAGE"
 ```
 
 The existing workflow engine verifies immutable inputs, source, images, and
