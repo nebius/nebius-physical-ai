@@ -104,10 +104,12 @@ IMAGE_DIGEST=$(docker buildx imagetools inspect "${IMAGE_TAG}" \
 IMAGE_REF="${NPA_REGISTRY}/npa-embodiedgen@${IMAGE_DIGEST}"
 ```
 
-`NPA_REGISTRY` must name a fully-qualified private registry host. `build.sh`
-rejects Docker Hub shorthand, public registries, a non-40-character source SHA,
-and a tag other than `dev-<full-source-sha>`. Before a live run, scan and
-inspect the exact private digest under the secure-image-build procedure. No
+`NPA_REGISTRY` must name the complete operator-controlled private OCI prefix:
+a fully-qualified registry host plus any provider-required registry namespace.
+`build.sh` rejects Docker Hub shorthand, public registries, a non-40-character
+source SHA, and a tag other than `dev-<full-source-sha>`. Before a live run,
+scan and inspect the exact private digest under the secure-image-build
+procedure. No
 public-development tag, release promotion, or anonymous pull is permitted for
 this candidate.
 

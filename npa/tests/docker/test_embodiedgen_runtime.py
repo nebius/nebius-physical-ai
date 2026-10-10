@@ -269,9 +269,14 @@ def test_token_factory_mime_patch_uses_decoded_format_not_staged_suffix(
     image_bytes = input_path.read_bytes()
 
     BOOTSTRAP._patch_token_factory_image_mime(tmp_path)
-    namespace: dict[str, object] = {}
-    exec(client.read_text(encoding="utf-8"), namespace)
-    content = namespace["Client"]().build(str(input_path))
+    fixture_spec = importlib.util.spec_from_file_location(
+        "embodiedgen_token_factory_mime_fixture", client
+    )
+    assert fixture_spec and fixture_spec.loader
+    fixture_module = importlib.util.module_from_spec(fixture_spec)
+    sys.modules[fixture_spec.name] = fixture_module
+    fixture_spec.loader.exec_module(fixture_module)
+    content = fixture_module.Client().build(str(input_path))
     url = content[1]["image_url"]["url"]
     assert url.startswith(f"data:{expected_mime};base64,")
     assert base64.b64decode(url.split(",", 1)[1]) == image_bytes
