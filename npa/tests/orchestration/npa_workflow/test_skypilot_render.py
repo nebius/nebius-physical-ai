@@ -49,6 +49,11 @@ from npa.orchestration.npa_workflow.submission_state import (
     submission_state_path,
 )
 from npa.orchestration.skypilot.workflow import WorkflowResult
+from vendor_interpreter_contract import (
+    VENDOR_INTERPRETER_CLI_DIAGNOSTIC,
+    VENDOR_INTERPRETER_CLI_IMPORT,
+    VENDOR_INTERPRETER_CLI_WARNING,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 NPA_SPECS = REPO_ROOT / "workflows" / "testing"
@@ -431,7 +436,8 @@ def test_vendor_setup_repairs_a_shallow_overlay_before_a_stage_runs(
         "#!/bin/sh\n"
         'case "$1:$2" in\n'
         "  -c:'import npa.workbench') exit 0 ;;\n"
-        "  -c:'import npa.cli.main') test -f \"$NPA_VENDOR_TEST_READY\"; exit ;;\n"
+        f"  -c:'import {VENDOR_INTERPRETER_CLI_IMPORT}') "
+        'test -f "$NPA_VENDOR_TEST_READY"; exit ;;\n'
         "esac\n"
         'if [ "$1:$2:$3" = "-m:pip:install" ]; then\n'
         '  printf "%s\\n" "$*" >> "$NPA_VENDOR_TEST_LOG"\n'
@@ -465,11 +471,8 @@ def test_vendor_setup_repairs_a_shallow_overlay_before_a_stage_runs(
     setup = render_vendor_interpreter_setup((str(vendor),))
     source_root_probe = "if [ -s /tmp/npa-src-root ]; then"
     assert source_root_probe in setup
-    assert "warning: npa.cli.main is not importable from $npa_vendor_python:" in setup
-    assert (
-        "\"$npa_vendor_python\" -c 'import npa.cli.main' 2>&1 | tail -3 >&2 || true"
-        in setup
-    )
+    assert VENDOR_INTERPRETER_CLI_WARNING in setup
+    assert f"{VENDOR_INTERPRETER_CLI_DIAGNOSTIC} || true" in setup
     assert "npa.workbench is not importable" not in setup
     # Source-root selection is covered separately.  Force this generated branch
     # locally so this shell-level test stays hermetic rather than claiming the
