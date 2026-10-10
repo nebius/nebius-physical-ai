@@ -12,12 +12,12 @@ import uuid
 
 import pytest
 
-from npa.cluster.gpu_health import DEFAULT_GRAPHICS_SMOKE_IMAGE
+from npa.cluster.gpu_health import resolve_graphics_smoke_image
 from npa.fleet.spec import load_spec
 
 pytestmark = pytest.mark.e2e
 
-# Use the same immutable, payload-clean image as the provisioning graphics gate.
+# Use the operator-qualified image selected for the provisioning graphics gate.
 # Calling its baked interpreter directly does not fetch Isaac or model weights.
 COMMAND = r"""
 set -euo pipefail
@@ -74,6 +74,8 @@ def test_every_fleet_target_executes_cuda_and_graphics() -> None:
     results = []
     for index, (project, cluster) in enumerate(targets):
         assert cluster.gpu_workload_profile == "rtx-rendering"
+        image = resolve_graphics_smoke_image(cluster.gpu_graphics_smoke_image)
+        assert "@sha256:" in image, "native qualification requires an immutable image"
         api = config.new_client_from_config(
             config_file=configs[project.key()][cluster.name],
             persist_config=False,
@@ -127,7 +129,7 @@ def test_every_fleet_target_executes_cuda_and_graphics() -> None:
                             "containers": [
                                 {
                                     "name": "qualify",
-                                    "image": DEFAULT_GRAPHICS_SMOKE_IMAGE,
+                                    "image": image,
                                     "command": ["/bin/bash", "-c", COMMAND],
                                     "env": [
                                         {
@@ -215,7 +217,7 @@ def test_every_fleet_target_executes_cuda_and_graphics() -> None:
                 assert (
                     len(statuses) == 1 and statuses[0].state.terminated.exit_code == 0
                 )
-                digest = DEFAULT_GRAPHICS_SMOKE_IMAGE.split("@", 1)[1]
+                digest = image.split("@", 1)[1]
                 assert digest in statuses[0].image_id, (
                     "runtime digest differs from the pinned image"
                 )

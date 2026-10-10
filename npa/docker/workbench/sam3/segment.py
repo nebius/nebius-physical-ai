@@ -13,7 +13,10 @@ import tempfile
 
 def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        digest_state = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest_state.update(chunk)
+        return digest_state.hexdigest()
 
 
 def _video_info(path: Path) -> dict:
