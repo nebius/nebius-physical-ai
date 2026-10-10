@@ -437,6 +437,12 @@ corrected output. `metadata.json.padding_preservation` records both video
 hashes, scene/border pixel hashes and the verified policy. This fixes border
 artifacts; it does not repair defects within the generated scene.
 
+RGB pixel hashes describe the worker's decoded frames. Recompute them with the
+same FFmpeg build when checking exact equality: another build's YUV-to-RGB
+conversion can produce different pixel hashes for unchanged source or raw-model
+files. The video-file SHA-256 hashes remain the check for identical stored bytes.
+Use the documented Linux operator path for the retained-run audit.
+
 The evaluator verifies the source hash and complete video alignment, then uses lossless scene crops for all four checks. Artificial
 letterbox or pillarbox pixels cannot lower the scene score or satisfy a
 requested appearance change. Real black objects remain in the scene. Explicit
