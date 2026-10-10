@@ -38,8 +38,13 @@ use the same checkout/source selection, project/context, storage and isolated
 runtime state with `--resume --resume-run <run-id>`. Training additionally saves
 complete native model, optimizer, scheduler, RNG and sampler recovery state to
 S3 during execution. Failed gates resume their preceding native candidate and
-add another epoch increment. There is no implicit iteration or cost cap; cancel
-with `npa workbench workflow cancel <run-id> --project "<project>" --json`.
+add another epoch increment. There is no implicit iteration or cost cap. When
+submitting in a foreground terminal, stop its driver with Ctrl-C first, then
+reconcile cloud cancellation with
+`npa workbench workflow cancel <run-id> --project "<project>" --json`.
+Wait for the exact recorded jobs to be terminal before teardown; an independently
+running foreground driver can otherwise advance while cancellation is querying
+the current stage.
 
 The recipe in YAML controls epochs, batch size, seed, workers, evaluation trials,
 deployment state offset and the success threshold. Change it before starting a
@@ -104,3 +109,9 @@ Runtime configuration: `NPA_WORKFLOW_SHA256` is supplied by the renderer;
 `NPA_VLA_SELECTION_SHA256` are supplied by the training stage, not operator
 settings. GPU stages require CUDA and NVIDIA EGL. Native package installation
 and stage errors retain private diagnostics under the stage's diagnostics prefix.
+
+## Recorded live qualification
+
+[Sanitized qualification record](../../../workflows/testing/evidence/policy-public-training-qualification.json) binds the workflow bytes, runtime source commit, changed checkpoints, both worker roles and exported media hashes. The complete standard runtime recorded 3727 pretrain updates, 2431 finetune updates; promotion results were finetune 7/10, pretrain 7/10. The independent two-GPU deployment completed 9/10 trials and reconciled all 947 served/applied actions. All three live artifact tests passed. Offline browser validation recorded zero network requests and JavaScript errors, with working video, chapter selection and mobile layout. Retry iterations actually observed: 0.
+
+For an isolated local SkyPilot API, use its supported RSA service-account profile shape: `auth-type: service account`, `service-account-id`, `public-key-id`, and `private-key-file-path`. Normal derived token-cache renewal is supported with that stable key binding. Keep credential values outside the recipe and verify the selected operator profile before submission.

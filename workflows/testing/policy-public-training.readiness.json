@@ -11,36 +11,49 @@
       ]
     },
     "task_fidelity": {
-      "status": "unverified",
-      "reason": "The 10-epoch pilot scored 5/10 in independent serving trials; the 40-epoch recipe reserves fresh deployment states 30\u201339 and must complete live qualification.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Complete standard-runtime public training, both measured gates, independent GPU HTTP serving and same-run offline media passed live qualification.",
+      "evidence": [
+        "workflows/testing/evidence/policy-public-training-qualification.json",
+        "npa/tests/e2e/test_policy_public_live.py"
+      ]
     }
   },
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "The selected live run must qualify this prerequisite before turnkey execution is claimed.",
-      "evidence": []
+      "reason": "The recorded run verified this prerequisite; each new submission must verify its selected operator configuration.",
+      "evidence": [
+        "workflows/testing/evidence/policy-public-training-qualification.json"
+      ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "The selected live run must qualify this prerequisite before turnkey execution is claimed.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Pinned public data and model snapshots were consumed by the complete qualified run.",
+      "evidence": [
+        "workflows/testing/evidence/policy-public-training-qualification.json"
+      ]
     },
     "credentials": {
       "status": "unverified",
-      "reason": "The selected live run must qualify this prerequisite before turnkey execution is claimed.",
-      "evidence": []
+      "reason": "The recorded run verified this prerequisite; each new submission must verify its selected operator configuration.",
+      "evidence": [
+        "workflows/testing/evidence/policy-public-training-qualification.json"
+      ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The selected live run must qualify this prerequisite before turnkey execution is claimed.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Both immutable published images and the full source overlay executed native stages successfully.",
+      "evidence": [
+        "workflows/testing/evidence/policy-public-training-qualification.json"
+      ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "The selected live run must qualify this prerequisite before turnkey execution is claimed.",
-      "evidence": []
+      "status": "verified",
+      "reason": "RTX PRO 6000 CUDA training and two-worker neural serving/NVIDIA EGL rendering passed live qualification.",
+      "evidence": [
+        "workflows/testing/evidence/policy-public-training-qualification.json"
+      ]
     }
   }
 }
