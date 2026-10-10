@@ -6,6 +6,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa agent](agent.md)
 - [npa workbench alpamayo2-super](alpamayo2-super.md)
 - [npa workbench antioch](antioch.md)
+- [npa workbench workflow batch](batch.md)
 - [npa storage bucket](bucket.md)
 - [npa burst](burst.md)
 - [npa workbench byof](byof.md)

@@ -94,6 +94,7 @@ def test_reference_workflow_rejects_dangling_next_before_planning(tmp_path, name
         "cosmos-synth-fanout-curation.yaml",
         "robocasa-data-policy.yaml",
         "lerobot-transfer.yaml",
+        "rgbd-scan-to-policy-demo.yaml",
     ],
 )
 def test_example_specs_validate(name: str) -> None:

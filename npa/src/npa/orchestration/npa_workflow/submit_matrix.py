@@ -296,6 +296,31 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Native eight-RTX-PRO-6000 XR1 fine-tuning; paired Antioch robot evaluation is a separate operator step.",
     ),
     SubmitLiveCase(
+        "lyra-reconstruction.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires a checksummed captured-video bundle and operator-scoped internal Lyra R&D use.",
+        notes="Pinned upstream Lyra reconstruction, real Gaussian render and retained depth/camera predictions.",
+    ),
+    SubmitLiveCase(
+        "lyra-scene-actions.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires matching Lyra reconstruction, metric geometry and an operator-calibrated robot mounting bundle.",
+        notes="Native RTX manipulation in the imported collision scene with a scene-matched offline HTML review.",
+    ),
+    SubmitLiveCase(
+        "physical-augmentation.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Native RTX Franka physical variants, regenerated IK actions, verified transitions, and LeRobot/Rerun demonstrations.",
+    ),
+    SubmitLiveCase(
         "franka-rl-transfer.yaml",
         "gpu",
         secret_envs=(

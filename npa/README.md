@@ -94,6 +94,17 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
+PAIDF's native Nano structural generation now seals verified per-variant
+receipts so a recovered worker can reuse complete clips from the same run.
+The workflow's immutable `NPA_TASK_IMAGE` enables this path; standalone calls
+without that image identity, mutable image references, and custom checkpoints
+continue fresh generation. Set `variant_recovery=disabled` to intentionally
+regenerate after an operational runtime change.
+`NPA_COSMOS3_NANO_REVISION` is the internal full Hugging Face revision handoff
+from the sealed batch to the native interpreter, with no operator default.
+Let the coordinator set it. See the [recovery contract](../docs/workbench/guides/paidf-cosmos3.md#native-variant-recovery)
+for the source, weight, control and artifact checks and live qualification.
+
 For a first contest evaluation, use the [one-file BEHAVIOR DEV setup](../docs/workbench/challenge-onboarding.md)
 through `npa workbench workflow challenge init`, `check`, and `prepare`.
 The same helpers are available in `npa.sdk.workbench.workflow_challenge`.
@@ -584,7 +595,7 @@ gate; some optional checks also use Node, tmux, or Docker.
 
 Pull requests run the full Python 3.12 suite,
 dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
-Five duration-balanced coverage shards run with xdist and cached constrained
+Six duration-balanced coverage shards run with xdist and cached constrained
 installs, then enforce the merged coverage floor. Full suites include smoke
 and CLI install checks without a duplicate subsystem job. The queue verifies
 this evidence against its combined latest-main candidate. Recognized prose-only
@@ -605,7 +616,17 @@ on all three supported versions. Every full Python 3.12 run publishes module
 timings, with merged profiles from successful runs for reviewed rebalancing.
 The focused compatibility check runs before CPU tensor dependencies are
 installed, so async cancellation and isolated SkyPilot fixture regressions
-surface before merge. Run it locally with:
+surface before merge. The existing browser compatibility job also checks
+portable checksums and exception notes, SQLite failure fixtures, and VLM path
+errors on Python 3.10 and 3.14. These focused regressions keep the full
+compatibility matrix in scheduled audits without adding queue shards.
+Run the stdlib compatibility guard locally with:
+
+```bash
+npa/.venv/bin/python -m pytest npa/tests/test_python_compatibility.py -q
+```
+
+Run the early compatibility checks locally with:
 
 ```bash
 npa/.venv/bin/python -m pytest \
@@ -650,6 +671,14 @@ GitHub Actions dependencies daily and groups version updates into one
 `dependencies` PR. Review package declarations and generated locks together,
 regenerate CI pins after Python input changes, and validate the combined batch. Reproduce the scan
 with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
+
+Dependabot excludes `ci/**` relative to `/npa`: omitting `/npa/ci` from the
+directory list does not exclude its nested manifests. Generated CI pins must
+still be refreshed with `ci_requirements.py --update` after a Python input
+change; a stale fingerprint intentionally blocks admission. Torch and MuJoCo
+updates require manual qualification. Keep Torch aligned with the CPU security
+gate and supported interpreter wheels, and keep MuJoCo on the tested Gymnasium
+Robotics engine until its enum compatibility issue is resolved.
 
 The base-image scanner uses Docker with Buildx and the checksum-verified Trivy
 binary. From the repository root, `npa/.venv/bin/python
