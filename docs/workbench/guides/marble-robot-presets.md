@@ -174,6 +174,13 @@ npa workbench workflow plan-spec workflows/testing/marble-go1-five-sites.yaml \
   --run-id <run-id> --var bucket=<owned-bucket> --waves --json
 ```
 
+If your cluster has fewer than five available GPUs, add `--max-concurrency 4`
+to the submission above for four available GPUs, or set it to your available
+count. NPA batches every wave: all five sites still run with their full frame
+counts and quality settings. With four GPUs, collection runs as four jobs and
+then the fifth. Select this at initial submission; SkyPilot starts a parallel
+job group together, so a five-member group needs capacity for all five workers.
+
 Each site's artifacts use
 `s3://<owned-bucket>/runs/<run-id>/marble-go1-five-sites/<site>/`, where `<site>` is
 `warehouse`, `shipyard`, `home`, `factory` or `utility`. Each has its own
