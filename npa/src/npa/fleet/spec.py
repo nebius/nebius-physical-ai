@@ -89,6 +89,8 @@ _MK8S_ENVELOPE_FIELDS = {
     "gpu_health_timeout_minutes",
     "gpu_cuda_smoke",
     "gpu_cuda_smoke_image",
+    "gpu_graphics_smoke",
+    "gpu_graphics_smoke_image",
     "gpu_workload_profile",
     "gpu_driver_package_repositories",
     "mig",

@@ -43,6 +43,38 @@ def _graphics_spec(tmp_path, image):
     return load_spec(path)
 
 
+def _nested_graphics_spec(tmp_path, image):
+    path = tmp_path / "fleet-nested.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "npa.fleet/v0.0.1",
+                "name": "graphics-test",
+                "tenant_id": "tenant-test",
+                "region": "region-test",
+                "projects": [
+                    {
+                        "name": "team",
+                        "clusters": [
+                            {
+                                "name": "render",
+                                "backend": "mk8s",
+                                "mk8s": {
+                                    "gpu_workload_profile": "rtx-rendering",
+                                    "gpu_graphics_smoke": True,
+                                    "gpu_graphics_smoke_image": image,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    return load_spec(path)
+
+
 @pytest.mark.parametrize(
     "image",
     [
@@ -57,6 +89,30 @@ def test_fleet_yaml_preserves_explicit_graphics_image_through_backend(tmp_path, 
     assert cluster.gpu_graphics_smoke is True
     assert cluster.gpu_graphics_smoke_image == image
     assert desired_state(cluster)["gpu_graphics_smoke_image"] == image
+
+
+@pytest.mark.parametrize(
+    ("image", "expected"),
+    [
+        ("registry.example/graphics:operator", "registry.example/graphics:operator"),
+        (None, DEFAULT_GRAPHICS_SMOKE_IMAGE),
+    ],
+)
+def test_fleet_mk8s_envelope_preserves_graphics_image(tmp_path, image, expected):
+    spec = _nested_graphics_spec(tmp_path, image)
+    cluster = spec.projects[0].clusters[0]
+
+    assert cluster.gpu_graphics_smoke is True
+    assert cluster.gpu_graphics_smoke_image == expected
+    assert desired_state(cluster)["gpu_graphics_smoke_image"] == expected
+
+
+@pytest.mark.parametrize("image", [1, True, {}, ["registry.example/graphics:operator"]])
+def test_fleet_mk8s_envelope_rejects_non_string_graphics_image(tmp_path, image):
+    with pytest.raises(
+        FleetSpecError, match="gpu_graphics_smoke_image must be a string"
+    ):
+        _nested_graphics_spec(tmp_path, image)
 
 
 def test_fleet_yaml_null_uses_governed_default_before_mutation(tmp_path, monkeypatch):

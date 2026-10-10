@@ -167,11 +167,13 @@ under its per-cluster install directory so an operator can inspect evidence and
 retry reconciliation. CUDA smoke pods are deleted after each attempt.
 
 Fleet settings are `gpu_health_stabilization_seconds`,
-`gpu_health_timeout_minutes`, `gpu_cuda_smoke`, and `gpu_cuda_smoke_image`.
+`gpu_health_timeout_minutes`, `gpu_cuda_smoke`, `gpu_cuda_smoke_image`,
+`gpu_graphics_smoke`, and `gpu_graphics_smoke_image`.
 Direct equivalents are `--gpu-health-stabilization-seconds`,
 `--validation-timeout`, `--gpu-cuda-smoke/--skip-gpu-cuda-smoke`, and
-`--gpu-cuda-smoke-image`. Skipping validation is an explicit diagnostic choice,
-not the success default.
+`--gpu-cuda-smoke-image`; graphics image selection uses
+`--gpu-graphics-smoke-image`. Skipping validation is an explicit diagnostic
+choice, not the success default.
 
 ## Qualifying an existing RTX Fleet
 
