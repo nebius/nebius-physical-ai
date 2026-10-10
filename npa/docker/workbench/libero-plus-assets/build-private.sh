@@ -40,6 +40,7 @@ inputs=(
   npa/docker/workbench/libero-plus-assets/build-private.sh
   npa/docker/workbench/libero-plus-assets/entrypoint.sh
   npa/docker/workbench/libero-plus-assets/smoke.sh
+  npa/docker/workbench/libero-plus-assets/setup-venv.sh
   npa/docker/workbench/libero-plus-assets/native-executor-provenance.json
   npa/src/npa/orchestration/npa_workflow/skypilot_render.py
   npa/src/npa/workflows/libero_plus_assets.py

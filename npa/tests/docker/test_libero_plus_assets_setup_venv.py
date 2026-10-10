@@ -11,6 +11,8 @@ import zipfile
 
 
 PY_YAML_VERSION = "6.0.3"
+ROOT = Path(__file__).resolve().parents[3]
+BOOTSTRAP = ROOT / "npa/docker/workbench/libero-plus-assets/setup-venv.sh"
 
 
 def _local_pyyaml_wheel(tmp_path: Path) -> Path:
@@ -47,17 +49,24 @@ def _local_pyyaml_wheel(tmp_path: Path) -> Path:
     return wheel
 
 
-def test_setup_venv_bootstrap_installs_pyyaml_offline(tmp_path: Path) -> None:
-    """Exercise the NPA_SETUP_PYTHON PyYAML bootstrap without a Docker build.
+def test_setup_venv_bootstrap_executes_production_script_offline(
+    tmp_path: Path,
+) -> None:
+    """Execute the Dockerfile's real bootstrap against an offline local wheel."""
 
-    The image recipe is statically bound to the same pin.  This isolated venv is
-    deliberately not allowed to inherit the test runner's site packages: a host
-    PyYAML installation must not make the image bootstrap appear healthy.
-    """
+    _local_pyyaml_wheel(tmp_path)
+    base_runtime = tmp_path / "base-runtime"
+    subprocess.run([sys.executable, "-m", "venv", str(base_runtime)], check=True)
+    base_python = base_runtime / "bin" / "python"
+    missing = subprocess.run(
+        [base_python, "-c", "import yaml"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert missing.returncode != 0
 
-    wheel = _local_pyyaml_wheel(tmp_path)
     venv_root = tmp_path / "npa-setup-venv"
-    subprocess.run([sys.executable, "-m", "venv", str(venv_root)], check=True)
     setup_python = venv_root / "bin" / "python"
     environment = {
         **os.environ,
@@ -65,25 +74,21 @@ def test_setup_venv_bootstrap_installs_pyyaml_offline(tmp_path: Path) -> None:
         "PIP_NO_INPUT": "1",
         "PIP_DISABLE_PIP_VERSION_CHECK": "1",
         "PIP_CACHE_DIR": str(tmp_path / "empty-pip-cache"),
+        "PIP_FIND_LINKS": str(tmp_path),
     }
 
-    installed = subprocess.run(
-        [
-            setup_python,
-            "-m",
-            "pip",
-            "install",
-            "--no-index",
-            "--no-deps",
-            str(wheel),
-        ],
+    bootstrapped = subprocess.run(
+        ["bash", str(BOOTSTRAP), str(base_python), str(venv_root)],
         check=False,
         capture_output=True,
         text=True,
         env=environment,
     )
-    assert installed.returncode == 0, installed.stderr
-    assert "Successfully installed" in installed.stdout
+    assert bootstrapped.returncode == 0, bootstrapped.stderr
+    assert "Successfully installed" in bootstrapped.stdout
+    assert "include-system-site-packages = true" in (
+        venv_root / "pyvenv.cfg"
+    ).read_text(encoding="utf-8")
 
     imported = subprocess.run(
         [
