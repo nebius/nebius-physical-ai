@@ -179,6 +179,7 @@ Choose **one** cluster path below. Bootstrap pinned SkyPilot before provisioning
 because cluster readiness includes its GPU smoke task:
 
 ```bash
+export NPA_SKYPILOT_ISOLATED_CONFIG_DIR="$NPA_CONFIG_DIR/sim2real-runtime"
 npa/.venv/bin/npa skypilot bootstrap --path "$NPA_CONFIG_DIR/skypilot-venv"
 export NPA_SKYPILOT_BIN="$(npa/.venv/bin/npa skypilot status --bin-path)"
 ```
@@ -203,7 +204,6 @@ CLUSTER_ARGS=(
   --gpu-workload-profile rtx-rendering
   --gpu-graphics-smoke-image "$ISAAC_IMAGE"
   --cpu-nodes 1 --cpu-platform cpu-e2 --cpu-preset 16vcpu-64gb
-  --sky-smoke
 )
 npa/.venv/bin/npa provision-if-absent "${CLUSTER_ARGS[@]}" \
   --dry-run --output-format json
@@ -220,8 +220,9 @@ authorized existing filesystem instead. Private `terraform.tfvars` values take
 precedence over `TF_VAR_*`. See the [cluster configuration example](../../../deploy/cluster/terraform.tfvars.example)
 and [driver contract](../mk8s-gpu-driver-strategy.md#rtx-rendering-workload-profile).
 
-Expected: provisioning completes node stability, CUDA, graphics, and SkyPilot
-smoke checks and writes the kubeconfig. Do not skip those checks.
+Expected: provisioning completes node stability, CUDA, and graphics checks and
+writes the kubeconfig. The SkyPilot GPU task runs after private namespace
+selection below. Complete both readiness steps.
 The graphics probe uses the selected immutable Isaac image. The governed SONIC
 default may be quarantined; select this verified workflow image explicitly
 instead of bypassing the image gate.
@@ -256,11 +257,21 @@ repeating `provision-if-absent` readiness. If its default StorageClass is
 shell settings. Otherwise the validator expects `compute-csi-default-sc` and
 waits for a configuration that does not describe this cluster. Use the exact
 existing CPU/GPU node counts and shapes, its adopted context and kubeconfig,
-and `--gpu-workload-profile rtx-rendering --gpu-graphics-smoke-image "$ISAAC_IMAGE" --sky-smoke --skip-s3`. The cached
-kubeconfig is reused; the command checks stability, CUDA, graphics, and actual
-SkyPilot GPU dispatch. Inspect `--dry-run` first and require
-`provider_mutation=false`. This does not replace adoption or create a missing
-filesystem attachment.
+in this argument array for the readiness command below:
+
+```bash
+CLUSTER_ARGS=(
+  --project "$NPA_PROJECT" --cluster-name "$NPA_CLUSTER"
+  --gpu-workload-profile rtx-rendering --gpu-graphics-smoke-image "$ISAAC_IMAGE"
+  --cpu-nodes '<existing-cpu-node-count>'
+  --cpu-platform '<existing-cpu-platform>' --cpu-preset '<existing-cpu-preset>'
+  --gpu-nodes '<existing-gpu-node-count>'
+  --gpu-platform '<existing-gpu-platform>' --gpu-preset '<existing-gpu-preset>'
+)
+```
+
+The cached kubeconfig is reused; these checks do not replace adoption or create
+a missing filesystem attachment.
 
 ### Select a private workload namespace and verify the target
 
@@ -277,6 +288,7 @@ kubectl get storageclass csi-mounted-fs-path-sc
 Create a namespace for this operator run and prepare its authenticated context
 through the supported [namespace command](../namespaces.md). Choose new names
 and a new private destination; `namespace context` refuses existing destinations.
+Retain the private runtime directory selected before provisioning.
 
 ```bash
 export NPA_NAMESPACE=sim2real-manual
@@ -286,23 +298,32 @@ npa/.venv/bin/npa workbench namespace context "$NPA_NAMESPACE" \
   --context "$NPA_CLUSTER" --output-dir "$NPA_CLIENT_DIR"
 export KUBECONFIG="$NPA_CLIENT_DIR/kubeconfig"
 export SKYPILOT_GLOBAL_CONFIG="$NPA_CLIENT_DIR/sky.yaml"
-export NPA_SKYPILOT_ISOLATED_CONFIG_DIR="$NPA_CLIENT_DIR/runtime"
 npa/.venv/bin/npa skypilot verify \
   --cluster "$NPA_CLUSTER" --kubeconfig "$KUBECONFIG" --output-format json
+npa/.venv/bin/npa provision-if-absent "${CLUSTER_ARGS[@]}" \
+  --kubeconfig "$KUBECONFIG" --skip-s3 --sky-smoke \
+  --dry-run --output-format json
+npa/.venv/bin/npa provision-if-absent "${CLUSTER_ARGS[@]}" \
+  --kubeconfig "$KUBECONFIG" --skip-s3 --sky-smoke
 npa/.venv/bin/npa workbench workflow gpus \
   --cluster "$NPA_CLUSTER" --project "$NPA_PROJECT" --json
 ```
 
 Expected: the intended context is selected, CPU and RTX nodes are Ready,
 the renderer-facing graphics gate passed, Kubernetes is enabled, and GPU
-discovery reports requestable capacity. Newly provisioned operator nodes report
+discovery reports requestable capacity. Require `provider_mutation=false` in
+the cached readiness preview before its real command. The actual GPU smoke
+bootstraps SkyPilot's service account in this selected namespace; `verify`
+alone checks authentication and cannot prepare it for image pull probes.
+Newly provisioned operator nodes report
 `nvidia.com/gpu.deploy.operands=true`; labels on an older external cluster do not
 replace the actual GLX/EGL/Vulkan check. An excluded managed
 compute pool can coexist with the render pool. A StorageClass name alone does
 not prove its filesystem attachment; see [shared-cache diagnostics](../model-weight-cache.md).
 The isolated state derives its own stable controller identity; do not call
 `bind-controller` or use another operator's runtime directory. Keep all four
-configuration exports above on this Linux machine and restore them in every
+configuration exports (`KUBECONFIG`, `SKYPILOT_GLOBAL_CONFIG`,
+`NPA_SKYPILOT_ISOLATED_CONFIG_DIR`, and `NPA_SKYPILOT_BIN`) on this Linux machine and restore them in every
 shell used for submit, status, logs, resume, or cleanup. NPA cluster identity
 must still match the selected project/context. See [SkyPilot setup](../../orchestration/skypilot-setup.md).
 
@@ -328,7 +349,9 @@ kubectl --namespace "$NPA_NAMESPACE" get pvc npa-isaac-cache
 Private-registry users must include the prepared pull secret in the generated
 Job's `spec.template.spec.imagePullSecrets` before applying it.
 Expected: bootstrap reports its versioned cache tree ready, the Job succeeds,
-and the PVC is `Bound` with `ReadWriteMany`. While waiting, inspect the Job and
+and the PVC is `Bound` with `ReadWriteMany`. Cold installation downloads several
+gigabytes and can stay quiet while extracting wheels into the shared filesystem.
+While waiting, inspect the Job and
 pod events from another terminal; a failed Job never reaches `complete`.
 Keep the rendered manifest outside Git because it can contain private registry
 locations. The checked-in template remains unchanged.

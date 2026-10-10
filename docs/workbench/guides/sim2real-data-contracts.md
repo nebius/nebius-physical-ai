@@ -11,7 +11,7 @@ loop. Other guides link here instead of duplicating tables.
 
 | Doc | Use when you need… |
 | --- | --- |
-| **[sim2real-workflow.md](./sim2real-workflow.md)** | Run the loop: quickstart, CLI, local smoke |
+| **[sim2real-workflow.md](./sim2real-workflow.md)** | Manual setup, submit/resume, and artifact verification |
 | **This file** | What each artifact *is* (LeRobot vs NPA JSON vs media) |
 | **[sim2real-customer-assets.md](./sim2real-customer-assets.md)** | What the customer uploads (robot, scene, trigger) |
 | **[sim2real-robot-spec.md](./sim2real-robot-spec.md)** | Canonical RobotSpec contract, runnable URDF example, and proof artifacts |
