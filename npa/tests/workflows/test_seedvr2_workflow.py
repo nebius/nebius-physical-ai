@@ -11,7 +11,9 @@ from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.orchestration.npa_workflow.skypilot_render import (
     TOOL_REF_IMAGE_TOOL,
+    NpaWorkflowRenderError,
     SkypilotRenderOptions,
+    build_skypilot_task_doc,
     render_skypilot_yaml,
 )
 from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
@@ -113,3 +115,77 @@ def test_workflow_defaults_remain_h100_sample():
     spec = load_spec(WORKFLOW)
     assert spec.config["seedvr2_gpu"] == "H100"
     assert spec.config["seedvr2_conditioning_mode"] == "sample"
+
+
+@pytest.mark.parametrize("stage", range(4))
+@pytest.mark.parametrize("default_setup", [True, False])
+@pytest.mark.parametrize(
+    "source",
+    ["config", "ambient", "config-with-ambient-false", "baked-flag", "dependencies"],
+)
+def test_every_stage_rejects_overlays(monkeypatch, stage, default_setup, source):
+    config = {}
+    if source in {"config", "config-with-ambient-false", "baked-flag"}:
+        config["source_overlay"] = True
+    if source == "ambient":
+        monkeypatch.setenv("NPA_SRC_OVERLAY", "1")
+    if source == "config-with-ambient-false":
+        monkeypatch.setenv("NPA_SRC_OVERLAY", "0")
+    if source == "baked-flag":
+        config.update(require_baked_npa=True, source_sha="b" * 40)
+    if source == "dependencies":
+        config["pip_extra"] = "unreviewed-package"
+    spec = merge_config_overrides(load_spec(WORKFLOW), config)
+    step = build_plan(spec, run_id="overlay-negative").steps[stage]
+    with pytest.raises(NpaWorkflowRenderError, match="SeedVR2.*forbids"):
+        build_skypilot_task_doc(
+            spec,
+            step,
+            run_id="overlay-negative",
+            options=SkypilotRenderOptions(
+                image_overrides={"*": "registry.example/seedvr2@sha256:" + "a" * 64},
+                materialize_registry_secrets=False,
+                default_setup=default_setup,
+            ),
+        )
+
+
+def test_seedvr2_does_not_stage_source_or_install_dependencies(monkeypatch):
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/alternate-source")
+    spec = load_spec(WORKFLOW)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="baked-only"),
+        run_id="baked-only",
+        options=SkypilotRenderOptions(
+            image_overrides={"*": "registry.example/seedvr2@sha256:" + "a" * 64},
+            materialize_registry_secrets=False,
+        ),
+    )
+    tasks = [task for task in yaml.safe_load_all(rendered) if task and "envs" in task]
+    assert len(tasks) == 4
+    for task in tasks:
+        assert "NPA_SRC_S3_URI" not in task["envs"]
+        assert "NPA_SRC_OVERLAY" not in task["envs"]
+        assert "pip install" not in task["setup"]
+        assert "_require_baked_source()" in task["setup"]
+        assert "_require_baked_source()" in task["run"]
+        assert "/opt/npa-venv/bin/python" in task["setup"]
+
+
+@pytest.mark.parametrize(
+    "image",
+    ["registry.example/seedvr2:mutable", "namespace/seedvr2@sha256:" + "a" * 64],
+)
+def test_seedvr2_requires_registry_qualified_immutable_image(image):
+    spec = load_spec(WORKFLOW)
+    with pytest.raises(NpaWorkflowRenderError, match="registry-qualified immutable"):
+        render_skypilot_yaml(
+            spec,
+            build_plan(spec, run_id="mutable-negative"),
+            run_id="mutable-negative",
+            options=SkypilotRenderOptions(
+                image_overrides={"*": image},
+                materialize_registry_secrets=False,
+            ),
+        )

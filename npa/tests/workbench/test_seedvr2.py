@@ -181,6 +181,7 @@ def _restore(
 
 
 def _restore_environment(tmp_path, monkeypatch, identity):
+    monkeypatch.setattr(runtime, "BAKED_NPA_ROOT", Path(runtime.__file__).parents[2])
     monkeypatch.setenv("NPA_SEEDVR2_WORK_DIR", str(tmp_path / "runs"))
     source_root = _source_tree(tmp_path)
     monkeypatch.setattr(
@@ -621,6 +622,7 @@ def test_media_probe_refuses_playlist_disguised_as_mp4(tmp_path: Path) -> None:
 
 
 def _identity_environment(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime, "BAKED_NPA_ROOT", Path(runtime.__file__).parents[2])
     source_revision_path = tmp_path / "npa-source-revision"
     source_revision_path.write_text("b" * 40 + "\n")
     monkeypatch.setattr(runtime, "SOURCE_REVISION_PATH", source_revision_path)

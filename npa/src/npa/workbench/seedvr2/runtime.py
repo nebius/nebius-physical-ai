@@ -40,6 +40,7 @@ from .schemas import (
 )
 
 SOURCE_REVISION_PATH = Path("/opt/npa-source-revision")
+BAKED_NPA_ROOT = Path("/opt/npa-venv/lib/python3.12/site-packages/npa")
 MAX_SOURCE_PIXELS = 1920 * 1080
 SOURCE_ROOT = Path("/opt/seedvr2")
 RUNTIME_TEMP_ROOT = Path("/workspace/tmp")
@@ -591,7 +592,23 @@ def _gpu_inventory() -> dict[str, str]:
     }
 
 
+def _require_baked_source() -> None:
+    if os.environ.get("NPA_SRC_OVERLAY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        raise SeedVR2Error("SeedVR2 requires baked NPA source; overlays are forbidden")
+    expected_module = BAKED_NPA_ROOT / "workbench/seedvr2/runtime.py"
+    if Path(__file__).resolve() != expected_module:
+        raise SeedVR2Error(
+            "SeedVR2 requires its immutable image's baked NPA installation"
+        )
+
+
 def _runtime_identity(expected_gpu: str = "H100") -> dict[str, Any]:
+    _require_baked_source()
     image = os.environ.get("NPA_TASK_IMAGE", "")
     if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
         raise SeedVR2Error("NPA_TASK_IMAGE must bind an immutable image digest")
@@ -665,6 +682,21 @@ def _storage_failure_is_retryable(error: Exception) -> bool:
     }
 
 
+@contextmanager
+def _storage_errors():
+    try:
+        yield
+    except (BotoCoreError, ClientError, StorageError) as exc:
+        if _storage_failure_is_retryable(exc):
+            raise SeedVR2StorageUnavailable(
+                "object storage is temporarily unavailable; retry after recovery"
+            ) from exc
+        raise SeedVR2Error(
+            "object storage request failed; verify object paths and storage authority"
+        ) from exc
+
+
+@_storage_errors()
 def _publish_verified(storage: Any, source: Path, uri: str, readback_root: Path) -> str:
     expected = _sha256(source)
     storage.put_bytes_conditional(source.read_bytes(), uri, if_none_match=True)
@@ -804,7 +836,8 @@ def restore(
 @contextmanager
 def _retain_failure(directory):
     try:
-        yield
+        with _storage_errors():
+            yield
     except Exception as exc:
         failure = {"status": "failed", "at": _utc_now(), "error": type(exc).__name__}
         (directory / "failure.json").write_bytes(_canonical_json(failure))

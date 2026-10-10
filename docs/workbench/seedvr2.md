@@ -80,6 +80,13 @@ prints the exact official `torchrun` invocation without fetching the model or
 touching storage. The Python SDK exposes `probe`, `restore`, `verify`, and
 `review`.
 
+SeedVR2 executes only the NPA installation baked into that image. Workflow
+rendering rejects explicit or ambient `NPA_SRC_OVERLAY` source overlays and
+dependency overlays; setup does not stage source or install packages. Runtime
+identity and artifact verification also check the active module's baked location,
+so an alternate checkout cannot claim the image's source revision. Source changes
+require a newly qualified immutable image, not an overlay onto an older image.
+
 ## Runtime resource and failure-retention contract
 
 The upstream video adapter decodes the complete clip into host memory. Pixel

@@ -30,8 +30,10 @@ from .runtime import (
     _media_environment,
     _probe_video,
     _publish_verified,
+    _require_baked_source,
     _runtime_identity,
     _sha256,
+    _storage_errors,
     _utc_now,
     _require_canonical_s3_uri,
     _validate_request,
@@ -161,6 +163,7 @@ def _result_request(result, request):
 
 
 def _validate_result_runtime(result, restore_request):
+    _require_baked_source()
     runtime = result.get("runtime")
     gpu = runtime.get("gpu") if isinstance(runtime, dict) else None
     if not isinstance(runtime, dict) or not isinstance(gpu, dict):
@@ -368,6 +371,7 @@ def _validate_candidate_decode(result: dict[str, Any], candidate: Path) -> None:
         raise SeedVR2Error("SeedVR2 candidate decoded-frame identity is invalid")
 
 
+@_storage_errors()
 def probe(
     request: VideoArtifactRequest,
     *,
@@ -402,6 +406,7 @@ def probe(
     return document
 
 
+@_storage_errors()
 def verify(
     request: VideoArtifactRequest,
     *,
@@ -588,6 +593,7 @@ def _run_comparison(command: list[str], output: Path) -> None:
         raise SeedVR2Error("failed to render the matched baseline/candidate video")
 
 
+@_storage_errors()
 def review(
     request: VideoArtifactRequest,
     *,
