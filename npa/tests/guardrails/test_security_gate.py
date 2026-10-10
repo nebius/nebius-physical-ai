@@ -948,6 +948,24 @@ def test_exact_source_archive_mapping_is_inventoried(security_modules):
     assert dependencies._exact_pins(declaration) == ["moviepy==2.2.1"]
 
 
+def test_exact_libero_vcs_mapping_is_inventoried(security_modules):
+    """Inventory only the reviewed LIBERO revision by its declared version."""
+    _, dependencies = security_modules
+    repository = Path(__file__).resolve().parents[3]
+    requirements = (
+        repository / "npa/docker/workbench/lingbot-va/runtime-requirements.txt"
+    )
+    declaration = next(
+        line
+        for line in requirements.read_text().splitlines()
+        if line.startswith("libero @ ")
+    )
+
+    assert dependencies._exact_pins(declaration) == ["libero==0.1.0"]
+    with pytest.raises(ValueError, match="Direct dependency"):
+        dependencies._exact_pins(declaration[:-1] + "0")
+
+
 @pytest.mark.parametrize(
     "declaration",
     [
