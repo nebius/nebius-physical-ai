@@ -3489,7 +3489,8 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
 
 @pytest.mark.parametrize("cancel_status", ["CANCELLED", "FAILED_CONTROLLER"])
 def test_resume_cancels_phantom_pending_record_before_new_attempt(
-    tmp_path: Path, cancel_status: str,
+    tmp_path: Path,
+    cancel_status: str,
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 
