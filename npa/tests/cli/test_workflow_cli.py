@@ -74,7 +74,7 @@ def test_raw_plan_only_help_discloses_its_non_submission_contract() -> None:
     assert "raw SkyPilot" in result.output
     assert "PLANNED" in result.output
     assert "NOT_SUBMITTED" in result.output
-    assert "lifecycle state" in result.output
+    assert "durable" in result.output
     assert "submission" in result.output
 
 
