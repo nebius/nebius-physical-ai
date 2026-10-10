@@ -5,6 +5,9 @@ boundary. Administrators create persistent local accounts, assign local groups
 and explicit allocations, and operate the service. Users keep using the
 existing CLI, HTTP API, or Python SDK with a personal access-key file.
 
+For the short operator and user workflow, start with the
+[shared-access quickstart](shared-workbench-quickstart.md).
+
 This is deliberately not a standalone Workbench portal or browser-login
 product. There is no self-service signup, browser session, cloud-account
 provisioning, or direct user access to the private scheduler.
@@ -258,9 +261,126 @@ separately qualified.
 
 ## Deploy and qualify the service
 
-Use the normal credential and image-security preflight before deploying. Render
-the CPU gateway and private scheduler sidecar into a private manifest, keep the
-scheduler loopback-only, and expose only the TLS gateway.
+Shared Workbench setup includes its persistent HTTPS endpoint. Run the operator
+setup command once per installation; it deploys the CPU gateway and private
+SkyPilot sidecar, creates a Nebius LoadBalancer on port 443, and retains its
+address for reuse. Provisioning does not use a personal Workbench key or require
+a desktop client or SSH tunnel. Operators can run it from Workbench's management
+host, CI, or another machine with the selected Nebius profile and Kubernetes
+permissions. No particular operating system or user device is part of endpoint
+provisioning or its acceptance criteria.
+
+Prepare the management namespace, private server configuration Secret, durable
+state PVC, and platform TLS Secret first. Use a certificate for the
+operator-controlled endpoint; set `ca_file` only for an installation CA. Keep
+the setup input and receipt in an owner-only directory outside Git. This
+installs the shared server; `npa configure` remains project and credential
+configuration.
+
+HTTPS is required because authenticated API calls carry bearer credentials and
+workload data; [bearer-token transport requires TLS](https://datatracker.ietf.org/doc/html/rfc6750#section-5.2).
+The setup command configures TLS termination inside the server
+deployment and exposes only port 443. This server-side reverse proxy remains
+part of the installation; users do not need a local proxy or port forwarding.
+
+Save a private `setup.yaml`, replacing placeholders and the CPU selector with
+verified values. The setup rejects a selector that includes GPU nodes.
+
+```yaml
+project_id: <selected-project-id>
+cluster_id: <selected-cluster-id>
+kubeconfig: /private/npa-team/kubeconfig
+context: <selected-context>
+namespace: workbench-system
+image: registry.example.invalid/team@sha256:<reviewed-image-digest>
+configuration_secret: team-config
+state_claim: team-state
+tls_secret: team-tls
+endpoint: https://team.example.invalid
+node_selector:
+  workbench-pool: cpu
+# Optional installation CA, not a personal credential:
+# ca_file: /private/npa-team/operator-ca.pem
+# Optional existing registry pull Secrets for a private server image:
+# image_pull_secrets: [team-registry]
+```
+
+```bash
+npa workbench team setup --input-path /private/npa-team/setup.yaml \
+  --output-path /private/npa-team/installation.json
+```
+
+Setup matches the provider project and cluster to the exact kubeconfig,
+validates the TLS certificate and key, and checks HTTPS health, rejection of
+unauthenticated identity requests, and rejection of native scheduler routes.
+The endpoint and retained allocation are recorded privately; stdout contains
+status and the receipt path. Personal accounts, enrollment, and workload
+execution retain their existing authorization paths.
+
+For an existing HTTPS installation, set `existing_service_uid` and
+`existing_deployment_uid` to its observed exact public Service and Deployment
+UIDs. Images, configuration and PVC must match the input.
+Setup preserves its Deployment, users, jobs and state. Setup discovers the
+gateway's existing public Service automatically; set
+`service_name` when multiple matching endpoints exist. It records that selection
+for subsequent retries and Service recreation, keeping the same public endpoint.
+
+Rerun with the same input and receipt to reconcile interrupted setup. A completed retry does not
+redeploy the server or allocate another IP. Keep the receipt to reuse the
+retained allocation after Service recreation. Unrelated resources are refused.
+Input identity stays fixed for the life of a receipt. If discovery or adoption
+fails before any resource mutation, correct the selection and choose a new
+receipt path. Keep any receipt that records mutations for recovery.
+
+Point DNS at the assigned address. Setup exits 2 with `endpoint-awaiting-dns` or
+`endpoint-awaiting-connectivity` when final transport qualification is pending;
+the server and retained address remain recorded for retry. TLS verification is
+never disabled. Accept the installation using its provider allocation, trusted
+HTTPS, authentication boundaries, and retry/recreation checks from an authorized
+management or CI environment. A personal device's network path is not a
+deployment gate. Endpoint health alone does not prove personal workload readiness;
+qualify the account and enrollment boundaries below before production use.
+While the provider assigns an address, setup waits without an imposed time
+limit and fails on reported terminal allocation conditions. Interrupting it
+preserves the private receipt for the same-input retry.
+
+To repeat the live operator setup and retry checks on an existing installation:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_TEAM_SETUP_LIVE=1 \
+  NPA_TEAM_SETUP_INPUT_PATH=/private/npa-team/setup.yaml \
+  NPA_TEAM_SETUP_RECEIPT_PATH=/private/npa-team/installation.json \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_team_setup_live.py -q
+```
+
+This test requires `existing_service_uid`, uses real provider/Kubernetes/TLS
+transports, and checks that retries preserve Deployment, PVC, Service and IP
+identities. It fails if provisioning constructs a personal Workbench client.
+
+Fresh creation and retained-IP recovery have a separate opt-in test. Prepare
+the same prerequisites in a disposable CPU namespace labelled
+`npa.nebius.ai/team-setup-live-test=true`; use an explicitly named `service_name`
+and a new private receipt, with both adoption UIDs empty:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_TEAM_SETUP_FRESH_LIVE=1 \
+  NPA_TEAM_SETUP_FRESH_INPUT_PATH=/private/npa-team/fresh-setup.yaml \
+  NPA_TEAM_SETUP_FRESH_RECEIPT_PATH=/private/npa-team/fresh-installation.json \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_team_setup_fresh_live.py -q
+```
+
+It checks real HTTPS and Service recreation, then removes only the server
+resources and allocation identified by its own receipt. Operator-supplied
+namespace, Secrets and PVC remain for separate test-fixture cleanup.
+
+The shared server and retained address survive benchmark cleanup. Full
+installation teardown must explicitly delete the retained provider allocation
+after all server-owned workloads have been stopped and accounted for.
+
+Use the normal credential and image-security preflight before deploying. For
+offline inspection or custom installation tooling, the existing renderer emits
+the internal CPU gateway and private scheduler. Add TLS termination before
+exposing its gateway; the renderer alone does not create a public endpoint.
 
 ```bash
 npa workbench team render-service --namespace workbench-system \

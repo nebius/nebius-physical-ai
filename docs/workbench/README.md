@@ -10,8 +10,10 @@ Python and HTTP access follow each tool's documented contract.
 CLI, API, and SDK. Administrators create local users/groups and explicit personal
 GPU allocations and artifact storage; users use revocable personal key files and
 never receive scheduler or cluster credentials. The CPU gateway and private
-SkyPilot service still require live qualification. Start with [local users and
-personal access keys](team-identity.md). External identities can be explicitly
+SkyPilot service still require live qualification. Start with the
+[shared-access quickstart](shared-workbench-quickstart.md), then use
+[local users and personal access keys](team-identity.md) for identity details.
+External identities can be explicitly
 linked later without changing local ownership; there is no standalone portal or
 browser-login flow. The [offline team example](../demos/team-access.html)
 illustrates synthetic policy outcomes and recorded local checks, not a deployed

@@ -28,6 +28,13 @@ linked local account, using a short-lived IAM token through the same private
 token-file path. It is mutually exclusive with generic JWT identity mode and
 does not import Nebius roles or tenant access as Workbench grants.
 
+`npa workbench team setup --input-path <private-setup.yaml> --output-path
+<private-installation.json>` deploys the shared HTTPS gateway, creates its
+Nebius LoadBalancer, and retains the address. It uses operator cloud/Kubernetes
+credentials and existing server/TLS/state resources; no personal key or VDI
+client is required. See [shared server setup](../docs/workbench/team-access.md#deploy-and-qualify-the-service)
+for ownership checks, retries, and qualification.
+
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
 optional `--baseline-path` compares both sources in both A/B orders. See the

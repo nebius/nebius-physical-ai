@@ -32,6 +32,8 @@ prepare its project and compute, then inspect the result.
 | --- | --- |
 | Manage Kubernetes | [Kubernetes](workbench/kubernetes.md) · [GPU driver strategy](workbench/mk8s-gpu-driver-strategy.md) |
 | Configure workflow scheduling | [SkyPilot setup](orchestration/skypilot-setup.md) |
+| Install shared Workbench with a persistent HTTPS endpoint | [Shared server setup](workbench/team-access.md#deploy-and-qualify-the-service) |
+| Deploy a separate upstream SkyPilot API | [Optional Helm recipe](orchestration/skypilot-api-loadbalancer.md) |
 | Manage fleets or Slurm | [Cluster backends](cluster-backends.md) · [Fleet storage verification](fleet-storage-verification.md) · [RTX MIG](fleet-rtx-pro-6000-mig.md) |
 | Choose an image and GPU | [Public image catalog](workbench/container-image-catalog.md) · [compatibility matrix](workbench/image-gpu-compatibility-matrix.md) |
 | Adopt FA4 in an RTX PRO 6000 application | [Base naming, image build and model integration](workbench/guides/rtx6000-fa4.md) |
