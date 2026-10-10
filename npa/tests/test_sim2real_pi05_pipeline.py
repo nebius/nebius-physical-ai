@@ -299,7 +299,12 @@ class _FailSecondControllerStep:
         self.calls += 1
         if self.calls == 2:
             raise RuntimeError("controller rejected gs://private/location")
-        return {"terminated": False, "truncated": False}
+        return {
+            "terminated": False,
+            "truncated": False,
+            "command_application_time_s": 0.0,
+            "resulting_state_time_s": 1.0 / 15.0,
+        }
 
 
 def _partial_execution_context(record: dict) -> dict:
@@ -342,9 +347,47 @@ def test_policy_query_receipt_survives_partial_controller_failure(monkeypatch) -
     assert query["attempted_prefix"] == 2
     assert query["executed_prefix"] == 1
     assert len(query["controller_proofs"]) == 1
+    assert query["controller_proofs"][0]["physics_observation_status"] == "recorded"
+    assert record["physics_trace"][0]["simulator_time_s"] == 1.0 / 15.0
     assert (
         query["execution_error"] == "RuntimeError: controller rejected <redacted-uri>"
     )
+
+
+def test_policy_query_records_applied_target_with_failed_physics_observation(
+    monkeypatch,
+) -> None:
+    record = {"queries": [], "physics_trace": []}
+    context = _partial_execution_context(record)
+    actions = np.zeros((15, 8), dtype=np.float64)
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_query_policy",
+        lambda *_args: (actions, {}, {"observation_time_s": 0.0}),
+    )
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_apply_target",
+        lambda *_args, **_kwargs: {
+            "terminated": False,
+            "truncated": False,
+            "command_application_time_s": 0.0,
+            "resulting_state_time_s": 1.0 / 15.0,
+        },
+    )
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_physics_sample",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("observer failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="observer failed"):
+        pi05_closed_loop._decision_step(context, 0)
+
+    proof = record["queries"][0]["controller_proofs"][0]
+    assert proof["physics_observation_status"] == "failed"
+    assert proof["physics_observation_error"] == "RuntimeError: observer failed"
+    assert record["physics_trace"] == []
 
 
 def test_effectiveness_rejects_absent_sampler_identity() -> None:
@@ -1547,29 +1590,84 @@ def _successful_closed_loop_report() -> dict:
     }
 
 
-def test_closed_loop_rrd_is_finalized_before_independent_decode(
-    tmp_path: Path,
-) -> None:
-    episodes = [
-        {
-            "physics_trace": [
-                {
-                    "object_position_m": [0.5, 0.1, 0.03],
-                    "object_speed_m_s": 0.0,
-                    "target_xy_distance_m": 0.01,
-                }
-            ],
-            "queries": [],
-        }
-    ]
+def _rrd_episode() -> dict:
+    trace, queries = [], []
+    for index, (observation, command, result) in enumerate(
+        ((0.133333, 0.133333, 0.2), (0.666667, 0.666667, 0.733333))
+    ):
+        trace.append(
+            {
+                "object_position_m": [0.5, 0.1, 0.03],
+                "object_speed_m_s": 0.0,
+                "target_xy_distance_m": 0.01,
+                "simulator_time_s": result,
+            }
+        )
+        queries.append(
+            {
+                "observation_time_s": observation,
+                "exterior_capture_time_s": observation - 2.0e-6,
+                "wrist_capture_time_s": observation - 1.0e-6,
+                "inference": {"wire_input": {"capture_age_s": 1.0e-6}},
+                "controller_proofs": [
+                    {
+                        "command_application_time_s": command,
+                        "resulting_state_time_s": result,
+                        "physics_observation_status": "recorded",
+                        "physics_trace_index": index,
+                    }
+                ],
+            }
+        )
+    frames = [np.full((4, 4, 3), index, dtype=np.uint8) for index in range(2)]
+    return {
+        "physics_trace": trace,
+        "queries": queries,
+        "_exterior_frames": frames,
+        "_wrist_frames": frames,
+    }
+
+
+def test_closed_loop_rrd_is_finalized_and_causally_timed(tmp_path: Path) -> None:
+    episodes = [_rrd_episode()]
 
     rrd, steps = pi05_closed_loop._write_rrd(tmp_path, episodes, "base")
 
-    assert steps == 1
+    assert steps == 2
     subprocess.run(
         [sys.executable, "-m", "rerun", "rrd", "verify", str(rrd)],
         check=True,
     )
+    decoded = subprocess.run(
+        [sys.executable, "-m", "rerun", "rrd", "print", "-vvv", str(rrd)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert decoded.count("* entity_path: /episodes/0/physics/") == 6
+    assert decoded.count("* entity_path: /episodes/0/queries/") == 6
+    assert all(
+        value in decoded
+        for value in ("PT0.2S", "PT0.733333S", "PT0.133331S", "PT0.666666S")
+    )
+    assert not any(
+        "physics_step" in line and "query" in line for line in decoded.splitlines()
+    )
+
+
+@pytest.mark.parametrize("mutation", ["legacy", "count", "sample_time"])
+def test_closed_loop_rrd_rejects_unbound_physics_rows(
+    tmp_path: Path, mutation: str
+) -> None:
+    episode = _rrd_episode()
+    if mutation == "legacy":
+        episode["queries"][0]["controller_proofs"][0].pop("physics_observation_status")
+    elif mutation == "count":
+        episode["physics_trace"].pop()
+    else:
+        episode["physics_trace"][0]["simulator_time_s"] = 0.3
+    with pytest.raises(RuntimeError, match="Rerun"):
+        pi05_closed_loop._write_rrd(tmp_path, [episode], "base")
 
 
 def test_closed_loop_entry_rejects_green_kit_exit_without_success_report(

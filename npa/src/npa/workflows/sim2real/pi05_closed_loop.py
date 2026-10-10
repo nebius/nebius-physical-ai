@@ -513,15 +513,22 @@ def _execute_prefix(context: dict[str, Any], actions: Any, query: dict) -> bool:
         )
         query["controller_proofs"].append(proof)
         query["executed_prefix"] = len(query["controller_proofs"])
-        context["record"]["physics_trace"].append(
-            _physics_sample(
+        try:
+            sample = _physics_sample(
                 context["native"],
                 context["initial_z"],
                 context["target_xy"],
                 context["object_width_m"],
                 bool(float(target[7]) > 0.5),
             )
-        )
+        except Exception as error:
+            proof["physics_observation_status"] = "failed"
+            proof["physics_observation_error"] = _execution_error(error)
+            raise
+        proof["physics_observation_status"] = "recorded"
+        proof["physics_trace_index"] = len(context["record"]["physics_trace"])
+        sample["simulator_time_s"] = proof["resulting_state_time_s"]
+        context["record"]["physics_trace"].append(sample)
         if proof["terminated"] or proof["truncated"]:
             return True
     return False
@@ -770,37 +777,115 @@ def _write_rrd(
     with rr.RecordingStream(f"pi05-{role}") as recording:
         recording.save(rrd)
         for episode_index, episode in enumerate(episodes):
-            for sample in episode.get("physics_trace", []):
-                recording.set_time("step", sequence=step)
-                recording.log(
-                    f"episodes/{episode_index}/object_position",
-                    rr.Points3D([sample["object_position_m"]]),
-                )
-                recording.log(
-                    f"episodes/{episode_index}/object_speed_m_s",
-                    rr.Scalars([sample["object_speed_m_s"]]),
-                )
-                recording.log(
-                    f"episodes/{episode_index}/target_xy_distance_m",
-                    rr.Scalars([sample["target_xy_distance_m"]]),
-                )
-                step += 1
+            step += _log_rrd_physics(recording, rr, episode, episode_index)
             _log_rrd_queries(recording, rr, episode, episode_index)
     if not rrd.is_file() or rrd.stat().st_size == 0 or step < 1:
         raise RuntimeError("closed-loop Rerun readback is empty")
     return rrd, step
 
 
+def _rrd_time(
+    recording: Any, episode_index: int, index_name: str, index: int, time_s: float
+) -> None:
+    import math
+
+    if not math.isfinite(time_s) or time_s < 0.0:
+        raise RuntimeError(f"Rerun {index_name} simulator time is invalid")
+    recording.reset_time()
+    recording.set_time("episode", sequence=episode_index)
+    recording.set_time(index_name, sequence=index)
+    recording.set_time("sim_time", duration=time_s)
+
+
+def _physics_rows(episode: dict) -> list[tuple[dict, float]]:
+    trace = list(episode.get("physics_trace", []))
+    proofs = [
+        proof
+        for query in episode.get("queries", [])
+        for proof in query.get("controller_proofs", [])
+    ]
+    recorded = [
+        proof
+        for proof in proofs
+        if proof.get("physics_observation_status") == "recorded"
+    ]
+    if any(
+        proof.get("physics_observation_status") not in {"recorded", "failed"}
+        for proof in proofs
+    ):
+        raise RuntimeError("Rerun controller proof lacks physics observation status")
+    if len(trace) != len(recorded):
+        raise RuntimeError("Rerun physics rows do not match recorded controller proofs")
+    rows = []
+    previous = -1.0
+    for index, (sample, proof) in enumerate(zip(trace, recorded)):
+        command = proof.get("command_application_time_s")
+        result = proof.get("resulting_state_time_s")
+        if not all(isinstance(value, (int, float)) for value in (command, result)):
+            raise RuntimeError("Rerun controller proof lacks simulator times")
+        if not previous <= float(command) < float(result):
+            raise RuntimeError("Rerun controller proof times are not ordered")
+        if proof.get("physics_trace_index") != index:
+            raise RuntimeError("Rerun physics trace index binding is invalid")
+        if sample.get("simulator_time_s") != result:
+            raise RuntimeError(
+                "Rerun physics sample time differs from controller result"
+            )
+        previous = float(result)
+        rows.append((sample, previous))
+    return rows
+
+
+def _log_rrd_physics(recording: Any, rr: Any, episode: dict, episode_index: int) -> int:
+    rows = _physics_rows(episode)
+    for step, (sample, result_time) in enumerate(rows):
+        _rrd_time(recording, episode_index, "physics_step", step, result_time)
+        root = f"episodes/{episode_index}/physics/{step}"
+        recording.log(
+            root + "/object_position", rr.Points3D([sample["object_position_m"]])
+        )
+        recording.log(
+            root + "/object_speed_m_s", rr.Scalars([sample["object_speed_m_s"]])
+        )
+        recording.log(
+            root + "/target_xy_distance_m", rr.Scalars([sample["target_xy_distance_m"]])
+        )
+    return len(rows)
+
+
 def _log_rrd_queries(
     recording: Any, rr: Any, episode: dict, episode_index: int
 ) -> None:
-    for query_index, query in enumerate(episode.get("queries", [])):
-        recording.set_time("query", sequence=query_index)
+    queries = list(episode.get("queries", []))
+    exterior = episode.get("_exterior_frames", [])
+    wrist = episode.get("_wrist_frames", [])
+    if len(exterior) != len(queries) or len(wrist) != len(queries):
+        raise RuntimeError("Rerun camera frames do not match policy queries")
+    for query_index, query in enumerate(queries):
         root = f"episodes/{episode_index}/queries/{query_index}"
-        recording.log(
-            root + "/exterior", rr.Image(episode["_exterior_frames"][query_index])
+        _rrd_time(
+            recording,
+            episode_index,
+            "query",
+            query_index,
+            float(query["exterior_capture_time_s"]),
         )
-        recording.log(root + "/wrist", rr.Image(episode["_wrist_frames"][query_index]))
+        recording.log(root + "/exterior", rr.Image(exterior[query_index]))
+        _rrd_time(
+            recording,
+            episode_index,
+            "query",
+            query_index,
+            float(query["wrist_capture_time_s"]),
+        )
+        recording.log(root + "/wrist", rr.Image(wrist[query_index]))
+        _rrd_time(
+            recording,
+            episode_index,
+            "query",
+            query_index,
+            float(query["observation_time_s"]),
+        )
         recording.log(
             root + "/capture_age_s",
             rr.Scalars([query["inference"]["wire_input"]["capture_age_s"]]),
