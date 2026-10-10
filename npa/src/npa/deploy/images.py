@@ -519,7 +519,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "curobo": "0.8.0-cuda13-blackwell-unbuilt",
     # CPU-only, so this image carries no CUDA tag family.
     "open3d": "0.20.0-cpu-20260918",
-    "mjlab": "dev-0202f396fb23f7d066fd452b469578e67151d382",
+    "mjlab": "dev-06764a544844f93324bdf75a378c1a7139802c9a",
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.
     "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",
