@@ -10,6 +10,7 @@ from typing import Optional
 import typer
 
 from npa.cli.workbench import cosmos3_policy
+from npa.cli.workbench import cosmos3_droid_forward_dynamics
 from npa.lifecycle_intent import json_stdout_contract
 from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.workbench.cosmos.text_to_image import DEFAULT_UV_GROUP
@@ -49,6 +50,11 @@ app.command("policy-train")(cosmos3_policy.policy_train_cmd)
 app.command("policy-eval")(cosmos3_policy.policy_eval_cmd)
 app.command("policy-feedback")(cosmos3_policy.policy_feedback_cmd)
 app.command("failure-candidates")(cosmos3_policy.failure_candidates_cmd)
+app.command("droid-fd-prepare")(cosmos3_droid_forward_dynamics.droid_fd_prepare_cmd)
+app.command("droid-fd-predict")(cosmos3_droid_forward_dynamics.droid_fd_predict_cmd)
+app.command("droid-fd-controls")(cosmos3_droid_forward_dynamics.droid_fd_controls_cmd)
+app.command("droid-fd-evaluate")(cosmos3_droid_forward_dynamics.droid_fd_evaluate_cmd)
+app.command("droid-fd-visualize")(cosmos3_droid_forward_dynamics.droid_fd_visualize_cmd)
 
 
 @app.command("nano-video-augment")

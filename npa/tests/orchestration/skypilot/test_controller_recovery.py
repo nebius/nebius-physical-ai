@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -172,6 +173,44 @@ def test_requires_independent_durable_attempt_binding(original, change):
         runtime["waves"][0]["launch_sequence"] = 0
     with pytest.raises(recovery.ControllerRecoveryError):
         recovery.verify_ledger(record, manifest, runtime)
+
+
+def test_ledger_discovery_finds_declarative_state_below_recorded_prefix(
+    original, monkeypatch
+):
+    record, _, _, manifest, runtime, *_ = original
+    parent = SimpleNamespace(prefix="recorded-control-prefix")
+    state = SimpleNamespace(prefix="recorded-control-prefix/npa-workflow")
+    discovered = {}
+
+    def discover(*, state_parent, run_id):
+        discovered["state_parent"] = state_parent
+        discovered["run_id"] = run_id
+        return state
+
+    def read_runtime(actual, name):
+        assert actual is state
+        assert name == "runtime.json"
+        return runtime
+
+    monkeypatch.setattr(recovery, "resolve_workflow_s3_config", lambda **kwargs: parent)
+    monkeypatch.setattr(recovery, "discover_workflow_run_state", discover)
+    monkeypatch.setattr(recovery, "read_manifest", lambda actual: manifest)
+    monkeypatch.setattr(recovery, "get_json", read_runtime)
+
+    assert recovery._read_ledger(record) is state
+    assert discovered == {"state_parent": parent, "run_id": record["run_id"]}
+
+
+def test_ledger_discovery_refuses_missing_manifest(original, monkeypatch):
+    record = original[0]
+    monkeypatch.setattr(
+        recovery, "resolve_workflow_s3_config", lambda **kwargs: object()
+    )
+    monkeypatch.setattr(recovery, "discover_workflow_run_state", lambda **kwargs: None)
+
+    with pytest.raises(recovery.ControllerRecoveryError, match="manifest is absent"):
+        recovery._read_ledger(record)
 
 
 @pytest.mark.parametrize("change", ["uid", "image", "job"])

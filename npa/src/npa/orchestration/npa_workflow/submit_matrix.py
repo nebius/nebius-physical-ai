@@ -765,6 +765,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "cosmos3-droid-forward-dynamics.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="cosmos3",
+        plan_only=True,
+        plan_only_justification=(
+            "A private image and retrievable runtime framework pin are qualified, but "
+            "the DROID checkpoint/action pairing still needs one complete five-stage "
+            "native run with independently inspected outputs before public live coverage."
+        ),
+        notes=(
+            "Native true-action and matched shuffled/zero-action control inference on one "
+            "held-out 17-frame DROID window; emits measured visual-error/action-sensitivity "
+            "artifacts and a verified RRD. Plan-only is not live qualification."
+        ),
+    ),
+    SubmitLiveCase(
         "cosmos3-super-b200-benchmark.yaml",
         "gpu",
         secret_envs=(

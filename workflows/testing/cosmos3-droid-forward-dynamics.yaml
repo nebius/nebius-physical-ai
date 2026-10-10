@@ -1,0 +1,125 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: cosmos3-droid-forward-dynamics
+  description: >-
+    Evaluate the published Cosmos3-Nano DROID forward-dynamics derivative on one
+    selected held-out 17-frame window. The workflow performs true-action native
+    inference, matched temporal-permutation and zero-action native controls,
+    decoded visual metrics, and synchronized RRD evidence. It is not a benchmark
+    sweep, a reproduction of the card's 40-sample diagnostic, or a robot trial.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/cosmos3-droid-forward-dynamics"
+  source_overlay: true
+  # A run-scoped, hash-verified selection manifest. It identifies one DROID
+  # episode window, its raw action.gripper_position values, and either a
+  # scene/building split or the card's exact 3% split.
+  selection_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/selection.json"
+  checkpoint_revision: "1dfff3cc3b86548b208341bb123d1c4f71043114"
+  seed: "0"
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  true_prediction_uri: "s3://{{config.bucket}}/{{config.prefix}}/true_prediction/"
+  controls_uri: "s3://{{config.bucket}}/{{config.prefix}}/controls/"
+  evaluation_uri: "s3://{{config.bucket}}/{{config.prefix}}/evaluation/"
+  visualization_uri: "s3://{{config.bucket}}/{{config.prefix}}/visualization/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+  inference_gpu:
+    cloud: kubernetes
+    # Cosmos3's accepted CUDA 13 inference image supports the RTX PRO 6000
+    # Blackwell route used for this single-GPU forward-dynamics validation.
+    accelerators: RTXPRO6000:1
+    cpus: 20
+    memory: 192Gi
+
+initial: prepare
+
+states:
+  prepare:
+    description: >-
+      Decode the selected three DROID cameras, compose the exact 17-frame window,
+      and encode 16 relative rot6d/inverted-gripper actions without normalization.
+    toolRef: workbench.cosmos3.droid_fd_prepare
+    resources: cpu
+    inputs:
+      - uri: "{{config.selection_uri}}"
+        schema: npa.cosmos3.droid-fd.selection.v1
+    outputs:
+      - uri: "{{config.prepared_uri}}prepared.json"
+        schema: npa.cosmos3.droid-fd.prepared.v1
+    next: predict_true
+
+  predict_true:
+    description: >-
+      Runtime-fetch and independently hash the exported checkpoint, then invoke
+      upstream native forward dynamics with the true held-out action sequence.
+    toolRef: workbench.cosmos3.droid_fd_predict
+    resources: inference_gpu
+    inputs:
+      - uri: "{{config.prepared_uri}}prepared.json"
+        schema: npa.cosmos3.droid-fd.prepared.v1
+    outputs:
+      - uri: "{{config.true_prediction_uri}}prediction.json"
+        schema: npa.cosmos3.droid-fd.prediction.v1
+    next: predict_controls
+
+  predict_controls:
+    description: >-
+      Invoke the same checkpoint with a matched temporal shuffle and zero-action
+      control, keeping the prepared frames and sampling seed fixed.
+    toolRef: workbench.cosmos3.droid_fd_controls
+    resources: inference_gpu
+    inputs:
+      - uri: "{{config.prepared_uri}}prepared.json"
+        schema: npa.cosmos3.droid-fd.prepared.v1
+    outputs:
+      - uri: "{{config.controls_uri}}controls.json"
+        schema: npa.cosmos3.droid-fd.controls.v1
+    next: evaluate
+
+  evaluate:
+    description: >-
+      Decode all produced videos, measure frame-wise held-out visual error, and
+      report true-vs-control image differences as an action-sensitivity diagnostic.
+    toolRef: workbench.cosmos3.droid_fd_evaluate
+    resources: cpu
+    inputs:
+      - uri: "{{config.prepared_uri}}prepared.json"
+        schema: npa.cosmos3.droid-fd.prepared.v1
+      - uri: "{{config.true_prediction_uri}}prediction.json"
+        schema: npa.cosmos3.droid-fd.prediction.v1
+      - uri: "{{config.controls_uri}}controls.json"
+        schema: npa.cosmos3.droid-fd.controls.v1
+    outputs:
+      - uri: "{{config.evaluation_uri}}evaluation.json"
+        schema: npa.cosmos3.droid-fd.evaluation.v1
+    next: visualize
+
+  visualize:
+    description: >-
+      Record and independently decode-verify a Rerun stream of reference,
+      true prediction, both controls, metrics, and checkpoint provenance.
+    toolRef: workbench.cosmos3.droid_fd_visualize
+    resources: cpu
+    inputs:
+      - uri: "{{config.prepared_uri}}prepared.json"
+        schema: npa.cosmos3.droid-fd.prepared.v1
+      - uri: "{{config.true_prediction_uri}}prediction.json"
+        schema: npa.cosmos3.droid-fd.prediction.v1
+      - uri: "{{config.controls_uri}}controls.json"
+        schema: npa.cosmos3.droid-fd.controls.v1
+      - uri: "{{config.evaluation_uri}}evaluation.json"
+        schema: npa.cosmos3.droid-fd.evaluation.v1
+    outputs:
+      - uri: "{{config.visualization_uri}}visualization.json"
+        schema: npa.cosmos3.droid-fd.visualization.v1
+      - uri: "{{config.visualization_uri}}droid_forward_dynamics.rrd"
+        schema: npa.rerun.recording.v1
+    terminal: true

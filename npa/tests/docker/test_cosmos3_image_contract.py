@@ -33,6 +33,9 @@ BUILD_SCRIPT = NPA_ROOT / "docker/workbench/cosmos3/build.sh"
 ENTRYPOINT = NPA_ROOT / "docker/workbench/cosmos3/entrypoint.sh"
 SMOKE_SCRIPT = NPA_ROOT / "docker/workbench/cosmos3/smoke_functional.sh"
 VERIFY_ENV = NPA_ROOT / "docker/workbench/cosmos3/verify_env.py"
+SECURITY_UPGRADES = (
+    NPA_ROOT / "docker/workbench/cosmos3/security-upgrades-requirements.txt"
+)
 CONTRACT = NPA_ROOT / "docker/workbench/packaging-contract.yaml"
 # Deliberate tripwire: do not derive this from the production resolver. Keeping
 # an independent literal makes a one-sided tag edit fail instead of teaching the
@@ -108,6 +111,10 @@ def test_dockerfile_pins_the_framework_and_guards_against_baked_weights() -> Non
     assert "model weights baked into image" in instructions
     # Upstream attribution travels with the redistributed source.
     assert "/opt/cosmos3/licenses" in instructions
+    # Removing .git is fine only because the build leaves an immutable source
+    # marker for action-conditioned runtime provenance.
+    assert ".npa_source_revision" in instructions
+    assert 'rev-parse HEAD > "${COSMOS3_REPO}/.npa_source_revision"' in instructions
 
 
 def test_image_build_requires_the_fail_closed_generated_media_wrapper() -> None:
@@ -117,6 +124,9 @@ def test_image_build_requires_the_fail_closed_generated_media_wrapper() -> None:
     assert "npa.workbench.cosmos.guarded_inference" in instructions
     assert "npa.cosmos3.guardrail-state.v1" in instructions
     assert "VideoContentSafetyFilter" in verifier
+    assert "check_pinned_framework_source" in verifier
+    assert "check_action_inference_contract" in verifier
+    assert "ActionDataOverrides.model_fields" in verifier
 
 
 def test_image_repairs_inherited_unused_or_stale_vulnerable_bytes() -> None:
@@ -125,6 +135,22 @@ def test_image_repairs_inherited_unused_or_stale_vulnerable_bytes() -> None:
     assert "linux-libc-dev" in instructions
     assert "plugins/efa_metrics/nic_sampler" in instructions
     assert "-delete" in instructions
+
+
+def test_image_security_overlay_pins_the_fixed_anyio_release() -> None:
+    """The private byte scan must not inherit the fixed-critical anyio 4.9.0."""
+
+    requirements = SECURITY_UPGRADES.read_text(encoding="utf-8")
+
+    assert "anyio==4.14.2" in requirements
+    assert (
+        "9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494"
+        in requirements
+    )
+    assert (
+        "cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f"
+        in requirements
+    )
 
 
 def test_cosmos3_image_satisfies_the_skypilot_bootstrap_contract() -> None:

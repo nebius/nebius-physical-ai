@@ -4351,6 +4351,109 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.seed}}",
         ],
     ),
+    "workbench.cosmos3.droid_fd_prepare": ToolEntry(
+        name="workbench.cosmos3.droid_fd_prepare",
+        description=(
+            "Assemble a held-out DROID 17-frame concat-view observation window and "
+            "the checkpoint's relative rot6d/gripper action contract."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "droid-fd-prepare",
+            "--input-path",
+            "{{config.selection_uri}}",
+            "--output-path",
+            "{{config.prepared_uri}}",
+        ],
+    ),
+    "workbench.cosmos3.droid_fd_predict": ToolEntry(
+        name="workbench.cosmos3.droid_fd_predict",
+        description=(
+            "Run the published DROID forward-dynamics checkpoint using its selected "
+            "held-out true-action chunk."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "droid-fd-predict",
+            "--input-path",
+            "{{config.prepared_uri}}prepared.json",
+            "--output-path",
+            "{{config.true_prediction_uri}}",
+            "--seed",
+            "{{config.seed}}",
+            "--checkpoint-revision",
+            "{{config.checkpoint_revision}}",
+        ],
+    ),
+    "workbench.cosmos3.droid_fd_controls": ToolEntry(
+        name="workbench.cosmos3.droid_fd_controls",
+        description=(
+            "Run matched temporal-permutation and zero-action native controls for "
+            "the exact prepared DROID window."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "droid-fd-controls",
+            "--input-path",
+            "{{config.prepared_uri}}prepared.json",
+            "--output-path",
+            "{{config.controls_uri}}",
+            "--seed",
+            "{{config.seed}}",
+            "--checkpoint-revision",
+            "{{config.checkpoint_revision}}",
+        ],
+    ),
+    "workbench.cosmos3.droid_fd_evaluate": ToolEntry(
+        name="workbench.cosmos3.droid_fd_evaluate",
+        description=(
+            "Decode true/control forward-dynamics videos and measure held-out visual "
+            "error plus action sensitivity."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "droid-fd-evaluate",
+            "--prepared-path",
+            "{{config.prepared_uri}}prepared.json",
+            "--prediction-path",
+            "{{config.true_prediction_uri}}prediction.json",
+            "--controls-path",
+            "{{config.controls_uri}}controls.json",
+            "--output-path",
+            "{{config.evaluation_uri}}",
+        ],
+    ),
+    "workbench.cosmos3.droid_fd_visualize": ToolEntry(
+        name="workbench.cosmos3.droid_fd_visualize",
+        description=(
+            "Emit and independently verify an RRD synchronized across DROID "
+            "observation, true prediction, action controls, and measured error."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "cosmos3",
+            "droid-fd-visualize",
+            "--prepared-path",
+            "{{config.prepared_uri}}prepared.json",
+            "--prediction-path",
+            "{{config.true_prediction_uri}}prediction.json",
+            "--controls-path",
+            "{{config.controls_uri}}controls.json",
+            "--evaluation-path",
+            "{{config.evaluation_uri}}evaluation.json",
+            "--output-path",
+            "{{config.visualization_uri}}",
+        ],
+    ),
     "workbench.cosmos3.generate": ToolEntry(
         name="workbench.cosmos3.generate",
         access_capabilities=("cosmos3",),

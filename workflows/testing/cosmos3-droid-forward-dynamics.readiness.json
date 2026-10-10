@@ -1,0 +1,61 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "6a73e6963ab5147a6c7896e8a4bc79705458a1ba82204cae560b10bd9139d871",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation resolves every toolRef and exact run-scoped handoff. The quarantined public default deliberately refuses static rendering; an explicit private candidate image rendered the same five-stage plan without submission. Focused workflow, CLI, catalog, media, and Rerun tests pass locally.",
+      "evidence": [
+        "npa/tests/workflows/test_cosmos3_droid_forward_dynamics_workflow.py",
+        "npa/tests/workbench/test_cosmos3_droid_forward_dynamics.py",
+        "npa workbench workflow validate-spec workflows/testing/cosmos3-droid-forward-dynamics.yaml --json",
+        "npa workbench workflow submit workflows/testing/cosmos3-droid-forward-dynamics.yaml --plan-only --runtime with an explicit private candidate image"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The local contract test creates and decodes actual three-view MP4s, evaluates frame-wise RGB metrics and action controls, and independently verifies the emitted Rerun recording. It does not substitute those synthetic test media for model-inference evidence.",
+      "evidence": [
+        "npa/tests/workbench/test_cosmos3_droid_forward_dynamics.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The configured scoped profile completed its owned run-prefix probe, and the exact DROID input bundle was staged only to the private run prefix with a read-back hash check. No checkpoint or model output is stored in an image layer or public registry.",
+      "evidence": [
+        "access-controlled operator probe receipt"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "A genuine 17-frame DROID window from the documented held-out split was re-emitted from observation.state.cartesian_position (including the upstream DROID-to-OpenCV rotation) and aligned source action.gripper_position values. The corrected manifest plus 51 frame objects was staged to the private run prefix and read back with hashes; native processing awaits a fresh source-overlay five-stage run against the already-qualified private image.",
+      "evidence": [
+        "access-controlled operator input-selection evidence"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Nebius authentication and exact Cosmos payload access passed through the configured private route. The derivative repository resolves exactly to the configured immutable revision and its export manifest identifies the card's framework commit; full checkpoint-byte hashing remains a required recorded result of the selected worker's runtime fetch.",
+      "evidence": [
+        "access-controlled operator access and checkpoint-identity receipts"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "An operator-private candidate image carrying the immutable retrievable framework pin passed exact-digest pull qualification and executed the real preparation stage plus the framework-interpreter checkpoint fetch path. It remains quarantined from public release. A complete DROID native workflow is still required for capability acceptance.",
+      "evidence": [
+        "npa/deploy/public_release_manifest.json",
+        "npa/docker/workbench/packaging-contract.yaml"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "The private route independently verified a one-GPU RTX PRO 6000 Kubernetes target, registry pull-secret preparation, and provider identity; the workflow explicitly requests that compatible accelerator. A native run remains required before any live acceptance, benchmark result, or robot claim.",
+      "evidence": [
+        "docs/workbench/cosmos3-droid-forward-dynamics.md"
+      ]
+    }
+  }
+}
