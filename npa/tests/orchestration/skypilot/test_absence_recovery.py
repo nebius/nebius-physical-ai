@@ -889,9 +889,13 @@ def _zero_submission_config():
     return config
 
 
+def _journal_timestamp(journal, field):
+    return datetime.fromisoformat(journal[field].replace("Z", "+00:00"))
+
+
 def _zero_producer_records(directory, manifest, journal):
-    start = datetime.fromisoformat(journal["created_at"]) - timedelta(seconds=1)
-    end = datetime.fromisoformat(journal["updated_at"]) + timedelta(microseconds=100)
+    start = _journal_timestamp(journal, "created_at") - timedelta(seconds=1)
+    end = _journal_timestamp(journal, "updated_at") + timedelta(microseconds=100)
     workflow = put(directory / "workflow.yaml", {"synthetic": True})
     runner = put(directory / "runner.py", {"synthetic": True})
     stderr = put(directory / "stderr.log", {"synthetic": "failure"})

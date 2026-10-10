@@ -9,6 +9,11 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "lyra2": [
+        "checksummed operator RGB capture and pinned Lyra checkpoint load",
+        "native CUDA reconstruction produces Gaussian geometry and camera poses",
+        "rendered MP4 fully decodes and an offline HTML viewer is produced",
+    ],
     "antioch": [
         "FastAPI service authentication boundary",
         "CPU-only system-info contract",
