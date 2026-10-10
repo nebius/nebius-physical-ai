@@ -266,15 +266,23 @@ def _drive(
     admitting = True
     try:
         while True:
-            if admitting and len(active) < concurrency:
+            # Keep an admission cohort intact until every member has
+            # reconciled.  Refilling one completed slot while a sibling is
+            # still unresolved can admit new work immediately before that
+            # sibling reports a failure.
+            if admitting and not active:
                 _validate_source(plan)
-            while admitting and len(active) < concurrency:
-                run = next(pending, None)
-                if run is None:
-                    admitting = False
-                    break
-                active[run["run_id"]] = _launch(plan, run, directory, state, lock_fd)
-                report(f"Started {run['run_id']}; active workflow runs: {len(active)}")
+                while admitting and len(active) < concurrency:
+                    run = next(pending, None)
+                    if run is None:
+                        admitting = False
+                        break
+                    active[run["run_id"]] = _launch(
+                        plan, run, directory, state, lock_fd
+                    )
+                    report(
+                        f"Started {run['run_id']}; active workflow runs: {len(active)}"
+                    )
             if not active:
                 return
             time.sleep(0.2)

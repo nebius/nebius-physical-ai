@@ -141,8 +141,11 @@ def update(delta):
         handle.truncate()
 update(1)
 time.sleep(0.3)
+failure = os.getenv('BATCH_TEST_FAILURE') == run_id and not resume
+if failure:
+    time.sleep(float(os.getenv('BATCH_TEST_FAILURE_DELAY', '0')))
 update(-1)
-if os.getenv('BATCH_TEST_FAILURE') == run_id and not resume:
+if failure:
     print('lost response')
     sys.exit(1)
 print(json.dumps({'status': 'succeeded', 'run_id': run_id}))
@@ -183,12 +186,19 @@ def test_failure_stops_admission_and_resume_reconciles_first(
     manifest, children, tmp_path, monkeypatch
 ):
     monkeypatch.setenv("BATCH_TEST_FAILURE", "test-batch-item-0")
+    # Let the successful sibling free a slot before item-0 reports its
+    # failure.  A driver must not use that slot to admit item-2 yet.
+    monkeypatch.setenv("BATCH_TEST_FAILURE_DELAY", "0.3")
     result = batch.run_batch(
         manifest[0], state_dir=tmp_path / "state", max_concurrent_runs=2
     )
     assert result["runs"]["test-batch-item-0"]["status"] == "reconcile-required"
     assert result["runs"]["test-batch-item-2"]["status"] == "pending"
-    assert len(json.loads(children.read_text())["calls"]) == 2
+    initial_calls = json.loads(children.read_text())["calls"]
+    assert [call["run_id"] for call in initial_calls] == [
+        "test-batch-item-0",
+        "test-batch-item-1",
+    ]
     result = batch.run_batch(
         manifest[0], state_dir=tmp_path / "state", max_concurrent_runs=2, resume=True
     )
