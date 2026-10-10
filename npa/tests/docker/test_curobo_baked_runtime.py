@@ -245,6 +245,84 @@ def test_full_setuptools_seed_has_its_own_fixed_wheel_lock():
     assert donor["sha256"] not in final
 
 
+def _assert_setuptools_seed_lock_binding(retained, seed_lock):
+    lock = " ".join(
+        line for line in seed_lock.splitlines() if not line.startswith("#")
+    ).replace("\\", "")
+    pin = re.fullmatch(r"setuptools==([^\s]+)\s+--hash=sha256:([0-9a-f]{64})", lock)
+    assert pin is not None, "setuptools seed lock shape changed"
+    wheel = f"usr/share/python-wheels/setuptools-{pin[1]}-py3-none-any.whl"
+    assert retained[wheel]["sha256"] == pin[2], "setuptools seed digest drift"
+
+
+def _assert_bootstrap_seed_recipe_binding(payload, seed_lock, dockerfile):
+    seeds = payload["bootstrap_seeds"]
+    retained = {row["path"]: row for row in seeds["retained"]}
+    _assert_setuptools_seed_lock_binding(retained, seed_lock)
+    producer = dockerfile.split("AS runtime-producer", 1)[1].split(
+        "\nFROM scratch AS runtime", 1
+    )[0]
+    instructions = re.sub(r"\\\n\s*", " ", producer).splitlines()
+    apt = next(line for line in instructions if line.startswith("RUN --mount="))
+    commands = [shlex.split(command) for command in apt.split(" && ")]
+    installed = {
+        str(Path(command[-1]) / Path(command[-2]).name).lstrip("/")
+        for command in commands
+        if command[:3] == ["install", "-m", "0444"]
+    }
+    assert installed == {path for path in retained if path.endswith(".whl")}, (
+        "bootstrap wheel install paths drift"
+    )
+    removed = {
+        path.lstrip("/")
+        for command in commands
+        if command[0] == "rm"
+        for path in command[1:]
+        if path.startswith("/usr/share/python-wheels/")
+    }
+    assert removed == set(seeds["forbidden_paths"]), "superseded seed paths drift"
+    copies = [shlex.split(line) for line in instructions if line.startswith("COPY ")]
+    receipt = next(path for path in retained if not path.endswith(".whl"))
+    assert any(
+        row[-2:] == ["/opt/secure-pip-wheels/build-receipt.json", "/" + receipt]
+        and "--from=secure-pip-builder" in row
+        and "--chmod=0444" in row
+        for row in copies
+    ), "bootstrap receipt install path drift"
+
+
+@pytest.mark.parametrize(
+    "mutation", [None, "lock", "install", "remove", "receipt", "forbidden"]
+)
+def test_bootstrap_seed_contract_binds_lock_and_recipe(mutation):
+    payload = json.loads(RUNTIME_PAYLOAD.read_text())
+    seed_lock = DOCKERFILE.with_name("setuptools-seed.lock").read_text()
+    dockerfile = DOCKERFILE.read_text()
+    if mutation == "lock":
+        seed_lock = re.sub(r"sha256:[0-9a-f]{64}", "sha256:" + "0" * 64, seed_lock)
+    elif mutation == "install":
+        dockerfile = dockerfile.replace(
+            "install -m 0444 /opt/setuptools-84.0.0-py3-none-any.whl /usr/share/python-wheels/",
+            "install -m 0444 /opt/setuptools-84.0.0-py3-none-any.whl /wrong/",
+        )
+    elif mutation == "remove":
+        dockerfile = dockerfile.replace(
+            "rm /usr/share/python-wheels/pip-24.0-py3-none-any.whl",
+            "rm /usr/share/python-wheels/wrong.whl",
+        )
+    elif mutation == "receipt":
+        dockerfile = dockerfile.replace(
+            "/usr/share/doc/npa-curobo/secure-pip-build.json", "/wrong/receipt.json"
+        )
+    elif mutation == "forbidden":
+        payload["bootstrap_seeds"]["forbidden_paths"][0] = "wrong/old-seed.whl"
+    if mutation is None:
+        _assert_bootstrap_seed_recipe_binding(payload, seed_lock, dockerfile)
+    else:
+        with pytest.raises(AssertionError, match="drift"):
+            _assert_bootstrap_seed_recipe_binding(payload, seed_lock, dockerfile)
+
+
 def test_full_seed_replacement_occurs_before_the_apt_layer_is_committed():
     final = runtime_producer()
     instructions = re.sub(r"\\\n\s*", " ", final).splitlines()
