@@ -230,6 +230,10 @@ change per-dataset behavior, blend source pixels, or relax quality thresholds.
 
 ## Measured twelve-scenario fanout
 
+Use the [fresh-source ALOHA fanout recipe](paidf-aloha-cups-fanout.md) and its
+seven-stage review workflow to rerun these profiles from a newly downloaded,
+hash-verified episode. It keeps the strict thresholds and never promotes data.
+
 The cup-opening episode produced twelve distinct, complete Cosmos3-Nano videos
 using the [profile example](../examples/paidf-cups-fanout-profiles.json). Each has
 192 frames at 24 fps and an eight-second duration. Two GPUs generated variants

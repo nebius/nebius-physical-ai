@@ -225,6 +225,13 @@ one-shot test verifies that assumed promotion is refused. Runtime validation
 downloads and fully decodes the source and generated videos, verifies their
 timelines and control hashes, and checks every downstream component report.
 
+For the complete twelve-candidate ALOHA review, select
+`NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS=paidf-aloha-cups-fanout.yaml`, enable the
+runtime lane, and set `NPA_E2E_PAIDF_ALOHA_DATASET_URI` to the freshly staged,
+hash-verified dataset directory from the [fanout recipe](../docs/workbench/guides/paidf-aloha-cups-fanout.md).
+This case retains strict quality outcomes and produces terminal review evidence;
+workflow completion does not mean candidates were accepted for training.
+
 ## Further reading
 
 - [Workflow runbooks](guides/README.md) and [robot guides](../docs/workbench/guides/README.md).

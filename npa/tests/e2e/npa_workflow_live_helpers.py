@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 
 import httpx
 import pytest
+import yaml
 from typer.testing import Result
 
 from npa.clients.config import resolve_project_storage
@@ -323,6 +324,10 @@ def seed_live_workflow_inputs(
             "XR1 requires an operator-collected, sealed Antioch dataset, pinned model assets, "
             "and a verified SM120 runtime. Follow docs/workbench/cookbooks/xr1-antioch.md."
         )
+
+    if spec_name == "paidf-aloha-cups-fanout.yaml":
+        # The operator stages the pinned public camera and its real metadata.
+        return
 
     marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
@@ -1871,6 +1876,23 @@ def materialize_live_spec(
         count=1,
     )
     paidf_stem = name.replace(".yaml", "")
+    if name == "paidf-aloha-cups-fanout.yaml":
+        dataset_uri = os.environ.get("NPA_E2E_PAIDF_ALOHA_DATASET_URI", "").strip()
+        parsed = urlparse(dataset_uri)
+        if (
+            parsed.scheme != "s3"
+            or not parsed.netloc
+            or not parsed.path.strip("/")
+            or parsed.query
+            or parsed.fragment
+        ):
+            pytest.fail(
+                "NPA_E2E_PAIDF_ALOHA_DATASET_URI must name the fresh pinned "
+                "dataset's S3 directory; follow the ALOHA fanout recipe."
+            )
+        payload = yaml.safe_load(text)
+        payload["config"]["lerobot_dataset_uri"] = dataset_uri.rstrip("/") + "/"
+        text = yaml.safe_dump(payload, sort_keys=False)
     if name in {
         "paidf-image-attribute-augmentation.yaml",
         "paidf-event-video-generation.yaml",
