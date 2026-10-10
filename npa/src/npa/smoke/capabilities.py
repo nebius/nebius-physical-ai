@@ -300,6 +300,13 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "offline CUDA runtime probe refuses without downloading the absent cache",
         "no LTX source, weights, or CUDA distribution present in the image",
     ],
+    "hy-world": [
+        "candidate image carries no Tencent source, weights, cache, or generated scene bytes",
+        "future exact-digest B200 run must execute HY-Pano, WorldNav, WorldStereo and 3DGS composition",
+        "generated WorldStereo video is decoded and camera matrices plus PLY/SPZ assets are verified",
+        "factual Rerun report is emitted only from validated generated-scene artifacts",
+        "no text-to-world, collision, calibrated-scale, or robot-policy claim is made",
+    ],
     "sim2real-control": [
         "canonical 14-stage compositional workflow loads and validates",
         "real controller expands promote and loop-back execution plans",

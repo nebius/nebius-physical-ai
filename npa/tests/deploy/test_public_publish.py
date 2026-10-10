@@ -474,7 +474,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
     assert UNVALIDATED_PUBLICATION_TOOLS == (
-        frozenset({"openpi", "curobo", "ncore", "libero", "sam3"})
+        frozenset({"openpi", "curobo", "ncore", "libero", "sam3", "hy-world"})
         | ({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
     )
     assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset()
@@ -1364,6 +1364,7 @@ def test_accepted_release_plan_partitions_published_and_pending_tools() -> None:
     assert set(manifest["releases"]) == set(publicly_publishable_tools())
     assert set(manifest["publication_pending"]) == {
         "antioch",
+        "hy-world",
         *STALE_PUBLICATION_TOOLS,
     }
     for item in plan:

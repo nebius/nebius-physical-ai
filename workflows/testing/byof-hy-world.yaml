@@ -1,0 +1,98 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Candidate-only HY-World 2.0 image-to-world workflow. It is intentionally
+# plan-only until a manager-held scope record confirms the Tencent territory/MAU
+# condition or a Tencent grant, then an exact candidate digest completes the
+# secure build and real B200 validation gates.
+metadata:
+  name: byof-hy-world
+  # The artifact/provenance contract is enforced by the durable workflow
+  # runtime. This makes runtime execution the default for agents and rejects
+  # an explicit --no-runtime rather than silently selecting a flattened task.
+  executionMode: runtime
+  description: >
+    Runtime-fetch Tencent HY-World 2.0 image-conditioned world generation:
+    Qwen-Image-Edit HY-Pano, WorldNav, WorldStereo, GS-data preparation and 3DGS
+    composition. Emits actual generated scene assets, camera renders, provenance,
+    and a verified Rerun report; it neither creates a service nor trains a policy.
+
+config:
+  bucket: example-bucket
+  # This is the one parent for the declared artifacts and the BYOF uploader.
+  # The standard runner appends the run ID exactly once.
+  prefix: "oss-solutions/hy-world"
+  input_image_uri: "s3://example-bucket/operator-inputs/image.png"
+  prompt: "Expand the supplied image into a coherent, navigable world."
+  # NPA_HY_WORLD_LLM_ADDR is a secret environment variable, not configuration:
+  # it is an operator-owned, already-running vLLM endpoint and this workflow
+  # neither creates nor persists that service address.
+  llm_port: "8000"
+
+  repo_url: "https://github.com/Tencent-Hunyuan/HY-World-2.0"
+  repo_ref: "df9988efb87bfc0f4947eb3889411cf957478b06"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
+  base_profile: prebuilt
+  base_image: "tool://hy-world"
+  build_command: ""
+  source_prune_path: ""
+  workload: solution-smoke
+  smoke_command: |
+    set -euo pipefail
+    : "${BYOF_IMAGE:?BYOF image digest is required}"
+    : "${NPA_SMOKE_OUTPUT_DIR:?BYOF output directory is required}"
+    : "${NPA_HY_WORLD_LLM_ADDR:?private vLLM address must be passed as a SkyPilot secret}"
+    export HY_WORLD_PROMPT_B64="{{config.prompt|base64}}"
+    export HY_WORLD_INPUT_IMAGE_URI_B64="{{config.input_image_uri|base64}}"
+    export HY_WORLD_LLM_PORT_B64="{{config.llm_port|base64}}"
+    exec python3 /opt/npa/hy-world/workflow_runner.py
+  solution_name: "hy-world-2.0"
+  capability_name: "hy_world_2_image_conditioned_world_generation"
+  smoke_artifact_name: "hy_world_image_to_world.json"
+  resource_profile_yaml: "byof-solution-smoke-hy-world-b200-8gpu"
+  task: "hy-world-2-image-to-world"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: "-1"
+  poll_interval: "60"
+  output_root: "s3://{{config.bucket}}/{{config.prefix}}"
+  summary_uri: "s3://{{config.bucket}}/{{config.prefix}}/{{run.id}}/npa_byof_summary.json"
+  artifact_uri: "s3://{{config.bucket}}/{{config.prefix}}/{{run.id}}/hy_world_image_to_world.json"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/{{run.id}}/reports/hy_world_scene.rrd"
+  rrd_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/{{run.id}}/reports/hy_world_scene_rrd_manifest.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    image: "{{config.base_image}}"
+    accelerators: B200:8
+    cpus: 128
+    memory: 1024Gi
+    disk_size: 1000
+
+initial: generate
+
+states:
+  generate:
+    description: >
+      Run the pinned released image-to-world path on one image, validating
+      WorldStereo output, upstream cameras, trained 3DGS PLY/SPZ, a generated
+      camera-render video, and a Rerun recording. Requires a private pre-existing
+      vLLM endpoint and the operator's resolved Tencent terms/access record.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    inputs:
+      - uri: "{{config.input_image_uri}}"
+        schema: image/png
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+      - uri: "{{config.artifact_uri}}"
+        schema: npa.workbench.byof.hy_world_image_to_world.v1
+      - uri: "{{config.rrd_uri}}"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.rrd_manifest_uri}}"
+        schema: npa.workbench.hy_world_2.rrd_manifest.v1
+    terminal: true

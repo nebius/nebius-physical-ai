@@ -40,6 +40,7 @@ it remains unvalidated end to end. For browser teleoperation measurements, see
 | Goal | Start with |
 | --- | --- |
 | Generate images with Cosmos 3 | [Generation guide](../cosmos3-generate.md) and [access preflight](../cosmos3-access-preflight.md) |
+| Generate an image-conditioned 3D world (candidate) | [HY-World 2.0](../byof-hy-world.md); private Tencent/Meta eligibility, private image digest, Qwen vLLM endpoint, and GPU qualification are required |
 | Augment your source video with Cosmos 3 | [PAIDF + Cosmos 3](paidf-cosmos3.md) and [setup/run procedure](../../../workflows/guides/paidf-cosmos3.md) |
 | Generate twelve distinct appearance scenarios | [Reusable twelve-profile recipe](paidf-appearance-12.md); one separate MP4 per variant |
 | Assess augmentation across manipulation tasks | [LeRobot realism comparison](paidf-lerobot-realism.md); pinned cup, coffee and simulated cube-lift episodes |

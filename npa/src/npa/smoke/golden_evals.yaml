@@ -1303,6 +1303,32 @@ containers:
       timeout_seconds: 120
       status: ready
 
+  hy-world:
+    image: npa-hy-world
+    dockerfile: npa/docker/workbench/hy-world/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Candidate runtime-fetch image for released HY-World 2.0 image-conditioned
+        panorama-to-world generation and factual Gaussian-splat scene reporting.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04 (digest pinned; native extensions compile at operator runtime)
+      network: runtime-only Tencent source/checkpoints, WorldStereo and Qwen components, and S3
+      external_fetch: [operator-approved-tencent-hy-world-runtime, huggingface, operator-vllm, s3]
+      notes: >-
+        The unbuilt bootstrap contains no Tencent source, weights, caches, input,
+        or output. Its future exact-digest GPU gate must run the full released
+        image-to-world path and decode its output; this static command is only
+        the packaging health/absence gate and is not capability evidence.
+    golden_eval:
+      kind: container-smoke
+      command: bash /usr/local/bin/npa-hy-world-golden-smoke
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: unlimited
+      status: needs-image-update
+
   mjlab:
     image: npa-mjlab
     dockerfile: npa/docker/workbench/mjlab/Dockerfile

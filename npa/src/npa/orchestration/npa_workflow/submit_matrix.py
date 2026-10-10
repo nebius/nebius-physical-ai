@@ -255,6 +255,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
+        "byof-hy-world.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "Tencent HY-WORLD 2.0 territory/MAU eligibility or a Tencent grant is "
+            "not recorded in this private scope; no Tencent material may be fetched "
+            "until that operator fact is supplied."
+        ),
+        notes=(
+            "Candidate-only released image-to-world workflow. It also needs an "
+            "immutable neutral-bootstrap digest and a private pre-existing Qwen3-VL "
+            "vLLM endpoint before its real eight-B200 GPU gate may run."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-cogvideox-2b.yaml",
         "gpu",
         plan_only=True,

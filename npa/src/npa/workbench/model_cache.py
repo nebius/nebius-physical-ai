@@ -149,6 +149,9 @@ class ModelCacheError(ValueError):
 #:   images ship zero weights.
 #: * ``NPA_CONTENT_AGENTS_RUNTIME_CACHE``: the exact OVRTX SDK delivered by
 #:   NVIDIA to the operator; the public Content Agents image ships zero OVRTX.
+#: * ``NPA_HY_WORLD_RUNTIME_CACHE``: the HY-World runtime-fetched upstream
+#:   source, compiled environment, and permitted model-adjacent runtime state.
+#:   The public image ships none of those operator-fetched bytes.
 MODEL_CACHE_LAYOUT: tuple[tuple[str, str], ...] = (
     ("HF_HOME", "huggingface"),
     ("HF_HUB_CACHE", "huggingface/hub"),
@@ -186,6 +189,7 @@ MODEL_CACHE_LAYOUT: tuple[tuple[str, str], ...] = (
     ("MODELSCOPE_CACHE", "flex-pi/modelscope"),
     ("NPA_SAM3_CACHE", "sam3"),
     ("NPA_CONTENT_AGENTS_RUNTIME_CACHE", "runtimes/content-agents"),
+    ("NPA_HY_WORLD_RUNTIME_CACHE", "huggingface/hy-world/runtime"),
 )
 
 #: Every variable this module can set. Callers that filter an environment down to
