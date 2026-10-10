@@ -51,19 +51,17 @@ def _quality(path: Path) -> dict:
     return values or {"NRE quality metrics": "unavailable"}
 
 
-def _timelines(capture, novel, validation, validation_root, view_type="Novel views"):
+def _timelines(capture, novel, validation, validation_root):
     groups = [
-        _group(
-            view_type,
-            novel,
-            "NRE renders from a nonzero rig offset. These views are not paired with source image indices."
-            if view_type == "Novel views"
-            else "NRE renders at the recorded training viewpoints.",
-        ),
         _group(
             "Input capture",
             capture,
             "Photographic source frames exported from the selected NCore capture.",
+        ),
+        _group(
+            "Novel views",
+            novel,
+            "NRE renders from a nonzero rig offset. These views are not paired with source image indices.",
         ),
     ]
     groups.extend(_validation_timelines(validation, validation_root))
@@ -145,32 +143,12 @@ def write_nurec_preview(root: Path, output: Path) -> dict:
         "novel views": len(novel),
         "validation images": len(validation),
     }
-    write_preview(output, **_presentation(root, capture, novel, validation, counts))
-    return {"image_counts": counts, "maximum_preview_images_per_group": 32}
-
-
-def _presentation(root, capture, novel, validation, counts):
-    from npa.workbench.nurec.render_evidence import verified_render_summary
-
-    evidence = verified_render_summary(root)
-    hardware = {"render GPU": evidence.get("render GPU", "Unverified")}
-    return dict(
-        title="Digital twin · neural reconstruction",
-        metrics={
-            **{
-                ("rendered views" if key == "novel views" else key): value
-                for key, value in counts.items()
-            },
-            **hardware,
-            **_quality(root / "reconstruction" / "metrics.yaml"),
-        },
-        summary="Explore a reconstructed real-world scene. Scrub or play the recorded camera views below. Each timeline samples up to 32 actual NRE output images; playback is a slideshow, not live free-camera rendering. Gaussian appearance alone does not establish collision geometry or navigation readiness.",
-        groups=_timelines(
-            capture,
-            novel,
-            validation,
-            root / "reconstruction" / "val",
-            evidence.get("view type", "Novel views"),
-        ),
-        details={**(_public_sample_credit(root) or {}), "render_evidence": evidence},
+    write_preview(
+        output,
+        title="Neural reconstruction",
+        metrics={**counts, **_quality(root / "reconstruction" / "metrics.yaml")},
+        summary="Real photographs reconstructed into a renderable Gaussian scene. Each timeline samples up to 32 actual output images; playback is a slideshow, not a new video. Gaussian appearance alone does not establish collision geometry or navigation readiness.",
+        groups=_timelines(capture, novel, validation, root / "reconstruction" / "val"),
+        details=_public_sample_credit(root),
     )
+    return {"image_counts": counts, "maximum_preview_images_per_group": 32}

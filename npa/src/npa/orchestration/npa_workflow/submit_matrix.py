@@ -72,20 +72,6 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
-        "digital-twin-campus-render.yaml",
-        "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        runtime=True,
-        notes="RTX OptiX campus rendering, native geometry counts, four camera routes and private offline HTML.",
-    ),
-    SubmitLiveCase(
-        "digital-twin-cuda-render.yaml",
-        "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        runtime=True,
-        notes="Native Blender Cycles CUDA reference scene, OpenUSD/glTF export, and offline HTML with bound rendering evidence.",
-    ),
-    SubmitLiveCase(
         "molmoact2-jetson-thor-edge.yaml",
         "cpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
