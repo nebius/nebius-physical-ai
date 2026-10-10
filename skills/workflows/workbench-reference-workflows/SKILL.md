@@ -143,8 +143,8 @@ These raw templates were retired once their `npa.workflow` spec had a live run
   (`npa workbench lancedb deploy --runtime kubernetes --namespace workbench`).
 - `sim-to-real-pipeline.yaml` / `sim-to-real-trigger.yaml` — retired. The pipeline ran the
   deprecated `npa.workflows.sim_to_real real-loop`; the maintained path and the
-  watcher's submit target are the single staged-engine YAML,
-  `workflows/main/sim2real.yaml`.
+  watcher's submit target are the canonical 14-stage `npa.workflow` spec,
+  `workflows/main/sim2real.yaml`, executed through the ordinary SkyPilot runtime.
 - `cosmos2-transfer.yaml` — retired to `workflows/testing/cosmos2-transfer.yaml`, which runs the
   REAL Cosmos-Transfer2.5 model (`--execute`) instead of printing a `contract_ready` payload.
 - `isaac-franka-capture-reason.yaml` — retired to

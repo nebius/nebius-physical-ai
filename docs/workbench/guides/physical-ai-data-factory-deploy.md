@@ -1304,7 +1304,7 @@ Notes:
   [`author-npa-workflow`](../../../skills/workflows/author-npa-workflow/SKILL.md).
 - Operating the agent VM (chat, Rerun, verify-live):
   [`npa-agent`](../../../skills/tools/npa-agent/SKILL.md).
-- Staged Sim2Real operations on Kubernetes:
+- Canonical 14-stage Sim2Real operations through SkyPilot on Kubernetes:
   [`sim2real-operate`](../../../skills/workflows/sim2real-operate/SKILL.md).
 - FiftyOne curation deep-dive:
   [`fiftyone`](../../../skills/tools/fiftyone/SKILL.md).

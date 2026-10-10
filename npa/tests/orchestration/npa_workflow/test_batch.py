@@ -140,6 +140,14 @@ def update(delta):
         json.dump(state, handle)
         handle.truncate()
 update(1)
+minimum_started = int(os.getenv('BATCH_TEST_START_BARRIER', '0'))
+while minimum_started:
+    with path.open() as handle:
+        fcntl.flock(handle, fcntl.LOCK_SH)
+        started = len(json.load(handle)['calls'])
+    if started >= minimum_started:
+        break
+    time.sleep(0.01)
 time.sleep(0.3)
 update(-1)
 if os.getenv('BATCH_TEST_FAILURE') == run_id and not resume:
@@ -156,8 +164,11 @@ print(json.dumps({'status': 'succeeded', 'run_id': run_id}))
 
 
 def test_real_children_obey_limit_and_completed_resume_reverifies(
-    manifest, children, tmp_path
+    manifest, children, tmp_path, monkeypatch
 ):
+    # Startup and durable writes may outlast the synthetic child workload.
+    # Hold the first wave until every slot has started to measure real overlap.
+    monkeypatch.setenv("BATCH_TEST_START_BARRIER", "3")
     result = batch.run_batch(
         manifest[0], state_dir=tmp_path / "state", max_concurrent_runs=3
     )
@@ -170,6 +181,7 @@ def test_real_children_obey_limit_and_completed_resume_reverifies(
         call["args"][call["args"].index("--max-wait-seconds") + 1] == "0"
         for call in evidence["calls"]
     )
+    monkeypatch.setenv("BATCH_TEST_START_BARRIER", "9")
     batch.run_batch(
         manifest[0], state_dir=tmp_path / "state", max_concurrent_runs=3, resume=True
     )

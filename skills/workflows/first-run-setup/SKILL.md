@@ -226,8 +226,8 @@ audit.
 
 ## Common cold-start stumbles
 
-- **`sim2real` and `sim-to-real` are different things.** `sim2real` is the staged
-  14-stage VLM-to-RL loop; `sim-to-real` is the older H100 pipeline. The spelling
+- **`sim2real` and `sim-to-real` are different things.** `sim2real` is the canonical
+  14-stage SkyPilot VLM-to-RL loop; `sim-to-real` is the older H100 pipeline. The spelling
   is the disambiguator.
 - **A Token Factory key is not a Nebius IAM token.** It starts with `v1.` and
   lives in `NEBIUS_TOKEN_FACTORY_KEY`.

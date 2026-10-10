@@ -2843,6 +2843,7 @@ def submit_cmd(
             _runtime_submit_environment(
                 merged_npa_spec,
                 run_id=resolved_run_id,
+                project=project,
                 secret_env_values=extra_env,
                 endpoint=render_endpoint,
                 isolated_config_dir=isolated_config_dir,
@@ -3842,6 +3843,7 @@ def _runtime_submit_environment(
     spec,
     *,
     run_id: str,
+    project: str,
     secret_env_values: Mapping[str, str],
     endpoint: str,
     isolated_config_dir: Path | None = None,
@@ -3854,6 +3856,9 @@ def _runtime_submit_environment(
     )
 
     environment = dict(secret_env_values)
+    # The first discovery starts the owned API. Its project must already match
+    # the target that stage submission and durable observations will select.
+    environment["NPA_SKYPILOT_PROJECT"] = project or "default"
     resolved_config = _make_context(spec, run_id=run_id).config
     for key in ("bucket", "prefix"):
         if key in resolved_config:
@@ -4007,6 +4012,7 @@ def _run_npa_workflow_runtime(
     runtime_env = _runtime_submit_environment(
         spec,
         run_id=run_id,
+        project=project,
         secret_env_values=secret_env_values,
         endpoint=str(getattr(render_options, "aws_endpoint_url", "") or "").strip(),
         isolated_config_dir=isolated_config_dir,

@@ -852,6 +852,7 @@ def configured_gpu_runtime(mocker, monkeypatch, satisfied_preflight):
     expected = {
         "AWS_ACCESS_KEY_ID": "project-access",
         "AWS_SECRET_ACCESS_KEY": "project-secret",
+        "NPA_SKYPILOT_PROJECT": "selected-project",
         "NPA_S3_BUCKET": "rt-bucket",
         "NPA_S3_PREFIX": "runs/identity-test",
         **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, "https://storage.example.invalid"),
@@ -860,6 +861,7 @@ def configured_gpu_runtime(mocker, monkeypatch, satisfied_preflight):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://ambient.example.invalid")
+    monkeypatch.setenv("NPA_SKYPILOT_PROJECT", "ambient-project")
     original_environment = {key: os.environ.get(key) for key in expected}
     mocker.patch(
         "npa.orchestration.npa_workflow.submit_credentials.resolve_project_storage",
@@ -928,6 +930,8 @@ def test_runtime_discovery_preserves_resolved_identity_and_restores_environment(
             str(gpu_then_cpu_spec),
             "--run-id",
             "identity-test",
+            "--project",
+            "selected-project",
             "--runtime",
             "--infra",
             "k8s/unit-context",
