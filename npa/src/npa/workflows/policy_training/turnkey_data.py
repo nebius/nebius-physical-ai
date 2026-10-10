@@ -188,9 +188,7 @@ def curate(args, workspace: Path, output: Path) -> None:
     finally:
         from .diagnostics import _cleanup
 
-        _cleanup(
-            dataset.delete, args.output_uri.rstrip("/") + "-diagnostics/error.json"
-        )
+        _cleanup(dataset.delete, args.output_uri.rstrip("/") + "-diagnostics/")
     _curation_evidence(output, corpus)
 
 

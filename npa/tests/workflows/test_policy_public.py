@@ -246,3 +246,57 @@ def test_http_session_authentication_and_monotonic_sequence(monkeypatch, tmp_pat
         == 200
     )
     assert server.should_exit is True
+
+
+def test_private_diagnostics_directory_is_not_nested_or_misnamed(monkeypatch):
+    from npa.workflows.policy_training import diagnostics
+
+    written = []
+    monkeypatch.setattr(
+        diagnostics,
+        "write_json_uri",
+        lambda uri, payload: written.append((uri, payload)),
+    )
+    diagnostics._failure(
+        "s3://example-bucket/run/train-diagnostics/",
+        ValueError("private worker failure"),
+    )
+    assert len(written) == 1
+    uri, payload = written[0]
+    assert uri.startswith("s3://example-bucket/run/train-diagnostics/")
+    assert uri.count("diagnostics") == 1 and uri.endswith(".json")
+    assert payload["error_type"] == "ValueError"
+
+
+def test_interrupted_recovery_rejects_a_changed_training_selection(
+    monkeypatch, tmp_path
+):
+    from npa.workflows.policy_training import turnkey_runtime
+
+    monkeypatch.setattr(
+        turnkey_runtime,
+        "_recovery_pointer",
+        lambda uri: {
+            "recipe_sha256": "a" * 64,
+            "selection_sha256": "b" * 64,
+        },
+    )
+    with pytest.raises(ValueError, match="selection changed"):
+        turnkey_runtime.partial_recovery(
+            "s3://example-bucket/recovery/", tmp_path, "a" * 64, "c" * 64
+        )
+
+
+def test_interrupted_recovery_does_not_hide_storage_authorization_failure(
+    monkeypatch, tmp_path
+):
+    from botocore.exceptions import ClientError
+    from npa.workbench.dataset import storage
+    from npa.workflows.policy_training.turnkey_runtime import partial_recovery
+
+    def denied(uri):
+        raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")
+
+    monkeypatch.setattr(storage, "read_json_uri", denied)
+    with pytest.raises(ClientError):
+        partial_recovery("s3://example-bucket/recovery/", tmp_path, "a" * 64, "b" * 64)

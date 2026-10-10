@@ -10,7 +10,12 @@ from npa.workbench.dataset.storage import write_json_uri
 
 
 def _record(output_uri, payload):
-    uri = output_uri.rsplit("/", 1)[0] + "/diagnostics/" + uuid.uuid4().hex + ".json"
+    prefix = (
+        output_uri
+        if output_uri.endswith("/")
+        else output_uri.rsplit("/", 1)[0] + "/diagnostics/"
+    )
+    uri = prefix + uuid.uuid4().hex + ".json"
     try:
         write_json_uri(uri, payload)
     except Exception:

@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
                     "deployment qualification failed; measured HTML proof was retained"
                 )
     except Exception as exc:
-        _failure(args.output_uri.rstrip("/") + "-diagnostics/error.json", exc)
+        _failure(args.output_uri.rstrip("/") + "-diagnostics/", exc)
         raise SystemExit(f"public policy stage failed ({type(exc).__name__})") from None
     print(
         json.dumps(

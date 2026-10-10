@@ -63,6 +63,52 @@ PYPI_JSON = "https://pypi.org/pypi/lerobot/{version}/json"
 # (module, symbol, call-site provenance). symbol=None checks the module only.
 IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
     (
+        "lerobot.datasets.lerobot_dataset",
+        "LeRobotDataset",
+        ("npa/src/npa/workflows/policy_training/turnkey_holdout.py",),
+    ),
+    (
+        "lerobot.policies.factory",
+        "make_pre_post_processors",
+        (
+            "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
+            "npa/src/npa/workflows/policy_training/turnkey_server.py",
+        ),
+    ),
+    (
+        "lerobot.policies.smolvla.modeling_smolvla",
+        "SmolVLAPolicy",
+        (
+            "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
+            "npa/src/npa/workflows/policy_training/turnkey_server.py",
+        ),
+    ),
+    (
+        "lerobot.datasets.dataset_metadata",
+        "LeRobotDatasetMetadata",
+        ("npa/src/npa/workflows/policy_training/turnkey_holdout.py",),
+    ),
+    (
+        "lerobot.datasets.factory",
+        "resolve_delta_timestamps",
+        ("npa/src/npa/workflows/policy_training/turnkey_holdout.py",),
+    ),
+    (
+        "lerobot.envs.libero",
+        "LiberoEnv",
+        ("npa/src/npa/workflows/policy_training/turnkey_client.py",),
+    ),
+    (
+        "lerobot.envs.utils",
+        "preprocess_observation",
+        ("npa/src/npa/workflows/policy_training/turnkey_client.py",),
+    ),
+    (
+        "lerobot.processor",
+        "LiberoProcessorStep",
+        ("npa/src/npa/workflows/policy_training/turnkey_client.py",),
+    ),
+    (
         "lerobot.envs.libero",
         None,
         ("npa/src/npa/workflows/policy_training/public_vla_eval.py",),

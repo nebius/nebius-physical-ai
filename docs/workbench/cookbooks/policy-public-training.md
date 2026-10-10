@@ -14,12 +14,12 @@ The immutable published images are checked through the standard image preflight.
 Public HF snapshots are revision-pinned and fetched without an HF credential.
 
 ```bash
-npa workbench health preflight --checks s3,nebius --project <project> --json
-npa skypilot verify --cluster <context> --kubeconfig <kubeconfig>
+npa workbench health preflight --checks s3,nebius --project "<project>" --json
+npa skypilot verify --cluster "<context>" --kubeconfig "<kubeconfig>"
 npa workbench workflow validate-spec workflows/testing/policy-public-training.yaml --json
 npa workbench workflow submit workflows/testing/policy-public-training.yaml \
-  --project <project> --infra k8s/<context> --runtime --stage-src \
-  --var bucket=<private-bucket> \
+  --project "<project>" --infra "k8s/<context>" --runtime --stage-src \
+  --var "bucket=<private-bucket>" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
@@ -32,7 +32,7 @@ runtime state with `--resume --resume-run <run-id>`. Training additionally saves
 complete native model, optimizer, scheduler, RNG and sampler recovery state to
 S3 during execution. Failed gates resume their preceding native candidate and
 add another epoch increment. There is no implicit iteration or cost cap; cancel
-with `npa workbench workflow cancel <run-id> --project <project> --json`.
+with `npa workbench workflow cancel <run-id> --project "<project>" --json`.
 
 The recipe in YAML controls epochs, batch size, seed, workers, evaluation trials
 and the success threshold. Change it before starting a new run. Three disjoint
@@ -62,7 +62,7 @@ Collect the private run's `reports/` and `serving/{server,client}/` directories
 through the configured artifact transport, then verify the same-run evidence:
 
 ```bash
-NPA_POLICY_PUBLIC_RESULTS=<collected-run-directory> \
+NPA_POLICY_PUBLIC_RESULTS="<collected-run-directory>" \
   npa/.venv/bin/python -m pytest npa/tests/e2e/test_policy_public_live.py -q
 ```
 

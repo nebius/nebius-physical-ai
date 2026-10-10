@@ -75,7 +75,7 @@ def _server(args, parent, output, addresses):
 
     token = secrets.token_urlsafe(32)
     config = uvicorn.Config(
-        app=None, host="0.0.0.0", port=8080, access_log=False, log_level="error"
+        app=None, host=addresses[0], port=8080, access_log=False, log_level="error"
     )
     server = uvicorn.Server(config)
     expected = read(parent, "promotion.json")["checkpoint_sha256"]
