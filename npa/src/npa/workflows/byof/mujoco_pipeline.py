@@ -1,0 +1,186 @@
+"""mujoco workbench workflow stage (real implementation).
+
+Mirrors the ``newton_pipeline.py`` module pattern: a stage function backed by
+an argparse entry point (``main``), a module-level error type, and JSON
+stage artifacts written to URIs.
+
+Stage ``run`` executes N episodes of a scripted policy on a MuJoCo
+manipulation task (real MuJoCo stepping, programmatic MJCF scenes) and writes
+a trajectories + metrics report.
+
+Invoked as ``python3 -m npa.workflows.byof.mujoco_pipeline``.  The ``mujoco``
+import stays inside the stage function so the CLI surface imports on machines
+without MuJoCo installed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
+from typing import Any, Mapping, Sequence
+
+from npa.workflows.byof.artifact_io import ArtifactPathError, write_bytes
+
+SCHEMA_RUN = "npa.workbench.mujoco_manip.run.v1"
+TRAJECTORY_STRIDE = 20
+
+
+class MujocoPipelineError(RuntimeError):
+    """Raised when a mujoco pipeline invariant is not met."""
+
+
+def _resolve_output_path(*, output_path: str = "", output_uri: str = "") -> str:
+    """Resolve the canonical output-path spelling and its transitional alias."""
+    if output_path and output_uri and output_path != output_uri:
+        raise MujocoPipelineError(
+            "output_path and compatibility output_uri must identify the same destination"
+        )
+    resolved = output_path or output_uri
+    if not resolved:
+        raise MujocoPipelineError("output_path is required")
+    return resolved
+
+
+def _write_json_path(output_path: str, payload: Mapping[str, Any]) -> str:
+    try:
+        return write_bytes(
+            output_path,
+            (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+            content_type="application/json",
+        )
+    except ArtifactPathError as exc:
+        raise MujocoPipelineError(str(exc)) from exc
+
+
+def run(
+    *,
+    task: str,
+    policy: str,
+    output_path: str = "",
+    output_uri: str = "",
+    episodes: int = 10,
+    seed: int = 0,
+    max_steps: int = 500,
+) -> Mapping[str, Any]:
+    """Run N episodes of a scripted policy; write trajectories + metrics."""
+    from npa.workbench import mujoco_manip
+
+    if not task:
+        raise MujocoPipelineError("task is required")
+    if not policy:
+        raise MujocoPipelineError("policy is required")
+    output_path = _resolve_output_path(output_path=output_path, output_uri=output_uri)
+    if episodes < 1:
+        raise MujocoPipelineError("episodes must be >= 1")
+    if max_steps < 1:
+        raise MujocoPipelineError("max_steps must be >= 1")
+
+    short_task = task.split(".", 1)[-1]
+    policy_name = policy.split(":", 1)[1] if ":" in policy else policy
+
+    episode_reports: list[dict[str, Any]] = []
+    successes = 0
+    for index in range(episodes):
+        episode_seed = seed + index
+        env = mujoco_manip.make_env(short_task, max_steps=max_steps)
+        policy_fn = mujoco_manip.get_policy(short_task, policy_name, seed=episode_seed)
+        obs = env.reset(seed=episode_seed)
+        trajectory: list[list[float]] = []
+        total_reward = 0.0
+        success = False
+        steps = 0
+        for step in range(1, max_steps + 1):
+            obs, reward, done, info = env.step(policy_fn(obs))
+            total_reward += float(reward)
+            steps = step
+            if step % TRAJECTORY_STRIDE == 0 or done:
+                trajectory.append([float(v) for v in obs])
+            if info.get("success"):
+                success = True
+            if done:
+                break
+        successes += int(success)
+        episode_reports.append(
+            {
+                "index": index,
+                "seed": episode_seed,
+                "success": success,
+                "steps": steps,
+                "total_reward": total_reward,
+                "final_tip_pos": info.get("tip_pos"),
+                "final_tilt": info.get("tilt"),
+                "trajectory_stride": TRAJECTORY_STRIDE,
+                "trajectory_obs": trajectory,
+            }
+        )
+
+    n = len(episode_reports)
+    report: dict[str, Any] = {
+        "schema": SCHEMA_RUN,
+        "stage": "run",
+        "status": "completed",
+        "inputs": {
+            "task": task,
+            "policy": policy,
+            "episodes": episodes,
+            "seed": seed,
+            "max_steps": max_steps,
+        },
+        "summary": {
+            "episodes": n,
+            "successes": successes,
+            "success_rate": (successes / n) if n else 0.0,
+            "mean_steps": (sum(e["steps"] for e in episode_reports) / n if n else 0.0),
+        },
+        "episodes": episode_reports,
+        "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    _write_json_path(output_path, report)
+    return report
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="mujoco_pipeline",
+        description="MuJoCo contact-rich manipulation rollouts.",
+    )
+    commands = parser.add_subparsers(dest="stage", required=True)
+
+    run_cmd = commands.add_parser("run")
+    run_cmd.add_argument(
+        "--task",
+        required=True,
+        choices=("peg_insertion", "screw_driving", "reach"),
+    )
+    run_cmd.add_argument(
+        "--policy",
+        required=True,
+        help="Scripted policy: 'scripted:<expert|noisy|random>'.",
+    )
+    run_cmd.add_argument("--episodes", type=int, default=10)
+    run_cmd.add_argument("--seed", type=int, default=0)
+    run_cmd.add_argument(
+        "--output-path", "--output-uri", dest="output_path", required=True
+    )
+    run_cmd.add_argument("--max-steps", type=int, default=500)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.stage == "run":
+        run(
+            task=args.task,
+            policy=args.policy,
+            output_path=args.output_path,
+            episodes=args.episodes,
+            seed=args.seed,
+            max_steps=args.max_steps,
+        )
+        return 0
+    raise MujocoPipelineError(f"unknown stage {args.stage!r}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
