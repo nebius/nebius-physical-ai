@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
+import importlib.metadata
 import json
 import math
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -28,7 +31,10 @@ from npa.workflows.lerobot_dataset import (
     DEFAULT_PUBLIC_LEROBOT_REVISION,
 )
 from npa.workbench.lerobot.version_compat import (
+    LEROBOT_VERSION_ENV,
+    LeRobotVersionError,
     eval_checkpoint_arg,
+    resolve_lerobot_version,
     train_env_eval_arg,
 )
 
@@ -42,6 +48,20 @@ DEFAULT_TRAIN_LOG_FREQ = 10
 DEFAULT_TRAIN_TIMEOUT_SECONDS = 43200
 DEFAULT_EVAL_TIMEOUT_SECONDS = 7200
 REAL_WEIGHT_FILENAMES = ("model.safetensors", "pytorch_model.bin")
+TRAINING_DATASET_PROVENANCE_FILENAME = "training_dataset_provenance.json"
+# This is the pinned RoboCasa ACT closure, not a generally supported release.
+_ROBOCASA_ACT_TRAINING_VERSION = "0.6.1+npa2"
+_ROBOCASA_ACT_TRAINING_SOURCES = {
+    "lerobot/configs/train.py": (
+        "117d9829af0db49a681876861ac6fb014bf1927b03655c3428d0ec1db968af79"
+    ),
+    "lerobot/scripts/lerobot_train.py": (
+        "059bda054bbb188d4a40d0a32941aa4d9ac59252a37d67a258e685a0a6d063ec"
+    ),
+}
+_ROBOCASA_ACT_TRAINING_METADATA_SHA256 = (
+    "7b016caee01368c6c25ff6c24dd7138605c9205ae5788f9752f12f84d8850162"
+)
 
 # Request-supplied output directories are confined under this root so an
 # unauthenticated /feedback/train-step caller cannot write adapter checkpoints to
@@ -385,7 +405,12 @@ def build_lerobot_train_command(
     training_config: TrainingConfig | None = None,
     lerobot_version: str | None = None,
 ) -> list[str]:
-    """Build a real `lerobot-train` command for a local LeRobotDataset."""
+    """Build native training argv; an explicit version controls its eval flag.
+
+    The default retains the global compatibility manifest. The exact RoboCasa
+    ACT derivative has a separate, ACT-only command contract; this does not
+    register that derivative as a generally supported LeRobot release.
+    """
 
     config = training_config or TrainingConfig()
     if steps <= 0:
@@ -400,8 +425,10 @@ def build_lerobot_train_command(
     repo_id = dataset_repo_id or dataset_root.name
     if save_freq is None:
         save_freq = max(1, steps)
-    cmd = [
-        "lerobot-train",
+    executable = ["lerobot-train"]
+    if lerobot_version == _ROBOCASA_ACT_TRAINING_VERSION:
+        executable = [sys.executable, "-m", "lerobot.scripts.lerobot_train"]
+    cmd = executable + [
         f"--policy.type={policy_type}",
         "--policy.push_to_hub=false",
         f"--policy.device={device}",
@@ -410,7 +437,7 @@ def build_lerobot_train_command(
         f"--output_dir={output_dir}",
         f"--steps={steps}",
         f"--save_freq={save_freq}",
-        train_env_eval_arg(eval_freq, version=lerobot_version),
+        _training_eval_argument(eval_freq, lerobot_version, policy_type),
         f"--log_freq={log_freq}",
         f"--batch_size={batch_size}",
         f"--num_workers={num_workers}",
@@ -421,7 +448,101 @@ def build_lerobot_train_command(
     if extra_args:
         cmd.extend(extra_args)
     cmd.extend(format_override(override, style="cli") for override in config.overrides)
+    if lerobot_version == _ROBOCASA_ACT_TRAINING_VERSION:
+        _validate_robocasa_training_policy(cmd)
     return cmd
+
+
+def _training_eval_argument(value: int, version: str | None, policy_type: str) -> str:
+    if version != _ROBOCASA_ACT_TRAINING_VERSION:
+        return train_env_eval_arg(value, version=version)
+    if policy_type != "act":
+        raise PolicyContainerError("The RoboCasa LeRobot derivative supports ACT only")
+    return f"--env_eval_freq={int(value)}"
+
+
+def _verify_robocasa_training_runtime(distribution: Any, policy_type: str) -> None:
+    _training_eval_argument(0, distribution.version, policy_type)
+    metadata = distribution.read_text("METADATA")
+    if metadata is None or hashlib.sha256(metadata.encode()).hexdigest() != (
+        _ROBOCASA_ACT_TRAINING_METADATA_SHA256
+    ):
+        raise PolicyContainerError("RoboCasa ACT training metadata does not match")
+    for relative_path, expected in _ROBOCASA_ACT_TRAINING_SOURCES.items():
+        path = Path(distribution.locate_file(relative_path))
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise PolicyContainerError(
+                f"RoboCasa ACT training source does not match: {relative_path}"
+            )
+        module_name = relative_path.removesuffix(".py").replace("/", ".")
+        module = importlib.import_module(module_name)
+        module_path = Path(module.__file__).resolve()
+        if module_path != path.resolve():
+            raise PolicyContainerError(
+                f"RoboCasa ACT training module is shadowed: {relative_path}"
+            )
+
+
+def _validate_robocasa_training_policy(command: list[str]) -> None:
+    """Keep the pinned derivative on explicit ACT configuration only.
+
+    Native reward-model configuration takes precedence over an ACT policy, and
+    config/pretrained paths or plugin discovery can replace the selected type.
+    Those routes have not been qualified for this narrow runtime contract.
+    Ordinary ACT hyperparameters remain available as explicit CLI overrides.
+    """
+    for index, argument in enumerate(command):
+        option = argument.split("=", 1)[0]
+        if (
+            option in {"--config_path", "--policy", "--policy.path", "--reward_model"}
+            or option.startswith("--reward_model.")
+            or (option.startswith("--") and "discover_packages_path" in option)
+        ):
+            raise PolicyContainerError(
+                "The RoboCasa ACT-only runtime rejects configuration indirection: "
+                f"{option}"
+            )
+        if argument == "--policy.type":
+            value = command[index + 1] if index + 1 < len(command) else ""
+        elif argument.startswith("--policy.type="):
+            value = argument.split("=", 1)[1]
+        else:
+            continue
+        if value != "act":
+            raise PolicyContainerError(
+                "The RoboCasa LeRobot derivative supports ACT only"
+            )
+
+
+def _installed_training_version(policy_type: str) -> str:
+    try:
+        distribution = importlib.metadata.distribution("lerobot")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise PolicyContainerError(
+            "LeRobot training requires installed package metadata"
+        ) from exc
+    installed = distribution.version
+    if (
+        not isinstance(installed, str)
+        or not installed
+        or installed.strip() != installed
+    ):
+        raise PolicyContainerError(
+            "LeRobot training package version is missing or invalid"
+        )
+    selected = os.environ.get(LEROBOT_VERSION_ENV, "").strip()
+    if selected and selected != installed:
+        raise PolicyContainerError(
+            f"Selected LeRobot version {selected!r} differs from installed {installed!r}"
+        )
+    if installed == _ROBOCASA_ACT_TRAINING_VERSION:
+        _verify_robocasa_training_runtime(distribution, policy_type)
+    else:
+        try:
+            resolve_lerobot_version(installed)
+        except LeRobotVersionError as exc:
+            raise PolicyContainerError(str(exc)) from exc
+    return installed
 
 
 def run_lerobot_training(
@@ -440,11 +561,20 @@ def run_lerobot_training(
     extra_args: list[str] | None = None,
     training_config: TrainingConfig | None = None,
 ) -> LeRobotTrainingResult:
-    """Run real LeRobot policy training and validate the resulting checkpoint."""
+    """Train with the installed runtime's argv and validate real checkpoint bytes.
+
+    Explicit version selection must match package metadata. The RoboCasa ACT
+    derivative additionally requires the pinned metadata, native parser and
+    trainer source identities before any training subprocess is launched.
+    """
 
     config = training_config or TrainingConfig()
     assert_lerobot_importable()
-    if shutil.which("lerobot-train") is None:
+    training_version = _installed_training_version(policy_type)
+    if (
+        training_version != _ROBOCASA_ACT_TRAINING_VERSION
+        and shutil.which("lerobot-train") is None
+    ):
         raise PolicyContainerError("lerobot-train was not found on PATH")
     dataset_root = Path(dataset_path)
     if not (dataset_root / "meta" / "info.json").exists():
@@ -472,6 +602,7 @@ def run_lerobot_training(
         resume=resume,
         extra_args=extra_args,
         training_config=config,
+        lerobot_version=training_version,
     )
     start = time.time()
     with log.open("w", encoding="utf-8") as handle:
@@ -1212,6 +1343,141 @@ def _tail_training_log(log: Path | str, *, lines: int = 60) -> str:
     return f"--- last {len(captured)} lines of {log} ---\n" + "".join(captured)
 
 
+def build_training_dataset_provenance(
+    dataset_root: Path,
+    *,
+    dataset_source: str,
+    declared_training_env_ids: str,
+) -> dict[str, Any]:
+    """Bind training to exact dataset bytes and verified RoboCasa tasks."""
+    tasks = _read_dataset_tasks(dataset_root)
+    declared = _parse_declared_training_env_ids(declared_training_env_ids)
+    normalized_tasks = _normalize_dataset_tasks(tasks, declared)
+    if declared and normalized_tasks != declared:
+        raise PolicyContainerError(
+            "dataset tasks do not exactly match --training-env-ids: "
+            f"dataset={normalized_tasks}, declared={declared}"
+        )
+    tree_sha256, file_count, total_bytes = _dataset_tree_identity(dataset_root)
+    return {
+        "schema": "npa.lerobot.training_dataset_provenance.v1",
+        "dataset_source": dataset_source,
+        "dataset_tree_sha256": tree_sha256,
+        "dataset_file_count": file_count,
+        "dataset_bytes": total_bytes,
+        "dataset_tasks": tasks,
+        "normalized_dataset_training_env_ids": normalized_tasks,
+        "declared_training_env_ids": declared,
+        "declared_training_tasks_verified": bool(declared),
+        "declared_task_set_sha256": _ordered_values_sha256(declared),
+        "dataset_task_metadata_sha256": _ordered_values_sha256(tasks),
+    }
+
+
+def write_training_dataset_provenance(
+    output_dir: Path, payload: dict[str, Any]
+) -> Path:
+    """Write the content-bound dataset/task artifact into the training run."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / TRAINING_DATASET_PROVENANCE_FILENAME
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return path
+
+
+def _read_dataset_tasks(dataset_root: Path) -> list[str]:
+    jsonl_path = dataset_root / "meta" / "tasks.jsonl"
+    parquet_path = dataset_root / "meta" / "tasks.parquet"
+    if jsonl_path.is_file():
+        rows = [
+            json.loads(line)
+            for line in jsonl_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    elif parquet_path.is_file():
+        try:
+            import pyarrow.parquet as parquet
+        except ImportError as exc:
+            raise PolicyContainerError(
+                "pyarrow is required to read LeRobot task metadata"
+            ) from exc
+        rows = parquet.read_table(parquet_path).to_pylist()
+    else:
+        raise PolicyContainerError(
+            f"LeRobot dataset has no meta/tasks.jsonl or meta/tasks.parquet: {dataset_root}"
+        )
+    return _ordered_task_rows(rows)
+
+
+def _ordered_task_rows(rows: list[Any]) -> list[str]:
+    if not rows or any(not isinstance(row, dict) for row in rows):
+        raise PolicyContainerError("LeRobot task metadata contains no task records")
+    ordered = sorted(rows, key=lambda row: int(row.get("task_index", 0)))
+    tasks = [str(row.get("task") or "").strip() for row in ordered]
+    if any(not task for task in tasks) or len(set(tasks)) != len(tasks):
+        raise PolicyContainerError("LeRobot task metadata must name unique tasks")
+    return tasks
+
+
+def _parse_declared_training_env_ids(value: str) -> list[str]:
+    if not value.strip():
+        return []
+    task_ids = [item.strip() for item in value.split(",") if item.strip()]
+    if any(not item.startswith("robocasa/") for item in task_ids):
+        raise PolicyContainerError(
+            "--training-env-ids must contain only robocasa/ environment ids"
+        )
+    if len(set(task_ids)) != len(task_ids):
+        raise PolicyContainerError("--training-env-ids must be unique")
+    return task_ids
+
+
+def _normalize_dataset_tasks(tasks: list[str], declared: list[str]) -> list[str]:
+    if not declared:
+        return tasks
+    normalized = [
+        task if task.startswith("robocasa/") else f"robocasa/{task}" for task in tasks
+    ]
+    if any(task not in set(declared) for task in normalized):
+        raise PolicyContainerError(
+            f"dataset task metadata contains undeclared RoboCasa tasks: {normalized}"
+        )
+    return normalized
+
+
+def _dataset_tree_identity(root: Path) -> tuple[str, int, int]:
+    records = []
+    total_bytes = 0
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        size = path.stat().st_size
+        records.append(
+            {
+                "path": path.relative_to(root).as_posix(),
+                "bytes": size,
+                "sha256": _sha256_path(path),
+            }
+        )
+        total_bytes += size
+    if not records:
+        raise PolicyContainerError(f"LeRobot dataset contains no files: {root}")
+    encoded = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest(), len(records), total_bytes
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _ordered_values_sha256(values: list[str]) -> str:
+    encoded = json.dumps(values, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def _materialize_train_dataset(args: argparse.Namespace) -> Path:
     """Fetch the training dataset into this stage's own filesystem.
 
@@ -1334,6 +1600,11 @@ def build_parser() -> argparse.ArgumentParser:
     # or a bare Hugging Face repo id; empty falls back to --dataset-repo-id.
     train_cmd.add_argument("--dataset-source", default="")
     train_cmd.add_argument(
+        "--training-env-ids",
+        default="",
+        help="Comma-separated RoboCasa env ids that dataset task metadata must match.",
+    )
+    train_cmd.add_argument(
         "--dataset-revision", default=DEFAULT_PUBLIC_LEROBOT_REVISION
     )
     train_cmd.add_argument(
@@ -1445,6 +1716,20 @@ def main(argv: list[str] | None = None) -> int:
         dataset_path = training_config.data_path or args.dataset_path
         if not dataset_path:
             dataset_path = _materialize_train_dataset(args)
+        dataset_path = Path(dataset_path)
+        dataset_source = (args.dataset_source or "").strip()
+        if not dataset_source:
+            has_local_source = args.dataset_path or training_config.data_path
+            dataset_source = (
+                str(dataset_path)
+                if has_local_source
+                else (args.dataset_repo_id or "").strip()
+            )
+        training_provenance = build_training_dataset_provenance(
+            dataset_path,
+            dataset_source=dataset_source,
+            declared_training_env_ids=args.training_env_ids,
+        )
         train_result = run_lerobot_training(
             dataset_path=dataset_path,
             dataset_repo_id=args.dataset_repo_id,
@@ -1459,7 +1744,14 @@ def main(argv: list[str] | None = None) -> int:
             timeout_seconds=args.timeout_seconds,
             training_config=training_config,
         )
+        provenance_path = write_training_dataset_provenance(
+            Path(train_result.output_dir), training_provenance
+        )
         payload = train_result.to_dict()
+        payload["training_dataset_provenance"] = {
+            **training_provenance,
+            "artifact_path": str(provenance_path),
+        }
         if args.artifacts_s3_uri.strip():
             payload["artifacts_uri"] = upload_run_artifacts(
                 train_result.output_dir, args.artifacts_s3_uri

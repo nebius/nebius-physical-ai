@@ -29,6 +29,8 @@ GO_VERSION = "1.27.1"
 GO_ARCHIVE_SHA256 = "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"
 GO_ARCHIVE_URL = f"https://go.dev/dl/go{GO_VERSION}.linux-amd64.tar.gz"
 GITLEAKS_VERSION = "v8.28.0"
+PROCESS_CONTAINMENT = "seccomp-process-group-v1"
+MIN_LINUX_KERNEL = (5, 9)
 SOURCE_NAMES = (
     "main.go",
     "memory.go",
@@ -46,6 +48,13 @@ GO_NAMES = ("main.go", "memory.go", "main_test.go", "go.mod", "go.sum")
 
 class BuildError(Exception):
     """A fixed diagnostic code; raw subprocess output stays in protected logs."""
+
+
+def supported_linux_kernel(release: str) -> bool:
+    match = re.match(r"^([0-9]+)\.([0-9]+)(?:\.|[-+]|$)", release)
+    return bool(
+        match and (int(match.group(1)), int(match.group(2))) >= MIN_LINUX_KERNEL
+    )
 
 
 def digest(data: bytes) -> str:
@@ -141,6 +150,73 @@ def read_regular(path: Path) -> bytes:
         if fd >= 0:
             os.close(fd)
         os.close(parent)
+
+
+def open_held_regular(path: Path) -> tuple[Path, int, int, os.stat_result]:
+    """Hold one exact regular inode for execution and later byte binding."""
+    path = no_symlinks(path)
+    parent = directory_fd(path.parent)
+    fd = -1
+    try:
+        fd = os.open(
+            path.name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=parent,
+        )
+        before = os.fstat(fd)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or before.st_uid != os.getuid()
+        ):
+            raise BuildError("input_not_regular")
+        return path, parent, fd, before
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        os.close(parent)
+        raise
+
+
+def read_held_regular(
+    held: tuple[Path, int, int, os.stat_result],
+) -> bytes:
+    """Read and bind the inode held across every validation execution."""
+    path, parent, fd, before = held
+    parts = []
+    offset = 0
+    while offset < before.st_size:
+        data = os.pread(fd, min(1024 * 1024, before.st_size - offset), offset)
+        if not data:
+            raise BuildError("input_changed")
+        parts.append(data)
+        offset += len(data)
+    after = os.fstat(fd)
+    if _signature(before) != _signature(after) or offset != before.st_size:
+        raise BuildError("input_changed")
+    if _signature(before) != _signature(
+        os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+    ):
+        raise BuildError("input_replaced")
+    current_parent = directory_fd(path.parent)
+    try:
+        left, right = os.fstat(parent), os.fstat(current_parent)
+        if (left.st_dev, left.st_ino) != (right.st_dev, right.st_ino):
+            raise BuildError("input_parent_replaced")
+    finally:
+        os.close(current_parent)
+    return b"".join(parts)
+
+
+def close_held_regular(held: tuple[Path, int, int, os.stat_result]) -> bool:
+    _, parent, fd, _ = held
+    failed = False
+    for descriptor in (fd, parent):
+        try:
+            os.close(descriptor)
+        except OSError:
+            failed = True
+    return failed
 
 
 def private_dir(path: Path) -> Path:
@@ -359,6 +435,7 @@ def run_step(
     env: dict,
     logs: Path,
     input_data: bytes | None = None,
+    pass_fds: tuple[int, ...] = (),
 ) -> bytes:
     process = None
     state = _CANCELLATION.get()
@@ -376,6 +453,7 @@ def run_step(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
+                pass_fds=pass_fds,
             )
         finally:
             if state is not None:
@@ -470,6 +548,7 @@ def _ready(raw: bytes, config_sha: str) -> dict:
         or ready.get("max_target_megabytes") != 0
         or ready.get("ignore_inline_allow") is not True
         or ready.get("redact") != 100
+        or ready.get("process_containment") != PROCESS_CONTAINMENT
         or not isinstance(ready.get("rule_count"), int)
         or ready["rule_count"] < 217
         or summary != {"type": "summary", "files": 0, "bytes": 0, "findings": 0}
@@ -479,6 +558,11 @@ def _ready(raw: bytes, config_sha: str) -> dict:
         if not re.fullmatch(r"[0-9a-f]{64}", ready.get(key, "")):
             raise BuildError("helper_handshake_digest")
     return {"value": ready, "raw": rows[0]}
+
+
+def verify_containment_probe(raw: bytes) -> None:
+    if raw != f"{PROCESS_CONTAINMENT}\n".encode():
+        raise BuildError("helper_containment_probe")
 
 
 def locked_modules(sums: bytes) -> list[str]:
@@ -571,6 +655,8 @@ def build(
 ) -> dict:
     if platform.system() != "Linux" or platform.machine() not in {"x86_64", "amd64"}:
         raise BuildError("unsupported_platform")
+    if not supported_linux_kernel(platform.release()):
+        raise BuildError("unsupported_kernel")
     trusted = no_symlinks(trusted_root)
     analysis = no_symlinks(analysis_root)
     output = no_symlinks(output_dir)
@@ -642,40 +728,70 @@ def build(
         logs,
     )
     binary.chmod(0o700)
-    download_records = json_stream(downloaded)
-    verify_module_set(download_records, locked_modules(inputs["go.sum"]))
-    for module in download_records:
-        if module.get("Path") == "github.com/zricethezav/gitleaks/v8":
-            if (
-                read_regular(Path(module["Dir"]) / "LICENSE")
-                != inputs["LICENSE-GITLEAKS"]
-            ):
-                raise BuildError("detector_license_mismatch")
-    module_records = module_notices(
-        download_records, Path(env["GOMODCACHE"]), notices, inputs["go.sum"]
-    )
-    for name in ("LICENSE-GO", "LICENSE-GITLEAKS"):
-        write_new(notices / name, inputs[name])
-    handshake = run_step(
-        [str(binary), "--config", str(config)], "handshake", stage, env, logs, b""
-    )
-    parsed = _ready(handshake, digest(config_data))
-    ready_path = output / "helper-ready.json"
-    write_new(ready_path, parsed["raw"])
+    binary_held = config_held = None
+    held_cleanup_failed = False
+    try:
+        binary_held = open_held_regular(binary)
+        config_held = open_held_regular(config)
+        binary_fd = binary_held[2]
+        config_fd = config_held[2]
+        executable = f"/proc/self/fd/{binary_fd}"
+        containment = run_step(
+            [executable, "--containment-probe"],
+            "containment",
+            stage,
+            env,
+            logs,
+            pass_fds=(binary_fd,),
+        )
+        verify_containment_probe(containment)
+        download_records = json_stream(downloaded)
+        verify_module_set(download_records, locked_modules(inputs["go.sum"]))
+        for module in download_records:
+            if module.get("Path") == "github.com/zricethezav/gitleaks/v8":
+                if (
+                    read_regular(Path(module["Dir"]) / "LICENSE")
+                    != inputs["LICENSE-GITLEAKS"]
+                ):
+                    raise BuildError("detector_license_mismatch")
+        module_records = module_notices(
+            download_records, Path(env["GOMODCACHE"]), notices, inputs["go.sum"]
+        )
+        for name in ("LICENSE-GO", "LICENSE-GITLEAKS"):
+            write_new(notices / name, inputs[name])
+        handshake = run_step(
+            [executable, "--config-fd", str(config_fd)],
+            "handshake",
+            stage,
+            env,
+            logs,
+            b"",
+            pass_fds=(binary_fd, config_fd),
+        )
+        parsed = _ready(handshake, digest(config_data))
+        ready_path = output / "helper-ready.json"
+        write_new(ready_path, parsed["raw"])
+        binary_data = read_held_regular(binary_held)
+        if read_held_regular(config_held) != config_data:
+            raise BuildError("config_changed")
+    finally:
+        if config_held is not None:
+            held_cleanup_failed = close_held_regular(config_held) or held_cleanup_failed
+        if binary_held is not None:
+            held_cleanup_failed = close_held_regular(binary_held) or held_cleanup_failed
+    if held_cleanup_failed:
+        raise BuildError("held_input_cleanup_failed")
     for name, data in inputs.items():
         if read_regular(source_paths[name]) != data:
             raise BuildError("source_changed")
     for name in GO_NAMES:
         if read_regular(stage / name) != inputs[name]:
             raise BuildError("staged_source_changed")
-    if (
-        read_regular(config_source) != config_data
-        or read_regular(config) != config_data
-    ):
+    if read_regular(config_source) != config_data:
         raise BuildError("config_changed")
     receipt = {
         "schema_version": "npa.image-byte-scan-tools.v1",
-        "helper": {"path": str(binary), "sha256": digest(read_regular(binary))},
+        "helper": {"path": str(binary), "sha256": digest(binary_data)},
         "config": {"path": str(config), "sha256": digest(config_data)},
         "ready": {"path": str(ready_path), "sha256": digest(parsed["raw"])},
         "source": {name: digest(data) for name, data in inputs.items()},
@@ -690,6 +806,8 @@ def build(
             "native_counts": native_counts,
             "module_verification": "passed",
             "empty_handshake": "passed",
+            "process_containment": PROCESS_CONTAINMENT,
+            "probe_byte_binding": "held-descriptor-v1",
             "logs": str(logs),
         },
     }

@@ -14,6 +14,13 @@ EXACT = "exact-substring-v1"
 ASCII_WORD = frozenset(
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
 )
+LITERAL_PATTERN_LIMIT = 4096
+LITERAL_VALUE_BYTES_LIMIT = 64 * 1024
+LITERAL_TOTAL_BYTES_LIMIT = 8 * 1024 * 1024
+
+
+class LiteralFindingLimit(ValueError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,12 +44,20 @@ def compile_literals(values, policy):
         type(v) is not str or not v for v in values
     ):
         raise ValueError("literal_inventory_schema")
+    if len(values) > LITERAL_PATTERN_LIMIT:
+        raise ValueError("literal_inventory_pattern_limit")
     if ahocorasick.unicode != 1:
         raise ValueError("unexpected_extension_unicode_mode")
     groups = {}
     carry = 1
+    total = 0
     for index, value in enumerate(values):
         raw = value.encode("utf-8")
+        if len(raw) > LITERAL_VALUE_BYTES_LIMIT:
+            raise ValueError("literal_inventory_value_limit")
+        total += len(raw)
+        if total > LITERAL_TOTAL_BYTES_LIMIT:
+            raise ValueError("literal_inventory_total_limit")
         carry = max(carry, len(raw) + 1)
         # Preserve duplicate input patterns as distinct indexed policy entries.
         groups.setdefault(raw, []).append(
@@ -71,8 +86,13 @@ class LiteralMatcher:
         self.buffer, self.base = b"", 0
         self.next_positions = [0] * compiled.count
 
-    def feed(self, data, *, final=False):
-        if type(data) is not bytes or type(final) is not bool:
+    def feed(self, data, *, final=False, finding_limit):
+        if (
+            type(data) is not bytes
+            or type(final) is not bool
+            or type(finding_limit) is not int
+            or finding_limit < 0
+        ):
             raise TypeError("literal_feed_schema")
         self.buffer += data
         boundary = (
@@ -96,6 +116,8 @@ class LiteralMatcher:
                         and self.buffer[local_end] in ASCII_WORD
                     ):
                         continue
+                if len(found) >= finding_limit:
+                    raise LiteralFindingLimit("literal_finding_limit")
                 found.append(
                     {
                         "rule_id": "private_literal",

@@ -29,6 +29,13 @@ layer, including files subsequently deleted, plus raw archive headers, logical
 names, optional gzip headers, and padding. It never extracts image members into
 the host filesystem. Unsupported layer encodings or ambiguous archives fail.
 
+The generic Docker-save path distinguishes graph-bound encoded layer blobs from
+logical file records. An encoded layer may exceed the 1 GiB complete-record cap:
+its exact graph-bound size and digest are checked, then every decoded file is
+scanned under the unchanged cap and decoded-layer accounting. Unknown outer
+files, misleading layer-like names, and oversized decoded files do not receive
+this exception. This does not change matching, findings, or acceptance policy.
+
 ## Policy and dependencies
 
 CI requires `CUSTOMER_DENYLIST` from the repository secret store;

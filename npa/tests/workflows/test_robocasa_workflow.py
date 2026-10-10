@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from npa.cli.workbench.robocasa.deploy import (
+    DEFAULT_GPU_TYPE,
+    DEFAULT_NAME,
+    DEFAULT_NAMESPACE,
+    DEFAULT_PORT,
+    GPU_NODE_SELECTORS,
+)
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG, argv_for_tool
 from npa.orchestration.npa_workflow.interpreter import PlanStep
@@ -57,6 +64,8 @@ def test_robocasa_toolrefs_render() -> None:
         assert "--endpoint" in argv
         assert "--token-env" in argv
         assert "{{config.robocasa_token_env}}" in argv
+        assert "--expected-image-source-sha" in argv
+        assert "--expected-image-manifest-digest" in argv
 
 
 def test_random_rollout_toolref_includes_iterations() -> None:
@@ -105,14 +114,74 @@ def test_data_policy_trajectory_export_toolref_renders() -> None:
     assert "--capability" in argv
     assert "kitchen_trajectory_export" in argv
     assert "--num-envs" in argv
+    assert argv[argv.index("--seed") + 1] == "{{config.seed}}"
     assert "--token-env" in argv
     assert "{{config.robocasa_token_env}}" in argv
 
 
 def test_robocasa_workflows_forward_the_service_token() -> None:
     for workflow in (WORKFLOW, DATA_POLICY):
-        plan = build_plan(load_spec(workflow), run_id="test")
+        spec = load_spec(workflow)
+        assert spec.config["source_overlay"] is True
+        plan = build_plan(spec, run_id="test")
         assert secret_env_hints_for_plan(plan.steps) == ("ROBOCASA_TOKEN",)
+
+
+def test_all_robocasa_toolrefs_bind_exact_service_identity() -> None:
+    for tool_ref in (
+        "workbench.robocasa.task_registration",
+        "workbench.robocasa.asset_availability",
+        "workbench.robocasa.egl_env_reset",
+        "workbench.robocasa.random_rollout",
+        "workbench.robocasa.trajectory_export",
+        "workbench.robocasa.policy_eval",
+    ):
+        argv = argv_for_tool(tool_ref)
+        assert argv[argv.index("--expected-image-source-sha") + 1] == (
+            "{{config.robocasa_expected_image_source_sha}}"
+        )
+        assert argv[argv.index("--expected-image-manifest-digest") + 1] == (
+            "{{config.robocasa_expected_image_manifest_digest}}"
+        )
+    for workflow in (WORKFLOW, DATA_POLICY):
+        config = load_spec(workflow).config
+        assert config["robocasa_expected_image_source_sha"] == "0" * 40
+        assert config["robocasa_expected_image_manifest_digest"] == (
+            "sha256:" + "0" * 64
+        )
+
+
+def test_workflow_endpoint_matches_default_service_deployment() -> None:
+    expected = (
+        f"http://{DEFAULT_NAME}.{DEFAULT_NAMESPACE}.svc.cluster.local:{DEFAULT_PORT}"
+    )
+    assert DEFAULT_NAMESPACE == "default"
+    for workflow in (WORKFLOW, DATA_POLICY):
+        assert load_spec(workflow).config["robocasa_endpoint"] == expected
+
+
+def test_service_accelerator_and_policy_training_use_compatible_l40s() -> None:
+    assert DEFAULT_GPU_TYPE == "l40s"
+    assert GPU_NODE_SELECTORS[DEFAULT_GPU_TYPE] == "gpu-l40s-d"
+    spec = load_spec(DATA_POLICY)
+    assert spec.resources["train-gpu"]["accelerators"] == "L40S:1"
+    assert spec.resources["train-gpu"]["cpus"] == 12
+    assert spec.resources["train-gpu"]["image"] == "tool://lerobot"
+    assert {
+        name
+        for name, resource in spec.resources.items()
+        if resource.get("accelerators")
+    } == {"train-gpu"}
+
+
+def test_service_client_states_do_not_compete_for_the_service_gpu() -> None:
+    for workflow in (WORKFLOW, DATA_POLICY):
+        spec = load_spec(workflow)
+        for state_name, state in spec.states.items():
+            if not (state.tool_ref or "").startswith("workbench.robocasa."):
+                continue
+            resource = spec.resources[state.resources]
+            assert not resource.get("accelerators"), state_name
 
 
 def test_robocasa_service_token_hint_uses_the_resolved_token_env() -> None:
@@ -146,11 +215,48 @@ def test_data_policy_uses_panda_omron_and_disjoint_robocasa_eval() -> None:
     assert "--train-env-ids" in argv
     assert "--heldout-env-ids" in argv
     assert "--env-id" not in argv
+    assert argv[argv.index("--seed") + 1] == "{{config.seed}}"
+    assert spec.config["seed"] == "42"
 
 
 def test_data_policy_routes_raw_cpu_stages_to_native_images() -> None:
     spec = load_spec(DATA_POLICY)
+    assert spec.config["source_overlay"] is True
     assert spec.states["lerobot-convert"].resources == "convert-cpu"
     assert spec.resources["convert-cpu"]["image"] == "tool://lerobot"
     assert spec.states["insights"].resources == "insights-cpu"
     assert spec.resources["insights-cpu"]["image"] == "tool://lancedb"
+
+
+def test_data_policy_uses_one_uri_per_artifact_edge() -> None:
+    spec = load_spec(DATA_POLICY)
+
+    assert "trajectory_uri" not in spec.config
+    assert "dataset_uri" not in spec.config
+    assert spec.states["trajectory-export"].outputs[0].uri == "{{config.output_uri}}"
+    assert spec.states["lerobot-convert"].inputs[0].uri == "{{config.output_uri}}"
+    assert spec.states["lerobot-convert"].outputs[0].uri == "{{config.lerobot_dataset}}"
+    assert spec.states["insights"].inputs[0].uri == "{{config.run_prefix_uri}}"
+
+
+def test_policy_train_declares_dataset_input_and_task_provenance() -> None:
+    spec = load_spec(DATA_POLICY)
+    train = spec.states["policy-train"]
+    policy_eval = spec.states["policy-eval"]
+    assert [(item.uri, item.schema) for item in train.inputs] == [
+        ("{{config.lerobot_dataset}}", "npa.lerobot.dataset.v3")
+    ]
+    assert any(
+        item.uri == "{{config.training_provenance_uri}}"
+        and item.schema == "npa.lerobot.training_dataset_provenance.v1"
+        for item in train.outputs
+    )
+    assert any(
+        item.uri == "{{config.training_provenance_uri}}" for item in policy_eval.inputs
+    )
+    plan = build_plan(spec, run_id="test")
+    train_step = next(step for step in plan.steps if step.state == "policy-train")
+    assert (
+        train_step.argv[train_step.argv.index("--training-env-ids") + 1]
+        == (spec.config["train_env_ids"])
+    )

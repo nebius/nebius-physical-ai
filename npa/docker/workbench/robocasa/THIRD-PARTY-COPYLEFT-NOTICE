@@ -1,0 +1,23 @@
+RoboCasa NPA ACT dependency source and notices
+
+qpsolvers 4.13.0
+License: GNU Lesser General Public License v3.0 (LGPL-3.0)
+Official source archive: qpsolvers-4.13.0.tar.gz
+Source archive SHA-256: e86c4c16bf7c16fdbb8e6c0e4050bc1bfef72a25755211be66a492ac4c939a1c
+Upstream LICENSE SHA-256: e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118
+The exact source archive, LGPL text, and companion GNU GPL v3 text are installed
+in the image under /usr/share/source/robocasa-npa-act and
+/usr/share/doc/qpsolvers.
+
+quadprog 0.1.13
+License: GNU General Public License v2 or later (GPL-2.0-or-later)
+Official source archive: quadprog-0.1.13.tar.gz
+Source archive SHA-256: 9d6dd32f2762f29b840fb83741d11e527ddf48745f63b79caad0e530b4a6a0ff
+Upstream LICENSE SHA-256: c03cea027b4b40e4402fabd08557736727ec3d5bc54ad64ab6472de432198cad
+The exact source archive and license are installed in the image under
+/usr/share/source/robocasa-npa-act and /usr/share/doc/quadprog.
+
+These solver packages are part of RoboCasa/robosuite's normal resolved runtime
+dependency closure. Their inclusion does not change the narrower NPA-qualified
+RoboCasa ACT capability. Preserve these source archives and notices whenever
+the image is conveyed.

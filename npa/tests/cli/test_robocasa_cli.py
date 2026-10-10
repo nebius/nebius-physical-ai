@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from npa.cli.main import app as main_app
@@ -34,6 +36,7 @@ def test_run_help() -> None:
     assert "--capability" in result.stdout
     assert "--output-path" in result.stdout
     assert "--output-uri" in result.stdout
+    assert result.stdout.count("--expected-image") == 2
 
 
 def test_deploy_help() -> None:
@@ -41,21 +44,68 @@ def test_deploy_help() -> None:
     assert result.exit_code == 0
     assert "--gpu-type" in result.stdout
     assert "--auth-mode" in result.stdout
+    assert "--image" in result.stdout
+    assert "--expected-image-source-sha" in result.stdout
+    assert "--create-namespace" in result.stdout
+    assert "--ephemeral-storage-request" in result.stdout
+
+
+@pytest.mark.parametrize("quantity", ["", "0Gi", "32", "32G", "-1Gi", "1.5Gi"])
+def test_deploy_rejects_invalid_ephemeral_storage_request(quantity: str) -> None:
+    with pytest.raises(typer.Exit):
+        deploy_module._validated_ephemeral_storage_request(quantity)
+
+
+@pytest.mark.parametrize(
+    ("storage_args", "expected_request"),
+    [([], "32Gi"), (["--ephemeral-storage-request", "48Gi"], "48Gi")],
+)
+def test_deploy_dry_run_renders_ephemeral_storage_request(
+    monkeypatch: pytest.MonkeyPatch,
+    storage_args: list[str],
+    expected_request: str,
+) -> None:
+    monkeypatch.setattr(deploy_module, "_resolve_kubeconfig", lambda **_kwargs: "")
+    monkeypatch.setattr(deploy_module, "_service_env", lambda **_kwargs: {})
+
+    result = runner.invoke(
+        robocasa_app,
+        [
+            "deploy",
+            "--dry-run",
+            "--image",
+            "example.invalid/npa-robocasa@sha256:" + "1" * 64,
+            "--expected-image-source-sha",
+            "2" * 40,
+            *storage_args,
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    manifest = json.loads(result.stdout)
+    deployment = next(
+        item for item in manifest["items"] if item["kind"] == "Deployment"
+    )
+    resources = deployment["spec"]["template"]["spec"]["containers"][0]["resources"]
+    assert resources["requests"]["ephemeral-storage"] == expected_request
+    assert "ephemeral-storage" not in resources["limits"]
 
 
 def test_deploy_service_env_prefers_project_scoped_storage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(deploy_module, "load_credentials", object)
     monkeypatch.setattr(
         deploy_module,
-        "apply_shared_credential_env",
-        lambda env, _creds: env.update(
-            {
-                "AWS_ACCESS_KEY_ID": "host-ak",
-                "AWS_SECRET_ACCESS_KEY": "host-sk",
-                "AWS_ENDPOINT_URL": "https://host.invalid",
-            }
+        "load_credentials",
+        lambda: SimpleNamespace(
+            hf_token="hf-required",
+            s3_access_key_id="host-ak",
+            s3_secret_access_key="host-sk",
+            s3_endpoint="https://host.invalid",
+            tokens={
+                "NGC_API_KEY": "forbidden-ngc",
+                "NEBIUS_TOKEN_FACTORY_API_KEY": "forbidden-token-factory",
+            },
         ),
     )
     monkeypatch.setattr(
@@ -75,12 +125,20 @@ def test_deploy_service_env_prefers_project_scoped_storage(
         auth_mode="none",
         token_env="ROBOCASA_TOKEN",
         port=8791,
+        image_source_sha="1" * 40,
+        image_manifest_digest="sha256:" + "2" * 64,
     )
 
     assert env["AWS_ACCESS_KEY_ID"] == "fleet-test-ak"
     assert env["AWS_SECRET_ACCESS_KEY"] == "fleet-test-sk"
     assert env["AWS_ENDPOINT_URL"] == "https://project.invalid"
     assert env["AWS_ENDPOINT_URL_S3"] == "https://project.invalid"
+    assert env["HF_TOKEN"] == "hf-required"
+    assert env["HUGGING_FACE_HUB_TOKEN"] == "hf-required"
+    assert "NGC_API_KEY" not in env
+    assert "NEBIUS_TOKEN_FACTORY_API_KEY" not in env
+    assert env["ROBOCASA_DEPLOYED_IMAGE_SOURCE_SHA"] == "1" * 40
+    assert env["ROBOCASA_DEPLOYED_IMAGE_MANIFEST_DIGEST"] == "sha256:" + "2" * 64
 
 
 def test_deploy_manifest_rolls_when_service_env_changes(
@@ -90,8 +148,11 @@ def test_deploy_manifest_rolls_when_service_env_changes(
         return deploy_module._kubernetes_manifest(
             project="fleet-test",
             image="example.invalid/npa-robocasa@sha256:" + "1" * 64,
+            image_source_sha="2" * 40,
+            image_manifest_digest="sha256:" + "1" * 64,
             name="npa-robocasa",
             namespace="default",
+            create_namespace=False,
             port=8791,
             output_path="s3://example/output",
             node_selector_key="node.kubernetes.io/instance-type",
@@ -114,12 +175,95 @@ def test_deploy_manifest_rolls_when_service_env_changes(
     )
     second = manifest()
 
-    first_annotation = first["items"][1]["spec"]["template"]["metadata"]["annotations"]
-    second_annotation = second["items"][1]["spec"]["template"]["metadata"][
-        "annotations"
-    ]
+    first_deployment = next(
+        item for item in first["items"] if item["kind"] == "Deployment"
+    )
+    second_deployment = next(
+        item for item in second["items"] if item["kind"] == "Deployment"
+    )
+    first_annotation = first_deployment["spec"]["template"]["metadata"]["annotations"]
+    second_annotation = second_deployment["spec"]["template"]["metadata"]["annotations"]
     assert first_annotation != second_annotation
     assert len(first_annotation["npa.nebius.ai/env-checksum"]) == 64
+
+
+def test_deploy_manifest_creates_namespace_only_when_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(deploy_module, "_service_env", lambda **_kwargs: {})
+
+    manifest = deploy_module._kubernetes_manifest(
+        project="fleet-test",
+        image="example.invalid/npa-robocasa@sha256:" + "1" * 64,
+        image_source_sha="2" * 40,
+        image_manifest_digest="sha256:" + "1" * 64,
+        name="npa-robocasa",
+        namespace="workbench",
+        create_namespace=True,
+        port=8791,
+        output_path="s3://example/output",
+        node_selector_key="node.kubernetes.io/instance-type",
+        node_selector_value="gpu-l40s-d",
+        image_pull_secret="pull-secret",
+        auth_mode="none",
+        token_env="ROBOCASA_TOKEN",
+    )
+
+    assert manifest["items"][0] == {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {"name": "workbench"},
+    }
+    assert all(
+        item["metadata"].get("namespace") == "workbench"
+        for item in manifest["items"][1:]
+    )
+
+
+def test_deploy_manifest_preserves_namespace_and_enforces_non_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(deploy_module, "_service_env", lambda **_kwargs: {})
+    manifest = deploy_module._kubernetes_manifest(
+        project="",
+        image="example.invalid/npa-robocasa@sha256:" + "1" * 64,
+        image_source_sha="2" * 40,
+        image_manifest_digest="sha256:" + "1" * 64,
+        name="npa-robocasa",
+        namespace=deploy_module.DEFAULT_NAMESPACE,
+        create_namespace=False,
+        port=8791,
+        output_path="s3://example/output",
+        node_selector_key="node.kubernetes.io/instance-type",
+        node_selector_value="gpu-l40s-d",
+        image_pull_secret="",
+        auth_mode="none",
+        token_env="ROBOCASA_TOKEN",
+    )
+
+    # Keep the historical default namespace so an upgrade updates the existing
+    # GPU deployment rather than silently leaving it running elsewhere.
+    assert deploy_module.DEFAULT_NAMESPACE == "default"
+    assert all(item["kind"] != "Namespace" for item in manifest["items"])
+    deployment = next(
+        item for item in manifest["items"] if item["kind"] == "Deployment"
+    )
+    pod_spec = deployment["spec"]["template"]["spec"]
+    assert pod_spec["automountServiceAccountToken"] is False
+    assert pod_spec["securityContext"]["runAsNonRoot"] is True
+    assert pod_spec["containers"][0]["securityContext"]["runAsNonRoot"] is True
+
+
+def test_deploy_requires_resolved_immutable_image_identity() -> None:
+    with pytest.raises(typer.Exit):
+        deploy_module._validated_image_identity(
+            "example.invalid/robocasa:latest", "a" * 40
+        )
+    with pytest.raises(typer.Exit):
+        deploy_module._validated_image_identity(
+            "example.invalid/robocasa@sha256:" + "0" * 64,
+            "0" * 40,
+        )
 
 
 def test_status_help() -> None:
@@ -149,6 +293,60 @@ def test_run_invalid_capability_local() -> None:
         ["run", "--capability", "bogus", "--output-uri", "s3://bucket/out"],
     )
     assert result.exit_code != 0
+
+
+def test_service_run_requires_exact_expected_runtime_identity() -> None:
+    result = runner.invoke(
+        robocasa_app,
+        [
+            "run",
+            "--capability",
+            "kitchen_task_registration",
+            "--output-path",
+            "s3://bucket/out",
+            "--service",
+            "--endpoint",
+            "http://robocasa.invalid",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--expected-image-source-sha is required" in result.stderr
+
+
+def test_service_run_forwards_exact_expected_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_request(_method, _endpoint, _path, *, payload, **_kwargs):
+        observed.update(payload)
+        return {"run_id": "queued", "status": "queued"}
+
+    monkeypatch.setattr("npa.cli.workbench.robocasa.run.request_json", fake_request)
+    source_sha = "a" * 40
+    manifest_digest = "sha256:" + "b" * 64
+    result = runner.invoke(
+        robocasa_app,
+        [
+            "run",
+            "--capability",
+            "kitchen_task_registration",
+            "--output-path",
+            "s3://bucket/out",
+            "--service",
+            "--endpoint",
+            "http://robocasa.invalid",
+            "--expected-image-source-sha",
+            source_sha,
+            "--expected-image-manifest-digest",
+            manifest_digest,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert observed["expected_image_source_sha"] == source_sha
+    assert observed["expected_image_manifest_digest"] == manifest_digest
 
 
 @pytest.mark.parametrize(
