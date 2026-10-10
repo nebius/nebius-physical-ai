@@ -57,6 +57,9 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     # Paired judging is hosted API-only and must not inherit the self-hosted
     # VLM family's heavy Cosmos image.
     "workbench.vlm_eval.compare_judges": None,
+    # Gemini Robotics is a hosted API adapter.  It uses the default CPU image
+    # with staged source and must not inherit a model or accelerator image.
+    "workbench.gemini_robotics": None,
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
@@ -126,6 +129,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
         "MLFLOW_TRACKING_URI",
         "MLFLOW_EXPERIMENT_ID",
     ),
+    "workbench.gemini_robotics": ("GOOGLE_API_KEY",),
     "workbench.encord": ("ENCORD_SSH_KEY_B64",),
     "workflow.paidf": (),
     "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
