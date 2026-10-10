@@ -131,3 +131,14 @@ Output is a policy checkpoint on S3.
   this is not B200 or end-to-end workflow evidence. Require independent GPU,
   private pushed-digest, data/simulator, MP4/RRD, and measured-latency evidence
   before a FastWAM live-ready claim.
+
+## Public training and deployment recipe
+
+Use `workflows/testing/robot-policy-train-and-serve.yaml` and
+`docs/workbench/cookbooks/robot-policy-train-and-serve.md` for real FiftyOne selection,
+continued SmolVLA training, two measured gates, portable export, independent GPU
+HTTP serving and native LIBERO simulation, then same-run standalone HTML/MP4.
+The standard Workbench runtime owns submission, artifact lineage and recovery.
+This recipe uses managed Kubernetes and torchrun. The separate Slurm recipe
+requires operator training scripts. This public baseline does not prove in-house
+foundation pretraining.

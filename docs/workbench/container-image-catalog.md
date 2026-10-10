@@ -197,6 +197,10 @@ packages remain runtime fetches. B300 remains unvalidated for these images.
 See the [native workflow guide](video-generation-byof.md) and
 [capability evidence](validation/studio-public-models-20260916.json).
 
+The [physical prompt comparison workflow](physical-prompt-comparison.md) reuses the
+accepted `npa-diffusers` digest with a staged NPA source overlay. It adds no
+image or public release row. Its workload qualification is recorded separately.
+
 ## 2026-09-17 Isaac Arena recovery qualification
 
 `npa-isaac-arena:0.3.0-isaaclab3-20260917-r4` selects the accepted public
