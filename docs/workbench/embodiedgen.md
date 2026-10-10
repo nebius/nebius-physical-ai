@@ -30,6 +30,7 @@ same capability boundary.
 | TRELLIS source | upstream gitlink `55a8e8164b195bbf927e0978f00e76c835e6011f`, MIT, runtime fetched |
 | TRELLIS model | `microsoft/TRELLIS-image-large@25e0d31ffbebe4b5a97464dd851910efc3002d96`, MIT, runtime fetched and receipt-verified |
 | Validation runtime | upstream `requirements.txt` SHA-256 `acd142fb…af9157`; pinned NumPy/Pillow/trimesh/ImageIO/ImageIO-FFmpeg/PyBullet imports are probed with a real MP4 encode/decode before the smoke |
+| Blackwell bootstrap | exact upstream `install_basic.sh` SHA-256 `2969700d…f84d1`; the non-Conda CPython 3.12 worker restores `pip==24.0` before reuse, selects upstream Torch `cu128`, and probes Torch/CUDA, xformers, and spconv imports before model fetch |
 | Baked image | digest-pinned CUDA/OS bootstrap plus NPA fetch/validation code only; no source, model, task input, Python application dependencies, cache, output, or credential bytes |
 | Input and cache | worker-readable HTTPS or S3 image fetched into a run-local staging directory; fetched runtime cache is outside image layers and checked against receipts |
 | Outputs | run-scoped S3 objects; see [declared artifacts](#declared-input-and-output-contract) |
@@ -41,6 +42,11 @@ recipe's exact redistribution rationale and third-party notices are in
 [`REDISTRIBUTION.md`](../../npa/docker/workbench/embodiedgen/REDISTRIBUTION.md)
 and [`THIRD_PARTY_NOTICES.md`](../../npa/docker/workbench/embodiedgen/THIRD_PARTY_NOTICES.md).
 Runtime fetch does not grant source, model, input, output, or service rights.
+
+The workflow's outer SkyPilot worker explicitly requests the same RTX PRO 6000
+Blackwell, 16+ CPU, and 96+ GiB envelope as its EmbodiedGen smoke profile. The
+BYOF command executes in that worker; the profile cannot enlarge an already
+scheduled outer pod.
 
 TRELLIS is the selected public backend. SAM3D and the Tencent cloud backend are
 not used; do not invent a terms-acceptance environment variable. The configured
@@ -88,6 +94,37 @@ The workflow base64-transports `input_uri` through the rendered shell so URI
 characters remain data rather than shell syntax. That transport does not make a
 URI reachable or authorize its contents.
 
+### Private registry target configuration
+
+Keep one task-scoped SkyPilot global configuration outside the repository and
+pass its path to planning, image preflight, submit, and resume. It must select
+the intended context, the standard SkyPilot identity, and an existing
+namespace-scoped `dockerconfigjson` pull Secret for the private registry:
+
+```yaml
+kubernetes:
+  allowed_contexts: [<configured-kubernetes-context>]
+  pod_config:
+    spec:
+      serviceAccountName: skypilot-service-account
+      imagePullSecrets:
+        - name: <existing-private-registry-pull-secret>
+```
+
+Set `SKYPILOT_CONFIG` to that private file's path. The
+`skypilot-service-account` must exist before `preflight-images`; on a fresh
+task-owned target, use the normal SkyPilot bootstrap path so it also supplies
+its standard RBAC. Do not replace it with Kubernetes `default` or grant that
+default account controller privileges.
+
+For a private OCI registry, provide `SKYPILOT_DOCKER_SERVER`,
+`SKYPILOT_DOCKER_USERNAME`, and `SKYPILOT_DOCKER_PASSWORD` through the
+operator's private process/secret channel. `SKYPILOT_DOCKER_SERVER` is the
+exact registry host, not its repository namespace. These values let the
+operator-side bootstrap manifest check use the same authority as the worker
+pull Secret; never put them in this config file, workflow variables, rendered
+YAML, logs, or source control.
+
 ## Build the private candidate
 
 This is an operational prerequisite, not a claim that the candidate is already
@@ -125,6 +162,7 @@ npa workbench workflow validate-spec workflows/testing/byof-embodiedgen.yaml --j
 
 npa workbench workflow plan-spec workflows/testing/byof-embodiedgen.yaml \
   --run-id "${RUN_ID}" \
+  --config-path "${SKYPILOT_CONFIG}" \
   --var "bucket=${OUTPUT_BUCKET}" \
   --var "input_uri=${INPUT_URI}" \
   --var "base_image=${IMAGE_REF}" \
@@ -133,6 +171,7 @@ npa workbench workflow plan-spec workflows/testing/byof-embodiedgen.yaml \
 npa workbench workflow submit workflows/testing/byof-embodiedgen.yaml \
   --run-id "${RUN_ID}" --project "${PROJECT}" \
   --workflow-s3-uri "${WORKFLOW_STATE_URI}" --durable-s3 --runtime --plan-only \
+  --config-path "${SKYPILOT_CONFIG}" \
   --var "bucket=${OUTPUT_BUCKET}" \
   --var "input_uri=${INPUT_URI}" \
   --var "base_image=${IMAGE_REF}" \
@@ -152,6 +191,7 @@ bounded, owned pull-probe pod and verifies its cleanup:
 ```bash
 npa workbench workflow preflight-images workflows/testing/byof-embodiedgen.yaml \
   --project "${PROJECT}" --infra "k8s/${KUBERNETES_CONTEXT}" \
+  --config-path "${SKYPILOT_CONFIG}" \
   --var "bucket=${OUTPUT_BUCKET}" \
   --var "input_uri=${INPUT_URI}" \
   --var "base_image=${IMAGE_REF}" \
@@ -213,6 +253,7 @@ claim model-level resume.
 npa workbench workflow submit workflows/testing/byof-embodiedgen.yaml \
   --resume-run "${RUN_ID}" --project "${PROJECT}" \
   --workflow-s3-uri "${WORKFLOW_STATE_URI}" --durable-s3 --runtime \
+  --config-path "${SKYPILOT_CONFIG}" \
   --var "bucket=${OUTPUT_BUCKET}" \
   --var "input_uri=${INPUT_URI}" \
   --var "base_image=${IMAGE_REF}" \
@@ -238,14 +279,16 @@ submission; it does not add a second submitter:
 from npa.sdk.workbench import workflow
 
 state = workflow.status(RUN_ID, project=PROJECT, workflow_s3_uri=WORKFLOW_STATE_URI)
-artifacts = workflow.artifacts(RUN_ID, project=PROJECT, workflow_s3_uri=WORKFLOW_STATE_URI)
+artifacts = workflow.artifacts(
+    RUN_ID, project=PROJECT, workflow_s3_uri=WORKFLOW_STATE_URI
+)
 ```
 
 ## Qualification status
 
 Implementation, local workflow validation, and render checks are complete only
-when their recorded tests pass. This candidate has **no** built private digest,
-image-byte scan, actual RTX PRO 6000 run, or live artifact in the public
-repository. Those are separate operational gates. Until they are recorded for
-one exact private digest, this is an implementation-complete, live-qualification-pending
+when their recorded tests pass. No qualified private digest, actual RTX PRO
+6000 generation, or live artifact is recorded in the public repository. Those
+are separate operational gates. Until they are recorded for one exact private
+digest, this is an implementation-complete, live-qualification-pending
 workflow—not a supported release or a claim of generated model quality.

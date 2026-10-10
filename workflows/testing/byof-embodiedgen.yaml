@@ -46,6 +46,8 @@ resources:
     cloud: kubernetes
     image: "{{config.base_image}}"
     accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 16+
+    memory: 96+
     kubernetes:
       pod_config:
         spec:

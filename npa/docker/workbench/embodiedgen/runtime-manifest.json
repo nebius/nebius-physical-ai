@@ -29,6 +29,18 @@
       "path": "requirements.txt",
       "sha256": "acd142fb1d6d87931a5b4c783110526acade67d641d01ab2660f1fece7af9157"
     },
+    "upstream_install_basic": {
+      "path": "install/install_basic.sh",
+      "sha256": "2969700d580e8a0f18e377cddd3f3976317748c744ce0408ba6721d0a88f84d1"
+    },
+    "operator_runtime": {
+      "python": "3.12",
+      "pip": "pip==24.0",
+      "cuda_variant": "cu128",
+      "torch_index_url": "https://download.pytorch.org/whl/cu128",
+      "torch_cuda_arch_list": "12.0",
+      "tcnn_cuda_architectures": "120"
+    },
     "validation_requirements": [
       "numpy==1.26.4",
       "Pillow==11.3.0",

@@ -25,6 +25,20 @@ RUNTIME_NAME = "embodiedgen-v2-trellis"
 UPSTREAM_REQUIREMENTS_SHA256 = (
     "acd142fb1d6d87931a5b4c783110526acade67d641d01ab2660f1fece7af9157"
 )
+UPSTREAM_INSTALL_BASIC_SHA256 = (
+    "2969700d580e8a0f18e377cddd3f3976317748c744ce0408ba6721d0a88f84d1"
+)
+PIP_REQUIREMENT = "pip==24.0"
+CUDA_VARIANT = "cu128"
+TORCH_INDEX_URL = f"https://download.pytorch.org/whl/{CUDA_VARIANT}"
+RUNTIME_CONTRACT = {
+    "python": "3.12",
+    "pip": PIP_REQUIREMENT,
+    "cuda_variant": CUDA_VARIANT,
+    "torch_index_url": TORCH_INDEX_URL,
+    "torch_cuda_arch_list": "12.0",
+    "tcnn_cuda_architectures": "120",
+}
 
 # EmbodiedGen's pinned requirements.txt names these validation dependencies but
 # leaves several of them unversioned.  Pin the imports used by
@@ -49,13 +63,21 @@ import imageio.v3 as iio
 import imageio_ffmpeg
 import numpy as np
 import pybullet_data
+import spconv.pytorch
+import torch
 import trimesh
+import torchvision
+import xformers
 from PIL import Image
 
 assert Path(imageio_ffmpeg.get_ffmpeg_exe()).is_file()
 assert pybullet_data.getDataPath()
 assert trimesh.__version__
 assert Image
+assert torch.__version__.startswith("2.8.0")
+assert torch.version.cuda == "12.8"
+assert torchvision.__version__.startswith("0.23.0")
+assert xformers.__version__ == "0.0.32.post2"
 with tempfile.TemporaryDirectory() as directory:
     video = Path(directory) / "validation.mp4"
     frame = np.zeros((16, 16, 3), dtype=np.uint8)
@@ -80,6 +102,13 @@ def _read_manifest(path: Path) -> dict[str, Any]:
         "sha256": UPSTREAM_REQUIREMENTS_SHA256,
     }:
         raise ValueError("unexpected EmbodiedGen requirements contract")
+    if runtime.get("upstream_install_basic") != {
+        "path": "install/install_basic.sh",
+        "sha256": UPSTREAM_INSTALL_BASIC_SHA256,
+    }:
+        raise ValueError("unexpected EmbodiedGen installer contract")
+    if runtime.get("operator_runtime") != RUNTIME_CONTRACT:
+        raise ValueError("unexpected EmbodiedGen runtime contract")
     if runtime.get("validation_requirements") != list(VALIDATION_REQUIREMENTS):
         raise ValueError("unexpected EmbodiedGen validation dependency contract")
     return payload
@@ -171,13 +200,29 @@ def _venv_environment(venv: Path, cache: Path) -> dict[str, str]:
     env["PIP_CACHE_DIR"] = str(cache / "pip")
     env["PYTHONPATH"] = str(cache / RUNTIME_NAME / "source")
     env["NPA_EMBODIEDGEN_TRELLIS_MODEL_REVISION"] = MODEL_REVISION
+    env["EMBODIEDGEN_CUDA_VARIANT"] = CUDA_VARIANT
+    env["EMBODIEDGEN_TORCH_INDEX_URL"] = TORCH_INDEX_URL
+    env["TORCH_CUDA_ARCH_LIST"] = RUNTIME_CONTRACT["torch_cuda_arch_list"]
+    env["TCNN_CUDA_ARCHITECTURES"] = RUNTIME_CONTRACT["tcnn_cuda_architectures"]
     return env
+
+
+def _verify_upstream_install_script(script: Path) -> None:
+    if not script.is_file() or _sha256(script) != UPSTREAM_INSTALL_BASIC_SHA256:
+        raise RuntimeError(
+            "EmbodiedGen install_basic.sh does not match the pinned source"
+        )
 
 
 def _pin_install_script(source: Path) -> None:
     script = source / "install" / "install_basic.sh"
+    _verify_upstream_install_script(script)
     text = script.read_text(encoding="utf-8")
     replacements = {
+        "CUDA_VARIANT=$(detect_cuda_variant)": (
+            'CUDA_VARIANT="${EMBODIEDGEN_CUDA_VARIANT:-$(detect_cuda_variant)}"'
+        ),
+        '"pip==22.3.1"': f'"{PIP_REQUIREMENT}"',
         'https://github.com/openai/CLIP.git"': 'https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6"',
         'https://github.com/HochCC/Kolors.git"': 'https://github.com/HochCC/Kolors.git@c59c0aa67587e472de657bc9f4f9c18272c94165"',
         "https://github.com/autonomousvision/mip-splatting.git#": "https://github.com/autonomousvision/mip-splatting.git@dda02ab5ecf45d6edb8c540d9bb65c7e451345a9#",
@@ -306,6 +351,26 @@ def _prepare(cache: Path) -> tuple[Path, Path]:
     return source, venv
 
 
+def _repair_pip(venv: Path, cache: Path) -> None:
+    """Recover pip before reusing an incomplete runtime venv."""
+
+    python = str(venv / "bin" / "python")
+    env = _venv_environment(venv, cache)
+    _run([python, "-m", "ensurepip", "--upgrade"], env=env)
+    _run(
+        [
+            python,
+            "-m",
+            "pip",
+            "install",
+            PIP_REQUIREMENT,
+            "setuptools==80.10.2",
+            "wheel",
+        ],
+        env=env,
+    )
+
+
 def _install(source: Path, venv: Path, cache: Path) -> None:
     marker = venv / ".npa-embodiedgen-installed.json"
     if marker.is_file():
@@ -313,10 +378,7 @@ def _install(source: Path, venv: Path, cache: Path) -> None:
         return
     env = _venv_environment(venv, cache)
     pip = str(venv / "bin" / "python")
-    _run(
-        [pip, "-m", "pip", "install", "pip==22.3.1", "setuptools==80.10.2", "wheel"],
-        env=env,
-    )
+    _repair_pip(venv, cache)
     _run(["bash", "install/install_basic.sh"], cwd=source, env=env)
     _run(
         [
@@ -471,8 +533,13 @@ def _runtime_receipt(source: Path, venv: Path, cache: Path) -> Path:
         "schema": "npa.embodiedgen.runtime-receipt.v1",
         "source_revision": SOURCE_REVISION,
         "source_requirements_sha256": _sha256(source / "requirements.txt"),
+        "source_install_basic_sha256": UPSTREAM_INSTALL_BASIC_SHA256,
+        "patched_install_basic_sha256": _sha256(
+            source / "install" / "install_basic.sh"
+        ),
         "trellis_revision": TRELLIS_REVISION,
         "trellis_model_revision": MODEL_REVISION,
+        "operator_runtime": RUNTIME_CONTRACT,
         "validation_requirements": list(VALIDATION_REQUIREMENTS),
         "source_path": str(source),
         "venv_path": str(venv),

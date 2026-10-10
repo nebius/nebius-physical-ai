@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from PIL import Image
 
 from npa.orchestration.npa_workflow import build_plan
@@ -60,6 +61,11 @@ def test_manifest_pins_the_selected_upstream_components() -> None:
         "path": "requirements.txt",
         "sha256": BOOTSTRAP.UPSTREAM_REQUIREMENTS_SHA256,
     }
+    assert payload["runtime"]["upstream_install_basic"] == {
+        "path": "install/install_basic.sh",
+        "sha256": BOOTSTRAP.UPSTREAM_INSTALL_BASIC_SHA256,
+    }
+    assert payload["runtime"]["operator_runtime"] == BOOTSTRAP.RUNTIME_CONTRACT
     assert payload["runtime"]["validation_requirements"] == list(
         BOOTSTRAP.VALIDATION_REQUIREMENTS
     )
@@ -93,6 +99,15 @@ def test_manifest_refuses_a_changed_validation_dependency_contract(
         BOOTSTRAP._read_manifest(path)
 
 
+def test_manifest_refuses_a_changed_blackwell_runtime_contract(tmp_path: Path) -> None:
+    payload = json.loads((IMAGE / "runtime-manifest.json").read_text())
+    payload["runtime"]["operator_runtime"]["cuda_variant"] = "cu126"
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="runtime contract"):
+        BOOTSTRAP._read_manifest(path)
+
+
 def test_runtime_bootstrap_pins_and_probes_validation_dependency_closure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -109,7 +124,12 @@ def test_runtime_bootstrap_pins_and_probes_validation_dependency_closure(
     assert "import imageio_ffmpeg" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import numpy as np" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import pybullet_data" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import spconv.pytorch" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import torch" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import trimesh" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import torchvision" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import xformers" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert 'torch.version.cuda == "12.8"' in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "from PIL import Image" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "iio.imwrite(video, frame, fps=1)" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "iio.imiter(video)" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
@@ -215,6 +235,111 @@ def test_trellis_only_patch_removes_unselected_sam_import(tmp_path: Path) -> Non
     BOOTSTRAP._patch_trellis_only_import(tmp_path)
     assert "Sam3dInference" not in inference.read_text()
     assert "NPA_EMBODIEDGEN_TRELLIS_MODEL_DIR" in image_to_3d.read_text()
+
+
+def test_runtime_bootstrap_repairs_a_broken_incomplete_venv_before_installing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    venv = tmp_path / "venv"
+    python = venv / "bin" / "python"
+    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+    site_packages = Path(
+        subprocess.check_output(
+            [str(python), "-c", "import site; print(site.getsitepackages()[0])"],
+            text=True,
+        ).strip()
+    )
+    pip_metadata = next(site_packages.glob("pip-*.dist-info"))
+    bundled_version = subprocess.check_output(
+        [str(python), "-c", "import ensurepip; print(ensurepip.version())"],
+        text=True,
+    ).strip()
+    pip_metadata.rename(site_packages / "pip-0.0.1.dist-info")
+    metadata = site_packages / "pip-0.0.1.dist-info" / "METADATA"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8").replace(
+            f"Version: {bundled_version}", "Version: 0.0.1", 1
+        ),
+        encoding="utf-8",
+    )
+    (site_packages / "pip" / "__init__.py").write_text(
+        'raise AttributeError("pkgutil.ImpImporter")\n', encoding="utf-8"
+    )
+    broken = subprocess.run(
+        [str(python), "-m", "pip", "--version"], capture_output=True, text=True
+    )
+    assert broken.returncode != 0
+
+    calls: list[list[str]] = []
+    original_run = BOOTSTRAP._run
+
+    def recover_then_record(argv: list[str], **kwargs) -> None:
+        if argv[2:4] == ["ensurepip", "--upgrade"]:
+            original_run(argv, **kwargs)
+        else:
+            calls.append(argv)
+
+    monkeypatch.setattr(BOOTSTRAP, "_run", recover_then_record)
+    BOOTSTRAP._repair_pip(venv, tmp_path / "cache")
+    repaired = subprocess.run(
+        [str(python), "-m", "pip", "--version"], capture_output=True, text=True
+    )
+    assert repaired.returncode == 0, repaired.stderr
+    assert calls == [
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            BOOTSTRAP.PIP_REQUIREMENT,
+            "setuptools==80.10.2",
+            "wheel",
+        ]
+    ]
+
+
+def test_runtime_bootstrap_patches_the_upstream_installer_for_blackwell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installer = tmp_path / "install" / "install_basic.sh"
+    installer.parent.mkdir(parents=True)
+    installer.write_text(
+        "#!/bin/bash\n"
+        "detect_cuda_variant() { printf '%s\\n' cu126; }\n"
+        "CUDA_VARIANT=$(detect_cuda_variant)\n"
+        'TORCH_INDEX_URL="${EMBODIEDGEN_TORCH_INDEX_URL:-https://download.pytorch.org/whl/$CUDA_VARIANT}"\n'
+        "PIP_INSTALL_PACKAGES=(\n"
+        '    "pip==22.3.1"\n'
+        '    "clip@git+https://github.com/openai/CLIP.git"\n'
+        '    "kolors@git+https://github.com/HochCC/Kolors.git"\n'
+        '    "--no-build-isolation diff-gaussian-rasterization@git+https://github.com/autonomousvision/mip-splatting.git#subdirectory=mesh"\n'
+        ")\n"
+        'printf "%s\\n" "$CUDA_VARIANT" "$TORCH_INDEX_URL" "${PIP_INSTALL_PACKAGES[0]}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        BOOTSTRAP,
+        "UPSTREAM_INSTALL_BASIC_SHA256",
+        hashlib.sha256(installer.read_bytes()).hexdigest(),
+    )
+
+    BOOTSTRAP._pin_install_script(tmp_path)
+    completed = subprocess.run(
+        ["bash", str(installer)],
+        env={
+            **os.environ,
+            "EMBODIEDGEN_CUDA_VARIANT": BOOTSTRAP.CUDA_VARIANT,
+            "EMBODIEDGEN_TORCH_INDEX_URL": BOOTSTRAP.TORCH_INDEX_URL,
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.stdout.splitlines() == [
+        "cu128",
+        BOOTSTRAP.TORCH_INDEX_URL,
+        BOOTSTRAP.PIP_REQUIREMENT,
+    ]
 
 
 @pytest.mark.parametrize(
@@ -539,6 +664,8 @@ def test_workflow_declares_worker_input_and_generated_asset_outputs() -> None:
     spec = load_spec(WORKFLOW)
     assert spec.metadata["executionMode"] == "runtime"
     assert spec_requires_runtime(spec)
+    assert spec.resources["gpu"]["cpus"] == "16+"
+    assert spec.resources["gpu"]["memory"] == "96+"
     state = spec.states["byof-run"]
     assert [(item.uri, item.schema) for item in state.inputs] == [
         ("{{config.input_uri}}", "image/*")
@@ -551,6 +678,21 @@ def test_workflow_declares_worker_input_and_generated_asset_outputs() -> None:
         ("{{config.view_png_uri}}", "image/png"),
         ("{{config.view_mp4_uri}}", "video/mp4"),
     }
+
+
+def test_embodiedgen_render_keeps_the_profiled_outer_worker_envelope() -> None:
+    spec = load_spec(WORKFLOW)
+    plan = build_plan(spec, run_id="embodiedgen-resource-render")
+    rendered = render_skypilot_yaml(spec, plan, run_id="embodiedgen-resource-render")
+    tasks = list(yaml.safe_load_all(rendered))
+    assert any(
+        document.get("resources", {}).get("cpus") == "16+"
+        and document["resources"].get("memory") == "96+"
+        and document["resources"].get("accelerators")
+        == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+        for document in tasks
+        if isinstance(document, dict)
+    )
 
 
 def test_readiness_record_binds_workflow_and_live_blockers() -> None:
