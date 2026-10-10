@@ -19,6 +19,7 @@ def rendering(platform="gpu-rtx6000-a", preset="8gpu-192vcpu-1744gb"):
     return ClusterSpec(
         name="render",
         gpu_workload_profile="rtx-rendering",
+        gpu_graphics_smoke_image="registry.example/graphics:operator",
         gpu_nodes=NodePoolSpec(count=1, platform=platform, preset=preset),
     )
 
