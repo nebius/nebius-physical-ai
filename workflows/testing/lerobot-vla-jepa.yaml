@@ -16,6 +16,9 @@ config:
   # separately built immutable private candidate with --image-override; the
   # generic LeRobot 0.5.1/0.6.0 images do not contain this VLA-JEPA capability.
   vla_jepa_image: "registry.invalid/npa-lerobot-vla-jepa@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  # This candidate ships the NPA adapter and its LeRobot vendor runtime.  Operators
+  # must bind source_sha to the exact commit attested by their immutable digest.
+  require_baked_npa: true
   dataset_repo: HuggingFaceVLA/libero
   dataset_revision: 86958911c0f959db2bbbdb107eb3e17c5f9c798e
   heldout_task_ids: "[0, 1]"

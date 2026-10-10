@@ -97,6 +97,7 @@ def test_workflow_has_five_connected_native_stages() -> None:
     assert spec.resources["gpu"]["cpus"] == 16
     assert spec.resources["gpu"]["memory"] == "96Gi"
     assert "registry.invalid" in spec.config["vla_jepa_image"]
+    assert spec.config["require_baked_npa"] is True
     assert spec.config["train_steps"] == "30000"
     assert spec.config["heldout_task_ids"] == "[0, 1]"
 
@@ -209,7 +210,6 @@ def test_candidate_baked_vendor_python_matches_prepare_render(
             ),
             "bucket": "unit-bucket",
             "prefix": "unit-prefix",
-            "require_baked_npa": True,
             "source_sha": "a" * 40,
         },
     )

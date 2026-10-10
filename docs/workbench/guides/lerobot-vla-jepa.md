@@ -63,6 +63,7 @@ override; the checked-in image value is intentionally non-routable.
 
 ```bash
 VLA_JEPA_IMAGE='private-registry.invalid/operator/lerobot-vla-jepa@sha256:REPLACE_WITH_64_HEX_DIGEST'
+VLA_JEPA_SOURCE_SHA='REPLACE_WITH_40_HEX_SOURCE_COMMIT'
 NPA_PROJECT='operator-project'
 NPA_K8S_CONTEXT='operator-kubernetes-context'
 NPA_BUCKET='operator-authorized-bucket'
@@ -71,13 +72,16 @@ npa/.venv/bin/npa workbench health preflight --checks nebius,s3 --json
 npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/lerobot-vla-jepa.yaml --json
 npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/lerobot-vla-jepa.yaml \
   --run-id vla-jepa-operator-run --waves --json \
-  --var "vla_jepa_image=${VLA_JEPA_IMAGE}"
+  --var "vla_jepa_image=${VLA_JEPA_IMAGE}" \
+  --var "source_sha=${VLA_JEPA_SOURCE_SHA}"
 npa/.venv/bin/npa workbench workflow preflight-images workflows/testing/lerobot-vla-jepa.yaml \
   --infra "k8s/${NPA_K8S_CONTEXT}" \
+  --var "source_sha=${VLA_JEPA_SOURCE_SHA}" \
   --image-override "workbench.lerobot.vla_jepa=${VLA_JEPA_IMAGE}"
 npa/.venv/bin/npa workbench workflow submit workflows/testing/lerobot-vla-jepa.yaml \
   --project "$NPA_PROJECT" --infra "k8s/${NPA_K8S_CONTEXT}" --runtime --stage-src \
   --run-id vla-jepa-operator-run --var "bucket=${NPA_BUCKET}" \
+  --var "source_sha=${VLA_JEPA_SOURCE_SHA}" \
   --image-override "workbench.lerobot.vla_jepa=${VLA_JEPA_IMAGE}" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
