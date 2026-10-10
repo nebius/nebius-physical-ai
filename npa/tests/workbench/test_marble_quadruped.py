@@ -1,5 +1,8 @@
 """Guard physical robot import, upstream policy inputs, and truthful GPU reports."""
 
+import json
+from types import SimpleNamespace
+from unittest.mock import Mock
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -10,6 +13,41 @@ from npa.workbench.marble.quadruped_assets import _description, acquire_robot
 from npa.workbench.marble.quadruped_control import DEFAULT_ANGLES, observe
 from npa.workbench.marble.quadruped_report import _data
 from npa.workbench.marble.schemas import QuadrupedRequest
+
+
+def test_shadow_mesh_matches_physics_after_provider_transform(monkeypatch, tmp_path):
+    import trimesh
+    from npa.workbench.marble import quadruped_render
+    from npa.workbench.marble.rover_physics import _warehouse
+
+    mesh = trimesh.creation.box(extents=[2, 3, 5])
+    mesh.export(tmp_path / "collider.glb")
+    transform = {"scale": [2, 0.5, 3], "translation": [7, -4, 9]}
+    world = {
+        "source_kind": "world-api",
+        "mesh_transform": transform,
+        "splat_transform": transform,
+    }
+    physics = Mock(GEOM_MESH=5, GEOM_FORCE_CONCAVE_TRIMESH=1)
+    _warehouse(physics, tmp_path, world)
+    collider = physics.createCollisionShape.call_args.kwargs
+    monkeypatch.setattr(
+        quadruped_render,
+        "_render_actor",
+        lambda root: {
+            "device_type": "CUDA",
+            "cpu_render_fallback": False,
+            "frame_wall_seconds": [1],
+        },
+    )
+    quadruped_render._actor(
+        tmp_path, world, SimpleNamespace(width=32, height=32, samples=1, frames=1)
+    )
+    shadow = json.loads((tmp_path / "render-warehouse.json").read_text())
+    np.testing.assert_allclose(shadow["vertices"], collider["vertices"])
+    np.testing.assert_array_equal(
+        np.asarray(shadow["faces"]).reshape(-1), collider["indices"]
+    )
 
 
 def test_robot_import_preserves_dynamic_trunk_and_massless_optical_frames(tmp_path):

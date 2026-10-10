@@ -29,7 +29,7 @@ def _depth(root, world, request, poses, intrinsic):
     )
     hits = np.isfinite(depths) & (depths > 0)
     if hits.mean() < 0.5:
-        raise MarbleError("Rover depth coverage is below 50%; inspect mesh alignment")
+        raise MarbleError("Sensor depth coverage is below 50%; inspect mesh alignment")
     np.savez_compressed(
         root / "depth.npz", depth=depths, camera_to_world=poses, intrinsics=intrinsic
     )

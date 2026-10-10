@@ -86,7 +86,7 @@ def _rollout(bullet, root, warehouse, route, robot, joints, request, policy):
                     (len(records) + 1) / request.sensor_hz,
                 )
             )
-            records[-1]["motion_phase"] = patrol.phase if step >= settle else "settling"
+            records[-1]["motion_phase"] = patrol.phase
     return records
 
 

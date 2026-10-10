@@ -116,6 +116,7 @@ def _render_actor(root):
 
 
 def _actor(root, world, request):
+    # This mesh must share the Bullet Z-up frame of the recorded robot link poses.
     vertices, faces = collision_geometry(root, world)
     (root / "render-warehouse.json").write_text(
         json.dumps({"vertices": vertices.tolist(), "faces": faces.tolist()})

@@ -36,6 +36,7 @@ def collision_geometry(root: Path, world: dict):
         raise MarbleError("World transforms must be finite and invertible")
     mesh = trimesh.load(root / "collider.glb", force="scene").to_geometry()
     vertices = np.asarray(mesh.vertices) * scale + translation
+    # Navigation and Go1 shadows share Bullet's Z-up frame (_WORLD_FROM_BULLET inverse).
     vertices = vertices[:, [0, 2, 1]] * [1, -1, 1]
     faces = np.asarray(mesh.faces, dtype=np.int32)
     if not np.isfinite(vertices).all() or not len(faces):
