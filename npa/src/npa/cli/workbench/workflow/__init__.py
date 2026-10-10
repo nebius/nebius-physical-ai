@@ -9703,6 +9703,11 @@ def stage_src_cmd(
         "--run-id",
         help="Submission ledger key used to make concurrent staging restart-safe.",
     ),
+    persist: bool = typer.Option(
+        True,
+        "--persist/--no-persist",
+        help="Save the source URI in project configuration. Disable for isolated runtimes.",
+    ),
 ) -> None:
     """Upload the local npa package to S3 for image-less workflow steps.
 
@@ -9745,7 +9750,8 @@ def stage_src_cmd(
                 endpoint_url=endpoint,
                 on_status=lambda message: typer.echo(f"  {message}", err=True),
             )
-            persist_workflow_src_s3_uri(uri, project or None)
+            if persist:
+                persist_workflow_src_s3_uri(uri, project or None)
             update_submission_state(
                 project or "default",
                 run_id,
@@ -9761,6 +9767,7 @@ def stage_src_cmd(
             s3_endpoint=endpoint,
             project=project,
             run_id=run_id,
+            persist=persist,
         )
     if not uri:
         return
