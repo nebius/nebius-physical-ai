@@ -6,6 +6,7 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -30,6 +31,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     plan_image_pull_secrets,
     plan_images,
     render_task_run_script,
+    render_vendor_interpreter_setup,
     render_skypilot_yaml,
     resolve_task_image,
     secret_env_hints_for_plan,
@@ -406,6 +408,83 @@ def test_paidf_dig_keeps_npa_out_of_the_vendor_environment() -> None:
     assert tool_vendor_interpreters("workbench.lerobot") == (
         "/opt/lerobot/venv/bin/python",
     )
+
+
+def test_vendor_setup_repairs_a_shallow_overlay_before_a_stage_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A low-level package import must not hide absent CLI dependencies.
+
+    The fake vendor interpreter accepts ``npa.workbench`` immediately, but accepts
+    ``npa.cli.main`` only after a dependency-resolving editable install. This runs
+    the rendered shell instead of merely checking a rendered string.
+    """
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    install_log = tmp_path / "installs.log"
+    ready = tmp_path / "cli-ready"
+    vendor = fake_bin / "vendor-python"
+    vendor.write_text(
+        "#!/bin/sh\n"
+        'case "$1:$2" in\n'
+        "  -c:'import npa.workbench') exit 0 ;;\n"
+        "  -c:'import npa.cli.main') test -f \"$NPA_VENDOR_TEST_READY\"; exit ;;\n"
+        "esac\n"
+        'if [ "$1:$2:$3" = "-m:pip:install" ]; then\n'
+        '  printf "%s\\n" "$*" >> "$NPA_VENDOR_TEST_LOG"\n'
+        '  case " $* " in\n'
+        "    *' --no-deps '*) ;;\n"
+        '    *) : > "$NPA_VENDOR_TEST_READY" ;;\n'
+        "  esac\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    vendor.chmod(0o755)
+    fake_cat = fake_bin / "cat"
+    fake_cat.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = /tmp/npa-src-root ]; then\n'
+        '  printf "%s" "$NPA_VENDOR_TEST_SOURCE"\n'
+        "  exit 0\n"
+        "fi\n"
+        'exec /bin/cat "$@"\n',
+        encoding="utf-8",
+    )
+    fake_cat.chmod(0o755)
+    monkeypatch.setenv("NPA_VENDOR_TEST_LOG", str(install_log))
+    monkeypatch.setenv("NPA_VENDOR_TEST_READY", str(ready))
+    monkeypatch.setenv("NPA_VENDOR_TEST_SOURCE", str(source_root))
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv("BASH_ENV", raising=False)
+
+    setup = render_vendor_interpreter_setup((str(vendor),))
+    source_root_probe = "if [ -s /tmp/npa-src-root ]; then"
+    assert source_root_probe in setup
+    # Source-root selection is covered separately.  Force this generated branch
+    # locally so this shell-level test stays hermetic rather than claiming the
+    # shared /tmp path while other test workers may be active.
+    setup = setup.replace(source_root_probe, "if true; then", 1)
+
+    result = subprocess.run(
+        ["bash", "-c", setup],
+        check=False,
+        capture_output=True,
+        env=os.environ.copy(),
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert install_log.is_file(), (result.stdout, result.stderr)
+    installs = install_log.read_text(encoding="utf-8").splitlines()
+    assert len(installs) == 2
+    assert "--no-deps" in installs[0]
+    assert "--no-deps" not in installs[1]
+    assert ready.is_file()
 
 
 def test_sonic_specs_train_with_the_in_job_runtime() -> None:
