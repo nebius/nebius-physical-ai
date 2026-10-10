@@ -225,6 +225,8 @@ def test_candidate_baked_vendor_python_matches_prepare_render(
     )
     # Setup records the interpreter in the state file adjacent to the run-shell
     # shim directory, so both independently rendered shells use the same handoff.
+    # This test compares rendered shell text only; component construction keeps
+    # the expected path from looking like an insecure temporary-file operation.
     renderer_tmp = Path("/").joinpath("tmp")
     shim_python = renderer_tmp / "npa-shim" / "python3"
     recorded_python = shim_python.parent.parent / "npa-python"
