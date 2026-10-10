@@ -3,10 +3,42 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any
 
 from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
+
+
+def _goal_approach_count(rows: list[dict[str, Any]]) -> int:
+    """Require paired grasp/lift and measured progress into the goal basin."""
+    count = 0
+    for row in rows:
+        details = row["details"]
+        distance = details.get("closest_object_goal_distance_m")
+        if distance is None:
+            distance = details.get("object_goal_distance_m")
+        if distance is None:
+            continue
+        if (
+            type(distance) not in (float, int)
+            or not math.isfinite(distance)
+            or distance < 0
+        ):
+            raise ValueError(
+                "resume goal approach requires a finite nonnegative distance"
+            )
+        count += bool(details["stable_grasp"] and details["lift"] and distance < 0.08)
+    return count
+
+
+def _skill_phase(reliable_lifts: int, goal_approaches: int, episodes: int) -> str:
+    """Keep policy noise trainable until validation demonstrates goal approach."""
+    if reliable_lifts * 2 < episodes:
+        return "exploration"
+    if goal_approaches * 2 < episodes:
+        return "transport"
+    return "convergence"
 
 
 def _validated_skill_progress(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -31,6 +63,7 @@ def _validated_skill_progress(candidate: dict[str, Any]) -> dict[str, Any]:
             "resume curriculum requires literal simulator grasp/lift verdicts"
         )
     reliable_lifts = sum(grasp and lift for grasp, lift in pairs)
+    goal_approaches = _goal_approach_count(rows)
     return {
         "checkpoint_uri": checkpoint,
         "checkpoint_sha256": checksum,
@@ -38,7 +71,9 @@ def _validated_skill_progress(candidate: dict[str, Any]) -> dict[str, Any]:
         "validation_episodes": len(rows),
         "stable_grasp_and_lift_episodes": reliable_lifts,
         "stable_grasp_and_lift_rate": reliable_lifts / len(rows),
-        "phase": "convergence" if reliable_lifts * 2 >= len(rows) else "exploration",
+        "goal_approach_episodes": goal_approaches,
+        "goal_approach_distance_m": 0.08,
+        "phase": _skill_phase(reliable_lifts, goal_approaches, len(rows)),
         "decision_source": "simulator_validation_only",
     }
 

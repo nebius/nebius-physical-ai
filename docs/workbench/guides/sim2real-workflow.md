@@ -545,15 +545,22 @@ The production training default is 2,000 PPO updates per inner pass. Validation
 ranks the final checkpoint from each completed pass. Subsequent train rollouts
 and PPO resume the best candidate's exact checkpoint, which can differ from the
 newest training checkpoint; a three-pass loop performs 6,000 new updates while
-retaining stronger validation candidates.
+retaining stronger validation candidates. Strict success and placement rank
+first, followed by stable grasp and lift achieved in the same episode. Extra
+lifts without stable grasp cannot displace a stronger paired-skill candidate.
 
 A checkpoint file alone does not prove that the actor learned to grasp. Until
 at least half of its validation episodes achieved both stable grasp and lift,
 resumed PPO retains the exploration schedule and repeats the training-only goal
-curriculum. Once validation proves that milestone, the next pass uses low-noise
-placement consolidation. `resume_curriculum` records the decision, validation
-counts, and exact checkpoint identity. Stage 9 sets
-`NPA_BYO_ISAAC_RESUME_PHASE=exploration|convergence` and disables unvalidated
+curriculum. Once validation proves that milestone, the next pass learns transport
+toward the exact goals while keeping action noise trainable. Low-noise placement
+consolidation begins only after at least half of validation episodes also bring
+the grasped, lifted object within 8 cm of the goal. That 8 cm milestone selects a
+training phase; strict success still requires the unchanged 5 cm distance,
+0.03 m/s speed, and three consecutive stable steps. Missing distance evidence
+keeps the transport phase. `resume_curriculum` records the decision, paired-skill
+and approach counts, and exact checkpoint identity. Stage 9 sets
+`NPA_BYO_ISAAC_RESUME_PHASE=exploration|transport|convergence` and disables unvalidated
 automatic resume; direct compatibility callers retain `convergence` as their
 default. Gold is excluded from this decision, and its goals and strict predicates
 remain fixed. Reduced plumbing proofs may override the update count explicitly;

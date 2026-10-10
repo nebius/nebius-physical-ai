@@ -77,6 +77,9 @@ DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE = "0.0001"
 # this value only after loading the exact resume checkpoint.
 DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD = "0.05"
 _STOCK_ENTROPY_SENTINELS = frozenset({"stock", "default", "none", ""})
+_RESUME_PHASES = frozenset({"exploration", "transport", "convergence"})
+
+
 TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
 # rsl_rl experiment_name for the Franka Lift task (logs/rsl_rl/<experiment_name>/).
 # Overridable via NPA_BYO_ISAAC_EXPERIMENT_NAME for non-default tasks; the outer-loop
@@ -789,8 +792,8 @@ def build_isaac_job_manifest(
         overrides["agent.resume"] = "true"
         overrides["agent.load_run"] = RESUME_RUN_DIR
         overrides["agent.load_checkpoint"] = RESUME_CKPT_NAME
-    if resume_phase not in {"exploration", "convergence"}:
-        raise ValueError("resume_phase must be exploration or convergence")
+    if resume_phase not in _RESUME_PHASES:
+        raise ValueError("resume_phase must be exploration, transport or convergence")
     goal_curriculum_enabled = (
         not resume_uri or resume_phase == "exploration"
     ) and not physics
@@ -1299,6 +1302,25 @@ def s3_object_sha256(uri: str, *, endpoint: str = "") -> str:
     return digest.hexdigest()
 
 
+def _resume_schedule_defaults(phase: str) -> dict[str, str]:
+    """Retain trainable noise while learning transport toward the exact goal."""
+    if phase == "transport":
+        return {
+            "entropy": "0.006",
+            "final_entropy": "0.001",
+            "fraction": "0.8",
+            "learning_rate": "0.0003",
+            "noise": "stock",
+        }
+    return {
+        "entropy": DEFAULT_RESUME_ENTROPY_COEF,
+        "final_entropy": DEFAULT_RESUME_ENTROPY_FINAL_COEF,
+        "fraction": DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION,
+        "learning_rate": DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE,
+        "noise": DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD,
+    }
+
+
 def _resume_curriculum_audit(
     checkpoint: str, checksum: str, phase: str
 ) -> dict[str, Any] | None:
@@ -1552,12 +1574,14 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     # A saved checkpoint does not prove grasp/lift discovery. Canonical stages
     # select exploration or consolidation using that checkpoint's validation.
     resume_phase = _env("NPA_BYO_ISAAC_RESUME_PHASE", "convergence")
-    if resume_phase not in {"exploration", "convergence"}:
+    if resume_phase not in _RESUME_PHASES:
         raise ValueError(
-            "NPA_BYO_ISAAC_RESUME_PHASE must be exploration or convergence"
+            "NPA_BYO_ISAAC_RESUME_PHASE must be exploration, transport or convergence"
         )
-    resume_convergence = (
-        bool(resume_uri) and not physics and resume_phase == "convergence"
+    resume_exact_goals = (
+        bool(resume_uri)
+        and not physics
+        and resume_phase in {"transport", "convergence"}
     )
     resume_curriculum = _resume_curriculum_audit(
         resume_uri, resume_sha256, resume_phase
@@ -1565,27 +1589,28 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     training_phase = "exploration"
     if resume_uri and not physics:
         training_phase = f"resume_{resume_phase}"
-    if resume_convergence:
+    if resume_exact_goals:
+        schedule_defaults = _resume_schedule_defaults(resume_phase)
         raw_ent = _env(
             "NPA_BYO_ISAAC_RESUME_ENTROPY_COEF",
-            DEFAULT_RESUME_ENTROPY_COEF,
+            schedule_defaults["entropy"],
         )
         entropy_coef = "" if raw_ent.lower() in _STOCK_ENTROPY_SENTINELS else raw_ent
         entropy_final_coef = _env(
             "NPA_BYO_ISAAC_RESUME_ENTROPY_FINAL_COEF",
-            DEFAULT_RESUME_ENTROPY_FINAL_COEF,
+            schedule_defaults["final_entropy"],
         )
         entropy_anneal_fraction = _env(
             "NPA_BYO_ISAAC_RESUME_ENTROPY_ANNEAL_FRACTION",
-            DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION,
+            schedule_defaults["fraction"],
         )
         ppo_optimizer_learning_rate = _env(
             "NPA_BYO_ISAAC_RESUME_PPO_LEARNING_RATE",
-            DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE,
+            schedule_defaults["learning_rate"],
         )
         raw_convergence_std = _env(
             "NPA_BYO_ISAAC_RESUME_CONVERGENCE_ACTION_NOISE_STD",
-            DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD,
+            schedule_defaults["noise"],
         )
         convergence_action_noise_std = (
             ""
@@ -1608,7 +1633,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
             "byo_isaac_trainer: PPO entropy curriculum -> "
             f"{entropy_coef} then {entropy_final_coef} after "
             f"{entropy_anneal_fraction} of "
-            f"{'resume convergence' if resume_convergence else 'exploration'}",
+            f"{'resume ' + resume_phase if resume_exact_goals else 'exploration'}",
             flush=True,
         )
     print(

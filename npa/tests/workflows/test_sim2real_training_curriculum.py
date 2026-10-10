@@ -32,6 +32,9 @@ def _candidate(reliable_lifts: int, iteration: int = 1) -> dict:
                     "details": {
                         "stable_grasp": index < reliable_lifts,
                         "lift": index < reliable_lifts,
+                        "closest_object_goal_distance_m": 0.06
+                        if index < reliable_lifts
+                        else 0.4,
                     }
                 }
                 for index in range(64)
@@ -65,6 +68,42 @@ def test_resume_uses_better_validation_checkpoint_instead_of_latest():
         == best["checkpoint_sha256"]
     )
     assert environment["NPA_BYO_ISAAC_AUTO_RESUME"] == "0"
+
+
+@pytest.mark.parametrize("near_goal_episodes", [0, 31, 32, 64])
+def test_resume_retains_trainable_transport_until_paired_goal_approach(
+    near_goal_episodes,
+):
+    candidate = _candidate(64)
+    for index, row in enumerate(candidate["validation_report"]["per_env"]):
+        row["details"]["closest_object_goal_distance_m"] = (
+            0.06 if index < near_goal_episodes else 0.2
+        )
+    environment = resume_environment({"checkpoint_candidates": [candidate]})
+    assert environment["NPA_BYO_ISAAC_RESUME_PHASE"] == (
+        "convergence" if near_goal_episodes >= 32 else "transport"
+    )
+    audit = json.loads(environment["NPA_SIM2REAL_RESUME_CURRICULUM_JSON"])
+    assert audit["goal_approach_episodes"] == near_goal_episodes
+    assert audit["goal_approach_distance_m"] == 0.08
+
+
+def test_missing_goal_distance_never_freezes_an_otherwise_reliable_checkpoint():
+    candidate = _candidate(64)
+    for row in candidate["validation_report"]["per_env"]:
+        del row["details"]["closest_object_goal_distance_m"]
+    environment = resume_environment({"checkpoint_candidates": [candidate]})
+    assert environment["NPA_BYO_ISAAC_RESUME_PHASE"] == "transport"
+
+
+@pytest.mark.parametrize("distance", [True, -0.1, float("nan"), float("inf"), "0.01"])
+def test_resume_rejects_invalid_goal_distance(distance):
+    candidate = _candidate(64)
+    candidate["validation_report"]["per_env"][0]["details"][
+        "closest_object_goal_distance_m"
+    ] = distance
+    with pytest.raises(ValueError, match="finite nonnegative distance"):
+        resume_environment({"checkpoint_candidates": [candidate]})
 
 
 @pytest.mark.parametrize(

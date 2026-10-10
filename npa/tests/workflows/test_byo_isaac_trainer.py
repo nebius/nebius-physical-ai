@@ -826,6 +826,16 @@ def test_resumed_exploration_repeats_training_goal_curriculum():
     assert "agent.resume=true" in _manifest_script(manifest)
 
 
+def test_resumed_transport_uses_exact_goals_without_restarting_goal_curriculum():
+    manifest = _resume_manifest(resume_uri="s3://b/prior.pt", resume_phase="transport")
+    env = {
+        item["name"]: item["value"]
+        for item in manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM"] == "0"
+    assert "agent.resume=true" in _manifest_script(manifest)
+
+
 def test_manifest_resume_download_is_fail_closed_before_trainer_capture() -> None:
     uri = "s3://b/o/model_latest.pt"
     args = _manifest_script(_resume_manifest(resume_uri=uri))
@@ -949,7 +959,7 @@ def test_s3_object_sha256_streams_exact_checkpoint_bytes(monkeypatch) -> None:
     )
 
 
-@pytest.mark.parametrize("resume_phase", ["convergence", "exploration"])
+@pytest.mark.parametrize("resume_phase", ["convergence", "exploration", "transport"])
 def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch, resume_phase):
     # NPA_SIM2REAL_TRAINER_TAG must make each iteration's checkpoint a DISTINCT S3
     # path (so the prior model survives for the next outer iteration to resume from
@@ -1066,24 +1076,35 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch, resume_p
     assert captured["resume_uri"] == "s3://bkt/prior/model_latest.pt"
     assert captured["resume_sha256"] == "b" * 64
     convergence = resume_phase == "convergence"
+    transport = resume_phase == "transport"
     assert captured["resume_phase"] == resume_phase
-    assert captured["entropy_coef"] == (
-        byo.DEFAULT_RESUME_ENTROPY_COEF if convergence else byo.DEFAULT_ENTROPY_COEF
-    )
-    assert captured["entropy_final_coef"] == (
-        byo.DEFAULT_RESUME_ENTROPY_FINAL_COEF
-        if convergence
-        else byo.DEFAULT_ENTROPY_FINAL_COEF
-    )
-    assert captured["entropy_anneal_fraction"] == (
-        byo.DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION
-        if convergence
-        else byo.DEFAULT_ENTROPY_ANNEAL_FRACTION
-    )
-    assert captured["ppo_optimizer_learning_rate"] == (
-        byo.DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE
-        if convergence
-        else byo.DEFAULT_PPO_OPTIMIZER_LEARNING_RATE
+    if transport:
+        expected = ("0.006", "0.001", "0.8", "0.0003")
+    elif convergence:
+        expected = (
+            byo.DEFAULT_RESUME_ENTROPY_COEF,
+            byo.DEFAULT_RESUME_ENTROPY_FINAL_COEF,
+            byo.DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION,
+            byo.DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE,
+        )
+    else:
+        expected = (
+            byo.DEFAULT_ENTROPY_COEF,
+            byo.DEFAULT_ENTROPY_FINAL_COEF,
+            byo.DEFAULT_ENTROPY_ANNEAL_FRACTION,
+            byo.DEFAULT_PPO_OPTIMIZER_LEARNING_RATE,
+        )
+    assert (
+        tuple(
+            captured[name]
+            for name in (
+                "entropy_coef",
+                "entropy_final_coef",
+                "entropy_anneal_fraction",
+                "ppo_optimizer_learning_rate",
+            )
+        )
+        == expected
     )
     assert captured["convergence_action_noise_std"] == (
         byo.DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD if convergence else ""

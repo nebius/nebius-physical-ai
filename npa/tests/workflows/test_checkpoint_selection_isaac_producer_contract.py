@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from npa.workflows.sim2real.byo_isaac_eval import (
     build_heldout_report,
     per_env_from_distances,
@@ -34,6 +36,97 @@ def _validation_candidate(
         "checkpoint_sha256": f"sha256-{training_iteration:04d}",
         "validation_report": report,
     }
+
+
+def _controlled_lift_report(grasp_indices: set[int], lift_indices: set[int]) -> dict:
+    """Produce real report structure from paired native episode verdicts."""
+    metrics = [
+        {
+            "stable_grasp": index in grasp_indices,
+            "lift": index in lift_indices,
+            "reach": True,
+            "contact": True,
+            "place": False,
+            "placement_stable": False,
+        }
+        for index in range(64)
+    ]
+    per_env = per_env_from_distances(
+        [0.4] * 64, success_dist_m=0.05, runtime_metrics=metrics
+    )
+    return build_heldout_report(
+        per_env,
+        isaac_task=ISAAC_TASK,
+        checkpoint_uri="s3://bucket/controlled/model.pt",
+        source="byo_isaac_eval",
+    )
+
+
+def test_selection_preserves_controlled_grasps_over_more_uncontrolled_lifts():
+    controlled = _validation_candidate(
+        checkpoint_uri="s3://bucket/controlled/model.pt",
+        training_iteration=1,
+        report=_controlled_lift_report(set(range(34)), set(range(59))),
+    )
+    more_lifts = _validation_candidate(
+        checkpoint_uri="s3://bucket/more-lifts/model.pt",
+        training_iteration=2,
+        report=_controlled_lift_report(set(range(27)), set(range(61))),
+    )
+    for candidates in ([controlled, more_lifts], [more_lifts, controlled]):
+        selected = select_best_checkpoint(candidates)
+        assert selected["checkpoint_uri"] == controlled["checkpoint_uri"]
+        assert "stable_grasp_and_lift" in selected["selection_policy"]
+
+
+def test_selection_uses_joint_episode_verdicts_instead_of_marginal_skill_rates():
+    separate = _validation_candidate(
+        checkpoint_uri="s3://bucket/separate/model.pt",
+        training_iteration=1,
+        report=_controlled_lift_report(set(range(34)), set(range(24, 64))),
+    )
+    paired = _validation_candidate(
+        checkpoint_uri="s3://bucket/paired/model.pt",
+        training_iteration=2,
+        report=_controlled_lift_report(set(range(34)), set(range(40))),
+    )
+    assert (
+        separate["validation_report"]["decomposed_metrics"]
+        == paired["validation_report"]["decomposed_metrics"]
+    )
+    assert (
+        select_best_checkpoint([separate, paired])["checkpoint_uri"]
+        == paired["checkpoint_uri"]
+    )
+
+
+def test_strict_success_still_outranks_paired_precursor_skills():
+    controlled = _validation_candidate(
+        checkpoint_uri="s3://bucket/controlled/model.pt",
+        training_iteration=1,
+        report=_controlled_lift_report(set(range(64)), set(range(64))),
+    )
+    perfect = _validation_candidate(
+        checkpoint_uri="s3://bucket/perfect/model_latest.pt",
+        training_iteration=2,
+        report=_real_zero_distance_report(),
+    )
+    assert (
+        select_best_checkpoint([controlled, perfect])["checkpoint_uri"]
+        == perfect["checkpoint_uri"]
+    )
+
+
+@pytest.mark.parametrize("value", [1, "true", None])
+def test_selection_rejects_incomplete_or_nonliteral_paired_verdicts(value):
+    candidate = _validation_candidate(
+        checkpoint_uri="s3://bucket/controlled/model.pt",
+        training_iteration=1,
+        report=_controlled_lift_report(set(range(34)), set(range(59))),
+    )
+    candidate["validation_report"]["per_env"][0]["details"]["stable_grasp"] = value
+    with pytest.raises(ValueError, match="literal grasp/lift"):
+        select_best_checkpoint([candidate])
 
 
 def _real_zero_distance_report() -> dict[str, Any]:
