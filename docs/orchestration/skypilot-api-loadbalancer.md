@@ -94,6 +94,26 @@ ingress:
     enabled: true
 ```
 
+Before installing into a shared Workbench cluster, the cluster operator must
+review and explicitly approve the chart's Kubernetes permissions. SkyPilot
+0.12.2 defaults `rbac.manageRbacPolicies` to `true`, which grants the API pod's
+Kubernetes service account wildcard verbs on `clusterroles` and
+`clusterrolebindings`, plus namespaced `roles`, `rolebindings`, and
+`serviceaccounts`. These grants allow the API identity to create and bind
+cluster-wide permissions, including cluster-admin permissions. A dedicated
+namespace does not constrain this grant. `auth.serviceAccount.enabled: false`
+controls SkyPilot API client authentication and does not restrict Kubernetes
+RBAC. Do not run the Helm installation below until the operator has accepted
+this permission scope for the selected cluster.
+
+For a restricted alternative, set `rbac.manageRbacPolicies: false` and configure
+`kubernetes.remote_identity` in the SkyPilot server configuration to use an
+explicitly provisioned workload service account. The operator must provision
+and bind that identity within the approved workload namespace. Disabling policy
+management alone is not a complete replacement configuration. This alternative
+has only been rendered, not qualified for live execution; require a completed
+CPU job that verifies the intended workload identity and namespace before use.
+
 Authentication and user management run in SkyPilot itself. Basic-auth nginx
 annotations do not protect a different ingress controller. The initial secret
 creates one admin; create individual team accounts with appropriate roles in
