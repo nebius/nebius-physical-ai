@@ -87,6 +87,8 @@ def wheel(tmp_path: Path) -> Path:
                 else f"def {symbol}(*args, **kwargs): ...\n"
             )
             _write(target, existing + body)
+        elif not target.exists():
+            _write(target, "")
 
     # Callables whose parameter names the script asserts on.
     _write(
@@ -108,7 +110,18 @@ def wheel(tmp_path: Path) -> Path:
         "def make_optimizer_and_scheduler(cfg, policy): ...\n",
     )
 
-    _write(root / "lerobot/datasets/dataset_metadata.py", 'CODEBASE_VERSION = "v3.0"\n')
+    _write(
+        root / "lerobot/datasets/dataset_metadata.py",
+        'CODEBASE_VERSION = "v3.0"\nclass LeRobotDatasetMetadata: ...\n',
+    )
+    _write(
+        root / "lerobot/envs/libero.py",
+        "class LiberoEnv:\n    def _format_raw_obs(self, raw_obs): ...\n",
+    )
+    _write(
+        root / "lerobot/policies/smolvla/modeling_smolvla.py",
+        "class SmolVLAPolicy:\n    def _get_action_chunk(self, batch): ...\n",
+    )
     _write(
         root / "lerobot/configs/train.py",
         "class TrainPipelineConfig:\n    env_eval_freq: int = 20_000\n",
