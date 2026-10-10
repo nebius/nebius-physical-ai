@@ -72,6 +72,13 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "robot-policy-train-and-serve.yaml",
+        "multi",
+        runtime=True,
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes="Public SmolVLA/FiftyOne training, both measured retry gates, two GPU serving workers and standalone HTML proof.",
+    ),
+    SubmitLiveCase(
         "physical-prompt-comparison.yaml",
         "multi",
         secret_envs=(
