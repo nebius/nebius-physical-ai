@@ -139,6 +139,15 @@
       "notes": "The current neutral-bootstrap candidate remains unbuilt, quarantined, and unvalidated. It contains no LIBERO source, GPU runtime, model, demonstration, task asset, cache, checkpoint, credential, or output payload. No datacenter Blackwell compatibility or public acceptance is claimed."
     },
     {
+      "name": "npa-lingbot-va",
+      "dockerfile": "lingbot-va/Dockerfile",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "restricted",
+      "smoke": "Run the six-stage native LingBot-VA LIBERO-Long workflow: decode selected raw CC-BY LeRobot episodes, materialize fresh Wan latents, post-train the upstream recipe, execute closed-loop rollouts, evaluate numerical metrics, and independently decode the emitted RRD and MP4.",
+      "notes": "The source-only, operator-private candidate has no current built or byte-scanned image. It runtime-fetches its CUDA/Python closure, checkpoints, and data, so no datacenter-Blackwell architecture outcome is known. Planned RTX PRO 6000 sm_120 validation cannot establish B200 or B300 compatibility; public publication is prohibited."
+    },
+    {
       "name": "npa-cosmos3-nano-video",
       "dockerfile": "cosmos3-nano-video/Dockerfile",
       "verdict": "ready",

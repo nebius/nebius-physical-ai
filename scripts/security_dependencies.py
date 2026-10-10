@@ -25,7 +25,7 @@ _MOVIEPY_SOURCE_URL = (
     "97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz"
     "#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9"
 )
-# The exact archive's pyproject declares 2.2.1; both its commit and bytes are pinned.
+# The exact archive's pyproject declares 2.2.1; its commit and bytes are pinned.
 _DIRECT_SOURCE_PINS = {("moviepy", _MOVIEPY_SOURCE_URL): "2.2.1"}
 
 

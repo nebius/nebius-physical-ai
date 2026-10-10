@@ -1,0 +1,4 @@
+# Security inventory declaration for the runtime-fetched LIBERO source below.
+# lingbot-va-runtime verifies the immutable Git revision before installation;
+# this file is intentionally not supplied to pip as an index dependency input.
+libero==0.1.0

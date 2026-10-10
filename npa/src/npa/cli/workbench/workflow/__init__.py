@@ -6096,6 +6096,7 @@ def _raw_execution_preflight(
         global_config=config,
         extra_env=env,
         cwd=_stable_sky_cwd(runtime.isolated_config_dir),
+        resolved_sky_config_path=str(runtime.global_config_path),
         sky_bin=str(ensure_skypilot_version(runtime.sky_bin)),
     )
 

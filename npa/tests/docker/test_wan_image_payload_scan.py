@@ -34,9 +34,52 @@ def test_libssh2_audit_matches_reviewed_debian_package() -> None:
         item for item in lock["debian_binaries"] if item["name"] == "libssh2-1"
     )
     library = package["elf_files"][0]
-    assert (
-        scanner.AUDITED_SECRET_LITERAL_FILE_SHA256[library["path"]] == library["sha256"]
+    hashes = scanner._audited_literal_hashes(
+        scanner.AUDITED_SECRET_LITERAL_FILE_SHA256[library["path"]]
     )
+    assert hashes == {
+        library["sha256"],
+        "66f751ec9d3d5bff254a498e020d37f9bbde8e0193ba11d1b78f29153ffe694a",
+    }
+
+
+def test_exact_public_source_literal_disposition_is_hash_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A public parser literal is not a credential, but any byte drift still is."""
+    path = "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1"
+    public_debian_payload = b"\x7fELF\x00-----BEGIN OPENSSH PRIVATE KEY-----\x00"
+    monkeypatch.setattr(
+        scanner,
+        "AUDITED_SECRET_LITERAL_FILE_SHA256",
+        {
+            path: frozenset(
+                {
+                    hashlib.sha256(public_debian_payload).hexdigest(),
+                    hashlib.sha256(b"another audited release").hexdigest(),
+                }
+            )
+        },
+    )
+
+    assert (
+        scanner.scan(
+            _tar(tmp_path / "public-debian.tar", {path: public_debian_payload}), {}
+        )
+        == []
+    )
+
+    findings = scanner.scan(
+        _tar(
+            tmp_path / "public-debian-mutated.tar",
+            {path: public_debian_payload + b"\nAKIAABCDEFGHIJKLMNOP"},
+        ),
+        {},
+    )
+    assert {item.kind for item in findings} == {
+        "audited_literal_byte_drift",
+        "credential_content",
+    }
 
 
 def _gzip(payload: bytes) -> bytes:

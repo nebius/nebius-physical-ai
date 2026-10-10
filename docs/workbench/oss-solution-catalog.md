@@ -41,6 +41,7 @@ tracks the GPU qualification; the workflow adds no new image or model admission.
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
 | Lightricks LTX-2.5 (**accepted public image; entitled runtime fetch**) | `Lightricks/LTX-2` `fd4ded7f…` | `ltx2_5_text_to_video` | `ltx2_5_text_to_video.json` + provenance manifest + MP4 | `byof-ltx2.yaml` |
 | Alibaba Wan 2.2 TI2V-5B (**4-GPU distributed**) | same pinned source/checkpoint | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | multi-GPU capability JSON + rank topology + runtime inventory + MP4 | `byof-wan2.2-multigpu.yaml` |
+| LingBot-VA LIBERO-Long (**restricted private-validation candidate**) | `Robbyant/lingbot-va` `7c6ffa9b…` + exact CC-BY raw `HuggingFaceVLA/libero` v2.1 + official post-train `0e89d1e…` | `libero_long_closed_loop_rollout` on upstream `libero_10` after `libero_train` | raw-to-derived provenance, training/rollout/evaluation records, RRD + real MP4 | `lingbot-va-libero-long.yaml` |
 
 ## Live capability results
 
@@ -48,6 +49,7 @@ tracks the GPU qualification; the workflow adds no new image or model admission.
 | --- | --- | --- | --- |
 | Habitat-Sim | `skokloster_castle_rgb_depth_bullet_traversal` / `headless_nvidia_egl_rgb_depth_render` / `bullet_physics_world_step` / `greedy_geodesic_agent_traversal` | **development evidence; supported release quarantined** | [Exact-digest development manifest](validation/habitat-sim-development-image-manifest.json): 19 RGB/depth frame pairs, 19 Bullet steps and 2.2466 metres of navigation on one RTX PRO 6000 Blackwell. Historical producer evidence; no policy-training or long-benchmark claim. |
 | LIBERO | `libero_spatial_bc_rnn_train_reload_heldout` | **qualification pending; payload-free public-development staging permitted; not released** | Requires complete-byte and anonymous-pull proof followed by one STRICT-bound B200 run of the exact candidate digest: eight upstream BC-RNN/Adam steps on the official LIBERO-Spatial demonstration, checkpoint reload, and full trajectory-disjoint held-out evaluation |
+| LingBot-VA LIBERO-Long | six-stage exact CC-BY raw-source staging → LeRobot selection/MP4+Wan latent preparation → post-train → upstream LIBERO-Long (`libero_10`) rollout → evaluation → RRD/MP4 | **private qualification in progress; no live result** | [Candidate guide](lingbot-va.md) and `lingbot-va-libero-long.yaml`; the exact HuggingFaceVLA card declares CC-BY-4.0. The source data and derivative remain runtime-staged and the source-only image remains publication-quarantined pending a private native run. |
 | ManiSkill | `gymnasium_pickcube_registration` | **accepted** | `defcap-maniskill-20260708-230227` (81 `-v1` envs) |
 | ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | **accepted** | `defcap11-maniskill-20260709-043408` (sapien 3.0.3 on CUDA Ubuntu22.04/py3.10; Blackwell render OK) |
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |

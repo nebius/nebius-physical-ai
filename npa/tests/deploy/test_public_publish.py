@@ -35,6 +35,7 @@ from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
     NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
+    PRIVATE_VALIDATION_CANDIDATE_TOOLS,
     PUBLICATION_QUARANTINE_TOOLS,
     RESTRICTED_DERIVED_IMAGES,
     RESTRICTED_PUBLICATION_TOOLS,
@@ -459,6 +460,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         {
             "cosmos3-nano-video",
             "cosmos3-super-benchmark",
+            "lingbot-va",
             "paidf-anomalygen-sky",
             "paidf-attribute-search-sky",
             "paidf-captioning-sky",
@@ -543,6 +545,7 @@ def test_public_set_includes_the_oss_tools() -> None:
         set(CONTAINER_IMAGE_NAMES)
         - RESTRICTED_PUBLICATION_TOOLS
         - PUBLICATION_QUARANTINE_TOOLS
+        - PRIVATE_VALIDATION_CANDIDATE_TOOLS
     )
 
 
@@ -772,12 +775,13 @@ def test_contract_marks_active_isaac_images_public_and_runtime_fetch() -> None:
 
 
 def test_the_restriction_mechanism_still_exists() -> None:
-    """The general refusal API covers every restricted PAIDF compatibility runtime."""
+    """The general refusal API covers every private-only runtime candidate."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
     assert restricted_image_names() == [
         "cosmos3-nano-video",
         "cosmos3-super-benchmark",
+        "lingbot-va",
         "paidf-anomalygen-sky",
         "paidf-attribute-search-sky",
         "paidf-captioning-sky",
@@ -904,6 +908,26 @@ def test_restricted_tools_still_resolve_from_an_operators_own_registry(
     monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
     ref = container_image_for_tool("genesis", registry="registry.example/example")
     assert ref.startswith("registry.example/example/npa-genesis:")
+
+
+def test_lingbot_va_refuses_public_resolution_but_allows_a_scoped_private_candidate() -> (
+    None
+):
+    """Keep this source-only candidate out of public releases without blocking BYO proof."""
+    private_registry = "registry.example/operator-private"
+    candidate_tag = "dev-" + "a" * 40
+
+    assert "lingbot-va" in RESTRICTED_PUBLICATION_TOOLS
+    assert "lingbot-va" in PRIVATE_VALIDATION_CANDIDATE_TOOLS
+    with pytest.raises(ValueError, match="lingbot-va.*not publicly redistributable"):
+        container_image_for_tool(
+            "lingbot-va", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
+        )
+
+    ref = container_image_for_tool(
+        "lingbot-va", registry=private_registry, tag=candidate_tag
+    )
+    assert ref == f"{private_registry}/npa-lingbot-va:{candidate_tag}"
 
 
 def test_public_registry_detection() -> None:

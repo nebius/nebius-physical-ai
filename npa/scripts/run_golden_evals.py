@@ -42,14 +42,24 @@ def _cmd_validate(_: argparse.Namespace) -> int:
 def _cmd_list(args: argparse.Namespace) -> int:
     specs = load_manifest()
     if args.capabilities:
-        from npa.deploy.images import supported_tool_version
+        from npa.deploy.images import (
+            PRIVATE_VALIDATION_CANDIDATE_TOOLS,
+            supported_tool_version,
+        )
         from npa.smoke.capabilities import GOLDEN_EVAL_CAPABILITIES
 
         width = max(len(name) for name in specs)
         for name in sorted(specs):
             spec = specs[name]
             ge = spec.golden_eval
-            tag = supported_tool_version(name) if name in CONTAINER_IMAGE_NAMES else "-"
+            if name in PRIVATE_VALIDATION_CANDIDATE_TOOLS:
+                # There is no ordinary tag for a private-only unbuilt candidate.
+                # The actual workflow must bind its scanned private digest.
+                tag = "operator-candidate"
+            elif name in CONTAINER_IMAGE_NAMES:
+                tag = supported_tool_version(name)
+            else:
+                tag = "-"
             checks = GOLDEN_EVAL_CAPABILITIES.get(name, [])
             cap = "; ".join(checks)
             print(f"{name:<{width}}  {tag:<42} {ge.kind:<16} {ge.status:<18} {cap}")
