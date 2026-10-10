@@ -129,8 +129,8 @@ access and workload acceptance requirements continue to apply.
 The preceding tables preserve the original dated resolver observation. That
 audit missed literal Isaac and SONIC digests, which bypassed tool-default
 quarantine. The follow-up removes those automatic selections. All 133 shipped
-specs now have **43 guarded default selections across 39 workflows**: 33 deny
-quarantined tool-image selection, and ten deny missing exact operator image
+specs now have **45 guarded default selections across 41 workflows**: 33 deny
+quarantined tool-image selection, and twelve deny missing exact operator image
 inputs before task expansion. These categories are audited independently:
 supplying exact operator inputs can reveal additional quarantined task-image
 defaults. This is planning evidence only, not fresh image or GPU acceptance.
@@ -182,6 +182,8 @@ still required for the operator-selected bytes.
 
 | Workflow | Required config keys |
 | --- | --- |
+| `workflows/testing/digital-twin-campus-render.yaml` | `runtime_image` |
+| `workflows/testing/digital-twin-cuda-render.yaml` | `runtime_image` |
 | `workflows/testing/field-failure-reference-demo.yaml` | `navigation_image, reconstruction_image` |
 | `workflows/testing/lyra-scene-actions.yaml` | `isaac_image` |
 | `workflows/testing/multicamera-rgbd-warehouse.yaml` | `isaac_image` |
