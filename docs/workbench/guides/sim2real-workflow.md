@@ -66,10 +66,11 @@ The canonical YAML intentionally leaves all five image references and
 | `SOURCE_SHA` | Common full 40-hex commit baked into all five images as `NPA_IMAGE_SOURCE_SHA` |
 
 Every image must be a complete `repository@sha256:<64-hex-digest>` reference.
-The receipt must establish compatibility with this checkout's workflow and
-hosted evaluator contract. Pullability and matching labels alone do not prove
-those capabilities. Prefer the checkout at the qualified image source revision
-when reproducing a release; retain that revision with your run settings.
+The receipt must name the tested CLI/workflow checkout and establish
+compatibility with its hosted evaluator contract. Use that checkout when
+reproducing the result; its revision can differ from the common image source
+SHA. Pullability and matching labels alone do not prove those capabilities.
+Retain both revisions with your run settings.
 
 **Release gate:** the checked-in [readiness record](../../../workflows/main/sim2real.readiness.json)
 currently marks `source_image` as `unverified`; this checkout does not supply a
@@ -474,6 +475,15 @@ npa/.venv/bin/npa workbench workflow status "$RUN_ID" --project "$NPA_PROJECT" -
 npa/.venv/bin/npa workbench workflow logs "$RUN_ID" --project "$NPA_PROJECT" --follow
 npa/.venv/bin/npa workbench workflow artifacts "$RUN_ID" --project "$NPA_PROJECT"
 ```
+
+Model loading and Transfer inference can stay quiet between log messages.
+The first Isaac startup can also compile ray-tracing shaders on the CPU while
+GPU utilization stays low. Its log names the Kit log file, where shader
+compilation progress is recorded. PPO retains the full RSL-RL training log and
+prints its console tail when a pass finishes, so workflow logs can also stay
+quiet during optimizer updates. Check live status and pod events while waiting.
+A running pod or GPU activity does not prove stage completion;
+require the declared output artifacts and successful scheduler status.
 
 Inspect primary, side, and overhead footage for the robot, object, and task.
 Stage 8 sees primary frames; secondary views cannot compensate for occlusion.
