@@ -152,9 +152,7 @@ class SkyBackend:
         try:
             self._resolved_job_ids(wave)
         except BackendError as exc:
-            return ManagedJobEvidence(
-                outcome="unknown", error=str(exc)
-            )
+            return ManagedJobEvidence(outcome="unknown", error=str(exc))
         rows = self.timeline(wave["id"])
         return ManagedJobEvidence(
             outcome="found",
@@ -173,9 +171,7 @@ class SkyBackend:
         Raises:
             sqlite3.Error: The durable wave ledger cannot be read.
         """
-        results = [
-            self._cancel_wave(wave) for wave in self.ledger.waves(self.run_id)
-        ]
+        results = [self._cancel_wave(wave) for wave in self.ledger.waves(self.run_id)]
         return all(results)
 
     def _resolved_job_ids(self, wave):

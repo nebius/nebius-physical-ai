@@ -262,7 +262,9 @@ class TeamService:
             if outcome.failure_code
             else None
         )
-        if self.ledger.transition(run_id, ("running",), outcome.status, failure=failure):
+        if self.ledger.transition(
+            run_id, ("running",), outcome.status, failure=failure
+        ):
             if outcome.status == "failed":
                 self.ledger.audit(actor, "execution-terminal-failed", run_id)
 

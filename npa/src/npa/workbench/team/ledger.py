@@ -284,9 +284,7 @@ class TeamLedger:
         return db.execute(query, values).rowcount
 
     def _upgrade(self, db):
-        columns = {
-            row["name"] for row in db.execute("PRAGMA table_info(runs)")
-        }
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(runs)")}
         for name, definition in _RUN_COLUMNS.items():
             if name not in columns:
                 db.execute(f"ALTER TABLE runs ADD COLUMN {name} {definition}")

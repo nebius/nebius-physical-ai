@@ -49,8 +49,10 @@ def classify_runtime_report(report: RuntimeReport) -> LifecycleOutcome:
 
 
 def _has_only_terminal_waves(waves: list[dict]) -> bool:
-    return bool(waves) and all(_is_exact_terminal(wave) for wave in waves) and any(
-        _is_scheduler_failure(wave) for wave in waves
+    return (
+        bool(waves)
+        and all(_is_exact_terminal(wave) for wave in waves)
+        and any(_is_scheduler_failure(wave) for wave in waves)
     )
 
 

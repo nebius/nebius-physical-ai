@@ -42,9 +42,7 @@ class Scheduler:
                 return SimpleNamespace(returncode=1, stdout='{"error":"unavailable"}')
             response = {"job_ids": [42]}
         elif operation == "queue":
-            status = (
-                self.queue_statuses.pop(0) if self.queue_statuses else "SUCCEEDED"
-            )
+            status = self.queue_statuses.pop(0) if self.queue_statuses else "SUCCEEDED"
             response = {
                 "jobs": [
                     {
