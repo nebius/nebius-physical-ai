@@ -408,6 +408,39 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "sylvest-oft-mixdata-libero-plus-comparison.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "The exact LIBERO-Plus source revision has no authoritative source "
+            "license/grant or separately licensed proven-equivalent implementation, "
+            "so native benchmark execution is deliberately fail-closed. A private "
+            "immutable runtime image and an authoritative training inventory are "
+            "also required before a held-out claim can be tested."
+        ),
+        notes=(
+            "Five connected native stages: protocol preparation, matched OpenVLA-OFT "
+            "baseline and candidate rollouts, paired statistical comparison, and "
+            "MP4/RRD report. Apache-2.0 dlimp is derived at runtime with the "
+            "documented deterministic override; no public image is authorized."
+        ),
+    ),
+    SubmitLiveCase(
+        "sylvest-oft-mixdata-original-libero-comparison.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "Five connected native stages on pinned MIT original LIBERO: task and "
+            "initial-state-byte preparation, matched official OpenVLA-OFT baseline "
+            "and Sylvest candidate rollouts, paired statistics, and MP4/RRD report. "
+            "The protocol defaults to training_coverage_unknown until an authoritative "
+            "candidate training-task inventory proves held-out disjointness. Apache-2.0 "
+            "dlimp is a noticed private deterministic runtime derivative; weights "
+            "remain operator runtime fetches and public image publication is not authorized."
+        ),
+    ),
+    SubmitLiveCase(
         "molmoact-finetune.yaml",
         "gpu",
         plan_only=True,

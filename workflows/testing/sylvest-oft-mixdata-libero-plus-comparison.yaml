@@ -1,0 +1,229 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: sylvest-oft-mixdata-libero-plus-comparison
+  description: >-
+    Source-pinned LIBERO-Plus paired robustness evaluation of the
+    official OpenVLA-OFT baseline and Sylvest's mixed-data checkpoint. The
+    successful path prepares either an inventory-proven held-out protocol or a
+    training-coverage-unknown protocol, performs two upstream-native simulator
+    rollout passes, calculates paired differences, and emits a factual report
+    plus Rerun recording. It does not equate fine-tuning with improved
+    robustness.
+
+config:
+  bucket: example-bucket
+  prefix: "sylvest-oft-mixdata/{{run.id}}"
+  # NPA execution configuration supplies the accelerator selection; no cluster
+  # identity or provider credential is embedded here.
+  gpu_type: RTXPRO6000
+  source_overlay: true
+  # Required on submission: an operator-built, immutable runtime image with the
+  # lawful OpenVLA-OFT Python environment. The workflow refuses a mutable
+  # or omitted value before it invokes a model or simulator.
+  runtime_image: ""
+  model_cache_root: "/workspace/.cache/npa/models"
+  openvla_oft_root: "/workspace/runtime/openvla-oft"
+  openvla_oft_revision: "e4287e94541f459edc4feabc4e181f537cd569a8"
+  # OFT requires this separately pinned Apache-2.0 bidirectional Transformers fork.
+  oft_transformers_root: "/workspace/runtime/transformers-openvla-oft"
+  oft_transformers_revision: "bc339d9ad707454c0c115970db43c260067c61ab"
+  # Apache-2.0 kvablack/dlimp is runtime-fetched at this immutable revision.
+  # The wrapper derives one private copy with only deterministic=False -> True,
+  # preserving LICENSE and an explicit NPA modification notice. The unlicensed
+  # moojink/dlimp_openvla fork is never fetched or redistributed.
+  dlimp_root: "/workspace/runtime/dlimp"
+  dlimp_revision: "92e3eca97af3b14d0b6aa15182c0dc240407698d"
+  dlimp_runtime_root: "/workspace/.cache/npa/dlimp-deterministic"
+  libero_plus_root: "/workspace/runtime/libero-plus"
+  libero_plus_revision: "4976dc30028e805ff8094b55501d532c48fec182"
+  # LIBERO-Plus's published classification covers the four expanded suites:
+  # libero_spatial, libero_object, libero_goal, and libero_10.
+  task_suite: libero_spatial
+  # The upstream evaluator's trial number selects a task initial state. These
+  # zero-based contiguous indices are paired between both checkpoint stages.
+  initial_state_indices: "0,1,2"
+  # held_out requires a supplied authoritative immutable inventory. The default
+  # remains explicit that the public card does not provide one: all selected
+  # tasks may be in-distribution and no generalization claim is allowed.
+  comparison_scope: training_coverage_unknown
+  training_task_ids_uri: ""
+  baseline_checkpoint_id: "moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10"
+  baseline_checkpoint_revision: "638918f3d1c2e43a39a8a20772bdb8b91835e4b7"
+  candidate_checkpoint_id: "Sylvest/openvla-7b-oft-finetuned-libero-plus-mixdata"
+  candidate_checkpoint_revision: "a85655ec941bae6644c9fbdf62db02b9726d7cf5"
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  baseline_uri: "s3://{{config.bucket}}/{{config.prefix}}/baseline/"
+  candidate_uri: "s3://{{config.bucket}}/{{config.prefix}}/candidate/"
+  comparison_uri: "s3://{{config.bucket}}/{{config.prefix}}/comparison/"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: "{{config.runtime_image}}"
+  gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:1"
+    cpus: 16
+    memory: 96Gi
+    image: "{{config.runtime_image}}"
+
+initial: prepare
+
+states:
+  prepare:
+    description: Build a hash-bound held-out or training-coverage-unknown LIBERO-Plus protocol.
+    run:
+      shell: >-
+        case "{{config.runtime_image}}" in *@sha256:*) ;; *) echo "runtime_image must be an immutable digest" >&2; exit 64;; esac;
+        "$NPA_CONTROL_PYTHON" -m npa.workflows.sylvest_oft_mixdata prepare
+        --benchmark "libero_plus"
+        --libero-plus-root "{{config.libero_plus_root}}"
+        --libero-plus-revision "{{config.libero_plus_revision}}"
+        --comparison-scope "{{config.comparison_scope}}"
+        --training-task-ids-uri "{{config.training_task_ids_uri}}"
+        --task-suite "{{config.task_suite}}"
+        --initial-state-indices "{{config.initial_state_indices}}"
+        --model-cache-root "{{config.model_cache_root}}"
+        --openvla-oft-root "{{config.openvla_oft_root}}"
+        --openvla-oft-revision "{{config.openvla_oft_revision}}"
+        --oft-transformers-root "{{config.oft_transformers_root}}"
+        --oft-transformers-revision "{{config.oft_transformers_revision}}"
+        --dlimp-root "{{config.dlimp_root}}"
+        --dlimp-revision "{{config.dlimp_revision}}"
+        --baseline-checkpoint-id "{{config.baseline_checkpoint_id}}"
+        --baseline-checkpoint-revision "{{config.baseline_checkpoint_revision}}"
+        --candidate-checkpoint-id "{{config.candidate_checkpoint_id}}"
+        --candidate-checkpoint-revision "{{config.candidate_checkpoint_revision}}"
+        --output-path "{{config.prepared_uri}}"
+    resources: cpu
+    outputs:
+      - uri: "{{config.prepared_uri}}protocol.json"
+        schema: npa.sylvest-oft-mixdata.protocol.v1
+      - uri: "{{config.prepared_uri}}provenance.json"
+        schema: npa.sylvest-oft-mixdata.provenance.v1
+      - uri: "{{config.prepared_uri}}notices.json"
+        schema: npa.sylvest-oft-mixdata.notices.v1
+    next: baseline_rollouts
+
+  baseline_rollouts:
+    description: Execute upstream OpenVLA-OFT continuous-action rollouts for every prepared baseline case.
+    run:
+      shell: >-
+        case "{{config.runtime_image}}" in *@sha256:*) ;; *) echo "runtime_image must be an immutable digest" >&2; exit 64;; esac;
+        "$NPA_CONTROL_PYTHON" -m npa.workflows.sylvest_oft_mixdata rollout
+        --protocol-uri "{{config.prepared_uri}}protocol.json"
+        --checkpoint-id "{{config.baseline_checkpoint_id}}"
+        --checkpoint-revision "{{config.baseline_checkpoint_revision}}"
+        --model-cache-root "{{config.model_cache_root}}"
+        --openvla-oft-root "{{config.openvla_oft_root}}"
+        --openvla-oft-revision "{{config.openvla_oft_revision}}"
+        --oft-transformers-root "{{config.oft_transformers_root}}"
+        --oft-transformers-revision "{{config.oft_transformers_revision}}"
+        --dlimp-root "{{config.dlimp_root}}"
+        --dlimp-revision "{{config.dlimp_revision}}"
+        --dlimp-runtime-root "{{config.dlimp_runtime_root}}"
+        --benchmark "libero_plus"
+        --libero-plus-root "{{config.libero_plus_root}}"
+        --libero-plus-revision "{{config.libero_plus_revision}}"
+        --output-path "{{config.baseline_uri}}"
+    resources: gpu
+    inputs:
+      - uri: "{{config.prepared_uri}}protocol.json"
+        schema: npa.sylvest-oft-mixdata.protocol.v1
+    outputs:
+      - uri: "{{config.baseline_uri}}rollouts.json"
+        schema: npa.sylvest-oft-mixdata.rollouts.v1
+      - uri: "{{config.baseline_uri}}clips/manifest.json"
+        schema: npa.sylvest-oft-mixdata.clip-manifest.v1
+      - uri: "{{config.baseline_uri}}provenance.json"
+        schema: npa.sylvest-oft-mixdata.provenance.v1
+    next: candidate_rollouts
+
+  candidate_rollouts:
+    description: Execute the Sylvest mixed-data checkpoint on the identical prepared cases and initial states.
+    run:
+      shell: >-
+        case "{{config.runtime_image}}" in *@sha256:*) ;; *) echo "runtime_image must be an immutable digest" >&2; exit 64;; esac;
+        "$NPA_CONTROL_PYTHON" -m npa.workflows.sylvest_oft_mixdata rollout
+        --protocol-uri "{{config.prepared_uri}}protocol.json"
+        --checkpoint-id "{{config.candidate_checkpoint_id}}"
+        --checkpoint-revision "{{config.candidate_checkpoint_revision}}"
+        --model-cache-root "{{config.model_cache_root}}"
+        --openvla-oft-root "{{config.openvla_oft_root}}"
+        --openvla-oft-revision "{{config.openvla_oft_revision}}"
+        --oft-transformers-root "{{config.oft_transformers_root}}"
+        --oft-transformers-revision "{{config.oft_transformers_revision}}"
+        --dlimp-root "{{config.dlimp_root}}"
+        --dlimp-revision "{{config.dlimp_revision}}"
+        --dlimp-runtime-root "{{config.dlimp_runtime_root}}"
+        --benchmark "libero_plus"
+        --libero-plus-root "{{config.libero_plus_root}}"
+        --libero-plus-revision "{{config.libero_plus_revision}}"
+        --output-path "{{config.candidate_uri}}"
+    resources: gpu
+    inputs:
+      - uri: "{{config.prepared_uri}}protocol.json"
+        schema: npa.sylvest-oft-mixdata.protocol.v1
+    outputs:
+      - uri: "{{config.candidate_uri}}rollouts.json"
+        schema: npa.sylvest-oft-mixdata.rollouts.v1
+      - uri: "{{config.candidate_uri}}clips/manifest.json"
+        schema: npa.sylvest-oft-mixdata.clip-manifest.v1
+      - uri: "{{config.candidate_uri}}provenance.json"
+        schema: npa.sylvest-oft-mixdata.provenance.v1
+    next: compare
+
+  compare:
+    description: Compute case-aligned success deltas, category summaries, intervals, and exact discordant-pair tests.
+    run:
+      shell: >-
+        "$NPA_CONTROL_PYTHON" -m npa.workflows.sylvest_oft_mixdata compare
+        --baseline-uri "{{config.baseline_uri}}rollouts.json"
+        --candidate-uri "{{config.candidate_uri}}rollouts.json"
+        --output-path "{{config.comparison_uri}}"
+    resources: cpu
+    inputs:
+      - uri: "{{config.baseline_uri}}rollouts.json"
+        schema: npa.sylvest-oft-mixdata.rollouts.v1
+      - uri: "{{config.candidate_uri}}rollouts.json"
+        schema: npa.sylvest-oft-mixdata.rollouts.v1
+    outputs:
+      - uri: "{{config.comparison_uri}}comparison.json"
+        schema: npa.sylvest-oft-mixdata.comparison.v1
+      - uri: "{{config.comparison_uri}}provenance.json"
+        schema: npa.sylvest-oft-mixdata.provenance.v1
+    next: report
+
+  report:
+    description: Emit a factual comparison report and a reviewable Rerun recording from the measured paired cases.
+    run:
+      shell: >-
+        "$NPA_CONTROL_PYTHON" -m npa.workflows.sylvest_oft_mixdata report
+        --comparison-uri "{{config.comparison_uri}}comparison.json"
+        --protocol-uri "{{config.prepared_uri}}protocol.json"
+        --notices-uri "{{config.prepared_uri}}notices.json"
+        --run-id "{{run.id}}"
+        --output-path "{{config.report_uri}}"
+    resources: cpu
+    inputs:
+      - uri: "{{config.comparison_uri}}comparison.json"
+        schema: npa.sylvest-oft-mixdata.comparison.v1
+      - uri: "{{config.prepared_uri}}protocol.json"
+        schema: npa.sylvest-oft-mixdata.protocol.v1
+      - uri: "{{config.prepared_uri}}notices.json"
+        schema: npa.sylvest-oft-mixdata.notices.v1
+    outputs:
+      - uri: "{{config.report_uri}}report.json"
+        schema: npa.sylvest-oft-mixdata.report.v1
+      - uri: "{{config.report_uri}}comparison.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.report_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+      - uri: "{{config.report_uri}}notices.json"
+        schema: npa.sylvest-oft-mixdata.notices.v1
+    terminal: true

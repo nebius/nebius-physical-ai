@@ -963,6 +963,29 @@ def test_wan_submit_cases_need_storage_but_not_hf_or_runtime_consent(spec: str) 
     }
 
 
+@pytest.mark.parametrize(
+    "spec,plan_only",
+    [
+        ("sylvest-oft-mixdata-original-libero-comparison.yaml", False),
+        ("sylvest-oft-mixdata-libero-plus-comparison.yaml", True),
+    ],
+)
+def test_sylvest_oft_submit_cases_need_storage_but_not_an_hf_token(
+    spec: str,
+    plan_only: bool,
+) -> None:
+    """Public exact checkpoint revisions must not create a token gate."""
+
+    case = _case(spec)
+
+    assert case is not None
+    assert case.plan_only is plan_only
+    assert set(case.secret_envs) == {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    }
+
+
 def test_robocasa_data_policy_submit_case_forwards_its_service_token() -> None:
     case = _case("robocasa-data-policy.yaml")
 

@@ -1,0 +1,61 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "839adb31b6bc2001a4d7096be7a1858a2fe736bc49812683c1dbaa3149878506",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Local workflow schema validation and production-render checking succeeded for five connected stages. The renderer used only a synthetic immutable digest; no registry, storage, or provider action occurred.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml --json: status valid",
+        "npa workbench workflow plan-spec workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml --run-id sylvest-oft-mixdata-contract-20261004 --check-render --json with synthetic digest: render_check status valid, tasks 5, provider_actions false, registry_secrets_materialized false"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Local tests prove five substantive stages are connected, pair upstream initial-state trial indices rather than mislabeling them as random seeds, distinguish an inventory-proven held-out comparison from training-coverage-unknown data, reject unpaired data, preserve immutable checkpoint-cache provenance, create a noticed Apache dlimp deterministic derivative atomically, and require one decoded upstream MP4 per scored case.",
+      "evidence": [
+        "npa/tests/workflows/test_sylvest_oft_mixdata.py: 18 passed, including parsed prepare/baseline/candidate argv checks for both original-LIBERO and deferred LIBERO-Plus specs",
+        "npa/tests/guardrails/test_tool_catalog_argv.py, test_module_toolref_argv.py, test_shown_workflow_catalog.py, and npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py: 260 passed",
+        "npa/.venv/bin/rerun rrd verify and rerun rrd print independently decoded the local measured-fixture comparison.rrd and exposed metrics/delta_success",
+        "The exact Apache-2.0 kvablack/dlimp parent revision was materialized into a private derivative; the ready marker records the preserved LICENSE, one deterministic option replacement, modification notice, and full content inventory",
+        "npa/src/npa/workflows/sylvest_oft_mixdata.py invokes upstream OpenVLA-OFT run_task with its native trial-to-initial-state mapping for each exact prepared case"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The committed example bucket is deliberately non-routable; an owned writable run-scoped prefix must be selected and independently read back.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "A live run needs an applicable LIBERO-Plus source license or a separately licensed proven-equivalent implementation. The checkpoint card does not provide a training-task split, so an immutable inventory is additionally required only for a held-out claim; without it the workflow labels the comparison training-coverage-unknown.",
+      "evidence": [
+        "Pinned sylvestf/LIBERO-plus@4976dc30028e805ff8094b55501d532c48fec182 has no LICENSE, NOTICE, or COPYING file; repository license metadata is absent",
+        "No authoritative mix-SFT task-name inventory is published by the candidate card"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The configured Nebius, S3, and Hugging Face credential preflight passed. Exact-revision one-kilobyte action-head payload probes for both public checkpoints returned HTTP 206; this establishes technical fetch access only, not broader legal permission.",
+      "evidence": [
+        "npa workbench health preflight --checks nebius,s3,hf --warn-only --json: PASS for all three checks (private operational receipt)",
+        "Exact pinned candidate and baseline action-head range probes: HTTP 206, 1024 bytes each (private operational receipt)"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "A task-owned neutral private bootstrap was built, pushed, and pulled, but NPA Kubernetes preflight rejected its missing SkyPilot bootstrap-contract attestation before a pod was launched. It is not image-qualified. A neutral image may carry only lawful control/bootstrap bytes and licensed dlimp runtime logic; it cannot be called capability-qualified while the exact LIBERO-Plus source remains unavailable.",
+      "evidence": [
+        "Private image build/push/pull receipt was collected; no public publication occurred",
+        "NPA workflow preflight-images terminated before workload launch because the selected digest lacked the required bootstrap-contract attestation"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "No real NPA/SkyPilot/Kubernetes execution occurred because the exact benchmark source has no applicable license/grant. An inventory is also required before a held-out claim; training-coverage-unknown does not remove the source boundary. There is no benchmark, convergence, or physical-robot claim.",
+      "evidence": []
+    }
+  }
+}

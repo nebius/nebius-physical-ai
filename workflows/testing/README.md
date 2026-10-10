@@ -91,6 +91,8 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`sonic-export.yaml`](sonic-export.yaml) | [Evaluation runbook](../../docs/workbench/cookbooks/sonic-eval-runbook.md) | SONIC export |
 | [`sonic-locomotion-finetuning.yaml`](sonic-locomotion-finetuning.yaml) | [Fine-tuning guide](../../docs/workbench/cookbooks/sonic-locomotion-finetuning.md) | Retarget → train → export → native SONIC eval |
 | [`sonic-train.yaml`](sonic-train.yaml) | [Training runbook](../../docs/workbench/cookbooks/sonic-train-runbook.md) | SONIC train |
+| [`sylvest-oft-mixdata-libero-plus-comparison.yaml`](sylvest-oft-mixdata-libero-plus-comparison.yaml) | [Sylvest OFT guide](../../docs/workbench/sylvest-oft-mixdata.md) | Deferred pending source rights: source-pinned LIBERO-Plus protocol → official OpenVLA-OFT baseline → identical-case Sylvest checkpoint rollout → paired statistics → RRD/report. Training coverage remains unknown without an authoritative inventory. |
+| [`sylvest-oft-mixdata-original-libero-comparison.yaml`](sylvest-oft-mixdata-original-libero-comparison.yaml) | [Sylvest OFT guide](../../docs/workbench/sylvest-oft-mixdata.md) | Operator-private qualification pending: source-pinned original MIT LIBERO task/state/checkpoint preparation → official baseline and matched Sylvest rollouts → paired metrics → decoded MP4/RRD/report. Training coverage remains unknown; no held-out or result claim exists. |
 
 ## Data, perception, and scenario analysis
 
