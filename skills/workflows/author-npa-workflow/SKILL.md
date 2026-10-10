@@ -17,8 +17,9 @@ Keep promoted principal pipelines in `workflows/main/`; the
 and validation scope. Promotion must retain the adjacent readiness record and
 update catalog discovery tests, guides, and skill references together.
 Add partner integrations under `workflows/partners/<partner>/` and other
-reference specs under `workflows/testing/`; keep catalog documentation in
-`workflows/README.md`.
+reference specs under `workflows/testing/`. Add each YAML and its guide to the
+README beside the spec; `workflows/README.md` is the catalog overview. Keep
+detailed guides in their existing locations and link to them from the table.
 
 For **new creative pipelines**, also load `skills/workflows/generate-npa-workflow/SKILL.md`.
 

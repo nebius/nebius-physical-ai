@@ -24,7 +24,10 @@ workflows/testing/  # General references, component tests, and fixtures
 workflows/partners/<partner>/  # Partner integrations and runbooks
 ```
 
-Catalog documentation lives in [`workflows/README.md`](../workflows/README.md).
+The catalog overview lives in [`workflows/README.md`](../workflows/README.md).
+The [main](../workflows/main/README.md) and
+[testing](../workflows/testing/README.md) directory READMEs pair each YAML with
+its guide; detailed guides stay in their existing locations.
 The concise language reference is
 [`docs/workbench/npa-workflow-guide.md`](workbench/npa-workflow-guide.md). This guide
 uses

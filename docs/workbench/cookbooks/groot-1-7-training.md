@@ -146,6 +146,10 @@ recording in the agent. Lichtblick's browser frontend was blocked by the deploye
 Content Security Policy despite successful MCAP parsing and API checks; this run
 does not qualify Lichtblick browser rendering or “Describe this.”
 
+The [readiness record](../../../workflows/main/groot-1-7-finetune.readiness.json)
+binds this qualification to the workflow bytes and separates it from each future
+run's storage, dataset, credentials, image, and runtime prerequisites.
+
 ## Kubernetes image prerequisites
 
 The pinned development image includes system Python, `rsync`, SSH client and

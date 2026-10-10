@@ -1,5 +1,8 @@
 # PAIDF with Cosmos 3: setup and run guide
 
+For whole-dataset submission, read-only input checks and private processing,
+see [PAIDF dataset batches](../../docs/workbench/guides/paidf-dataset-batches.md).
+
 Run the [Physical AI Data Factory (PAIDF) Cosmos 3 workflow](../main/paidf-cosmos3.yaml)
 on Nebius AI Cloud. This guide covers account prerequisites, local installation,
 project storage, Kubernetes setup, submission, and output inspection. Follow it
@@ -11,6 +14,11 @@ on your GPU, and evaluates them with Cosmos Evaluator. Accepted variants pass
 through captioning, Cosmos Curator, and FiftyOne Brain before a final report.
 If variants remain rejected after the configured refinement passes, the workflow
 preserves Rerun quality evidence and stops before curation.
+
+For **twelve appearance profiles with automatic padding preservation**, complete
+the one-time setup below, then use the
+[copy-paste MP4 recipe guide](../../docs/workbench/guides/paidf-appearance-12.md#apply-the-recipe).
+It includes the full recipe, fresh-run submission, downloads and receipt checks.
 
 > **Validation scope:** All 15 pipeline stages completed on an existing RTX PRO
 > 6000 Blackwell cluster. Setup was exercised on Linux with Python 3.12. See
@@ -998,6 +1006,10 @@ as shown in the R3a audit, then require **one passed test**, not a skip:
 
 ### R3c. Tune realistic manipulation augmentation
 
+For the reusable twelve-profile setup from #907 and automatic padding handling
+from #908, follow the [appearance recipe guide](../../docs/workbench/guides/paidf-appearance-12.md).
+Apply the complete recipe; changing only `variant_count` does not add profiles.
+
 For `lerobot/aloha_static_battery` or another manipulation task, follow the
 [realistic augmentation guide](../../docs/workbench/guides/paidf-realistic-augmentation.md).
 It provides a pinned battery input, configurable coherent appearance profiles,
@@ -1076,8 +1088,11 @@ aws s3 cp "s3://$BUCKET/paidf-cosmos3/$RUN_ID/npa-workflow/runtime.json" - \
 
 For progress during a long stage, use its live logs as well: the durable record
 can retain `sky_status: SUBMITTED` while the payload is already executing.
-The generation stage publishes its variants after all requested variants finish,
-so an empty `cosmos_augmented/` prefix during sampling is expected.
+The generation stage publishes each variant as it finishes.
+`cosmos_augmented/generation-progress.json` records partial progress; the final
+`manifest.json` is written only when every requested variant publishes. A
+refinement pass can replace the latest variants, so collect final evidence only
+after the run is terminal.
 Each wave reports whether it is running or succeeded. A missing stage row or
 `manifest_pending` in the summary does not establish that no job launched;
 check this record and the stage logs before deciding to resume or submit again.
@@ -1157,7 +1172,7 @@ Use a fresh run ID after changing inputs or settings.
 | `attribute_sample_policy` | `ranking` | Evaluator attribute-observation policy. |
 | `temporal_consistency_mode`, `temporal_consistency_threshold` | `advisory`, `0.8` | Source-relative temporal diagnostic. Related `temporal_*` keys configure regions, noise floor, and blur. |
 | `appearance_fidelity_mode`, `appearance_fidelity_threshold` | `advisory`, `0.8` | Protected-appearance diagnostic. Related `appearance_*` keys configure regions and tolerances. |
-| `source_motion_weight` | `0.0` | Must remain zero: publish model output after guardrail processing; blending does not align motion. |
+| `source_motion_weight` | `0.0` | Must remain zero: source/model scene blending is disabled. Verified source padding is restored separately before publication. |
 | `curator_clip_len_s`, `curator_min_clip_len_s` | `3`, `1` | Curator's target and minimum clip durations in seconds. Use a source at least one second long for the full pipeline with these defaults. |
 | `curator_motion_filter` | `score-only` | Retain Curator motion measurements without discarding clips based on that diagnostic. |
 
@@ -1201,7 +1216,12 @@ prepared timestamp; the adapter never trims, stretches or blends output to force
 Each variant includes `source_edges.mkv`, `transfer.json`, and alignment evidence
 in `metadata.json`. The adapter verifies that the native framework loads all
 control pixels unchanged, checks each effective prompt before generation, and
-saves the video returned by the model's video guardrail. The evaluator independently
+retains the video returned by the model's video guardrail. When verified padding
+is present, it restores only those borders before publishing
+`augmented_video.mp4`, keeps `raw_model_video.mp4` separately, and records exact
+scene/border preservation in `metadata.json.padding_preservation`. This handling
+is automatic for new runs using the updated NPA source, including embedded bars
+on all four sides; ambiguous boundaries remain in the scene. The evaluator independently
 decodes the current source/output pair and verifies the recorded hashes before
 comparing corresponding frames. `--var fps=24` and `--var num_frames=169` are
 not supported controls; use the named settings above.

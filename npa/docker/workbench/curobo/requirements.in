@@ -6,6 +6,7 @@ nvidia-cuda-runtime>=13,<14
 importlib_resources
 networkx
 numpy-quaternion
+oauthlib==4.0.0
 setuptools_scm>=6.2
 tqdm
 trimesh
@@ -17,5 +18,6 @@ pin
 seaborn
 tabulate
 uvicorn
+urllib3==2.8.0
 # Offline source installs use these locked build backends.
 hatchling

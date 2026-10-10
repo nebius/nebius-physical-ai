@@ -448,3 +448,30 @@ def test_embedded_backend_defines_the_identity_helpers_before_using_them() -> No
     assert source.index(embed_marker) < source.index(
         "elif is_neural_reconstruction_recording(key):"
     )
+
+
+def test_nurec_preview_preserves_detail_for_desktop_viewing(tmp_path):
+    from PIL import Image
+    import base64
+    import io
+    import re
+    from npa.workbench.nurec.preview import write_nurec_preview
+
+    run = _nurec_run(tmp_path / "run")
+    image = run / "novel_views" / "camera" / "000000.png"
+    image.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (2000, 1500), (20, 40, 60)).save(image)
+    output = tmp_path / "index.html"
+    write_nurec_preview(run, output)
+    data = re.search(
+        r'<script id="preview-data" type="application/json">(.*?)</script>',
+        output.read_text(),
+        re.S,
+    )[1]
+    novel = next(group for group in json.loads(data) if group["title"] == "Novel views")
+    sizes = []
+    for frame in novel["frames"]:
+        raw = base64.b64decode(frame["images"][0]["data"].partition(",")[2])
+        with Image.open(io.BytesIO(raw)) as decoded:
+            sizes.append(decoded.size)
+    assert (1600, 1200) in sizes
