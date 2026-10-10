@@ -1,0 +1,65 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "6ed25ff6935a99273e6a4be66665863f81bf7773b8d3884232d7eae4b8981461",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation, the eleven-stage plan, scheduler translation, and SkyPilot rendering pass. Planning tests cover GPU counts 1, 2, 7, 8, and 16; only the two-GPU configuration has the recorded live qualification.",
+      "evidence": [
+        "npa/tests/orchestration/npa_workflow/test_groot_finetune_workflow.py",
+        "npa workbench workflow validate-spec workflows/main/groot-1-7-finetune.yaml --json",
+        "npa workbench workflow plan-spec workflows/main/groot-1-7-finetune.yaml --run-id groot-readiness --check-render --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "All eleven logical stages completed with real data, four optimizer updates on two B200 GPUs, changed checkpoint weights, held-out model forwards, inspected RRD/MCAP publication, and authenticated agent viewer API checks. This qualifies the operational pipeline only: held-out MSE increased, learning_outcome was not_improved, and candidate_promoted remained false. Rerun browser rendering passed; Lichtblick browser rendering was blocked by the deployed Content Security Policy, and Describe this was not qualified.",
+      "evidence": [
+        "docs/workbench/evidence/groot-1-7-promotion.json",
+        "docs/workbench/cookbooks/groot-1-7-training.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The shipped workflow retains example-bucket. Each future run must supply writable operator-owned object storage and a fresh run prefix. The deployed agent also needs an isolated read-only storage identity and artifact source covering that exact output prefix.",
+      "evidence": [
+        "docs/workbench/cookbooks/groot-1-7-training.md#submit"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The recorded run used five real SO101 episodes, with two training episodes, one held-out episode, two excluded episodes, and train-only statistics. Each future source_data_uri must identify worker-readable GR00T-format LeRobot data that passes the deterministic split and leakage checks; the shipped URI is a placeholder.",
+      "evidence": [
+        "docs/workbench/evidence/groot-1-7-promotion.json",
+        "docs/workbench/cookbooks/groot-1-7-training.md#submit"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Each operator must verify project and object-storage access, exact GR00T model access under the applicable terms, and authenticated worker-to-agent connectivity. Supply HF_TOKEN and NPA_AGENT_BASIC_AUTH through runtime secrets; the agent's storage reader must independently access this run's artifacts.",
+      "evidence": [
+        "docs/workbench/cookbooks/groot-1-7-training.md#submit",
+        "skills/atomic/health-preflight/SKILL.md",
+        "skills/atomic/access-approval/SKILL.md"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The pinned immutable GR00T development image completed the recorded pipeline, including Kubernetes bootstrap and MCAP production. It is not a supported-release promotion. source_overlay stages the submitting checkout's adapters, so each future run must verify its selected source revision, image pullability, bootstrap, and model access; replacement images need independent checks.",
+      "evidence": [
+        "docs/workbench/evidence/groot-1-7-promotion.json",
+        "docs/workbench/cookbooks/groot-1-7-training.md#kubernetes-image-prerequisites"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The recorded training used two B200 GPUs on one node, with both ranks completing optimizer work and one rank-zero checkpoint publication. Each future Kubernetes target must pass capacity and runtime preflight for the selected GPU and batch settings, and workers must reach the authenticated agent and its exact artifacts. The qualification covers viewer APIs and Rerun painting; Lichtblick browser rendering remains unqualified.",
+      "evidence": [
+        "docs/workbench/evidence/groot-1-7-promotion.json",
+        "docs/workbench/cookbooks/groot-1-7-training.md#outputs-and-viewers"
+      ]
+    }
+  }
+}
