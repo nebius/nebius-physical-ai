@@ -154,6 +154,8 @@ sonic = [
 # standard (non-e2e) test suite collects without pulling in the GPU-heavy
 # extras (genesis, groot, sonic).
 dev = [
+    # RRD semantic tests exercise ChunkStore.reader's real DataFusion path.
+    "rerun-sdk[catalog]==0.38.1",
     "langgraph==1.2.12",
     "langgraph-checkpoint-sqlite==3.1.1",
     # Parse real raw USD layers/variants in sensor-rig scene preflight tests.
@@ -188,6 +190,7 @@ dev = [
 
 [dependency-groups]
 dev = [
+    "rerun-sdk[catalog]==0.38.1",
     "langgraph==1.2.12",
     "langgraph-checkpoint-sqlite==3.1.1",
     "usd-core==26.8",

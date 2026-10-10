@@ -257,6 +257,8 @@ class Artifact:
     role: str = "output"
     namespace: str = ""
     relative_key: str = ""
+    source_etag: str = ""
+    source_version_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data_role = artifact_data_role(self.key, self.run_id)
@@ -781,7 +783,9 @@ def build_s3_client(
     }
     if endpoint_url.strip():
         kwargs["endpoint_url"] = endpoint_url.strip()
-    return boto3.client("s3", **kwargs)
+    from npa.clients.storage import register_s3_error_body_compat
+
+    return register_s3_error_body_compat(boto3.client("s3", **kwargs))
 
 
 def render_hint_for_object(*, key: str, content_type: str = "") -> str:
@@ -3566,6 +3570,7 @@ def list_artifacts(
                         role=artifact_role_for_relative_key(relative_key),
                         namespace=namespace,
                         relative_key=relative_key,
+                        source_etag=str(item.get("ETag") or "").strip(),
                     )
                 )
     except (ClientError, BotoCoreError) as exc:
@@ -3622,6 +3627,7 @@ def list_artifacts_page(
                 role=artifact_role_for_relative_key(relative_key),
                 namespace=namespace,
                 relative_key=relative_key,
+                source_etag=str(item.get("ETag") or "").strip(),
             )
         )
     artifacts.sort(key=lambda item: (item.last_modified, item.key), reverse=True)

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from botocore.exceptions import BotoCoreError, ClientError
 
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.config import artifact_uris_for_run
@@ -17,6 +18,13 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_OUTER_ITERATIONS,
     DEFAULT_PREFIX,
     DEFAULT_S3_ENDPOINT,
+)
+from npa.workflows.sim2real.publication import (
+    PublicationConflict,
+    assert_legacy_publication_unjournaled,
+    read_verified_committed_publication_bytes,
+    resolve_committed_publication_snapshot,
+    verify_committed_publication_object,
 )
 
 
@@ -347,6 +355,61 @@ def _load_s3_json(
     return payload if isinstance(payload, dict) else None
 
 
+def _resolved_publication_object(
+    client: StorageClient,
+    bucket: str,
+    key: str,
+) -> tuple[str, str] | None:
+    canonical_uri = f"s3://{bucket}/{key}"
+    publication = resolve_committed_publication_snapshot(client, canonical_uri)
+    resolved_uri = verify_committed_publication_object(
+        client,
+        publication,
+        canonical_uri,
+    )
+    if resolved_uri is None:
+        return None
+    value = resolved_uri.removeprefix("s3://")
+    if value == resolved_uri or "/" not in value:
+        raise ValueError("publication journal resolved a malformed S3 URI")
+    resolved_bucket, resolved_key = value.split("/", 1)
+    if resolved_bucket != bucket:
+        raise ValueError("publication journal resolved outside the selected bucket")
+    try:
+        client._s3.head_object(Bucket=resolved_bucket, Key=resolved_key)
+    except ClientError as exc:
+        if str(exc.response.get("Error", {}).get("Code")) in {
+            "404",
+            "NoSuchKey",
+            "NotFound",
+        }:
+            return None
+        raise
+    assert_legacy_publication_unjournaled(client, publication)
+    return resolved_bucket, resolved_key
+
+
+def _load_publication_json(
+    client: StorageClient,
+    bucket: str,
+    key: str,
+) -> dict[str, Any] | None:
+    canonical_uri = f"s3://{bucket}/{key}"
+    publication = resolve_committed_publication_snapshot(client, canonical_uri)
+    payload_bytes = read_verified_committed_publication_bytes(
+        client,
+        publication,
+        canonical_uri,
+    )
+    if payload_bytes is None:
+        return None
+    try:
+        payload = json.loads(payload_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _load_workflow_state(
     client: StorageClient,
     bucket: str,
@@ -405,7 +468,11 @@ def _extract_eval_metrics(
             metrics.setdefault("threshold", decision.get("threshold"))
 
     if any(key not in metrics for key in ("success_rate", "decision", "threshold")):
-        report = _load_s3_json(client, bucket, f"{prefix}/reports/sim2real-report.json")
+        report = _load_publication_json(
+            client,
+            bucket,
+            f"{prefix}/reports/sim2real-report.json",
+        )
         if report:
             outer = report.get("outer_loop") or {}
             latest_eval = outer.get("latest_heldout_report") or {}
@@ -435,6 +502,9 @@ def _artifact_rule_matches(
             if not key.endswith("/"):
                 key = f"{key}/"
             checks.append(_s3_prefix_nonempty(client, bucket, key))
+        elif rel_path == "reports/sim2real-report.json":
+            resolved = _resolved_publication_object(client, bucket, key)
+            checks.append(resolved is not None)
         else:
             checks.append(_s3_object_exists(client, bucket, key))
     if rule.match == "all":
@@ -453,6 +523,22 @@ def _stage_artifact_present(
         _artifact_rule_matches(client, bucket, run_prefix=run_prefix, rule=rule)
         for rule in spec.rules
     )
+
+
+def _publication_unavailable(exc: Exception) -> dict[str, str]:
+    """Expose named failure states without leaking provider diagnostics."""
+    return {
+        "publication_state": (
+            exc.publication_state
+            if isinstance(exc, PublicationConflict)
+            else "unavailable"
+        ),
+        "error_code": (
+            "publication_conflict"
+            if isinstance(exc, PublicationConflict)
+            else "storage_unavailable"
+        ),
+    }
 
 
 def _record_completed_at(entry: dict[str, Any], fallback: str) -> str:
@@ -644,7 +730,9 @@ def _stage_states(
             completion_index=completion_index,
             spec=spec,
         )
-        if resolved:
+        if spec.name == "report":
+            present, source, tier, completed_at = False, "", "", ""
+        elif resolved:
             present = True
             source = str(resolved.get("source") or "workflow_state")
             tier = str(resolved.get("tier") or "")
@@ -675,6 +763,27 @@ def _stage_states(
             "source": source,
             "completed_at": completed_at,
         }
+
+    # Workflow completion is historical, not authority for the currently
+    # published report. Recheck even when state/workflow_state says completed.
+    try:
+        present = (
+            _resolved_publication_object(
+                client, bucket, f"{run_prefix}/reports/sim2real-report.json"
+            )
+            is not None
+        )
+        stages["report"].update(
+            state="SUCCEEDED" if present else "PENDING",
+            source="s3_artifact" if present else "",
+            publication_state="available" if present else "absent",
+        )
+    except (PublicationConflict, BotoCoreError, ClientError) as exc:
+        stages["report"].update(
+            state="PENDING",
+            source="publication_unavailable",
+            **_publication_unavailable(exc),
+        )
 
     _apply_infer_from_later(stages)
     return stages
@@ -785,6 +894,15 @@ def _aggregate_status(
     stages: dict[str, dict[str, Any]],
     k8s: dict[str, Any],
 ) -> str:
+    report = stages.get("report", {})
+    if report.get("error_code"):
+        # Worker completion is not proof that publication became readable.
+        # Keep watching recoverable publication states even after worker exit.
+        if k8s.get("phase") == "FAILED" or int(k8s.get("failed") or 0) > 0:
+            return "FAILED"
+        return (
+            "RUNNING" if report.get("publication_state") == "publishing" else "UNKNOWN"
+        )
     if (
         k8s.get("phase") == "SUCCEEDED"
         or stages.get("report", {}).get("state") == "SUCCEEDED"
@@ -837,6 +955,10 @@ def emit_sim2real_status(result: dict[str, Any], *, json_output: bool = False) -
         return
     print(f"run_id: {result.get('run_id')}")
     print(f"status: {result.get('status')}")
+    if result.get("publication_state"):
+        print(f"publication_state: {result['publication_state']}")
+    if result.get("publication_error"):
+        print(f"publication_error: {result['publication_error']}")
     if result.get("current_stage"):
         print(f"current_stage: {result.get('current_stage')}")
     eval_metrics = result.get("eval_metrics")
@@ -1008,21 +1130,30 @@ def get_sim2real_workflow_status(
                 kubeconfig=kcfg,
                 namespace=k8s_namespace,
             )
+    run_prefix = f"{s3_prefix.rstrip('/')}/{run_id}"
+    client = StorageClient.from_environment(endpoint_url=endpoint)
+    workflow_state = _load_workflow_state(client, bucket, run_prefix)
+    publication_status = stages.get("report", {})
+    try:
+        eval_metrics = _extract_eval_metrics(
+            workflow_state=workflow_state,
+            client=client,
+            bucket=bucket,
+            run_prefix=run_prefix,
+        )
+    except (PublicationConflict, BotoCoreError, ClientError) as exc:
+        eval_metrics = {}
+        publication_status.update(
+            state="PENDING",
+            source="publication_unavailable",
+            **_publication_unavailable(exc),
+        )
+
     status = _aggregate_status(stages, k8s)
     if status == "RUNNING":
         current = _current_stage(stages)
         if isinstance(stages.get(current), dict):
             stages[current]["state"] = "RUNNING"
-
-    run_prefix = f"{s3_prefix.rstrip('/')}/{run_id}"
-    client = StorageClient.from_environment(endpoint_url=endpoint)
-    workflow_state = _load_workflow_state(client, bucket, run_prefix)
-    eval_metrics = _extract_eval_metrics(
-        workflow_state=workflow_state,
-        client=client,
-        bucket=bucket,
-        run_prefix=run_prefix,
-    )
 
     return {
         "run_id": run_id,
@@ -1037,6 +1168,8 @@ def get_sim2real_workflow_status(
             endpoint=endpoint,
         ),
         "eval_metrics": eval_metrics,
+        "publication_state": publication_status.get("publication_state", ""),
+        "publication_error": publication_status.get("error_code", ""),
         "k8s_job": k8s.get("job_name"),
         "k8s_context": context,
         "pod_phase": k8s.get("pod_phase"),

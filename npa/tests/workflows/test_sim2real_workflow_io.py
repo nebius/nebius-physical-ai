@@ -8,10 +8,25 @@ import pytest
 
 from npa.workflows.sim2real import workflow_io
 from npa.workflows.sim2real import workflow_stage
+from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
 
 
 SOURCE_SHA = "1" * 40
 IMAGE = "cr.example/npa/runtime@sha256:" + "2" * 64
+
+
+def test_parse_json_object_rejects_duplicate_nested_identity_fields() -> None:
+    payload = (
+        '{"policy_inference_provenance":{'
+        '"checkpoint_sha256":"'
+        + "a" * 64
+        + '","checkpoint_sha256":"'
+        + "b" * 64
+        + '"}}'
+    )
+
+    with pytest.raises(ValueError, match="duplicate JSON field"):
+        workflow_io.parse_json_object(payload, source="retained report")
 
 
 def test_source_sha_requires_workflow_and_image_attestations_to_match(
@@ -40,6 +55,7 @@ def test_component_records_are_content_addressed_and_stage12_is_a_seam(
     monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", SOURCE_SHA)
     monkeypatch.setenv("NPA_SIM2REAL_SOURCE_SHA", SOURCE_SHA)
     monkeypatch.setenv("NPA_TASK_IMAGE", IMAGE)
+    monkeypatch.setenv("SKYPILOT_TASK_ID", "stage-test-job")
 
     record = workflow_io.publish_component_record(
         root_uri="s3://bucket/run",
@@ -91,9 +107,12 @@ def test_parallel_lane_records_preserve_distinct_execution_owners(
     provenances = [
         {
             "image": IMAGE,
+            "image_digest": IMAGE.split("@", 1)[1],
             "source_sha": SOURCE_SHA,
             "workflow_job": f"managed-job-{index}",
+            "execution_mode": "standard_npa_workflow_skypilot",
             "gpu_products": ["NVIDIA RTX PRO 6000"],
+            "gpu_rows": [f"NVIDIA RTX PRO 6000, GPU-test-{index:04d}"],
         }
         for index in range(2)
     ]
@@ -133,14 +152,54 @@ def test_reduced_proof_records_zero_policy_success_without_failing_pipeline(
 ) -> None:
     written: dict[str, dict[str, object]] = {}
     published: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        workflow_stage,
-        "read_json",
-        lambda *_args, **_kwargs: {
-            "success_rate": 0.0,
-            "policy_checkpoint_uri": "s3://bucket/run/checkpoint.pt",
-        },
+    job = k8s_job_name("s2r-byo-isaac-train", "run")
+    checkpoint = (
+        f"s3://bucket/run/byo-trainer/{job}/"
+        f"{artifact_tag('outer-01-iter-01')}/model_latest.pt"
     )
+    identity = {
+        "checkpoint_uri": checkpoint,
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "generator_policy_sha256": "a" * 64,
+    }
+    candidate = {
+        **identity,
+        "evaluation_split": "validation",
+        "outer_iteration": 1,
+        "inner_iteration": 1,
+        "training_iteration": 10,
+        "validation_report_uri": "s3://bucket/run/eval/validation/report.json",
+    }
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 1,
+        "success_rate": 0.0,
+        "policy_checkpoint_uri": checkpoint,
+    }
+    evidence = {
+        "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "run_id": "run",
+        "outer_iteration": 1,
+        "iterations": [{"iteration": 1}],
+        "selected_checkpoint_uri": checkpoint,
+        "final_checkpoint_uri": checkpoint,
+        "checkpoint_selection": dict(candidate),
+        "checkpoint_candidates": [dict(candidate)],
+    }
+
+    def read_json(uri: str, **kwargs):
+        if "/inner_loop/" in uri:
+            return evidence
+        directory = Path(kwargs["directory"])
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "report.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return report
+
+    monkeypatch.setattr(workflow_stage, "read_json", read_json)
     monkeypatch.setattr(
         workflow_stage,
         "write_json",

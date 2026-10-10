@@ -4,11 +4,13 @@ ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-genesis@sha256:80cd1c4c7f7a
 FROM ${BASE_IMAGE} AS sanitized
 
 ARG NPA_SOURCE_SHA
-ARG UBUNTU_SNAPSHOT=20260820T000000Z
+ARG UBUNTU_SNAPSHOT=20261002T000000Z
+ARG LINUX_LIBC_DEV_VERSION=5.15.0-198.208
 
 WORKDIR /opt/npa
 USER root
-# COPY merges trees, so removed source files must not survive from the parent.
+# COPY merges directories: remove the parent's obsolete NPA source/catalog before
+# installing this exact closure. The final scratch stage excludes removed ancestors.
 RUN test -d /opt/npa && test ! -L /opt/npa \
     && rm -rf /opt/npa/src /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
@@ -26,6 +28,8 @@ COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
 COPY docker/workbench/common/sanitize_sim2real_envgen_parent.py \
     /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py
+COPY docker/workbench/common/sanitize_envgen_grass_example.py \
+    /usr/local/lib/npa/sanitize-envgen-grass-example.py
 COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
     /opt/npa/compat/tetgen.py
 
@@ -45,7 +49,8 @@ COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
 # constructing this deliberately capability-reduced runtime distribution.
 # The shared Genesis requirements own the GitPython pin; keep its installed-version
 # check aligned with that file rather than installing a second version here.
-RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
+RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${LINUX_LIBC_DEV_VERSION}" \
+    && test "$(dpkg-query --show --showformat='${Version}' linux-libc-dev)" = "${LINUX_LIBC_DEV_VERSION}" \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
@@ -55,6 +60,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && python -m pip uninstall -y npa \
     && python -m pip uninstall -y transformers imageio-ffmpeg wandb tetgen \
     && python /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py \
+    && python /usr/local/lib/npa/sanitize-envgen-grass-example.py \
     && rm -rf /opt/nvidia/nsight-compute \
     && python -m pip install --no-deps \
       'imageio-ffmpeg @ https://files.pythonhosted.org/packages/44/bd/c3343c721f2a1b0c9fc71c1aebf1966a3b7f08c2eea8ed5437a2865611d6/imageio_ffmpeg-0.6.0.tar.gz#sha256=e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755' \

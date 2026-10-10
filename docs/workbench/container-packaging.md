@@ -31,6 +31,35 @@ node-local ephemeral storage, with durable reuse still unapproved.
 
 ## SkyPilot worker bootstrap contract
 
+The Sim2Real controller and Rerun viewer upgrade inherited Debian packages from
+the pinned `DEBIAN_SNAPSHOT=20261002T000000Z` closure. Their `MIN_*_VERSION`
+build arguments encode the observed fixed security floors: Perl for both roles,
+plus GLib and mbedcrypto for the viewer. An unreadable or below-floor installed
+version stops the build. The [package-index receipt](validation/sim2real-cpu-security-snapshot-20261002.json)
+binds the snapshot and exact package hashes; it is not replacement-image
+security, bootstrap or runtime acceptance. Do not lower these floors or
+substitute scanner exceptions for rebuilt, validated image bytes.
+
+The GPU-role security closure separately pins PyJWT 2.14.0 for Transfer and
+Isaac. EnvGen uses the October Ubuntu snapshot and the explicit
+`LINUX_LIBC_DEV_VERSION=5.15.0-198.208` argument to the existing installer;
+other installer callers retain their own release-specific defaults. The exact
+installed header version is checked before proceeding. The frozen APT transaction
+already selects that version, above the security floor `5.15.0-194.204`.
+The [signed-index binding](validation/sim2real-envgen-headers-20261002.json)
+preserves both identities; requesting the lower floor after that transaction
+caused a real downgrade refusal, not an access or transport failure. No downgrade
+override is used. These dependency pins
+do not qualify an image without its fresh complete artifact gates.
+
+EnvGen also removes one hash-bound, inert `grass()` sample-download example
+from inherited scikit-image source. The example contains a token-bearing URL
+flagged by the image scan; no assertion is made that it is a private credential.
+The sanitizer refuses changed source or package `RECORD`, preserves executable
+ASTs and primary API documentation, and updates the exact modified source hash
+in `RECORD`. It runs before filesystem flattening, not as a scanner suppression.
+Original failing image bytes and scan populations remain separate evidence.
+
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
 effective user; root or verified passwordless sudo; `openssh-server`, `rsync`,
 and compatible service/init behavior; writable `/tmp` and home; and an

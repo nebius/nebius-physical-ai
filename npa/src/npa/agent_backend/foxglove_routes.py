@@ -250,26 +250,33 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
                     status_code=status_code,
                     detail=f"canonical MCAP export failed: {detail}",
                 )
-            artifact_key = str(canonical.get("artifact_key") or "")
-            s3_uri = str(canonical.get("s3_uri") or "")
-            output_path = Path(str(canonical.get("local_path") or ""))
-            summary = dict(canonical.get("summary") or {})
-            if not artifact_key or not s3_uri or not output_path.is_file():
-                raise http_error(
-                    status_code=502,
-                    detail="canonical MCAP persistence returned an incomplete contract",
-                )
-            if deps.apply_prepared_canonical is not None:
-                loaded = deps.apply_prepared_canonical(
-                    canonical=canonical,
-                    run_id=run_id,
-                    run_ref=request["run_ref"],
-                )
-            else:
-                load_request = {"run_id": run_id, "key": artifact_key}
-                if request["run_ref"]:
-                    load_request["run_ref"] = request["run_ref"]
-                loaded = deps.load_artifact(load_request)
+            from .recording_cache import release_verified_recording
+
+            try:
+                artifact_key = str(canonical.get("artifact_key") or "")
+                s3_uri = str(canonical.get("s3_uri") or "")
+                output_path = Path(str(canonical.get("local_path") or ""))
+                summary = dict(canonical.get("summary") or {})
+                # The request-owned input is released before the response is sent.
+                summary.pop("output", None)
+                if not artifact_key or not s3_uri or not output_path.is_file():
+                    raise http_error(
+                        status_code=502,
+                        detail="canonical MCAP persistence returned an incomplete contract",
+                    )
+                if deps.apply_prepared_canonical is not None:
+                    loaded = deps.apply_prepared_canonical(
+                        canonical=canonical,
+                        run_id=run_id,
+                        run_ref=request["run_ref"],
+                    )
+                else:
+                    load_request = {"run_id": run_id, "key": artifact_key}
+                    if request["run_ref"]:
+                        load_request["run_ref"] = request["run_ref"]
+                    loaded = deps.load_artifact(load_request)
+            finally:
+                release_verified_recording(canonical.get("local_path"))
             if not isinstance(loaded, dict) or not loaded.get("ok"):
                 raise http_error(
                     status_code=502,
@@ -293,10 +300,13 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
             state["sim_viz"] = sim_viz
             deps.record_run(state, sim_viz)
             deps.save_state(state)
+            public_canonical = {k: v for k, v in canonical.items() if k != "local_path"}
+            if "summary" in public_canonical:
+                public_canonical["summary"] = summary
             return {
                 "ok": True,
                 "summary": summary,
-                "canonical": {k: v for k, v in canonical.items() if k != "local_path"},
+                "canonical": public_canonical,
                 "sim_viz": sim_viz,
                 "foxglove": foxglove_status_payload(
                     deps.foxglove_config(state), sim_viz
