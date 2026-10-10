@@ -24,7 +24,7 @@ def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
     assert "rm -rf /tmp/openwam-uv-cache" in dockerfile
     assert "COPY --chmod=0755 src/npa /opt/npa/src/npa" in dockerfile
     assert (
-        "runuser -u ubuntu -- env HOME=/home/ubuntu /opt/openwam-venv/bin/python "
+        "runuser -u ubuntu -- env -u PYTHONPATH HOME=/home/ubuntu /opt/openwam-venv/bin/python "
         "-m npa.workflows.openwam_pipeline" in dockerfile
     )
     assert "sudo -u ubuntu" not in dockerfile
@@ -47,6 +47,29 @@ def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
     assert 'm.version("transformers") == "4.36.0"' in dockerfile
     assert 'm.version("hydra-core") == "1.3.7"' in dockerfile
     assert 'm.version("PyYAML") == "6.0.3"' in dockerfile
+
+
+def test_openwam_exposes_exact_source_without_incomplete_npa_metadata() -> None:
+    """Keep the runtime module importable without bypassing dependency closure."""
+
+    dockerfile = (
+        ROOT / "npa" / "docker" / "workbench" / "openwam" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    source_path = "npa-exact-source.pth"
+    assert source_path in dockerfile
+    assert "pip install --no-cache-dir --no-deps /opt/npa" not in dockerfile
+    assert dockerfile.index("/opt/openwam-venv/bin/python -m pip check") < dockerfile.index(
+        source_path
+    )
+    assert (
+        "env -u PYTHONPATH /opt/openwam-venv/bin/python "
+        "-m npa.workflows.openwam_pipeline --help"
+    ) in dockerfile
+    assert (
+        "runuser -u ubuntu -- env -u PYTHONPATH HOME=/home/ubuntu "
+        "/opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline"
+    ) in dockerfile
 
 
 def test_openwam_removes_observed_base_image_critical_footprint() -> None:

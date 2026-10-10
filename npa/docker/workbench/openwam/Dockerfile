@@ -125,10 +125,11 @@ COPY --chmod=0755 src/npa /opt/npa/src/npa
 # Each upstream environment declares imageio-ffmpeg, whose wheel bundles a
 # second static executable. Each install layer removes it before that layer is
 # committed; the Ubuntu ffmpeg package above is sufficient for the runtime.
-RUN /opt/openwam-venv/bin/python -m pip install --no-cache-dir --no-deps /opt/npa \
+RUN /opt/openwam-venv/bin/python -c \
+      "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
     && test -z "$(find /opt/openwam-venv /opt/openwam-libero -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
-    && /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
-    && runuser -u ubuntu -- env HOME=/home/ubuntu /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
+    && env -u PYTHONPATH /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
+    && runuser -u ubuntu -- env -u PYTHONPATH HOME=/home/ubuntu /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
     && /opt/openwam-venv/bin/rerun rrd --help >/dev/null \
     && test -z "$(find /opt/openwam /opt/openwam-venv /opt/openwam-libero /opt/openwam-libero-source -type f \
       \( -iname '*.safetensors' -o -iname '*.ckpt' -o -iname 'pytorch_model*.bin' \) -print -quit)" \
