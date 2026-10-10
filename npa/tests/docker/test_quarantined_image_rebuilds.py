@@ -93,6 +93,12 @@ def test_isaac_2_runtime_dependency_fixes_preserve_the_runtime_family(name, floo
     assert "ARG ISAAC_LAB_VERSION=2.3.2" in (WORKBENCH / "sonic/Dockerfile").read_text()
 
 
+def test_sonic_uses_the_fixed_jammy_header_snapshot():
+    text = (WORKBENCH / "sonic/Dockerfile").read_text()
+    assert "NPA_UBUNTU_SNAPSHOT=20261002T000000Z" in text
+    assert "NPA_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in text
+
+
 def test_loop_eval_uses_the_fixed_kernel_header_snapshot():
     text = (WORKBENCH / "sim2real-eval/Dockerfile").read_text()
     assert "ARG UBUNTU_SNAPSHOT=20261002T000000Z" in text

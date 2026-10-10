@@ -496,7 +496,7 @@ required operator images from legacy automatic public-image selection.
 
 The Ray Serve Dockerfile now derives from PAIDF's repaired Cosmos3 digest rather
 than retaining the withdrawn parent's SSH-key layers. The Isaac 3 OSS dependency
-lock also selects PyJWT 2.14.0, which fixes the critical signature-verification
+lock also selects PyJWT 2.15.0, which fixes the critical signature-verification
 issue that blocked its rebuilt image scan; Transfer's hash-verified security
 override selects the same fix. The controller and viewer use the immutable
 2026-10-02 Debian snapshot with fixed Perl, GLib and Mbed TLS, and both upgrade
