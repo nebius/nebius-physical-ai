@@ -16,10 +16,16 @@ Admission reserves raw payload bytes against a 512 MiB budget before allocating
 them; a record larger than the whole budget is admitted alone rather than
 refused, so coverage never depends on a size threshold.
 
-That budget bounds admitted payload bytes, not resident memory: the detector
-holds the raw bytes, a string copy, a lowercased copy and the regexp engine's
-working set. Peak RSS for a single record, read from the helper's `VmHWM` in
-KiB, Linux x86_64, Go toolchain 1.27.1, one record in flight:
+The helper fills a preallocated `strings.Builder` and hashes the bytes while
+reading the record. Its completed string shares that backing storage with the
+detector, removing the previous byte-buffer-to-string copy. Each detection still
+receives one complete record, including empty and binary records.
+
+The admission budget bounds payload bytes, not resident memory: the detector's
+lowercased prefilter, regexp working set and findings can allocate additional
+memory. The following historical RSS measurements precede the allocation fix;
+they are not measurements of the current helper. Peak RSS for a single record,
+read from `VmHWM` in KiB, Linux x86_64, Go toolchain 1.27.1, one record in flight:
 
 | record | peak `VmHWM` | multiple of record size |
 | --- | --- | --- |
