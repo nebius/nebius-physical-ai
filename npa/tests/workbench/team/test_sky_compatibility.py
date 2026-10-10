@@ -76,6 +76,49 @@ assert result['paths'][7] == str(destination / 'job/run')
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_pinned_sdk_refreshes_rotated_kubernetes_token_files(tmp_path):
+    program = _token_rotation_program()
+    environment = {**os.environ, "SKYPILOT_KUBECONFIG_REFRESH_INTERVAL_SECONDS": "60"}
+    result = subprocess.run(
+        [os.environ["NPA_TEAM_SKY_PYTHON"], "-c", program],
+        env=environment,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _token_rotation_program():
+    return r"""
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from kubernetes import client, config
+from sky.adaptors import kubernetes as adapter
+with TemporaryDirectory() as directory:
+    token = Path(directory) / 'token'
+    token.write_text('initial-synthetic-token')
+    configuration = {'apiVersion':'v1','kind':'Config','current-context':'test',
+        'clusters':[{'name':'test','cluster':{'server':'https://unused.example.test'}}],
+        'users':[{'name':'test','user':{'tokenFile':str(token)}}],
+        'contexts':[{'name':'test','context':{'cluster':'test','user':'test'}}]}
+    def getter():
+        settings = client.Configuration()
+        config.load_kube_config_from_dict(configuration, client_configuration=settings)
+        return SimpleNamespace(read=lambda: settings.get_api_key_with_prefix('authorization'))
+    stale = getter()
+    wrapped = adapter.RetryableClientWrapper(getter(), getter, (), {})
+    assert adapter._get_kubeconfig_refresh_interval_seconds() == 60
+    assert wrapped.read() == 'Bearer initial-synthetic-token'
+    token.write_text('rotated-synthetic-token')
+    assert stale.read() == 'Bearer initial-synthetic-token'
+    assert wrapped.read() == 'Bearer initial-synthetic-token'
+    wrapped._last_refresh_time -= 61
+    assert wrapped.read() == 'Bearer rotated-synthetic-token'
+"""
+
+
 def test_real_private_server_accepts_new_synthetic_identity(config, binding, tmp_path):
     executable = Path(os.path.abspath(os.environ["NPA_TEAM_SKY_PYTHON"]))
     settings = tmp_path / "sky-server.yaml"

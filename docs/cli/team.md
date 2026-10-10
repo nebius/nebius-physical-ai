@@ -10,6 +10,8 @@ Optional team access and authenticated workflow execution.
 Options
 --help  Show this message and exit.
 Commands
+login  Verify access and remember a Workbench connection for subsequent commands.
+logout  Forget a local Workbench connection without revoking accounts or cloud login.
 setup  Deploy the shared HTTPS control plane and retain its Nebius LB address.
 stop-run  Cancel an exact run as the local server operator, including after offboarding.
 render  Render cluster boundaries and private SkyPilot configuration for review.
@@ -35,6 +37,8 @@ account  Operator-managed users, personal keys, and optional SSO links.
 
 | Command | Description |
 | --- | --- |
+| `login` | Verify access and remember a Workbench connection for subsequent commands. |
+| `logout` | Forget a local Workbench connection without revoking accounts or cloud login. |
 | `setup` | Deploy the shared HTTPS control plane and retain its Nebius LB address. |
 | `stop-run` | Cancel an exact run as the local server operator, including after offboarding. |
 | `render` | Render cluster boundaries and private SkyPilot configuration for review. |
@@ -53,7 +57,7 @@ account  Operator-managed users, personal keys, and optional SSO links.
 
 ```bash
 npa workbench team --help
-npa workbench team setup --help
+npa workbench team login --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `team`.

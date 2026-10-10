@@ -12,9 +12,30 @@ browser login flow.
 Local Workbench accounts are the stable ownership domain. Create an
 `account_namespace` once, then use `Accounts` for local people and
 `issue_key_file` for a personal mode-0600 key. `TeamClient` is the supported
-agent-callable API for an already-authorized service endpoint; its token comes
-from the existing `load_bearer_token` file/environment path. Do not read, print,
-or persist the bearer token outside that path.
+agent-callable API for an already-authorized service endpoint. Obtain credentials
+through the private saved-session provider or the explicit `load_bearer_token`
+file/environment path. Never print bearer credentials or copy them into reports.
+
+For end users, start with `npa login --endpoint <team-HTTPS-endpoint>` and choose
+a privately delivered personal key or `--nebius`. Successful login saves a
+private named connection and unambiguous placement defaults. Subsequent team
+commands can omit endpoint and credential flags; agents can use
+`npa.sdk.workbench.team.connect()`. A native session asks the official Nebius CLI
+for a token on each command without copying IAM tokens into Workbench storage.
+If no human profile exists, create an isolated CLI configuration, preserving
+the machine's default profile. `npa logout` forgets the local connection; it
+does not revoke the server key, cloud session, or running work.
+
+The CLI retains automatic retry identities before submission. Repeating an
+unchanged submission returns its original run. Use `--new-run` only after an
+acknowledged submission when another run is intended; reconcile an unconfirmed
+submission first. Explicit idempotency keys remain supported.
+
+On a remote operator VM, `--no-browser --ssh-host <alias>` emits the verified
+official browser URL and scoped loopback callback forward. An authorized agent
+may open that URL and establish the tunnel. Let the human complete any required
+password or MFA; never request the callback URL or token in chat. Verify actual
+human login and a real workload before labeling a demo SSO-verified.
 
 An external identity is only a credential for an already-created local account:
 

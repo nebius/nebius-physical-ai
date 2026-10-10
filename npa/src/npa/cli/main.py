@@ -41,7 +41,9 @@ from npa.cli.soperator import app as soperator_app
 from npa.cli.viz import app as viz_app
 from npa.cli.workflow_shim import workflow_shim_app
 from npa.cli.tools import app as tools_app
+from npa.cli.workbench.team_login import login_cmd, logout_cmd
 from npa.clients.serverless import ServerlessClientError
+from npa.workbench.team.errors import TeamError
 from npa.provisioning_journal import (
     ProvisioningOperation,
     current_operation,
@@ -115,6 +117,9 @@ app.add_typer(
     rich_help_panel="Primary solution",
 )
 app.add_typer(tools_app, name="tools", rich_help_panel="Platform utilities")
+# Authentication is also available under workbench team for namespace discovery.
+app.command("login", rich_help_panel="Setup")(login_cmd)
+app.command("logout", rich_help_panel="Setup")(logout_cmd)
 
 # FIXME(solutions): These platform-level command groups predate the solution
 # namespace model. They remain top-level for compatibility in this PR and should
@@ -3509,6 +3514,15 @@ def app_entry() -> None:
     except ServerlessClientError as exc:
         print(
             format_error_for_user(exc, output_format=_detect_error_format()),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except TeamError as exc:
+        message = {"error": type(exc).__name__, "message": str(exc)}
+        print(
+            json.dumps(message)
+            if _detect_error_format() == "json"
+            else f"Error: {exc}",
             file=sys.stderr,
         )
         sys.exit(1)

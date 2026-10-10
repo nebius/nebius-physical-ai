@@ -3,6 +3,8 @@
 from pathlib import Path
 
 from npa.workbench.team.client import TeamClient
+from npa.workbench.team.connection import connect, open_connection
+from npa.workbench.team.submission_receipts import submit_saved, submit_workflow
 from npa.workbench.team.models import SubmitRequest
 from npa.workbench.team.accounts import Accounts
 from npa.workbench.team.account_administration import issue_key_file, link_identity
@@ -12,6 +14,10 @@ __all__ = [
     "Accounts",
     "SubmitRequest",
     "TeamClient",
+    "connect",
+    "open_connection",
+    "submit_saved",
+    "submit_workflow",
     "issue_key_file",
     "link_identity",
     "SetupRequest",

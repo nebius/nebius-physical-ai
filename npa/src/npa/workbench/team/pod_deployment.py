@@ -44,6 +44,9 @@ def _scheduler(image):
                 "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:46580",
                 "IS_SKYPILOT_SERVER": "true",
                 "SKYPILOT_DISABLE_USAGE_COLLECTION": "1",
+                # tokenFile has no expiry hook; periodically reload projected
+                # credentials using the upstream client's supported refresh.
+                "SKYPILOT_KUBECONFIG_REFRESH_INTERVAL_SECONDS": "60",
             }.items()
         ],
     )

@@ -9,10 +9,11 @@ import typer
 import yaml
 
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
-from npa.workbench.team.client import TeamClient, load_bearer_token
+from npa.workbench.team.client import TeamClient
 from npa.workbench.team.errors import TeamError
-from npa.workbench.team.models import SubmitRequest, load_config
+from npa.workbench.team.models import load_config
 from .team_accounts import app as accounts_app
+from .team_login import login_cmd, logout_cmd
 
 app = typer.Typer(
     help="Optional team access and authenticated workflow execution.",
@@ -20,6 +21,8 @@ app = typer.Typer(
 )
 
 app.add_typer(accounts_app, name="account")
+app.command("login")(login_cmd)
+app.command("logout")(logout_cmd)
 
 
 @app.command("setup")
@@ -182,9 +185,15 @@ def serve_cmd(
 @app.command("whoami")
 @json_stdout_contract
 def whoami_cmd(
-    endpoint: str = typer.Option(..., "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
+    endpoint: str | None = typer.Option(None, "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
     token_env: str = typer.Option("NPA_TEAM_TOKEN", "--token-env"),
     token_file: Path | None = typer.Option(None, "--token-file"),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Saved Workbench connection."
+    ),
+    ca_file: Path | None = typer.Option(
+        None, "--ca-file", help="Private service CA certificate."
+    ),
     output_format: str = typer.Option("json", "--output-format"),
 ):
     """Show verified identity and workspace access without a personal cloud account.
@@ -192,6 +201,7 @@ def whoami_cmd(
     Args:
         endpoint, token_env: HTTPS gateway and bearer-token environment variable.
         token_file: Optional private mode-0600 file that overrides token_env.
+        profile, ca_file: Saved connection and optional trusted private CA.
         output_format: Required JSON response format.
     Returns:
         None; emits JSON to standard output.
@@ -199,7 +209,7 @@ def whoami_cmd(
         TeamError: Authentication, authorization, or transport fails.
     """
     _json_only(output_format)
-    client = _team_client(endpoint, token_env, token_file)
+    client = _team_client(endpoint, token_env, token_file, profile, ca_file)
     try:
         typer.echo(json.dumps(client.whoami()))
     finally:
@@ -210,12 +220,23 @@ def whoami_cmd(
 @json_stdout_contract
 def submit_cmd(
     spec: Path = typer.Option(..., "--spec"),
-    workspace: str = typer.Option(..., "--workspace"),
-    cluster: str = typer.Option(..., "--cluster"),
-    idempotency_key: str = typer.Option(..., "--idempotency-key"),
-    endpoint: str = typer.Option(..., "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+    cluster: str | None = typer.Option(None, "--cluster"),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key"),
+    new_run: bool = typer.Option(
+        False,
+        "--new-run",
+        help="Start another run after a prior acknowledged submission.",
+    ),
+    endpoint: str | None = typer.Option(None, "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
     token_env: str = typer.Option("NPA_TEAM_TOKEN", "--token-env"),
     token_file: Path | None = typer.Option(None, "--token-file"),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Saved Workbench connection."
+    ),
+    ca_file: Path | None = typer.Option(
+        None, "--ca-file", help="Private service CA certificate."
+    ),
     output_format: str = typer.Option("json", "--output-format"),
 ):
     """Submit an NPA workflow through the authenticated team execution boundary.
@@ -223,9 +244,11 @@ def submit_cmd(
     Args:
         spec: Canonical workflow YAML.
         workspace, cluster: Requested enrolled placement.
-        idempotency_key: Caller-retained retry identity.
+        idempotency_key: Optional explicit retry identity; otherwise retained automatically.
+        new_run: Start another run after acknowledging the previous submission.
         endpoint, token_env: HTTPS gateway and bearer-token environment variable.
         token_file: Optional private mode-0600 file that overrides token_env.
+        profile, ca_file: Saved connection and optional trusted private CA.
         output_format: Required JSON response format.
     Returns:
         None; emits JSON to standard output.
@@ -233,15 +256,22 @@ def submit_cmd(
         TeamError, OSError: Validation, authorization, operation, or local I/O fails.
     """
     _json_only(output_format)
-    request = SubmitRequest(
-        workspace=workspace,
-        cluster=cluster,
-        idempotency_key=idempotency_key,
-        workflow=yaml.safe_load(spec.read_text()),
+    client, session = _team_connection(
+        endpoint, token_env, token_file, profile, ca_file
     )
-    client = _team_client(endpoint, token_env, token_file)
     try:
-        typer.echo(json.dumps(client.submit(request)))
+        from npa.workbench.team.submission_receipts import submit_workflow
+
+        result = submit_workflow(
+            client,
+            session,
+            yaml.safe_load(spec.read_text()),
+            workspace=workspace,
+            cluster=cluster,
+            idempotency_key=idempotency_key,
+            new_run=new_run,
+        )
+        typer.echo(json.dumps(result))
     finally:
         client.close()
 
@@ -253,9 +283,15 @@ def run_cmd(
     action: str = typer.Option(
         "status", "--action", help="status, cancel, resume, logs, or artifacts"
     ),
-    endpoint: str = typer.Option(..., "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
+    endpoint: str | None = typer.Option(None, "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
     token_env: str = typer.Option("NPA_TEAM_TOKEN", "--token-env"),
     token_file: Path | None = typer.Option(None, "--token-file"),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Saved Workbench connection."
+    ),
+    ca_file: Path | None = typer.Option(
+        None, "--ca-file", help="Private service CA certificate."
+    ),
     output_format: str = typer.Option("json", "--output-format"),
 ):
     """Inspect, cancel, or resume an owned run using the authenticated team API.
@@ -264,6 +300,7 @@ def run_cmd(
         run_id, action: Owned run and supported operation.
         endpoint, token_env: HTTPS gateway and token environment variable.
         token_file: Optional private mode-0600 file that overrides token_env.
+        profile, ca_file: Saved connection and optional trusted private CA.
         output_format: Required JSON response format.
     Returns:
         None; emits JSON to standard output.
@@ -271,7 +308,7 @@ def run_cmd(
         TeamError, OSError: Validation, authorization, operation, or local I/O fails.
     """
     _json_only(output_format)
-    client = _team_client(endpoint, token_env, token_file)
+    client = _team_client(endpoint, token_env, token_file, profile, ca_file)
     try:
         typer.echo(json.dumps(client.run(run_id, action)))
     finally:
@@ -281,10 +318,16 @@ def run_cmd(
 @app.command("list")
 @json_stdout_contract
 def list_cmd(
-    workspace: str = typer.Option(..., "--workspace"),
-    endpoint: str = typer.Option(..., "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+    endpoint: str | None = typer.Option(None, "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
     token_env: str = typer.Option("NPA_TEAM_TOKEN", "--token-env"),
     token_file: Path | None = typer.Option(None, "--token-file"),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Saved Workbench connection."
+    ),
+    ca_file: Path | None = typer.Option(
+        None, "--ca-file", help="Private service CA certificate."
+    ),
     output_format: str = typer.Option("json", "--output-format"),
 ):
     """List the authenticated person's runs in one workspace.
@@ -293,6 +336,7 @@ def list_cmd(
         workspace: Authorized workspace to list.
         endpoint, token_env: HTTPS gateway and token environment variable.
         token_file: Optional private mode-0600 file that overrides token_env.
+        profile, ca_file: Saved connection and optional trusted private CA.
         output_format: Required JSON response format.
     Returns:
         None; emits JSON to standard output.
@@ -300,9 +344,15 @@ def list_cmd(
         TeamError, OSError: Validation, authorization, operation, or local I/O fails.
     """
     _json_only(output_format)
-    client = _team_client(endpoint, token_env, token_file)
+    client, session = _team_connection(
+        endpoint, token_env, token_file, profile, ca_file
+    )
     try:
-        typer.echo(json.dumps(client.list(workspace)))
+        typer.echo(
+            json.dumps(
+                client.list(_placement(workspace, session.workspace, "workspace"))
+            )
+        )
     finally:
         client.close()
 
@@ -312,19 +362,30 @@ def _json_only(value):
         raise TeamError("--output-format must be json")
 
 
-def _team_client(endpoint: str, token_env: str, token_file: Path | None) -> TeamClient:
-    """Create a bearer-authenticated team client from one selected secret source.
+def _team_client(endpoint, token_env, token_file, profile=None, ca_file=None):
+    return _team_connection(endpoint, token_env, token_file, profile, ca_file)[0]
 
-    Args:
-        endpoint: HTTPS team API endpoint.
-        token_env: Environment variable used when token_file is absent.
-        token_file: Optional mode-0600 file containing the personal bearer token.
-    Returns:
-        Authenticated client for one command invocation.
-    Raises:
-        AuthenticationError, TeamError: Secret source or endpoint is invalid.
-    """
-    return TeamClient(endpoint, load_bearer_token(token_env, token_file))
+
+def _team_connection(endpoint, token_env, token_file, profile, ca_file):
+    from npa.workbench.team.connection import open_connection
+
+    return open_connection(
+        client_factory=TeamClient,
+        endpoint=endpoint,
+        token_env=token_env,
+        token_file=token_file,
+        profile=profile,
+        ca_file=ca_file,
+    )
+
+
+def _placement(explicit, saved, name):
+    selected = explicit or saved
+    if not selected:
+        raise TeamError(
+            f"Choose --{name}; use npa workbench team whoami to see permitted choices."
+        )
+    return selected
 
 
 @app.command("storage-create")

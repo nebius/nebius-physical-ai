@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import ssl
 import stat
 from pathlib import Path
 from urllib.parse import quote, urlsplit
@@ -20,13 +21,14 @@ class TeamClient:
     Args:
         endpoint, token: HTTPS gateway and personal bearer token.
         transport: Optional HTTP transport for deterministic client tests.
+        ca_file: Optional trusted private CA certificate; TLS remains verified.
     Returns:
         A TeamClient instance.
     Raises:
         TeamError: Endpoint or bearer token is invalid.
     """
 
-    def __init__(self, endpoint: str, token: str, *, transport=None):
+    def __init__(self, endpoint: str, token: str, *, transport=None, ca_file=None):
         parsed = urlsplit(endpoint)
         if (
             parsed.scheme != "https"
@@ -38,11 +40,20 @@ class TeamClient:
             raise TeamError("team endpoint must use HTTPS without embedded credentials")
         if not token or "\n" in token or "\r" in token:
             raise AuthenticationError("a personal bearer token is required")
+        try:
+            verification = (
+                ssl.create_default_context(cafile=ca_file) if ca_file else True
+            )
+        except (OSError, ssl.SSLError):
+            raise TeamError(
+                "Could not read --ca-file as a CA certificate; check the supplied file."
+            ) from None
         self.http = httpx.Client(
             base_url=endpoint.rstrip("/") + "/",
             headers={"Authorization": f"Bearer {token}"},
             follow_redirects=False,
             transport=transport,
+            verify=verification,
         )
 
     def close(self):
@@ -150,7 +161,10 @@ def _check_response(response):
     if response.is_success:
         return
     if response.status_code == 401:
-        raise AuthenticationError("bearer token is invalid, expired, or revoked")
+        raise AuthenticationError(
+            "Authentication was not accepted. Run npa login again; if it persists, "
+            "ask your administrator to check your account, key, or Nebius identity link."
+        )
     if response.status_code in {403, 404}:
         raise TeamError("operation is not authorized or run is unavailable")
     raise TeamError(

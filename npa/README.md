@@ -23,10 +23,19 @@ External JWT identities can be explicitly linked later without changing local
 ownership or allocations. Team mode has no standalone portal or browser-login
 flow. `npa workbench team whoami` and `TeamClient.whoami()` report the same
 personal permissions; see the [local account and key guide](../docs/workbench/team-identity.md).
-An installation can instead use native Nebius human identity verification for a
-linked local account, using a short-lived IAM token through the same private
-token-file path. It is mutually exclusive with generic JWT identity mode and
-does not import Nebius roles or tenant access as Workbench grants.
+Sign in once with `npa login --endpoint <team-HTTPS-endpoint> --token-file <key-file>`
+or `npa login --endpoint <team-HTTPS-endpoint> --nebius`. The latter uses official
+Nebius browser sign-in and automatic CLI token refresh for a linked local
+account; no manual IAM-token files are needed. Both remember the connection and
+unambiguous workspace/cluster placement, so the next command can be
+`npa workbench team submit --spec workflow.yaml`. Repeating it recovers the same
+run; add `--new-run` to deliberately repeat an acknowledged submission.
+`--profile` selects named connections, `--ca-file` trusts an administrator's
+private CA, and `npa logout` forgets the local connection. Private saved state
+uses `$NPA_CONFIG_DIR/team` or `~/.npa/team`. Agents can use the same saved login
+through `npa.sdk.workbench.team.connect()`. Native Nebius verification remains
+mutually exclusive with generic JWT identity mode and never imports cloud roles
+as Workbench grants.
 
 `npa workbench team setup --input-path <private-setup.yaml> --output-path
 <private-installation.json>` deploys the shared HTTPS gateway, creates its

@@ -128,7 +128,57 @@ The service stores a digest of the key, not its plaintext. Do not place a key
 in a workflow, repository, shell history, URL, or shared configuration. Users
 need no Nebius account, Kubernetes credential, or scheduler credential.
 
-## User: submit and inspect work from a key file
+## User: sign in, submit, and inspect work
+
+Use `npa login` once with a personal key, or choose the
+[Nebius human sign-in path](team-identity.md#sign-in-once-with-npa-login).
+Both save a connection for the CLI and agent-callable SDK:
+
+```bash
+npa login --endpoint https://team.example.invalid --token-file ./workbench.key
+npa workbench team whoami
+npa workbench team submit --spec workflow.yaml
+npa workbench team list
+npa workbench team run "$RUN_ID" --action logs
+```
+
+When only one authorized workspace and cluster are allocated, login remembers
+them. Otherwise select `--workspace` and `--cluster` at login or submission.
+The service always assigns the worker namespace from your allocation.
+
+The short submit command saves a retry identity before contacting the service.
+Repeating the same workflow, account, endpoint, and placement returns the same
+run, including after a lost response. Use `--new-run` to deliberately repeat a
+previously acknowledged submission. If the previous response was lost, first
+retry without `--new-run` to recover its identity. Explicit `--idempotency-key`
+remains available for agents that already manage their own request identities.
+Retry receipts are small private files retained under the session directory's
+`requests/` folder. Logout keeps them so a later login can recover a lost
+submission response. They have no automatic expiry: deleting a receipt can
+make a repeated command launch another job. Retain or back up receipts while
+their submissions may still be retried; administrators of automated clients
+can supply their own durable idempotency keys instead.
+
+For Python agents, the saved login uses the same authenticated API:
+
+```python
+from npa.sdk.workbench.team import open_connection, submit_workflow
+import yaml
+from pathlib import Path
+
+client, session = open_connection()  # Or profile="research".
+try:
+    workflow = yaml.safe_load(Path("workflow.yaml").read_text())
+    print(submit_workflow(client, session, workflow))
+finally:
+    client.close()
+```
+
+CLI and SDK submissions share placement defaults and the same retry receipts.
+Use `connect()` for a client alone, or `open_connection()` to inspect the saved
+workspace and cluster. Both recheck the saved account before use.
+
+### Explicit credentials for existing integrations
 
 Each user-facing team command accepts `--token-file`. It reads one personal key
 from a regular mode-0600 file and takes precedence over `--token-env`; prefer it
@@ -381,6 +431,8 @@ Use the normal credential and image-security preflight before deploying. For
 offline inspection or custom installation tooling, the existing renderer emits
 the internal CPU gateway and private scheduler. Add TLS termination before
 exposing its gateway; the renderer alone does not create a public endpoint.
+The rendered scheduler reloads Kubernetes credentials every 60 seconds so
+projected service-account token rotation does not leave cached clients expired.
 
 ```bash
 npa workbench team render-service --namespace workbench-system \

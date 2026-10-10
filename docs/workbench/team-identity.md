@@ -5,6 +5,55 @@ receives a persistent Workbench user ID, local group membership, and one or more
 independently revocable personal access keys. They use that key file with the
 existing CLI, HTTP API, and SDK; there is no Workbench browser-login flow.
 
+## Sign in once with `npa login`
+
+Your administrator supplies the team HTTPS endpoint and either a personal key
+or an explicit link from your Nebius identity to your Workbench account. Once
+`npa` is installed, choose one path:
+
+```bash
+# Without a Nebius account: use the privately delivered personal key.
+npa login --endpoint https://team.example.invalid --token-file ./workbench.key
+
+# With a human Nebius account: complete the official browser sign-in.
+npa login --endpoint https://team.example.invalid --nebius
+```
+
+Running `npa login` in a terminal guides you through missing choices. Login
+verifies your access before saving anything, displays your workspace, cluster,
+and GPU allowance, and chooses placement defaults when there is exactly one
+choice. For multiple choices, add `--workspace` and `--cluster`. A reader can
+sign in without an execution allocation.
+
+Then both authentication methods use the same commands:
+
+```bash
+npa workbench team whoami
+npa workbench team submit --spec workflow.yaml
+npa workbench team list
+npa workbench team run "$RUN_ID" --action logs
+```
+
+The CLI saves private connection profiles under `$NPA_CONFIG_DIR/team` (default
+`~/.npa/team`). Personal keys are copied only after successful verification, to
+mode-0600 files inside a mode-0700 directory. Nebius sessions retain the selected
+CLI profile, never a copied IAM token. Each subsequent command asks the official
+Nebius CLI for a current token; its refresh credential remains managed by that
+CLI. If browser authentication is needed again, the command asks you to rerun
+`npa login` without attempting the workload.
+
+Use `--profile research` to name a connection; successful login makes it active.
+Use `--profile research` on a team command to select it explicitly. Saved
+credentials are never sent to a different `--endpoint` without an explicit new
+credential. For a private service certificate, supply your administrator's
+`--ca-file` at login; TLS verification remains enabled.
+
+`npa logout` removes the active local connection and its saved personal key. It
+does not revoke the server key, sign out the Nebius CLI, or cancel running jobs.
+Other named connections remain available by explicit selection. Both login and
+logout are also available under `npa workbench team` and support
+`--output-format json` for agents and scripts.
+
 The account database lives with the team service's private persistent state. It
 is not a password database, cloud directory, or self-service identity product.
 Neither a personal Nebius account nor an external identity provider is required.
@@ -52,13 +101,13 @@ share it between people. The team CLI reads the mode-0600 file directly with
 environment:
 
 ```bash
-export NPA_TEAM_ENDPOINT=https://team.example.invalid
 TEAM_KEY_FILE="$HOME/.config/npa/team.key"
-npa workbench team whoami --token-file "$TEAM_KEY_FILE"
-npa workbench team list --workspace robotics --token-file "$TEAM_KEY_FILE"
+npa login --endpoint https://team.example.invalid --token-file "$TEAM_KEY_FILE"
+npa workbench team whoami
+npa workbench team list
 ```
 
-See [team access](team-access.md#user-submit-and-inspect-work-from-a-key-file)
+See [team access](team-access.md#user-sign-in-submit-and-inspect-work)
 for submit, status, logs, artifacts, cancellation, recovery, HTTP, and SDK
 examples.
 
@@ -142,16 +191,26 @@ This is not generic JWT mode: do not set `identity` alongside
 `nebius_identity`. Changing either identity configuration while the service is
 running requires a server restart.
 
-The person completes browser SSO through their existing Nebius CLI and identity
-provider. Workbench does not host an OAuth callback, Keycloak UI, or browser
-login page. They place their short-lived IAM token in a private, regular
-mode-0600 file and use the existing team CLI and SDK token-file path:
+`npa login --nebius` uses the official Nebius CLI and identity provider to
+complete browser sign-in. Select an existing human profile with
+`--nebius-profile`; a single human profile is selected automatically. If no
+human profile exists, NPA creates an isolated official CLI configuration for
+Workbench. Neither path changes the global Nebius CLI default, so an operator
+VM can keep its service-account profile. Workbench does not host an OAuth
+callback, Keycloak UI, or browser login page.
 
 ```bash
-NEBIUS_IAM_TOKEN_FILE="$HOME/.config/npa/nebius-iam-token"
-chmod 600 "$NEBIUS_IAM_TOKEN_FILE"
-npa workbench team whoami --token-file "$NEBIUS_IAM_TOKEN_FILE"
+npa login --endpoint https://team.example.invalid --nebius
+npa workbench team whoami
 ```
+
+The official CLI opens the local browser by default. On a remote machine, use
+`--no-browser --ssh-host YOUR_VM_ALIAS`: NPA prints the official sign-in URL and
+the exact loopback callback-forward command for the laptop. An agent can open
+the URL and establish that scoped tunnel; the person completes any password,
+account selection, or MFA required by their identity provider. Tokens and
+returned callback URLs must not be pasted into chat. An authenticated Nebius
+account still needs the administrator's explicit Workbench link below.
 
 For every such bearer request, Workbench calls the fixed HTTPS Nebius IAM
 ProfileService endpoint (`GET https://api.nebius.cloud/iam/v1/profiles`) with

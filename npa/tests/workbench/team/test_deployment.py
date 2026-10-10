@@ -72,6 +72,7 @@ def test_service_exposes_only_gateway_and_copies_credentials_privately():
     environment = {item["name"]: item["value"] for item in scheduler["env"]}
     assert environment["SKYPILOT_API_SERVER_ENDPOINT"] == "http://127.0.0.1:46580"
     assert environment["PATH"].startswith("/opt/sky/bin:")
+    assert environment["SKYPILOT_KUBECONFIG_REFRESH_INTERVAL_SECONDS"] == "60"
     assert "cd /state/sky" in scheduler["args"][0]
     assert [port["port"] for port in service["spec"]["ports"]] == [8443]
     assert "chmod 600" in pod["initContainers"][0]["args"][0]

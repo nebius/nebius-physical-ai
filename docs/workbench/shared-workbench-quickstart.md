@@ -7,7 +7,7 @@ permissions and runs workflows through its private SkyPilot scheduler.
 | Role | Needs |
 | --- | --- |
 | Operator | Nebius and Kubernetes permissions, server configuration, durable storage, and TLS |
-| User or coding agent | NPA client, shared HTTPS endpoint, personal key, and an enrolled allocation |
+| User or coding agent | NPA client, shared HTTPS endpoint, personal key or linked Nebius identity, and an enrolled allocation |
 
 Users do not need a Nebius account, Kubernetes credentials, VDI, a local proxy,
 or port forwarding. Install the client on [macOS, Linux, or WSL2](../install.md).
@@ -39,31 +39,39 @@ or port forwarding. Install the client on [macOS, Linux, or WSL2](../install.md)
 
 ## User or coding agent: connect, submit, inspect
 
-After installing NPA, keep the delivered key in a private file and replace the
-example endpoint, workspace, and cluster alias with the operator's values.
+After installing NPA, sign in once with the endpoint and private key delivered
+by your administrator:
 
 ```bash
-export NPA_TEAM_ENDPOINT=https://team.example.invalid
-TEAM_KEY_FILE="$HOME/.config/npa/team.key"
-
-npa workbench team whoami --token-file "$TEAM_KEY_FILE"
-npa workbench team submit --spec workflow.yaml --workspace robotics \
-  --cluster training --idempotency-key robotics-run-001 \
-  --token-file "$TEAM_KEY_FILE"
+npa login --endpoint https://team.example.invalid --token-file ./workbench.key
 ```
 
-Keep the returned run ID and reuse the same idempotency key when retrying the
-same submission. A changed workflow needs a new key. Set `RUN_ID` to the returned
-ID before inspecting the run:
+If your administrator linked your human Nebius identity instead, use
+`npa login --endpoint https://team.example.invalid --nebius` and complete browser
+sign-in. Running `npa login` alone guides you through missing choices.
+Neither path needs a Workbench login page or Keycloak. See the
+[identity guide](team-identity.md#sign-in-once-with-npa-login) for remote sign-in
+and private certificates.
+
+Both paths then use the same commands. Login remembers placement when there is
+one authorized workspace and cluster; otherwise select `--workspace` and
+`--cluster` at login or submission. Set `RUN_ID` to the returned ID:
 
 ```bash
-npa workbench team run "$RUN_ID" --action status --token-file "$TEAM_KEY_FILE"
-npa workbench team run "$RUN_ID" --action logs --token-file "$TEAM_KEY_FILE"
-npa workbench team run "$RUN_ID" --action artifacts --token-file "$TEAM_KEY_FILE"
+npa workbench team whoami
+npa workbench team submit --spec workflow.yaml
+npa workbench team list
+npa workbench team run "$RUN_ID" --action status
+npa workbench team run "$RUN_ID" --action logs
+npa workbench team run "$RUN_ID" --action artifacts
 ```
+
+Repeating the same submission safely recovers its original run. Add `--new-run`
+when you intend another run after an acknowledged submission. `npa logout`
+forgets your saved connection without cancelling jobs.
 
 The same personal identity applies through the
-[HTTP API and Python SDK](team-access.md#user-submit-and-inspect-work-from-a-key-file).
+[HTTP API and Python SDK](team-access.md#user-sign-in-submit-and-inspect-work).
 Users can operate their own runs within the permissions granted by the operator.
 
 ## Where `npa configure` fits
@@ -71,7 +79,7 @@ Users can operate their own runs within the permissions granted by the operator.
 `npa configure` handles operator project, credential, and storage configuration.
 It does not install the shared service or create its LoadBalancer. The one-time
 installation command is `npa workbench team setup`; everyday shared access uses
-`npa workbench team` commands with the endpoint and personal key.
+`npa login` followed by `npa workbench team` commands.
 
 Ordinary `npa workbench workflow` commands retain the
 [operator workflow](getting-started.md). Setting `NPA_TEAM_ENDPOINT` does not
