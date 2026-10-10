@@ -33,6 +33,14 @@ LIBERO_SOURCE_REF = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
 LIBERO_LICENSE = "MIT"
 LIBERO_DATA_LICENSE = "CC-BY-4.0"
 _NORMALIZATION_OFF_VALUES = (None, "", "none", "null")
+_TRAINING_MODE_OVERRIDES = {
+    "production": (),
+    "diagnostic": ("training.debug=true",),
+}
+_TRAINING_MODE_DESCRIPTIONS = {
+    "production": "upstream production defaults (training.debug=false)",
+    "diagnostic": "upstream training.debug=true (20-step diagnostic run)",
+}
 
 
 class OpenWAMPipelineError(RuntimeError):
@@ -336,6 +344,25 @@ def _command(
     subprocess.run(command, cwd=cwd, env=merged, check=True)
 
 
+def _training_command(foundation: Path, output: Path, training_mode: str) -> list[str]:
+    """Build the pinned upstream trainer invocation for one supported mode."""
+
+    try:
+        mode_overrides = _TRAINING_MODE_OVERRIDES[training_mode]
+    except KeyError as exc:
+        raise OpenWAMPipelineError(
+            f"Unsupported OpenWAM training mode: {training_mode}"
+        ) from exc
+    return [
+        "bash",
+        "scripts/train.sh",
+        "dataloader=libero",
+        f"training.finetune_ckpt_path={foundation}",
+        *mode_overrides,
+        f"training.output_path={output}",
+    ]
+
+
 def prepare_assets(args: argparse.Namespace) -> dict[str, Any]:
     """Fetch and archive exact public OpenWAM, Wan, and LIBERO inputs."""
 
@@ -413,7 +440,7 @@ def prepare_assets(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def fine_tune(args: argparse.Namespace) -> dict[str, Any]:
-    """Run OpenWAM's upstream debug fine-tune from prepared foundation assets."""
+    """Run OpenWAM's upstream production or diagnostic fine-tune."""
 
     image = _runtime_image_provenance(args.runtime_image)
     prepared = _read_json(args.prepared_assets_uri)
@@ -432,14 +459,7 @@ def fine_tune(args: argparse.Namespace) -> dict[str, Any]:
     output = workspace / "training-output"
     started = time.monotonic()
     _command(
-        [
-            "bash",
-            "scripts/train.sh",
-            "dataloader=libero",
-            f"training.finetune_ckpt_path={foundation}",
-            "training.debug=true",
-            f"training.output_path={output}",
-        ],
+        _training_command(foundation, output, args.training_mode),
         cwd=repo,
         env={"WANDB_MODE": "offline", "NPROC_PER_NODE": args.gpu_count},
     )
@@ -456,7 +476,8 @@ def fine_tune(args: argparse.Namespace) -> dict[str, Any]:
         "architecture": "dual_system/joint_self_attn",
         "video_backbone": "wan22_ti2v_5b",
         "attention_mask": "mutual",
-        "mode": "upstream training.debug=true (20-step operational smoke)",
+        "training_mode": args.training_mode,
+        "mode": _TRAINING_MODE_DESCRIPTIONS[args.training_mode],
         "elapsed_seconds": time.monotonic() - started,
         "checkpoint_archive_uri": args.checkpoint_archive_uri,
         "checkpoint_archive_sha256": observed["sha256"],
@@ -739,7 +760,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         "rollout_request": rollout_report["request"],
         "result": payload,
         "server_log_sha256": _sha256_file(result_dir / "openwam-server.log"),
-        "limitation": "The debug-trained operational smoke is not a full LIBERO benchmark result.",
+        "limitation": "The configured LIBERO trial range is not a full benchmark aggregate or a training-convergence claim.",
     }
     _write_json(args.output_uri, report)
     return report
@@ -860,6 +881,12 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--checkpoint-archive-uri", required=True)
     train.add_argument("--output-uri", required=True)
     train.add_argument("--gpu-count", default="1")
+    train.add_argument(
+        "--training-mode",
+        choices=tuple(_TRAINING_MODE_OVERRIDES),
+        default="production",
+        help="Use upstream production defaults or the explicit 20-step diagnostic override.",
+    )
     for name in ("rollout", "evaluate"):
         stage = _add_stage_parser(subparsers, name)
         stage.add_argument("--prepared-assets-uri", required=True)

@@ -150,6 +150,7 @@ def test_workflow_has_five_connected_substantive_stages() -> None:
     validate_spec(spec)
     plan = build_plan(spec, run_id="openwam-contract")
 
+    assert spec.config["training_mode"] == "production"
     assert [step.state for step in plan.steps] == [
         "prepare-assets",
         "fine-tune-openwam",
@@ -192,6 +193,10 @@ def test_openwam_toolrefs_call_real_pipeline_stages() -> None:
         assert argv[:3] == ["python3", "-m", "npa.workflows.openwam_pipeline"]
         assert argv[3] == stage
         assert "--runtime-image" in argv
+
+    train_argv = TOOL_CATALOG["workflow.openwam.fine_tune"].argv_template
+    training_mode_index = train_argv.index("--training-mode")
+    assert train_argv[training_mode_index + 1] == "{{config.training_mode}}"
 
     for tool_ref, prefix in (
         ("workflow.openwam.rollout", "rollout"),
@@ -243,8 +248,79 @@ def test_parser_exposes_native_libero_suite_task_and_trial_controls(
     )
 
 
-def test_fine_tune_invokes_the_upstream_libero_entrypoint(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("mode_args", "expected_mode"),
+    [
+        ([], "production"),
+        (["--training-mode", "production"], "production"),
+        (["--training-mode", "diagnostic"], "diagnostic"),
+    ],
+)
+def test_parser_exposes_production_default_and_explicit_diagnostic_mode(
+    tmp_path: Path, mode_args: list[str], expected_mode: str
+) -> None:
+    args = pipeline.build_parser().parse_args(
+        [
+            "fine-tune",
+            "--run-id",
+            "contract",
+            "--runtime-image",
+            DIGEST_IMAGE,
+            "--work-dir",
+            str(tmp_path / "openwam-contract"),
+            "--prepared-assets-uri",
+            "s3://bucket/prepared.json",
+            "--checkpoint-archive-uri",
+            "s3://bucket/checkpoint.tar.gz",
+            "--output-uri",
+            "s3://bucket/training.json",
+            *mode_args,
+        ]
+    )
+
+    assert args.training_mode == expected_mode
+
+
+def test_parser_rejects_unknown_training_mode(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        pipeline.build_parser().parse_args(
+            [
+                "fine-tune",
+                "--run-id",
+                "contract",
+                "--runtime-image",
+                DIGEST_IMAGE,
+                "--work-dir",
+                str(tmp_path / "openwam-contract"),
+                "--prepared-assets-uri",
+                "s3://bucket/prepared.json",
+                "--checkpoint-archive-uri",
+                "s3://bucket/checkpoint.tar.gz",
+                "--output-uri",
+                "s3://bucket/training.json",
+                "--training-mode",
+                "smoke",
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    ("training_mode", "mode_override", "reported_mode"),
+    [
+        ("production", [], "upstream production defaults (training.debug=false)"),
+        (
+            "diagnostic",
+            ["training.debug=true"],
+            "upstream training.debug=true (20-step diagnostic run)",
+        ),
+    ],
+)
+def test_fine_tune_invokes_the_selected_upstream_libero_entrypoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    training_mode: str,
+    mode_override: list[str],
+    reported_mode: str,
 ) -> None:
     assets = tmp_path / "prepared-assets"
     assets.mkdir()
@@ -300,6 +376,7 @@ def test_fine_tune_invokes_the_upstream_libero_entrypoint(
             checkpoint_archive_uri="trained.tar.gz",
             output_uri="training.json",
             gpu_count="1",
+            training_mode=training_mode,
         )
     )
 
@@ -309,12 +386,91 @@ def test_fine_tune_invokes_the_upstream_libero_entrypoint(
             "scripts/train.sh",
             "dataloader=libero",
             f"training.finetune_ckpt_path={workspace / 'repo' / 'assets' / 'openwam_ckpt' / 'openwam_alpha' / 'OpenWAM-Alpha-Pretrain-Foundation-Model'}",
-            "training.debug=true",
+            *mode_override,
             f"training.output_path={workspace / 'training-output'}",
         ]
     ]
-    assert report["mode"] == "upstream training.debug=true (20-step operational smoke)"
+    assert report["training_mode"] == training_mode
+    assert report["mode"] == reported_mode
     assert persisted["training.json"] == report
+
+
+def test_evaluate_reports_a_mode_neutral_benchmark_limitation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    trained = tmp_path / "trained"
+    trained.mkdir()
+    repo = tmp_path / "repo"
+    persisted: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        pipeline, "_runtime_image_provenance", lambda image: {"declared": image}
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_read_json",
+        lambda uri: {
+            "prepared.json": {"archive_sha256": "a" * 64},
+            "training.json": {
+                "checkpoint_archive_uri": "checkpoint.tar.gz",
+                "checkpoint_archive_sha256": "b" * 64,
+                "checkpoint": {"sha256": "c" * 64},
+            },
+            "rollout.json": {
+                "request": {
+                    "suite": "libero_spatial",
+                    "task_id": 0,
+                    "trial_start": 0,
+                    "num_trials": 5,
+                }
+            },
+        }[uri],
+    )
+    restored = iter((assets, trained))
+    monkeypatch.setattr(
+        pipeline, "_restore_archive", lambda _manifest, _target: next(restored)
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_copy_repository",
+        lambda _source, _destination: repo,
+    )
+
+    def fake_run_libero_trial(
+        _repo: Path, _checkpoint_root: Path, result: Path, **_kwargs: object
+    ) -> dict[str, object]:
+        (result / "openwam-server.log").write_text("server stopped\n")
+        return {"success_rate": 0.0, "trials": []}
+
+    monkeypatch.setattr(pipeline, "_run_libero_trial", fake_run_libero_trial)
+    monkeypatch.setattr(
+        pipeline, "_write_json", lambda uri, payload: persisted.update({uri: payload})
+    )
+
+    pipeline.evaluate(
+        argparse.Namespace(
+            run_id="test",
+            runtime_image=DIGEST_IMAGE,
+            openwam_root="/opt/openwam",
+            work_dir=str(tmp_path / "work"),
+            prepared_assets_uri="prepared.json",
+            training_uri="training.json",
+            rollout_uri="rollout.json",
+            output_uri="evaluation.json",
+            port=8848,
+            suite="libero_spatial",
+            task_id=0,
+            trial_start=5,
+            num_trials=5,
+        )
+    )
+
+    assert persisted["evaluation.json"]["limitation"] == (
+        "The configured LIBERO trial range is not a full benchmark aggregate or "
+        "a training-convergence claim."
+    )
 
 
 def test_rollout_uses_the_separate_upstream_libero_client(

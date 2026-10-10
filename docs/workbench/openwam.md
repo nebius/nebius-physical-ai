@@ -20,11 +20,14 @@ contract is exactly:
 | Benchmark client | [`Lifelong-Robot-Learning/LIBERO`](https://github.com/Lifelong-Robot-Learning/LIBERO/tree/8f1084e3132a39270c3a13ebe37270a43ece2a01) `8f1084e3132a39270c3a13ebe37270a43ece2a01` |
 | Training-format data mirror | [`OpenWAM/LIBERO`](https://huggingface.co/datasets/OpenWAM/LIBERO/tree/bcb2eaf1121ae4cbd324f8862807abce282500e8) `bcb2eaf1121ae4cbd324f8862807abce282500e8` |
 
-The checked-in workflow uses OpenWAM's `training.debug=true`, which upstream
-defines as a 20-step operational smoke with checkpoint saves. It is useful to
-prove the real model/data/trainer path and must never be represented as a
-converged run. Full OpenWAM training uses the operator's upstream configuration
-and appropriate GPU topology; it is not inferred from a passing smoke.
+The checked-in workflow selects `training_mode: production`. It deliberately
+omits an override for OpenWAM's `training.debug`, so the pinned upstream
+`configs/train.yaml` controls the run (`training.debug: false`, five epochs,
+and no `max_steps` override). This is the upstream production path, not a
+claim of convergence, a full LIBERO aggregate, or robot success. The separate
+`training_mode: diagnostic` option is explicit: it passes upstream
+`training.debug=true`, which is a 20-step diagnostic run and cannot support an
+acceptance claim.
 
 ## Five connected executable stages
 

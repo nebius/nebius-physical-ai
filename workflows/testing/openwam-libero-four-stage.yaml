@@ -7,8 +7,8 @@ metadata:
     Runtime-fetch the pinned public OpenWAM-alpha, Wan 2.2, and LIBERO inputs;
     run OpenWAM's native LIBERO fine-tuner; serve and roll out the resulting
     checkpoint; evaluate a distinct LIBERO episode; then emit a factual Rerun
-    recording. The checked-in configuration is an operational debug training
-    smoke, not a claim of full-benchmark convergence or robot success.
+    recording. The checked-in configuration uses pinned upstream production
+    training defaults and does not claim convergence or robot success.
 
 config:
   bucket: example-bucket
@@ -21,6 +21,9 @@ config:
   # sm_120 path. This is not a B200/B300 compatibility claim.
   gpu_type: RTXPRO6000
   gpu_count: "1"
+  # Production omits the upstream training.debug override, retaining its pinned
+  # epoch-based configuration. The 20-step diagnostic mode is explicit only.
+  training_mode: production
   policy_port: "8848"
   # These are native OpenWAM/LIBERO controls, intentionally exposed so an
   # operator can select a benchmark suite, task, and non-overlapping trial ranges.

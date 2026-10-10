@@ -189,8 +189,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workflow.openwam.fine_tune": ToolEntry(
         name="workflow.openwam.fine_tune",
         description=(
-            "Run the upstream OpenWAM LIBERO fine-tuner from the archived "
-            "foundation checkpoint and persist its trained checkpoint."
+            "Run the upstream OpenWAM LIBERO fine-tuner in configured production "
+            "or explicit diagnostic mode and persist its trained checkpoint."
         ),
         argv_template=[
             *_OPENWAM_PIPELINE,
@@ -211,6 +211,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.training_uri}}",
             "--gpu-count",
             "{{config.gpu_count}}",
+            "--training-mode",
+            "{{config.training_mode}}",
         ],
     ),
     "workflow.openwam.rollout": ToolEntry(
