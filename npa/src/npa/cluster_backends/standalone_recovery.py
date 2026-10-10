@@ -19,8 +19,13 @@ def _operation_for_context(context: str, project_id: str, operation_id: str):
     matches = []
     for operation in operations:
         payload = operation.read()
-        parameters = payload.get("parameters") or {}
-        recorded_context = parameters.get("context") or payload.get("requested_name")
+        recorded_context = payload.get("requested_name")
+        argv = (payload.get("recovery_commands") or {}).get("destroy_argv") or []
+        if "--context" in argv:
+            index = argv.index("--context") + 1
+            if index >= len(argv):
+                raise ValueError("Partial standalone journal has no recovery context")
+            recorded_context = argv[index]
         if payload.get("project_id") == project_id and recorded_context == context:
             matches.append(payload)
     if len(matches) > 1:
@@ -91,6 +96,8 @@ def partial_backend_metadata(
     operation = _operation_for_context(context, project_id, operation_id)
     if operation is None:
         return {}
+    if operation.get("tenant_id") != tenant_id or operation.get("region") != region:
+        raise ValueError("Partial standalone journal tenant or region does not match")
     name = str(operation.get("requested_name") or "")
     if not name or Path(name).name != name or name in {".", ".."}:
         raise ValueError("Partial standalone journal has an unsafe cluster name")

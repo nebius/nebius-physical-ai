@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 import pytest
 
 from npa.cluster_backends import standalone_recovery as recovery
+from npa.provisioning_journal import ProvisioningOperation
 
 
 def _write_partial_state(install):
@@ -49,19 +49,24 @@ def partial_cluster(tmp_path, monkeypatch):
     sidecar_path, state_path = _write_partial_state(
         root / "project-test" / "test-cluster"
     )
-    operation = SimpleNamespace(
-        read=lambda: {
-            "project_id": "project-test",
-            "requested_name": "test-cluster",
-            "parameters": {"context": "owned-context"},
-            "operation_id": "operation-test",
-        }
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    operation = ProvisioningOperation.prepare(
+        command="npa provision-if-absent",
+        project_alias="test",
+        project_id="project-test",
+        tenant_id="tenant-test",
+        region="region-test",
+        backend={},
+        resource_type="cluster",
+        requested_name="test-cluster",
+        ownership_source="test",
+        resume_command="",
+        destroy_argv=["npa", "cluster", "down", "--context", "owned-context"],
     )
+    operation.transition("mutating")
     monkeypatch.setattr(
         recovery, "metadata_file", lambda _context: root.parent / "metadata.json"
     )
-    monkeypatch.setattr(recovery, "list_operations", lambda **_kwargs: [operation])
-    monkeypatch.setattr(recovery, "load_operation", lambda _identifier: operation)
     return root, sidecar_path, state_path, operation
 
 
@@ -85,7 +90,7 @@ def test_partial_cluster_recovers_exact_native_backend_without_rewriting_state(
     metadata = _recover()
     assert metadata["backend_state_root"] == str(root.resolve())
     assert metadata["backend_cluster_id"] == "cluster-test"
-    assert metadata["backend_recovery_operation_id"] == "operation-test"
+    assert metadata["backend_recovery_operation_id"] == _operation.operation_id
     assert [path.read_bytes() for path in (sidecar, state)] == before
     assert not (root.parent / "metadata.json").exists()
 
@@ -135,7 +140,8 @@ def test_partial_cluster_needs_unambiguous_operation(partial_cluster, monkeypatc
     with pytest.raises(ValueError, match="exact --operation-id"):
         _recover()
     assert (
-        _recover(operation_id="operation-test")["backend_cluster_id"] == "cluster-test"
+        _recover(operation_id=operation.operation_id)["backend_cluster_id"]
+        == "cluster-test"
     )
 
 

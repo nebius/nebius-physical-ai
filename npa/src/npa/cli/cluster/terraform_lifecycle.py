@@ -438,6 +438,9 @@ def up_cmd(
     _preflight_provider_lock(tf_dir)
     tfvars = _read_tfvars(tf_dir)
     from npa.provisioning_preflight import current_resolved_plan
+    from npa.clients.nebius_auth import nebius_profile
+
+    profile = nebius_profile()
 
     inherited_plan = current_resolved_plan()
     if inherited_plan is not None:
@@ -673,6 +676,7 @@ def up_cmd(
             tenant_id=tenant_id_value,
             region=region_value,
             provider_env=env,
+            profile=profile,
             # Every fresh shared-backend apply uses the fleet capacity/quota
             # preflight, not only MIG targets. In particular, a non-MIG GPU
             # pool with a capacity block must prove the exact STRICT
@@ -725,6 +729,7 @@ def up_cmd(
                     project_id_value,
                     name_stem=context,
                     env=env,
+                    profile=profile,
                     network_state_path=(
                         backend_root / project_spec.key() / ".npa-fleet-network.json"
                     ),
@@ -759,6 +764,7 @@ def up_cmd(
                     recipe_root=recipe_dir.parent,
                     terraform_bin=terraform_bin,
                     nebius_bin=nebius_bin,
+                    profile=profile,
                     timeout_minutes=timeout,
                     on_status=lambda message: typer.echo(message, err=True),
                     standalone_context=context,
@@ -2231,9 +2237,12 @@ def _terraform_env(nebius_bin: str, *, profile: str = "") -> dict[str, str]:
     the machine's active profile.
     """
     from npa.cluster_backends.process import BackendCommandError, terraform_env
+    from npa.clients.nebius_auth import nebius_profile
 
     try:
-        return terraform_env(nebius_bin, profile=profile, capture_runner=_run_capture)
+        return terraform_env(
+            nebius_bin, profile=profile or nebius_profile(), capture_runner=_run_capture
+        )
     except BackendCommandError as exc:
         raise typer.BadParameter(str(exc)) from exc
 

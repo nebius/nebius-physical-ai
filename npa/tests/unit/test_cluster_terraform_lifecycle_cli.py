@@ -3076,6 +3076,33 @@ def test_shared_filesystem_requested_covers_existing_filestore() -> None:
     )
 
 
+@pytest.mark.parametrize("explicit", ["", "explicit-profile"])
+def test_terraform_env_uses_selected_profile_without_changing_native_default(
+    monkeypatch, explicit
+) -> None:
+    calls = []
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "selected-profile")
+    monkeypatch.setenv("NEBIUS_PROFILE", "different-profile")
+    monkeypatch.delenv("NPA_REUSE_IAM_TOKEN", raising=False)
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda args, **_kwargs: calls.append(args) or _completed("token"),
+    )
+    assert (
+        tf_mod._terraform_env("nebius", profile=explicit)["TF_VAR_iam_token"] == "token"
+    )
+    assert calls == [
+        [
+            "nebius",
+            "--profile",
+            explicit or "selected-profile",
+            "iam",
+            "get-access-token",
+        ]
+    ]
+
+
 def test_terraform_env_refreshes_stale_token_by_default(monkeypatch) -> None:
     # A stale ambient token must NOT shadow the freshly minted profile token.
     monkeypatch.setenv("TF_VAR_iam_token", "stale-cloud-env-token")
