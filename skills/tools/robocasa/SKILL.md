@@ -82,12 +82,16 @@ The `0.1.1` candidate recipe uses a CUDA 12.9 runtime base without inherited
 cuDNN or development toolkits, with the pinned PyTorch 2.13.0+cu129
 runtime; this is the first available CUDA 12 wheel set that clears the declared
 Torch dependency vulnerabilities. The image rebuilds exact upstream RoboCasa
-and LeRobot sources as locally versioned `1.0.0+npa4` and `0.6.1+npa2`
+and LeRobot sources as locally versioned `1.0.0+npa5` and `0.6.1+npa2`
 derivatives. Their packaging patches bind RoboCasa's ACT path to the
 reviewed LeRobot derivative and declare the fixed Torch pair and Gymnasium/OpenCV
 closure. The RoboCasa patch also resolves the native recorded-action reader's
-`write_info` import from LeRobot's `datasets.io_utils`; it changes no replay,
-action ordering, reset, or task-success implementation. This import/reader check
+`write_info` import from LeRobot's `datasets.io_utils`. Its native counter
+reset-region enumeration removes duplicate XML elements in first-occurrence
+order, preventing element allocation order from permuting physical regions.
+Candidate membership, constructor/reset seeds, settling, replay, action ordering
+and task-success predicates are unchanged. Native ordering controls do not prove
+matched GPU rollouts. This import/reader check
 does not prove GPU replay or qualify upstream dataset writing.
 Datasets is locked to 5.0.1 for the upstream folder-metadata
 path-containment security fix; the derivative's dataset-extra metadata declares
@@ -176,9 +180,31 @@ then proves the held-out set is disjoint. Use
 `success_rate_delta` and the paired win/loss/tie counts for comparison; do not
 turn a zero or negative delta into a policy-improvement claim.
 
+A refused initial-state match stays `failed`. Before cleanup, the producer
+captures each arm's initial workspace PNG before action 0. Once the containment
+supervisor proves all descendants stopped, the service retains only the failed
+pair's two initial PNGs, two completed arm videos, and typed `failure.json` under
+the run's `failure-diagnostics/` output prefix. The record identifies the pair,
+seed, robot-state/workspace hashes, optional full simulator-state hash, action
+digests, checkpoint/tree hashes, request hash and runtime image/source identity.
+An unavailable or unsupported simulator-state accessor yields `null`, not an
+empty or fabricated state. An observed non-finite simulator state still fails
+the run. The parent independently checks the retained episode index, seed and
+held-out environment against the requested episode plan.
+No scratch tree, environment dump or checkpoint is retained with these artifacts.
+Diagnostic publication uses the same immutable byte/readback commit as successful
+outputs, but its commit only establishes delivery of failure evidence; it does
+not establish a matched pair or completed run. Failed publication remains failed
+and reports diagnostics unavailable. Timeout or uncontained-worker failures do
+not publish these files.
+
 Every run uploads `result.json` and `provenance.json`. Rollout provenance names
 the RoboCasa → MuJoCo execution path, exact image source revision, and hashes
-each generated MP4, with machine-readable `rrd: false` and `mcap: false` fields;
+each generated MP4. Successful policy evaluation also retains each arm's
+after-reset/before-action-0 workspace PNG at `episode_XXXX/rollout.png` and
+`episode_XXXX/random_baseline.png`; `png_artifacts` in provenance binds their
+paths and byte hashes, and the immutable output commit covers those bytes.
+Machine-readable `rrd: false` and `mcap: false` fields remain explicit;
 this tool does not emit RRD or MCAP recordings.
 
 The service owns one GPU, so accepted runs execute through one process-wide GPU

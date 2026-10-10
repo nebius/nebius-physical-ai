@@ -37,6 +37,7 @@ from typing import Any, BinaryIO, Callable, Iterator
 
 from npa.clients.storage import safe_s3_download_target
 from npa.workbench.robocasa.asset_paths import HeldAssetDirectory, hold_asset_directory
+from npa.workbench.robocasa import pair_diagnostics
 from npa.workbench.robocasa.schemas import (
     DEFAULT_ENV_ID,
     RoboCasaRunRequest,
@@ -98,6 +99,15 @@ _SAFE_ZIP_COMPRESSION = frozenset({zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED})
 
 class RoboCasaError(RuntimeError):
     """Raised when a RoboCasa capability operation fails."""
+
+
+class RoboCasaMatchError(RoboCasaError):
+    """A refused pair with allowlisted evidence, never a successful result."""
+
+    def __init__(self, message: str, evidence: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.evidence = evidence
+        self.diagnostics_ready = False
 
 
 @dataclass(frozen=True)
@@ -2139,6 +2149,8 @@ def _run_eval_episode(
     try:
         _seed_action_space(env.action_space, seed)
         observation, _ = env.reset(seed=seed)
+        initial_simulator_state = _initial_simulator_state_hash(env)
+        _write_initial_workspace(observation, video_path.with_suffix(".png"))
         frames, result = _rollout_eval_episode(
             env, iterations=iterations, selector=selector, observation=observation
         )
@@ -2148,6 +2160,7 @@ def _run_eval_episode(
                 "video_sha256": _sha256_file(video),
                 "video_bytes": video.stat().st_size,
                 "video_frames": len(frames),
+                "initial_simulator_state_sha256": initial_simulator_state,
             }
         )
         return result
@@ -2156,6 +2169,35 @@ def _run_eval_episode(
             env.close()
         except Exception as exc:  # pragma: no cover - best effort.
             LOGGER.debug("env close failed: %s", exc)
+
+
+def _initial_simulator_state_hash(env: Any) -> str | None:
+    try:
+        unwrapped = getattr(env, "unwrapped", env)
+        candidates = (unwrapped, getattr(unwrapped, "env", None), env)
+    except (AttributeError, TypeError):
+        return None
+    for native in candidates:
+        try:
+            simulator = getattr(native, "sim", None)
+            if simulator is None:
+                continue
+            # Preserve native precision; policy float32 conversion loses evidence.
+            state = np.asarray(simulator.get_state().flatten())
+            finite = np.all(np.isfinite(state))
+        except (AttributeError, TypeError):
+            continue
+        if not finite:
+            raise RoboCasaError("non-finite initial simulator state")
+        return _sha256_array(state)
+    return None
+
+
+def _write_initial_workspace(observation: dict[str, Any], path: Path) -> None:
+    from PIL import Image
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(_obs_image(observation, "video.robot0_agentview_left")).save(path)
 
 
 def _write_eval_manifest(
@@ -2274,14 +2316,21 @@ def _evaluate_policy_checkpoint(
         runtime = _load_act_policy(pretrained)
         policy, *_ = runtime
         selector = _act_action_selector(runtime)
-        pairs = _run_matched_eval_pairs(
-            episode_manifest,
-            policy=policy,
-            selector=selector,
-            iterations=iterations,
-            output_dir=output_dir,
-            download_assets=download_assets,
-        )
+        try:
+            pairs = _run_matched_eval_pairs(
+                episode_manifest,
+                policy=policy,
+                selector=selector,
+                iterations=iterations,
+                output_dir=output_dir,
+                download_assets=download_assets,
+            )
+        except RoboCasaMatchError as exc:
+            exc.evidence.update(
+                checkpoint_sha256=checkpoint_sha256,
+                artifact_tree_sha256=artifact_tree_sha256,
+            )
+            raise
     return {
         "checkpoint_sha256": checkpoint_sha256,
         "checkpoint_selection": checkpoint_selection,
@@ -2405,12 +2454,37 @@ def _run_matched_eval_pairs(
             video_path=episode_dir / "random_baseline.mp4",
             download_assets=False,
         )
-        _require_matched_initial_state(policy_result, baseline)
         identity = {key: item[key] for key in ("episode_index", "env_id", "seed")}
+        try:
+            _require_matched_initial_state(policy_result, baseline)
+        except RoboCasaError as exc:
+            raise RoboCasaMatchError(
+                str(exc), _pair_failure_evidence(identity, policy_result, baseline)
+            ) from exc
         policy_result.update(identity)
         baseline.update(identity)
         pairs.append({**identity, "policy": policy_result, "random_baseline": baseline})
     return pairs
+
+
+def _pair_failure_evidence(identity: dict, policy: dict, baseline: dict) -> dict:
+    fields = pair_diagnostics.ArmEvidence.model_fields
+    return {
+        "schema_version": "npa.robocasa.pair-failure.v1",
+        "status": "failed",
+        "reason": (
+            "initial_workspace_mismatch"
+            if policy["initial_workspace_sha256"]
+            != baseline["initial_workspace_sha256"]
+            else "initial_robot_state_mismatch"
+        ),
+        **identity,
+        "camera": "video.robot0_agentview_left",
+        "initial_capture": "after_reset_before_action_0",
+        "state_scope": "robot_observation; simulator hash unavailable when null",
+        "policy": {key: policy.get(key) for key in fields},
+        "random_baseline": {key: baseline.get(key) for key in fields},
+    }
 
 
 def _require_matched_initial_state(
@@ -2547,7 +2621,11 @@ def run_capability_with_output(
                 output_dir=Path(tmp),
                 upload=upload,
             )
-    result = run_capability(request, output_dir=output_dir)
+    try:
+        result = run_capability(request, output_dir=output_dir)
+    except RoboCasaMatchError as exc:
+        _persist_match_failure(request, output_dir, exc, upload=upload)
+        raise
     output_dir.mkdir(parents=True, exist_ok=True)
     provenance = _execution_provenance(request, output_dir, result)
     result["execution_provenance"] = provenance
@@ -2562,6 +2640,57 @@ def run_capability_with_output(
     return result
 
 
+def _persist_match_failure(
+    request: RoboCasaRunRequest,
+    output_dir: Path,
+    failure: RoboCasaMatchError,
+    *,
+    upload: bool,
+) -> None:
+    try:
+        directory = _copy_pair_failure_media(
+            output_dir, failure.evidence["episode_index"]
+        )
+        runtime = _runtime_identity()
+        evidence = {
+            **failure.evidence,
+            "request_manifest_sha256": compute_manifest_sha256(
+                "run", request.model_dump(mode="json")
+            ),
+            "image_source_sha": runtime.image_source_sha,
+            "image_manifest_digest": runtime.image_manifest_digest,
+            "files": {
+                name: pair_diagnostics.file_evidence(directory / name)
+                for name in pair_diagnostics.MEDIA
+            },
+        }
+        pair_diagnostics.write_report(directory, evidence)
+        failure.diagnostics_ready = True
+        if upload:
+            upload_output(
+                directory,
+                request.output_uri.rstrip("/") + "/failure-diagnostics",
+                evidence,
+            )
+    except Exception as exc:
+        # Never turn the refused pair into success, or mask its original reason.
+        raise RoboCasaError(
+            f"{failure}; failure diagnostics unavailable ({type(exc).__name__})"
+        ) from failure
+
+
+def _copy_pair_failure_media(output_dir: Path, episode_index: int) -> Path:
+    directory = output_dir / pair_diagnostics.DIRECTORY
+    directory.mkdir(mode=0o700)
+    episode = output_dir / f"episode_{episode_index:04d}"
+    for role, stem in (("policy", "rollout"), ("random_baseline", "random_baseline")):
+        for suffix in ("png", "mp4"):
+            pair_diagnostics.copy_evidence(
+                episode / f"{stem}.{suffix}", directory / f"{role}.{suffix}"
+            )
+    return directory
+
+
 def _provenance_environment_ids(
     request: RoboCasaRunRequest, result: dict[str, Any]
 ) -> list[str]:
@@ -2573,12 +2702,16 @@ def _provenance_environment_ids(
 
 
 def _provenance_mp4_artifacts(output_dir: Path) -> list[dict[str, str]]:
+    return _provenance_media_artifacts(output_dir, "*.mp4")
+
+
+def _provenance_media_artifacts(output_dir: Path, pattern: str) -> list[dict[str, str]]:
     return [
         {
             "path": path.relative_to(output_dir).as_posix(),
             "sha256": _sha256_file(path),
         }
-        for path in sorted(output_dir.rglob("*.mp4"))
+        for path in sorted(output_dir.rglob(pattern))
     ]
 
 
@@ -2624,6 +2757,7 @@ def _execution_provenance(
             "mcap": False,
         },
         "mp4_artifacts": mp4_artifacts,
+        "png_artifacts": _provenance_media_artifacts(output_dir, "*.png"),
         "validation_scope": "runtime artifact provenance; no GPU validation claim",
     }
 

@@ -41,8 +41,8 @@ ARG LEROBOT_SOURCE_COMMIT=7e241bd630a3719a56157a497ce5d08f244784f1
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
       npa.robocasa.revision="8f3c96ec8d1bfcd8126cad2bca887da98d30e997" \
-      npa.robocasa.derivative="1.0.0+npa4" \
-      npa.robocasa.patch.sha256="ea97b69d3db52b23a9ab795347ff23644665dfe5ccbc18f5e5da1bea7cd97d49" \
+      npa.robocasa.derivative="1.0.0+npa5" \
+      npa.robocasa.patch.sha256="43a00fbf2f59ba5aa77e9b2182ce148277b0d39a0d787cc5c7dd4578dce14812" \
       npa.robocasa.license.sha256="5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885" \
       npa.robosuite.revision="85abee228d1c43ab1939bce33028099945d453b4" \
       npa.lerobot.revision="${LEROBOT_SOURCE_COMMIT}" \
@@ -167,6 +167,7 @@ COPY --chmod=0644 \
     docker/workbench/robocasa/verify_fixture_controls.py \
     docker/workbench/robocasa/verify_dataset_metadata.py \
     docker/workbench/robocasa/verify_recorded_action_reader.py \
+    docker/workbench/robocasa/verify_reset_region_order.py \
     docker/workbench/robocasa/verify_sim_dataset_roundtrip.py \
     src/npa/workbench/robocasa/fixture-controls.json \
     /opt/robocasa/derivative/
@@ -313,7 +314,7 @@ RUN git init /opt/robocasa/source \
     && base64 --decode /opt/robocasa/derivative/robocasa-npa-act.patch.b64 \
       > /tmp/robocasa-npa-act.patch \
     && echo \
-      "ea97b69d3db52b23a9ab795347ff23644665dfe5ccbc18f5e5da1bea7cd97d49  /tmp/robocasa-npa-act.patch" \
+      "43a00fbf2f59ba5aa77e9b2182ce148277b0d39a0d787cc5c7dd4578dce14812  /tmp/robocasa-npa-act.patch" \
       | sha256sum --check --strict - \
     && git -C /opt/robocasa/source apply --check /tmp/robocasa-npa-act.patch \
     && git -C /opt/robocasa/source apply /tmp/robocasa-npa-act.patch \
@@ -322,7 +323,7 @@ RUN git init /opt/robocasa/source \
       --disable-pip-version-check --no-cache-dir \
       --index-url https://pypi.org/simple \
       --no-build-isolation -e /opt/robocasa/source \
-    && python -c "from importlib.metadata import version; assert version('robocasa') == '1.0.0+npa4'" \
+    && python -c "from importlib.metadata import version; assert version('robocasa') == '1.0.0+npa5'" \
     && echo \
       "5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885  /opt/robocasa/source/LICENSE" \
       | sha256sum --check --strict - \
@@ -345,6 +346,7 @@ RUN printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' \
     && python -c "from importlib.metadata import version; assert version('lerobot') == '0.6.1+npa2'" \
     && python /opt/robocasa/derivative/verify_dataset_metadata.py \
     && python /opt/robocasa/derivative/verify_recorded_action_reader.py \
+    && python /opt/robocasa/derivative/verify_reset_region_order.py \
     && python -m pip check \
     && python -c "from importlib.metadata import distributions; forbidden_names = {'nvidia-cublas', 'nvidia-cuda-cupti', 'nvidia-cuda-nvrtc', 'nvidia-cuda-runtime', 'nvidia-cudnn-cu13', 'nvidia-cufft', 'nvidia-cufile', 'nvidia-curand', 'nvidia-cusolver', 'nvidia-cusparse', 'nvidia-cusparselt-cu13', 'nvidia-nccl-cu13', 'nvidia-nvjitlink', 'nvidia-nvshmem-cu13', 'nvidia-nvtx'}; opencv_names = {'opencv-python', 'opencv-python-headless', 'opencv-contrib-python', 'opencv-contrib-python-headless'}; installed = {str(dist.metadata['Name']).lower(): str(dist.version) for dist in distributions()}; forbidden = sorted(name for name in installed if name in forbidden_names or name.endswith('-cu13')); opencv = sorted(set(installed) & opencv_names); cuda_helpers = {name: installed[name] for name in installed if name.startswith('cuda-')}; assert not forbidden, forbidden; assert opencv == ['opencv-python'], opencv; assert cuda_helpers == {'cuda-bindings': '12.9.8', 'cuda-pathfinder': '1.8.2', 'cuda-toolkit': '12.9.1'}, cuda_helpers" \
     && python -c "import torch, torchvision; assert torch.__version__ == '2.13.0+cu129'; assert torch.version.cuda == '12.9'; assert torchvision.__version__ == '0.28.0+cu129'" \
@@ -414,8 +416,8 @@ ARG LEROBOT_SOURCE_COMMIT=7e241bd630a3719a56157a497ce5d08f244784f1
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
       npa.robocasa.revision="8f3c96ec8d1bfcd8126cad2bca887da98d30e997" \
-      npa.robocasa.derivative="1.0.0+npa4" \
-      npa.robocasa.patch.sha256="ea97b69d3db52b23a9ab795347ff23644665dfe5ccbc18f5e5da1bea7cd97d49" \
+      npa.robocasa.derivative="1.0.0+npa5" \
+      npa.robocasa.patch.sha256="43a00fbf2f59ba5aa77e9b2182ce148277b0d39a0d787cc5c7dd4578dce14812" \
       npa.robocasa.license.sha256="5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885" \
       npa.robosuite.revision="85abee228d1c43ab1939bce33028099945d453b4" \
       npa.lerobot.revision="${LEROBOT_SOURCE_COMMIT}" \
