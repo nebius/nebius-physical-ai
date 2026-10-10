@@ -1468,7 +1468,11 @@ def default_npa_setup() -> str:
         # Prefer the image's declared dependency-complete interpreter. Isaac images put an
         # externally managed system python first on PATH while keeping the supported NPA
         # runtime in NPA_BAKED_PYTHON. Falling back remains necessary for generic images.
-        'npa_setup_python="${NPA_BAKED_PYTHON:-}"\n'
+        # A private image can expose its dependency-complete runtime without making
+        # that environment writable to the worker user.  Prefer an explicitly
+        # declared task-owned setup interpreter for source overlays in that case;
+        # stage commands can still use the immutable runtime they require.
+        'npa_setup_python="${NPA_SETUP_PYTHON:-${NPA_BAKED_PYTHON:-}}"\n'
         'if [ -z "$npa_setup_python" ] || [ ! -x "$npa_setup_python" ] '
         '|| ! "$npa_setup_python" -c "import sys" >/dev/null 2>&1; then\n'
         '  npa_setup_python="$(command -v python3)"\n'
@@ -1575,7 +1579,7 @@ def default_npa_setup() -> str:
         # Opt-in branch overlay: reinstall npa from NPA_SRC_S3_URI on TOP of a
         # baked workbench image so branch code (e.g. a new augment prompt path)
         # actually runs on GPU without rebuilding the image. Default off (no-op).
-        'if [ "$NPA_SRC_OVERLAY" = "1" ] && [ -n "$NPA_SRC_S3_URI" ]; then\n'
+        'if [ "${NPA_SRC_OVERLAY:-}" = "1" ] && [ -n "${NPA_SRC_S3_URI:-}" ]; then\n'
         "  if ! \"$npa_setup_python\" -c 'import boto3, botocore' >/dev/null 2>&1; then\n"
         "    npa_pip_install boto3\n"
         "  fi\n"
@@ -2017,9 +2021,9 @@ def render_setup_for_tool(
     if tool_ref.startswith("workbench.token_factory") or (
         tool_ref in API_ONLY_VLM_AUDIT_TOOLS
     ):
-        # Avoid ${VAR:-} bash forms so SkyPilot placeholder lint stays clean.
+        # Preserve the friendly missing-secret error when setup runs under nounset.
         parts.append(
-            'if [[ -z "$NEBIUS_TOKEN_FACTORY_KEY" ]]; then\n'
+            'if [[ -z "${NEBIUS_TOKEN_FACTORY_KEY:-}" ]]; then\n'
             "  echo 'NEBIUS_TOKEN_FACTORY_KEY is required. Pass it with --secret-env "
             "NEBIUS_TOKEN_FACTORY_KEY' >&2\n"
             "  exit 1\n"
@@ -2027,7 +2031,7 @@ def render_setup_for_tool(
         )
     if tool_ref.startswith("workbench.encord"):
         parts.append(
-            'if [[ -z "$ENCORD_SSH_KEY" && -z "$ENCORD_SSH_KEY_B64" ]]; then\n'
+            'if [[ -z "${ENCORD_SSH_KEY:-}" && -z "${ENCORD_SSH_KEY_B64:-}" ]]; then\n'
             "  echo 'ENCORD_SSH_KEY or ENCORD_SSH_KEY_B64 is required for Encord stages' >&2\n"
             "  exit 1\n"
             "fi\n"

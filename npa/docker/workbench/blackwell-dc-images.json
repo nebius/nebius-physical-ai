@@ -139,6 +139,17 @@
       "notes": "The current neutral-bootstrap candidate remains unbuilt, quarantined, and unvalidated. It contains no LIBERO source, GPU runtime, model, demonstration, task asset, cache, checkpoint, credential, or output payload. No datacenter Blackwell compatibility or public acceptance is claimed."
     },
     {
+      "name": "npa-libero-plus-assets",
+      "dockerfile": "libero-plus-assets/Dockerfile.private",
+      "build_script": "libero-plus-assets/build-private.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "unvalidated",
+      "smoke": "Run the five-stage author-published MIT assets camera-compatibility workflow on one RTX PRO 6000: hash-verify the asset archive, assemble original MIT LIBERO TableArena, render matched EGL cameras, decode pose/pixel metrics, and independently inspect the gallery, RRD, and report.",
+      "blocked_reason": "No immutable current-source private candidate has completed the required byte scan, pull/bootstrap, RTX PRO 6000 execution, or independent final-artifact inspection. This EGL camera workload is RTX-only and must not be relabeled as B200/B300 evidence.",
+      "notes": "Operator-private unvalidated candidate for the separately MIT-labelled asset archive and original MIT LIBERO executor. It excludes the unlicensed sylvestf/LIBERO-plus source, BDDL task definitions, randomizer, policies, checkpoints, and robot control. The declared capability is scene/camera compatibility only, not the 10,030-task benchmark, a rollout, robustness score, convergence result, or physical-robot result."
+    },
+    {
       "name": "npa-cosmos3-nano-video",
       "dockerfile": "cosmos3-nano-video/Dockerfile",
       "verdict": "ready",

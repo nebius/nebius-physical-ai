@@ -6,6 +6,8 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -391,6 +393,39 @@ def test_setup_prefers_the_dependency_complete_baked_npa_interpreter() -> None:
     assert candidate_loop.index('"${NPA_BAKED_PYTHON:-}"') < candidate_loop.index(
         "sys.executable"
     )
+
+
+def test_task_owned_setup_interpreter_overrides_a_baked_runtime(
+    tmp_path: Path,
+) -> None:
+    """A worker records the writable setup interpreter without invoking the baked one."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    launcher = bin_dir / "npa"
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    record = tmp_path / "npa-python"
+    setup = default_npa_setup()
+    record_marker = 'echo "$npa_python" > '
+    record_start = setup.index(record_marker) + len(record_marker)
+    rendered_record = setup[record_start : setup.index("\n", record_start)]
+    setup = setup.replace(rendered_record, str(record), 1).replace(
+        "/usr/local/bin/npa", str(launcher)
+    )
+    environment = {
+        "HOME": str(tmp_path),
+        "NPA_BAKED_PYTHON": str(tmp_path / "immutable-python"),
+        "NPA_SETUP_PYTHON": sys.executable,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+    }
+
+    subprocess.run(["/bin/bash", "-c", setup], check=True, env=environment)
+
+    assert record.read_text(encoding="utf-8").strip() == sys.executable
+    assert 'npa_setup_python="${NPA_SETUP_PYTHON:-${NPA_BAKED_PYTHON:-}}"' in setup
 
 
 def test_paidf_dig_keeps_npa_out_of_the_vendor_environment() -> None:
@@ -2707,7 +2742,7 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     setup = default_npa_setup()
     # Opt-in overlay: gated on NPA_SRC_OVERLAY, reinstalls branch npa on top of a
     # baked image so branch code runs on GPU without an image rebuild. Default off.
-    assert 'if [ "$NPA_SRC_OVERLAY" = "1" ]' in setup
+    assert 'if [ "${NPA_SRC_OVERLAY:-}" = "1" ]' in setup
     assert "/tmp/npa-src-overlay" in setup
     # Installs route through the PEP 668-tolerant helper (see npa_pip_install).
     assert "npa_pip_install -e /tmp/npa-src-overlay --no-deps" in setup
@@ -2719,6 +2754,103 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     assert setup.index("PYTHONPATH=/tmp/npa-src-overlay/src") < setup.index(
         "npa_pip_install -e /tmp/npa-src-overlay --no-deps"
     )
+
+
+@pytest.mark.parametrize(
+    ("overlay", "source_uri", "expected_exit"),
+    (
+        (None, None, 0),
+        ("0", "s3://fixture/source", 0),
+        ("1", None, 0),
+        ("1", "s3://fixture/source", 42),
+    ),
+)
+def test_default_npa_setup_source_overlay_guard_is_nounset_safe(
+    overlay: str | None, source_uri: str | None, expected_exit: int
+) -> None:
+    """Run the generated source-overlay guard with the production nounset mode."""
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    guard = next(
+        line
+        for line in default_npa_setup().splitlines()
+        if line.startswith('if [ "${NPA_SRC_OVERLAY:-}" = "1" ]')
+    )
+    environment = os.environ.copy()
+    environment.pop("NPA_SRC_OVERLAY", None)
+    environment.pop("NPA_SRC_S3_URI", None)
+    if overlay is not None:
+        environment["NPA_SRC_OVERLAY"] = overlay
+    if source_uri is not None:
+        environment["NPA_SRC_S3_URI"] = source_uri
+    script = f"set -euo pipefail\n{guard}\n  exit 42\nfi\n"
+    result = subprocess.run(["bash", "-c", script], env=environment, check=False)
+    assert result.returncode == expected_exit
+
+
+@pytest.mark.parametrize(
+    ("tool_ref", "provided", "expected_exit", "expected_message"),
+    (
+        (
+            "workbench.token_factory.caption",
+            {},
+            1,
+            "NEBIUS_TOKEN_FACTORY_KEY is required",
+        ),
+        (
+            "workbench.token_factory.caption",
+            {"NEBIUS_TOKEN_FACTORY_KEY": "fixture"},
+            0,
+            "",
+        ),
+        (
+            "workbench.encord.annotate",
+            {},
+            1,
+            "ENCORD_SSH_KEY or ENCORD_SSH_KEY_B64 is required",
+        ),
+        ("workbench.encord.annotate", {"ENCORD_SSH_KEY": "fixture"}, 0, ""),
+        ("workbench.encord.annotate", {"ENCORD_SSH_KEY_B64": "fixture"}, 0, ""),
+    ),
+)
+def test_rendered_secret_guards_are_nounset_safe(
+    tool_ref: str,
+    provided: dict[str, str],
+    expected_exit: int,
+    expected_message: str,
+) -> None:
+    """Run the generated missing-secret guard with production nounset semantics."""
+    from npa.orchestration.npa_workflow.skypilot_render import render_setup_for_tool
+
+    setup = render_setup_for_tool(
+        tool_ref,
+        config={},
+        options=SkypilotRenderOptions(),
+    )
+    guard_start = next(
+        index
+        for index, line in enumerate(setup.splitlines())
+        if line.startswith('if [[ -z "${')
+        and ("TOKEN_FACTORY" in line or "ENCORD_SSH_KEY" in line)
+    )
+    guard = "\n".join(setup.splitlines()[guard_start : guard_start + 4])
+    environment = os.environ.copy()
+    for name in ("NEBIUS_TOKEN_FACTORY_KEY", "ENCORD_SSH_KEY", "ENCORD_SSH_KEY_B64"):
+        environment.pop(name, None)
+    environment.update(provided)
+    result = subprocess.run(
+        ["bash", "-c", f"set -euo pipefail\n{guard}\nprintf 'guard-complete\\n'"],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == expected_exit
+    assert "unbound variable" not in result.stderr
+    if expected_message:
+        assert expected_message in result.stderr
+    else:
+        assert result.stdout == "guard-complete\n"
 
 
 def test_default_npa_setup_installs_the_image_local_runtime_source_first() -> None:

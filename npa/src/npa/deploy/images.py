@@ -203,6 +203,7 @@ CONTAINER_IMAGE_NAMES = {
     "ncore": "npa-ncore",
     "robotwin": "npa-robotwin",
     "libero": "npa-libero",
+    "libero-plus-assets": "npa-libero-plus-assets",
 }
 
 # Public-image publication must enforce the digest-bound SkyPilot bootstrap
@@ -230,6 +231,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "ncore",
         "robotwin",
         "libero",
+        "libero-plus-assets",
         "fiftyone",
         "groot",
         "habitat-sim",
@@ -306,7 +308,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Independent OSS catalog additions stay quarantined as soon as their image
 # names are registered. An absent tool is not added to the publication inventory.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore", "libero", "sam3"}
+    {"openpi", "curobo", "ncore", "libero", "libero-plus-assets", "sam3"}
 ) | frozenset({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset(
     {"antioch", "mjlab", "robocasa", "open3d"}
@@ -319,8 +321,14 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
-NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
-NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
+# A ``redistribution: unvalidated`` packaging-contract entry must remain in this
+# selector inventory until its exact private bytes, payload scan, device run, and
+# artifact inspection are accepted.  It is deliberately distinct from a source
+# license restriction and still refuses any public reference.
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"libero-plus-assets"})
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {
+    "libero-plus-assets": "licensed-assets-camera-private-unbuilt",
+}
 # Previously accepted releases whose published bytes no longer satisfy the
 # repository's current security contract. Keep this separate from
 # UNVALIDATED_PUBLICATION_TOOLS: these images were built and capability-tested,
@@ -535,6 +543,9 @@ SUPPORTED_TOOL_VERSIONS = {
 # giving planning and private qualification a fail-closed, visibly unbuilt tag.
 UNBUILT_CANDIDATE_TOOL_VERSIONS: dict[str, str] = {
     "habitat-sim": "0.3.3-public-unbuilt",
+    # Private-only camera-compatibility candidate. The neutral display sentinel
+    # above and public-refusal inventory prevent it from resolving as a release.
+    "libero-plus-assets": "licensed-assets-camera-private-unbuilt",
 }
 
 
@@ -2526,7 +2537,11 @@ def container_image_for_tool(
             "image after its source/delivery gates pass; see "
             "docs/workbench/byof-habitat-sim.md."
         )
-    if not is_publicly_redistributable(tool) and public_registry:
+    if (
+        not is_publicly_redistributable(tool)
+        and public_registry
+        and not public_unbuilt_planning_ref
+    ):
         raise ValueError(
             f"{tool!r} is not publicly redistributable and is never distributed from a "
             f"public registry, so {resolved_registry!r} cannot serve it. Build it into "

@@ -127,6 +127,37 @@ containers:
       gpu: required
       timeout_seconds: 7200
       status: needs-image-update
+
+  libero-plus-assets:
+    image: npa-libero-plus-assets
+    dockerfile: npa/docker/workbench/libero-plus-assets/Dockerfile.private
+    physical_ai:
+      useful: true
+      role: >-
+        Renders two matched native EGL views from one author-published MIT
+        LIBERO-Plus scene asset through original MIT LIBERO TableArena.
+    safety:
+      runs_as: ubuntu
+      base_image: operator-private original-MIT-LIBERO runtime
+      network: runtime fetch of one hash-pinned MIT asset archive and operator-owned artifact I/O
+      external_fetch:
+        - author-published MIT Sylvest/LIBERO-plus assets.zip at the pinned revision
+        - operator-owned artifact storage
+      notes: >-
+        This private, quarantined candidate excludes the unlicensed
+        sylvestf/LIBERO-plus source, BDDL task definitions, benchmark randomizer,
+        weights, policies, demonstrations, and robot control. Its complete-camera
+        smoke writes decoded PNG gallery, pose/pixel metrics, report and RRD only;
+        it does not establish benchmark, rollout, robustness, convergence, or
+        physical-robot results. No qualified private image digest exists yet.
+    golden_eval:
+      kind: container-smoke
+      command: bash /usr/local/bin/npa-libero-plus-assets-smoke
+      artifact: ${NPA_SMOKE_OUTPUT_DIR}/libero-plus-assets-camera/report.json
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: unlimited
+      status: needs-image-update
   antioch:
     image: npa-antioch
     dockerfile: npa/docker/workbench/antioch/Dockerfile

@@ -65,6 +65,9 @@ def test_needs_image_update_exclusions_can_only_shrink() -> None:
         "lerobot",
         "lerobot-vlm-rl",
         "libero",
+        # Private candidate: remains excluded until an immutable image passes
+        # its complete native MIT-assets camera workflow and byte gates.
+        "libero-plus-assets",
         "loop-eval",
         "ncore",
         "openpi",

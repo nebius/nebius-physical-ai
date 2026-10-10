@@ -1,0 +1,61 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "f3677845888057e51c734e67df307d52a305554825d6fc253ba9fb9b0f6f1dca",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The final five-state spec validates and expands into its connected execution plan.",
+      "evidence": [
+        "private onboarding evidence: validate-spec-20261003.json",
+        "private onboarding evidence: plan-spec-20261003.json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "blocked",
+      "reason": "The graph is connected, but its checked-in default is mode=smoke with smoke-zero for both baseline and candidate. These zero-action simulator/IO smokes write smoke_only output and cannot establish learned-policy robustness or policy acceptance. Any policy-acceptance run needs real immutable module:function baseline and candidate adapters, learned-policy outputs, and the separately required upstream source grant.",
+      "evidence": [
+        "npa/tests/workflows/test_libero_plus_robustness.py",
+        "docs/workbench/libero-plus.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The operator-owned S3 preflight passed; all workflow outputs are run-scoped S3-style URIs.",
+      "evidence": [
+        "private onboarding evidence: preflight-20261003.json"
+      ]
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "The pinned upstream GitHub source has no LICENSE, NOTICE, or COPYING declaration. The separate asset-card MIT label does not establish permission to use the source.",
+      "evidence": [
+        "docs/workbench/libero-plus.md",
+        "private onboarding evidence: upstream source tree inspection"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Nebius, S3, Hugging Face, and NGC preflight checks passed without adding a new acceptance mechanism.",
+      "evidence": [
+        "private onboarding evidence: preflight-20261003.json"
+      ]
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "No source-capable image can be qualified while the upstream source rights are unresolved. A separate source-free admission image was privately built, scanned, pushed, and independently pulled solely to prove the fail-closed admission boundary before upstream fetch; it cannot be represented as a benchmark runtime. The workflow retains a deliberately invalid example digest for offline planning only.",
+      "evidence": [
+        "docs/workbench/libero-plus.md",
+        "private onboarding evidence: source-admission-image-20261004"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "GPU discovery found an RTX PRO 6000 Blackwell execution class, but no private immutable image or authorized upstream workload was submitted.",
+      "evidence": [
+        "private onboarding evidence: gpu-discovery-20261003.json"
+      ]
+    }
+  }
+}

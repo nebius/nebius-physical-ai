@@ -1,0 +1,87 @@
+# syntax=docker/dockerfile:1.7
+#
+# Private derivative for the separately licensed MIT asset-camera capability.
+# BASE_IMAGE is supplied by the operator build and must be the privately
+# inspected OpenWAM image containing original MIT LIBERO, never the unlicensed
+# LIBERO-Plus fork or its asset archive.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG NPA_SOURCE_SHA
+ARG SOURCE_DATE_EPOCH
+
+USER root
+
+LABEL org.opencontainers.image.title="NPA LIBERO-Plus licensed-assets camera compatibility" \
+      org.opencontainers.image.description="Private original-MIT-LIBERO scene and EGL camera compatibility image; not the LIBERO-Plus benchmark" \
+      org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT" \
+      org.nebius.npa.redistribution="unvalidated-operator-private" \
+      org.nebius.npa.validation-status="licensed-assets-camera-compatibility" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
+      org.nebius.npa.libero-plus-source="absent" \
+      org.nebius.npa.libero-plus-assets="runtime-fetch-only"
+
+COPY docker/workbench/libero-plus-assets/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-libero-plus-assets/THIRD_PARTY_NOTICES.md
+COPY docker/workbench/libero-plus-assets/native-executor-provenance.json /usr/share/doc/npa-libero-plus-assets/native-executor-provenance.json
+COPY docker/workbench/libero-plus-assets/entrypoint.sh /usr/local/bin/npa-libero-plus-assets-entrypoint
+COPY docker/workbench/libero-plus-assets/smoke.sh /usr/local/bin/npa-libero-plus-assets-smoke
+COPY docker/workbench/libero-plus-assets/setup-venv.sh /usr/local/libexec/npa-libero-plus-assets-setup-venv
+COPY src/npa/workflows/libero_plus_assets.py /opt/npa/src/npa/workflows/libero_plus_assets.py
+
+# Camera PNG and RRD output do not invoke bundled FFmpeg. The derived image
+# prunes inherited wheel executables so it has no scanner-quarantined payload.
+# It also supplies SkyPilot's worker prerequisites. Host keys created by the
+# package installation are removed in this layer; the entrypoint creates fresh
+# per-pod keys immediately before it forwards the task command.
+RUN set -eux; \
+    test -n "${NPA_SOURCE_SHA}"; \
+    test "${#NPA_SOURCE_SHA}" -eq 40; \
+    case "${NPA_SOURCE_SHA}" in *[!0-9a-f]*) exit 64 ;; esac; \
+    case "${SOURCE_DATE_EPOCH}" in ''|*[!0-9]*) exit 64 ;; esac; \
+    test "${SOURCE_DATE_EPOCH}" -gt 0; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      openssh-server rsync sudo; \
+    rm -rf /var/lib/apt/lists/*; \
+    install -d -m 0755 /run/sshd; \
+    rm -f /etc/ssh/ssh_host_*; \
+    printf '%s\n' \
+      'PasswordAuthentication no' \
+      'PermitRootLogin no' \
+      > /etc/ssh/sshd_config.d/99-npa-libero-plus-assets.conf; \
+    printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' \
+      > /etc/sudoers.d/99-npa-libero-plus-assets; \
+    chmod 0440 /etc/sudoers.d/99-npa-libero-plus-assets; \
+    /opt/openwam-libero/bin/python -m pip install --no-cache-dir \
+      boto3==1.42.91 rerun-sdk==0.38.1; \
+    /opt/openwam-libero/bin/python -m py_compile /opt/npa/src/npa/workflows/libero_plus_assets.py; \
+    /opt/openwam-libero/bin/python -c "import libero, mujoco; assert mujoco.__version__ == '3.3.2'"; \
+    test -s /opt/openwam-libero-source/LICENSE; \
+    test "$(sha256sum /opt/openwam-libero-source/LICENSE | awk '{print $1}')" = \
+      e2885fd30a08381b799c4a33385522b23d637b4051b8f9a7f9f2519944b68ff6; \
+    install -d -m 0755 /usr/share/doc/npa-libero-plus-assets; \
+    chmod 0444 /opt/npa/src/npa/workflows/libero_plus_assets.py; \
+    chmod 0444 /usr/share/doc/npa-libero-plus-assets/THIRD_PARTY_NOTICES.md \
+      /usr/share/doc/npa-libero-plus-assets/native-executor-provenance.json; \
+    chmod 0555 /usr/local/bin/npa-libero-plus-assets-entrypoint /usr/local/bin/npa-libero-plus-assets-smoke /usr/local/libexec/npa-libero-plus-assets-setup-venv; \
+    rm -f \
+      /opt/openwam-venv/lib/python3.12/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2 \
+      /opt/openwam-libero/lib/python3.10/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2; \
+    install -d -m 0750 -o ubuntu -g ubuntu /workspace/npa-setup-venv; \
+    sudo -u ubuntu /usr/local/libexec/npa-libero-plus-assets-setup-venv /opt/openwam-libero/bin/python /workspace/npa-setup-venv; \
+    install -d -m 0750 -o ubuntu -g ubuntu /workspace/.cache/npa-model; \
+    test ! -e /workspace/.cache/npa-model/libero-plus-assets; \
+    ! find /opt/npa -type f \( -iname '*.zip' -o -iname '*.mp4' -o -iname '*.hdf5' -o -iname '*.pth' -o -iname '*.ckpt' \) -print -quit | grep -q .
+
+ENV NPA_BAKED_PYTHON=/opt/openwam-libero/bin/python \
+    NPA_SETUP_PYTHON=/workspace/npa-setup-venv/bin/python \
+    NPA_MODEL_CACHE_DIR=/workspace/.cache/npa-model \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+USER ubuntu
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/npa-libero-plus-assets-entrypoint"]
+CMD ["/opt/openwam-libero/bin/python", "/opt/npa/src/npa/workflows/libero_plus_assets.py", "--help"]

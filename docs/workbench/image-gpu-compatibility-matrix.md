@@ -140,6 +140,7 @@ likewise predates its current coherent release.
 | `npa-lyra2` (`2.0-rtfetch2`) | unverified | unverified | **verified** [native reconstruction](validation/lyra2-rtx-20261009.json) | **historical evidence** [rtfetch1](validation/lyra2-b200-20261008.json); rtfetch2 unverified | unverified |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
 | `npa-libero` (payload-free public-development staging permitted; not qualified) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
+| `npa-libero-plus-assets` (operator-private camera-compatibility candidate) | unbuilt; not validated | unbuilt; not validated | unbuilt; strict RTX-only EGL camera gate pending | not routed (strict RTX-only camera gate) | not routed (strict RTX-only camera gate) |
 | `npa-alpamayo2-super` | supported | supported | **verified** [78] | **verified** [77] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-flex-pi` | supported | **verified** [93] (H200; eager inference, compiled workflow not run) | **verified** [87] | **verified** [86] | supported (same-major `sm_100` coverage; not measured) |
 | `npa-cosmos3-reason` | supported | **verified** [38] | **verified** [43] | **verified** [36] | **verified** [37] |

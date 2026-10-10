@@ -680,7 +680,7 @@ def test_setup_uses_uv_when_the_selected_environment_has_no_pip() -> None:
     pip_probe = setup.index('"$npa_setup_python" -m pip --version')
     uv_fallback = setup.index('uv pip install -q --python "$npa_setup_python"')
     assert pip_probe < uv_fallback
-    assert 'npa_setup_python="${NPA_BAKED_PYTHON:-}"' in setup
+    assert 'npa_setup_python="${NPA_SETUP_PYTHON:-${NPA_BAKED_PYTHON:-}}"' in setup
     assert 'npa_setup_python="$(command -v python3)"' in setup
     assert "selected python has no pip and uv is unavailable" in setup
 
