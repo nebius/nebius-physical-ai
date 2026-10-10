@@ -40,7 +40,7 @@ dependencies = [
     "jinja2>=3.1.6,<4.0",
     # Official API client matched to the production Kubernetes 1.33 cluster.
     # Sim2Real uses typed Job/Pod conditions instead of parsing kubectl prose.
-    "kubernetes==36.0.3",
+    "kubernetes==37.0.0",
     # Exclude OAuth transport versions affected by CVE-2026-49264/49265.
     "oauthlib>=4.0.0",
     "numpy>=1.24",
@@ -98,7 +98,7 @@ full = []
 # The former optional package was imported only to report its presence.
 agent-eval = []
 agent-specialists = [
-    "langgraph==1.2.12",
+    "langgraph==1.2.14",
     "langgraph-checkpoint-sqlite==3.1.1",
     "uvicorn>=0.52.4",
 ]
@@ -153,7 +153,7 @@ sonic = [
 # standard (non-e2e) test suite collects without pulling in the GPU-heavy
 # extras (genesis, groot, sonic).
 dev = [
-    "langgraph==1.2.12",
+    "langgraph==1.2.14",
     "langgraph-checkpoint-sqlite==3.1.1",
     # Parse real raw USD layers/variants in sensor-rig scene preflight tests.
     "usd-core==26.8",
@@ -187,7 +187,7 @@ dev = [
 
 [dependency-groups]
 dev = [
-    "langgraph==1.2.12",
+    "langgraph==1.2.14",
     "langgraph-checkpoint-sqlite==3.1.1",
     "usd-core==26.8",
     "uvicorn>=0.52.4",
