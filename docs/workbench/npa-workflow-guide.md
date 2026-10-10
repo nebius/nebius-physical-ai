@@ -20,8 +20,11 @@ npa workbench workflow plan-spec "$workflow_spec" --run-id preview --json
 ```
 
 These commands launch no workload. The plan still contains the example bucket.
-For execution, complete [Workbench setup](getting-started.md) and the
-[Cosmos 3 prerequisites](cosmos3-generate.md#workflow), then set your actual target:
+The stock Cosmos3 sample is deliberately quarantined, so image preflight and
+submission of that exact spec refuse by design. For execution, choose a
+release-ready workload from the [workload guides](guides/README.md), complete
+its setup, replace `workflow_spec` with its documented path, then set your
+actual target:
 
 ```bash
 project_alias='<your-project-alias>'
@@ -73,9 +76,9 @@ npa workbench workflow submit "$workflow_spec" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-`--runtime` supervises execution to a terminal state. The default generation
-requires gated guardrail access through `HF_TOKEN`. Secrets resolve from the
-private environment or selected project's credential store; pass names only.
+`--runtime` supervises execution to a terminal state. Follow the selected
+workload's access requirements. Secrets resolve from the private environment or
+selected project's credential store; pass names only.
 Public images need no registry login. Use `--registry` only for custom images.
 
 Inspect the same run from another shell or after submission returns:
@@ -172,6 +175,25 @@ Reference specs (all pytest-guarded):
 
 This excerpt illustrates the schema. Use a complete spec from the catalog for
 execution; each `toolRef` also requires its own configuration and inputs.
+
+When a stage records an exact image in provenance or submits native child jobs,
+declare the corresponding config keys in `required_immutable_images`:
+
+```yaml
+config:
+  required_immutable_images: [runtime_image]
+  runtime_image: ''
+```
+
+Supply `--var runtime_image=<registry>/<repository>@sha256:<64-hex-digest>` to
+planning and execution commands. The engine checks these inputs after config
+overrides and token expansion, before rendering, run-state writes or stage
+execution. References must be digest-only and registry-qualified; missing,
+tagged and `tool://` values fail with an actionable CLI error. This opt-in check
+binds declared identity. Image-byte, licensing and native workload qualification
+remain required, and ordinary public defaults still obey the governed release
+quarantine. Public demo aliases forward the same repeatable `--var` parameters,
+with project-managed bucket and prefix values.
 
 ```yaml
 apiVersion: npa.workflow/v0.0.1

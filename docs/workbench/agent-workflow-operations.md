@@ -72,6 +72,19 @@ The plan-only submission is the final read-only gate. It exercises NPA's real
 translation path without creating a workflow job. Provisioning and submission
 are separate mutations and require the caller's explicit authorization.
 
+For agent control planes, successful `submit --output-format json` and
+`plan-spec --check-render --json` can report
+`workflow_validation_candidates` plus
+`workflow_validation_candidates_status`: `available` means the list was
+computed for manifest-governed toolRefs whose effective images resolve,
+`unavailable` means normal rendering remains authoritative, and `not_applicable`
+identifies raw SkyPilot YAML. `preflight-images --json` adds
+`release_status` and `selection_scope` to a checked validation-candidate image
+when candidate disclosure succeeds. If its stderr warning says disclosure is
+unavailable, an omitted `release_status` is inconclusive; read the provenance
+from `submit` or `plan-spec --check-render`. These fields establish validation
+provenance only; they never approve an image release.
+
 ## Submit, resume, and observe
 
 After authorization, prepare configured infrastructure and submit through NPA:

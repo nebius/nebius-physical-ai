@@ -122,6 +122,8 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
        TORCH_INDEX_URL="${TORCH_INDEX_URL}" \
        REQUIRE_TORCH_SM120="${REQUIRE_TORCH_SM120}" \
        NPA_CUDA_ARCHITECTURES="${NPA_CUDA_ARCHITECTURES}" \
+       NPA_UBUNTU_SNAPSHOT=20261001T000000Z \
+       NPA_LINUX_LIBC_DEV_VERSION=5.15.0-194.204 \
        NPA_INSTALL_SKYPILOT_PREREQS=1 \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh
 

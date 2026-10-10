@@ -1575,7 +1575,7 @@ def test_paidf_plan_only_uses_repaired_public_defaults(spec_path: Path) -> None:
 
 
 def test_plan_only_reports_quarantined_default_as_cli_error() -> None:
-    spec_path = SPEC.parents[2] / "workflows/testing/cosmos3-generate.yaml"
+    spec_path = SPEC.parents[2] / "workflows/testing/cosmos3-checkpoint-eval.yaml"
     result = runner.invoke(
         app,
         [
@@ -2878,7 +2878,10 @@ def test_preflight_images_covers_every_decision_branch(mocker) -> None:
 
 
 def test_preflight_images_reports_valid_empty_plan(mocker) -> None:
-    mocker.patch(
+    reachability = mocker.patch(
+        "npa.cli.workbench.workflow._image_preflight_steps", return_value=[]
+    )
+    requirements = mocker.patch(
         "npa.cli.workbench.workflow._plan_preflight_image_requirements",
         return_value=([], {}),
     )
@@ -2901,6 +2904,8 @@ def test_preflight_images_reports_valid_empty_plan(mocker) -> None:
 
     assert result.exit_code == 0, result.output
     assert result.output == "images: none pinned by this spec\n"
+    reachability.assert_called_once()
+    assert requirements.call_args.kwargs["steps"] == []
     pulls.assert_not_called()
     contracts.assert_not_called()
 
@@ -2939,6 +2944,127 @@ def test_preflight_images_reports_planning_failure_before_pull_checks(
     assert "images: none" not in result.output
     pulls.assert_not_called()
     contracts.assert_not_called()
+
+
+@pytest.mark.parametrize("error_type", [ValueError, NpaWorkflowError])
+def test_preflight_images_keeps_candidate_disclosure_failure_observational(
+    mocker,
+    error_type,
+    caplog,
+) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._plan_preflight_image_requirements",
+        return_value=([], {}),
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._workflow_validation_candidate_payload",
+        side_effect=error_type("synthetic candidate disclosure failure"),
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials"
+    )
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "images: none pinned by this spec" in result.output
+    assert "candidate disclosure is unavailable" in result.stderr
+    assert (
+        "workflow validation candidate disclosure failed: synthetic candidate "
+        in caplog.text
+    )
+    pulls.assert_not_called()
+    contracts.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("candidate_payload", "expected_status", "candidate_selected"),
+    [
+        (
+            [
+                {
+                    "tool_ref": "workbench.cosmos3.generate_variants",
+                    "image": f"cr.example.invalid/npa@sha256:{'a' * 64}",
+                    "release_status": "workflow_validation_candidate",
+                    "selection_scope": "reachable_branches",
+                }
+            ],
+            "available",
+            True,
+        ),
+        ([], "available", False),
+        (ValueError("synthetic candidate disclosure failure"), "unavailable", False),
+    ],
+)
+def test_preflight_images_json_reports_candidate_disclosure_status_per_check(
+    mocker,
+    candidate_payload,
+    expected_status: str,
+    candidate_selected: bool,
+) -> None:
+    """Keep per-image JSON truthful when candidate disclosure is unavailable."""
+    from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
+
+    image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
+    mocker.patch("npa.cli.workbench.workflow._image_preflight_steps", return_value=[])
+    mocker.patch(
+        "npa.cli.workbench.workflow._plan_preflight_image_requirements",
+        return_value=([image], {image: ImagePullRequirements()}),
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[ImagePullCheck(image=image, status="ok", http_status=200)],
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+    candidate_payload_patch = mocker.patch(
+        "npa.cli.workbench.workflow._workflow_validation_candidate_payload"
+    )
+    if isinstance(candidate_payload, Exception):
+        candidate_payload_patch.side_effect = candidate_payload
+    else:
+        candidate_payload_patch.return_value = candidate_payload
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(COSMOS3_SPEC),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert isinstance(payload, list)
+    assert len(payload) == 1
+    check = payload[0]
+    assert check["image"] == image
+    assert check["status"] == "ok"
+    assert check["http_status"] == 200
+    assert check["workflow_validation_candidates_status"] == expected_status
+    if candidate_selected:
+        assert check["release_status"] == "workflow_validation_candidate"
+        assert check["selection_scope"] == "reachable_branches"
+    else:
+        assert "release_status" not in check
+        assert "selection_scope" not in check
 
 
 def test_preflight_images_uses_selected_cluster_context_for_pull_authority(

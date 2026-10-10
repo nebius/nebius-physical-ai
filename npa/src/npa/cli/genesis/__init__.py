@@ -2282,6 +2282,12 @@ def deploy_cmd(
         _fail(
             "Genesis deploy does not use --runtime serverless; use `npa workbench genesis train-teacher --runtime serverless`."
         )
+    container_image = ""
+    if not destroy and runtime_uses_container(runtime):
+        try:
+            container_image = image.strip() or container_image_for_tool("genesis")
+        except ValueError as exc:
+            _fail(str(exc))
     use_remote_state = not tf_dir and not byovm
     if byovm:
         skip_infra = True
@@ -2734,7 +2740,6 @@ def deploy_cmd(
                 write_manifest,
                 write_remote_docker_env_file,
             )
-            from npa.deploy.images import container_image_for_tool
 
             credentials = resolve_credentials()
             ssh_cfg = SSHConfig(
@@ -2774,7 +2779,7 @@ def deploy_cmd(
                     service_env,
                     owner=ssh_user,
                 )
-                image_ref = image.strip() or container_image_for_tool("genesis")
+                image_ref = container_image
                 deploy_workbench_container(
                     ssh,
                     image_ref=image_ref,

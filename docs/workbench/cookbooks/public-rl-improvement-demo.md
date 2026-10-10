@@ -5,10 +5,15 @@ baseline, observes actual failures on office training routes, admits the capture
 for reconstruction, continues PPO with baseline replay and a frozen baseline
 policy penalty, and compares checkpoints on frozen cases. There is no pre-trained
 demo baseline to find or operator adapter to write. On a configured RTX Workbench
-environment:
+environment, first select qualified immutable CPU reconstruction and native
+Isaac navigation images. Set `NPA_RECONSTRUCTION_IMAGE` and
+`NPA_NAVIGATION_IMAGE` to digest-only
+`registry/repository@sha256:<64-hex-digest>` references:
 
 ```bash
-npa workbench workflow demo run rl-improvement
+npa workbench workflow demo run rl-improvement \
+  --var "navigation_image=$NPA_NAVIGATION_IMAGE" \
+  --var "reconstruction_image=$NPA_RECONSTRUCTION_IMAGE"
 ```
 
 The shared demo command selects
@@ -17,10 +22,14 @@ The standard workflow interface also supports direct submission:
 
 ```bash
 npa workbench workflow validate-spec workflows/testing/field-failure-reference-demo.yaml
-npa workbench workflow plan-spec workflows/testing/field-failure-reference-demo.yaml --run-id preview
+npa workbench workflow plan-spec workflows/testing/field-failure-reference-demo.yaml \
+  --run-id preview --var "navigation_image=$NPA_NAVIGATION_IMAGE" \
+  --var "reconstruction_image=$NPA_RECONSTRUCTION_IMAGE"
 npa workbench workflow submit workflows/testing/field-failure-reference-demo.yaml \
   --run-id '<fresh-run-id>' --stage-src --runtime \
   --infra 'k8s/<configured-rtx-context>' --var 'bucket=<configured-bucket>' \
+  --var "navigation_image=$NPA_NAVIGATION_IMAGE" \
+  --var "reconstruction_image=$NPA_RECONSTRUCTION_IMAGE" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
@@ -28,6 +37,14 @@ Use the standard [Workbench setup](../getting-started.md) for authentication,
 storage, and compute. The public sample needs no customer data or gated dataset
 token. The runtime fetches the public robot and controller under the normal
 Isaac runtime terms; neither is bundled into this repository.
+
+The old Isaac and SONIC defaults are quarantined and retained only in historical
+evidence. Missing or non-digest image inputs now fail planning before any launch.
+The reconstruction image must retain `/opt/npa/venv/bin/python`, Open3D/SciPy,
+and access to the pinned OpenUSD 26.8 assembly wheel. The navigation image must
+support the native Isaac training, rendering, and child-launch contracts. Exact
+operator references preserve provenance; select them only after the
+[image qualification procedure](../container-image-catalog.md).
 
 ## Training and replay
 

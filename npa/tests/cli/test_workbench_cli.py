@@ -856,8 +856,8 @@ def test_lerobot_saved_registry_does_not_bypass_public_quarantine(
     )
 
     assert result.exit_code == 1
-    assert isinstance(result.exception, ValueError)
-    assert "public release metadata is quarantined" in str(result.exception)
+    assert not isinstance(result.exception, ValueError)
+    assert "public release metadata is quarantined" in result.output
     apply.assert_not_called()
 
 

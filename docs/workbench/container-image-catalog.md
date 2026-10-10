@@ -26,7 +26,7 @@ cache in its layers. It has no accepted release build and remains release
 quarantined; it has no public image row, but now has a truthful immutable
 development-build path for byte and capability validation.
 
-The September 18 accepted-release manifest contained **38 release references**, including
+The accepted-release manifest contains **38 release references**, including
 Flex-Pi r2, Isaac Arena and OpenArm. The incoming Flex-Pi qualification records
 an anonymous digest audit on **2026-09-18** and retained `linux/amd64` runtime
 metadata. Flex-Pi r2 was independently built, scanned and run on both required
@@ -100,6 +100,14 @@ publication gates plus the checked-in Blackwell validator and real
 `DiffusionPolicy` construction on B200. This optional version does not replace
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
+
+A fresh generic 0.5.1 rebuild subsequently failed its independent installed
+dependency and native default camera-decoder checks. Its narrow CPU ACT
+optimizer/checkpoint result does not qualify the image. See the
+[exact-image failure and compatible-closure repair](validation/lerobot-default-native-closure-20261006.md);
+a later candidate passed its scoped publication and native CPU gates but remains
+quarantined pending default/GPU capability qualification. It does not add a
+public release row or change the default.
 
 The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
 that optional 0.6.0 image by digest and stages its adapters from the checkout.
@@ -489,10 +497,32 @@ release promotion or completed PAIDF workflow acceptance; these candidates do
 not re-enter the accepted-release table below. Explicit operator registries and
 image overrides remain supported.
 
+The [stock Cosmos3 generation validation record](validation/cosmos3-stock-generation-default-20261006.md)
+defines the narrow native-qualification evidence required before this candidate
+can be considered for `workbench.cosmos3.generate`. Until that evidence exists,
+that action remains quarantined by default.
+
 The [default-workflow impact audit](validation/public-default-quarantine-impact-20261005.md)
 checks all shipped plans without image overrides and records the remaining
 blocked workflows and derivative images. It distinguishes canonical Sim2Real's
 required operator images from legacy automatic public-image selection.
+
+The Ray Serve Dockerfile now derives from PAIDF's repaired Cosmos3 digest rather
+than retaining the withdrawn parent's SSH-key layers. The Isaac 3 OSS dependency
+lock also selects PyJWT 2.15.0, which fixes the critical signature-verification
+issue that blocked its rebuilt image scan; Transfer's hash-verified security
+override selects the same fix. The controller and viewer use the immutable
+2026-10-02 Debian snapshot with fixed Perl, GLib and Mbed TLS, and both upgrade
+inherited packages. EnvGen and Loop Eval use the 2026-10-02 Ubuntu snapshot with
+the fixed `linux-libc-dev` 5.15.0-198.208 package. EnvGen also applies cuRobo's
+existing exact-source correction to an inert scikit-image recipe containing a
+historical token. The correction preserves executable behavior and removes
+the original source and bytecode before flattening the sanitized filesystem;
+derivatives must be rebuilt from that corrected parent to discard the old
+bytes from their layers. These are source repairs:
+newly built images must still pass all publication scans and real capability
+validation before any public default is restored. Historical releases remain
+quarantined.
 
 The scan-to-policy workflow selects repaired immutable development candidates
 for Isaac Lab and SONIC, and the GR00T training workflow selects a development
@@ -513,6 +543,22 @@ the accepted plan. The recipes now record only generic base profiles, and the
 three thin Genesis derivatives override inherited base metadata explicitly.
 Replacements must pass exact-config disclosure checks, non-root validation,
 image scanning, and capability evaluation before re-entering this table.
+
+The [October 6 rebuild follow-up](validation/807-image-rebuild-follow-up-20261006.md)
+replaces stale Isaac and EnvGen parents in the derivative build recipes and fixes
+additional dependency and snapshot inputs. Its parent development builds passed
+their trusted publication jobs and independent anonymous source/config checks.
+Seven child jobs also passed trusted publication and independent digest/source
+and provenance/SBOM signature verification, as recorded in that follow-up.
+Genesis has a rebuilt candidate that passed its narrow CPU gate, but GPU teacher
+optimization, export, and rendered-physics qualification remain pending. Default
+LeRobot still requires a compatible policy closure and native execution. The
+[stock public Genesis contract](../../npa/docker/workbench/genesis/README.md)
+documents its retained rigid workload, ACT dependencies and excluded optional
+capabilities. None is added to the accepted-release table by these source changes. Current examples
+also stop automatically selecting withdrawn image digests through literal
+resource or provenance inputs. Historical validation records retain their
+original image identities.
 
 | Friendly name | Image (`ghcr.io/nebius/nebius-physical-ai/...`) | Published tag(s) | Built | What it does |
 | --- | --- | --- | --- | --- |

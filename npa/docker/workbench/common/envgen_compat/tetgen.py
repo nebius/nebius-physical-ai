@@ -1,6 +1,6 @@
 """Fail-closed compatibility surface for Genesis' optional TetGen import.
 
-The public Sim2Real Envgen image intentionally excludes the AGPL ``tetgen``
+The public Genesis and Sim2Real Envgen images intentionally exclude the AGPL ``tetgen``
 distribution. Genesis imports that module eagerly even for rigid-body scenes,
 although it only constructs ``TetGen`` for deformable tetrahedralization. The
 canonical pipeline does not advertise or invoke that capability.
@@ -14,6 +14,6 @@ class TetGen:
 
     def __init__(self, *_args: object, **_kwargs: object) -> None:
         raise RuntimeError(
-            "TetGen tetrahedralization is not available in the public Sim2Real "
-            "Envgen runtime; use a separately licensed private extension"
+            "TetGen tetrahedralization is not available in the public Genesis "
+            "or Sim2Real Envgen runtime; use a separately licensed private extension"
         )

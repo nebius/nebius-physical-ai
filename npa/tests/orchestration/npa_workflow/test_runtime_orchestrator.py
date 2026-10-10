@@ -632,6 +632,34 @@ states:
     terminal: true
 """
 
+TWO_WAVE_EXPLICIT_RECOVERY_SPEC = """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: two-wave-explicit-terminal-recovery
+config:
+  bucket: example-bucket
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 1
+initial: prepare
+states:
+  prepare:
+    run:
+      shell: "echo prepare"
+    resources: cpu
+    next: export
+  export:
+    run:
+      shell: "echo export"
+    resources: cpu
+    outputs:
+      - uri: "s3://example-bucket/two-wave-explicit-recovery/result.json"
+        schema: npa.example.result.v1
+    terminal: true
+"""
+
 FANOUT_SPEC = """
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
@@ -3929,6 +3957,304 @@ def test_explicit_resume_adopts_controller_lost_running_wave_with_valid_outputs(
     )
 
 
+def _seed_explicit_terminal_recovery_case(tmp_path: Path):
+    spec = load_spec(_write_spec(tmp_path, COMPLETED_REPLAY_SPEC))
+    store = MemoryStore()
+    run_id = "rt-exact-terminal-recovery"
+    initial = _executor(spec, run_id=run_id, store=store)
+    report = run_workflow_runtime(spec, run_id=run_id, executor=initial)
+    assert report.status == "succeeded"
+    state = store.read_runtime_state()
+    prior = dict(state.waves[0])
+    prior.update(
+        {
+            "status": "failed",
+            "sky_status": "FAILED_CONTROLLER",
+            "error": "stale controller projection",
+            "recovery_decision": "submitted_and_reconciled",
+        }
+    )
+    state.record_wave(prior)
+    store.write_runtime_state(state)
+    return spec, store, run_id, build_plan(spec, run_id=run_id).steps[0]
+
+
+def test_explicit_terminal_recovery_adopts_only_the_requested_exact_job(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec, store, run_id, step = _seed_explicit_terminal_recovery_case(tmp_path)
+    submitter = FakeSubmitter()
+
+    def reconcile(job_name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        assert job_name == "rt-exact-terminal-recovery-01-export"
+        if job_id == "1":
+            return ManagedJobEvidence(
+                "found", job_id="1", status="SUCCEEDED", workload_observable=True
+            )
+        assert job_id == "2"
+        return ManagedJobEvidence(
+            "found", job_id="2", status="SUCCEEDED", workload_observable=True
+        )
+
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        recover_managed_job_id="2",
+    )
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=submitter,
+        options=options,
+        reconcile_fn=reconcile,
+    )
+
+    assert executor.execute(step)["job_id"] == "2"
+    assert submitter.calls == []
+    recovered = store.read_runtime_state().waves[0]
+    assert recovered["status"] == "succeeded"
+    assert recovered["job_id"] == "2"
+    assert recovered["recovery_history"][-1]["prior_job_id"] == "1"
+    assert (
+        recovered["recovery_history"][-1]["prior_recovery_decision"]
+        == "submitted_and_reconciled"
+    )
+    assert recovered["recovery_history"][-1]["recovered_job_id"] == "2"
+
+    replay = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=FakeSubmitter(),
+        options=options,
+        reconcile_fn=lambda *_args, **_kwargs: pytest.fail("recovery replay queried"),
+    )
+    assert replay.execute(step)["job_id"] == "2"
+    assert replay._submitter.calls == []
+
+
+def test_explicit_terminal_recovery_skips_completed_waves_before_failed_wave(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, TWO_WAVE_EXPLICIT_RECOVERY_SPEC))
+    store = MemoryStore()
+    run_id = "rt-two-wave-exact-terminal-recovery"
+    initial = _executor(spec, run_id=run_id, store=store)
+    assert (
+        run_workflow_runtime(spec, run_id=run_id, executor=initial).status
+        == "succeeded"
+    )
+
+    state = store.read_runtime_state()
+    assert state is not None
+    failed = dict(state.waves[-1])
+    assert failed["states"] == ["export"]
+    assert failed["job_id"] == "2"
+    failed.update(
+        {
+            "status": "failed",
+            "sky_status": "FAILED_CONTROLLER",
+            "error": "stale controller projection",
+            "recovery_decision": "submitted_and_reconciled",
+        }
+    )
+    state.record_wave(failed)
+    store.write_runtime_state(state)
+
+    resumed_submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=resumed_submitter,
+        options=RuntimeOptions(
+            poll_seconds=0,
+            max_wait_seconds=60,
+            resume=True,
+            recover_managed_job_id="3",
+        ),
+        reconcile_fn=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found",
+            job_id=job_id,
+            status="SUCCEEDED",
+            workload_observable=True,
+        ),
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id=run_id, executor=resumed, options=resumed.options
+    )
+
+    assert report.status == "succeeded"
+    assert resumed_submitter.calls == []
+    recovered = store.read_runtime_state().waves[-1]
+    assert recovered["states"] == ["export"]
+    assert recovered["job_id"] == "3"
+    assert recovered["recovery_history"][-1]["prior_job_id"] == "2"
+    assert recovered["recovery_history"][-1]["recovered_job_id"] == "3"
+
+
+def test_explicit_terminal_recovery_replays_a_prior_recovery_before_later_failure(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, TWO_WAVE_EXPLICIT_RECOVERY_SPEC))
+    store = MemoryStore()
+    run_id = "rt-two-wave-recovery-replay"
+    initial = _executor(spec, run_id=run_id, store=store)
+    assert (
+        run_workflow_runtime(spec, run_id=run_id, executor=initial).status
+        == "succeeded"
+    )
+
+    state = store.read_runtime_state()
+    assert state is not None
+    original_first = dict(state.waves[0])
+    original_second = dict(state.waves[1])
+    original_first.update(
+        {
+            "job_id": "3",
+            "status": "succeeded",
+            "sky_status": "SUCCEEDED",
+            "recovery_history": [
+                {
+                    "schema": "npa.workflow.exact-terminal-recovery.v1",
+                    "recovered_job_id": "3",
+                }
+            ],
+        }
+    )
+    original_second.update(
+        {
+            "status": "failed",
+            "sky_status": "FAILED_CONTROLLER",
+            "error": "later controller failure",
+            "recovery_decision": "submitted_and_reconciled",
+        }
+    )
+    state.record_wave(original_first)
+    state.record_wave(original_second)
+    store.write_runtime_state(state)
+
+    reconciled_ids: list[str] = []
+
+    def reconcile(_name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        reconciled_ids.append(job_id)
+        return ManagedJobEvidence("absent")
+
+    resumed = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        options=RuntimeOptions(resume=True, recover_managed_job_id="3"),
+        reconcile_fn=reconcile,
+    )
+    steps = build_plan(spec, run_id=run_id).steps
+
+    replayed = resumed._run_wave([steps[0]], kind="serial", group="")
+    later = resumed._run_wave([steps[1]], kind="serial", group="")
+
+    assert replayed.job_id == "3"
+    assert replayed.replayed is True
+    assert resumed._explicit_terminal_recovery_consumed is True
+    assert later.key != replayed.key
+    assert "3" not in reconciled_ids
+
+
+@pytest.mark.parametrize(
+    ("evidence", "output_present", "error"),
+    [
+        (
+            {"job_id": "3", "status": "SUCCEEDED", "observable": True},
+            True,
+            "not observable terminal success",
+        ),
+        (
+            {"job_id": "2", "status": "FAILED", "observable": True},
+            True,
+            "not observable terminal success",
+        ),
+        (
+            {"job_id": "2", "status": "SUCCEEDED", "observable": False},
+            True,
+            "not observable terminal success",
+        ),
+        (
+            {"job_id": "2", "status": "SUCCEEDED", "observable": True},
+            False,
+            "without declared durable output",
+        ),
+    ],
+)
+def test_explicit_terminal_recovery_rejects_unverified_replacement(
+    tmp_path: Path, evidence: dict[str, object], output_present: bool, error: str
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec, store, run_id, step = _seed_explicit_terminal_recovery_case(tmp_path)
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(resume=True, recover_managed_job_id="2")
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=submitter,
+        options=options,
+        output_checker=lambda _uri: output_present,
+        reconcile_fn=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found",
+            job_id=("1" if job_id == "1" else str(evidence["job_id"])),
+            status=("SUCCEEDED" if job_id == "1" else str(evidence["status"])),
+            workload_observable=(
+                True if job_id == "1" else bool(evidence["observable"])
+            ),
+        ),
+    )
+
+    with pytest.raises(NpaWorkflowError, match=error):
+        executor.execute(step)
+    assert submitter.calls == []
+    retained = store.read_runtime_state().waves[0]
+    assert retained["job_id"] == "1"
+    assert retained["status"] == "failed"
+
+
+def test_explicit_terminal_recovery_refuses_an_active_stale_job(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec, store, run_id, step = _seed_explicit_terminal_recovery_case(tmp_path)
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=submitter,
+        options=RuntimeOptions(resume=True, recover_managed_job_id="2"),
+        reconcile_fn=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found",
+            job_id=job_id,
+            status="RUNNING",
+            workload_observable=True,
+        ),
+    )
+
+    with pytest.raises(NpaWorkflowError, match="stale recorded managed job"):
+        executor.execute(step)
+    assert submitter.calls == []
+    retained = store.read_runtime_state().waves[0]
+    assert retained["job_id"] == "1"
+    assert retained["status"] == "failed"
+
+
 def test_explicit_resume_adopts_output_complete_lost_wave_after_driver_interrupt(
     tmp_path: Path,
 ) -> None:
@@ -4719,6 +5045,81 @@ def test_resume_refuses_a_ledger_recorded_for_a_different_plan(tmp_path: Path) -
         run_workflow_runtime(
             changed_spec, run_id="rt-fp", executor=resumed, options=resume_options
         )
+
+
+def test_resume_refuses_a_changed_required_immutable_image(tmp_path: Path) -> None:
+    image_a = "registry.example.invalid/runtime@sha256:" + "a" * 64
+    image_b = "registry.example.invalid/runtime@sha256:" + "b" * 64
+
+    def spec_with(image: str, name: str):
+        source = FANOUT_SPEC.replace(
+            '  prefix: "fanout/{{run.id}}"',
+            '  prefix: "fanout/{{run.id}}"\n'
+            "  required_immutable_images: [runtime_image]\n"
+            f'  runtime_image: "{image}"',
+        )
+        return load_spec(_write_spec(tmp_path, source, name=name))
+
+    initial = spec_with(image_a, "initial.yaml")
+    store = MemoryStore()
+    first = _executor(initial, run_id="rt-image-fingerprint", store=store)
+    assert (
+        run_workflow_runtime(
+            initial,
+            run_id="rt-image-fingerprint",
+            executor=first,
+            options=first.options,
+        ).status
+        == "succeeded"
+    )
+
+    changed = spec_with(image_b, "changed.yaml")
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        changed,
+        run_id="rt-image-fingerprint",
+        options=options,
+        store=store,
+        submitter=submitter,
+    )
+
+    with pytest.raises(NpaWorkflowError, match="different plan"):
+        run_workflow_runtime(
+            changed,
+            run_id="rt-image-fingerprint",
+            executor=resumed,
+            options=options,
+        )
+
+    assert not submitter.calls
+
+
+def test_undeclared_immutable_images_preserve_legacy_fingerprint(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    plan = build_plan(spec, run_id="rt-legacy-fingerprint")
+    legacy_payload = {
+        "workflow": spec.name,
+        "api_version": spec.api_version,
+        "steps": [
+            {
+                "state": step.state,
+                "iteration": step.iteration,
+                "group": step.group,
+                "argv": step.argv,
+                "shell": step.shell,
+                "resources": step.resources,
+            }
+            for step in plan.steps
+        ],
+    }
+    expected = hashlib.sha256(
+        json.dumps(legacy_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+
+    assert plan_fingerprint(spec, run_id="rt-legacy-fingerprint") == expected
 
 
 def test_resume_accepts_an_unchanged_plan(tmp_path: Path) -> None:

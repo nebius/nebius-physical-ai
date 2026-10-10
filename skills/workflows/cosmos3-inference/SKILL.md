@@ -109,15 +109,18 @@ Inspect the chosen route and effective manifest, preserve the operator's
 configuration, and check access to any newly selected gated guardrail payloads.
 Do not infer one route's posture from another route's defaults.
 
-For containerized `generate`, the `1.2.2-cu130-r7` release resolves
-[#270](https://github.com/nebius/nebius-physical-ai/issues/270). The compatibility
-field `guardrails` records the request; inspect `guardrail_state` for discovered
-and evaluated prompt-input and generated-media safety models. Publication
-requires `status: passed` and `effective: true`. Missing models, failed
-evaluations, or an absent/invalid native receipt fail closed. An explicit
-`--no-guardrails` request records `status: explicit_opt_out`, `requested: false`,
-and `effective: false`; do not disable guardrails to recover a failed guarded run.
-Repair access or runtime health and rerun. See the
+For containerized `generate`, the historical `1.2.2-cu130-r7` release resolves
+[#270](https://github.com/nebius/nebius-physical-ai/issues/270) but is quarantined.
+Official-default workflow planning uses a digest-pinned validation candidate only
+for its governed toolRefs; `workbench.cosmos3.generate` is not one of them and
+remains quarantined. That candidate is not an accepted public release.
+The compatibility field `guardrails` records the request; inspect
+`guardrail_state` for discovered and evaluated prompt-input and generated-media
+safety models. Publication requires `status: passed` and `effective: true`.
+Missing models, failed evaluations, or an absent/invalid native receipt fail
+closed. An explicit `--no-guardrails` request records `status: explicit_opt_out`,
+`requested: false`, and `effective: false`; do not disable guardrails to recover
+a failed guarded run. Repair access or runtime health and rerun. See the
 [generation guide](../../../docs/workbench/cosmos3-generate.md) for the upstream
 empty-model preset, restored media filter, and RTX PRO 6000 regression evidence.
 

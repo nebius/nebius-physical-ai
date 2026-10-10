@@ -63,6 +63,11 @@ PYPI_JSON = "https://pypi.org/pypi/lerobot/{version}/json"
 # (module, symbol, call-site provenance). symbol=None checks the module only.
 IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
     (
+        "lerobot.policies.factory",
+        "get_policy_class",
+        ("npa/src/npa/server/app.py",),
+    ),
+    (
         "lerobot.envs.configs",
         "PushtEnv",
         ("npa/src/npa/workflows/lerobot_transfer_eval.py",),
@@ -240,6 +245,12 @@ CALLABLE_PARAMS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
         "npa/server/app.py",
     ),
     (
+        "lerobot/policies/pretrained.py",
+        "PreTrainedPolicy.from_pretrained",
+        ("config",),
+        "npa/server/app.py (get_policy_class(...).from_pretrained)",
+    ),
+    (
         "lerobot/policies/utils.py",
         "prepare_observation_for_inference",
         ("observation", "device", "task", "robot_type"),
@@ -296,7 +307,9 @@ B300_IMAGE_PINS: dict[str, str] = {
 MANIFEST_PIN_KEYS = {
     "torch_pin": "torch",
     "torchvision_pin": "torchvision",
+    "torchcodec_pin": "torchcodec",
     "diffusers_pin": "diffusers",
+    "wandb_pin": "wandb",
 }
 
 
@@ -849,6 +862,17 @@ def check_cli_flags(
         if "pretrained_path" in policy_fields
         else "PreTrainedConfig.pretrained_path missing",
     )
+    report.add(
+        "policy-peft-flag",
+        "use_peft" in policy_fields,
+        "PreTrainedConfig.use_peft present"
+        if "use_peft" in policy_fields
+        else "PreTrainedConfig.use_peft missing",
+        # PolicyState treats this as optional metadata and takes the native
+        # saved-shape loader when it is absent. Keep the release audit useful
+        # without contradicting that supported fallback.
+        warn="use_peft" not in policy_fields,
+    )
 
     parser = root / "lerobot" / "configs" / "parser.py"
     has_path_key = parser.exists() and 'PATH_KEY = "path"' in parser.read_text(
@@ -939,6 +963,37 @@ def check_dependency_bounds(
             "manifest torch pins",
             True,
             "manifest forces no torch pins for this version (upstream resolver decides)",
+        )
+        return
+
+    if manifest_entry.get("package_source") == "npa-secure-integration":
+        constraint_path = (
+            REPO_ROOT
+            / "npa"
+            / "docker"
+            / "workbench"
+            / "lerobot"
+            / "default-runtime-requirements.txt"
+        )
+        expected: dict[str, str] = {}
+        if constraint_path.exists():
+            for line in constraint_path.read_text(encoding="utf-8").splitlines():
+                if line and not line.startswith("#"):
+                    requirement = Requirement(line)
+                    expected[canonicalize_name(requirement.name)] = _pin_floor(line)
+        problems = [
+            f"{package}=={pinned} does not match secure constraint "
+            f"{expected.get(package, 'missing')}"
+            for package, pinned in sorted(pins.items())
+            if expected.get(package) != pinned
+        ]
+        report.add(
+            "manifest torch pins",
+            not problems,
+            "NPA secure integration pins match its reviewed runtime constraints; "
+            "stock PyPI bounds are intentionally not applied"
+            if not problems
+            else "; ".join(problems),
         )
         return
 

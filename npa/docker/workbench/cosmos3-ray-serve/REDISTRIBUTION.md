@@ -3,8 +3,9 @@
 Decision: `public`, subject to exact-image payload/security scans and independent
 real-GPU acceptance on every advertised CUDA target.
 
-- The digest-pinned parent is the accepted public `npa-cosmos3` image. It carries
-  NVIDIA cosmos-framework 1.2.2 source at commit
+- The digest-pinned parent is the repaired main-source Cosmos3 development
+  candidate, pending acceptance and not a public default. It carries NVIDIA
+  cosmos-framework 1.2.2 source at commit
   `5e67049cd94acb667786f1e6dd0dab821cb90c97` under OpenMDW-1.1 and its frozen
   CUDA 13 inference environment.
 - The new layer contains only NPA's Apache-2.0 CLI/client/ingress code. It uses

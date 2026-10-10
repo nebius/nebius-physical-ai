@@ -1,57 +1,46 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "182e87fef09fcdd7d081ba4b843d90c150a2ac9a8f74a62e3f05156b2c81d7c8",
+  "workflow_sha256": "5f7a56712b382b93c4c980e2b179d6135dd3b4f11d3f7a021ef48057dd1797c0",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec --run-id preview pass; eight executable states.",
+      "reason": "Schema loads. Missing required operator images fail before planning where declared; supplied exact image fixtures reach the production renderer. Governed public Isaac defaults remain quarantined. Offline checks do not qualify image bytes or workloads.",
       "evidence": [
-        "npa/tests/orchestration/npa_workflow/test_scan_to_policy_demo.py"
+        "npa/tests/orchestration/npa_workflow/test_required_immutable_image_inputs.py",
+        "npa/tests/cli/test_workflow_required_images.py"
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "Fresh native execution completed 500 PPO updates and 16 million transitions, then passed 3,386/4,000 held-out routes (84.65%) against the unchanged 80% gate. The first evaluation failed before scoring on a compute-only target; recovery reused the exact sealed checkpoint, recipe and source on a graphics-qualified RTX target. Eight logical stages completed across the original run and recovery. This qualifies navigation in the reconstructed scene, not unseen-site or physical-robot transfer.",
-      "evidence": [
-        "docs/workbench/guides/rgbd-scan-to-policy-demo.md",
-        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
-      ]
+      "status": "unverified",
+      "reason": "The original workflow and readiness record are preserved under docs/workbench/evidence/workflow-defaults-807/. Image-default changes require fresh workload qualification; historical live evidence does not accept the current specification.",
+      "evidence": []
     }
   },
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "A configured project and writable run-scoped bucket must pass submission preflight.",
+      "reason": "The selected project and run-scoped storage must pass current submission preflight.",
       "evidence": []
     },
     "worker_input": {
-      "status": "verified",
-      "reason": "The public TUM capture was fetched with its expected archive hash and consumed by the complete workflow. Measured reconstruction used 1,984 integration frames and 501 withheld depth frames; 501 native PhysX rays verified the 921,561-triangle collision scene. Future input overrides require their own geometry and calibration checks.",
-      "evidence": [
-        "npa/tests/workbench/test_nurec_navigation_sample.py",
-        "docs/workbench/guides/rgbd-scan-to-policy-demo.md",
-        "docs/workbench/evidence/public-demos/real-to-sim.json",
-        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
-      ]
+      "status": "unverified",
+      "reason": "Inputs and applicable access/terms must be checked for the current run; historical sample evidence remains bound to its original workflow.",
+      "evidence": []
     },
     "credentials": {
       "status": "unverified",
-      "reason": "Runtime requires configured object-storage credentials and access to the pinned Isaac image. Public TUM sample needs no model token.",
+      "reason": "Current storage and runtime credentials must pass preflight.",
       "evidence": []
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The selected immutable SONIC and Isaac development images were exercised by the fresh pipeline. Independent observations bound both native main CUDA processes and their running containers to the exact Isaac digest. These workflow pins do not promote either image to a supported release; each future run still needs image and source preflight.",
-      "evidence": [
-        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
-      ]
+      "reason": "Select independently qualified operator images or wait for governed public acceptance; immutable identity alone does not qualify exact bytes.",
+      "evidence": []
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The full 4,000-environment, 500-update training and 4,000-case evaluation completed on RTX PRO 6000 Blackwell. Evaluation required a graphics-qualified target; CUDA availability alone was insufficient. Each new target must verify the NVIDIA runtime class, GLX/EGL mounts, NVIDIA Vulkan device and GPU/runtime/scratch health.",
-      "evidence": [
-        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
-      ]
+      "reason": "The current exact image set must complete the advertised native workload on the selected GPU target.",
+      "evidence": []
     }
   }
 }
