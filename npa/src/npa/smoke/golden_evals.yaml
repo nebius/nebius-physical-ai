@@ -1161,7 +1161,7 @@ containers:
       network: >-
         Runtime-only CUDA closure plus operator-authorized public raw
         HuggingFaceVLA LIBERO source and LingBot checkpoints.
-      external_fetch: [pytorch-cu126, huggingface]
+      external_fetch: [pytorch-cu130, huggingface]
       notes: >-
         No image is currently qualified. The private source-only candidate
         fetches CUDA, checkpoints, and the exact CC-BY-4.0 raw LeRobot source

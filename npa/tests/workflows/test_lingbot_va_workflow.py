@@ -29,6 +29,8 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows/testing/lingbot-va-libero-long.yaml"
 DOCKERFILE = ROOT / "npa/docker/workbench/lingbot-va/Dockerfile"
 STORAGE_HELPER = DOCKERFILE.parent / "lingbot_va_storage.py"
+GOLDEN_EVALS = ROOT / "npa/src/npa/smoke/golden_evals.yaml"
+GUIDE = ROOT / "docs/workbench/lingbot-va.md"
 
 
 class _PinnedLeRobotTensor:
@@ -515,6 +517,23 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
         not in dockerfile
     )
     assert "/usr/share/doc/npa-lingbot-va" in dockerfile
+
+
+def test_catalog_and_guide_keep_the_runtime_and_reader_evidence_boundaries() -> None:
+    """The unbuilt candidate must not describe a stale CUDA channel or test seam as native execution."""
+    manifest = yaml.safe_load(GOLDEN_EVALS.read_text(encoding="utf-8"))
+    guide = GUIDE.read_text(encoding="utf-8")
+
+    assert manifest["containers"]["lingbot-va"]["safety"]["external_fetch"] == [
+        "pytorch-cu130",
+        "huggingface",
+    ]
+    assert "does not execute an installed LeRobot reader" in guide
+    assert (
+        "Installed-reader execution with the pinned `datasets==5.0.1` remains an image-qualification gate"
+        in guide
+    )
+    assert "independently exercises the installed native reader" not in guide
 
 
 def test_parent_os_security_patch_is_narrow_and_runtime_independent() -> None:
