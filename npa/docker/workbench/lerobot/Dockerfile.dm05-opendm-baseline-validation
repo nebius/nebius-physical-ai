@@ -103,10 +103,11 @@ LABEL org.opencontainers.image.source="https://github.com/dexmal/opendm" \
 
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 WORKDIR /opt/opendm
-ENTRYPOINT ["python", "-m", "npa.server.app"]
 
 USER root
 
+COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
+    /usr/local/bin/npa-workflow-entrypoint
 COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/dm05-opendm-baseline-runtime-manifest.json /opt/opendm/dm05-libero-baseline-runtime.json
 COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/DM05-OPENDM-BASELINE-ATTRIBUTION.md /opt/opendm/DM05-OPENDM-BASELINE-ATTRIBUTION.md
 
@@ -118,3 +119,4 @@ ENV NPA_DM05_OPENDM_RUNTIME_MANIFEST=/opt/opendm/dm05-libero-baseline-runtime.js
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
 USER ubuntu
+ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]

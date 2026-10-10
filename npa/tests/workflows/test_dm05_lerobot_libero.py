@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import shlex
 import shutil
@@ -472,7 +472,11 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     assert 'validation-disposition="operator-private-no-publication"' in instructions
     assert "AS dm05-sanitized-parent" in instructions
     assert "FROM scratch\nCOPY --from=dm05-sanitized-parent / /" in instructions
-    assert 'ENTRYPOINT ["python", "-m", "npa.server.app"]' in instructions
+    assert (
+        "COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh "
+        "\\\n    /usr/local/bin/npa-workflow-entrypoint"
+    ) in instructions
+    assert 'ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]' in instructions
     assert "checkout --detach 7d52f1591437332cb0157be3303c1c46da811344" in instructions
     assert "checkout --detach 789b87f50d9fadc7663d2e8bac057941221aab81" in instructions
     assert "checkout --detach 8f1084e3132a39270c3a13ebe37270a43ece2a01" in instructions
@@ -499,7 +503,9 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     libero_dependencies_block = instructions[
         instructions.index(
             "RUN /opt/libero-venv/bin/python --version"
-        ) : instructions.index("\n\nCOPY --chown=ubuntu:ubuntu")
+        ) : instructions.index(
+            "\n\n# The pinned parent includes a static, sample-media JWT URL"
+        )
     ]
     for environment, dependency_block in (
         ("/opt/opendm-venv", opendm_dependencies_block),
@@ -563,6 +569,23 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     )
 
 
+def test_opendm_private_runtime_entrypoint_forwards_orchestrator_argv():
+    entrypoint = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/common/workflow_runtime_entrypoint.sh"
+    )
+
+    completed = subprocess.run(
+        ["bash", str(entrypoint), "/bin/sh", "-c", "printf dm05-entrypoint-ready"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "dm05-entrypoint-ready"
+
+
 def test_opendm_flattened_final_stage_restores_nonroot_runtime_user():
     dockerfile = (
         Path(__file__).resolve().parents[2]
@@ -578,7 +601,12 @@ def test_opendm_flattened_final_stage_restores_nonroot_runtime_user():
     assert final_stage.index("COPY --chown=ubuntu:ubuntu") < final_stage.rindex(
         "USER ubuntu"
     )
-    assert final_stage.rstrip().endswith("USER ubuntu")
+    assert final_stage.index("USER ubuntu") < final_stage.index(
+        'ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]'
+    )
+    assert final_stage.rstrip().endswith(
+        'ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]'
+    )
 
 
 def test_opendm_parent_jwt_sanitizer_executes_the_dockerfile_ere(tmp_path):
