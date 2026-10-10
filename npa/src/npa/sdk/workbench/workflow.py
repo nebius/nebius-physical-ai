@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from npa.orchestration.npa_workflow.batch import batch_status, run_batch
+from npa.orchestration.npa_workflow.batch_plan import plan_batch
+from npa.workflows.data_factory_input_diagnostics import check_paidf_input
+
 from npa.orchestration.skypilot.workflow_state import (
     WorkflowS3Config,
     list_artifacts,
@@ -13,6 +17,24 @@ from npa.orchestration.skypilot.workflow_state import (
     read_stage_status,
     resolve_workflow_s3_config,
 )
+
+
+def schema() -> dict[str, Any]:
+    """Return the authoritative JSON Schema for workflow editor integrations.
+
+    Args:
+        None.
+
+    Returns:
+        A fresh parsed JSON Schema for supported ``npa.workflow`` documents.
+
+    Raises:
+        FileNotFoundError: The bundled schema is unavailable from the installation.
+        ValueError: The bundled schema is not a JSON object.
+    """
+    from npa.orchestration.npa_workflow.schema_export import load_workflow_schema
+
+    return load_workflow_schema()
 
 
 def status(
@@ -122,4 +144,14 @@ def _state(
     )
 
 
-__all__ = ["artifacts", "logs", "runs", "status"]
+__all__ = [
+    "artifacts",
+    "logs",
+    "runs",
+    "schema",
+    "status",
+    "plan_batch",
+    "run_batch",
+    "batch_status",
+    "check_paidf_input",
+]
