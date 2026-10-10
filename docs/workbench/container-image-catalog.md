@@ -508,8 +508,9 @@ the original source and bytecode before flattening the sanitized filesystem;
 derivatives must be rebuilt from that corrected parent to discard the old
 bytes from their layers. These are source repairs:
 newly built images must still pass all publication scans and real capability
-validation before any public default is restored. Historical releases remain
-quarantined.
+validation before any public default is restored. The affected historical
+releases remain quarantined; this source repair does not change other published
+defaults.
 
 The scan-to-policy workflow selects repaired immutable development candidates
 for Isaac Lab and SONIC, and the GR00T training workflow selects a development

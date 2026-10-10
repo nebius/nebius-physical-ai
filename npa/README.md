@@ -19,9 +19,13 @@ including `rerun heldout-only`, still requires qualified component images.
 For `rerun regen` and `rerun heldout-only`, explicit `--s3-bucket` and
 `--s3-endpoint` override their corresponding project coordinates. With
 `--project`, a complete isolated project record supplies the remaining bucket,
-endpoint, and client credentials; an unknown or incomplete record refuses rather
-than falling back to host credentials or environment settings. Without
-`--project`, the existing Sim2Real environment settings apply. For `workbench
+endpoint, and client credentials for `regen` and its CLI-side artifact work in
+`heldout-only`; the submitted held-out evaluation stage keeps its configured
+workload storage authority and does not receive those project client credentials.
+An unknown or incomplete record refuses rather than falling back to host
+credentials or environment settings. Without `--project`, the existing Sim2Real
+environment settings apply. `rerun serve --project` retains its legacy
+saved/default-project and environment fallback behavior. For `workbench
 health sim2real`, `--project` applies when the selected checks include `s3`: it
 supplies the reachability-probe target and isolated credentials unless the
 corresponding S3 flag is explicit. It has no effect on selections without `s3`.

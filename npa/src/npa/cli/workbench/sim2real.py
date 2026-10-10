@@ -777,7 +777,13 @@ def _rerun_serve_credentials() -> tuple[str, str]:
 def rerun_serve_command(
     run_id: str = typer.Option(..., "--run-id", help="Completed Sim2Real run id."),
     project: str = typer.Option(
-        "", "--project", "-p", help="Project alias for storage resolution."
+        "",
+        "--project",
+        "-p",
+        help=(
+            "Project alias for legacy serve storage resolution; saved/default and "
+            "environment fallback remain enabled."
+        ),
     ),
     cluster_name: str = typer.Option(
         "",
