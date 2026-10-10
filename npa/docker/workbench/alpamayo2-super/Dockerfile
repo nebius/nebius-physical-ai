@@ -18,6 +18,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/workspace/.cache/huggingface \
     MPLCONFIGDIR=/workspace/.cache/matplotlib \
     PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     TORCH_CUDA_ARCH_LIST="9.0;10.0;12.0" \
     UV_PROJECT_ENVIRONMENT=/opt/alpamayo2/.venv \
     UV_CACHE_DIR=/tmp/uv-cache \
@@ -65,6 +66,7 @@ RUN python3.12 -m venv /opt/uv \
       -r /tmp/alpamayo2-security-upgrades.txt \
     && /opt/uv/bin/uv pip check --python .venv/bin/python \
     && rm -f /tmp/alpamayo2-security-upgrades.txt \
+    && rm -rf /tmp/uv-cache /opt/alpamayo2/.venv/lib/python3.12/site-packages/pyarrow/tests \
     && /opt/alpamayo2/.venv/bin/python - <<'PY'
 import torch
 flags = set(torch._C._cuda_getArchFlags().split())
@@ -74,7 +76,11 @@ PY
 COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa
 RUN python3.12 -m venv /opt/npa-venv \
-    && /opt/npa-venv/bin/pip install --no-cache-dir 'uvicorn==0.41.0' /opt/npa-src \
+    && /opt/npa-venv/bin/pip install --no-cache-dir --no-compile 'uvicorn==0.41.0' /opt/npa-src \
+    && rm -rf /opt/npa-venv/lib/python3.12/site-packages/pyarrow/tests \
+      /opt/npa-venv/lib/python3.12/site-packages/boto3/examples \
+    && find /opt/npa-venv /opt/alpamayo2/.venv -type d -name __pycache__ -prune -exec rm -rf {} + \
+    && find /opt/npa-venv/lib/python3.12/site-packages/botocore/data -name 'examples-1.json' -delete \
     && rm -rf /root/.cache /tmp/uv-cache /tmp/pip-* \
     && test -z "$(find /opt/alpamayo2 /opt/npa-src /opt/npa-venv \
       \( -iname '*.safetensors' -o -iname '*.ckpt' -o -iname 'pytorch_model*.bin' \) \
