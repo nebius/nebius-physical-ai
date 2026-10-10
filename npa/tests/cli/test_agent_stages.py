@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import secrets
 from pathlib import Path
@@ -707,9 +708,36 @@ def test_report_summary_uses_bounded_object_read_without_persisting_download() -
     report_block = runtime_source.split("if report_artifact:", 1)[1].split(
         "stage_summary =", 1
     )[0]
-    assert (
-        "_read_bounded_json_object(s3, run_bucket, report_artifact.key)" in report_block
-    )
+    report_reads = [
+        node
+        for node in ast.walk(ast.parse(runtime_source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_read_bounded_json_object"
+        and any(
+            isinstance(argument, ast.Attribute)
+            and isinstance(argument.value, ast.Name)
+            and argument.value.id == "report_artifact"
+            for argument in node.args
+        )
+    ]
+    assert len(report_reads) == 1
+    call = report_reads[0]
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "s3",
+        "run_bucket",
+        "report_artifact.key",
+    ]
+    assert [(keyword.arg, ast.unparse(keyword.value)) for keyword in call.keywords] == [
+        (
+            "max_bytes",
+            "_MAX_RUN_REPORT_BYTES if publication_snapshot.journaled else _MAX_STAGE_EVIDENCE_BYTES",
+        ),
+        (None, "read_identity"),
+    ]
+    from npa.cli.agent_stage_runtime import _MAX_RUN_REPORT_BYTES
+
+    assert _MAX_RUN_REPORT_BYTES == 16 * 1024 * 1024
     assert "download_s3_uri" not in report_block
     assert "RECORDINGS_DIR" not in report_block
 

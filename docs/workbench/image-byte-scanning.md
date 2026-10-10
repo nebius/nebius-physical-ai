@@ -56,6 +56,37 @@ changed executable bytes from running.
 
 ## Run and inspect
 
+### Original OCI archives
+
+The generic structural verifier accepts an original OCI archive with one Linux
+amd64 runtime and supported BuildKit attestations. It binds the independently
+obtained image index digest, archive hash, config, ordered layer digests and
+decoded ancestor-file population. It does not require conversion to a Docker
+save archive. Existing cuRobo, NCore, RoboTwin and Habitat verifier contracts are
+unchanged.
+
+```bash
+npa/.venv/bin/python npa/scripts/image_byte_scan/oci_verification.py \
+  --analysis-root "$SCAN_ROOT" --trusted-root "$PWD" \
+  --archive "$OCI_ARCHIVE" --expected-image-id "$EXPECTED_IMAGE_INDEX_DIGEST" \
+  --output-dir "$SCAN_ROOT/oci-verification"
+```
+
+Pass the resulting `verification.json` to `prepare.py authorize` together with
+the same archive and expected image identity. The report uses
+`npa.image.oci-verification.v1`. Normal dependency, confidentiality-policy,
+complete-byte and helper-completion checks still apply. A structural report's
+`valid` field does not mean the image passed those checks or product validation.
+Keep the original archive immutable; transformed archives need new verification
+and scans. Unsupported archive metadata remains a failure.
+
+This generic path does not enable finding adjudication: `adjudicate.py` retains
+its existing product and Docker-save requirements. Findings, missing policy and
+unfinished scans remain failures. GPU functionality, licensing, vulnerabilities,
+runtime provenance and publication authorization remain separate requirements.
+
+### Authorize and scan
+
 Use `prepare.py authorize --help` to prepare an authorization from the exact
 archive, successful cuRobo verifier report, expected image identity, and native
 dependency receipts. For CI policy mode, provide the denylist values through the

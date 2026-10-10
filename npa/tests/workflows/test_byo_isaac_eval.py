@@ -40,6 +40,7 @@ def test_policy_inference_provenance_requires_learned_actor_only() -> None:
         checkpoint_uri="s3://bucket/model.pt",
         checkpoint={"sha256": "a" * 64, "size_bytes": 123},
     )
+    assert provenance["generator_policy_sha256"] == "a" * 64
     assert provenance["actor_is_learned"] is True
     assert provenance["policy_composition"] == "learned_actor_only"
     assert provenance["scripted_post_actor_controller"] is False
@@ -415,6 +416,17 @@ def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
             "applied_scenarios": {
                 "records": [{"scenario_config_digest": "cfg-1", "applied_count": 1}]
             },
+            "render_episodes": [{"env_id": "gold-1", "frames": ["camera-000.png"]}],
+        },
+    )
+    monkeypatch.setattr(
+        ev,
+        "_render_frame_artifacts",
+        lambda _root, _episodes: {
+            "gold-1/camera-000.png": {
+                "sha256": "d" * 64,
+                "size_bytes": 16,
+            }
         },
     )
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")

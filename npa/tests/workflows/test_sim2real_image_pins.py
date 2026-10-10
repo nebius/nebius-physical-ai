@@ -210,6 +210,9 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
     assert "ARG DEBIAN_SNAPSHOT=20261002T000000Z" in dockerfile
+    assert "ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1" in dockerfile
+    assert "apt-get upgrade -y --no-install-recommends" in dockerfile
+    assert 'dpkg --compare-versions "${installed}" ge "$2"' in dockerfile
     assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in dockerfile
     assert "npa-exact-source.pth" in dockerfile
     assert "env -u PYTHONPATH python -c" in dockerfile

@@ -36,6 +36,38 @@ outputs pass validation, and resubmits only incomplete work. Consequently a
 restart at the Stage 8/9 barrier or during finalization reconciles from the
 same workflow/S3 state instead of reconstructing private controller memory.
 
+Stage 14 publishes report, RRD, MCAP and its ComponentRecord as one generation.
+Each artifact has an immutable source; the publication journal records all four
+byte identities before mutable aliases advance. Readers require a committed
+journal and verify the selected immutable bytes, so an interrupted publication
+returns a conflict instead of exposing a mixture of generations. A later writer
+can recover the complete planned generation from its immutable sources. Legacy
+alias readers remain available only when no journal exists and recheck that
+condition after reading.
+
+Canonical archive regeneration separates immutable input authority from its
+current writer. The retained report source and upstream ComponentRecords remain
+unchanged; the input report byte hash and preceding Stage14 history are preserved.
+A digest-attested replay task binds its actual source, image and job to the new
+recording generation and byte hashes, even when its source differs from those
+historical inputs. It does not inherit their execution or device claims. An
+unattested host CLI may emit a local preview but cannot rewrite or publish
+canonical report/ComponentRecord authority.
+
+Publication also verifies upstream authority: every ComponentRecord must match
+the workflow source revision, the selected learned checkpoint must match its
+validation and gold inference evidence, and downloaded gold PNGs must match the
+producer's frame hashes. Stage 11 and Stage 14 use the configured promotion
+threshold and early-exit policy. Strict policy success and pipeline completion
+remain separate results.
+
+The held-out-only diagnostic command stores a new report and renders under a
+unique evaluation-attempt prefix. It does not advance the canonical Stage 10
+report, final publication journal or workflow decision. Advance those authorities
+through the canonical workflow and its resume path. An archived run with a
+different source revision or incomplete frame/checkpoint authority requires a new
+run; changing its metadata cannot qualify it for current publication.
+
 ## Execution ownership
 
 SkyPilot/Kubernetes owns each state Job. Isaac rollout, PPO, and evaluation run

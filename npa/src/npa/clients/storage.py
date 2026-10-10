@@ -16,6 +16,7 @@ import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
+from botocore.httpchecksum import StreamingChecksumBody
 
 _MULTIPART_THRESHOLD = 8 * 1024 * 1024
 _PART_SIZE = 64 * 1024 * 1024
@@ -99,6 +100,44 @@ _TOTAL_TRANSFER_THREAD_BUDGET = 16
 _MAX_PER_FILE_TRANSFER_CONCURRENCY = 10
 
 _T = TypeVar("_T")
+
+
+def _normalize_checksum_error_body(response_dict, **_kwargs):
+    body = response_dict.get("body")
+    if int(response_dict.get("status_code", 0)) < 300:
+        return
+    if not isinstance(body, StreamingChecksumBody):
+        return
+    # botocore's streaming checksum adapter can wrap an error after the HTTP
+    # adapter has already consumed its XML bytes. RestXMLParser requires bytes,
+    # not StreamingChecksumBody. Preserve the trusted HTTP status and standard
+    # retry/error parsing, without treating a stored object's checksum as an
+    # error-body checksum or changing successful response validation.
+    response_dict["body"] = b""
+    try:
+        body.close()
+    except (OSError, RuntimeError):
+        pass
+
+
+def register_s3_error_body_compat(client):
+    """Normalize only SDK-wrapped S3 GetObject errors, not successful bodies.
+
+    Args:
+        client: A boto3 S3 client, or a test transport without event support.
+    Returns:
+        The unchanged client with an idempotently registered response adapter.
+    Raises:
+        None for ordinary clients.
+    """
+    events = getattr(getattr(client, "meta", None), "events", None)
+    if events is not None:
+        events.register(
+            "before-parse.s3.GetObject",
+            _normalize_checksum_error_body,
+            unique_id="npa-s3-getobject-error-body-compat",
+        )
+    return client
 
 
 def _adaptive_transfer_config(file_count: int) -> TransferConfig:
@@ -300,19 +339,21 @@ class StorageClient:
                 "Storage endpoint URL is not configured. "
                 "Set AWS_ENDPOINT_URL or storage.endpoint_url in ~/.npa/config.yaml"
             )
-        self._s3 = boto3.client(
-            "s3",
-            endpoint_url=endpoint_url,
-            aws_access_key_id=aws_access_key_id or None,
-            aws_secret_access_key=aws_secret_access_key or None,
-            config=BotoConfig(
-                signature_version="s3v4",
-                retries={"max_attempts": 3, "mode": "adaptive"},
-                # Comfortably above the worst-case _TOTAL_TRANSFER_THREAD_BUDGET
-                # (16) concurrent connections a directory transfer can open,
-                # so they don't queue waiting for a free pooled connection
-                # (botocore's own default is 10).
-                max_pool_connections=24,
+        self._s3 = register_s3_error_body_compat(
+            boto3.client(
+                "s3",
+                endpoint_url=endpoint_url,
+                aws_access_key_id=aws_access_key_id or None,
+                aws_secret_access_key=aws_secret_access_key or None,
+                config=BotoConfig(
+                    signature_version="s3v4",
+                    retries={"max_attempts": 3, "mode": "adaptive"},
+                    # Comfortably above the worst-case _TOTAL_TRANSFER_THREAD_BUDGET
+                    # (16) concurrent connections a directory transfer can open,
+                    # so they don't queue waiting for a free pooled connection
+                    # (botocore's own default is 10).
+                    max_pool_connections=24,
+                ),
             ),
         )
 

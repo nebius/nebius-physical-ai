@@ -280,6 +280,7 @@ def authorize(args, directory):
         in (
             "npa.curobo.image-verification.v1",
             "npa.ncore.oci-verification.v1",
+            "npa.image.oci-verification.v1",
             "npa.robotwin.image-verification.v1",
         ),
         "accepted_graph_report_required",
