@@ -1,87 +1,19 @@
-# Slurm policy training with two evaluation gates
+# Operator Slurm policy adapter contracts
 
-[Workflow catalog](../../../workflows/README.md) ·
-[Workflow YAML](../../../workflows/testing/policy-training-slurm.yaml)
+The single shipped turnkey pipeline is
+[`robot-policy-train-and-serve.yaml`](../../../workflows/testing/robot-policy-train-and-serve.yaml),
+with its [operator cookbook](robot-policy-train-and-serve.md). It uses managed
+Kubernetes and torchrun and includes native training, measured gates, serving
+and standalone HTML/MP4 proof.
 
-This workflow runs CPU orchestration on Nebius Managed Kubernetes and submits
-training, evaluation, and policy-test jobs to an existing Slurm cluster. It
-requires operator-provided model scripts; it does not bundle a foundation model,
-simulation benchmark, robot controller, or synthetic-data generator.
-
-For the foundation-training design, public-data HTML/MP4 preview, Soperator
-launcher, event entry points and checkpoint evaluation hooks, see
-[Foundation-model training on Soperator](foundation-training.md). The local
-reference below is a contract test only.
-
-## Run the local contract demo
-
-From a checkout, with `uv` and `ffmpeg` installed:
-
-```bash
-bash npa/scripts/run_policy_training_demo.sh /tmp/policy-training-demo
-```
-
-The command creates or reuses `npa/.venv`, installs the `adapter` and `policy-demo`
-extras plus Chromium, generates all inputs, executes the existing workflow,
-and writes `index.html`, `demo.mp4`, `poster.png`, `evidence.json`, and
-`checksums.json`. Open `index.html` directly: it is self-contained, works offline,
-and supports chapter selection, timeline scrubbing, and held-out trial switching.
-The MP4 is a 45-second, 1440×810 walkthrough of those same measurements.
-Use a new output directory for each run; existing evidence is never overwritten.
-Append `--html-only` to omit MP4 encoding. The poster still requires Chromium.
-On minimal Linux hosts, install Chromium's system dependencies with
-`npa/.venv/bin/python -m playwright install --with-deps chromium` first.
-
-This is a **local CPU reference run** of the pipeline. It executes real FiftyOne,
-LeRobot v3 conversion (Parquet plus camera videos), NumPy behavior cloning,
-checkpoint verification, measured evaluation, and both retry loops. Its
-separate `demo_stage` entry point runs the supplied local worker; it does not invoke Slurm, SkyPilot, a foundation model, or robot hardware.
-The Slurm workflow and its deployment prerequisites below remain unchanged.
-
-The generated task is analytical Cartesian reaching. Of 132 source episodes,
-12 have unusably dark previews; actual FiftyOne filters keep 120 and split them
-into 108 training groups and two six-group holdouts. Labels come from the
-generator, rather than an object detector. The policy learns a linear map from
-target error to action with damped least-squares updates. Fine-tuning relabels
-only training actions for an actuator with half the nominal gain.
-
-Each holdout is evaluated from four initial-state variations per source episode:
-24 correlated trials, rather than 24 independent tasks. Success means a final
-target distance of at most 4 cm after 16 control steps. The first gate requires
-90% success in both nominal and perturbed actuator conditions; the second
-requires 90% with the slow actuator. These are two conditions of the same
-reference evaluator. The recorded terminal test rechecks the approved checkpoint
-on holdout two; it is not an additional independent generalization benchmark.
-Retries stop on measured success. Numerical optimizer convergence without a
-passing gate raises an error rather than producing a success artifact.
-
-The deterministic reference completes with three pretraining attempts and two
-fine-tuning attempts, then 24/24 terminal successes. These are reference-task
-measurements, not evidence of foundation-model quality or hardware readiness.
-The robot drawing uses inverse kinematics to illustrate recorded Cartesian
-positions; contacts and collisions are outside this reference environment.
-
-Raw requests, source datasets, checkpoints, and worker logs remain in the
-output's `private/` subdirectory. Share only the five named artifacts above.
-The HTML embeds an allowlisted report with no worker paths or request payloads
-and makes no network requests. The setup needs network access to install its
-dependencies; the generated workload needs no cloud credentials or customer data.
-
-The planar teaching worker can be submitted manually with
-[`policy_training_reference.sbatch`](../../../npa/scripts/policy_training_reference.sbatch)
-for Slurm transport experiments. Its `numpy-planar-reference` results cannot
-pass production batch validation or gates. The production CLI accepts only
-`local` (real Slurm clients) or `soperator` transport settings; copying a demo
-settings file cannot select the teaching trainer. The local demo uses FiftyOne
-1.22.0; the separately qualified workflow image uses 1.21.0. These are distinct
-environments, not a claim of identical dependency versions.
-
-Committed live coverage can reproduce the reference, including MP4 export:
-
-```bash
-NPA_E2E_POLICY_DEMO=1 npa/.venv/bin/python -m pytest \
-  npa/tests/e2e/test_policy_training_live.py -k turnkey_reference_demo -q
-```
+This page documents the existing Slurm adapter for operator-owned model scripts.
+It is not another turnkey recipe. It requires a privately authored workflow,
+real training and evaluation scripts, and access to the selected Slurm or
+Soperator allocation. The adapter does not bundle a model, simulator or robot
+controller. Its contract tests retain a JSON fixture under `npa/tests/fixtures/`;
+the NumPy planar teaching worker cannot pass production validation or gates.
+See [training design and batch adapters](foundation-training.md) for distributed
+launch recipes, data mixtures and checkpoint hooks.
 
 ```mermaid
 flowchart LR
@@ -258,35 +190,14 @@ execution permission are operator prerequisites. Staging NPA source does not
 stage these dependencies. The existing FiftyOne workbench image serves curation;
 use a validated immutable image override when required by the deployment.
 
-## Validate and run
+## Using operator scripts
 
-Validate and preview without submitting jobs:
-
-```bash
-npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/policy-training-slurm.yaml --json
-npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/policy-training-slurm.yaml \
-  --run-id policy-preview --assume-decision promote_checkpoint --check-render --json
-npa/.venv/bin/npa workbench workflow run-spec --run-id policy-preview \
-  --plan-only --scheduler-plan --assume-decision promote_checkpoint --json \
-  workflows/testing/policy-training-slurm.yaml
-```
-
-The plan previews one iteration per condition-only loop. Runtime submission is
-mandatory; a static submission cannot flatten the measured retries correctly.
-After storage, access, worker images, service-account access, and scripts have
-been verified, use the generic submission command:
-
-```bash
-npa/.venv/bin/npa workbench workflow submit workflows/testing/policy-training-slurm.yaml \
-  --runtime --stage-src --run-id "$POLICY_RUN_ID" \
-  --var "bucket=$NPA_S3_BUCKET" --var "slurm_service_account=$POLICY_SERVICE_ACCOUNT"
-```
-
-Review `curation/episodes.json`, `splits/index.json`, each numbered training and
-evaluation attempt, and `deployment/result.json` under the run prefix. A planning
-success is not a training result. The
-[readiness record](../../../workflows/testing/policy-training-slurm.readiness.json)
-records which execution prerequisites have actually been verified.
+Private workflows that call these adapters must use runtime submission for
+condition-only promotion loops. Validate and plan the private spec with the
+standard Workbench commands, then verify its storage, access, worker images,
+service account and scripts before submission. A successful plan proves neither
+training nor model quality. These contracts have no separately shipped YAML or
+live-matrix recipe; the public train-and-serve workflow is the canonical entry.
 
 ## Tests and cleanup
 
@@ -311,8 +222,8 @@ NPA_INTEGRATION_E2E=1 FIFTYONE_DO_NOT_TRACK=1 npa/.venv/bin/python -m pytest \
 The second test submits the real Slurm pipeline only when
 `NPA_E2E_POLICY_TRAINING_SPEC`, `NPA_E2E_POLICY_TRAINING_RUN_ID`, and
 `NPA_E2E_POLICY_TRAINING_RESULT_URI` identify a privately prepared spec and run.
-It checks the terminal policy-test result. The general submit matrix retains
-an explicit plan-only entry because these operator-owned inputs are not shipped.
+It checks the terminal policy-test result. These operator-owned inputs are not
+shipped; the general submit matrix registers only the canonical public workflow.
 
 Cancel the workflow before deleting its artifacts or changing the cluster.
 Confirm any submitted Slurm job has stopped, especially after a disconnected

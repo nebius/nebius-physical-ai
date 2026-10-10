@@ -729,5 +729,5 @@ used `--assume-decision promote_checkpoint`.
 promise that the live run will finish after one iteration. Use iteration-specific
 output paths with `{{loop.<state-name>}}` to preserve evidence and prevent cached
 results from being reused across attempts. The
-[Slurm policy pipeline](cookbooks/policy-training-slurm.md) demonstrates two
+[robot policy train-and-serve pipeline](cookbooks/robot-policy-train-and-serve.md) demonstrates two
 independent gates.

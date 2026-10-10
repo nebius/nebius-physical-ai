@@ -18,7 +18,7 @@ from npa.workflows.policy_training.turnkey_training import decide
 
 SPEC = (
     Path(__file__).resolve().parents[3]
-    / "workflows/testing/policy-public-training.yaml"
+    / "workflows/testing/robot-policy-train-and-serve.yaml"
 )
 
 

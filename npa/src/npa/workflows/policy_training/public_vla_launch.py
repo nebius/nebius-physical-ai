@@ -13,8 +13,6 @@ import subprocess
 import tarfile
 import uuid
 
-import yaml
-
 IMAGE = "ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643"
 MODULE = "npa.workflows.policy_training.public_vla"
 PYTHON = "/opt/lerobot/venv/bin/python"
@@ -216,10 +214,46 @@ def _pod_spec():
             f"exec {PYTHON} -u -m {MODULE} --input-path /pipeline/recipe.json --output-path /work/run",
         ]
     )
-    template = Path(__file__).with_name("public-vla-pod.yaml")
-    spec = yaml.safe_load(template.read_text())["spec"]
-    spec["containers"][0].update(image=IMAGE, command=["bash", "-c", command])
-    return spec
+    return {
+        "restartPolicy": "Never",
+        "automountServiceAccountToken": False,
+        "securityContext": {"runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000},
+        "containers": [_pipeline_container(command)],
+        "volumes": [
+            {"name": "artifacts", "persistentVolumeClaim": {"claimName": "pipeline"}},
+            {"name": "source", "configMap": {"name": "pipeline"}},
+            {"name": "shm", "emptyDir": {"medium": "Memory", "sizeLimit": "16Gi"}},
+        ],
+    }
+
+
+def _pipeline_container(command):
+    return {
+        "name": "pipeline",
+        "image": IMAGE,
+        "command": ["bash", "-c", command],
+        "securityContext": {
+            "readOnlyRootFilesystem": True,
+            "allowPrivilegeEscalation": False,
+            "runAsNonRoot": True,
+            "capabilities": {"drop": ["ALL"]},
+        },
+        "env": [
+            {"name": "NVIDIA_DRIVER_CAPABILITIES", "value": "compute,utility,graphics"},
+            {"name": "TMPDIR", "value": "/work/tmp"},
+            {"name": "XDG_CACHE_HOME", "value": "/work/cache"},
+        ],
+        "resources": {
+            "requests": {"cpu": "16", "memory": "96Gi"},
+            "limits": {"nvidia.com/gpu": "1"},
+        },
+        "volumeMounts": [
+            {"name": "artifacts", "mountPath": "/work"},
+            {"name": "source", "mountPath": "/pipeline", "readOnly": True},
+            # POSIX shared memory for dataloaders; bounded by the 16Gi emptyDir.
+            {"name": "shm", "mountPath": "/dev/shm"},  # nosec B108
+        ],
+    }
 
 
 def _submit_kubernetes(args):

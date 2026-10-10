@@ -14,8 +14,11 @@ except the explicitly public composition primitives `infra.fleet.deploy`,
 `infra.soperator.deploy`, `workbench.cosmos2.transfer`,
 `workbench.curobo.plan`, `workbench.foxglove.convert`, `workbench.insights.record`,
 `workbench.isaac_lab.byof_repo`, `workbench.lerobot.eval`,
-`workbench.vlm_eval.compare_preference`, and `workbench.vlm_eval.compare_judges`. The
-reusable-only list is machine-checked against `PUBLIC_REUSABLE_TOOLREFS`;
+`workbench.vlm_eval.compare_preference`, and `workbench.vlm_eval.compare_judges`.
+The four `workflow.policy_training.*` adapters are also reusable primitives for
+operator-owned batch inputs and scripts; they do not supply another turnkey
+recipe. The single public recipe uses `workflow.policy_public.*` stages.
+The reusable-only list is machine-checked against `PUBLIC_REUSABLE_TOOLREFS`;
 accidental dead entries fail the guardrail. The retired monolithic
 `workbench.sim2real.run` surface is intentionally absent.
 

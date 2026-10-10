@@ -64,7 +64,7 @@ def run_demo(output: Path, spec_path: Path, *, video: bool = True) -> dict:
 
     Args:
         output: New directory for private evidence and shareable HTML/MP4.
-        spec_path: Existing policy-training-slurm workflow YAML.
+        spec_path: Existing operator batch contract specification.
         video: Whether to render the HTML walkthrough to MP4.
     Returns:
         Sanitized summary of the completed run.

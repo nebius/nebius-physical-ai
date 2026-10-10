@@ -15,7 +15,8 @@ from npa.orchestration.npa_workflow.interpreter import run_workflow
 from npa.orchestration.npa_workflow.submit import spec_requires_runtime
 
 SPEC = (
-    Path(__file__).resolve().parents[4] / "workflows/testing/policy-training-slurm.yaml"
+    Path(__file__).resolve().parents[4]
+    / "npa/tests/fixtures/policy-training-slurm.json"
 )
 
 

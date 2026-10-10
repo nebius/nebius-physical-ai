@@ -22,7 +22,7 @@ from npa.workflows.policy_training.events import event_workflow
 from npa.workflows.policy_training.selection import select_training_data
 
 ROOT = Path(__file__).resolve().parents[3]
-TEMPLATE = ROOT / "workflows/testing/policy-training-slurm.yaml"
+TEMPLATE = ROOT / "npa/tests/fixtures/policy-training-slurm.json"
 
 
 @pytest.mark.parametrize(

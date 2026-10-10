@@ -1,6 +1,6 @@
-# Public policy training and deployed simulation proof
+# Robot policy: train and serve
 
-[One workflow YAML](../../../workflows/testing/policy-public-training.yaml)
+[One workflow YAML](../../../workflows/testing/robot-policy-train-and-serve.yaml)
 executes public SmolVLA continued training and deployment through the standard
 Workbench runtime. Every stage is discoverable in the tool catalog; the agent can
 validate, plan, submit, inspect artifacts, resume and cancel using the existing
@@ -22,8 +22,8 @@ kubeconfig for the checks and submission below.
 ```bash
 npa workbench health preflight --checks s3,nebius --project "<project>" --json
 npa skypilot verify --cluster "<context>" --kubeconfig "<kubeconfig>"
-npa workbench workflow validate-spec workflows/testing/policy-public-training.yaml --json
-npa workbench workflow submit workflows/testing/policy-public-training.yaml \
+npa workbench workflow validate-spec workflows/testing/robot-policy-train-and-serve.yaml --json
+npa workbench workflow submit workflows/testing/robot-policy-train-and-serve.yaml \
   --project "<project>" --infra "k8s/<context>" --runtime --stage-src \
   --max-wait-seconds 0 --image-bootstrap-timeout-seconds 0 \
   --var "bucket=<private-bucket>" \
@@ -100,9 +100,10 @@ NPA_INTEGRATION_E2E=1 NPA_POLICY_PUBLIC_RESULTS="<collected-run-directory>" \
 This implements the two training/gate loops and deployed benchmark-container
 pattern as a public executable baseline. It does not qualify in-house foundation
 pretraining, weighted customer data soup, physical robot transfer or concurrent
-client batching. It uses managed Kubernetes and torchrun, **not Slurm**. The
-separate [Slurm workflow](policy-training-slurm.md) supports operator training
-scripts and Soperator access. The SDG pipeline remains separate.
+client batching. It uses managed Kubernetes and torchrun, **not Slurm**. This is the single
+shipped recipe for this pipeline. Existing operator batch adapters are documented
+as [Slurm contracts](policy-training-slurm.md); they require private scripts and
+are not another turnkey workflow. The SDG pipeline remains separate.
 
 Runtime configuration: `NPA_WORKFLOW_SHA256` is supplied by the renderer;
 `NPA_VLA_RECOVERY_URI`, `NPA_VLA_RECIPE_SHA256` and
@@ -112,6 +113,10 @@ and stage errors retain private diagnostics under the stage's diagnostics prefix
 
 ## Recorded live qualification
 
-[Sanitized qualification record](../../../workflows/testing/evidence/policy-public-training-qualification.json) binds the workflow bytes, runtime source commit, changed checkpoints, both worker roles and exported media hashes. The complete standard runtime recorded 3727 pretrain updates, 2431 finetune updates; promotion results were finetune 7/10, pretrain 7/10. The independent two-GPU deployment completed 9/10 trials and reconciled all 947 served/applied actions. All three live artifact tests passed. Offline browser validation recorded zero network requests and JavaScript errors, with working video, chapter selection and mobile layout. Retry iterations actually observed: 0.
+The filename is `robot-policy-train-and-serve.yaml`. Its internal workflow name
+remains `policy-public-training` so the live-tested bytes and qualification digest
+are preserved; the rename changes no stages or runtime settings.
+
+[Sanitized qualification record](../../../workflows/testing/evidence/robot-policy-train-and-serve-qualification.json) binds the workflow bytes, runtime source commit, changed checkpoints, both worker roles and exported media hashes. The complete standard runtime recorded 3727 pretrain updates, 2431 finetune updates; promotion results were finetune 7/10, pretrain 7/10. The independent two-GPU deployment completed 9/10 trials and reconciled all 947 served/applied actions. All three live artifact tests passed. Offline browser validation recorded zero network requests and JavaScript errors, with working video, chapter selection and mobile layout. Retry iterations actually observed: 0.
 
 For an isolated local SkyPilot API, use its supported RSA service-account profile shape: `auth-type: service account`, `service-account-id`, `public-key-id`, and `private-key-file-path`. Normal derived token-cache renewal is supported with that stable key binding. Keep credential values outside the recipe and verify the selected operator profile before submission.

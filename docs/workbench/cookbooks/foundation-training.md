@@ -1,53 +1,21 @@
-# Foundation-model training on Soperator
+# Policy training design and operator batch adapters
 
-[Training workflow](../../../workflows/testing/policy-training-slurm.yaml) ·
-[Slurm contract cookbook](policy-training-slurm.md) ·
-[GR00T training](groot-1-7-training.md)
+[Single turnkey workflow](../../../workflows/testing/robot-policy-train-and-serve.yaml) ·
+[Operator cookbook](robot-policy-train-and-serve.md) ·
+[Slurm adapter contracts](policy-training-slurm.md)
 
-The training pipeline starts with a versioned robot corpus. Its stages are
-curation, multi-task training, checkpoint evaluation, task-specific fine-tuning,
-and policy evaluation. Data generation is a separate pipeline and is not part
-of this graph.
+Start with the single Workbench workflow for a fully implemented public-data
+baseline: pinned LeRobot data, real FiftyOne curation, grouped splits, native
+SmolVLA continued training, two promotion gates, checkpoint export, authenticated
+GPU serving and an independent GPU-rendered LIBERO client. It produces standalone
+HTML/MP4 proof from the actual run through standard catalog and runtime surfaces.
+Its qualified deployment scored 9/10 with all 947 served/applied actions
+reconciled. This is continued training of a pretrained model's action expert,
+not foundation pretraining from scratch. Data generation is a separate pipeline.
 
-For the integrated public-data path, start with
-[the single Workbench workflow](policy-public-training.md). Its catalog stages
-run FiftyOne curation, native SmolVLA training, both evaluation/gate loops,
-checkpoint export, authenticated GPU policy serving and an independent
-GPU-rendered LIBERO client, then produce same-run offline HTML/MP4 proof.
-That recipe uses managed Kubernetes plus torchrun. The older
-[VLA operator reference](public-vla-training.md) supports a direct Kubernetes
-Job or Slurm/Pyxis allocation outside the Workbench control plane.
-The preview below explains the larger architecture.
-
-## See the public-data preview
-
-With `uv` and `ffmpeg` installed, run:
-
-```bash
-bash npa/scripts/run-foundation-training-preview.sh /tmp/foundation-training-preview
-```
-
-This produces an offline `index.html`, a sixty-second 1920×1080 `demo.mp4`, a
-poster, source clips, attribution, the Apache-2.0 license, an evidence manifest
-and SHA256 checksums.
-Use a new destination. Add `--html-only` to omit MP4 export. Dependencies use the
-existing `adapter` and `policy-demo` extras and Playwright Chromium. On minimal
-Linux hosts, install Chromium system dependencies with
-`npa/.venv/bin/python -m playwright install --with-deps chromium`.
-
-The exporter fetches four existing demonstrations from the Apache-2.0
-[`lerobot/libero` dataset](https://huggingface.co/datasets/lerobot/libero/tree/a1aaacb7f6cd6ee5fb43120f673cebb0cfea7dd4).
-The immutable revision, original video checksums, episode timestamps, task labels,
-and transcoding outputs appear in `evidence.json`. The renderer never reads
-customer inputs, private run logs, or cloud configuration. The HTML embeds the
-clips, requires no server, and makes no network requests. Public download inputs
-are cached under `${XDG_CACHE_HOME:-$HOME/.cache}/npa/foundation-preview`.
-
-This is an **architecture preview**, not a completed foundation-training run.
-The animation is schematic and the footage is dataset material, not trained
-policy evaluation. There are no invented loss curves, GPU measurements, success
-rates, or before/after claims. The analytical reaching demo in the Slurm cookbook
-is a separate local contract test; it is not the foundation-model demonstration.
+The canonical recipe uses managed Kubernetes and torchrun. The following design
+contracts also support operator-owned Slurm/Soperator scripts and private
+workflows; they are not additional shipped turnkey recipes.
 
 ## Training requirements and implementation status
 
@@ -63,9 +31,9 @@ is a separate local contract test; it is not the foundation-model demonstration.
 | Checkpoint-triggered evaluation | A trainer hook hashes a completed checkpoint and its recovery files, atomically publishes a ready event, then submits an evaluation job with a durable receipt. This hook must be wired into the selected trainer's post-save barrier. |
 | Shared model server with benchmark clients | The public Workbench recipe deploys one checkpoint-bound GPU HTTP server and one independent GPU-rendered LIBERO client. Every returned/applied action is reconciled in the report. Concurrent clients and batching are not qualified by this recipe; the generic batch adapter does not supply a model server. |
 | Model recovery | The ready-event contract requires model, optimizer, scheduler, RNG and sampler files. The public SmolVLA reference has passed a one-GPU interruption/resume test through its final step. Other trainers and multi-node allocations require their own qualification. |
-| Final policy quality | The public SmolVLA reference records actual CUDA updates, 40 native rollout videos and an 8/10 final simulator score. These results do not qualify a different model, benchmark or physical robot. |
+| Final policy quality | The canonical workflow records 3727 multi-task updates, 2431 specialist updates, two 7/10 promotion scores and a separate 9/10 deployed simulation result. These results do not qualify a different model, benchmark or physical robot. |
 
-## Why Soperator is the default
+## Scheduling operator-owned batch jobs
 
 Soperator preserves Slurm scheduling while managing its cluster on Kubernetes.
 It supports shared storage, containerized jobs, gang scheduling, and cluster
@@ -78,10 +46,10 @@ replace the cluster scheduler, allocate Kubernetes nodes, or automatically save
 model state. The training script must save and restore its own state. See
 [PyTorch fault-tolerant training](https://docs.pytorch.org/tutorials/beginner/ddp_series_fault_tolerance.html).
 
-MK8s with torchrun can be a smaller deployment for an independent single-node
-job. For the full workflow, compare gang allocation, rendezvous, failure cleanup,
-checkpoint recovery, storage throughput and observability before replacing
-Slurm. No performance advantage for either path is claimed without measurements.
+The canonical workflow uses managed Kubernetes plus torchrun for its complete
+GPU training and serving path. Use the Slurm adapter when integrating existing
+operator batch jobs. Qualify gang allocation, rendezvous, failure cleanup, recovery
+and throughput for each different trainer and infrastructure configuration.
 
 Keep active datasets and checkpoints on the shared training filesystem. Archive
 versioned artifacts to private object storage. Keep online augmentation and model
@@ -107,18 +75,10 @@ Other kinds are `corpus-ready` (requires `episodes_uri`) and `dataset-arrived`
 task-specific fine-tuning and evaluation. New code/image selection remains in the
 private batch settings; an event never rewrites an existing shared environment.
 
-```bash
-npa/.venv/bin/python -m npa.workflows.policy_training.foundation event \
-  --input-path /tmp/training-event.json \
-  --template-path workflows/testing/policy-training-slurm.yaml \
-  --output-path /tmp/training-event.yaml
-npa/.venv/bin/npa workbench workflow validate-spec /tmp/training-event.yaml --json
-```
-
-The module materializes files only. Use the existing generic workflow
-`plan-spec` and runtime `submit` commands from the Slurm cookbook after verifying
-private inputs, access, storage, images, scripts and the exact runtime target.
-It creates no clusters and submits no jobs during preparation.
+The event adapter accepts an operator-owned batch workflow template. It
+materializes a private spec without creating clusters or submitting jobs.
+No batch template is shipped as another pipeline entry point; the JSON fixture
+used by contract tests does not supply the required private inputs or scripts.
 
 ## Select a training mixture
 
@@ -193,8 +153,8 @@ Hugging Face payload access before GPU execution:
 npa/.venv/bin/npa workbench health access --capability groot --json
 ```
 
-The preview records this run as pending. It is not an access test or an attempt
-to fetch gated weights. No GPU job is launched by the preview exporter.
+The public turnkey recipe serves SmolVLA; it does not qualify GR00T training or
+fetch gated GR00T weights. Access and execution checks are specific to the model.
 
 ## Connect checkpoint evaluation
 

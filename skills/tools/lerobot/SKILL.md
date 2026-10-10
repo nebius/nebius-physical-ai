@@ -119,8 +119,8 @@ Output is a policy checkpoint on S3.
 
 ## Public training and deployment recipe
 
-Use `workflows/testing/policy-public-training.yaml` and
-`docs/workbench/cookbooks/policy-public-training.md` for real FiftyOne selection,
+Use `workflows/testing/robot-policy-train-and-serve.yaml` and
+`docs/workbench/cookbooks/robot-policy-train-and-serve.md` for real FiftyOne selection,
 continued SmolVLA training, two measured gates, portable export, independent GPU
 HTTP serving and native LIBERO simulation, then same-run standalone HTML/MP4.
 The standard Workbench runtime owns submission, artifact lineage and recovery.

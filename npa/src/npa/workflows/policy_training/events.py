@@ -19,7 +19,7 @@ def event_workflow(template: dict, event: dict) -> dict:
     """Bind one explicit event to the existing measured training workflow.
 
     Args:
-        template: Parsed policy-training-slurm workflow specification.
+        template: Parsed operator batch workflow specification.
         event: Event kind and private immutable input references.
     Returns:
         A separate workflow specification with the selected entry path.

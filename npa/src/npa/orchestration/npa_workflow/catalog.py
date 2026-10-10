@@ -53,6 +53,10 @@ class ToolEntry:
 # even though no shipped reference spec consumes them today. Everything else in
 # TOOL_CATALOG must be reachable from at least one shipped spec.
 PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
+    "workflow.policy_training.curate": "Operator-supplied LeRobot episode manifests; reusable batch-adapter curation contract, separate from the turnkey public workflow.",
+    "workflow.policy_training.split": "Operator-supplied curated episode manifests; reusable batch-adapter grouped split contract.",
+    "workflow.policy_training.batch": "Operator-owned Slurm or Soperator scripts and settings; reusable batch submission and reconciliation contract.",
+    "workflow.policy_training.gate": "Operator-produced checkpoint-bound evaluations; reusable batch-adapter promotion decision contract.",
     "workbench.curobo.plan": "Operator-provided Franka start/goal/scene manifests; benchmark workflow exercises the shared planner and artifact path.",
     "workbench.open3d.prepare": "Operator-provided scan prefixes; the shipped registration workflow exercises the same manifest contract through stage-demo.",
     "infra.fleet.deploy": "public npa.fleet deployment primitive",

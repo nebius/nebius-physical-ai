@@ -1,4 +1,8 @@
-# Run public-data VLA training end to end
+# Legacy public VLA operator reference
+
+For the complete agent-operated pipeline, use the single
+[robot-policy-train-and-serve workflow](robot-policy-train-and-serve.md).
+The direct-launch implementation below is retained as an operator reference.
 
 This reference downloads a pretrained SmolVLA policy and public LeRobot v3
 demonstrations, performs real gradient updates, adapts the policy to one task,
@@ -15,10 +19,10 @@ This is an **out-of-band operator reference**, launched directly through
 Kubernetes or Slurm. It is not an agent-discoverable Workbench `toolRef` or
 `npa.workflow`: it has no SkyPilot submission, Workbench run ledger, or durable
 interpreter resume. Its argparse `--input-path` and `--output-path` options use
-local files, and its console output is human-readable. The separate
-[Slurm policy workflow](policy-training-slurm.md) has Workbench control-plane
-integration but requires operator model and benchmark scripts. The measured
-public reference does not qualify that workflow's two retry loops.
+local files, and its console output is human-readable. The canonical
+train-and-serve workflow uses catalog stages and the standard Workbench runtime;
+its measured qualification covers both promotion gates and independent GPU
+serving. Results from this older direct launcher do not qualify that workflow.
 
 ## Run on Nebius Managed Kubernetes
 

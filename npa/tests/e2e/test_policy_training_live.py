@@ -115,7 +115,7 @@ def test_operator_slurm_pipeline(tmp_path):
     assert report["policy_test_report_uri"]
 
 
-def test_turnkey_reference_demo(tmp_path):
+def test_legacy_contract_reference_demo(tmp_path):
     if os.environ.get("NPA_E2E_POLICY_DEMO") != "1":
         pytest.skip(
             "opt in to real FiftyOne, LeRobot video generation and browser export"
@@ -124,7 +124,7 @@ def test_turnkey_reference_demo(tmp_path):
 
     spec = (
         Path(__file__).resolve().parents[3]
-        / "workflows/testing/policy-training-slurm.yaml"
+        / "npa/tests/fixtures/policy-training-slurm.json"
     )
     output = tmp_path / "demo"
     report = run_demo(output, spec, video=True)

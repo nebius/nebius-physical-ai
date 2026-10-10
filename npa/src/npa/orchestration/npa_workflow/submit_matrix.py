@@ -72,22 +72,11 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
-        "policy-public-training.yaml",
+        "robot-policy-train-and-serve.yaml",
         "multi",
         runtime=True,
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         notes="Public SmolVLA/FiftyOne training, both measured retry gates, two GPU serving workers and standalone HTML proof.",
-    ),
-    SubmitLiveCase(
-        "policy-training-slurm.yaml",
-        "multi",
-        runtime=True,
-        plan_only=True,
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        plan_only_justification=(
-            "Requires operator-owned batch scripts, private Slurm access and episode inputs; "
-            "the dedicated opt-in live test exercises the configured execution path."
-        ),
     ),
     SubmitLiveCase(
         "video-variant-sweep.yaml",

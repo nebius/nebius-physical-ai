@@ -1,9 +1,10 @@
 # Policy training stages
 
-The Slurm adapter implements operator-owned training scripts and durable job
-reconciliation. The public recipe uses `turnkey.py` stateless stages through
-standard Workbench toolRefs; run the single
-`workflows/testing/policy-public-training.yaml` with the public policy cookbook.
+Run the single `workflows/testing/robot-policy-train-and-serve.yaml` using the
+[train-and-serve cookbook](../../../../../docs/workbench/cookbooks/robot-policy-train-and-serve.md).
+The recipe uses `turnkey.py` stateless stages through standard Workbench toolRefs.
+The existing Slurm adapter remains an operator-script contract with durable job
+reconciliation; its test fixture is not a shipped workflow.
 
 `turnkey_data` prepares, curates and splits public episodes; `turnkey_training`
 trains, evaluates, gates and exports; `turnkey_runtime` prepares the native

@@ -380,17 +380,15 @@ output or raise CLI exits and do not guarantee typed response objects.
 The [walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md) explains these
 differences with a detection-training service example.
 
-For a complete public-data GPU training reference, run
-`bash npa/scripts/run-public-vla.sh --backend kubernetes --output-path ./outputs/vla-launch`.
-The [public VLA cookbook](../docs/workbench/cookbooks/public-vla-training.md)
-documents the Slurm/Soperator alternative, optional recipe fields, private launch
-receipts, checkpoint recovery, and collection of the trained policy and HTML/MP4
-evaluation report, plus opt-in `--cleanup` after verified collection. This is an
-out-of-band operator reference with local receipt paths, not an agent-discoverable
-`npa.workflow` or `toolRef`. The reference uses pinned public SmolVLA and LeRobot
-data. The separate [Slurm workflow](../docs/workbench/cookbooks/policy-training-slurm.md)
-uses durable job-ID reconciliation and rejects unchanged checkpoints and planar
-reference results in production gates.
+For public-data GPU training and deployment, use the single
+[`robot-policy-train-and-serve.yaml`](../workflows/testing/robot-policy-train-and-serve.yaml).
+The [operator cookbook](../docs/workbench/cookbooks/robot-policy-train-and-serve.md)
+covers prerequisites and standard `npa workbench workflow` validation, submission,
+monitoring, resume and cancellation. Catalog stages run pinned public LeRobot data
+through FiftyOne curation, native SmolVLA continued training, both measured
+promotion gates, export, independent GPU HTTP serving and native simulation.
+The same run produces standalone HTML/MP4 proof. This qualified recipe uses
+managed Kubernetes plus torchrun and needs no private trainer scripts.
 
 For artifact conversion and sharing, see the
 [CLI / SDK walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md),
