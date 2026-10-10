@@ -427,8 +427,10 @@ def test_real_symlink_loops_fail_without_disclosing_private_paths(
 
 
 def test_sampling_output_resolution_also_sanitizes_real_symlink_loop(
-    runner, config, tmp_path
+    runner, config, tmp_path, monkeypatch
 ):
+    # This path-resolution test never invokes the video tools.
+    monkeypatch.setattr(runner.shutil, "which", lambda executable: executable)
     loop = tmp_path / "private-output-loop"
     loop.symlink_to(loop)
     config["output_path"] = str(loop)
