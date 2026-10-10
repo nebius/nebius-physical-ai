@@ -183,8 +183,15 @@ def test_eval_input_requires_s3_json_plan_and_rubric() -> None:
     assert payload == {"plan_text": "plan", "rubric": "safety first"}
 
 
-@pytest.mark.parametrize("output_path", ["", "file:///receipt.json", "s3://bucket/"])
-def test_planning_rejects_invalid_output_before_client(output_path: str) -> None:
+@pytest.mark.parametrize("output_case", ["missing", "local_path", "s3_prefix"])
+def test_planning_rejects_invalid_output_before_client(
+    output_case: str, tmp_path: Path
+) -> None:
+    output_path = {
+        "missing": "",
+        "local_path": str(tmp_path / "receipt.json"),
+        "s3_prefix": "s3://bucket/",
+    }[output_case]
     client = FakeClient()
     with pytest.raises(GeminiRoboticsPipelineError):
         run_er_planning_stage(_config(output_path=output_path), client, FakeStorage())
