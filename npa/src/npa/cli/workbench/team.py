@@ -22,6 +22,35 @@ app = typer.Typer(
 app.add_typer(accounts_app, name="account")
 
 
+@app.command("setup")
+@intent_boundary(OperationIntent.ENSURE_PRESENT)
+@json_stdout_contract
+def setup_cmd(
+    input_path: Path = typer.Option(..., "--input-path"),
+    output_path: Path = typer.Option(..., "--output-path"),
+    output_format: str = typer.Option("json", "--output-format"),
+):
+    """Deploy the shared HTTPS control plane and retain its Nebius LB address.
+
+    Args:
+        input_path: Private operator YAML selecting one server installation.
+        output_path: Private persistent receipt reused when retrying setup.
+        output_format: Required JSON response format.
+    Returns:
+        None; prints status without personal credentials or infrastructure identities.
+    Raises:
+        TeamError, OSError: Setup selection, ownership, transport or I/O fails.
+    """
+    from npa.workbench.team.setup import setup_control_plane
+    from npa.workbench.team.setup_models import read_setup_request
+
+    _json_only(output_format)
+    result = setup_control_plane(read_setup_request(input_path), output_path)
+    typer.echo(json.dumps(result))
+    if result["status"] != "ready":
+        raise typer.Exit(2)
+
+
 @app.command("stop-run")
 @intent_boundary(OperationIntent.DESTROY)
 @json_stdout_contract

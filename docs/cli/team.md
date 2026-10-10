@@ -10,6 +10,7 @@ Optional team access and authenticated workflow execution.
 Options
 --help  Show this message and exit.
 Commands
+setup  Deploy the shared HTTPS control plane and retain its Nebius LB address.
 stop-run  Cancel an exact run as the local server operator, including after offboarding.
 render  Render cluster boundaries and private SkyPilot configuration for review.
 enroll  Apply and verify one administrator-selected personal cluster allocation.
@@ -34,6 +35,7 @@ account  Operator-managed users, personal keys, and optional SSO links.
 
 | Command | Description |
 | --- | --- |
+| `setup` | Deploy the shared HTTPS control plane and retain its Nebius LB address. |
 | `stop-run` | Cancel an exact run as the local server operator, including after offboarding. |
 | `render` | Render cluster boundaries and private SkyPilot configuration for review. |
 | `enroll` | Apply and verify one administrator-selected personal cluster allocation. |
@@ -51,7 +53,7 @@ account  Operator-managed users, personal keys, and optional SSO links.
 
 ```bash
 npa workbench team --help
-npa workbench team stop-run --help
+npa workbench team setup --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `team`.
