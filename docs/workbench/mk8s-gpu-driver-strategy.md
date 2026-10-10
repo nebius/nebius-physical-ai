@@ -175,6 +175,32 @@ Direct equivalents are `--gpu-health-stabilization-seconds`,
 `--gpu-graphics-smoke-image`. Skipping validation is an explicit diagnostic
 choice, not the success default.
 
+## Qualifying an existing standalone RTX cluster
+
+The operator-invoked standalone harness preserves its explicit live opt-in and
+does not provision, select, or mutate a cluster beyond its short-lived health
+pods. Alongside the existing exact cluster selectors, it requires
+`NPA_E2E_MK8S_GRAPHICS_SMOKE_IMAGE` to be a reviewed immutable
+`<registry>/<image>@sha256:<64-hex-digest>` reference. A missing, tagged, or
+malformed reference is refused before the harness invokes GPU health or
+`kubectl`; it never falls back to the quarantined `tool://sonic` default.
+
+```bash
+NPA_E2E_MK8S_RTX_RENDERING=1 \
+NPA_E2E_MK8S_GPU_KUBECONFIG=/private/path/to/kubeconfig \
+NPA_E2E_MK8S_GPU_NODES=1 \
+NPA_E2E_MK8S_GPU_PLATFORM=gpu-rtx6000 \
+NPA_E2E_MK8S_GPU_PRESET=1gpu-24vcpu-218gb \
+NPA_E2E_MK8S_GPU_DRIVER_MODE=operator \
+NPA_E2E_MK8S_GRAPHICS_SMOKE_IMAGE='<reviewed-registry>/graphics@sha256:<64-hex-digest>' \
+npa/.venv/bin/python -m pytest npa/tests/e2e/test_mk8s_gpu_health_live.py -q -s
+```
+
+This selector is an operator-owned runtime input and must not be committed to
+public configuration. The harness retains the CUDA, mixed-pool, and live
+authorization gates; its private health evidence and short-lived pods remain
+subject to the existing cleanup checks.
+
 ## Qualifying an existing RTX Fleet
 
 Deployment runs the graphics gate before reporting a target as deployed. To
