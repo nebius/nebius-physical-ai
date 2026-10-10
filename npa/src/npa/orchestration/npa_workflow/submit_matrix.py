@@ -1758,6 +1758,21 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "lorafleet-oft-adapters.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "The committed workflow intentionally carries a non-routable image sentinel; "
+            "manual live submission requires the operator-built private immutable digest."
+        ),
+        notes=(
+            "Five connected substantive stages verify public immutable payloads, reconstruct "
+            "base-plus-FP32 factors, run original and reconstructed full-suite LIBERO rollouts, "
+            "and emit paired RRD/MP4 evidence."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-wan2.2.yaml",
         "multi",
         secret_envs=(
