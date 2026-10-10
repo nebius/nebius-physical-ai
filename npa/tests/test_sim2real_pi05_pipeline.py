@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import sys
 import types
 from argparse import Namespace
@@ -1544,6 +1545,31 @@ def _successful_closed_loop_report() -> dict:
             "rrd": {"bytes": 20},
         },
     }
+
+
+def test_closed_loop_rrd_is_finalized_before_independent_decode(
+    tmp_path: Path,
+) -> None:
+    episodes = [
+        {
+            "physics_trace": [
+                {
+                    "object_position_m": [0.5, 0.1, 0.03],
+                    "object_speed_m_s": 0.0,
+                    "target_xy_distance_m": 0.01,
+                }
+            ],
+            "queries": [],
+        }
+    ]
+
+    rrd, steps = pi05_closed_loop._write_rrd(tmp_path, episodes, "base")
+
+    assert steps == 1
+    subprocess.run(
+        [sys.executable, "-m", "rerun", "rrd", "verify", str(rrd)],
+        check=True,
+    )
 
 
 def test_closed_loop_entry_rejects_green_kit_exit_without_success_report(

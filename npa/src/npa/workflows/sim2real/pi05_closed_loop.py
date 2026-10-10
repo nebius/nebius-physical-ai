@@ -765,28 +765,27 @@ def _write_rrd(
 ) -> tuple[Path, int]:
     import rerun as rr
 
-    recording = rr.RecordingStream(f"pi05-{role}")
     rrd = work / "rollouts.rrd"
-    recording.save(rrd)
     step = 0
-    for episode_index, episode in enumerate(episodes):
-        for sample in episode.get("physics_trace", []):
-            recording.set_time("step", sequence=step)
-            recording.log(
-                f"episodes/{episode_index}/object_position",
-                rr.Points3D([sample["object_position_m"]]),
-            )
-            recording.log(
-                f"episodes/{episode_index}/object_speed_m_s",
-                rr.Scalars([sample["object_speed_m_s"]]),
-            )
-            recording.log(
-                f"episodes/{episode_index}/target_xy_distance_m",
-                rr.Scalars([sample["target_xy_distance_m"]]),
-            )
-            step += 1
-        _log_rrd_queries(recording, rr, episode, episode_index)
-    recording.flush()
+    with rr.RecordingStream(f"pi05-{role}") as recording:
+        recording.save(rrd)
+        for episode_index, episode in enumerate(episodes):
+            for sample in episode.get("physics_trace", []):
+                recording.set_time("step", sequence=step)
+                recording.log(
+                    f"episodes/{episode_index}/object_position",
+                    rr.Points3D([sample["object_position_m"]]),
+                )
+                recording.log(
+                    f"episodes/{episode_index}/object_speed_m_s",
+                    rr.Scalars([sample["object_speed_m_s"]]),
+                )
+                recording.log(
+                    f"episodes/{episode_index}/target_xy_distance_m",
+                    rr.Scalars([sample["target_xy_distance_m"]]),
+                )
+                step += 1
+            _log_rrd_queries(recording, rr, episode, episode_index)
     if not rrd.is_file() or rrd.stat().st_size == 0 or step < 1:
         raise RuntimeError("closed-loop Rerun readback is empty")
     return rrd, step
