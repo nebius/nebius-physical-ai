@@ -1075,9 +1075,13 @@ def test_groot_scikit_image_sanitizer_removes_only_scoped_documentation_token(
     sanitized = fetchers.read_text()
     assert token not in sanitized
     assert "[redacted-token]" in sanitized
-    namespace: dict[str, object] = {}
-    exec(compile(sanitized, str(fetchers), "exec"), namespace)
-    assert namespace["grass"]() == "grass-result"
+    sanitized_spec = importlib.util.spec_from_file_location(
+        "sanitized_fetchers", fetchers
+    )
+    assert sanitized_spec and sanitized_spec.loader
+    sanitized_module = importlib.util.module_from_spec(sanitized_spec)
+    sanitized_spec.loader.exec_module(sanitized_module)
+    assert sanitized_module.grass() == "grass-result"
 
 
 def test_groot_scikit_image_sanitizer_rejects_ambiguous_upstream_literals(
