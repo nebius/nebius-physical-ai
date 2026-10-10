@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import gzip
-import importlib.util
 import hashlib
+import importlib.util
 import io
+import json
 import subprocess
 import sys
 import tarfile
@@ -17,6 +18,7 @@ import yaml
 from npa.workbench.hy_world.private_delivery import (
     PrivateDeliveryError,
     bind_remote_manifest,
+    docker_save_config_digest,
     private_registry,
 )
 
@@ -42,6 +44,29 @@ def _tar(path: Path, members: dict[str, bytes]) -> Path:
             info.size = len(payload)
             archive.addfile(info, io.BytesIO(payload))
     return path
+
+
+def _tar_entries(path: Path, members: list[tuple[str, bytes]]) -> Path:
+    with tarfile.open(path, "w") as archive:
+        for name, payload in members:
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+    return path
+
+
+def _docker_save_archive(
+    path: Path, config: bytes, entries: list[dict[str, object]] | None = None
+) -> Path:
+    config_name = "config.json"
+    manifest = entries or [{"Config": config_name, "RepoTags": ["image:tag"]}]
+    return _tar_entries(
+        path,
+        [
+            ("manifest.json", json.dumps(manifest).encode()),
+            (config_name, config),
+        ],
+    )
 
 
 def _kinds(findings) -> set[str]:
@@ -331,6 +356,67 @@ def test_private_delivery_binds_remote_layers_to_the_scanned_local_config() -> N
         "remote_config_digest": local,
         "remote_layer_digests": ["sha256:" + "c" * 64],
     }
+
+
+def test_private_delivery_uses_docker_save_config_not_containerd_image_id(
+    tmp_path: Path,
+) -> None:
+    config = json.dumps({"rootfs": {"diff_ids": ["sha256:" + "a" * 64]}}).encode()
+    archive = _docker_save_archive(tmp_path / "image.tar", config)
+    containerd_image_id = "sha256:" + hashlib.sha256(b"manifest identity").hexdigest()
+    expected = "sha256:" + hashlib.sha256(config).hexdigest()
+
+    assert containerd_image_id != expected
+    assert docker_save_config_digest(archive) == expected
+
+
+@pytest.mark.parametrize(
+    "members,error",
+    (
+        (
+            [
+                (
+                    "manifest.json",
+                    json.dumps(
+                        [
+                            {"Config": "one.json"},
+                            {"Config": "two.json"},
+                        ]
+                    ).encode(),
+                ),
+                ("one.json", b"{}"),
+                ("two.json", b"{}"),
+            ],
+            "exactly one image",
+        ),
+        (
+            [("manifest.json", json.dumps([{"Config": "missing.json"}]).encode())],
+            "one regular missing.json",
+        ),
+        (
+            [
+                ("manifest.json", json.dumps([{"Config": "../config.json"}]).encode()),
+                ("config.json", b"{}"),
+            ],
+            "config path is unsafe",
+        ),
+        (
+            [
+                ("manifest.json", json.dumps([{"Config": "config.json"}]).encode()),
+                ("config.json", b"{}"),
+                ("config.json", b"{}"),
+            ],
+            "one regular config.json",
+        ),
+    ),
+)
+def test_private_delivery_refuses_ambiguous_or_malformed_docker_save_archive(
+    tmp_path: Path, members: list[tuple[str, bytes]], error: str
+) -> None:
+    archive = _tar_entries(tmp_path / "invalid.tar", members)
+
+    with pytest.raises(PrivateDeliveryError, match=error):
+        docker_save_config_digest(archive)
 
 
 def test_private_delivery_refuses_remote_config_mismatch_before_receipt() -> None:

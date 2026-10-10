@@ -9,8 +9,10 @@ scanned image configuration.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +87,85 @@ def _digest(value: object, field: str) -> str:
     return digest
 
 
+def _safe_member_name(name: object, field: str) -> str:
+    """Validate one non-traversing Docker-save member name."""
+
+    if not isinstance(name, str):
+        raise PrivateDeliveryError(f"docker-save {field} path is unsafe")
+    value = name
+    path = Path(value)
+    if not value or path.is_absolute() or ".." in path.parts or str(path) != value:
+        raise PrivateDeliveryError(f"docker-save {field} path is unsafe")
+    return value
+
+
+def _single_file_member(archive: tarfile.TarFile, name: str) -> tarfile.TarInfo:
+    """Return exactly one regular archive member, rejecting ambiguity."""
+
+    matches = [member for member in archive.getmembers() if member.name == name]
+    if len(matches) != 1 or not matches[0].isfile():
+        raise PrivateDeliveryError(
+            f"docker-save archive must contain one regular {name}"
+        )
+    return matches[0]
+
+
+def _member_bytes(archive: tarfile.TarFile, name: str) -> bytes:
+    """Read one verified regular member from a Docker-save archive."""
+
+    member = _single_file_member(archive, name)
+    handle = archive.extractfile(member)
+    if handle is None:  # pragma: no cover - regular members are readable
+        raise PrivateDeliveryError(f"could not read docker-save member {name}")
+    return handle.read()
+
+
+def _docker_save_config_bytes(archive: tarfile.TarFile) -> bytes:
+    """Read the single image configuration named by Docker-save metadata."""
+
+    try:
+        manifest = json.loads(_member_bytes(archive, "manifest.json"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PrivateDeliveryError(
+            "docker-save manifest.json is not valid JSON"
+        ) from exc
+    if not isinstance(manifest, list) or len(manifest) != 1:
+        raise PrivateDeliveryError(
+            "docker-save archive must describe exactly one image"
+        )
+    item = manifest[0]
+    if not isinstance(item, dict):
+        raise PrivateDeliveryError("docker-save manifest entry is invalid")
+    config_name = _safe_member_name(item.get("Config"), "config")
+    config_bytes = _member_bytes(archive, config_name)
+    try:
+        if not isinstance(json.loads(config_bytes), dict):
+            raise PrivateDeliveryError("docker-save image config must be a JSON object")
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PrivateDeliveryError(
+            "docker-save image config is not valid JSON"
+        ) from exc
+    return config_bytes
+
+
+def docker_save_config_digest(archive_path: Path) -> str:
+    """Hash the OCI config bytes of exactly one Docker-save image archive.
+
+    Docker's ``image inspect .Id`` is storage-driver dependent: containerd can
+    report an image/manifest identity rather than the OCI config descriptor.
+    The archive is both the local scanner input and the push input, so its
+    declared config member is the only durable local value to compare with the
+    registry manifest's config digest.
+    """
+
+    try:
+        with tarfile.open(archive_path, mode="r:*") as archive:
+            config_bytes = _docker_save_config_bytes(archive)
+    except (OSError, tarfile.TarError) as exc:
+        raise PrivateDeliveryError("could not read docker-save archive") from exc
+    return "sha256:" + hashlib.sha256(config_bytes).hexdigest()
+
+
 def bind_remote_manifest(
     *, local_config_digest: str, remote_digest: str, manifest: Any
 ) -> dict[str, object]:
@@ -151,10 +232,15 @@ def _main(argv: list[str] | None = None) -> int:
     binding.add_argument("--remote-digest", required=True)
     binding.add_argument("--manifest", type=Path, required=True)
     binding.add_argument("--output", type=Path, required=True)
+    config_digest = subcommands.add_parser("docker-save-config-digest")
+    config_digest.add_argument("--docker-save", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "private-registry":
             print(private_registry(args.registry))
+            return 0
+        if args.command == "docker-save-config-digest":
+            print(docker_save_config_digest(args.docker_save))
             return 0
         report = bind_remote_manifest(
             local_config_digest=args.local_config_digest,

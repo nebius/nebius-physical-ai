@@ -165,11 +165,15 @@ run_trivy() {
 # vulnerability/license policy; the second rejects every secret severity and
 # deliberately omits the ignorefile. Save once and scan that archive, then
 # push that same archive, rather than relying on a mutable local image tag.
-LOCAL_CONFIG_DIGEST="$(docker image inspect --format '{{.Id}}' "$LOCAL_IMAGE")"
-[[ "$LOCAL_CONFIG_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
-  || fail "local image has no immutable OCI config digest"
 IMAGE_TAR="$DELIVERY_DIR/local-image.tar"
 docker save --output "$IMAGE_TAR" "$LOCAL_IMAGE"
+LOCAL_CONFIG_DIGEST="$(
+  PYTHONPATH="${BUILD_NPA}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+    "$NPA_PYTHON" -m npa.workbench.hy_world.private_delivery \
+    docker-save-config-digest --docker-save "$IMAGE_TAR"
+)"
+[[ "$LOCAL_CONFIG_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
+  || fail "could not derive the OCI config digest from the scanned image archive"
 LOCAL_ARCHIVE_SHA256="$(sha256sum "$IMAGE_TAR" | awk '{print $1}')"
 [[ "$LOCAL_ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]] \
   || fail "could not hash locally scanned image archive"
