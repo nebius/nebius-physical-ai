@@ -57,7 +57,8 @@ eight devices per node.
 For Isaac/RTX rendering on RTX PRO 6000 Kubernetes, use the explicit profile:
 
 ```bash
-npa cluster up --gpu-workload-profile rtx-rendering
+npa cluster up --gpu-workload-profile rtx-rendering \
+  --gpu-graphics-smoke-image '<reviewed-registry>/graphics@sha256:<64-hex-digest>'
 ```
 
 The profile selects `gpu-rtx6000` (or preserves an exact zonal variant such as
@@ -67,11 +68,16 @@ GPU Operator mounted-driver path and a mandatory graphics readiness gate. The
 8-GPU RTX shape is not an SXM/NVL fabric topology, so it does not enable a GPU
 cluster or the NVSwitch unsafe-operator exception. The
 gate runs after stabilization and CUDA vectorAdd on every GPU node. Its pinned,
-payload-clean RTX image must dynamically load operator-mounted GLX and EGL,
-create a Vulkan instance, and enumerate an NVIDIA physical device. Do not
-replace it with library filename or environment-variable inspection. The empty
-profile preserves the managed-image default for every other workload, and the
-NVSwitch operator rejection remains in force.
+operator-selected graphics image must dynamically load operator-mounted GLX and
+EGL, create a Vulkan instance, and enumerate an NVIDIA physical device. The
+governed `tool://sonic` default is quarantined, so an RTX deployment must supply
+a reviewed operator image with `--gpu-graphics-smoke-image`; use an immutable
+digest that has been qualified for GLX/EGL/Vulkan. Do not replace this probe
+with library filename or environment-variable inspection. The empty profile
+preserves the managed-image default for every other workload, and the NVSwitch
+operator rejection remains in force. See
+`docs/workbench/mk8s-gpu-driver-strategy.md` for the matching Fleet and SDK
+forms and operator prerequisites.
 
 ## Provision with the health gates on
 

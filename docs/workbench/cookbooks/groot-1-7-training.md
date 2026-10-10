@@ -5,7 +5,7 @@
 Use `groot-1-7-finetune.yaml` to validate the complete real-data path from a
 GR00T-format LeRobot dataset through distributed optimizer work, an immutable
 checkpoint, aligned offline inference, synchronized RRD/MCAP diagnostics, S3
-publication, and the deployed NPA agent viewers.
+publication, and the deployed NPA agent viewer APIs.
 
 For the public GR00T N1.7 LIBERO-X derivative, use the separate
 [closed-loop evaluation guide](../groot-libero-x.md) and
@@ -36,7 +36,7 @@ agent_ui_load_viewer_verification
 Use the repository virtual environment for repository validation:
 
 ```bash
-SPEC=workflows/testing/groot-1-7-finetune.yaml
+SPEC=workflows/main/groot-1-7-finetune.yaml
 RUN_ID=groot-n1-7-operational-example
 
 npa/.venv/bin/npa workbench workflow validate-spec "$SPEC"
@@ -63,8 +63,12 @@ MCAP production are CPU artifact conversions and no stage renders with RT cores.
 
 ## Submit
 
-Supply the bucket, real source dataset, registry image, deployed agent URL, and
+Supply the bucket, real source dataset, deployed agent URL, and
 runtime secrets at submission time; do not commit tenant or customer values.
+Configure the agent's artifact sources and isolated read-only storage identity
+for the output bucket and run prefix before submission. The final stage must
+reach the authenticated agent from the worker and discover those exact outputs;
+agent health alone does not prove artifact access.
 
 ```bash
 npa/.venv/bin/npa workbench workflow submit "$SPEC" \
@@ -77,10 +81,14 @@ npa/.venv/bin/npa workbench workflow submit "$SPEC" \
   --var per_device_batch_size=1 \
   --var gradient_accumulation_steps=1 \
   --var global_batch_size=2 \
-  --registry "<registry>/npa-groot:<validated-tag>" \
   --secret-env HF_TOKEN \
   --secret-env NPA_AGENT_BASIC_AUTH
 ```
+
+The workflow pins an immutable GR00T development image with Kubernetes SSH
+bootstrap and MCAP support. `source_overlay: true` stages this checkout's adapters.
+Override `groot_image` only with an independently checked image. This workflow
+pin does not change the supported GR00T release.
 
 Before the trainer is scheduled, the CPU preflight checks the GPU/batch/step
 contract and the split stage derives real sample coverage. Training evidence
@@ -134,16 +142,29 @@ The terminal stage exercises run discovery, inventory association, Rerun and
 Lichtblick loads, and byte-range endpoints through the deployed agent API.
 Pixel-level nonblank rendering and “Describe this” remain browser E2E gates.
 
+The [promotion run](../evidence/groot-1-7-promotion.json) completed all eleven
+logical stages on two B200 GPUs, including real optimizer work and authenticated
+viewer API checks. Its four updates changed the checkpoint but increased
+held-out action MSE from 3079.199463 to 3083.461914; `learning_outcome` was
+`not_improved` and `candidate_promoted` remained false. The offline HTML report
+passed desktop, mobile, playback, and no-network checks. Rerun painted the actual
+recording in the agent. Lichtblick's browser frontend was blocked by the deployed
+Content Security Policy despite successful MCAP parsing and API checks; this run
+does not qualify Lichtblick browser rendering or “Describe this.”
+
+The [readiness record](../../../workflows/main/groot-1-7-finetune.readiness.json)
+binds this qualification to the workflow bytes and separates it from each future
+run's storage, dataset, credentials, image, and runtime prerequisites.
+
 ## Kubernetes image prerequisites
 
-`npa/docker/workbench/groot/Dockerfile.k8s-prereqs` adds the system packages the
-SkyPilot Kubernetes bootstrap requires. The canonical image runs as `ubuntu`
-and its shared installer supplies system Python, `rsync`, an SSH client, and
-passwordless sudo for SkyPilot's in-pod bootstrap. It does not contain
-`openssh-server`, its entrypoint is `/bin/bash`, and it does not implement
-runtime SSH host-key generation. The derived repair layer adds the SSH server,
-generates per-container host keys when SSH starts, removes build-time host keys,
-and installs the argument-forwarding entrypoint required by the complete
-SkyPilot bootstrap contract. The workflow does not override the pod to uid 0,
-so use the repaired image for Kubernetes submission; the canonical image alone
-has not passed that complete contract.
+The pinned development image includes system Python, `rsync`, SSH client and
+server, and passwordless sudo for SkyPilot's in-pod bootstrap. It runs as
+`ubuntu`, generates SSH host keys per container, removes build-time host keys,
+and forwards orchestrator arguments through its entrypoint. The canonical
+Dockerfile also includes MCAP support for this workflow's artifact stages.
+
+`npa/docker/workbench/groot/Dockerfile.k8s-prereqs` remains a derived repair
+option for older operator images. Any replacement digest still needs the
+exact-target image and bootstrap checks before submission; a successful image
+build alone does not establish the runtime contract.

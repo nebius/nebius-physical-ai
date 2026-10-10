@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lyra 2 · A reconstructed world</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #080e13;
+        --panel: #111d27;
+        --line: #2a3b48;
+        --text: #e9f2f7;
+        --muted: #9bb0be;
+        --mint: #a7f2c3;
+        --blue: #8cd7ff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          16px/1.55 system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 1440px;
+        margin: auto;
+        padding: 28px 40px 50px;
+      }
+      nav {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 22px;
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .brand {
+        color: var(--mint);
+      }
+      .muted {
+        color: var(--muted);
+      }
+      header {
+        padding: 64px 0 30px;
+      }
+      .eyebrow {
+        color: var(--blue);
+        font-size: 12px;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+      h1 {
+        font-size: clamp(40px, 6vw, 82px);
+        font-weight: 550;
+        line-height: 1.02;
+        letter-spacing: -0.055em;
+        margin: 18px 0 24px;
+      }
+      h1 span {
+        color: var(--mint);
+      }
+      .lede {
+        font-size: 20px;
+        color: var(--muted);
+        max-width: 800px;
+      }
+      h2 {
+        font-size: 30px;
+        letter-spacing: -0.03em;
+        font-weight: 550;
+        margin: 0;
+      }
+      h3 {
+        font-size: 17px;
+        font-weight: 550;
+        margin: 0;
+      }
+      p {
+        margin: 12px 0;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin: 28px 0;
+      }
+      .stat {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 18px;
+      }
+      .stat strong {
+        display: block;
+        color: var(--mint);
+        font-size: 28px;
+        font-weight: 500;
+      }
+      .stat span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        overflow: hidden;
+      }
+      .cardhead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 20px;
+      }
+      .badge {
+        color: var(--mint);
+        font-size: 11px;
+        border: 1px solid #385846;
+        border-radius: 20px;
+        padding: 4px 10px;
+        white-space: nowrap;
+      }
+      video {
+        display: block;
+        width: 100%;
+        aspect-ratio: 4/3;
+        object-fit: contain;
+        background: #030608;
+      }
+      .caption {
+        padding: 12px 20px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 18px 0;
+      }
+      button {
+        color: var(--text);
+        background: #192d3b;
+        border: 1px solid #426071;
+        padding: 10px 15px;
+        border-radius: 8px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover,
+      button[aria-pressed="true"] {
+        background: #294b54;
+        border-color: var(--mint);
+      }
+      button:focus-visible {
+        outline: 2px solid var(--mint);
+        outline-offset: 3px;
+      }
+      .primary {
+        background: var(--mint);
+        color: #122b20;
+        border-color: var(--mint);
+        font-weight: 650;
+      }
+      .small {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      section {
+        margin-top: 52px;
+      }
+      .sectionhead {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 28px;
+        margin-bottom: 20px;
+      }
+      .sectionhead p {
+        max-width: 540px;
+        color: var(--muted);
+      }
+      .viewer {
+        position: relative;
+        height: 570px;
+        background: radial-gradient(ellipse at 50% 45%, #203342, #091218);
+      }
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        touch-action: none;
+      }
+      .hint {
+        position: absolute;
+        bottom: 18px;
+        left: 20px;
+        color: #d0e3ec;
+        font-size: 12px;
+        pointer-events: none;
+      }
+      .legend {
+        color: var(--muted);
+        font-size: 12px;
+        padding: 12px 20px;
+      }
+      details {
+        margin-top: 20px;
+        border-top: 1px solid var(--line);
+        padding-top: 18px;
+      }
+      summary {
+        cursor: pointer;
+      }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-size: 12px;
+        background: var(--panel);
+        padding: 20px;
+        border-radius: 10px;
+      }
+      footer {
+        margin-top: 45px;
+        border-top: 1px solid var(--line);
+        padding-top: 20px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      a {
+        color: var(--blue);
+      }
+      input[type="range"] {
+        min-width: 160px;
+        flex: 1;
+        accent-color: var(--mint);
+      }
+      @media (max-width: 760px) {
+        main {
+          padding: 20px;
+        }
+        header {
+          padding-top: 40px;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .stats {
+          grid-template-columns: 1fr 1fr;
+        }
+        .stat {
+          padding: 14px;
+        }
+        .sectionhead {
+          display: block;
+        }
+        .viewer {
+          height: 400px;
+        }
+        nav {
+          letter-spacing: 0.05em;
+          font-size: 11px;
+        }
+        .cardhead {
+          padding: 13px;
+        }
+        .lede {
+          font-size: 17px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <nav>
+        <span class="brand">Lyra 2 / Standalone reconstruction</span
+        ><span>Offline · Private research</span>
+      </nav>
+      <header>
+        <div class="eyebrow">
+          Recorded RGB → Lyra inference → Gaussian scene
+        </div>
+        <h1>Captured video.<br /><span>A reconstructed world.</span></h1>
+        <p class="lede">
+          Compare the recorded scene with Lyra's native Gaussian rendering.
+          Explore its predicted 3D structure, then inspect the exact model and
+          artifact evidence.
+        </p>
+        <p class="small">
+          A completed reconstruction run. Every video and 3D sample below is
+          embedded in this file.
+        </p>
+      </header>
+      <div class="stats" id="stats"></div>
+      <div class="grid">
+        <article class="card">
+          <div class="cardhead">
+            <h3>01 / Captured scene</h3>
+            <span class="badge">Recorded RGB</span>
+          </div>
+          <video
+            id="source"
+            controls
+            muted
+            playsinline
+            preload="metadata"
+          ></video>
+          <div class="caption">
+            Real camera capture. Only RGB frames were supplied to Lyra.
+          </div>
+        </article>
+        <article class="card">
+          <div class="cardhead">
+            <h3>02 / Reconstructed scene</h3>
+            <span class="badge">Native Lyra output</span>
+          </div>
+          <video
+            id="reconstruction"
+            controls
+            muted
+            playsinline
+            preload="metadata"
+          ></video>
+          <div class="caption">
+            Upstream Lyra Gaussian rasterization along the original camera
+            trajectory.
+          </div>
+        </article>
+      </div>
+      <div class="toolbar">
+        <button class="primary" id="play">Play together</button
+        ><button id="restart">Restart</button
+        ><input
+          id="scrub"
+          type="range"
+          min="0"
+          max="1000"
+          value="0"
+          aria-label="Comparison playback position"
+        /><span id="time" class="small">0.0 s</span>
+      </div>
+      <section>
+        <div class="sectionhead">
+          <div>
+            <div class="eyebrow">Explore the model's prediction</div>
+            <h2>A view inside the reconstruction.</h2>
+          </div>
+          <p>
+            Orbit depth samples backprojected using Lyra's estimated cameras.
+            Toggle confidence to inspect weaker regions. These are visual
+            predictions in relative units.
+          </p>
+        </div>
+        <div class="card">
+          <div class="cardhead">
+            <h3>Predicted 3D structure</h3>
+            <span class="badge" id="point-count"></span>
+          </div>
+          <div class="viewer" id="viewer">
+            <canvas
+              id="cloud"
+              aria-label="Interactive Lyra depth point cloud"
+            ></canvas>
+            <div class="hint">
+              Drag to orbit · scroll or use buttons to zoom
+            </div>
+          </div>
+          <div class="legend" id="legend">
+            Colors sampled from the input frames; geometry predicted by Lyra.
+            This point preview is separate from the native Gaussian video above.
+          </div>
+        </div>
+        <div class="toolbar">
+          <button id="confidence" aria-pressed="false">Show confidence</button
+          ><button id="zoom-in" aria-label="Zoom into reconstruction">
+            Zoom +</button
+          ><button id="zoom-out" aria-label="Zoom out of reconstruction">
+            Zoom −</button
+          ><button id="reset">Reset view</button>
+        </div>
+      </section>
+      <section>
+        <div class="eyebrow">Bring your own capture</div>
+        <h2>One reconstruction workflow.</h2>
+        <p class="muted">
+          Prepare a sharp video with overlapping views, then run the Lyra
+          reconstruction workflow. It retains the Gaussian PLY, camera poses,
+          predicted depth and a native rendered video. This standalone viewer
+          requires no Isaac runtime, Cosmos service or network connection.
+        </p>
+        <details>
+          <summary>Reproduce with Workbench</summary>
+          <pre>
+npa/.venv/bin/python -m npa.workflows.lyra_capture \
+  --input-path ./capture.mp4 --output-path ./lyra-input
+
+# Publish the prepared bundle to your project's private storage.
+npa workbench workflow submit workflows/testing/lyra-reconstruction.yaml \
+  --project &lt;project-alias&gt; --infra k8s/&lt;gpu-context&gt; --stage-src \
+  --var bucket=&lt;bucket&gt; --var input_uri=s3://&lt;bucket&gt;/&lt;input-prefix&gt;/ \
+  --var accelerator=B200:1 \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+
+# After downloading the completed reconstruction bundle:
+npa/.venv/bin/python -m npa.workflows.lyra_reconstruction_demo \
+  --input-path ./reconstruction --output-path ./lyra-standalone.html</pre>
+        </details>
+        <details>
+          <summary>Verified run evidence</summary>
+          <pre id="evidence"></pre>
+          <button id="download-evidence">Download provenance</button>
+        </details>
+        <p class="small">
+          Scope: reconstruction and appearance inspection. Predicted points are
+          not calibrated colliders, movable bodies or robot action labels.
+          Confidence is a relative model score, not an accuracy guarantee.
+        </p>
+      </section>
+      <footer>
+        <p id="attribution"></p>
+        <p>
+          Private, non-production internal R&amp;D demonstration.
+          <a href="https://github.com/nv-tlabs/lyra/tree/main/Lyra-2"
+            >Lyra source</a
+          >
+          ·
+          <a
+            href="https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-internal-scientific-research-and-development-model-license/"
+            >Model terms</a
+          >
+        </p>
+      </footer>
+    </main>
+    <script id="lyra-data" type="application/json">
+      __LYRA_DATA__
+    </script>
+    <script>
+      "use strict";
+      const data = JSON.parse(document.getElementById("lyra-data").textContent);
+      const byId = (id) => document.getElementById(id);
+      const source = byId("source"),
+        reconstruction = byId("reconstruction");
+      source.src = data.source_video;
+      reconstruction.src = data.reconstruction_video;
+      byId("attribution").textContent = data.attribution;
+      byId("evidence").textContent = JSON.stringify(data.evidence, null, 2);
+      const preview = data.points;
+      function renderStats() {
+        const values = [
+          [preview.views, "reconstructed views"],
+          [preview.width + " × " + preview.height, "inference resolution"],
+          [data.evidence.gpu.replace("NVIDIA ", ""), "recorded GPU"],
+          ["Verified", "native artifact hashes"],
+        ];
+        for (const [value, label] of values) {
+          const box = document.createElement("div");
+          box.className = "stat";
+          const strong = document.createElement("strong"),
+            span = document.createElement("span");
+          strong.textContent = value;
+          span.textContent = label;
+          box.append(strong, span);
+          byId("stats").append(box);
+        }
+      }
+      renderStats();
+      function playBoth() {
+        reconstruction.currentTime = source.currentTime;
+        Promise.all([source.play(), reconstruction.play()]).catch(() => {
+          byId("play").textContent = "Play together";
+        });
+      }
+      byId("play").onclick = () => {
+        if (source.paused) playBoth();
+        else {
+          source.pause();
+          reconstruction.pause();
+        }
+      };
+      source.onplay = () => {
+        byId("play").textContent = "Pause together";
+        if (reconstruction.paused) reconstruction.play().catch(() => {});
+      };
+      source.onpause = () => {
+        byId("play").textContent = "Play together";
+        reconstruction.pause();
+      };
+      source.ontimeupdate = () => {
+        byId("time").textContent = source.currentTime.toFixed(1) + " s";
+        byId("scrub").value = source.duration
+          ? (source.currentTime / source.duration) * 1000
+          : 0;
+        if (Math.abs(source.currentTime - reconstruction.currentTime) > 0.2)
+          reconstruction.currentTime = source.currentTime;
+      };
+      byId("restart").onclick = () => {
+        source.currentTime = 0;
+        reconstruction.currentTime = 0;
+        playBoth();
+      };
+      byId("scrub").oninput = (event) => {
+        if (Number.isFinite(source.duration)) {
+          source.currentTime = (source.duration * event.target.value) / 1000;
+          reconstruction.currentTime = source.currentTime;
+        }
+      };
+      byId("download-evidence").onclick = () => {
+        const url = URL.createObjectURL(
+          new Blob([JSON.stringify(data.evidence, null, 2)], {
+            type: "application/json",
+          }),
+        );
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "lyra-provenance.json";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+      function floats(encoded) {
+        return new Float32Array(
+          Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0)).buffer,
+        );
+      }
+      const vertex = `#version 300 es
+precision highp float;
+in vec3 position;in vec3 color;in float confidence;
+uniform vec3 center;uniform vec4 camera;uniform bool showConfidence;
+out vec3 rgb;
+void main(){
+  vec3 p=position-center;
+  vec3 q=vec3(cos(camera.x)*p.x+sin(camera.x)*p.z,p.y,-sin(camera.x)*p.x+cos(camera.x)*p.z);
+  vec3 r=vec3(q.x,cos(camera.y)*q.y-sin(camera.y)*q.z,sin(camera.y)*q.y+cos(camera.y)*q.z);
+  gl_Position=vec4(r.x/(camera.z*camera.w),r.y/camera.z,r.z/(camera.z*8.0),1.0);
+  gl_PointSize=2.4;rgb=showConfidence?mix(vec3(1.0,.32,.18),vec3(.2,.9,.76),confidence):color;
+}`;
+      const fragment = `#version 300 es
+precision highp float;in vec3 rgb;out vec4 outColor;
+void main(){if(length(gl_PointCoord-vec2(.5))>.5)discard;outColor=vec4(rgb,1.0);}`;
+      function programFor(gl) {
+        const program = gl.createProgram();
+        for (const [type, code] of [
+          [gl.VERTEX_SHADER, vertex],
+          [gl.FRAGMENT_SHADER, fragment],
+        ]) {
+          const shader = gl.createShader(type);
+          gl.shaderSource(shader, code);
+          gl.compileShader(shader);
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+            throw Error(gl.getShaderInfoLog(shader));
+          gl.attachShader(program, shader);
+        }
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+          throw Error(gl.getProgramInfoLog(program));
+        gl.useProgram(program);
+        return program;
+      }
+      function buffersFor(gl, program) {
+        for (const [name, size] of [
+          ["position", 3],
+          ["color", 3],
+          ["confidence", 1],
+        ]) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+          gl.bufferData(gl.ARRAY_BUFFER, floats(preview[name]), gl.STATIC_DRAW);
+          const location = gl.getAttribLocation(program, name);
+          gl.enableVertexAttribArray(location);
+          gl.vertexAttribPointer(location, size, gl.FLOAT, false, 0, 0);
+        }
+        gl.enable(gl.DEPTH_TEST);
+      }
+      function draw(viewer) {
+        const { canvas, gl, program, camera } = viewer,
+          ratio = Math.min(devicePixelRatio || 1, 2);
+        canvas.width = canvas.clientWidth * ratio;
+        canvas.height = canvas.clientHeight * ratio;
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0.025, 0.045, 0.065, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        gl.uniform3fv(gl.getUniformLocation(program, "center"), preview.center);
+        gl.uniform4f(
+          gl.getUniformLocation(program, "camera"),
+          camera.yaw,
+          camera.pitch,
+          camera.zoom,
+          canvas.width / canvas.height,
+        );
+        gl.uniform1i(
+          gl.getUniformLocation(program, "showConfidence"),
+          camera.confidence,
+        );
+        gl.drawArrays(gl.POINTS, 0, preview.count);
+      }
+      function controls(viewer) {
+        const { canvas, camera } = viewer;
+        let drag = null;
+        canvas.onpointerdown = (e) => {
+          drag = [e.clientX, e.clientY];
+          canvas.setPointerCapture(e.pointerId);
+        };
+        canvas.onpointermove = (e) => {
+          if (!drag) return;
+          camera.yaw += (e.clientX - drag[0]) * 0.006;
+          camera.pitch += (e.clientY - drag[1]) * 0.006;
+          drag = [e.clientX, e.clientY];
+          draw(viewer);
+        };
+        canvas.onpointerup = canvas.onpointercancel = () => {
+          drag = null;
+        };
+        zoomControls(viewer);
+      }
+      function zoomControls(viewer) {
+        const { canvas, camera } = viewer;
+        const zoom = (factor) => {
+          camera.zoom = Math.max(
+            preview.radius * 0.05,
+            Math.min(preview.radius * 8, camera.zoom * factor),
+          );
+          draw(viewer);
+        };
+        canvas.onwheel = (e) => {
+          e.preventDefault();
+          zoom(Math.exp(e.deltaY * 0.001));
+        };
+        byId("zoom-in").onclick = () => zoom(0.8);
+        byId("zoom-out").onclick = () => zoom(1.25);
+        byId("reset").onclick = () => {
+          camera.yaw = 0;
+          camera.pitch = 0;
+          camera.zoom = preview.radius * 0.7;
+          draw(viewer);
+        };
+        byId("confidence").onclick = () => {
+          camera.confidence = !camera.confidence;
+          byId("confidence").setAttribute(
+            "aria-pressed",
+            String(camera.confidence),
+          );
+          byId("legend").textContent = camera.confidence
+            ? "Relative confidence: orange = lower, mint = higher. Display scaled to the 5th–95th percentiles; scores are not calibrated probabilities."
+            : "Colors sampled from the input frames; geometry predicted by Lyra. This point preview is separate from the native Gaussian video above.";
+          draw(viewer);
+        };
+      }
+      function startViewer() {
+        byId("point-count").textContent =
+          preview.count.toLocaleString() + " sampled points";
+        const canvas = byId("cloud"),
+          gl = canvas.getContext("webgl2", { antialias: true });
+        if (!gl) {
+          byId("viewer").textContent =
+            "This browser does not support WebGL 2. Both embedded videos remain available.";
+          return false;
+        }
+        const program = programFor(gl);
+        buffersFor(gl, program);
+        const viewer = {
+          canvas,
+          gl,
+          program,
+          camera: {
+            yaw: 0,
+            pitch: 0,
+            zoom: preview.radius * 0.7,
+            confidence: false,
+          },
+        };
+        controls(viewer);
+        new ResizeObserver(() => draw(viewer)).observe(canvas);
+        draw(viewer);
+        return true;
+      }
+      window.lyraStandalone = {
+        complete: data.complete,
+        views: preview.views,
+        pointCount: preview.count,
+        webgl: startViewer(),
+        sourceAvailable: !!source.src,
+        reconstructionAvailable: !!reconstruction.src,
+      };
+    </script>
+  </body>
+</html>

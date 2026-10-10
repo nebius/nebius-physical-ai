@@ -53,7 +53,7 @@ recorded in [the evaluation guide](../../../../docs/workbench/groot-libero-x.md)
 
 ## Run and verify
 
-Use [`groot-1-7-finetune.yaml`](../../../../workflows/testing/groot-1-7-finetune.yaml)
+Use [`groot-1-7-finetune.yaml`](../../../../workflows/main/groot-1-7-finetune.yaml)
 with the cookbook's dataset, checkpoint, and image settings. Its `gpu_count`
 controls a single-node allocation and the real trainer; counts above one use
 `torchrun`. Inspect the training report and emitted checkpoint. Image build
