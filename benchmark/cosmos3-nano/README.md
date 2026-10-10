@@ -229,7 +229,7 @@ different bytes.
 
 ## Credits and provenance
 
-- **Stewart Tong (Nebius):** ran these measurements on 2026-10-05 and 2026-10-06 UTC and assembled this folder.
+- **[Stewart Tong (@stewtong)](https://github.com/stewtong) (Nebius):** ran these measurements on 2026-10-05 and 2026-10-06 UTC and assembled this folder.
 - **NVIDIA / [`NVIDIA/cosmos`](https://github.com/NVIDIA/cosmos) and [`nvidia/Cosmos3-Nano`](https://huggingface.co/nvidia/Cosmos3-Nano):** the model, the transfer cookbook assets and the published single-GPU benchmarks. The model and assets have their own terms; neither is redistributed here.
 - **[`vllm-project/vllm-omni`](https://github.com/vllm-project/vllm-omni):** the serving engine and both pinned images.
 - **[`stewtong/cosmos3-super-serving`](https://github.com/stewtong/cosmos3-super-serving):** the v1 harness, the Super reference record and the method this folder reuses.
