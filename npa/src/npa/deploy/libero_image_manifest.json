@@ -25,8 +25,8 @@
   },
   "runtime_payloads_baked": false,
   "customer_runtime_authorization_required": true,
-  "runtime_manifest_sha256": "d999dd97e8f9b324b68ec2a7f19b6360f5599868cd873cd752779106b8ea4f02",
-  "runtime_requirements_sha256": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
+  "runtime_manifest_sha256": "73cc3db0419d8431deab96461c33df4237074269a11956f367e272033356c6aa",
+  "runtime_requirements_sha256": "e268334cb849d3ce8912b47361a04adada88b53fcdc72d9dac36727a473a6266",
   "governing_terms_count": 7,
   "runtime_artifact_review": {
     "status": "complete",
@@ -120,7 +120,7 @@
     "package_writer_repository": "",
     "customer_authorization_public_key_sha256": "",
     "output_storage_authorization_public_key_sha256": "",
-    "runtime_manifest_sha256": "d999dd97e8f9b324b68ec2a7f19b6360f5599868cd873cd752779106b8ea4f02"
+    "runtime_manifest_sha256": "73cc3db0419d8431deab96461c33df4237074269a11956f367e272033356c6aa"
   },
   "catalog_release": false
 }

@@ -412,7 +412,7 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
     versions = {item["name"]: item["version"] for item in manifest["runtime_artifacts"]}
     security_refreshed_versions = {
         "future": "0.18.3",
-        "hydra-core": "1.3.4",
+        "hydra-core": "1.3.7",
         "opencv-python": "4.8.1.78",
         "protobuf": "5.29.6",
         "torch": "2.13.0",
@@ -502,7 +502,7 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         for item in manifest["runtime_artifacts"]
     )
     assert sum(item["size_bytes"] for item in manifest["runtime_artifacts"]) == (
-        3_277_640_175
+        3_277_660_358
     )
     lines = [
         line
