@@ -2,7 +2,6 @@
 
 import hashlib
 import importlib.util
-import io
 from pathlib import Path
 
 import pytest
@@ -18,18 +17,30 @@ def _load(name):
     return module
 
 
+def test_signature_metadata_cannot_replace_the_source_version():
+    path = ROOT.parent / "habitat-sim/bootstrap_sources.py"
+    spec = importlib.util.spec_from_file_location("bootstrap_sources", path)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    descriptor = "Source: libasyncns\nVersion: 0.8-6\n-----BEGIN PGP SIGNATURE-----\nVersion: GnuPG v2\n"
+    assert helper.fields(descriptor)["Version"] == "0.8-6"
+
+
 @pytest.mark.parametrize("changed", [False, True])
 def test_download_is_bound_to_locked_bytes(tmp_path, monkeypatch, changed):
     helper = _load("python_sources")
     expected = b"reviewed source"
-    response = io.BytesIO(b"changed source" if changed else expected)
-    response.geturl = lambda: "https://ffmpeg.org/source.tar.xz"
-    monkeypatch.setattr(helper, "urlopen", lambda _: response)
+    content = b"changed source" if changed else expected
+    monkeypatch.setattr(
+        helper,
+        "download_public_https",
+        lambda url, stream, **kwargs: stream.write(content),
+    )
     item = {
         "filename": "source.tar.xz",
         "size": len(expected),
         "sha256": hashlib.sha256(expected).hexdigest(),
-        "url": response.geturl(),
+        "url": "https://ffmpeg.org/source.tar.xz",
     }
     if changed:
         with pytest.raises(ValueError, match="differs"):

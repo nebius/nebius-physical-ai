@@ -10,7 +10,13 @@ from pathlib import Path
 import re
 import tarfile
 from urllib.parse import urlsplit
-from urllib.request import urlopen
+
+try:
+    from npa._public_https import download_public_https
+except ModuleNotFoundError as error:
+    if error.name != "npa":
+        raise
+    from _public_https import download_public_https
 
 
 HOSTS = frozenset(
@@ -33,11 +39,28 @@ HOSTS = frozenset(
         "www.python.org",
     }
 )
+REDIRECT_HOSTS = frozenset(
+    {
+        "release-assets.githubusercontent.com",
+        "downloads.videolan.org",
+        "master.dl.sourceforge.net",
+        "netix.dl.sourceforge.net",
+        "phoenixnap.dl.sourceforge.net",
+        "psychz.dl.sourceforge.net",
+        "cfhcable.dl.sourceforge.net",
+        "versaweb.dl.sourceforge.net",
+        "deac-riga.dl.sourceforge.net",
+        "newcontinuum.dl.sourceforge.net",
+    }
+)
 
 
 def _digest(path: Path) -> str:
+    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _validate(lock: dict) -> None:
@@ -65,15 +88,10 @@ def _validate(lock: dict) -> None:
 
 def _fetch(item: dict, root: Path) -> None:
     target = root / item["filename"]
-    total = 0
-    with urlopen(item["url"]) as response, target.open("xb") as stream:
-        if urlsplit(response.geturl()).scheme != "https":
-            raise ValueError("source download left HTTPS")
-        while chunk := response.read(1024 * 1024):
-            total += len(chunk)
-            if total > item["size"]:
-                raise ValueError("source download exceeds its locked size")
-            stream.write(chunk)
+    with target.open("xb") as stream:
+        download_public_https(
+            item["url"], stream, allowed_hosts=HOSTS, redirect_hosts=REDIRECT_HOSTS
+        )
     if target.stat().st_size != item["size"] or _digest(target) != item["sha256"]:
         raise ValueError("source archive differs from the reviewed lock")
 

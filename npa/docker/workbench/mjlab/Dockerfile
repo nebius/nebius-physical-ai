@@ -19,7 +19,7 @@ ENV PYTHONUNBUFFERED=1 \
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
 COPY docker/workbench/habitat-sim/bootstrap_sources.py /opt/mjlab-source/bootstrap_sources.py
-COPY docker/workbench/mjlab/python_sources.py docker/workbench/mjlab/python-sources.lock.json /opt/mjlab-source/
+COPY src/npa/_public_https.py docker/workbench/mjlab/debian_sources.py docker/workbench/mjlab/python_sources.py docker/workbench/mjlab/python-sources.lock.json /opt/mjlab-source/
 RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
     && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
     && install -d -m 0755 /usr/share/doc/npa-mjlab \
@@ -41,7 +41,7 @@ RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
        ca-certificates curl netcat-openbsd procps rsync sudo openssh-server wget \
        libegl1 libgl1 libglvnd0 libglib2.0-0 ffmpeg git \
     && cp /var/lib/dpkg/status /usr/share/doc/npa-mjlab/runtime-status \
-    && python3 /opt/mjlab-source/bootstrap_sources.py fetch /usr/share/doc/npa-mjlab \
+    && python3 /opt/mjlab-source/debian_sources.py /usr/share/doc/npa-mjlab \
     && python3 /opt/mjlab-source/python_sources.py --lock /opt/mjlab-source/python-sources.lock.json \
        --output /usr/share/doc/npa-mjlab/python-sources \
     && rm -f /etc/ssh/ssh_host_* \
