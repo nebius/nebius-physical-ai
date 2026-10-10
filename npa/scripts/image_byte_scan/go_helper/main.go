@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -292,8 +293,8 @@ func failure(stderr io.Writer, code string) int {
 }
 
 // inFlightByteBudget bounds the payload bytes admitted to the detection pool at
-// one time. It is not a heap or resident-memory limit: the string conversion,
-// lowercased prefilter, regexp working set, and findings allocate additional
+// one time. It is not a heap or resident-memory limit: the lowercased prefilter,
+// regexp working set, and findings allocate additional
 // memory, and reclamation can lag completed detections. The README records
 // measured overhead rather than assuming a constant multiplier. A record larger
 // than the entire budget is admitted alone rather than refused: coverage never
@@ -405,7 +406,7 @@ func (b *byteBudget) release(amount int64) {
 type scanJob struct {
 	ordinal  uint64
 	length   uint64
-	payload  []byte
+	payload  string
 	reserved int64
 	digest   string
 	findings []finding
@@ -500,12 +501,10 @@ func detectRecord(job *scanJob, detector *detect.Detector, budget *byteBudget) {
 		}
 	}()
 	defer budget.release(job.reserved)
-	digest := sha256.Sum256(job.payload)
-	job.digest = hex.EncodeToString(digest[:])
 	// One call, one complete file. No MIME decision, source chunker, overlap,
 	// archive traversal, baseline, ignore file, or AddFinding accumulation.
-	matches := detector.Detect(detect.Fragment{Raw: string(job.payload), FilePath: recordPath(job.ordinal)})
-	job.payload = nil
+	matches := detector.Detect(detect.Fragment{Raw: job.payload, FilePath: recordPath(job.ordinal)})
+	job.payload = ""
 	findings := make([]finding, 0, len(matches))
 	for _, match := range matches {
 		findings = append(findings, finding{match.RuleID, match.StartLine, match.EndLine})
@@ -605,8 +604,12 @@ func admitOne(input io.Reader, detector *detect.Detector, budget *byteBudget,
 	if !granted {
 		return nil, ""
 	}
-	payload := make([]byte, int(length))
-	if _, err := io.ReadFull(input, payload); err != nil {
+	// Builder.String shares the completed backing storage, avoiding another
+	// whole-record allocation when the detector requires a string.
+	var payload strings.Builder
+	payload.Grow(int(length))
+	digest := sha256.New()
+	if _, err := io.CopyN(io.MultiWriter(&payload, digest), input, length); err != nil {
 		budget.release(reserved)
 		return nil, "truncated_payload"
 	}
@@ -617,8 +620,9 @@ func admitOne(input io.Reader, detector *detect.Detector, budget *byteBudget,
 	return &scanJob{
 		ordinal:  ordinal,
 		length:   uint64(length),
-		payload:  payload,
+		payload:  payload.String(),
 		reserved: reserved,
+		digest:   hex.EncodeToString(digest.Sum(nil)),
 		done:     make(chan struct{}),
 	}, ""
 }
