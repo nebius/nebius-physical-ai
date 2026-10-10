@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "ab7cbeb33aa6fc370ae8826675198cae961665edeaf8389d6bbb27fb5304fd71",
+  "workflow_sha256": "26c97b1a298f0416232bd15aa2591a5c28083fc42f97c554c08e7178f141bce9",
   "planning": {
     "validation": {
       "status": "verified",
@@ -43,7 +43,7 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The candidate's operator-private exact-source image is qualified, but the separate OpenDM/Dexbotic baseline image has not yet completed build, scan, target pull, bootstrap, and device checks. Neither image is a public release.",
+      "reason": "The candidate is an official public runtime that must be target-pulled anonymously, while the separate OpenDM/Dexbotic baseline image requires an operator-private baseline-only secret. The baseline image and the role-bound target-pull/device checks have not completed acceptance.",
       "evidence": [
         "Private operator image qualification evidence"
       ]

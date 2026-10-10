@@ -14,6 +14,9 @@ config:
   source_overlay: true
   candidate_runtime_image: "registry.example.invalid/operator/dm05-lerobot-libero@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   baseline_runtime_image: "registry.example.invalid/operator/dm05-opendm-libero@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  # The operator-private route replaces this placeholder with its existing
+  # baseline-only pull secret. Candidate resources must stay anonymous.
+  baseline_image_pull_secret: "operator-provided-baseline-pull-secret"
   seed: "7"
   episodes_per_task: "5"
   policy_device: cuda
@@ -35,18 +38,33 @@ resources:
     cpus: 4
     memory: 16Gi
     image: "{{config.candidate_runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          # Do not inherit a private baseline secret for the public candidate.
+          imagePullSecrets: []
   baseline_gpu:
     cloud: kubernetes
     accelerators: "{{config.gpu_type}}:{{config.baseline_gpu_count}}"
     cpus: 32
     memory: 256Gi
     image: "{{config.baseline_runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          imagePullSecrets:
+            - name: "{{config.baseline_image_pull_secret}}"
   candidate_gpu:
     cloud: kubernetes
     accelerators: "{{config.gpu_type}}:{{config.candidate_gpu_count}}"
     cpus: 16
     memory: 96Gi
     image: "{{config.candidate_runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          # Do not inherit a private baseline secret for the public candidate.
+          imagePullSecrets: []
 initial: prepare
 states:
   prepare:

@@ -168,6 +168,20 @@ same run before making any live-ready or reproduction claim. The maintained
 PR #4721 implementation must not be substituted for this checkpoint-parity
 path unless its documented processor conversion is also executed and recorded.
 
+### Role-bound image delivery
+
+The enhanced runtime is an official public image and must be target-pulled
+anonymously. The separate baseline runtime is operator-private. The workflow
+therefore declares an explicit empty `imagePullSecrets` list for every
+candidate resource, while only the baseline resource accepts the
+`baseline_image_pull_secret` configuration value. Its checked-in value is a
+nonfunctional placeholder; the private route supplies its existing baseline
+secret and removes the inherited shared secret for that invocation. If a shared
+secret is accidentally left inherited, SkyPilot's merge contract rejects the
+candidate route before provider submission instead of sending a private secret
+to the public-image path. This describes delivery authority only; it is not an
+image, device, or workflow-acceptance result.
+
 ### Baseline compatibility finding
 
 The documented `Dexmal/DM05-Lerobot` predecessor is a real DM05 checkpoint but

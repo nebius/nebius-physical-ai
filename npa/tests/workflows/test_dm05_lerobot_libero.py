@@ -13,8 +13,13 @@ import types
 from pathlib import Path
 
 import pytest
+import yaml
 
+from npa.cli.workbench import workflow as workflow_cli
 from npa.orchestration.npa_workflow.readiness import load_readiness_record
+from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+from npa.orchestration.npa_workflow.submit import merge_config_overrides
+from npa.orchestration.skypilot.registry_preflight import RegistryPreflightError
 from npa.workflows import dm05_lerobot_libero as workflow
 from npa.workflows import dm05_opendm_libero_baseline as baseline_workflow
 
@@ -812,3 +817,68 @@ def test_readiness_record_is_bound_to_the_comparison_workflow_bytes():
         == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
     )
     assert readiness["prerequisites"]["target_runtime"]["status"] == "unverified"
+
+
+def test_workflow_binds_the_baseline_secret_and_fails_closed_for_candidate_leakage():
+    raw = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    assert raw["config"]["baseline_image_pull_secret"] == (
+        "operator-provided-baseline-pull-secret"
+    )
+    assert raw["resources"]["baseline_gpu"]["kubernetes"]["pod_config"]["spec"][
+        "imagePullSecrets"
+    ] == [{"name": "{{config.baseline_image_pull_secret}}"}]
+    for resource_name in ("cpu", "candidate_gpu"):
+        assert (
+            raw["resources"][resource_name]["kubernetes"]["pod_config"]["spec"][
+                "imagePullSecrets"
+            ]
+            == []
+        )
+
+    baseline_image = "registry.example.invalid/operator/baseline@sha256:" + "b" * 64
+    candidate_image = "ghcr.example.invalid/operator/candidate@sha256:" + "c" * 64
+    spec = merge_config_overrides(
+        workflow_cli._load_npa_workflow(WORKFLOW),
+        {
+            "baseline_runtime_image": baseline_image,
+            "candidate_runtime_image": candidate_image,
+            "baseline_image_pull_secret": "operator-private-pull-secret",
+        },
+    )
+    images, requirements = workflow_cli._plan_preflight_image_requirements(
+        spec,
+        run_id="dm05-role-bound-pull-authority",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        assume_decision="",
+        infra="k8s/example-context",
+    )
+    _, kubernetes_images = workflow_cli._image_pull_execution_paths(
+        images=images,
+        requirements=requirements,
+    )
+    paths = workflow_cli._image_pull_paths(
+        images=images,
+        requirements=requirements,
+        kubernetes_images=kubernetes_images,
+        inherited_service_account_name="route-service-account",
+        inherited_pod_placement_json='{"nodeSelector":{"pool":"verified"}}',
+    )
+
+    assert paths[baseline_image] == (
+        (
+            ("operator-private-pull-secret",),
+            "route-service-account",
+            '{"nodeSelector":{"pool":"verified"}}',
+        ),
+    )
+    assert paths[candidate_image] == (
+        ((), "route-service-account", '{"nodeSelector":{"pool":"verified"}}'),
+    )
+    with pytest.raises(RegistryPreflightError, match="exactly one entry"):
+        workflow_cli._image_pull_paths(
+            images=images,
+            requirements=requirements,
+            kubernetes_images=kubernetes_images,
+            inherited_pull_secrets=("shared-private-secret",),
+            inherited_pull_secrets_configured=True,
+        )
