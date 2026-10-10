@@ -83,6 +83,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.cosmos_curate import app as cosmos_curate_app
     from npa.cli.workbench.cosmos_evaluator import app as cosmos_evaluator_app
     from npa.cli.workbench.curobo import app as curobo_app
+    from npa.cli.workbench.marble import app as marble_app
     from npa.cli.workbench.data import app as data_app
     from npa.cli.workbench.dataset import app as dataset_app
     from npa.cli.workbench.detection_training import app as detection_training_app
@@ -99,6 +100,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.lichtblick import app as lichtblick_app
     from npa.cli.workbench.ltx2 import app as ltx2_app
     from npa.cli.workbench.mjlab import app as mjlab_app
+    from npa.cli.workbench.ros2 import app as ros2_app
     from npa.cli.workbench.open3d import app as open3d_app
 
     from npa.cli.workbench.namespace import app as namespace_app
@@ -149,6 +151,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(nurec_app, name="nurec")
     full.add_typer(sonic_app, name="sonic")
     full.add_typer(mjlab_app, name="mjlab")
+    full.add_typer(ros2_app, name="ros2")
     full.add_typer(namespace_app, name="namespace")
     full.add_typer(molmoact_app, name="molmoact")
     full.add_typer(openvla_app, name="openvla")
@@ -160,6 +163,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(ltx2_app, name="ltx2")
     full.add_typer(alpamayo2_super_app, name="alpamayo2-super")
     full.add_typer(curobo_app, name="curobo")
+    full.add_typer(marble_app, name="marble")
     full.add_typer(lancedb_app, name="lancedb")
     full.add_typer(detection_training_app, name="detection-training")
     full.add_typer(encord_app, name="encord")

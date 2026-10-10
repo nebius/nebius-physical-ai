@@ -20,6 +20,7 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 
 | Goal | Spec and runbook |
 | --- | --- |
+| Generate robot inspection datasets in five sites | [Marble Go1 presets](../docs/workbench/guides/marble-robot-presets.md) — warehouse, shipyard, home, factory and utility; one GPU per site, optional five-site fan-out; new presets await live validation |
 | Run a complete public sample with one command | [Four workflow demos](../docs/workbench/guides/public-workflow-demos.md) — automatic inputs, standard GPU execution, and offline HTML results |
 | Label videos in Encord and export an annotated MP4 | [Encord partner workflows](partners/encord/README.md) — real object tracks, exported-label verification, and media roundtrip |
 | Augment a video or LeRobot episode | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) — public starter, local MP4, and episode/camera inputs; [twelve variants with preserved padding](../docs/workbench/guides/paidf-appearance-12.md#apply-the-recipe) |
@@ -28,6 +29,8 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 | Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [native and operator adapter runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — sealed data/runtime required; GPU acceptance pending |
 | Train navigation from a public RGB-D capture | [Scan-to-policy](main/rgbd-scan-to-policy-demo.yaml) · [runbook](../docs/workbench/guides/rgbd-scan-to-policy-demo.md) — automatic sample setup through held-out evaluation |
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
+| Render a digital-twin reference scene on CUDA | [Digital twin](../docs/workbench/guides/digital-twin.md) — dedicated GPU infrastructure, native Cycles, OpenUSD/glTF and offline HTML |
+| Inspect an industrial campus on RTX | [Campus rendering](../docs/workbench/guides/digital-twin.md#render-the-industrial-campus-on-rtx) — 18-hectare authored scene, native OptiX, four camera routes and 1440p output |
 | Prepare a reconstructed scene for Isaac navigation | [Scan-to-Isaac handoff](../docs/workbench/guides/scan-to-isaac-navigation.md) — supplied collision mesh, portable USDZ, and native PhysX probes |
 | Reconstruct metric RGB-D into a collision scene | [RGB-D scan to Isaac](../docs/workbench/guides/rgbd-scan-to-isaac.md) — measured TSDF surface, held-out depth qualification, colored USDZ, native PhysX; [explicit native-training handoff](../docs/workbench/guides/rgbd-scan-to-isaac.md#continue-into-native-navigation-training) requires the companion navigation implementation |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
