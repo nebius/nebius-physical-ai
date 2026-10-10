@@ -23,7 +23,7 @@ credentials, or a machine address. The operator supplies an existing Antioch
 project whose scenario emits the documented validation fields and a network
 address that its assigned simulator can reach.
 
-The image is built locally from the same pinned OpenPI source used by the
+The image is built locally from the same pinned, clean OpenPI source used by the
 workflow family. It is not pushed or classified for redistribution; the Polaris
 checkpoint remains a runtime-mounted operator cache. As with every OpenPI path,
 the exact run-scoped `NPA_OPENPI_ACCEPT_GEMMA_TERMS` value must already be in the

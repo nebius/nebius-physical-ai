@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import socket
 import subprocess
+import sys
 import time
 from typing import Any, Mapping, Sequence
 
@@ -139,6 +140,12 @@ def build_local_image(
         raise OpenPIAntiochError(
             f"OpenPI checkout must be pinned to {SOURCE_REF}, got {source_ref}"
         )
+    source_status = _run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=openpi_dir,
+    ).stdout.strip()
+    if source_status:
+        raise OpenPIAntiochError("OpenPI checkout must be clean before image build")
     _run(
         [
             docker_bin,
@@ -661,42 +668,56 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _failure_result(error: Exception) -> dict[str, str]:
+    """Return a sanitized, machine-readable result for a local operation failure."""
+
+    return {
+        "status": "failed",
+        "error_type": type(error).__name__,
+        "message": "OpenPI/Antioch operation failed; inspect private local logs.",
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command == "build-image":
-        result = build_local_image(
-            openpi_dir=args.openpi_dir,
-            image=args.image,
-            docker_bin=args.docker_bin,
-        )
-    else:
-        result = run_live_loop(
-            LiveLoopConfig(
-                project_dir=args.project_dir,
-                cache_dir=args.cache_dir,
+    try:
+        if args.command == "build-image":
+            result = build_local_image(
+                openpi_dir=args.openpi_dir,
                 image=args.image,
-                policy_host=args.policy_host,
-                host_port=args.host_port,
-                policy_port=args.policy_port,
-                scenario=args.scenario,
-                chunks=args.chunks,
-                policy_ready_timeout_s=args.policy_ready_timeout_s,
-                scenario_timeout_s=args.scenario_timeout_s,
                 docker_bin=args.docker_bin,
-                antioch_bin=args.antioch_bin,
-                rerun_from=args.rerun_from,
-                machine=args.machine,
-                script=args.script,
-                container_name=args.container_name,
-                cleanup_container=args.cleanup_container,
             )
-        )
-        if args.output:
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(
-                json.dumps(result, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
+        else:
+            result = run_live_loop(
+                LiveLoopConfig(
+                    project_dir=args.project_dir,
+                    cache_dir=args.cache_dir,
+                    image=args.image,
+                    policy_host=args.policy_host,
+                    host_port=args.host_port,
+                    policy_port=args.policy_port,
+                    scenario=args.scenario,
+                    chunks=args.chunks,
+                    policy_ready_timeout_s=args.policy_ready_timeout_s,
+                    scenario_timeout_s=args.scenario_timeout_s,
+                    docker_bin=args.docker_bin,
+                    antioch_bin=args.antioch_bin,
+                    rerun_from=args.rerun_from,
+                    machine=args.machine,
+                    script=args.script,
+                    container_name=args.container_name,
+                    cleanup_container=args.cleanup_container,
+                )
             )
+            if args.output:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(
+                    json.dumps(result, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+    except (OpenPIAntiochError, ValueError) as error:
+        print(json.dumps(_failure_result(error), sort_keys=True), file=sys.stderr)
+        return 1
     print(json.dumps(result, sort_keys=True))
     return 0
 

@@ -123,6 +123,29 @@ def test_build_refuses_unpinned_source_before_docker(
     assert calls == [["git", "rev-parse", "HEAD"]]
 
 
+def test_build_refuses_dirty_source_before_docker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(OPENPI_TERMS_ENV, "YES")
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(list(argv))
+        if argv[:3] == ["git", "rev-parse", "HEAD"]:
+            return _completed(list(argv), SOURCE_REF + "\n")
+        return _completed(list(argv), " M scripts/serve_policy.py\n")
+
+    monkeypatch.setattr(antioch, "_run", fake_run)
+
+    with pytest.raises(antioch.OpenPIAntiochError, match="must be clean"):
+        antioch.build_local_image(openpi_dir=tmp_path, image="local/openpi:test")
+
+    assert calls == [
+        ["git", "rev-parse", "HEAD"],
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+    ]
+
+
 def test_build_uses_stdin_dockerfile_without_acceptance_value(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -140,10 +163,11 @@ def test_build_uses_stdin_dockerfile_without_acceptance_value(
     monkeypatch.setattr(antioch, "_run", fake_run)
     antioch.build_local_image(openpi_dir=tmp_path, image="local/openpi:test")
 
-    build_argv, build_kwargs = calls[1]
+    build_argv, build_kwargs = calls[2]
     assert build_argv[-2:] == ["-", str(tmp_path)]
     assert f"ENV {OPENPI_TERMS_ENV}=YES" not in str(build_kwargs["input_text"])
     assert "--build-arg" not in build_argv
+    assert "NPA_OPENPI_TERMS_REFUSED" in str(build_kwargs["input_text"])
     assert "pi05_droid" not in str(build_kwargs["input_text"])
 
 
@@ -279,6 +303,30 @@ def test_live_loop_parser_has_bounded_wait_defaults_and_overrides() -> None:
     assert defaults.scenario_timeout_s == 1800.0
     assert overrides.policy_ready_timeout_s == 17.5
     assert overrides.scenario_timeout_s == 180.5
+
+
+def test_main_emits_sanitized_structured_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        antioch,
+        "build_local_image",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            antioch.OpenPIAntiochError("private runtime detail")
+        ),
+    )
+
+    status = antioch.main(
+        ["build-image", "--openpi-dir", "/tmp/openpi", "--image", "local/openpi:test"]
+    )
+    result = json.loads(capsys.readouterr().err)
+
+    assert status == 1
+    assert result == {
+        "error_type": "OpenPIAntiochError",
+        "message": "OpenPI/Antioch operation failed; inspect private local logs.",
+        "status": "failed",
+    }
 
 
 def test_accepted_container_forwards_env_by_name_only(tmp_path: Path) -> None:
