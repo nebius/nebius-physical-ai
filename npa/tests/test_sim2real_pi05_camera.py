@@ -26,6 +26,7 @@ from npa.workflows.sim2real.pi05_isaac import (
     _object_asset_geometry,
     _robot_plant_receipt,
     _launch_camera_app,
+    _live_gravity_receipt,
     _axis_angle_error_xyzw,
     _expert_waypoints,
     _expert_command,
@@ -552,7 +553,9 @@ def test_runtime_robot_plant_receipt_reads_actual_actuator_tensors() -> None:
             spawn=SimpleNamespace(rigid_props=SimpleNamespace(disable_gravity=True))
         ),
         actuators={"panda_shoulder": actuator},
-        root_physx_view=SimpleNamespace(
+        num_instances=1,
+        num_bodies=9,
+        root_view=SimpleNamespace(
             get_disable_gravities=lambda: torch.ones((1, 9), dtype=torch.uint8)
         ),
     )
@@ -562,6 +565,7 @@ def test_runtime_robot_plant_receipt_reads_actual_actuator_tensors() -> None:
     assert receipt["configured_disable_robot_gravity"] is True
     assert receipt["observed_disable_gravity"]["all_bodies_disabled"] is True
     assert receipt["observed_disable_gravity"]["shape"] == [1, 9]
+    assert receipt["observed_disable_gravity"]["converter"] == "torch"
     assert receipt["actuators"]["panda_shoulder"]["stiffness"] == [400.0]
     assert receipt["actuators"]["panda_shoulder"]["damping"] == [80.0]
 
@@ -579,13 +583,83 @@ def test_runtime_robot_plant_rejects_unapplied_gravity_config() -> None:
             spawn=SimpleNamespace(rigid_props=SimpleNamespace(disable_gravity=True))
         ),
         actuators={"panda_shoulder": actuator},
-        root_physx_view=SimpleNamespace(
+        num_instances=1,
+        num_bodies=1,
+        root_view=SimpleNamespace(
             get_disable_gravities=lambda: torch.zeros((1, 1), dtype=torch.uint8)
         ),
     )
 
     with pytest.raises(RuntimeError, match="gravity disabling is not active"):
         _robot_plant_receipt(SimpleNamespace(scene={"robot": robot}))
+
+
+def test_runtime_robot_plant_converts_raw_warp_gravity_flags(monkeypatch) -> None:
+    import torch
+
+    raw = object()
+    warp = types.ModuleType("warp")
+    warp.to_torch = lambda value: torch.ones((1, 2)) if value is raw else None
+    monkeypatch.setitem(sys.modules, "warp", warp)
+    robot = _plant_robot_for_gravity(SimpleNamespace(get_disable_gravities=lambda: raw))
+
+    receipt = _robot_plant_receipt(SimpleNamespace(scene={"robot": robot}))
+
+    gravity = receipt["observed_disable_gravity"]
+    assert gravity["converter"] == "warp.to_torch"
+    assert gravity["return_type"] == "builtins.object"
+
+
+def _plant_robot_for_gravity(view: SimpleNamespace) -> SimpleNamespace:
+    import torch
+
+    actuator = SimpleNamespace(
+        joint_names=["panda_joint1"],
+        stiffness=torch.tensor([[400.0]]),
+        damping=torch.tensor([[80.0]]),
+    )
+    return SimpleNamespace(
+        cfg=SimpleNamespace(
+            spawn=SimpleNamespace(rigid_props=SimpleNamespace(disable_gravity=True))
+        ),
+        actuators={"panda_shoulder": actuator},
+        num_instances=1,
+        num_bodies=2,
+        root_view=view,
+    )
+
+
+@pytest.mark.parametrize(
+    ("robot", "message"),
+    [
+        (SimpleNamespace(root_view=None), "lacks its PhysX articulation root view"),
+        (SimpleNamespace(root_view=SimpleNamespace()), "lacks get_disable_gravities"),
+    ],
+)
+def test_live_gravity_receipt_distinguishes_missing_api(robot, message) -> None:
+    with pytest.raises(RuntimeError, match=message):
+        _live_gravity_receipt(robot)
+
+
+def test_live_gravity_receipt_rejects_shape_and_nonbinary_values() -> None:
+    import torch
+
+    wrong_shape = SimpleNamespace(
+        root_view=SimpleNamespace(get_disable_gravities=lambda: torch.ones((1, 1))),
+        num_instances=1,
+        num_bodies=2,
+    )
+    with pytest.raises(RuntimeError, match="shape is invalid"):
+        _live_gravity_receipt(wrong_shape)
+    nonbinary = SimpleNamespace(
+        root_view=SimpleNamespace(
+            get_disable_gravities=lambda: torch.tensor([[1.0, 2.0]])
+        ),
+        num_instances=1,
+        num_bodies=2,
+    )
+    with pytest.raises(RuntimeError, match="flags are invalid"):
+        _live_gravity_receipt(nonbinary)
 
 
 def test_live_rotated_hand_sensor_and_ik_control_point_receipt() -> None:

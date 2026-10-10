@@ -1184,20 +1184,52 @@ def _live_gravity_receipt(robot: Any) -> dict[str, Any]:
 
     import numpy as np
 
-    view = getattr(robot, "root_physx_view", None)
+    view = getattr(robot, "root_view", None)
+    if view is None:
+        raise RuntimeError("runtime Franka lacks its PhysX articulation root view")
     getter = getattr(view, "get_disable_gravities", None)
-    values = _proxy_torch(getter() if callable(getter) else None)
-    if values is None or not hasattr(values, "detach"):
-        raise RuntimeError("runtime Franka lacks PhysX disable-gravity flags")
+    if not callable(getter):
+        raise RuntimeError("PhysX articulation view lacks get_disable_gravities")
+    raw = getter()
+    values, converter = _native_tensor_to_torch(raw)
     array = values.detach().cpu().numpy()
-    if array.size < 1 or not np.isfinite(array.astype(float)).all():
+    expected_shape = (int(robot.num_instances), int(robot.num_bodies))
+    if array.shape != expected_shape:
+        raise RuntimeError("runtime Franka disable-gravity shape is invalid")
+    if not np.isfinite(array.astype(float)).all() or not np.isin(array, [0, 1]).all():
         raise RuntimeError("runtime Franka disable-gravity flags are invalid")
     flags = array.astype(bool)
     return {
         "shape": list(flags.shape),
         "unique": sorted(int(item) for item in np.unique(flags)),
         "all_bodies_disabled": bool(flags.all()),
+        "view_type": _qualified_type(view),
+        "return_type": _qualified_type(raw),
+        "converter": converter,
     }
+
+
+def _native_tensor_to_torch(value: Any) -> tuple[Any, str]:
+    """Resolve documented Torch, ProxyArray, or raw Warp tensor output."""
+
+    if hasattr(value, "torch"):
+        return value.torch, "proxyarray.torch"
+    if hasattr(value, "detach"):
+        return value, "torch"
+    try:
+        import warp as wp
+
+        converted = wp.to_torch(value)
+    except (ImportError, TypeError, AttributeError) as error:
+        raise RuntimeError("unsupported PhysX native tensor return type") from error
+    if not hasattr(converted, "detach"):
+        raise RuntimeError("Warp conversion did not produce a Torch tensor")
+    return converted, "warp.to_torch"
+
+
+def _qualified_type(value: Any) -> str:
+    cls = type(value)
+    return f"{cls.__module__}.{cls.__qualname__}"
 
 
 def _axis_angle_error_xyzw(current: Any, target: Any) -> Any:
