@@ -28,7 +28,12 @@ USER root
 # included in the image.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-      build-essential ca-certificates ffmpeg git git-lfs libgl1 libglib2.0-0 rsync sudo \
+      build-essential ca-certificates curl ffmpeg fuse3 git git-lfs \
+      init-system-helpers libgl1 libglib2.0-0 netcat-openbsd openssh-server \
+      patch pciutils rsync sudo wget \
+    # openssh-server creates host keys during package installation.  Remove them
+    # before this layer is committed so SkyPilot can generate per-pod keys.
+    && rm -f /etc/ssh/ssh_host_* \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && (id -u "${NPA_RUNTIME_USER}" >/dev/null 2>&1 \
         || useradd -m -s /bin/bash -u 1000 "${NPA_RUNTIME_USER}") \

@@ -76,11 +76,12 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # SkyPilot's passwordless-sudo bootstrap changes uid and gid
-                # before payload execution; retain only those two capabilities.
+                # The retained SkyPilot bootstrap changes uid/gid, persists its
+                # environment under /etc/profile.d, and emits a Linux audit
+                # record through sudo. Keep that exact least-privilege set.
                 capabilities:
                   drop: [ALL]
-                  add: [SETGID, SETUID]
+                  add: [AUDIT_WRITE, SETGID, SETUID]
   train:
     cloud: kubernetes
     # The configured NPA route resolves this standard alias to its exact RTX PRO
@@ -120,11 +121,12 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # SkyPilot's passwordless-sudo bootstrap changes uid and gid
-                # before payload execution; retain only those two capabilities.
+                # The retained SkyPilot bootstrap changes uid/gid, persists its
+                # environment under /etc/profile.d, and emits a Linux audit
+                # record through sudo. Keep that exact least-privilege set.
                 capabilities:
                   drop: [ALL]
-                  add: [SETGID, SETUID]
+                  add: [AUDIT_WRITE, SETGID, SETUID]
   rollout:
     cloud: kubernetes
     accelerators: RTXPRO6000:1
@@ -161,11 +163,12 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # SkyPilot's passwordless-sudo bootstrap changes uid and gid
-                # before payload execution; retain only those two capabilities.
+                # The retained SkyPilot bootstrap changes uid/gid, persists its
+                # environment under /etc/profile.d, and emits a Linux audit
+                # record through sudo. Keep that exact least-privilege set.
                 capabilities:
                   drop: [ALL]
-                  add: [SETGID, SETUID]
+                  add: [AUDIT_WRITE, SETGID, SETUID]
   evidence:
     cloud: kubernetes
     cpus: 4
@@ -201,11 +204,12 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # SkyPilot's passwordless-sudo bootstrap changes uid and gid
-                # before payload execution; retain only those two capabilities.
+                # The retained SkyPilot bootstrap changes uid/gid, persists its
+                # environment under /etc/profile.d, and emits a Linux audit
+                # record through sudo. Keep that exact least-privilege set.
                 capabilities:
                   drop: [ALL]
-                  add: [SETGID, SETUID]
+                  add: [AUDIT_WRITE, SETGID, SETUID]
 
 initial: prepare
 

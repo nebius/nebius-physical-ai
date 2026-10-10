@@ -271,6 +271,30 @@ def test_neutral_image_preserves_nonroot_access_to_its_notices() -> None:
     assert 'CMD ["sleep", "infinity"]' in dockerfile
 
 
+def test_neutral_image_bakes_skypilot_prerequisites_without_host_keys() -> None:
+    """Avoid mutable worker package setup while retaining per-pod SSH keys."""
+    dockerfile = (
+        Path(__file__).resolve().parents[1] / "docker/workbench/openvla-oft/Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    install_block = dockerfile.split("RUN apt-get update", 1)[1].split(
+        "COPY docker/workbench/openvla-oft/control-requirements.lock", 1
+    )[0]
+    for package in (
+        "curl",
+        "fuse3",
+        "init-system-helpers",
+        "netcat-openbsd",
+        "openssh-server",
+        "patch",
+        "pciutils",
+        "rsync",
+        "wget",
+    ):
+        assert package in install_block
+    assert "rm -f /etc/ssh/ssh_host_*" in install_block
+
+
 def test_workflow_resources_declare_the_skypilot_task_container() -> None:
     """Every native stage gets SkyPilot's named non-root Kubernetes task container."""
     workflow = (
@@ -315,14 +339,14 @@ def test_workflow_resources_declare_the_skypilot_task_container() -> None:
         container = pod_spec["containers"][0]
         assert container["name"] == "ray-node", resource_name
         assert container["env"] == expected_storage_env, resource_name
-        # The bootstrap needs set-id transitions, but no other capability.
+        # This is the exact retained SkyPilot sudo bootstrap capability set.
         assert "allowPrivilegeEscalation" not in container["securityContext"]
         assert container["securityContext"] == {
             "runAsNonRoot": True,
             "privileged": False,
             "capabilities": {
                 "drop": ["ALL"],
-                "add": ["SETGID", "SETUID"],
+                "add": ["AUDIT_WRITE", "SETGID", "SETUID"],
             },
         }, resource_name
 
