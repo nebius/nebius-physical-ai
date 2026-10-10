@@ -127,6 +127,12 @@ def test_image_repairs_inherited_unused_or_stale_vulnerable_bytes() -> None:
     assert "-delete" in instructions
 
 
+def test_image_includes_the_glu_runtime_library() -> None:
+    instructions = _dockerfile_instructions()
+
+    assert "libglu1-mesa" in instructions
+
+
 def test_cosmos3_image_satisfies_the_skypilot_bootstrap_contract() -> None:
     instructions = _dockerfile_instructions()
     entrypoint = ENTRYPOINT.read_text(encoding="utf-8")

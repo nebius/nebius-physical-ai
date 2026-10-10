@@ -78,6 +78,7 @@ RUN apt-get update \
         ffmpeg \
         git \
         git-lfs \
+        libglu1-mesa \
         linux-libc-dev \
         openssh-server \
         rsync \
