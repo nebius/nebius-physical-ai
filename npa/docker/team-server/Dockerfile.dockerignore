@@ -1,0 +1,19 @@
+# Send only package sources and the supported workflow catalog to the builder.
+**
+!npa/
+!npa/pyproject.toml
+!npa/src/
+!npa/src/**
+!workflows/
+!workflows/main/
+!workflows/main/*.yaml
+!workflows/testing/
+!workflows/testing/*.yaml
+!workflows/partners/
+!workflows/partners/**
+**/__pycache__/
+**/*.py[cod]
+**/.env
+**/*.pem
+**/*.key
+**/.venv/

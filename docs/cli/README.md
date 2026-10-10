@@ -2,6 +2,7 @@
 
 Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 
+- [npa workbench team account](account.md)
 - [npa adapter](adapter.md)
 - [npa agent](agent.md)
 - [npa workbench alpamayo2-super](alpamayo2-super.md)
@@ -46,6 +47,8 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench leisaac](leisaac.md)
 - [npa workbench lerobot](lerobot.md)
 - [npa workbench lichtblick](lichtblick.md)
+- [npa login](login.md)
+- [npa logout](logout.md)
 - [npa workbench ltx2](ltx2.md)
 - [npa workbench mjlab](mjlab.md)
 - [npa workbench molmoact](molmoact.md)
@@ -75,6 +78,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa storage](storage.md)
 - [npa studio](studio.md)
 - [npa workbench specialists submit](submit.md)
+- [npa workbench team](team.md)
 - [npa workbench token-factory](token-factory.md)
 - [npa tools](tools.md)
 - [npa workbench workflow trigger](trigger.md)

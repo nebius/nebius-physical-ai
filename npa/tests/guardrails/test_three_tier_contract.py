@@ -982,6 +982,9 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # Namespace selection is host-side platform configuration.
         # CLI and SDK share namespaces.py; no payload service or toolRef applies.
         "namespace",
+        # Team access is a trusted execution gateway, never an in-workload toolRef.
+        # CLI and SDK share team.client; team tests exercise its HTTP boundary.
+        "team",
         # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
         # passthrough, so the inspect-based CapabilityContract cannot express them.
         # CLI <-> SDK <-> YAML coherence is enforced instead by

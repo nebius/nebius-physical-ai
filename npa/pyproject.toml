@@ -31,6 +31,8 @@ dependencies = [
     # Directly verifies customer/control-plane-signed LIBERO authorizations;
     # keep the operator verifier version aligned with CI.
     "cryptography==50.0.2",
+    # Team mode verifies external issuer/audience-bound JWTs; never proxy headers.
+    "PyJWT>=2.15.1,<3",
     "bcrypt>=5.0,<6.0",
     "pyyaml>=6.0,<7.0",
     # Structure-aware edits of owned Terraform provider defaults.

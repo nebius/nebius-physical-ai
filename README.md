@@ -16,6 +16,7 @@
 **[Guides](docs/workbench/guides/README.md)** ·
 **[Manual workflows](docs/workbench/guides/manual-workflow-operations.md)** ·
 **[Workbench docs](docs/workbench/README.md)** ·
+**[Shared access](docs/workbench/shared-workbench-quickstart.md)** ·
 **[Benchmarks](benchmark/README.md)** ·
 **[Operator tools](docs/tools/README.md)** ·
 **[CLI reference](docs/cli/README.md)** ·
@@ -26,8 +27,15 @@
 </div>
 
 
-For shared Kubernetes clusters, use [team namespaces](docs/workbench/namespaces.md) to configure
-namespace selection and private SkyPilot contexts with `npa workbench namespace`.
+For a shared Workbench endpoint, start with the
+[shared-access quickstart](docs/workbench/shared-workbench-quickstart.md).
+Operators install the HTTPS service once; users and coding agents connect with
+`npa login` using a personal key or Nebius human sign-in. Team mode adds
+personal namespaces, GPU caps, and scoped storage. The CLI and agents reuse
+the saved connection through the same authenticated API.
+Operators managing Kubernetes directly can use
+[team namespaces](docs/workbench/namespaces.md) to select namespaces and private
+SkyPilot contexts with `npa workbench namespace`.
 
 ## What is Workbench?
 
@@ -114,6 +122,11 @@ maintained prompts:
 The prompts keep credentials private, stop at human approval gates, validate
 the plan before provisioning, and stay with the run through artifact inspection.
 The manual path below exposes the same control-plane steps.
+
+Joining an existing shared Workbench? Complete **1. Install**, then follow the
+[shared-access quickstart](docs/workbench/shared-workbench-quickstart.md).
+The project connection steps below are for operators; `npa configure` does not
+install the shared service or its LoadBalancer.
 
 ### 1. Install
 

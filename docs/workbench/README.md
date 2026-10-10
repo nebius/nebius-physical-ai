@@ -6,6 +6,21 @@ Use `npa workbench <tool> <command>` for a capability and
 `npa workbench workflow` for a pipeline. Tools exchange artifacts through S3;
 Python and HTTP access follow each tool's documented contract.
 
+[Optional team mode](team-access.md) adds shared execution through the existing
+CLI, API, and SDK. Administrators create local users/groups and explicit personal
+GPU allocations and artifact storage; users use revocable personal key files and
+never receive scheduler or cluster credentials. The CPU gateway and private
+SkyPilot service still require live qualification. Start with the
+[shared-access quickstart](shared-workbench-quickstart.md), then use
+[local users and personal access keys](team-identity.md) for identity details.
+External identities can be explicitly
+linked later without changing local ownership; there is no standalone portal or
+browser-login flow. The [offline team example](../demos/team-access.html)
+illustrates synthetic policy outcomes and recorded local checks, not a deployed
+service. Optional native Nebius human identity verification uses the same
+linked-local-account model and private token-file path; it does not make tenant
+access, cloud groups, or cloud roles into Workbench authorization.
+
 PAIDF workflows select repaired public Cosmos3, Evaluator, and Curator
 candidates by immutable digest while the historical releases remain
 quarantined. See the [PAIDF image-selection notes](guides/physical-ai-data-factory.md)

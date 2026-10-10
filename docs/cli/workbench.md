@@ -51,6 +51,7 @@ dataset  Dataset-of-record: ingest, validate, curate, and query production senso
 insights  Insights: lineage graph + common metrics store over workflow-run artifacts.
 vlm-eval  VLM evaluation for sim-to-real pipeline gating.
 token-factory  Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible).
+team  Optional team access and authenticated workflow execution.
 byof  Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder).
 workflow  Multi-stage training workflow orchestration.
 health  Preflight health checks for workbench workflows.
@@ -107,6 +108,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `insights` | Insights: lineage graph + common metrics store over workflow-run artifacts. |
 | `vlm-eval` | VLM evaluation for sim-to-real pipeline gating. |
 | `token-factory` | Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible). |
+| `team` | Optional team access and authenticated workflow execution. |
 | `byof` | Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder). |
 | `workflow` | Multi-stage training workflow orchestration. |
 | `health` | Preflight health checks for workbench workflows. |

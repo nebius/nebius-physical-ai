@@ -10,6 +10,14 @@ and credentials in the existing NPA stores; no second credential file is needed.
 Direct [Token Factory](token-factory.md) inference uses the hosted API. Its local
 CLI/SDK calls do not require the Kubernetes setup below.
 
+For a shared Workbench installation, the operator runs
+[`npa workbench team setup`](team-access.md#deploy-and-qualify-the-service) as part
+of server setup. It creates the persistent Nebius HTTPS LoadBalancer and retains
+its address using operator infrastructure credentials. Desktop clients and
+personal Workbench keys are not provisioning dependencies. Users and agents access the
+shared API through their own Workbench identity. The local operator workflow
+below remains available independently.
+
 > **Realistic total for a first workload: 1–3 hours.** The long poles are
 > cluster provisioning, the SkyPilot venv build, and GPU image pulls —
 > all one-time costs. Repeat runs skip most of this page.

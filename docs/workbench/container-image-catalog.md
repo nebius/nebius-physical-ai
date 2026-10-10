@@ -2,6 +2,12 @@
 
 [Workbench docs](README.md)
 
+The optional [team gateway](team-access.md) has a separate CPU service recipe
+at `npa/docker/team-server/Dockerfile`. It is built into an operator-controlled
+private registry and is outside the public image plan and release table below.
+Its Python and kubectl bases are digest-pinned. A private deployment does not
+establish a supported public release.
+
 Repository-selected runtime images use the public mirror by default:
 
 ```text

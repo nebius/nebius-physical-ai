@@ -12,6 +12,38 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+Optional [team mode](../docs/workbench/team-access.md) adds CLI/API/SDK shared
+execution through `npa workbench team` and `npa.sdk.workbench.team`.
+Administrators create local users and groups, then assign explicit personal
+namespaces, GPU allocations, and scoped artifact storage. Users receive
+revocable personal key files for submit, status, logs, and artifacts; they do
+not receive scheduler or cluster credentials. Set `account_namespace` once to
+enable persistent local accounts through `npa workbench team account`.
+External JWT identities can be explicitly linked later without changing local
+ownership or allocations. Team mode has no standalone portal or browser-login
+flow. `npa workbench team whoami` and `TeamClient.whoami()` report the same
+personal permissions; see the [local account and key guide](../docs/workbench/team-identity.md).
+Sign in once with `npa login --endpoint <team-HTTPS-endpoint> --token-file <key-file>`
+or `npa login --endpoint <team-HTTPS-endpoint> --nebius`. The latter uses official
+Nebius browser sign-in and automatic CLI token refresh for a linked local
+account; no manual IAM-token files are needed. Both remember the connection and
+unambiguous workspace/cluster placement, so the next command can be
+`npa workbench team submit --spec workflow.yaml`. Repeating it recovers the same
+run; add `--new-run` to deliberately repeat an acknowledged submission.
+`--profile` selects named connections, `--ca-file` trusts an administrator's
+private CA, and `npa logout` forgets the local connection. Private saved state
+uses `$NPA_CONFIG_DIR/team` or `~/.npa/team`. Agents can use the same saved login
+through `npa.sdk.workbench.team.connect()`. Native Nebius verification remains
+mutually exclusive with generic JWT identity mode and never imports cloud roles
+as Workbench grants.
+
+`npa workbench team setup --input-path <private-setup.yaml> --output-path
+<private-installation.json>` deploys the shared HTTPS gateway, creates its
+Nebius LoadBalancer, and retains the address. It uses operator cloud/Kubernetes
+credentials and existing server/TLS/state resources; no personal key or VDI
+client is required. See [shared server setup](../docs/workbench/team-access.md#deploy-and-qualify-the-service)
+for ownership checks, retries, and qualification.
+
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
 optional `--baseline-path` compares both sources in both A/B orders. See the

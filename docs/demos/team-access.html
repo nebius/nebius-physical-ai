@@ -1,0 +1,1976 @@
+<!doctype html>
+<!-- Offline illustration of CLI-first team access; it does not connect to a service, identity provider, or cloud. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Workbench · Simulated team access</title>
+    <style>
+      :root {
+        --ink: #172339;
+        --muted: #637087;
+        --paper: #f5f6fa;
+        --line: #dfe4ed;
+        --accent: #5841cf;
+        --tint: #eeebff;
+        --green: #16704d;
+        --red: #a53040;
+        --amber: #875e15;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font:
+          15px/1.55 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button,
+      select {
+        cursor: pointer;
+      }
+      button {
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: white;
+        color: var(--ink);
+        padding: 9px 13px;
+        transition: background 0.15s;
+      }
+      button:hover {
+        background: #f0f1f8;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+      button.primary {
+        background: var(--accent);
+        color: white;
+        border-color: var(--accent);
+      }
+      button.primary:hover {
+        background: #4731b5;
+      }
+      button.danger {
+        color: var(--red);
+      }
+      button:focus-visible,
+      a:focus-visible,
+      select:focus-visible {
+        outline: 3px solid #8e80e9;
+        outline-offset: 3px;
+      }
+      a {
+        color: var(--accent);
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+      h1 {
+        font-size: 39px;
+        letter-spacing: -1.6px;
+        line-height: 1.15;
+        margin-bottom: 13px;
+      }
+      h2 {
+        font-size: 21px;
+        letter-spacing: -0.4px;
+        margin-bottom: 7px;
+      }
+      h3 {
+        font-size: 15px;
+        margin-bottom: 6px;
+      }
+      small,
+      .muted {
+        color: var(--muted);
+      }
+      code,
+      pre {
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+      code {
+        font-size: 12px;
+      }
+      pre {
+        background: #152137;
+        color: #e6eafa;
+        border-radius: 12px;
+        padding: 18px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-size: 12px;
+        line-height: 1.8;
+        margin: 12px 0 0;
+      }
+      .shell {
+        display: grid;
+        grid-template-columns: 230px 1fr;
+        min-height: 100vh;
+      }
+      .sidebar {
+        padding: 29px 20px;
+        background: #fff;
+        border-right: 1px solid var(--line);
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        gap: 27px;
+      }
+      .brand {
+        font-size: 19px;
+        font-weight: 750;
+        letter-spacing: -0.6px;
+        display: flex;
+        gap: 9px;
+        align-items: center;
+      }
+      .brandmark {
+        height: 26px;
+        width: 26px;
+        background: var(--accent);
+        border-radius: 7px;
+        display: grid;
+        place-items: center;
+        color: white;
+        font-size: 15px;
+      }
+      .eyebrow {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1.6px;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      nav {
+        display: grid;
+        gap: 7px;
+      }
+      nav button {
+        text-align: left;
+        border-color: transparent;
+        color: var(--muted);
+        padding: 12px;
+      }
+      nav button.active {
+        background: var(--tint);
+        color: var(--accent);
+        font-weight: 650;
+      }
+      .side-note {
+        margin-top: auto;
+        font-size: 12px;
+        color: var(--muted);
+        border-top: 1px solid var(--line);
+        padding-top: 20px;
+      }
+      .main {
+        max-width: 1470px;
+        padding: 28px 42px 50px;
+        width: 100%;
+        margin: auto;
+      }
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 15px;
+        margin-bottom: 33px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 5px 10px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 650;
+        background: var(--tint);
+        color: var(--accent);
+      }
+      .pill.green {
+        background: #e8f5ee;
+        color: var(--green);
+      }
+      .pill.amber {
+        background: #fbf0d9;
+        color: var(--amber);
+      }
+      .pill.red {
+        background: #fcebed;
+        color: var(--red);
+      }
+      .dot {
+        height: 6px;
+        width: 6px;
+        background: currentColor;
+        border-radius: 50%;
+      }
+      .lead {
+        font-size: 16px;
+        color: var(--muted);
+        max-width: 750px;
+        margin-bottom: 25px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .between {
+        justify-content: space-between;
+      }
+      .scenarios {
+        display: flex;
+        gap: 7px;
+        flex-wrap: wrap;
+        margin: 19px 0 25px;
+      }
+      .scenarios button {
+        font-size: 12px;
+        padding: 7px 10px;
+      }
+      .scenarios button.selected {
+        border-color: var(--accent);
+        background: var(--tint);
+        color: var(--accent);
+      }
+      .card {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        padding: 23px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr);
+        gap: 19px;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px;
+        margin-bottom: 20px;
+      }
+      .metric {
+        padding: 18px 20px;
+      }
+      .metric strong {
+        display: block;
+        font-size: 25px;
+        letter-spacing: -0.7px;
+        margin-top: 7px;
+      }
+      .metric small {
+        font-size: 12px;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin: 20px 0;
+      }
+      label {
+        font-size: 11px;
+        font-weight: 650;
+        color: var(--muted);
+        display: block;
+        letter-spacing: 0.3px;
+      }
+      select,
+      input {
+        display: block;
+        width: 100%;
+        margin-top: 6px;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        padding: 9px;
+        border-radius: 8px;
+        min-width: 0;
+      }
+      .notice {
+        padding: 13px 16px;
+        border-radius: 10px;
+        background: var(--tint);
+        color: #493d7b;
+        font-size: 13px;
+        margin: 18px 0;
+      }
+      .notice.warning {
+        background: #fff3de;
+        color: #785814;
+      }
+      .notice.error {
+        background: #fcebed;
+        color: var(--red);
+      }
+      .runs {
+        display: grid;
+        gap: 10px;
+        margin-top: 15px;
+      }
+      .run {
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+      }
+      .run.selected {
+        border-color: #9a8de9;
+        background: #faf9ff;
+      }
+      .run button {
+        border: 0;
+        padding: 0;
+        background: none;
+        text-align: left;
+        font-weight: 650;
+      }
+      .run small {
+        display: block;
+        font-size: 11px;
+        margin-top: 4px;
+      }
+      .empty {
+        padding: 32px 16px;
+        text-align: center;
+        color: var(--muted);
+        border: 1px dashed var(--line);
+        border-radius: 10px;
+      }
+      .detail {
+        margin-top: 22px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+      }
+      .stages {
+        display: flex;
+        gap: 5px;
+        margin: 16px 0;
+      }
+      .stage {
+        flex: 1;
+        border-radius: 6px;
+        padding: 10px 6px;
+        background: #f0f2f6;
+        font-size: 11px;
+        text-align: center;
+        color: var(--muted);
+      }
+      .stage.done {
+        background: #e8f5ee;
+        color: var(--green);
+      }
+      .stage.current {
+        background: var(--tint);
+        color: var(--accent);
+        box-shadow: inset 0 0 0 1px #b8aef1;
+      }
+      .actions {
+        display: flex;
+        gap: 7px;
+        flex-wrap: wrap;
+        margin-top: 15px;
+      }
+      .actions button {
+        font-size: 12px;
+      }
+      .facts {
+        display: grid;
+        grid-template-columns: 105px minmax(0, 1fr);
+        gap: 9px;
+        font-size: 12px;
+        margin: 14px 0;
+      }
+      .facts dt {
+        color: var(--muted);
+      }
+      .facts dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      .meter {
+        display: flex;
+        gap: 5px;
+        margin: 14px 0;
+      }
+      .gpu {
+        height: 9px;
+        flex: 1;
+        border-radius: 3px;
+        background: #e7ebf2;
+      }
+      .gpu.used {
+        background: var(--accent);
+      }
+      .trace {
+        margin: 20px 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 14px;
+      }
+      .trace li {
+        display: grid;
+        grid-template-columns: 26px 1fr;
+        gap: 9px;
+        font-size: 12px;
+      }
+      .trace .number {
+        background: #f0eefc;
+        color: var(--accent);
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+      }
+      .trace small {
+        display: block;
+        font-size: 11px;
+        margin-top: 3px;
+      }
+      .trace > li.muted {
+        display: block;
+      }
+      .stack {
+        display: grid;
+        gap: 19px;
+      }
+      .hidden,
+      [hidden] {
+        display: none !important;
+      }
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 14px;
+        margin: 25px 0;
+      }
+      .flow .card {
+        padding: 18px;
+        position: relative;
+      }
+      .flow .card:not(:last-child):after {
+        content: "→";
+        position: absolute;
+        right: -14px;
+        top: 45%;
+        color: var(--muted);
+      }
+      .flow b {
+        display: block;
+        font-size: 14px;
+        margin: 10px 0;
+      }
+      .flow p {
+        font-size: 12px;
+        color: var(--muted);
+        margin: 0;
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 13px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 14px 12px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.7px;
+      }
+      td:first-child {
+        font-weight: 600;
+      }
+      .section-head {
+        margin-bottom: 20px;
+      }
+      .access-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+      .footnote {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 19px;
+      }
+      .evidence-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 13px;
+      }
+      .receipt {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 15px;
+      }
+      .receipt p {
+        font-size: 12px;
+        color: var(--muted);
+        margin: 8px 0 0;
+      }
+      .coverage {
+        margin-top: 25px;
+      }
+      .dialog {
+        position: fixed;
+        inset: 0;
+        background: #18223980;
+        display: grid;
+        place-items: center;
+        padding: 20px;
+        z-index: 5;
+      }
+      .dialog .card {
+        width: min(650px, 100%);
+        max-height: 85vh;
+        overflow: auto;
+        box-shadow: 0 20px 70px #0003;
+      }
+      #dialog-body {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font:
+          13px/1.7 ui-monospace,
+          SFMono-Regular,
+          Consolas,
+          monospace;
+        background: #f5f6fa;
+        padding: 18px;
+        border-radius: 9px;
+      }
+      footer {
+        margin-top: 32px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .tag {
+        font-size: 10px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+      .scenario-caption {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: -13px;
+        min-height: 25px;
+      }
+      @media (max-width: 1100px) {
+        .main {
+          padding: 25px;
+        }
+        .shell {
+          grid-template-columns: 190px 1fr;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .flow {
+          grid-template-columns: 1fr 1fr;
+        }
+        .flow .card:after {
+          display: none;
+        }
+        .controls {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 700px) {
+        .shell {
+          display: block;
+        }
+        .sidebar {
+          position: static;
+          height: auto;
+          padding: 16px;
+          gap: 13px;
+        }
+        .sidebar nav {
+          display: flex;
+          overflow: auto;
+          gap: 3px;
+        }
+        .sidebar nav button {
+          white-space: nowrap;
+          padding: 9px;
+          font-size: 12px;
+        }
+        .side-note,
+        .sidebar > .eyebrow {
+          display: none;
+        }
+        .main {
+          padding: 22px 16px;
+        }
+        .topbar {
+          margin-bottom: 25px;
+        }
+        h1 {
+          font-size: 31px;
+        }
+        .metrics {
+          gap: 7px;
+        }
+        .metric {
+          padding: 13px;
+        }
+        .metric strong {
+          font-size: 19px;
+        }
+        .metric small {
+          font-size: 10px;
+        }
+        .access-grid,
+        .evidence-grid {
+          grid-template-columns: 1fr;
+        }
+        .flow {
+          grid-template-columns: 1fr;
+        }
+        .topbar .eyebrow {
+          font-size: 9px;
+        }
+        .card {
+          padding: 18px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand"><span class="brandmark">w</span>workbench</div>
+        <div class="eyebrow">Offline team-access illustration</div>
+        <nav aria-label="Example sections">
+          <button class="active" data-tab="playground">01 &nbsp; Try it</button
+          ><button data-tab="access">02 &nbsp; People &amp; access</button
+          ><button data-tab="architecture">03 &nbsp; How it runs</button
+          ><button data-tab="evidence">04 &nbsp; Proof &amp; boundaries</button>
+        </nav>
+        <div class="side-note">
+          <strong>Simulated policy walkthrough.</strong>
+          <p>
+            No credentials, cloud calls, telemetry, external assets, or product
+            service. Reset whenever you like.
+          </p>
+          <button id="reset">Reset example ↺</button>
+        </div>
+      </aside>
+      <main class="main">
+        <header class="topbar">
+          <span class="eyebrow">Workbench / CLI-first shared execution</span
+          ><span class="pill amber"
+            ><span class="dot"></span>Example · simulated infrastructure</span
+          >
+        </header>
+        <section id="playground" aria-labelledby="title">
+          <div class="section-head">
+            <h1 id="title">One team. Simulated boundaries.</h1>
+            <p class="lead">
+              This offline page illustrates how local accounts, allocations, and
+              personal key files keep shared execution separate. No real user or
+              infrastructure is represented here.
+            </p>
+          </div>
+          <div class="scenarios" aria-label="Guided scenarios">
+            <button data-scenario="workflow" class="selected">
+              Run a workflow</button
+            ><button data-scenario="quota">Hit a GPU limit</button
+            ><button data-scenario="projects">Switch projects</button
+            ><button data-scenario="privacy">Try another person's run</button
+            ><button data-scenario="recovery">Recover a run</button
+            ><button data-scenario="lost">Lose a launch receipt</button
+            ><button data-scenario="offboard">Offboard someone</button
+            ><button data-scenario="reader">Try reader access</button>
+          </div>
+          <p id="scenario-caption" class="scenario-caption">
+            Start a workflow, then advance its stages. Every stage keeps the
+            same owner and namespace.
+          </p>
+          <div class="metrics">
+            <div class="card metric">
+              <small>WORKSPACE</small
+              ><strong id="workspace-metric">Robotics</strong
+              ><small id="project-metric"
+                >Sample project · Sample cluster A</small
+              >
+            </div>
+            <div class="card metric">
+              <small>YOUR GPU USE HERE</small
+              ><strong id="gpu-metric">0 / 2</strong
+              ><small>Concurrent cap, not a reservation</small>
+            </div>
+            <div class="card metric">
+              <small>RUN VISIBILITY</small
+              ><strong id="privacy-metric">Only yours</strong
+              ><small>Groups grant access; runs stay personal</small>
+            </div>
+          </div>
+          <div class="grid">
+            <div class="card">
+              <div class="row between">
+                <h2>Launch into your allocation</h2>
+                <span class="pill green" id="access-badge">Access granted</span>
+              </div>
+              <div class="controls">
+                <label
+                  >ACT AS<select id="person">
+                    <option value="alice">Sample runner A</option>
+                    <option value="bob">Sample runner B</option>
+                    <option value="casey">Sample reader</option>
+                    <option value="dana">Sample pending allocation</option>
+                    <option value="eve">Sample without grant</option>
+                  </select></label
+                ><label
+                  >WORKSPACE<select id="workspace">
+                    <option value="robotics">Robotics</option>
+                    <option value="vision">Vision</option>
+                  </select></label
+                ><label
+                  >CLUSTER<select id="cluster">
+                    <option value="east">Sample cluster A</option>
+                    <option value="west">Sample cluster B</option>
+                  </select></label
+                ><label
+                  >GPUS PER STAGE<select id="gpus">
+                    <option value="1">1 GPU</option>
+                    <option value="2">2 GPUs</option>
+                    <option value="3">3 GPUs</option>
+                    <option value="0">CPU only</option>
+                  </select></label
+                >
+              </div>
+              <div class="row">
+                <button class="primary" id="submit">Submit workflow →</button
+                ><button id="retry">Retry last submission</button
+                ><small>Production CLI/API/SDK sends a personal key file as bearer authentication.</small>
+              </div>
+              <div id="notice" class="notice" role="status" aria-live="polite">
+                All interactive outcomes are simulated. GPU jobs, object
+                storage, accounts, and infrastructure are not live; local code
+                receipts are in “Proof &amp; boundaries”.
+              </div>
+              <div class="row between">
+                <h3>Your runs</h3>
+                <small id="run-count">0 visible</small>
+              </div>
+              <div id="runs" class="runs"></div>
+              <div id="run-detail" class="detail" hidden>
+                <div class="row between">
+                  <h3 id="run-title"></h3>
+                  <span id="run-status" class="pill"></span>
+                </div>
+                <div class="stages" id="stages"></div>
+                <dl class="facts" id="run-facts"></dl>
+                <div class="actions">
+                  <button id="advance">Advance one stage</button
+                  ><button id="logs">View logs</button
+                  ><button id="artifacts">View artifacts</button
+                  ><button id="interrupt">Simulate restart</button
+                  ><button id="resume">Resume</button
+                  ><button id="cancel" class="danger">Cancel run</button>
+                </div>
+              </div>
+            </div>
+            <div class="stack">
+              <div class="card">
+                <span class="eyebrow">Your execution boundary</span>
+                <h2 id="boundary-name" style="margin-top: 12px">
+                  Sample runner A / Robotics
+                </h2>
+                <div class="meter" id="gpu-meter"></div>
+                <dl class="facts" id="boundary-facts"></dl>
+                <p class="footnote">
+                  Changing a project does not silently grant access. Each
+                  cluster needs an explicit allocation. GPU slices across
+                  clusters must fit the workspace budget.
+                </p>
+              </div>
+              <div class="card">
+                <div class="row between">
+                  <h3>What just happened</h3>
+                  <span class="tag muted">Example event trail</span>
+                </div>
+                <ol id="trace" class="trace"></ol>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="access" hidden>
+          <h1>Groups open the door.</h1>
+          <p class="lead">
+            An allocation decides what someone can actually run. Workspace
+            membership and cloud administration are separate decisions.
+          </p>
+          <div class="card table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Sample local account</th>
+                  <th>Local group / role</th>
+                  <th>Robotics capacity</th>
+                  <th>Vision capacity</th>
+                  <th>Cloud account</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Sample runner A</td>
+                  <td>researchers · runner<br />vision-team · runner</td>
+                  <td>East 2 · West 1</td>
+                  <td>East 1</td>
+                  <td>Not required</td>
+                </tr>
+                <tr>
+                  <td>Sample runner B</td>
+                  <td>researchers · runner</td>
+                  <td>East 2 · West 1</td>
+                  <td>No grant</td>
+                  <td>Not required</td>
+                </tr>
+                <tr>
+                  <td>Sample reader</td>
+                  <td>reviewers · reader</td>
+                  <td>Can read their own existing runs</td>
+                  <td>No grant</td>
+                  <td>Not required</td>
+                </tr>
+                <tr>
+                  <td>Sample pending allocation</td>
+                  <td>researchers · runner</td>
+                  <td>No allocation yet</td>
+                  <td>No grant</td>
+                  <td>Not required</td>
+                </tr>
+                <tr>
+                  <td>Sample without grant</td>
+                  <td>No matching group</td>
+                  <td>No grant</td>
+                  <td>No grant</td>
+                  <td>Not required</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="access-grid" style="margin-top: 20px">
+            <div class="card">
+              <h2>Offboard sample runner A</h2>
+              <p class="muted">
+                Disabling a local account blocks its personal keys. It stops
+                later workflow waves after the next policy check.
+              </p>
+              <div class="actions">
+                <button id="disable-alice" class="danger">Disable sample runner A</button
+                ><button id="enable-alice">Restore access</button
+                ><button id="operator-stop">Operator: stop that sample's runs</button>
+              </div>
+              <div id="offboard-note" class="notice">
+                Access is enabled. Existing jobs are not destroyed by removing
+                membership.
+              </div>
+              <p class="footnote">
+                Workload storage keys already delivered to a job need separate
+                revocation in cloud IAM. A local group change does not revoke an
+                admitted workflow's recorded authorization snapshot.
+              </p>
+            </div>
+            <div class="card">
+              <h2>Administrator setup</h2>
+              <p class="muted">
+                A private configuration maps groups to workspace roles and
+                assigns each person's capacity and storage. These are CLI
+                operations, not a shipped admin UI.
+              </p>
+              <pre>
+npa workbench team account create --config /private/team.yaml \
+  --name sample-runner-a --group researchers
+npa workbench team render --config /private/team.yaml \
+  --output-dir /private/rendered
+npa workbench team enroll --config /private/team.yaml \
+  --workspace robotics --cluster east --subject "$WORKBENCH_USER_ID"</pre>
+            </div>
+          </div>
+          <div class="notice">
+            Reader and admin workspace roles do not unlock another person's
+            runs. Server operators have a separate, trusted cancellation
+            command.
+          </div>
+        </section>
+        <section id="architecture" hidden>
+          <h1>A service, not another VM.</h1>
+          <p class="lead">
+            The team gateway and private SkyPilot server can live together in
+            one Kubernetes pod. Your existing NPA workflow engine still runs the
+            stages.
+          </p>
+          <div class="flow">
+            <div class="card">
+              <span class="pill">1</span><b>Personal key file</b>
+              <p>
+                A locally issued, revocable key authenticates the existing CLI,
+                API, and SDK. No browser sign-in is involved.
+              </p>
+            </div>
+            <div class="card">
+              <span class="pill">2</span><b>Team gateway</b>
+              <p>
+                Checks current grants. Binds an immutable run owner, allocation,
+                and storage scope.
+              </p>
+            </div>
+            <div class="card">
+              <span class="pill">3</span><b>Private SkyPilot</b>
+              <p>
+                Loopback API. Shared trusted job monitors; personal worker namespaces. No direct
+                user access to the server.
+              </p>
+            </div>
+            <div class="card">
+              <span class="pill">4</span><b>Enrolled clusters</b>
+              <p>
+                Fixed worker identity, GPU quota, restricted RBAC, admission
+                rules, and network policy.
+              </p>
+            </div>
+            <div class="card">
+              <span class="pill">5</span><b>Personal storage</b>
+              <p>
+                Dedicated cloud principal and bucket. Explicit read-only shared
+                inputs can be added.
+              </p>
+            </div>
+          </div>
+          <div class="access-grid">
+            <div class="card">
+              <h2>What you operate</h2>
+              <dl class="facts">
+                <dt>Compute</dt>
+                <dd>One pod, two CPU containers, one replica.</dd>
+                <dt>Durable state</dt>
+                <dd>
+                  One persistent volume for the private ownership and runtime
+                  ledgers.
+                </dd>
+                <dt>Configuration</dt>
+                <dd>
+                  Private policy, enrolled kubeconfigs, and scoped credentials.
+                </dd>
+                <dt>Entry point</dt>
+                <dd>HTTPS gateway; the scheduler has no public Service.</dd>
+                <dt>Clusters</dt>
+                <dd>
+                  Explicit connections to each project or cloud's Kubernetes
+                  cluster.
+                </dd>
+              </dl>
+              <pre>
+npa workbench team export-kubeconfig --config /private/team.yaml \
+  --output-path /private/sky-kubeconfig.yaml
+npa workbench team render-service --namespace workbench-system \
+  --image registry.example.invalid/team:reviewed \
+  --secret team-config --claim team-state \
+  --output-path /private/team-service.yaml</pre>
+            </div>
+            <div class="card">
+              <h2>CLI and SDK use the same API</h2>
+              <pre>
+npa workbench team submit --spec workflow.yaml \
+  --workspace robotics --cluster east \
+  --idempotency-key retained-key
+npa workbench team run "$RUN_ID" --action logs
+npa workbench team run "$RUN_ID" --action artifacts
+npa workbench team run "$RUN_ID" --action resume
+npa workbench team run "$RUN_ID" --action cancel</pre>
+              <pre>
+from npa.sdk.workbench.team import TeamClient, SubmitRequest
+
+client = TeamClient(endpoint, personal_key)
+try:
+    result = client.submit(SubmitRequest(
+        workspace="robotics", cluster="east",
+        idempotency_key="retained-key", workflow=document))
+finally:
+    client.close()</pre>
+            </div>
+          </div>
+          <div class="card coverage">
+            <h2>How close to the established pattern?</h2>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Capability</th>
+                    <th>Workbench team mode</th>
+                    <th>Boundary</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Namespace + RBAC + quota</td>
+                    <td>Same core pattern as Kubeflow Profiles</td>
+                    <td>
+                      Explicit enrollment commands; no continuously reconciling
+                      Profile controller
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Identity + groups</td>
+                    <td>Local accounts, groups, and personal key files</td>
+                    <td>
+                      No portal, directory sync, or automatic personal
+                      provisioning; optional external linking is explicit
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Workflow execution</td>
+                    <td>Existing NPA engine and SkyPilot</td>
+                    <td>
+                      No Airflow installation or Airflow DAG compatibility claim
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Storage accountability</td>
+                    <td>Personal cloud principal and bucket</td>
+                    <td>
+                      Scoped static keys; automatic federation and refresh
+                      remain future work
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Multiple projects / clouds</td>
+                    <td>Workspace grants and explicit cluster allocations</td>
+                    <td>
+                      Cloud credentials remain administrator-managed; live
+                      qualification is required per environment
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="footnote">
+              Reference:
+              <a
+                href="https://www.kubeflow.org/docs/components/central-dash/profiles/"
+                target="_blank"
+                rel="noreferrer"
+                >Kubeflow Profiles and Namespaces</a
+              >. The comparison describes the shared pattern, not feature
+              parity.
+            </p>
+          </div>
+        </section>
+        <section id="evidence" hidden>
+          <h1>See what is actually proved.</h1>
+          <p class="lead">
+            The interactive controls above simulate every account, allocation,
+            job, and infrastructure outcome. The receipts below are captured
+            offline from local team API and policy code using synthetic local
+            accounts and access keys.
+          </p>
+          <div id="evidence-summary" class="notice"></div>
+          <div id="receipts" class="evidence-grid"></div>
+          <div class="card coverage">
+            <h2>Capability coverage</h2>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Capability</th>
+                    <th>Try it here</th>
+                    <th>What this example proves</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Identity and group access</td>
+                    <td>Switch sample accounts</td>
+                    <td>
+                      Recorded local-key/API policy checks; this offline page
+                      does not authenticate a user or contact a service
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>GPU limits</td>
+                    <td>Hit a GPU limit</td>
+                    <td>
+                      Illustrated scheduling outcome + real quota manifest; not
+                      live enforcement
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Stage namespace / identity</td>
+                    <td>Advance workflow stages</td>
+                    <td>
+                      Real policy binding receipt; browser stage progress is
+                      simulated
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Run ownership</td>
+                    <td>Try another person's run</td>
+                    <td>
+                      Recorded real denial on status, logs, artifacts, cancel,
+                      and resume
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Artifact storage</td>
+                    <td>View artifacts; try another bucket</td>
+                    <td>
+                      Real URI scope check; example bytes, not a cloud IAM test
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Idempotency and recovery</td>
+                    <td>Retry, restart, resume, lose a receipt</td>
+                    <td>
+                      Recorded idempotency checks; recovery progression is
+                      simulated
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Offboarding</td>
+                    <td>Disable a sample account; operator stop</td>
+                    <td>
+                      Real access revocation receipt; cloud key revocation
+                      remains separate
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Enrollment and deployment</td>
+                    <td>How it runs / administrator commands</td>
+                    <td>
+                      Configuration and manifest rendering; not deployed
+                      infrastructure
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Multiple clusters / projects</td>
+                    <td>Switch projects, then workspaces</td>
+                    <td>
+                      Explicit allocation checks; no live cross-cloud execution
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Least-privilege scheduler</td>
+                    <td>Inspect the worker boundary</td>
+                    <td>
+                      Rendered RBAC/admission settings; live escalation and CNI
+                      tests remain required
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="notice warning">
+            <strong>Before production:</strong> qualify actual managed-job
+            launches, GPU quota rejection, network isolation, cross-bucket IAM,
+            the chosen identity provider, and restart/cancellation. No automatic
+            cloud-token federation, fair GPU queue, MIG allocation, or
+            active-active gateway is implemented.
+          </div>
+        </section>
+        <footer>
+          Optional Workbench team mode · all people, keys, resources, and
+          outcomes in this example are synthetic · no control contacts or
+          provisions infrastructure.
+        </footer>
+      </main>
+    </div>
+    <div
+      id="dialog"
+      class="dialog"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dialog-title"
+    >
+      <div class="card">
+        <div class="row between">
+          <h2 id="dialog-title"></h2>
+          <button id="close-dialog" aria-label="Close details">Close ×</button>
+        </div>
+        <div id="dialog-body"></div>
+      </div>
+    </div>
+    <script type="application/json" id="evidence-data">{
+  "checks": [
+    {
+      "title": "GPU quota is rendered",
+      "observed": "2",
+      "passed": true,
+      "detail": "Actual generated Kubernetes manifest, not evidence of live quota enforcement."
+    },
+    {
+      "title": "Worker Kubernetes token disabled",
+      "observed": "False",
+      "passed": true,
+      "detail": "Actual worker account manifest. Live admission and escalation checks remain required."
+    },
+    {
+      "title": "Foreign artifact scope rejected",
+      "observed": "True",
+      "passed": true,
+      "detail": "Actual URI authorization policy. Cloud IAM enforcement is a separate live check."
+    },
+    {
+      "title": "Placement is server-bound",
+      "observed": "True",
+      "passed": true,
+      "detail": "The actual workflow policy binds resources to the authenticated local user's cluster context."
+    },
+    {
+      "title": "Verified identity can submit",
+      "observed": "HTTP 202",
+      "passed": true,
+      "detail": "Actual local-key verification, authorization, parser, and run ledger; execution adapter is simulated."
+    },
+    {
+      "title": "Identical retry returns the same run",
+      "observed": "True",
+      "passed": true,
+      "detail": "The actual private ledger deduplicates the same identity, workspace, request key, and body."
+    },
+    {
+      "title": "Changed retry is rejected",
+      "observed": "HTTP 409",
+      "passed": true,
+      "detail": "An existing idempotency key cannot silently become a different workflow."
+    },
+    {
+      "title": "Missing access key is rejected",
+      "observed": "HTTP 401",
+      "passed": true,
+      "detail": "Recorded response from the actual team API with a synthetic local key."
+    },
+    {
+      "title": "Unknown personal key is rejected",
+      "observed": "HTTP 401",
+      "passed": true,
+      "detail": "Recorded response from the actual team API with a synthetic local key."
+    },
+    {
+      "title": "Unassigned local user is rejected",
+      "observed": "HTTP 403",
+      "passed": true,
+      "detail": "Recorded response from the actual team API with a synthetic local key."
+    },
+    {
+      "title": "Reader cannot submit",
+      "observed": "HTTP 403",
+      "passed": true,
+      "detail": "Recorded response from the actual team API with a synthetic local key."
+    },
+    {
+      "title": "Group membership without allocation",
+      "observed": "HTTP 403",
+      "passed": true,
+      "detail": "Recorded response from the actual team API with a synthetic local key."
+    },
+    {
+      "title": "Another person cannot access status",
+      "observed": "HTTP 404",
+      "passed": true,
+      "detail": "A different local user cannot operate this sample runner's run, even with the same workspace group."
+    },
+    {
+      "title": "Another person cannot access logs",
+      "observed": "HTTP 404",
+      "passed": true,
+      "detail": "A different local user cannot operate this sample runner's run, even with the same workspace group."
+    },
+    {
+      "title": "Another person cannot access artifacts",
+      "observed": "HTTP 404",
+      "passed": true,
+      "detail": "A different local user cannot operate this sample runner's run, even with the same workspace group."
+    },
+    {
+      "title": "Another person cannot access artifacts/output.txt",
+      "observed": "HTTP 404",
+      "passed": true,
+      "detail": "A different local user cannot operate this sample runner's run, even with the same workspace group."
+    },
+    {
+      "title": "Another person cannot access cancel",
+      "observed": "HTTP 404",
+      "passed": true,
+      "detail": "A different local user cannot operate this sample runner's run, even with the same workspace group."
+    },
+    {
+      "title": "Another person cannot access resume",
+      "observed": "HTTP 404",
+      "passed": true,
+      "detail": "A different local user cannot operate this sample runner's run, even with the same workspace group."
+    },
+    {
+      "title": "Explicit second cluster allocation",
+      "observed": "HTTP 202",
+      "passed": true,
+      "detail": "The same local account can target a separately allocated cluster; no cloud account is required."
+    },
+    {
+      "title": "Local offboarding takes effect",
+      "observed": "HTTP 401",
+      "passed": true,
+      "detail": "The actual account registry rejects disabled local users. Already issued cloud keys are not revoked by this check."
+    }
+  ],
+  "source_sha256": "08a64c07d007e604b8014881c700d0b60cae433201d9d3bcb7bd130f8dd37e34",
+  "scope": "20 local API and policy checks passed. Synthetic local accounts and access keys; simulated execution and enrollment. No Kubernetes or cloud-storage calls."
+}</script>
+    <script>
+      /* Keep illustration state in this page; production authorization remains in the gateway. */
+      const $ = (id) => document.getElementById(id);
+      const people = {
+        alice: {
+          name: "Sample runner A",
+          groups: ["researchers", "vision-team"],
+          role: "runner",
+        },
+        bob: { name: "Sample runner B", groups: ["researchers"], role: "runner" },
+        casey: { name: "Sample reader", groups: ["reviewers"], role: "reader" },
+        dana: { name: "Sample pending allocation", groups: ["researchers"], role: "runner" },
+        eve: { name: "Sample without grant", groups: [], role: "none" },
+      };
+      const stages = [
+        "Prepare data",
+        "Train policy",
+        "Evaluate",
+        "Publish artifacts",
+      ];
+      let state, dialogFocus;
+      const escape = (value) =>
+        String(value).replace(
+          /[&<>"']/g,
+          (ch) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[ch],
+        );
+      function fresh() {
+        return {
+          runs: [],
+          person: "alice",
+          workspace: "robotics",
+          cluster: "east",
+          selected: null,
+          sequence: 0,
+          last: null,
+          disabled: false,
+          events: [],
+        };
+      }
+      function allocation(
+        person = state.person,
+        workspace = state.workspace,
+        cluster = state.cluster,
+      ) {
+        if (workspace === "vision")
+          return person === "alice" && cluster === "east" ? 1 : 0;
+        return ["alice", "bob"].includes(person)
+          ? cluster === "east"
+            ? 2
+            : 1
+          : 0;
+      }
+      function granted(person = state.person, workspace = state.workspace) {
+        if (person === "alice" && state.disabled) return false;
+        return workspace === "vision"
+          ? person === "alice"
+          : people[person].groups.some((g) =>
+              ["researchers", "reviewers"].includes(g),
+            );
+      }
+      function occupied(
+        person = state.person,
+        workspace = state.workspace,
+        cluster = state.cluster,
+      ) {
+        return state.runs
+          .filter(
+            (r) =>
+              r.owner === person &&
+              r.workspace === workspace &&
+              r.cluster === cluster &&
+              [
+                "running",
+                "recovery_required",
+                "cancelling",
+                "unknown",
+              ].includes(r.status),
+          )
+          .reduce((n, r) => n + r.gpus, 0);
+      }
+      function event(title, detail) {
+        state.events.unshift({ title, detail });
+        state.events = state.events.slice(0, 5);
+        renderTrace();
+      }
+      function notice(text, kind = "") {
+        $("notice").className = "notice " + kind;
+        $("notice").textContent = text;
+      }
+      function current() {
+        return state.runs.find((r) => r.id === state.selected);
+      }
+      function namespace(person = state.person, workspace = state.workspace) {
+        return `example-${workspace}-${person}`;
+      }
+      function selectedFields() {
+        for (const field of ["person", "workspace", "cluster"])
+          state[field] = $(field).value;
+        state.selected = null;
+        render();
+      }
+      function createRun(
+        person = state.person,
+        gpus = Number($("gpus").value),
+      ) {
+        const run = {
+          id: `example-run-${++state.sequence}`,
+          owner: person,
+          workspace: state.workspace,
+          cluster: state.cluster,
+          gpus,
+          stage: 0,
+          status: "running",
+          key: `example-key-${state.sequence}`,
+        };
+        const limit = allocation(person),
+          used = occupied(person);
+        if (gpus > limit - used) run.status = "quota_blocked";
+        state.runs.push(run);
+        state.selected = run.id;
+        return run;
+      }
+      function submit() {
+        if (!granted())
+          return notice(
+            "403 · This identity has no current grant for this workspace.",
+            "error",
+          );
+        if (people[state.person].role !== "runner")
+          return notice(
+            "403 · Reader access cannot submit work. It does not expose anyone else’s runs.",
+            "error",
+          );
+        if (!allocation())
+          return notice(
+            "403 · Group membership is valid, but an administrator allocation is required for this cluster.",
+            "error",
+          );
+        const run = createRun();
+        state.last = {
+          person: state.person,
+          workspace: state.workspace,
+          id: run.id,
+        };
+        event(
+          "Owner and placement fixed",
+          `${people[run.owner].name} → ${run.workspace} / ${run.cluster}. One namespace for every stage.`,
+        );
+        if (run.status === "quota_blocked")
+          notice(
+            "Example: Kubernetes rejects pod creation above the personal GPU quota. The gateway does not promise a fair queue or automatic retry.",
+            "warning",
+          );
+        else
+          notice(
+            `Accepted ${run.id}. The example reserves ${run.gpus} simulated GPU(s); use “Advance one stage” to continue.`,
+          );
+        render();
+      }
+      function retry() {
+        const last = state.last;
+        if (!granted())
+          return notice(
+            "403 · Access was revoked; an idempotency key does not bypass authorization.",
+            "error",
+          );
+        if (
+          !last ||
+          last.person !== state.person ||
+          last.workspace !== state.workspace
+        )
+          return notice(
+            "Submit your own workflow first, then retry it with the same key.",
+          );
+        state.selected = last.id;
+        event(
+          "Idempotent retry",
+          `${last.id} returned again. No second launch.`,
+        );
+        notice(
+          "The same person, workspace, key, and document return the same run. A changed document would conflict.",
+        );
+        render();
+      }
+      function advance() {
+        const run = current();
+        if (!run || run.status !== "running") return;
+        if (!granted(run.owner, run.workspace)) {
+          run.status = "recovery_required";
+          event(
+            "Next wave refused",
+            "Current local access no longer permits execution. Existing jobs need explicit cancellation.",
+          );
+          notice("Access is disabled. No new stage starts.", "error");
+          render();
+          return;
+        }
+        run.stage++;
+        if (run.stage === stages.length) run.status = "succeeded";
+        event(
+          run.status === "succeeded" ? "Artifacts published" : "Next stage",
+          `${namespace(run.owner, run.workspace)} stays fixed. Artifact writes use the same personal storage principal.`,
+        );
+        notice(
+          run.status === "succeeded"
+            ? "Workflow complete in the example. Inspect its logs and artifacts."
+            : "Stage advanced. Owner, namespace, workload identity, and storage scope stay fixed.",
+        );
+        render();
+      }
+      function interrupt() {
+        const run = current();
+        if (!run || run.status !== "running") return;
+        run.status = "recovery_required";
+        event(
+          "Gateway restarted",
+          "The private ledger survives. The scheduler job may still be running.",
+        );
+        notice(
+          "Recovery required. Resume reconciles the recorded scheduler job before making another launch.",
+        );
+        render();
+      }
+      function resume() {
+        const run = current();
+        if (!run) return;
+        if (!granted())
+          return notice("403 · Current access is required to resume.", "error");
+        if (run.status === "unknown")
+          return notice(
+            "Launch acknowledgement is missing. Preserve the run for operator reconciliation; do not blindly submit another job.",
+            "warning",
+          );
+        if (run.status !== "recovery_required")
+          return notice(
+            "Only an interrupted run can resume. A quota-blocked launch needs reconciliation first.",
+            "warning",
+          );
+        run.status = "running";
+        event(
+          "Existing job reconciled",
+          `${run.id} keeps its original ownership and job identity. No duplicate launch.`,
+        );
+        notice(
+          "Resumed the existing job in this example. GPU usage did not double.",
+        );
+        render();
+      }
+      function cancel() {
+        const run = current();
+        if (!run) return;
+        if (!granted() || people[state.person].role !== "runner")
+          return notice(
+            "403 · Cancellation requires current runner access. A trusted operator can stop an offboarded person’s job.",
+            "error",
+          );
+        if (run.status === "unknown")
+          return notice(
+            "Cannot confirm cancellation without an exact scheduler identity. Operator reconciliation is required.",
+            "warning",
+          );
+        if (run.status === "cancelling") {
+          run.status = "cancelled";
+          event(
+            "Termination confirmed",
+            "The exact recorded scheduler job is now terminal.",
+          );
+          notice(
+            "Cancelled. Simulated GPU usage is released only after this confirmation.",
+          );
+        } else {
+          run.status = "cancelling";
+          event(
+            "Cancellation requested",
+            "Acknowledgement alone does not establish termination.",
+          );
+          notice(
+            "Cancellation is pending. Click “Confirm cancellation” to simulate the next provider-state check.",
+            "warning",
+          );
+        }
+        render();
+      }
+      function details(kind) {
+        const run = current();
+        if (!run) return;
+        if (!granted() || run.owner !== state.person)
+          return notice(
+            "404 / 403 · This run is unavailable to the current identity.",
+            "error",
+          );
+        const output =
+          kind === "logs"
+            ? `EXAMPLE LOGS — no workload ran\n\nRun: ${run.id}\nOwner: ${people[run.owner].name}\nNamespace: ${namespace(run.owner, run.workspace)}\n${stages
+                .slice(0, run.stage)
+                .map((s) => s + " · complete")
+                .join(
+                  "\n",
+                )}\nStatus: ${run.status}\n\nProduction logs come only from this run’s exact worker jobs.`
+            : `EXAMPLE ARTIFACTS — synthetic bytes\n\ns3://example-${run.owner}-${run.workspace}/personal/runs/${run.id}/metrics.json\n${run.status === "succeeded" ? 'Example result: {"evaluation": "complete"}' : "Artifacts become available as stages publish them."}\n\nThe cloud principal is unique to this person and workspace. Shared inputs require explicit read grants. Cloud IAM must independently enforce these scopes.`;
+        showDialog(kind === "logs" ? "Run logs" : "Run artifacts", output);
+      }
+      function showDialog(title, body) {
+        dialogFocus = document.activeElement;
+        $("dialog-title").textContent = title;
+        $("dialog-body").textContent = body;
+        $("dialog").hidden = false;
+        $("close-dialog").focus();
+      }
+      function closeDialog() {
+        $("dialog").hidden = true;
+        dialogFocus?.focus();
+      }
+      function renderTrace() {
+        $("trace").innerHTML =
+          state.events
+            .map(
+              (e, i) =>
+                `<li><span class="number">${i + 1}</span><div>${escape(e.title)}<small>${escape(e.detail)}</small></div></li>`,
+            )
+            .join("") ||
+          '<li class="muted">Choose a scenario or submit a workflow.</li>';
+      }
+      function renderBoundary() {
+        const person = people[state.person],
+          limit = allocation(),
+          used = occupied();
+        $("workspace-metric").textContent =
+          state.workspace === "robotics" ? "Robotics" : "Vision";
+        $("project-metric").textContent =
+          state.cluster === "east"
+            ? "Sample project · Sample cluster A"
+            : "Sample project · Sample cluster B";
+        $("gpu-metric").textContent = `${used} / ${limit}`;
+        $("boundary-name").textContent =
+          `${person.name} / ${$("workspace-metric").textContent}`;
+        $("access-badge").textContent = accessLabel(person, limit);
+        $("access-badge").className =
+          "pill " + (granted() && limit ? "green" : "amber");
+        $("gpu-meter").innerHTML = Array.from(
+          { length: limit },
+          (_, i) => `<span class="gpu ${i < used ? "used" : ""}"></span>`,
+        ).join("");
+        renderBoundaryFacts(person, limit);
+      }
+      function accessLabel(person, limit) {
+        if (!granted()) return "No access";
+        if (person.role === "reader") return "Reader";
+        return limit ? "Allocated" : "Needs allocation";
+      }
+      function renderBoundaryFacts(person, limit) {
+        const facts = [
+          ["Identity", `${person.name} · local account`],
+          ["Groups", person.groups.join(", ") || "No matching group"],
+          ["Namespace", limit ? namespace() : "Not allocated"],
+          ["Worker token", "Not mounted"],
+          [
+            "Storage",
+            limit
+              ? `example-${state.person}-${state.workspace}`
+              : "Not allocated",
+          ],
+          ["Cloud account", "End user does not need one"],
+        ];
+        $("boundary-facts").innerHTML = facts
+          .map(([k, v]) => `<dt>${k}</dt><dd>${escape(v)}</dd>`)
+          .join("");
+      }
+      function renderRuns() {
+        const visible = granted()
+          ? state.runs.filter(
+              (r) =>
+                r.owner === state.person && r.workspace === state.workspace,
+            )
+          : [];
+        if (!visible.some((r) => r.id === state.selected))
+          state.selected = null;
+        $("run-count").textContent = `${visible.length} visible`;
+        $("runs").innerHTML =
+          visible
+            .map(
+              (r) =>
+                `<div class="run ${r.id === state.selected ? "selected" : ""}" data-run="${r.id}"><div><button data-run="${r.id}">${r.id}</button><small>${r.cluster} cluster · ${r.gpus} GPU(s) · ${people[r.owner].name}</small></div><span class="pill ${statusColor(r.status)}">${statusLabel(r.status)}</span></div>`,
+            )
+            .join("") ||
+          '<div class="empty">No visible runs. Another person’s runs are never listed here.</div>';
+        renderRunDetail();
+      }
+      function renderRunDetail() {
+        const run = current();
+        $("run-detail").hidden = !run;
+        if (!run) return;
+        $("run-title").textContent = run.id;
+        $("run-status").textContent = statusLabel(run.status);
+        $("run-status").className = "pill " + statusColor(run.status);
+        $("stages").innerHTML = stages
+          .map(
+            (s, i) =>
+              `<div class="stage ${i < run.stage ? "done" : i === run.stage && run.status === "running" ? "current" : ""}">${escape(s)}</div>`,
+          )
+          .join("");
+        $("run-facts").innerHTML = [
+          ["Namespace", namespace(run.owner, run.workspace)],
+          ["Retry key", run.key],
+          ["Ledger", "Private, server-owned"],
+          ["Stage placement", "Inherited from this run; no stage override"],
+        ]
+          .map(([k, v]) => `<dt>${k}</dt><dd>${escape(v)}</dd>`)
+          .join("");
+        $("advance").disabled = run.status !== "running";
+        $("interrupt").disabled = run.status !== "running";
+        $("resume").disabled = !["recovery_required", "unknown"].includes(
+          run.status,
+        );
+        $("cancel").disabled = ["succeeded", "cancelled"].includes(run.status);
+        $("cancel").textContent =
+          run.status === "cancelling" ? "Confirm cancellation" : "Cancel run";
+      }
+      function statusLabel(value) {
+        return {
+          running: "Running",
+          succeeded: "Complete",
+          quota_blocked: "Quota blocked",
+          recovery_required: "Needs recovery",
+          unknown: "Launch uncertain",
+          cancelling: "Cancelling",
+          cancelled: "Cancelled",
+        }[value];
+      }
+      function statusColor(value) {
+        return value === "succeeded"
+          ? "green"
+          : [
+                "quota_blocked",
+                "unknown",
+                "recovery_required",
+                "cancelling",
+              ].includes(value)
+            ? "amber"
+            : "";
+      }
+      function render() {
+        renderBoundary();
+        renderRuns();
+        renderTrace();
+      }
+      function tab(id) {
+        document
+          .querySelectorAll("main>section")
+          .forEach((s) => (s.hidden = s.id !== id));
+        document
+          .querySelectorAll("nav button")
+          .forEach((b) => b.classList.toggle("active", b.dataset.tab === id));
+      }
+      const captions = {
+        workflow:
+          "Submit, advance stages, then inspect logs and artifacts. Try a retry with the same key.",
+        quota:
+          "Sample runner A has two simulated GPUs in sample cluster A. A third concurrent request is blocked; sample runner B still has a separate allocation.",
+        projects:
+          "The same sample account can use two projects, but only its explicit cluster allocations. Vision grants do not spill over to another account.",
+        privacy:
+          "Sample runner A owns a run. Sample runner B cannot list or directly access it.",
+        recovery:
+          "A gateway restart does not justify a second launch. Resume the existing recorded job.",
+        lost: "A launch may have happened, but its acknowledgement is missing. Automatic retry would risk a duplicate.",
+        offboard:
+          "A sample runner has a running job. Disable the account, then explicitly stop the job as an operator.",
+        reader:
+          "The sample reader has a reader grant. Submit is denied, and no one else’s runs become visible.",
+      };
+      function scenario(name) {
+        state = fresh();
+        for (const field of ["person", "workspace", "cluster"])
+          $(field).value = state[field];
+        $("gpus").value = "1";
+        $("offboard-note").textContent =
+          "Access is enabled. Existing jobs are not destroyed by removing membership.";
+        if (name === "quota") {
+          createRun("alice", 2);
+          state.selected = null;
+        }
+        if (["privacy", "recovery", "lost", "offboard"].includes(name))
+          createRun();
+        if (name === "privacy") {
+          state.person = "bob";
+          $("person").value = "bob";
+          state.selected = null;
+        }
+        if (name === "recovery") current().status = "recovery_required";
+        if (name === "lost") current().status = "unknown";
+        if (name === "reader") {
+          state.person = "casey";
+          $("person").value = "casey";
+        }
+        document
+          .querySelectorAll("[data-scenario]")
+          .forEach((b) =>
+            b.classList.toggle("selected", b.dataset.scenario === name),
+          );
+        $("scenario-caption").textContent = captions[name];
+        event("Scenario ready", captions[name]);
+        notice(captions[name]);
+        render();
+        if (name === "privacy")
+          showDialog(
+            "Another person’s run is private",
+            "Illustrated API response: 404 · run not found\n\nSample runner B cannot read sample runner A’s status, logs, or artifacts, or cancel/resume that run. See the recorded local checks under Proof & boundaries.",
+          );
+      }
+      function offboard(disabled) {
+        state.disabled = disabled;
+        $("offboard-note").textContent = disabled
+          ? "Sample runner A is disabled. New access and future waves are refused; existing jobs and workload storage keys need separate action."
+          : "Sample runner A’s local access is enabled again.";
+        event(
+          disabled ? "Access revoked" : "Access restored",
+          "Local policy is checked again for every API operation.",
+        );
+        render();
+      }
+      function stopAsOperator() {
+        state.runs
+          .filter(
+            (r) =>
+              r.owner === "alice" &&
+              !["succeeded", "cancelled"].includes(r.status),
+          )
+          .forEach(
+            (r) =>
+              (r.status = r.status === "unknown" ? "unknown" : "cancelled"),
+          );
+        $("offboard-note").textContent =
+          "Example operator cancellation completed for known jobs. Uncertain launches still require reconciliation. Revoke issued cloud keys separately.";
+        event(
+          "Operator cancellation",
+          "Uses server-owned run identities, not the offboarded user’s token.",
+        );
+        render();
+      }
+      function renderEvidence() {
+        const evidence = JSON.parse($("evidence-data").textContent);
+        $("evidence-summary").textContent = evidence.scope;
+        $("receipts").innerHTML = evidence.checks
+          .map(
+            (c) =>
+              `<article class="receipt"><div class="row between"><strong>${escape(c.title)}</strong><span class="pill ${c.passed ? "green" : "red"}">${c.passed ? "Verified" : "Failed"}</span></div><p>${escape(c.detail)}</p><code>${escape(c.observed)}</code></article>`,
+          )
+          .join("");
+      }
+      document
+        .querySelectorAll("[data-tab]")
+        .forEach((b) => b.addEventListener("click", () => tab(b.dataset.tab)));
+      document
+        .querySelectorAll("[data-scenario]")
+        .forEach((b) =>
+          b.addEventListener("click", () => scenario(b.dataset.scenario)),
+        );
+      for (const field of ["person", "workspace", "cluster"])
+        $(field).addEventListener("change", selectedFields);
+      const handlers = {
+        submit,
+        retry,
+        advance,
+        interrupt,
+        resume,
+        cancel,
+        logs: () => details("logs"),
+        artifacts: () => details("artifacts"),
+        reset: () => {
+          scenario("workflow");
+          tab("playground");
+        },
+        "close-dialog": closeDialog,
+        "disable-alice": () => offboard(true),
+        "enable-alice": () => offboard(false),
+        "operator-stop": stopAsOperator,
+      };
+      for (const [id, handler] of Object.entries(handlers))
+        $(id).addEventListener("click", handler);
+      $("runs").addEventListener("click", (e) => {
+        const row = e.target.closest("[data-run]");
+        if (row) {
+          state.selected = row.dataset.run;
+          renderRuns();
+        }
+      });
+      $("dialog").addEventListener("click", (e) => {
+        if (e.target === $("dialog")) closeDialog();
+      });
+      document.addEventListener("keydown", (e) => {
+        if ($("dialog").hidden) return;
+        if (e.key === "Escape") closeDialog();
+        if (e.key === "Tab") {
+          e.preventDefault();
+          $("close-dialog").focus();
+        }
+      });
+      state = fresh();
+      render();
+      renderEvidence();
+    </script>
+  </body>
+</html>

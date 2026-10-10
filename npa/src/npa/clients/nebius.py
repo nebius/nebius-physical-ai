@@ -1585,6 +1585,7 @@ def ensure_storage_capability_binding(
     service_account_id: str,
     allow_editors_fallback: bool = False,
     on_resource_created: Callable[[str, dict[str, str]], None] | None = None,
+    binding_group_name: str = "",
 ) -> StorageIamBindingEvidence:
     """Ensure the narrow provider-verified bucket object capability binding.
 
@@ -1593,6 +1594,10 @@ def ensure_storage_capability_binding(
     and adds the storage service account. Existing tenant-wide editors members
     remain accepted for compatibility, but NPA only creates that broad binding
     when the operator explicitly opts into the fallback.
+
+    ``binding_group_name`` selects a separate capability group for a personal
+    allocation. The default project group intentionally shares all its bucket
+    permits and must not be used for independent team principals.
     """
 
     from npa.lifecycle_intent import forbid_destructive_provisioning
@@ -1605,7 +1610,7 @@ def ensure_storage_capability_binding(
 
     changed = False
     group_created = False
-    group_name = storage_binding_group_name(project_id)
+    group_name = binding_group_name or storage_binding_group_name(project_id)
     try:
         group_data = _run_json(
             [
