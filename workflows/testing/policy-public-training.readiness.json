@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "9ada0ac769f751fd9c3d6431d1afb967af96835bb49b30860aa5197496f8dac0",
+  "workflow_sha256": "899965b651bc3dc8047371530795db5b9f380b7bf3838f504967a079f5f3d699",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "Native component contracts are wired; complete live execution is pending.",
+      "reason": "The 10-epoch pilot passed both promotion gates but scored 5/10 in independent serving trials; the 40-epoch canonical recipe must complete live qualification.",
       "evidence": []
     }
   },
