@@ -1,5 +1,5 @@
 # Public source-only job runtime. CUDA and model weights are fetched at runtime.
-FROM ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837
+FROM ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:4e5fe7932f66fab3ff036090f66d4a9d915e9eb6fab3ee2e7633ca1c68363cf0
 
 ARG NPA_SOURCE_SHA
 LABEL npa.tool="sam2" \
