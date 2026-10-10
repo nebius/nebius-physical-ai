@@ -16,7 +16,9 @@ from npa.workflows.byof.openpi_pipeline import (
 )
 from npa.workflows.sim2real.pi05_contract import (
     ACTION_HORIZON,
+    CONTROL_HZ,
     DATASET_SCHEMA,
+    PROXIMAL_FINGER_CLEARANCE_M,
     Pi05ContractError,
     validate_dense_episode,
     validate_split_manifest,
@@ -68,9 +70,9 @@ def _verify_camera_receipts(arrays: dict[str, Any], metadata: dict[str, Any]) ->
     import numpy as np
 
     for index, row in enumerate(metadata["steps"]):
-        for array_name, row_name in (
-            ("exterior", "exterior_image_1_left"),
-            ("wrist", "wrist_image_left"),
+        for array_name, row_name, timestamp_name in (
+            ("exterior", "exterior_image_1_left", "exterior_timestamp_s"),
+            ("wrist", "wrist_image_left", "wrist_timestamp_s"),
         ):
             frame = np.ascontiguousarray(arrays[array_name][index])
             digest = hashlib.sha256(frame.tobytes()).hexdigest()
@@ -78,11 +80,109 @@ def _verify_camera_receipts(arrays: dict[str, Any], metadata: dict[str, Any]) ->
                 raise Pi05ContractError(
                     f"{row_name} capture hash mismatch at row {index}"
                 )
-            age = float(row[row_name].get("age_s", -1.0))
-            if age < -1.0e-9 or age > 1.0 / 15.0 + 1.0e-9:
-                raise Pi05ContractError(
-                    f"{row_name} causal age is invalid at row {index}"
-                )
+            receipt = row[row_name]
+            _verify_row_camera_times(receipt, row, timestamp_name, row_name, index)
+            _camera_causal_age(receipt, row_name, index)
+
+
+def _verify_row_camera_times(
+    receipt: dict[str, Any],
+    row: dict[str, Any],
+    timestamp_name: str,
+    name: str,
+    index: int,
+) -> None:
+    import math
+
+    observation = float(receipt.get("observation_time_s", math.nan))
+    capture = float(receipt.get("capture_time_s", math.nan))
+    row_time = float(row.get("timestamp_s", math.nan))
+    row_capture = float(row.get(timestamp_name, math.nan))
+    if not all(
+        math.isfinite(value) for value in (observation, capture, row_time, row_capture)
+    ):
+        raise Pi05ContractError(f"{name} row clocks are invalid at row {index}")
+    if abs(observation - row_time) > 1.0e-9 or abs(capture - row_capture) > 1.0e-9:
+        raise Pi05ContractError(f"{name} receipt is not bound to row {index}")
+
+
+def _reproduced_sensor_time(observation_time: float) -> tuple[float, int]:
+    import numpy as np
+
+    physics_period = np.float32(1.0 / 60.0)
+    updates = round(observation_time / float(physics_period))
+    expected_observation = updates * 1.0 / 60.0
+    if updates < 0 or abs(observation_time - expected_observation) > 1.0e-6:
+        raise Pi05ContractError("camera observation time is not on the physics clock")
+    sensor_time = np.float32(0.0)
+    for _ in range(updates):
+        sensor_time = np.float32(sensor_time + physics_period)
+    return float(sensor_time), updates
+
+
+def _camera_clock_time(receipt: dict[str, Any], observation: float) -> float:
+    import math
+
+    clock = receipt.get("sensor_clock")
+    reproduced, updates = _reproduced_sensor_time(observation)
+    if clock is None:
+        return reproduced
+    if (
+        not isinstance(clock, dict)
+        or int(clock.get("physics_update_count", -1)) != updates
+    ):
+        raise Pi05ContractError("camera sensor clock update count is inconsistent")
+    expected = float(clock.get("expected_sensor_time_s", float("nan")))
+    period = float(clock.get("physics_period_s", float("nan")))
+    finite = math.isfinite(expected) and math.isfinite(period)
+    if not finite or abs(period - 1.0 / 60.0) > 1.0e-8:
+        raise Pi05ContractError("camera sensor clock binding is inconsistent")
+    if abs(expected - reproduced) > 1.0e-7:
+        raise Pi05ContractError("camera sensor clock binding is inconsistent")
+    return expected
+
+
+def _camera_causal_age(receipt: dict[str, Any], name: str, index: int) -> float:
+    import math
+    import numpy as np
+
+    capture = float(receipt.get("capture_time_s", math.nan))
+    observation = float(receipt.get("observation_time_s", math.nan))
+    stored = float(receipt.get("sensor_causal_age_s", math.nan))
+    if not all(math.isfinite(value) for value in (capture, observation, stored)):
+        raise Pi05ContractError(f"{name} camera clocks are invalid at row {index}")
+    sensor_time = _camera_clock_time(receipt, observation)
+    causal_age = sensor_time - capture
+    tolerance = max(1.0e-7, 4.0 * abs(float(np.spacing(np.float32(sensor_time)))))
+    if abs(stored - causal_age) > tolerance:
+        raise Pi05ContractError(f"{name} sensor age is inconsistent at row {index}")
+    _verify_age_fields(receipt, observation - capture, causal_age, tolerance)
+    if causal_age < -tolerance or causal_age > 1.0 / CONTROL_HZ + tolerance:
+        raise Pi05ContractError(f"{name} causal age is invalid at row {index}")
+    return causal_age
+
+
+def _verify_age_fields(
+    receipt: dict[str, Any], raw_age: float, causal_age: float, tolerance: float
+) -> None:
+    import math
+
+    age = float(receipt.get("age_s", float("nan")))
+    clock = receipt.get("sensor_clock")
+    expected_age = causal_age if clock is not None else raw_age
+    if not math.isfinite(age) or abs(age - expected_age) > tolerance:
+        raise Pi05ContractError("camera receipt age field is inconsistent")
+    if clock is None:
+        return
+    raw = float(receipt.get("raw_observation_age_s", float("nan")))
+    offset = float(receipt.get("representation_offset_s", float("nan")))
+    if not math.isfinite(raw) or not math.isfinite(offset):
+        raise Pi05ContractError("camera representation offset is inconsistent")
+    if (
+        abs(raw - raw_age) > tolerance
+        or abs(offset - (causal_age - raw_age)) > tolerance
+    ):
+        raise Pi05ContractError("camera representation offset is inconsistent")
 
 
 def _first_true(mask: Any, start: int, label: str) -> int:
@@ -106,10 +206,16 @@ def _load_physics_trace(episode_dir: Path, length: int) -> dict[str, Any]:
         "right_finger_object_force_n",
         "object_support_force_n",
         "gripper_width_m",
+        "measured_proximal_finger_clearance_m",
         "hand_object_distance_m",
     }
-    if set(trace) < required or any(len(trace[key]) != length for key in required):
+    if not required <= set(trace):
         raise Pi05ContractError("physics trace is incomplete or not action-aligned")
+    if any(len(trace[key]) != length for key in required):
+        raise Pi05ContractError("physics trace is incomplete or not action-aligned")
+    clearance = trace["measured_proximal_finger_clearance_m"]
+    if clearance.shape != (length,) or not np.isfinite(clearance).all():
+        raise Pi05ContractError("proximal finger clearance trace is invalid")
     return trace
 
 
@@ -130,6 +236,12 @@ def _verify_physics_evidence(
     width_ok = np.abs(trace["gripper_width_m"] - metadata["object_width_m"]) <= 0.015
     grasped = bilateral & (arrays["actions"][:, 7] > 0.5) & width_ok & (motion > 0.005)
     grasp = _first_true(grasped, contact, "grasp with object motion")
+    clearance = trace["measured_proximal_finger_clearance_m"]
+    minimum_clearance = PROXIMAL_FINGER_CLEARANCE_M - 1.0e-4
+    if float(clearance[contact]) < minimum_clearance:
+        raise Pi05ContractError("contact lacks measured proximal finger clearance")
+    if float(clearance[grasp]) < minimum_clearance:
+        raise Pi05ContractError("grasp lacks measured proximal finger clearance")
     lifted = position[:, 2] - initial[2] >= 0.05
     lift = _first_true(lifted, grasp, "lift")
     xy_error = np.linalg.norm(position[:, :2] - target[:2], axis=1)

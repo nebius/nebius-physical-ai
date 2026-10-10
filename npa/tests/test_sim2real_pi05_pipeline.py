@@ -749,8 +749,21 @@ def _bind_frame_hashes(
     for index, row in enumerate(steps):
         exterior_hash = hashlib.sha256(exterior[index].tobytes()).hexdigest()
         wrist_hash = hashlib.sha256(wrist[index].tobytes()).hexdigest()
-        row["exterior_image_1_left"].update({"sha256": exterior_hash, "age_s": 0.0})
-        row["wrist_image_left"].update({"sha256": wrist_hash, "age_s": 0.0})
+        sensor_time = np.float32(0.0)
+        updates = round(row["timestamp_s"] * 60)
+        for _ in range(updates):
+            sensor_time = np.float32(sensor_time + np.float32(1.0 / 60.0))
+        raw_age = row["timestamp_s"] - float(sensor_time)
+        row["exterior_timestamp_s"] = float(sensor_time)
+        row["wrist_timestamp_s"] = float(sensor_time)
+        timing = {
+            "capture_time_s": float(sensor_time),
+            "observation_time_s": row["timestamp_s"],
+            "age_s": raw_age,
+            "sensor_causal_age_s": 0.0,
+        }
+        row["exterior_image_1_left"].update({"sha256": exterior_hash, **timing})
+        row["wrist_image_left"].update({"sha256": wrist_hash, **timing})
         identity = {
             "step": index,
             "exterior": exterior_hash,
@@ -777,6 +790,7 @@ def _write_physics_trace(episode: Path, length: int) -> None:
     speed[12:] = 0.0
     hand_distance = np.full(length, 0.04, dtype=np.float32)
     hand_distance[12:] = 0.12
+    clearance = np.full(length, 0.008, dtype=np.float32)
     np.savez(
         episode / "physics_trace.npz",
         object_position_m=position,
@@ -785,8 +799,114 @@ def _write_physics_trace(episode: Path, length: int) -> None:
         right_finger_object_force_n=bilateral,
         object_support_force_n=support,
         gripper_width_m=width,
+        measured_proximal_finger_clearance_m=clearance,
         hand_object_distance_m=hand_distance,
     )
+
+
+def test_export_accepts_bound_float32_sensor_age(tmp_path, monkeypatch) -> None:
+    roots = {name: tmp_path / name for name in ("train", "validation", "gold")}
+    for index, (name, root) in enumerate(roots.items()):
+        _write_episode(root, f"cube-{name}", f"scene-{index}")
+    row = json.loads((roots["train"] / "episode-000000" / "episode.json").read_text())
+    observation = row["steps"][0]["timestamp_s"]
+    sensor_time = np.float32(0.0)
+    for _ in range(round(observation * 60)):
+        sensor_time = np.float32(sensor_time + np.float32(1.0 / 60.0))
+    for name in ("exterior_image_1_left", "wrist_image_left"):
+        receipt = row["steps"][0][name]
+        receipt["capture_time_s"] = float(sensor_time)
+        receipt["observation_time_s"] = observation
+        receipt["age_s"] = observation - float(sensor_time)
+        receipt["sensor_causal_age_s"] = 0.0
+    (roots["train"] / "episode-000000" / "episode.json").write_text(json.dumps(row))
+    monkeypatch.setitem(
+        sys.modules, "npa.adapter.sim_to_lerobot", _fake_lerobot_module()
+    )
+
+    report = export_local(
+        train_root=roots["train"],
+        validation_root=roots["validation"],
+        gold_root=roots["gold"],
+        output=tmp_path / "output",
+    )
+
+    assert report["splits"]["train"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("sensor_causal_age_s", 0.02, "sensor age is inconsistent"),
+        ("capture_time_s", -1.0, "not bound to row 0"),
+    ],
+)
+def test_export_rejects_inconsistent_camera_clock(
+    tmp_path, monkeypatch, field: str, value: float, message: str
+) -> None:
+    roots = {name: tmp_path / name for name in ("train", "validation", "gold")}
+    for index, (name, root) in enumerate(roots.items()):
+        _write_episode(root, f"cube-{name}", f"scene-{index}")
+    path = roots["train"] / "episode-000000" / "episode.json"
+    metadata = json.loads(path.read_text())
+    metadata["steps"][0]["wrist_image_left"][field] = value
+    path.write_text(json.dumps(metadata))
+    monkeypatch.setitem(
+        sys.modules, "npa.adapter.sim_to_lerobot", _fake_lerobot_module()
+    )
+
+    with pytest.raises(Pi05ContractError, match=message):
+        export_local(
+            train_root=roots["train"],
+            validation_root=roots["validation"],
+            gold_root=roots["gold"],
+            output=tmp_path / "output",
+        )
+
+
+def test_camera_clock_rejects_bound_but_stale_capture() -> None:
+    observation = 1.0 / 15.0
+    sensor_time = np.float32(0.0)
+    for _ in range(4):
+        sensor_time = np.float32(sensor_time + np.float32(1.0 / 60.0))
+    capture = float(sensor_time) - 0.1
+    receipt = {
+        "capture_time_s": capture,
+        "observation_time_s": observation,
+        "age_s": observation - capture,
+        "sensor_causal_age_s": 0.1,
+    }
+    with pytest.raises(Pi05ContractError, match="causal age is invalid"):
+        pi05_data._camera_causal_age(receipt, "wrist_image_left", 0)
+
+
+def test_export_rejects_self_consistent_receipt_shifted_from_row(
+    tmp_path, monkeypatch
+) -> None:
+    roots = {name: tmp_path / name for name in ("train", "validation", "gold")}
+    for index, (name, root) in enumerate(roots.items()):
+        _write_episode(root, f"cube-{name}", f"scene-{index}")
+    path = roots["train"] / "episode-000000" / "episode.json"
+    metadata = json.loads(path.read_text())
+    receipt = metadata["steps"][0]["wrist_image_left"]
+    shifted_observation = metadata["steps"][1]["timestamp_s"]
+    shifted_capture = metadata["steps"][1]["wrist_timestamp_s"]
+    receipt["observation_time_s"] = shifted_observation
+    receipt["capture_time_s"] = shifted_capture
+    receipt["age_s"] = shifted_observation - shifted_capture
+    receipt["sensor_causal_age_s"] = 0.0
+    path.write_text(json.dumps(metadata))
+    monkeypatch.setitem(
+        sys.modules, "npa.adapter.sim_to_lerobot", _fake_lerobot_module()
+    )
+
+    with pytest.raises(Pi05ContractError, match="not bound to row 0"):
+        export_local(
+            train_root=roots["train"],
+            validation_root=roots["validation"],
+            gold_root=roots["gold"],
+            output=tmp_path / "output",
+        )
 
 
 def _fake_lerobot_module() -> types.ModuleType:
@@ -895,6 +1015,36 @@ def test_export_rejects_claimed_success_without_post_retreat_physics(
         sys.modules, "npa.adapter.sim_to_lerobot", _fake_lerobot_module()
     )
     with pytest.raises(Pi05ContractError, match="post-retreat support"):
+        export_local(
+            train_root=roots["train"],
+            validation_root=roots["validation"],
+            gold_root=roots["gold"],
+            output=tmp_path / "output",
+        )
+
+
+@pytest.mark.parametrize("mode", ["missing", "below_contact", "nonfinite"])
+def test_export_requires_measured_proximal_clearance(
+    tmp_path, monkeypatch, mode: str
+) -> None:
+    roots = {name: tmp_path / name for name in ("train", "validation", "gold")}
+    for index, (name, root) in enumerate(roots.items()):
+        _write_episode(root, f"cube-{name}", f"scene-{index}")
+    path = roots["train"] / "episode-000000" / "physics_trace.npz"
+    with np.load(path, allow_pickle=False) as loaded:
+        trace = {key: loaded[key] for key in loaded.files}
+    if mode == "missing":
+        trace.pop("measured_proximal_finger_clearance_m")
+    elif mode == "below_contact":
+        trace["measured_proximal_finger_clearance_m"][0] = 0.0
+    else:
+        trace["measured_proximal_finger_clearance_m"][0] = np.nan
+    np.savez(path, **trace)
+    monkeypatch.setitem(
+        sys.modules, "npa.adapter.sim_to_lerobot", _fake_lerobot_module()
+    )
+
+    with pytest.raises(Pi05ContractError, match="physics trace|proximal"):
         export_local(
             train_root=roots["train"],
             validation_root=roots["validation"],

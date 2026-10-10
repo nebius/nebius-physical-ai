@@ -26,6 +26,7 @@ from typing import Any, Mapping
 from npa.workflows.sim2real.pi05_contract import (
     CONTROL_HZ,
     EPISODE_SCHEMA,
+    GRIPPER_MEASUREMENT_TOLERANCE_M,
     JOINT_NAMES,
     MAX_GRIPPER_WIDTH_M,
     OBJECT_INITIAL_X_RANGE_M,
@@ -36,6 +37,7 @@ from npa.workflows.sim2real.pi05_contract import (
     WRIST_MOUNT_TRANSLATION_M,
     build_contract,
     release_width_threshold,
+    width_to_droid_gripper,
 )
 
 
@@ -442,6 +444,19 @@ def _rgb_receipt(frame: Any, capture_time: float, observation_time: float) -> di
         "standard_deviation": float(value.std()),
         "channel_order": "RGB",
     }
+
+
+def _bind_rgb_clock(receipt: dict, clock: dict[str, Any]) -> None:
+    """Bind an RGB receipt to the sensor clock without losing raw timestamps."""
+
+    capture = float(receipt["capture_time_s"])
+    observation = float(receipt["observation_time_s"])
+    sensor_time = float(clock["expected_sensor_time_s"])
+    receipt["raw_observation_age_s"] = observation - capture
+    receipt["representation_offset_s"] = sensor_time - observation
+    receipt["sensor_causal_age_s"] = sensor_time - capture
+    receipt["age_s"] = receipt["sensor_causal_age_s"]
+    receipt["sensor_clock"] = dict(clock)
 
 
 def _semantic_pixel_count(native: Any, sensor_name: str, label: str) -> int:
@@ -867,6 +882,7 @@ def _finger_grasp_reference_geometry(native: Any) -> dict[str, Any]:
     return {
         "hand_to_finger_link_centroid_local_m": local.astype(float).tolist(),
         "finger_link_hand_axis_interval_m": interval,
+        "finger_link_bounds_hand_frame_m": local_points.astype(float).tolist(),
         "measured_finger_link_centroid_world_m": np.mean(world, axis=0)
         .astype(float)
         .tolist(),
@@ -876,6 +892,22 @@ def _finger_grasp_reference_geometry(native: Any) -> dict[str, Any]:
             "complete-link interval, not pad geometry; bilateral contact required"
         ),
     }
+
+
+def _measured_proximal_clearance(native: Any, geometry: dict[str, Any]) -> float:
+    """Measure the live complete-link proximal bound above the object top."""
+
+    import numpy as np
+
+    world, points = _finger_points_in_hand_frame(native)
+    if points.ndim != 2 or points.shape[1] != 3 or not np.isfinite(points).all():
+        raise RuntimeError("finger-link hand-frame bounds are invalid")
+    proximal = float(points[:, 2].min())
+    proximal_world = world[points[:, 2] <= proximal + 1.0e-6]
+    object_z_tensor = _proxy_torch(native.scene["object"].data.root_pos_w)[0, 2]
+    object_z = float(object_z_tensor.detach().cpu().item())
+    object_top = object_z + float(geometry["object_height_m"]) / 2.0
+    return float(proximal_world[:, 2].min() - object_top)
 
 
 def _object_grasp_geometry(geometry: dict[str, Any], height: float) -> dict[str, Any]:
@@ -1339,7 +1371,7 @@ def _gripper_width(native: Any) -> float:
     ]
     q = _proxy_torch(robot.data.joint_pos)[0, indices].detach().cpu().numpy()
     width = float(np.sum(q))
-    if not 0.0 <= width <= MAX_GRIPPER_WIDTH_M + 0.005:
+    if not 0.0 <= width <= MAX_GRIPPER_WIDTH_M + GRIPPER_MEASUREMENT_TOLERANCE_M:
         raise RuntimeError(f"measured physical finger width is invalid: {width}")
     return width
 
@@ -1907,9 +1939,8 @@ def _raw_camera_observation(native: Any) -> dict[str, Any]:
     exterior, wrist = _rgb(native, "pi05_exterior"), _rgb(native, "pi05_wrist")
     exterior_receipt = _rgb_receipt(exterior, exterior_time, now)
     wrist_receipt = _rgb_receipt(wrist, wrist_time, now)
-    expected = clock["expected_sensor_time_s"]
-    exterior_receipt["sensor_causal_age_s"] = expected - exterior_time
-    wrist_receipt["sensor_causal_age_s"] = expected - wrist_time
+    _bind_rgb_clock(exterior_receipt, clock)
+    _bind_rgb_clock(wrist_receipt, clock)
     return {
         "exterior": exterior,
         "wrist": wrist,
@@ -2051,6 +2082,15 @@ def _object_kinematics(native: Any) -> tuple[Any, float]:
     return position, float(np.linalg.norm(velocity))
 
 
+def _gripper_physics(context: dict[str, Any]) -> tuple[float, float]:
+    native = context["native"]
+    width = _gripper_width(native)
+    clearance = _measured_proximal_clearance(
+        native, context["finger_grasp_reference_geometry"]
+    )
+    return width, clearance
+
+
 def _physics_sample(
     context: dict[str, Any], phase: str, intent: float
 ) -> dict[str, Any]:
@@ -2059,7 +2099,7 @@ def _physics_sample(
     native = context["native"]
     obj_np, speed = _object_kinematics(native)
     left, right, support = _contact_forces(native)
-    width = _gripper_width(native)
+    width, clearance = _gripper_physics(context)
     bilateral = left > 1.0e-3 and right > 1.0e-3
     lifted = float(obj_np[2] - context["initial_z"]) >= 0.05
     xy_error = float(np.linalg.norm(obj_np[:2] - context["target"][:2]))
@@ -2077,6 +2117,7 @@ def _physics_sample(
         "bilateral_finger_contact": bilateral,
         "support_contact": support > 1.0e-3,
         "gripper_width_m": width,
+        "measured_proximal_finger_clearance_m": clearance,
         "hand_object_distance_m": retreat_distance,
         "finger_controller_target_m": _finger_controller_target(native).tolist(),
         "target_xy_distance_m": xy_error,
@@ -2109,6 +2150,13 @@ def _update_events(context: dict[str, Any], sample: dict[str, Any]) -> None:
             context["buffers"]["events"].append(name)
 
 
+def _observation_state(observation: dict[str, Any]) -> Any:
+    import numpy as np
+
+    state = np.r_[observation["q"], width_to_droid_gripper(observation["width"])]
+    return state.astype(np.float32)
+
+
 def _record_step(
     context: dict[str, Any],
     observation: dict[str, Any],
@@ -2126,10 +2174,10 @@ def _record_step(
     ]
     actual_q = actual_q.detach().cpu().numpy()
     buffers["controller_errors"].append(float(np.max(np.abs(target_q - actual_q))))
-    state = np.r_[observation["q"], 1.0 - observation["width"] / MAX_GRIPPER_WIDTH_M]
+    state = _observation_state(observation)
     buffers["frames_exterior"].append(observation["exterior"])
     buffers["frames_wrist"].append(observation["wrist"])
-    buffers["states"].append(state.astype(np.float32))
+    buffers["states"].append(state)
     buffers["actions"].append(np.r_[target_q, intent].astype(np.float32))
     buffers["timestamps"].append(observation["time"])
     sample = _physics_sample(context, phase, intent)
@@ -2175,6 +2223,14 @@ def _trace_receipts(
     }
 
 
+def _phase_converged(
+    phase: str, distance: float, orientation_error: float, clearance: float
+) -> bool:
+    clearance_ok = phase not in {"contact", "grasp"}
+    clearance_ok |= clearance >= PROXIMAL_FINGER_CLEARANCE_M - 1.0e-4
+    return distance < 0.012 and orientation_error < 0.08 and clearance_ok
+
+
 def _run_phase(context: dict[str, Any], phase: str, goal: Any, intent: float) -> None:
     reached = 0
     for _ in range(90):
@@ -2184,7 +2240,11 @@ def _run_phase(context: dict[str, Any], phase: str, goal: Any, intent: float) ->
         )
         command_time, resulting_time = _step_command(context, command, phase)
         _record_step(context, observation, intent, phase, command_time, resulting_time)
-        reached = reached + 1 if distance < 0.012 and orientation_error < 0.08 else 0
+        clearance = context["buffers"]["traces"][-1][
+            "measured_proximal_finger_clearance_m"
+        ]
+        converged = _phase_converged(phase, distance, orientation_error, clearance)
+        reached = reached + 1 if converged else 0
         hold = 12 if phase in {"grasp", "release"} else 3
         if reached >= hold or (phase == "retreat" and context["stable_steps"] >= 3):
             return
@@ -2225,6 +2285,7 @@ def _write_episode_arrays(episode: Path, buffers: dict[str, list[Any]]) -> None:
         "right_finger_object_force_n",
         "object_support_force_n",
         "gripper_width_m",
+        "measured_proximal_finger_clearance_m",
         "hand_object_distance_m",
         "finger_controller_target_m",
     )

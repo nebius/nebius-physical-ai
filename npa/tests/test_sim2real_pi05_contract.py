@@ -159,6 +159,10 @@ def test_absolute_bridge_and_physical_gripper_roundtrip() -> None:
     assert proof["thresholded_gripper_target"] == 1.0
     assert proof["expected_observed_gripper_width_m"] == 0.0
     assert width_to_droid_gripper(droid_gripper_to_width(0.25)) == pytest.approx(0.25)
+    assert width_to_droid_gripper(0.080001) == 0.0
+    assert width_to_droid_gripper(0.085) == 0.0
+    with pytest.raises(Pi05ContractError, match="measurement tolerance"):
+        width_to_droid_gripper(0.085001)
     assert droid_gripper_to_width(0.0) == pytest.approx(0.08)
     assert droid_gripper_to_width(1.0) == pytest.approx(0.0)
 
@@ -218,6 +222,15 @@ def test_dense_episode_requires_real_aligned_wrist_and_ordered_physics_evidence(
     invisible_destination["destination_marker"]["minimum_exterior_semantic_pixels"] = 0
     with pytest.raises(Pi05ContractError, match="exterior-visible"):
         validate_dense_episode(invisible_destination)
+
+
+@pytest.mark.parametrize("value", [-0.001, 1.001, float("nan")])
+def test_dense_episode_rejects_invalid_gripper_state(value: float) -> None:
+    episode = _episode()
+    episode["steps"][0]["gripper_position"] = [value]
+
+    with pytest.raises(Pi05ContractError, match="gripper"):
+        validate_dense_episode(episode)
 
 
 def test_dense_episode_rejects_unmeasured_reset_settle_cadence() -> None:

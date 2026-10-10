@@ -31,6 +31,7 @@ JOINT_LIMITS_RAD = (
     (-2.8973, 2.8973),
 )
 MAX_GRIPPER_WIDTH_M = 0.08
+GRIPPER_MEASUREMENT_TOLERANCE_M = 0.005
 CONTROL_HZ = 15.0
 ACTION_HORIZON = 15
 EXECUTION_PREFIX = 8
@@ -62,7 +63,8 @@ def _expert_grasp_contract() -> dict[str, Any]:
         "source": "live_complete_finger_link_bounds_in_panda_hand_frame",
         "object_height": "measured_runtime_usd_extent",
         "proximal_finger_clearance_m": PROXIMAL_FINGER_CLEARANCE_M,
-        "admission": "bilateral_rendered_contact_and_object_motion_required",
+        "phase_admission": "measured_live_complete_link_clearance_required",
+        "success_admission": "bilateral_rendered_contact_and_object_motion_required",
     }
 
 
@@ -179,6 +181,7 @@ def _observation_contract() -> dict[str, Any]:
                 "units": "normalized",
                 "open": 0.0,
                 "closed": 1.0,
+                "measurement_overshoot": "saturates_within_0.005_m_tolerance",
             },
             "prompt": "non_empty_utf8",
             "alignment": (
@@ -295,9 +298,11 @@ def droid_gripper_to_width(value: float) -> float:
 def width_to_droid_gripper(width_m: float) -> float:
     """Convert finger width. Args: width_m. Returns: DROID grip. Raises: Pi05ContractError."""
     width = float(width_m)
-    if not math.isfinite(width) or not 0.0 <= width <= MAX_GRIPPER_WIDTH_M:
-        raise Pi05ContractError("physical gripper width must be in [0, 0.08] m")
-    return 1.0 - width / MAX_GRIPPER_WIDTH_M
+    maximum = MAX_GRIPPER_WIDTH_M + GRIPPER_MEASUREMENT_TOLERANCE_M
+    if not math.isfinite(width) or not 0.0 <= width <= maximum:
+        raise Pi05ContractError("physical gripper width exceeds measurement tolerance")
+    bounded = min(width, MAX_GRIPPER_WIDTH_M)
+    return 1.0 - bounded / MAX_GRIPPER_WIDTH_M
 
 
 def release_width_threshold(object_width_m: float) -> float:
@@ -455,6 +460,9 @@ def _validate_dense_row(row: Mapping[str, Any], index: int, previous: float) -> 
         raise Pi05ContractError("episode steps must be contiguous and ordered")
     timestamp = _validate_timing(row, previous)
     _finite_vector(row.get("joint_position", []), 7, "joint_position")
+    gripper = _finite_vector(row.get("gripper_position", []), 1, "gripper_position")
+    if not 0.0 <= gripper[0] <= 1.0:
+        raise Pi05ContractError("DROID gripper state must be in [0, 1]")
     action = _finite_vector(row.get("action", []), 8, "action")
     for joint_index, (value, limits) in enumerate(
         zip(action[:7], JOINT_LIMITS_RAD, strict=True)

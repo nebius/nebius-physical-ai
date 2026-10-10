@@ -9,9 +9,11 @@ import pytest
 
 from npa.workflows.sim2real import pi05_isaac
 from npa.workflows.sim2real.pi05_closed_loop import _new_episode_record
+from npa.workflows.sim2real.pi05_contract import Pi05ContractError
 from npa.workflows.sim2real.pi05_isaac import (
     DESTINATION_LABEL,
     DESTINATION_RADIUS_M,
+    _bind_rgb_clock,
     _camera_config,
     _camera_pose_sample,
     _camera_time,
@@ -23,8 +25,11 @@ from npa.workflows.sim2real.pi05_isaac import (
     _finger_pixel_counts,
     _hand_origin_control_receipt,
     _multiply_xyzw,
+    _measured_proximal_clearance,
     _object_asset_geometry,
     _object_grasp_geometry,
+    _observation_state,
+    _phase_converged,
     _robot_plant_receipt,
     _launch_camera_app,
     _live_gravity_receipt,
@@ -824,6 +829,28 @@ def test_capture_clock_reproduces_long_float32_accumulation_and_reset() -> None:
     assert reset["reset_epoch"] == 1
 
 
+def test_rgb_receipt_preserves_raw_age_and_binds_sensor_age() -> None:
+    receipt = {
+        "capture_time_s": float(np.float32(2.0 / 15.0)),
+        "observation_time_s": 2.0 / 15.0,
+        "age_s": 2.0 / 15.0 - float(np.float32(2.0 / 15.0)),
+    }
+    clock = {
+        "expected_sensor_time_s": receipt["capture_time_s"],
+        "physics_update_count": 8,
+        "physics_period_s": float(np.float32(1.0 / 60.0)),
+        "reset_epoch": 0,
+    }
+
+    _bind_rgb_clock(receipt, clock)
+
+    assert receipt["sensor_causal_age_s"] == 0.0
+    assert receipt["age_s"] == 0.0
+    assert receipt["raw_observation_age_s"] != 0.0
+    assert receipt["representation_offset_s"] == -receipt["raw_observation_age_s"]
+    assert receipt["sensor_clock"] == clock
+
+
 def _semantic_native(segmentation: np.ndarray) -> SimpleNamespace:
     data = SimpleNamespace(
         info={
@@ -1285,6 +1312,47 @@ def test_size_aware_contact_keeps_proximal_finger_clear_of_cube_top(height) -> N
     assert geometry["contact_hand_origin_above_object_center_m"] == pytest.approx(
         height / 2 + 0.058533 + 0.008
     )
+
+
+def test_live_clearance_uses_downward_hand_pose_and_object_top(monkeypatch) -> None:
+    import torch
+
+    robot = SimpleNamespace(
+        body_names=["panda_hand"],
+        data=SimpleNamespace(
+            body_pos_w=torch.tensor([[[0.5, 0.0, 0.14]]]),
+            body_quat_w=torch.tensor([[[1.0, 0.0, 0.0, 0.0]]]),
+        ),
+    )
+    obj = SimpleNamespace(
+        data=SimpleNamespace(root_pos_w=torch.tensor([[0.5, 0.0, 0.03]]))
+    )
+    native = SimpleNamespace(scene={"robot": robot, "object": obj})
+    world = np.asarray([[0.5, 0.0, 0.08], [0.5, 0.0, 0.03]])
+    local = np.asarray([[0.0, 0.0, 0.06], [0.0, 0.0, 0.11]])
+    monkeypatch.setattr(
+        pi05_isaac, "_finger_points_in_hand_frame", lambda _native: (world, local)
+    )
+    geometry = {
+        "object_height_m": 0.06,
+    }
+
+    assert _measured_proximal_clearance(native, geometry) == pytest.approx(0.02)
+
+
+def test_contact_convergence_requires_measured_proximal_clearance() -> None:
+    assert not _phase_converged("contact", 0.0, 0.0, 0.007)
+    assert _phase_converged("contact", 0.0, 0.0, 0.008)
+    assert _phase_converged("transport", 0.0, 0.0, -0.02)
+
+
+def test_collector_state_saturates_only_allowed_open_width_overshoot() -> None:
+    state = _observation_state({"q": np.arange(7), "width": 0.085})
+
+    assert state.dtype == np.float32
+    assert state.tolist() == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 0.0]
+    with pytest.raises(Pi05ContractError, match="measurement tolerance"):
+        _observation_state({"q": np.arange(7), "width": 0.086})
 
 
 def test_grasp_reference_recovers_selected_asset_link_centroid(monkeypatch) -> None:

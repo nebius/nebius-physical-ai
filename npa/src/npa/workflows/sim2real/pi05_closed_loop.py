@@ -25,6 +25,7 @@ from npa.workflows.sim2real.pi05_isaac import (
     POLICY_SURFACE_TASK_ID,
     RESET_SETTLE_CONTROL_STEPS,
     _camera_config,
+    _bind_rgb_clock,
     _camera_pose_sample,
     _camera_time,
     _contact_config,
@@ -334,7 +335,6 @@ def _camera_query_receipts(native: Any, exterior: Any, wrist: Any) -> tuple[dict
     wrist_time = _camera_time(native, "pi05_wrist")
     clock = _sensor_clock_reference(native)
     _validate_capture_ages((exterior_time, wrist_time), clock, native.step_dt)
-    sensor_time = clock["expected_sensor_time_s"]
     timing = {
         "observation_time_s": observation_time,
         "exterior_capture_time_s": exterior_time,
@@ -344,10 +344,8 @@ def _camera_query_receipts(native: Any, exterior: Any, wrist: Any) -> tuple[dict
         "exterior": _rgb_receipt(exterior, exterior_time, observation_time),
         "wrist": _rgb_receipt(wrist, wrist_time, observation_time),
     }
-    for receipt, capture in zip(receipts.values(), (exterior_time, wrist_time)):
-        receipt["sensor_causal_age_s"] = sensor_time - capture
-        receipt["age_s"] = sensor_time - capture
-        receipt["sensor_clock"] = dict(clock)
+    for receipt in receipts.values():
+        _bind_rgb_clock(receipt, clock)
     return timing, receipts
 
 

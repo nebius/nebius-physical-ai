@@ -23,6 +23,12 @@ resulting state. The exporter forms 15-step targets only within episode
 boundaries, computes normalization from the train split, and writes both the
 OpenPI dataset contract and native LeRobot v3 data.
 
+Camera receipts preserve the SDK capture timestamp and the episode-local
+observation timestamp separately. Causal age is evaluated in the reproduced
+float32 sensor-clock domain; the raw float64/float32 representation delta is
+also retained. Export rejects inconsistent clock bindings and frames older than
+one 15 Hz control interval rather than clamping representation offsets.
+
 The exact Isaac Lab 3.0 camera contract uses XYZW quaternions, live pose
 updates, and ProxyArray-to-tensor conversion before indexing. Its RTX backend
 consumes USD camera transforms while Fabric owns the moving articulation, so
@@ -49,6 +55,12 @@ bits are little-endian packed RGBA codes. Each code is accepted only through an
 exact, bijective `idToLabels` RGBA-to-class mapping; unmapped, malformed, or
 ambiguous metadata fails closed. These codes are not advertised as numeric
 class IDs and RGB color similarity is never used as semantic evidence.
+
+Measured Franka finger separation remains a raw physics value for contact and
+success metrics. The observation adapter alone saturates widths between 80 and
+85 mm to DROID state `0.0` (open), matching the collector's bounded actuator
+overshoot allowance and the policy path. Larger, negative, non-finite, or
+out-of-range normalized states fail closed before export or normalization.
 
 The destination is a rendered, non-colliding cyan disc centered on the declared
 surface target with the same 5 cm radius as the success threshold. The prompt
@@ -91,8 +103,15 @@ live bilateral contact is still required. Contact and lower waypoints are
 size-aware: the proximal measured finger-link plane stays 8 mm above the
 measured object top while the rest of the finger interval overlaps the object
 side. The receipt records the measured interval, object height, clearance,
-reference plane, and resulting hand-origin target. This avoids driving the palm
-through taller held-out cubes without relaxing waypoint or success thresholds.
+reference plane, and resulting hand-origin target. Contact and grasp phase
+advancement also requires the live transformed complete-link proximal bound to
+retain that 8 mm clearance; the 12 mm Cartesian convergence tolerance cannot
+consume it. This remains complete-link evidence rather than a pad or palm
+collision-geometry claim, so live 48/60/72 mm contact qualification remains
+required without relaxing waypoint or success thresholds.
+The aligned clearance trace is required again at dataset admission and at the
+ordered contact/grasp samples, so older episodes cannot bypass the new phase
+evidence during OpenPI or LeRobot export.
 The stock task's frame sensor and differential-IK action otherwise use distinct
 nonzero tool offsets from `panda_hand`. This variant explicitly sets both to the
 hand origin before environment construction, applies the same sensor-frame
