@@ -783,13 +783,12 @@ def test_spec_reconstruct_reads_the_uri_the_fetch_stage_writes() -> None:
     assert resolved_consumed == resolved_published + "sequence/"
 
 
-def test_staging_the_source_is_inert_for_an_image_that_already_bakes_npa() -> None:
-    """Propagating NPA_SRC_S3_URI to every pinned image must not change baked ones.
+def test_explicit_source_overlay_precedes_baked_image_setup() -> None:
+    """An explicit overlay stages before any image-local NPA install path.
 
-    The renderer now injects the URI for ANY pinned image (it previously required
-    NPA_SRC_OVERLAY=1). That is safe only because the in-pod install is guarded on
-    `command -v npa`, so an image that already ships npa skips it entirely. This
-    pins that guard -- it is the whole reason the change is non-breaking.
+    A partial baked NPA tree cannot satisfy the editable-install hook. The
+    renderer must therefore stage an explicitly requested source overlay first,
+    even when an image advertises a baked project path.
     """
     from npa.orchestration.npa_workflow.skypilot_render import (
         SkypilotRenderOptions,
@@ -799,8 +798,7 @@ def test_staging_the_source_is_inert_for_an_image_that_already_bakes_npa() -> No
 
     setup = default_npa_setup()
     assert "if ! command -v npa >/dev/null 2>&1; then" in setup
-    # The baked-image path is tried before any S3 sync.
-    assert setup.index("/opt/nebius-physical-ai/npa") < setup.index("NPA_SRC_S3_URI")
+    assert setup.index("NPA_SRC_S3_URI") < setup.index("/opt/nebius-physical-ai/npa")
 
     # And an unrelated tool's setup is unchanged by the NuRec additions.
     other = render_setup_for_tool(

@@ -811,7 +811,8 @@ def test_isaac3_dependency_lock_excludes_vulnerable_pyjwt() -> None:
     """Keep the signature-confusion fix in the immutable Isaac OSS closure."""
 
     dependencies = ISAAC3_OSS_DEPS.read_text(encoding="utf-8").splitlines()
-    assert "pyjwt==2.14.0" in dependencies
+    assert "pyjwt==2.15.0" in dependencies
+    assert "pyjwt==2.14.0" not in dependencies
     assert "pyjwt==2.13.0" not in dependencies
 
 

@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 from pathlib import Path, PurePosixPath
 
@@ -193,10 +194,10 @@ def _render_overlay_setup(
         {
             "/opt/npa": partial,
             "/opt/lerobot/venv/bin/python": vendor_python,
-            "/tmp/npa-src-overlay": overlay,
-            "/tmp/npa-src-root": source_root,
-            "/tmp/npa-python": recorded_python,
-            "/tmp/npa-overlay-venv": overlay_venv,
+            str(Path(tempfile.gettempdir()) / "npa-src-overlay"): overlay,
+            str(Path(tempfile.gettempdir()) / "npa-src-root"): source_root,
+            str(Path(tempfile.gettempdir()) / "npa-python"): recorded_python,
+            str(Path(tempfile.gettempdir()) / "npa-overlay-venv"): overlay_venv,
         },
     )
     branch = (

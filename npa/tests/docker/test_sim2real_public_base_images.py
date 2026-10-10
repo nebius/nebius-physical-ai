@@ -222,9 +222,9 @@ def test_transfer_uses_the_hash_verified_pyjwt_signature_fix() -> None:
     overrides = (WORKBENCH / "cosmos2-transfer/security-overrides.txt").read_text()
     wheels = [line for line in overrides.splitlines() if "/pyjwt-" in line]
     assert len(wheels) == 1
-    assert "pyjwt-2.14.0-py3-none-any.whl" in wheels[0]
+    assert "pyjwt-2.15.0-py3-none-any.whl" in wheels[0]
     assert wheels[0].endswith(
-        "#sha256=ad0cef71c756a56e74863c2919cf0985f72decbcfcb550ee2f422e7c62b5eedc"
+        "#sha256=7a3742debf6b879e912dbb9819ceec1594be812452b78c5f2e2dfc56564954f8"
     )
 
 
