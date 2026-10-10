@@ -4115,6 +4115,41 @@ def test_sky_environment_keeps_one_explicit_repo_source_path(
     assert env["PYTHONPATH"] == f"{repo_src}{os.pathsep}other-source"
 
 
+def test_sky_environment_preserves_an_empty_pythonpath_entry(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot import cleanup
+
+    repo_src = str(Path(cleanup.__file__).resolve().parents[3])
+    monkeypatch.setenv("PYTHONPATH", f"{repo_src}{os.pathsep}{repo_src}{os.pathsep}")
+
+    env = cleanup.sky_environment(tmp_path / "isolated")
+
+    assert env["PYTHONPATH"] == f"{repo_src}{os.pathsep}"
+
+
+def test_sky_environment_is_idempotent_for_returned_environment(tmp_path):
+    from npa.orchestration.skypilot import cleanup
+
+    root = tmp_path / "isolated"
+    supplied = {
+        "HOME": str(tmp_path / "operator"),
+        "NPA_CONFIG_DIR": str(tmp_path / "config"),
+        "KUBECONFIG": str(tmp_path / "missing-kubeconfig"),
+        "PYTHONPATH": os.pathsep.join(["first-source", "", "last-source"]),
+    }
+    first = cleanup.sky_environment(root, environment=supplied)
+    second = cleanup.sky_environment(root, environment=first)
+    assert second == first
+    repo_src = str(Path(cleanup.__file__).resolve().parents[3])
+    assert second["PYTHONPATH"].split(os.pathsep) == [
+        repo_src,
+        "first-source",
+        "",
+        "last-source",
+    ]
+
+
 def test_sky_environment_preserves_nebius_exec_auth_without_copying(
     monkeypatch, tmp_path
 ) -> None:
