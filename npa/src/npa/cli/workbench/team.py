@@ -25,6 +25,60 @@ app.command("login")(login_cmd)
 app.command("logout")(logout_cmd)
 
 
+@app.command("export-connections")
+@json_stdout_contract
+def export_connections_cmd(
+    config: Path = typer.Option(..., "--config"),
+    output_dir: Path = typer.Option(..., "--output-dir"),
+    server_directory: Path = typer.Option(Path("/etc/npa-team"), "--server-directory"),
+    output_format: str = typer.Option("json", "--output-format"),
+):
+    """Prepare private connections to existing Kubernetes clusters on any cloud.
+
+    Args:
+        config: Administrator policy and locally usable Kubernetes connections.
+        output_dir: New private directory for exported server configuration files.
+        server_directory: Configuration mount in both server containers.
+        output_format: Required JSON response format.
+    Returns:
+        None; emits file names and cluster aliases without credentials.
+    Raises:
+        TeamError, OSError: Selected connections or private export fail.
+    """
+    from npa.workbench.team.cluster_connections import export_connections
+
+    _json_only(output_format)
+    typer.echo(
+        json.dumps(
+            export_connections(
+                load_config(config), output_dir, server_directory=server_directory
+            )
+        )
+    )
+
+
+@app.command("check-clusters")
+@json_stdout_contract
+def check_clusters_cmd(
+    config: Path = typer.Option(..., "--config"),
+    output_format: str = typer.Option("json", "--output-format"),
+):
+    """Verify existing cluster access and boundaries from the server environment.
+
+    Args:
+        config: Private server configuration with mounted cluster credentials.
+        output_format: Required JSON response format.
+    Returns:
+        None; emits verified allocation counts without credentials.
+    Raises:
+        TeamError, OSError: Connectivity, authentication, enrollment, or file reads fail.
+    """
+    from npa.workbench.team.cluster_connections import check_clusters
+
+    _json_only(output_format)
+    typer.echo(json.dumps(check_clusters(load_config(config))))
+
+
 @app.command("setup")
 @intent_boundary(OperationIntent.ENSURE_PRESENT)
 @json_stdout_contract

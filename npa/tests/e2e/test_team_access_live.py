@@ -12,6 +12,7 @@ from npa.workbench.team.deployment import allocations
 from npa.workbench.team.enrollment import kubectl, verify_enrollment
 from npa.workbench.team.models import load_config
 from npa.workbench.team.storage import PersonalStorage
+from npa.workbench.team.cluster_connections import check_clusters, export_connections
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(0)]
 
@@ -55,6 +56,14 @@ def _pod(binding):
             ],
         },
     }
+
+
+def test_real_exported_connections_preserve_cluster_access(live_allocations, tmp_path):
+    config = load_config(Path(os.environ["NPA_TEAM_LIVE_CONFIG"]))
+    directory = tmp_path / "connections"
+    export_connections(config, directory, server_directory=directory)
+    exported = load_config(directory / "team.yaml")
+    assert check_clusters(exported)["status"] == "verified"
 
 
 def _admit(binding, pod):

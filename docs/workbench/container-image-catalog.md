@@ -6,7 +6,9 @@ The optional [team gateway](team-access.md) has a separate CPU service recipe
 at `npa/docker/team-server/Dockerfile`. It is built into an operator-controlled
 private registry and is outside the public image plan and release table below.
 Its Python and kubectl bases are digest-pinned. A private deployment does not
-establish a supported public release.
+establish a supported public release. Its isolated SkyPilot environment includes
+the AWS CLI for existing EKS cluster authentication; runtime AWS profiles stay
+in private configuration, and the execution policy remains Kubernetes-only.
 
 Repository-selected runtime images use the public mirror by default:
 

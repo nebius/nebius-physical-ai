@@ -9,6 +9,7 @@ from npa.workbench.team.models import SubmitRequest
 from npa.workbench.team.accounts import Accounts
 from npa.workbench.team.account_administration import issue_key_file, link_identity
 from npa.workbench.team.setup_models import SetupRequest
+from npa.workbench.team.cluster_connections import export_connections, check_clusters
 
 __all__ = [
     "Accounts",
@@ -22,6 +23,8 @@ __all__ = [
     "link_identity",
     "SetupRequest",
     "setup_control_plane",
+    "export_connections",
+    "check_clusters",
 ]
 
 

@@ -8,6 +8,10 @@ existing CLI, HTTP API, or Python SDK with a personal access-key file.
 For the short operator and user workflow, start with the
 [shared-access quickstart](shared-workbench-quickstart.md).
 
+The hosting cloud does not constrain enrolled Kubernetes destinations. See
+[external Kubernetes connections](external-kubernetes.md) to keep the server
+on Nebius while adding existing clusters, including AWS EKS.
+
 This is deliberately not a standalone Workbench portal or browser-login
 product. There is no self-service signup, browser session, cloud-account
 provisioning, or direct user access to the private scheduler.

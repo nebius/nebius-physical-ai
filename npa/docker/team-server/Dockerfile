@@ -31,7 +31,7 @@ COPY workflows/partners /opt/workflows/partners
 RUN python -m venv /opt/npa-venv \
     && /opt/npa-venv/bin/pip install --no-cache-dir /opt/npa 'uvicorn>=0.52.4' \
     && python -m venv /opt/sky \
-    && /opt/sky/bin/pip install --no-cache-dir 'skypilot[kubernetes]==0.12.2' \
+    && /opt/sky/bin/pip install --no-cache-dir 'skypilot[aws,kubernetes]==0.12.2' \
       'kubernetes>=20.0.0,!=32.0.0,<36' \
     && useradd --uid 1000 --create-home workbench \
     && chown workbench:workbench \

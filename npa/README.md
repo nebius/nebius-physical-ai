@@ -37,6 +37,18 @@ through `npa.sdk.workbench.team.connect()`. Native Nebius verification remains
 mutually exclusive with generic JWT identity mode and never imports cloud roles
 as Workbench grants.
 
+The server can stay on Nebius while workloads use other enrolled Kubernetes
+clusters. `npa workbench team export-connections --config <runtime-policy.yaml>
+--output-dir <new-private-directory>` prepares gateway and scheduler connections
+with server paths (default `/etc/npa-team`; override with `--server-directory`).
+`npa workbench team check-clusters --config <server-policy.yaml>` verifies access
+and allocation boundaries from the server environment. Both functions are also
+available in `npa.sdk.workbench.team`. The server includes the AWS CLI for EKS
+authentication; provider credentials are supplied privately at runtime. See the
+[external Kubernetes guide](../docs/workbench/external-kubernetes.md) for EKS,
+credential refresh and network requirements. Direct cloud VMs remain unsupported
+by this shared execution boundary.
+
 `npa workbench team setup --input-path <private-setup.yaml> --output-path
 <private-installation.json>` deploys the shared HTTPS gateway, creates its
 Nebius LoadBalancer, and retains the address. It uses operator cloud/Kubernetes

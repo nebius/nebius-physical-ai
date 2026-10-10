@@ -37,6 +37,15 @@ may open that URL and establish the tunnel. Let the human complete any required
 password or MFA; never request the callback URL or token in chat. Verify actual
 human login and a real workload before labeling a demo SSO-verified.
 
+The server's Nebius location does not restrict Kubernetes workload destinations.
+Use `export-connections` to prepare private runtime connections for both server
+containers, and run `check-clusters` from the server environment before a real
+workload. EKS uses the image's AWS CLI with separately supplied server profiles;
+do not transfer an operator's inline keys or assume laptop SSO works in the pod.
+See `docs/workbench/external-kubernetes.md`. Direct cloud VM execution and native
+SkyPilot client protocol access remain outside this boundary. Never label a
+Nebius workload or an offline EKS token check as live AWS validation.
+
 An external identity is only a credential for an already-created local account:
 
 - Generic `identity` uses the configured JWT issuer and its verified subject.

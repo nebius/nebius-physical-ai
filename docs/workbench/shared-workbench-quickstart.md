@@ -12,6 +12,10 @@ permissions and runs workflows through its private SkyPilot scheduler.
 Users do not need a Nebius account, Kubernetes credentials, VDI, a local proxy,
 or port forwarding. Install the client on [macOS, Linux, or WSL2](../install.md).
 
+The server can stay on Nebius while workflows run on other enrolled Kubernetes
+clusters. See [existing clusters on other clouds](external-kubernetes.md) for
+AWS EKS authentication, connection export, and destination checks.
+
 ## Operator: install once and grant access
 
 1. Prepare the management namespace, private server configuration Secret,

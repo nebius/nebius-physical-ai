@@ -12,6 +12,8 @@ Options
 Commands
 login  Verify access and remember a Workbench connection for subsequent commands.
 logout  Forget a local Workbench connection without revoking accounts or cloud login.
+export-connections  Prepare private connections to existing Kubernetes clusters on any cloud.
+check-clusters  Verify existing cluster access and boundaries from the server environment.
 setup  Deploy the shared HTTPS control plane and retain its Nebius LB address.
 stop-run  Cancel an exact run as the local server operator, including after offboarding.
 render  Render cluster boundaries and private SkyPilot configuration for review.
@@ -39,6 +41,8 @@ account  Operator-managed users, personal keys, and optional SSO links.
 | --- | --- |
 | `login` | Verify access and remember a Workbench connection for subsequent commands. |
 | `logout` | Forget a local Workbench connection without revoking accounts or cloud login. |
+| `export-connections` | Prepare private connections to existing Kubernetes clusters on any cloud. |
+| `check-clusters` | Verify existing cluster access and boundaries from the server environment. |
 | `setup` | Deploy the shared HTTPS control plane and retain its Nebius LB address. |
 | `stop-run` | Cancel an exact run as the local server operator, including after offboarding. |
 | `render` | Render cluster boundaries and private SkyPilot configuration for review. |

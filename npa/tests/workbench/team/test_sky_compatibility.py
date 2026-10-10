@@ -23,6 +23,52 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_real_aws_cli_eks_exec_authentication_without_aws_access(tmp_path):
+    executable = os.environ.get("NPA_TEAM_AWS_EXECUTABLE")
+    if not executable:
+        pytest.skip("Select the server image's AWS CLI for the offline EKS check")
+    result = subprocess.run(
+        [os.environ["NPA_TEAM_SKY_PYTHON"], "-c", _eks_exec_program(), executable],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, "AWS exec credential protocol check failed"
+
+
+def _eks_exec_program():
+    return r"""
+import base64, json, os, pathlib, sys, tempfile
+from kubernetes import client, config
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    credentials = root / 'aws-credentials'
+    settings = root / 'aws-config'
+    credentials.write_text('[scheduler]\naws_access_key_id=test-access-key\naws_secret_access_key=test-secret-key\n')
+    credentials.chmod(0o600)
+    settings.write_text('[profile scheduler]\nregion=us-east-1\n')
+    # The explicit server profile must win over unrelated process credentials.
+    os.environ.update(AWS_ACCESS_KEY_ID='ambient-key', AWS_SECRET_ACCESS_KEY='ambient-secret')
+    environment = {'AWS_CONFIG_FILE':str(settings), 'AWS_SHARED_CREDENTIALS_FILE':str(credentials),
+        'AWS_EC2_METADATA_DISABLED':'true', 'AWS_ENDPOINT_URL_STS':'https://sts.us-east-1.amazonaws.com'}
+    plugin = {'apiVersion':'client.authentication.k8s.io/v1beta1', 'command':sys.argv[1],
+        'args':['--profile','scheduler','eks','get-token','--cluster-name','synthetic-cluster'],
+        'interactiveMode':'Never', 'env':[{'name':key,'value':value} for key,value in environment.items()]}
+    document = {'apiVersion':'v1','kind':'Config','current-context':'external',
+        'clusters':[{'name':'external','cluster':{'server':'https://unused.example.test'}}],
+        'users':[{'name':'external','user':{'exec':plugin}}],
+        'contexts':[{'name':'external','context':{'cluster':'external','user':'external'}}]}
+    configured = client.Configuration()
+    config.load_kube_config_from_dict(document, client_configuration=configured)
+    token = configured.get_api_key_with_prefix('authorization').split(' ', 1)[1]
+    assert token.startswith('k8s-aws-v1.')
+    encoded = token.split('.',1)[1]
+    signed = base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)).decode()
+    assert 'test-access-key' in signed and 'ambient-key' not in signed
+    print(json.dumps({'eks_exec_credential_protocol':'passed','aws_api_contacted':False}))
+"""
+
+
 def test_pinned_sdk_forwards_workspace_for_first_cancel_call(config, binding, tmp_path):
     backend = SkyBackend(config, binding, TeamLedger(config.state_dir), "run-context")
     environment = backend._bridge_environment()
