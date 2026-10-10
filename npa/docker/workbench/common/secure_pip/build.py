@@ -111,7 +111,16 @@ def run(argv: list[str], *, cwd: Path, env: dict[str, str]) -> None:
     subprocess.run(argv, cwd=cwd, env=env, check=True, umask=0o022)
 
 
+def _require_fresh_directories(work: Path, output: Path) -> None:
+    """Refuse stale task paths before checking the optional build runtime."""
+    if work.exists() or output.exists():
+        raise FileExistsError("secure-pip build paths must be fresh")
+
+
 def build(work: Path, output: Path) -> Path:
+    # A stale task path is always a pre-side-effect refusal, including on a
+    # host that cannot perform the Python-3.11-only derivative build.
+    _require_fresh_directories(work, output)
     if sys.version_info < (3, 11):
         raise RuntimeError("The pinned vendoring build tool requires Python 3.11+")
     manifest = json.loads((HERE / "inputs.json").read_text())

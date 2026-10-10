@@ -145,12 +145,27 @@ def test_archive_positive_preserves_source_bytes(tmp_path):
     assert (target / "source.py").read_bytes() == b"x"
 
 
-def test_existing_work_directory_is_not_reused(tmp_path):
-    marker = tmp_path / "retained"
+@pytest.mark.parametrize("occupied", ["work", "output"])
+def test_existing_build_directory_is_not_reused(tmp_path, occupied):
+    work = tmp_path / "work"
+    output = tmp_path / "out"
+    stale = work if occupied == "work" else output
+    stale.mkdir()
+    marker = stale / "retained"
     marker.write_text("keep")
     with pytest.raises(FileExistsError):
-        builder.build(tmp_path, tmp_path / "out")
+        builder.build(work, output)
     assert marker.read_text() == "keep"
+
+
+def test_unsupported_python_refuses_before_creating_build_directories(tmp_path, monkeypatch):
+    monkeypatch.setattr(builder.sys, "version_info", (3, 10))
+    work = tmp_path / "work"
+    output = tmp_path / "out"
+    with pytest.raises(RuntimeError, match="Python 3.11"):
+        builder.build(work, output)
+    assert not work.exists()
+    assert not output.exists()
 
 
 def test_build_lock_preserves_marker_dependency():
