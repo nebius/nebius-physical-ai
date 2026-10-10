@@ -10,19 +10,23 @@ import shutil
 
 
 def catalog_directories(catalog: Path) -> tuple[Path, ...]:
-    """List main, testing, and individual partner workflow directories.
+    """List principal, reference, Cosmos Data Factory, and partner directories.
 
     Args:
         catalog: Repository or packaged workflow catalog root.
     Returns:
-        Main/testing paths plus existing immediate partner directories.
+        Main/testing/factory paths plus existing immediate partner directories.
     Raises:
         ValueError: A catalog directory is a symbolic link.
     """
     partners = catalog / "partners"
     if catalog.is_symlink() or partners.is_symlink():
         raise ValueError("Workflow catalog directories must not be symbolic links")
-    directories = [catalog / "main", catalog / "testing"]
+    directories = [
+        catalog / "main",
+        catalog / "testing",
+        catalog / "cosmos-data-factory",
+    ]
     if partners.is_dir():
         directories.extend(
             path

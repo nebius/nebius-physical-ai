@@ -28,6 +28,9 @@ licenses:
       - neural-reconstruction
   - path: skills/NOTICE-NVIDIA-PAIDF
     applies_to:
+      - cosmos-data-factory-setup
+      - physical-ai-image-attribute-augmentation
+      - physical-ai-event-video-generation
       - physical-ai-data-factory
       - nvidia-osmo-to-npa-workflow
   - path: skills/NOTICE-PAIDF-STARTER-MEDIA
@@ -1355,8 +1358,8 @@ skills:
           - workflows/testing/physical-ai-data-factory.yaml
           - workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
           - workflows/testing/paidf-defect-image-generation.yaml
-          - workflows/testing/paidf-image-attribute-augmentation.yaml
-          - workflows/testing/paidf-event-video-generation.yaml
+          - workflows/cosmos-data-factory/paidf-image-attribute-augmentation.yaml
+          - workflows/cosmos-data-factory/paidf-event-video-generation.yaml
           - workflows/main/paidf-cosmos3.yaml
       - type: cli_help
         args: ["workbench", "cosmos-evaluator", "evaluate", "--help"]
@@ -1367,6 +1370,36 @@ skills:
       - type: cli_help
         args: ["workbench", "cosmos2", "transfer", "--help"]
         contains: "--mask-prompt"
+  - name: cosmos-data-factory-setup
+    category: workflows
+    when_to_use: "Prepare shared NPA/SkyPilot storage, credentials, exact private images, and GPU prerequisites for IAA or EVG."
+    path: skills/cosmos-data-factory/cosmos-data-factory-setup/SKILL.md
+    smoke:
+      - type: file_exists
+        path: workflows/cosmos-data-factory/README.md
+      - type: cli_help
+        args: ["workbench", "workflow", "preflight-images", "--help"]
+        contains: "--infra"
+  - name: physical-ai-image-attribute-augmentation
+    category: workflows
+    when_to_use: "Author, run, or inspect person-image clothing, color, footwear, and accessory augmentation with verified labels on NPA."
+    path: skills/cosmos-data-factory/physical-ai-image-attribute-augmentation/SKILL.md
+    smoke:
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/cosmos-data-factory/paidf-image-attribute-augmentation.yaml
+      - type: file_exists
+        path: workflows/cosmos-data-factory/image-attribute-augmentation.md
+  - name: physical-ai-event-video-generation
+    category: workflows
+    when_to_use: "Author, run, or inspect seed-image-to-event-video generation with detection, tracking, captioning, visual QA, and attribute labels on NPA."
+    path: skills/cosmos-data-factory/physical-ai-event-video-generation/SKILL.md
+    smoke:
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/cosmos-data-factory/paidf-event-video-generation.yaml
+      - type: file_exists
+        path: workflows/cosmos-data-factory/event-video-generation.md
   - name: nvidia-osmo-to-npa-workflow
     category: workflows
     when_to_use: "Semantically translate a pinned NVIDIA OSMO workflow definition, or a related authoritative Airflow DAG, into npa.workflow/v0.0.1 without claiming control-plane equivalence."

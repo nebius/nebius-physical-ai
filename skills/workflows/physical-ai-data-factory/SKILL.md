@@ -29,6 +29,12 @@ not textually or behaviorally changed to add that contract.
 
 ## Workflow Inventory
 
+IAA and EVG's canonical specs and dedicated guides are in
+`workflows/cosmos-data-factory/`. For these two workflows, load shared setup and
+the matching NVIDIA-adapted skill from `skills/cosmos-data-factory/`; their
+runbook records which upstream YAMLs require orchestration conversion and which
+component configs are reused. The established VDA/DIG paths remain separate.
+
 | YAML | Official source | Classification | Execution |
 | --- | --- | --- | --- |
 | `physical-ai-data-factory.yaml` | established NPA VDA blueprint | unchanged NPA-native reference | SkyPilot + Transfer 2.5/Token Factory/Curator/FiftyOne |

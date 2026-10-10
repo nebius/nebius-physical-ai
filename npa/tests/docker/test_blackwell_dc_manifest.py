@@ -378,7 +378,9 @@ def test_paidf_gpu_agnostic_video_clients_still_require_scheduled_cuvid(
     entry = next(item for item in entries if item["name"] == name)
     proof = manifest["validation_evidence"][name]
     workflow = yaml.safe_load(
-        (ROOT / "workflows/testing/paidf-event-video-generation.yaml").read_text()
+        (
+            ROOT / "workflows/cosmos-data-factory/paidf-event-video-generation.yaml"
+        ).read_text()
     )
 
     assert entry["verdict"] == "not-applicable"

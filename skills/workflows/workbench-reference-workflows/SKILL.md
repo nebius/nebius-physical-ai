@@ -16,6 +16,8 @@ The catalog keeps promoted principal pipelines in `workflows/main/`; see
 selection and its measured validation scope.
 Partner integrations live in `workflows/partners/<partner>/`; general reference
 workflows, component tests, and fixtures live in `workflows/testing/`.
+IAA and EVG live in `workflows/cosmos-data-factory/` with their own workflow/guide
+table and adapted NVIDIA skills under `skills/cosmos-data-factory/`.
 Keep the catalog overview in `workflows/README.md`. Maintain a
 `Workflow | Guide | Purpose` table in `workflows/main/README.md` and
 `workflows/testing/README.md`, beside the YAMLs. Link to the existing guide
