@@ -483,6 +483,10 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     assert "apt-get install" not in instructions
     assert "virtualenv==21.7.13" in instructions
     assert (
+        "virtualenv 21.7.13 satisfies the deployed-workbench security floor."
+        in instructions
+    )
+    assert (
         "python3.10 -m virtualenv --no-download --python=/usr/bin/python3.10 "
         "/opt/opendm-venv"
     ) in instructions
@@ -508,6 +512,10 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
         )
     ]
     assert "'hydra-core==1.3.7'" in libero_dependencies_block
+    assert (
+        "hydra-core 1.3.7 satisfies the deployed-workbench security floor."
+        in instructions
+    )
     assert "hydra-core==1.2.0" not in libero_dependencies_block
     for environment, dependency_block in (
         ("/opt/opendm-venv", opendm_dependencies_block),
