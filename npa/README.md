@@ -323,6 +323,15 @@ See [runtime modes](../docs/workbench/runtime-modes.md) for direct deploy,
 BYOVM, and serverless examples. A mode supported by one tool does not imply
 support in every other tool.
 
+Managed preemptible workbench VMs follow Nebius's current spot price. The
+bundled Terraform provider lock includes the required spot-pricing fields;
+`--no-preemptible` keeps regular on-demand provisioning. A reclaimed VM stops
+without automatic restart. See [Nebius preemptible VMs](https://docs.nebius.com/compute/virtual-machines/preemptible).
+Preemptible serverless jobs and endpoints also explicitly follow the current
+spot price and require Nebius CLI 0.12.278 or newer for that pricing flag.
+Destroying a workbench retains its project's identity and storage configuration
+so subsequent jobs can continue using the configured project.
+
 <a id="config"></a>
 
 ## Configuration

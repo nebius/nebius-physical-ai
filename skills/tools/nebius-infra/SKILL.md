@@ -22,6 +22,12 @@ For these specific tasks, read the matching reference:
 
 ## Procedure
 
+Preemptible workbench VMs, Serverless Jobs, and Serverless Endpoints explicitly
+select the provider's `follows_spot_price` pricing model. Serverless submissions
+require Nebius CLI 0.12.278 or newer for `--follows-spot-price`; check
+`nebius version` before submitting. Workbench Terraform pins a provider that
+supports this field. Regular allocations omit the spot pricing selection.
+
 1. Keep committed files public-repo safe. Never hardcode project IDs, tenant IDs,
    registry IDs, bucket names, VM IPs, private endpoints, or secrets.
 2. Capture runtime configuration with `npa configure`. In CI or scripted

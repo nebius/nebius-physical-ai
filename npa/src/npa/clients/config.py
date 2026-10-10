@@ -992,7 +992,7 @@ def remove_workbench_config(
     project: str,
     name: str,
 ) -> None:
-    """Remove ``projects.<project>.workbenches.<name>``."""
+    """Remove one workbench while retaining project identity and storage routing."""
 
     def remove(existing: dict[str, Any]) -> dict[str, Any]:
         projects = existing.get("projects", {})
@@ -1005,8 +1005,7 @@ def remove_workbench_config(
             proj["workbenches"] = workbenches
         else:
             proj.pop("workbenches", None)
-        agents = proj.get("agents", {}) if isinstance(proj, dict) else {}
-        if not workbenches and not (isinstance(agents, dict) and agents):
+        if not proj:
             del projects[project]
             if existing.get("default_project") == project:
                 remaining = list(projects.keys())

@@ -927,7 +927,7 @@ class ServerlessClient:
         ]
         args += ["--preset", preset or f"{gpu_count}gpu-16vcpu-200gb"]
         if preemptible:
-            args.append("--preemptible")
+            args.extend(["--preemptible", "--follows-spot-price"])
         args += self._registry_auth_args(image)
         # A Serverless Job allocates its GPU before the container starts, so a gated
         # checkpoint that has to be downloaded again is billed GPU time on every
@@ -1342,7 +1342,7 @@ class ServerlessClient:
         if spec.working_dir:
             args.extend(["--working-dir", spec.working_dir])
         if spec.preemptible:
-            args.append("--preemptible")
+            args.extend(["--preemptible", "--follows-spot-price"])
         args.extend(["--format", "json"])
         return args
 

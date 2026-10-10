@@ -1061,7 +1061,9 @@ def test_write_config_deep_merges_existing_config(isolated_config: Path) -> None
     assert written.stat().st_mode & 0o777 == 0o600
 
 
-def test_remove_workbench_config_updates_defaults(isolated_config: Path) -> None:
+def test_remove_workbench_config_preserves_project_identity(
+    isolated_config: Path,
+) -> None:
     _write_full_config(isolated_config)
 
     config.remove_workbench_config("proj-a", "wb-a")
@@ -1071,6 +1073,25 @@ def test_remove_workbench_config_updates_defaults(isolated_config: Path) -> None
     assert data["default_project"] == "proj-a"
 
     config.remove_workbench_config("proj-a", "wb-b")
+    data = yaml.safe_load(isolated_config.read_text())
+    assert "workbenches" not in data["projects"]["proj-a"]
+    assert data["projects"]["proj-a"]["project_id"] == "project-1"
+    assert data["default_project"] == "proj-a"
+    assert config.resolve_environment("proj-a").project_id == "project-1"
+
+
+def test_remove_last_workbench_prunes_empty_legacy_project(
+    isolated_config: Path,
+) -> None:
+    _write_full_config(isolated_config)
+    data = yaml.safe_load(isolated_config.read_text())
+    data["projects"]["proj-a"] = {
+        "workbenches": {"only": {"endpoint": "http://example.invalid"}}
+    }
+    isolated_config.write_text(yaml.safe_dump(data))
+
+    config.remove_workbench_config("proj-a", "only")
+
     data = yaml.safe_load(isolated_config.read_text())
     assert "proj-a" not in data["projects"]
     assert data["default_project"] == "proj-b"
