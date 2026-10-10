@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 from pathlib import Path
+from types import CodeType, FunctionType
 
 from packaging.requirements import Requirement
 from packaging.version import Version
@@ -185,15 +186,18 @@ def test_native_decoder_contract_rejects_fallback_or_wrong_version(codec, versio
         if isinstance(node, ast.FunctionDef)
         and node.name == "_assert_native_decoder_contract"
     )
-    namespace = {}
-    exec(
-        compile(
-            ast.Module(body=[decoder_contract], type_ignores=[]), "<contract>", "exec"
-        ),
-        namespace,
+    # Load only the contract body to avoid importing the vendor ML stack.
+    module_code = compile(
+        ast.Module(body=[decoder_contract], type_ignores=[]), "<contract>", "exec"
     )
+    function_code = next(
+        constant
+        for constant in module_code.co_consts
+        if isinstance(constant, CodeType) and constant.co_name == decoder_contract.name
+    )
+    contract = FunctionType(function_code, {})
     with pytest.raises(AssertionError):
-        namespace["_assert_native_decoder_contract"](codec, version)
+        contract(codec, version)
 
 
 def test_run_smoke_uses_explicit_lerobot_venv_interpreter():
