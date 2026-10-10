@@ -1,6 +1,6 @@
 ---
 name: cosmos3-ray-serve
-description: Operate, validate, or troubleshoot persistent Cosmos3-Nano generation through NVIDIA Cosmos Framework's native Ray Serve implementation, including authenticated readiness, dynamic request batching, B200 versus RTX PRO 6000 placement, runtime-fetched weights/guardrails, and durable S3 batch outputs.
+description: Review retained Cosmos3-Nano Ray Serve history or prepare separately rebuilt-candidate validation; the retained image is quarantined and must not be deployed or operated.
 ---
 
 # Cosmos3 Native Ray Serve

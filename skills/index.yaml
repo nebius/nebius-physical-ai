@@ -1063,7 +1063,7 @@ skills:
         contains: "concurrency"
   - name: cosmos3-ray-serve
     category: tools
-    when_to_use: "Operate, validate, or troubleshoot persistent batched Cosmos3-Nano inference through NVIDIA cosmos-framework's native Ray Serve path."
+    when_to_use: "Review retained Cosmos3-Nano Ray Serve history or prepare separately rebuilt-candidate validation; the retained image is quarantined and must not be deployed or operated."
     path: skills/tools/cosmos3-ray-serve/SKILL.md
     smoke:
       - type: cli_help

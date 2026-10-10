@@ -236,6 +236,28 @@ def test_agent_indexes_describe_quarantined_ray_serve_as_unavailable() -> None:
         assert "cosmos3-ray-serve" in text
         assert expected in text
 
+    routing = yaml.safe_load(
+        (REPO_ROOT / "skills/index.yaml").read_text(encoding="utf-8")
+    )
+    ray_serve = next(
+        skill for skill in routing["skills"] if skill["name"] == "cosmos3-ray-serve"
+    )
+    assert "quarantined" in ray_serve["when_to_use"]
+    assert "must not be deployed or operated" in ray_serve["when_to_use"]
+
+    skill_text = (REPO_ROOT / "skills/tools/cosmos3-ray-serve/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "must not be deployed or operated" in skill_text
+
+    matrix = (REPO_ROOT / "docs/workbench/image-gpu-compatibility-matrix.md").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "2026-08-26 retained records show `ray1-cu130` historically resolved" in matrix
+    )
+    assert "the published `ray1-cu130` tag resolves" not in matrix
+
 
 def test_catalog_quarantines_are_excluded_from_public_selection() -> None:
     """Every declared catalog quarantine must be excluded by release selection."""
