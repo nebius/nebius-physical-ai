@@ -1069,6 +1069,44 @@ def test_baked_sim2real_setup_keeps_the_selected_evaluator(model):
     assert "validate_hosted_evaluator(" in setup
 
 
+@pytest.mark.parametrize("accelerator", ["RTXPRO6000:1", "B200:1"])
+def test_compute_capacity_preserves_isaac_rendering(accelerator: str) -> None:
+    spec = load_spec(SPEC)
+    image = "cr.example/npa/runtime@sha256:" + "b" * 64
+    spec.config.update(
+        source_sha="a" * 40,
+        outer_iterations="1",
+        inner_iterations="1",
+        transfer_accelerator=accelerator,
+        envgen_accelerator=accelerator,
+    )
+    spec.config.update(
+        {
+            key: image
+            for key in (
+                "controller_image",
+                "transfer_image",
+                "envgen_image",
+                "isaac_image",
+                "viewer_image",
+            )
+        }
+    )
+    plan = build_plan(spec, run_id="gpu-routing", assume_decision="loop_back")
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="gpu-routing",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    tasks = {item["name"]: item for item in yaml.safe_load_all(rendered) if item}
+    compute = ["stage-03-transfer", *[f"stage-04-shard-{index}" for index in range(8)]]
+    for name in compute:
+        assert tasks[name]["resources"]["accelerators"] == accelerator
+    for name in ("stage-07-rollouts", "stage-09-ppo", "stage-10-gold"):
+        assert tasks[name]["resources"]["accelerators"] == "RTXPRO6000:1"
+
+
 def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> None:
     spec = load_spec(SPEC)
     source_sha = "a" * 40
