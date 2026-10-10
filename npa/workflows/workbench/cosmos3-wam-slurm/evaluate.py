@@ -297,7 +297,10 @@ def _checkpoint_identity(checkpoint):
         if not path.is_file():
             continue
         with path.open("rb") as stream:
-            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            digest_state = hashlib.sha256()
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest_state.update(chunk)
+            digest = digest_state.hexdigest()
         manifest[path.name] = {"bytes": path.stat().st_size, "sha256": digest}
     if ".metadata" not in manifest or not any(
         name.endswith(".distcp") for name in manifest
