@@ -590,6 +590,9 @@ skills:
     path: skills/tools/insights/SKILL.md
     smoke:
       - type: cli_help
+        args: ["workbench", "insights", "report", "--help"]
+        contains: "input-path"
+      - type: cli_help
         args: ["workbench", "insights", "query", "--help"]
         contains: "input-path"
       - type: cli_help
@@ -1211,6 +1214,9 @@ skills:
     path: skills/workflows/author-npa-workflow/SKILL.md
     smoke:
       - type: cli_help
+        args: ["workbench", "workflow", "schema", "--help"]
+        contains: "JSON Schema"
+      - type: cli_help
         args: ["workbench", "workflow", "validate-spec", "--help"]
         contains: "npa.workflow"
       - type: npa_workflow_yaml
@@ -1332,6 +1338,9 @@ skills:
     when_to_use: "Author, run, submit, or view the native NVIDIA Physical AI Data Factory VDA, DIG, IAA, and EVG translations or the NPA-specific Cosmos3 VDA alternative on Nebius + SkyPilot."
     path: skills/workflows/physical-ai-data-factory/SKILL.md
     smoke:
+      - type: cli_help
+        args: ["workbench", "cosmos-evaluator", "report", "--help"]
+        contains: "--input-path"
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/physical-ai-data-factory.yaml
