@@ -176,6 +176,21 @@ then proves the held-out set is disjoint. Use
 `success_rate_delta` and the paired win/loss/tie counts for comparison; do not
 turn a zero or negative delta into a policy-improvement claim.
 
+A refused initial-state match stays `failed`. Before cleanup, the producer
+captures each arm's initial workspace PNG before action 0. Once the containment
+supervisor proves all descendants stopped, the service retains only the failed
+pair's two initial PNGs, two completed arm videos, and typed `failure.json` under
+the run's `failure-diagnostics/` output prefix. The record identifies the pair,
+seed, robot-state/workspace hashes, optional full simulator-state hash, action
+digests, checkpoint/tree hashes, request hash and runtime image/source identity.
+An unavailable simulator-state hash is `null`, not an empty or fabricated state.
+No scratch tree, environment dump or checkpoint is retained with these artifacts.
+Diagnostic publication uses the same immutable byte/readback commit as successful
+outputs, but its commit only establishes delivery of failure evidence; it does
+not establish a matched pair or completed run. Failed publication remains failed
+and reports diagnostics unavailable. Timeout or uncontained-worker failures do
+not publish these files.
+
 Every run uploads `result.json` and `provenance.json`. Rollout provenance names
 the RoboCasa → MuJoCo execution path, exact image source revision, and hashes
 each generated MP4, with machine-readable `rrd: false` and `mcap: false` fields;

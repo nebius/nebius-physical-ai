@@ -25,10 +25,12 @@ import anyio
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, Response
 from starlette.concurrency import run_in_threadpool
 
+from npa.workbench.robocasa import pair_diagnostics
 from npa.workbench.robocasa.capabilities import (
     WORKER_ASSET_TEMP_ROOT_ENV,
     WORKER_TEMP_ROOT_ENV,
     RoboCasaError,
+    RoboCasaMatchError,
     _assets_root,
     compute_manifest_sha256,
     make_run_id,
@@ -67,6 +69,7 @@ class _WorkerOutcome:
     timed_out: bool = False
     stopped: bool = True
     output_dir: Path | None = None
+    failure_diagnostics: bool = False
 
 
 class GpuExecutionGate:
@@ -509,7 +512,20 @@ def _run_capability(
             )
             return
         if outcome.error is not None:
-            update("failed", None, outcome.error)
+            diagnostics = None
+            error = outcome.error
+            if outcome.failure_diagnostics and retained_output is not None:
+                try:
+                    diagnostics = pair_diagnostics.validate_directory(retained_output)
+                    upload_output(
+                        retained_output,
+                        body.output_uri.rstrip("/") + "/failure-diagnostics",
+                        diagnostics,
+                    )
+                except Exception as exc:
+                    diagnostics = None
+                    error += f"; failure diagnostics publication failed ({type(exc).__name__})"
+            update("failed", diagnostics, error)
         elif outcome.result is None:
             update("failed", None, "RoboCasa worker returned no result")
         else:
@@ -558,6 +574,12 @@ def _capability_worker_entry(sender: Any, request_payload: dict[str, Any]) -> No
             upload=not defer_output_upload,
         )
         message = {"kind": "result", "result": result}
+    except RoboCasaMatchError as exc:
+        message = {
+            "kind": "error",
+            "error": str(exc),
+            "failure_diagnostics": exc.diagnostics_ready,
+        }
     except RoboCasaError as exc:
         message = {"kind": "error", "error": str(exc)}
     except Exception as exc:  # pragma: no cover - child process boundary.
@@ -1012,6 +1034,17 @@ def _execute_capability_in_worker(
         else:
             outcome = _WorkerOutcome(result=result, stopped=stopped)
 
+    if (
+        stopped
+        and retain_output
+        and outcome.error is not None
+        and message is not None
+        and message.get("failure_diagnostics") is True
+        and not timed_out
+        and protocol_error is None
+        and cleanup_error is None
+    ):
+        return _retain_failure_diagnostics(body, worker_output, outcome)
     if stopped and outcome.result is not None and retain_output:
         return _WorkerOutcome(
             result=outcome.result,
@@ -1030,6 +1063,44 @@ def _execute_capability_in_worker(
                 stopped=False,
             )
     return outcome
+
+
+def _retain_failure_diagnostics(
+    body: RoboCasaRunRequest,
+    worker_output: Path,
+    outcome: _WorkerOutcome,
+) -> _WorkerOutcome:
+    retained = Path(tempfile.mkdtemp(prefix="robocasa-failure-"))
+    error = outcome.error
+    ready = False
+    try:
+        report = pair_diagnostics.snapshot_directory(
+            worker_output / pair_diagnostics.DIRECTORY,
+            retained,
+        )
+        expected = compute_manifest_sha256("run", body.model_dump(mode="json"))
+        if (
+            body.capability != "kitchen_policy_eval"
+            or report["request_manifest_sha256"] != expected
+        ):
+            raise ValueError("failure diagnostics request binding differs")
+        ready = True
+    except Exception as exc:
+        error = f"{error}; failure diagnostics unavailable ({type(exc).__name__})"
+    try:
+        shutil.rmtree(worker_output)
+        if not ready:
+            shutil.rmtree(retained)
+    except OSError as exc:
+        return _WorkerOutcome(
+            error=f"{error}; failure diagnostic cleanup failed ({type(exc).__name__})",
+            stopped=False,
+        )
+    return _WorkerOutcome(
+        error=error,
+        output_dir=retained if ready else None,
+        failure_diagnostics=ready,
+    )
 
 
 def _receive_worker_message(receiver: Any) -> dict[str, Any]:
