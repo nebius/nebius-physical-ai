@@ -87,6 +87,37 @@ class IdentityProvider(Contract):
         return self
 
 
+class NebiusIdentity(Contract):
+    """Select one Nebius tenant for native human identity verification.
+
+    Args:
+        **data: Tenant and optional federation identifiers selected by an administrator.
+    Returns:
+        A native Nebius identity configuration.
+    Raises:
+        ValidationError: A configured identifier is blank or malformed.
+    """
+
+    tenant_id: str = Field(min_length=1, max_length=256)
+    federation_id: str | None = Field(default=None, min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def validate_identifiers(self):
+        """Reject ambiguous configured identity identifiers.
+
+        Args:
+            None.
+        Returns:
+            The validated native identity configuration.
+        Raises:
+            ValueError: A tenant or federation identifier has whitespace or controls.
+        """
+        _identity_identifier(self.tenant_id, "tenant ID")
+        if self.federation_id is not None:
+            _identity_identifier(self.federation_id, "federation ID")
+        return self
+
+
 class Grant(Contract):
     """Assign a workspace role to an external subject or group.
 
@@ -260,6 +291,7 @@ class TeamConfig(Contract):
 
     api_version: Literal["npa.team/v1"] = "npa.team/v1"
     identity: IdentityProvider | None = None
+    nebius_identity: NebiusIdentity | None = None
     account_namespace: UUID | None = None
     clusters: dict[Name, Cluster]
     workspaces: dict[Name, Workspace]
@@ -279,7 +311,17 @@ class TeamConfig(Contract):
         Raises:
             ValueError: A policy constraint is violated.
         """
-        if self.identity is None and self.account_namespace is None:
+        if self.identity is not None and self.nebius_identity is not None:
+            raise ValueError(
+                "generic and native Nebius identity providers are mutually exclusive"
+            )
+        if self.nebius_identity is not None and self.account_namespace is None:
+            raise ValueError("native Nebius identity requires account_namespace")
+        if (
+            self.identity is None
+            and self.nebius_identity is None
+            and self.account_namespace is None
+        ):
             raise ValueError(
                 "configure local accounts or an external identity provider"
             )
@@ -393,3 +435,8 @@ def _validate_storage_boundaries(workspaces):
             if (scope.endpoint, scope.bucket) != (other.endpoint, other.bucket):
                 continue
             raise ValueError("personal allocations must use distinct storage buckets")
+
+
+def _identity_identifier(value: str, label: str) -> None:
+    if value != value.strip() or any(ord(character) < 33 for character in value):
+        raise ValueError(f"{label} must be a nonempty identifier without whitespace")

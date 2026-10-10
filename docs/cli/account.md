@@ -16,6 +16,7 @@ issue-key  Deliver a new personal access key to a new mode-0600 file.
 revoke-key  Revoke a credential so it cannot authorize future API requests.
 update  Disable an account or replace its local group membership.
 link  Link a verified SSO subject to an existing account without changing ownership.
+unlink  Remove an exact SSO link while retaining the user's keys and ownership.
 ```
 
 ## Options
@@ -34,6 +35,7 @@ link  Link a verified SSO subject to an existing account without changing owners
 | `revoke-key` | Revoke a credential so it cannot authorize future API requests. |
 | `update` | Disable an account or replace its local group membership. |
 | `link` | Link a verified SSO subject to an existing account without changing ownership. |
+| `unlink` | Remove an exact SSO link while retaining the user's keys and ownership. |
 
 ## Examples
 

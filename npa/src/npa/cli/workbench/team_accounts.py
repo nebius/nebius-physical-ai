@@ -6,7 +6,11 @@ from pathlib import Path
 import typer
 
 from npa.lifecycle_intent import json_stdout_contract
-from npa.workbench.team.account_administration import issue_key_file, link_identity
+from npa.workbench.team.account_administration import (
+    issue_key_file,
+    link_identity,
+    unlink_identity,
+)
 from npa.workbench.team.accounts import Accounts
 from npa.workbench.team.errors import TeamError
 from npa.workbench.team.models import load_config
@@ -155,6 +159,30 @@ def link_cmd(
     """
     _json_only(output_format)
     typer.echo(json.dumps(link_identity(load_config(config), user, issuer, subject)))
+
+
+@app.command("unlink")
+@json_stdout_contract
+def unlink_cmd(
+    config: Path = typer.Option(..., "--config"),
+    user: str = typer.Option(..., "--user"),
+    issuer: str = typer.Option(..., "--issuer"),
+    subject: str = typer.Option(..., "--subject"),
+    output_format: str = typer.Option("json", "--output-format"),
+):
+    """Remove an exact SSO link while retaining the user's keys and ownership.
+
+    Args:
+        config, user: Private installation and permanent account ID.
+        issuer, subject: Exact linked identity, including a retired provider.
+        output_format: Required JSON format.
+    Returns:
+        None; prints whether the selected link was removed.
+    Raises:
+        TeamError: Account is absent or identity is incomplete.
+    """
+    _json_only(output_format)
+    typer.echo(json.dumps(unlink_identity(load_config(config), user, issuer, subject)))
 
 
 def _json_only(value):

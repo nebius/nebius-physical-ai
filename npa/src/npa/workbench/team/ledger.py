@@ -42,6 +42,7 @@ class TeamLedger:
         os.close(descriptor)
         with self._transaction() as db:
             db.executescript(_SCHEMA)
+            self._upgrade(db)
 
     def create(
         self, actor: Actor, request: SubmitRequest, binding: dict
@@ -130,11 +131,19 @@ class TeamLedger:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def transition(self, run_id: str, expected: tuple[str, ...], status: str) -> bool:
+    def transition(
+        self,
+        run_id: str,
+        expected: tuple[str, ...],
+        status: str,
+        *,
+        failure: tuple[str, str] | None = None,
+    ) -> bool:
         """Atomically claim one lifecycle transition.
 
         Args:
             run_id, expected, status: Run and permissible source/destination states.
+            failure: Safe terminal failure code and message, when applicable.
         Returns:
             Whether the transition won the concurrent claim.
         Raises:
@@ -146,10 +155,9 @@ class TeamLedger:
             ).fetchone()
             if current is None or current["status"] not in expected:
                 return False
-            changed = db.execute(
-                "UPDATE runs SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=?",
-                (status, run_id, current["status"]),
-            ).rowcount
+            changed = self._transition_row(
+                db, run_id, current["status"], status, failure
+            )
         return bool(changed)
 
     def audit(self, actor: Actor, action: str, run_id: str, detail: dict | None = None):
@@ -177,7 +185,7 @@ class TeamLedger:
         """
         with self._transaction() as db:
             db.execute(
-                "UPDATE runs SET status='recovery_required' WHERE status IN ('running','cancelling','accepted')"
+                "UPDATE runs SET status='recovery_required' WHERE status IN ('running','accepted')"
             )
 
     def begin_wave(self, run_id: str, name: str) -> dict:
@@ -263,6 +271,24 @@ class TeamLedger:
                 )
             ]
 
+    def _transition_row(self, db, run_id, current, status, failure):
+        if failure is None:
+            query = "UPDATE runs SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=?"
+            values = (status, run_id, current)
+        else:
+            query = (
+                "UPDATE runs SET status=?,failure_code=?,failure_message=?,"
+                "updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=?"
+            )
+            values = (status, *failure, run_id, current)
+        return db.execute(query, values).rowcount
+
+    def _upgrade(self, db):
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(runs)")}
+        for name, definition in _RUN_COLUMNS.items():
+            if name not in columns:
+                db.execute(f"ALTER TABLE runs ADD COLUMN {name} {definition}")
+
     @contextmanager
     def _transaction(self):
         db = sqlite3.connect(self.path)
@@ -297,6 +323,7 @@ CREATE TABLE IF NOT EXISTS runs (
  request_hash TEXT NOT NULL, workflow TEXT NOT NULL, binding TEXT NOT NULL,
  status TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ failure_code TEXT NOT NULL DEFAULT '', failure_message TEXT NOT NULL DEFAULT '',
  UNIQUE(issuer,subject,workspace,request_key)
 );
 CREATE TABLE IF NOT EXISTS audit (
@@ -310,3 +337,8 @@ CREATE TABLE IF NOT EXISTS waves (
  UNIQUE(run_id,name)
 );
 """
+
+_RUN_COLUMNS = {
+    "failure_code": "TEXT NOT NULL DEFAULT ''",
+    "failure_message": "TEXT NOT NULL DEFAULT ''",
+}

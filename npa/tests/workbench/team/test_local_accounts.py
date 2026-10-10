@@ -10,13 +10,17 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from npa.cli.workbench.team import app as team_cli
-from npa.workbench.team.account_administration import issue_key_file, link_identity
+from npa.workbench.team.account_administration import (
+    issue_key_file,
+    link_identity,
+    unlink_identity,
+)
 from npa.workbench.team.account_authentication import AccountAuthentication
 from npa.workbench.team.accounts import Accounts
 from npa.workbench.team.api import create_app
 from npa.workbench.team.authorization import authorize, bind_execution
 from npa.workbench.team.errors import AuthenticationError, ConflictError, TeamError
-from npa.workbench.team.models import SubmitRequest, TeamConfig
+from npa.workbench.team.models import Actor, SubmitRequest, TeamConfig
 from npa.workbench.team.service import TeamService, binding_snapshot
 
 
@@ -212,3 +216,64 @@ def test_local_cli_creates_revokes_and_disables_real_accounts(local, tmp_path):
         ["account", "update", "--config", str(config), "--user", user_id, "--disabled"],
     )
     assert disabled.exit_code == 0, disabled.output
+
+
+def test_retired_identity_removal_is_exact_repeatable_and_allows_provider_change(
+    local, config
+):
+    owner, other = [person["id"] for person in local.people]
+    old = local.config.model_copy(update={"identity": config.identity})
+    link_identity(old, owner, config.identity.issuer, "old-person")
+    replacement = config.identity.model_copy(update={"issuer": "https://new.test"})
+    new = local.config.model_copy(update={"identity": replacement})
+    for user, issuer, subject in (
+        (other, config.identity.issuer, "old-person"),
+        (owner, replacement.issuer, "old-person"),
+        (owner, config.identity.issuer, "different-person"),
+    ):
+        assert not unlink_identity(new, user, issuer, subject)["unlinked"]
+    local.accounts.update(owner, disabled=True)
+    assert unlink_identity(new, owner, config.identity.issuer, "old-person")["unlinked"]
+    assert not unlink_identity(new, owner, config.identity.issuer, "old-person")[
+        "unlinked"
+    ]
+    local.accounts.update(owner, disabled=False)
+    link_identity(new, owner, replacement.issuer, "new-person")
+    actor = local.accounts.resolve(
+        Actor(issuer=replacement.issuer, subject="new-person")
+    )
+    assert actor == local.accounts.authenticate(local.keys[0][1])[0]
+    with sqlite3.connect(local.accounts.path) as db:
+        assert (
+            db.execute(
+                "SELECT count(*) FROM account_audit WHERE action='identity-unlink'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_unlink_cli_uses_authoritative_database_and_reports_repeated_removal(
+    local, config, tmp_path
+):
+    linked = local.config.model_copy(update={"identity": config.identity})
+    owner = local.people[0]["id"]
+    link_identity(linked, owner, config.identity.issuer, "old-person")
+    path = tmp_path / "local-only.json"
+    path.write_text(local.config.model_dump_json())
+    args = [
+        "account",
+        "unlink",
+        "--config",
+        str(path),
+        "--user",
+        owner,
+        "--issuer",
+        config.identity.issuer,
+        "--subject",
+        "old-person",
+    ]
+    for removed in (True, False):
+        result = CliRunner().invoke(team_cli, args)
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {"user_id": owner, "unlinked": removed}
+    assert local.accounts.authenticate(local.keys[0][1])[0].subject == owner

@@ -11,6 +11,7 @@ from .authorization import authorize, bind_execution
 from .engine import execute_run
 from .errors import ConflictError, RunNotFoundError
 from .ledger import TeamLedger
+from .lifecycle import classify_runtime_report
 from .sky_backend import SkyBackend
 from .storage import PersonalStorage
 from .workflow_policy import load_bound_spec
@@ -63,6 +64,7 @@ class TeamService:
         config = self.configuration()
         fields = (
             "identity",
+            "nebius_identity",
             "account_namespace",
             "state_dir",
             "sky_endpoint",
@@ -245,16 +247,26 @@ class TeamService:
                 lambda: self._check_running(actor, record),
                 resume=resume,
             )
-            status = (
-                "succeeded" if report.status == "succeeded" else "recovery_required"
-            )
-            self.ledger.transition(run_id, ("running",), status)
+            self._record_runtime_outcome(actor, run_id, report)
         except Exception:  # noqa: BLE001 - retain uncertain jobs; never expose credentials
             self.ledger.transition(run_id, ("running",), "recovery_required")
             self.ledger.audit(actor, "execution-requires-reconciliation", run_id)
         finally:
             with self._lock:
                 self._workers.pop(run_id, None)
+
+    def _record_runtime_outcome(self, actor, run_id, report):
+        outcome = classify_runtime_report(report)
+        failure = (
+            (outcome.failure_code, outcome.failure_message)
+            if outcome.failure_code
+            else None
+        )
+        if self.ledger.transition(
+            run_id, ("running",), outcome.status, failure=failure
+        ):
+            if outcome.status == "failed":
+                self.ledger.audit(actor, "execution-terminal-failed", run_id)
 
     def _check_running(self, actor, record):
         if self.ledger.get(record["id"])["status"] != "running":
@@ -294,8 +306,15 @@ def public_run(record):
     Args:
         record: Server-owned run ledger record.
     Returns:
-        Run identity, placement, timestamps, and status only.
+        Run identity, placement, timestamps, status, and safe terminal failure data.
     Raises:
         KeyError: A required ledger field is absent.
     """
-    return {key: record[key] for key in _PUBLIC_FIELDS}
+    result = {key: record[key] for key in _PUBLIC_FIELDS}
+    if record["status"] == "failed":
+        result["failure"] = {
+            "code": record.get("failure_code") or "terminal_failure",
+            "message": record.get("failure_message")
+            or "The workflow reached a terminal failure.",
+        }
+    return result

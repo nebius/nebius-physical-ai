@@ -1,6 +1,7 @@
 """Exercise forged identities, quota multiplication, and execution boundary escapes."""
 
 import json
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
 import jwt
@@ -241,3 +242,20 @@ def test_concurrent_run_transitions_have_one_winner(config, actor, workflow):
     assert ledger.get(record["id"])["status"] == "running"
     assert not ledger.transition(record["id"], (), "cancelled")
     assert not ledger.transition("missing", ("running",), "cancelled")
+
+
+def test_ledger_upgrade_adds_safe_failure_columns_idempotently(tmp_path):
+    root = tmp_path / "state"
+    root.mkdir()
+    path = root / "team.sqlite3"
+    with sqlite3.connect(path) as database:
+        database.execute(
+            "CREATE TABLE runs (id TEXT PRIMARY KEY, status TEXT NOT NULL)"
+        )
+
+    TeamLedger(root)
+    TeamLedger(root)
+
+    with sqlite3.connect(path) as database:
+        columns = {row[1] for row in database.execute("PRAGMA table_info(runs)")}
+    assert {"failure_code", "failure_message"} <= columns

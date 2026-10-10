@@ -953,6 +953,18 @@ skills:
           - workflows/testing/token-factory-caption.yaml
           - workflows/testing/token-factory-generate.yaml
           - workflows/testing/token-factory-cosmos-reason.yaml
+  - name: team-identity
+    category: tools
+    when_to_use: "Configure or use optional Workbench team local keys, generic JWT identity links, or native Nebius human identity verification without changing local account ownership."
+    path: skills/tools/team-identity/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "team", "whoami", "--help"]
+        contains: "private mode-0600"
+      - type: file_exists
+        path: docs/workbench/team-identity.md
+      - type: file_exists
+        path: npa/src/npa/workbench/team/nebius_authentication.py
   - name: vlm-eval
     category: tools
     when_to_use: "Score rollouts with a vision-language model and turn the score into a pipeline gate: single rollout versus prefix-wide loop, rubric/threshold benchmark sweeps, backend selection (self-hosted, api, stub), and judging against a plan an earlier stage wrote."

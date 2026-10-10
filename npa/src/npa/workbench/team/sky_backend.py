@@ -107,7 +107,7 @@ class SkyBackend:
             BackendError: The recorded jobs cannot be observed exactly.
         """
         wave = self._wave(wave_id)
-        identifiers = _job_ids(json.loads(wave["job_ids"]))
+        identifiers = _stored_job_ids(wave["job_ids"])
         rows = self.call("queue", job_ids=list(identifiers))["jobs"]
         if {int(row["job_id"]) for row in rows} != set(identifiers):
             raise BackendError("scheduler did not return the exact recorded jobs")
@@ -124,7 +124,10 @@ class SkyBackend:
             BackendError: Cancellation could not be acknowledged.
         """
         wave = self._wave(job_id)
-        self.call("cancel", job_ids=list(_job_ids(json.loads(wave["job_ids"]))))
+        identifiers = _stored_job_ids(wave["job_ids"])
+        if not identifiers:
+            raise BackendError("wave has no exact scheduler identities")
+        self.call("cancel", job_ids=list(identifiers))
         return {"cancel_returncode": 0}
 
     def reconcile(self, name: str, job_id: str = "", **_kwargs) -> ManagedJobEvidence:
@@ -146,15 +149,10 @@ class SkyBackend:
                 outcome="unknown", error="wave identity requires reconciliation"
             )
         wave = matches[0]
-        if not json.loads(wave["job_ids"]):
-            if not wave["request_id"]:
-                return ManagedJobEvidence(
-                    outcome="unknown", error="launch acknowledgement is missing"
-                )
-            response = self.call("result", request_id=wave["request_id"])
-            self.ledger.record_wave(
-                wave["id"], job_ids=_job_ids(response.get("job_ids"))
-            )
+        try:
+            self._resolved_job_ids(wave)
+        except BackendError as exc:
+            return ManagedJobEvidence(outcome="unknown", error=str(exc))
         rows = self.timeline(wave["id"])
         return ManagedJobEvidence(
             outcome="found",
@@ -171,16 +169,29 @@ class SkyBackend:
         Returns:
             True only when no launch is uncertain and all observed jobs terminated.
         Raises:
-            BackendError: A provider operation failed.
+            sqlite3.Error: The durable wave ledger cannot be read.
         """
-        terminal = True
-        for wave in self.ledger.waves(self.run_id):
-            if not json.loads(wave["job_ids"]):
-                terminal = False
-                continue
+        results = [self._cancel_wave(wave) for wave in self.ledger.waves(self.run_id)]
+        return all(results)
+
+    def _resolved_job_ids(self, wave):
+        identifiers = _stored_job_ids(wave["job_ids"])
+        if identifiers:
+            return identifiers
+        if not wave["request_id"]:
+            raise BackendError("launch acknowledgement is missing")
+        response = self.call("result", request_id=wave["request_id"])
+        identifiers = _job_ids(response.get("job_ids"))
+        self.ledger.record_wave(wave["id"], job_ids=identifiers)
+        return identifiers
+
+    def _cancel_wave(self, wave):
+        try:
+            self._resolved_job_ids(wave)
             self.cancel(job_id=wave["id"])
-            terminal = _terminal(self.status(wave["id"]).status) and terminal
-        return terminal
+            return _terminal(self.status(wave["id"]).status)
+        except (BackendError, ConflictError, KeyError, TypeError, ValueError):
+            return False
 
     def logs(self) -> str:
         """Download only this run's exact worker logs into private server storage.
@@ -304,8 +315,18 @@ def _job_ids(values):
     return tuple(sorted(set(values)))
 
 
+def _stored_job_ids(value):
+    try:
+        values = json.loads(value)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise BackendError("durable scheduler identities are invalid") from exc
+    return () if values == [] else _job_ids(values)
+
+
 def _terminal(status):
-    return status in {"SUCCEEDED", "CANCELLED"} or status.startswith("FAILED")
+    return status in {"SUCCEEDED", "CANCELLED", "CANCELED"} or status.startswith(
+        "FAILED"
+    )
 
 
 def _aggregate(rows):
@@ -316,7 +337,7 @@ def _aggregate(rows):
         return "RUNNING"
     if any(status.startswith("FAILED") for status in statuses):
         return "FAILED"
-    return "CANCELLED" if "CANCELLED" in statuses else "SUCCEEDED"
+    return "CANCELLED" if statuses & {"CANCELLED", "CANCELED"} else "SUCCEEDED"
 
 
 def _read_log_paths(paths, destination):
