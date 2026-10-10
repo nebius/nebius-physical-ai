@@ -1,23 +1,17 @@
-"""BYO held-out eval: roll the TRAINED Isaac policy for a real success_rate.
+"""Evaluate the selected learned Isaac policy on sealed Sim2Real scenarios.
 
-Wired in via ``sim2real run --byo-eval-command 'python3 -m
-npa.workflows.sim2real.byo_isaac_eval'``. Satisfies ``run_heldout_eval``'s
-contract: write ``NPA_SIM2REAL_OUTPUT_JSON`` with a ``per_env`` list of
-``{env_id, score, success}``; the engine's ``_normalize_heldout_report``
-computes ``success_rate`` from it.
+Stage 10 of ``workflows/main/sim2real.yaml`` executes this adapter inside its
+already admitted SkyPilot GPU task. It downloads the exact validation-selected
+checkpoint, verifies its SHA and size, and evaluates the learned actor alone on
+``Isaac-Lift-Cube-Franka-v0``. Success requires measured object-to-goal distance
+and stable placement; rendered footage records the checkpoint lineage.
 
-Unlike the reference/stub held-out payload (which scores synthetic rollouts and
-does NOT load any trained policy), this loads the **trained checkpoint** (from
-the inner-loop evidence's ``update.checkpoint_path``) and rolls it in Isaac on
-``Isaac-Lift-Cube-Franka-v0``, deriving per-env success from the task's own
-object-to-goal metric.
-
-Runs in the orchestrator pod (no Isaac), so it submits an Isaac sibling k8s Job
-that downloads the checkpoint, plays the policy, writes per-env scores to S3;
-this process reads them back and writes the output JSON.
-
-``NPA_BYO_ISAAC_DRYRUN=1`` skips the Kubernetes API/S3 and emits a deterministic per-env
-report for unit tests / wiring checks.
+The component writes ``NPA_SIM2REAL_OUTPUT_JSON`` with actual ``per_env`` scores,
+boolean success, physical measurements, and inference provenance. Canonical
+execution reports ``npa_workflow_skypilot_task`` and creates no sibling Kubernetes
+Job. The older command-hook and typed Kubernetes launcher remain finite
+compatibility paths. ``NPA_BYO_ISAAC_DRYRUN=1`` supplies deterministic unit-test
+reports and is not learned-policy efficacy evidence.
 """
 
 from __future__ import annotations

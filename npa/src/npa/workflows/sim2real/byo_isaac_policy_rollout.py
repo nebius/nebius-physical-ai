@@ -1,34 +1,22 @@
-"""BYO policy rollout: roll the CURRENT trained policy in Isaac for the VLM.
+"""Capture the current Isaac policy for hosted Sim2Real visual evaluation.
 
-Wired in via ``sim2real run --byo-policy-command 'python3 -m
-npa.workflows.sim2real.byo_isaac_policy_rollout'``. This closes the sim2real
-loop: instead of the synthetic ``generate_action_rollouts`` fallback (random
-actions + procedural PPM frames), the inner loop rolls the **current policy** in
-Isaac on ``Isaac-Lift-Cube-Franka-v0`` and captures the policy's *actual*
-behavior as RGB frames + actions. The Cosmos-Reason VLM then critiques those
-real frames, and that critique shapes the next training step's reward — a
-genuine closed loop rather than a critique of synthetic rollouts.
+Stage 7 of ``workflows/main/sim2real.yaml`` runs this adapter inside its
+already admitted SkyPilot GPU task. It rolls ``Isaac-Lift-Cube-Franka-v0`` and
+captures primary, side, and overhead RGB frames with actual actions and simulation
+timestamps. Stage 8 evaluates the primary images through Token Factory; its
+temporal critique supplies training signals for Stage 9.
 
-Contract (``run_policy_rollout_component`` → ``_run_policy_rollouts_via_command``):
-read ``NPA_SIM2REAL_OUTPUT_DIR`` (where rollout dirs go) and
-``NPA_SIM2REAL_ROLLOUT_COUNT`` / ``NPA_SIM2REAL_STEPS_PER_ROLLOUT``; write each
-rollout as ``<output_dir>/rollout-NNNN/`` with ``camera-NNN.png`` frames and a
-``manifest.json`` (schema ``npa.sim2real.action_rollout.v1``); write
-``NPA_SIM2REAL_OUTPUT_JSON`` with ``{"rollout_dirs": [...]}``. The engine uses
-those dirs (else falls back to synthetic).
+The component reads ``NPA_SIM2REAL_OUTPUT_DIR``, ``NPA_SIM2REAL_ROLLOUT_COUNT``,
+and ``NPA_SIM2REAL_STEPS_PER_ROLLOUT``. It writes ``rollout-NNNN/manifest.json``
+with schema ``npa.sim2real.action_rollout.v1`` and camera PNGs, then publishes
+``NPA_SIM2REAL_OUTPUT_JSON`` with ``{"rollout_dirs": [...]}``. The first inner
+iteration rolls an untrained RSL-RL actor; later iterations load the run's current
+checkpoint and record its byte provenance.
 
-**Which policy?** The current policy = the most-recent ``model_latest.pt`` the
-BYO trainer has uploaded for this run (``s3://<bucket>/sim2real-b/<run_id>/
-byo-trainer/.../model_latest.pt``). On the very first inner iteration none
-exists yet, so an **untrained** rsl_rl policy is rolled — that is the correct RL
-loop (critique the initial policy → shape training → re-roll the improved one).
-
-Runs in the orchestrator pod (no Isaac), so it submits an Isaac sibling Job that
-rolls the policy, captures per-env frames + actions, and uploads them to S3;
-this process downloads them into the local rollout dirs.
-
-``NPA_BYO_ISAAC_DRYRUN=1`` skips the Kubernetes API/S3 and emits deterministic rollout dirs
-(procedural frames) for unit tests / wiring checks without a GPU.
+Canonical execution reports ``npa_workflow_skypilot_task`` and creates no sibling
+Kubernetes Job. The older command-hook and typed Kubernetes launcher remain
+finite compatibility paths. ``NPA_BYO_ISAAC_DRYRUN=1`` generates procedural
+unit-test fixtures and does not establish rendered policy behavior.
 """
 
 from __future__ import annotations

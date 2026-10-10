@@ -1,27 +1,18 @@
-"""BYO trainer: real Isaac-Lab RSL-RL PPO for the sim2real inner loop.
+"""Run Isaac Lab RSL-RL PPO for the canonical Sim2Real inner loop.
 
-Wired in via ``sim2real run --byo-trainer-command 'python3 -m
-npa.workflows.sim2real.byo_isaac_trainer'``. This satisfies the
-``_run_trainer_via_command`` contract (engine.py): read the parsed VLM signal
-batch from ``NPA_SIM2REAL_SIGNAL_JSON`` and write a ``VlmSignalUpdateResult``
-JSON to ``NPA_SIM2REAL_OUTPUT_JSON`` with at least ``reward_head_after``,
-``policy_output_after`` (non-empty list), and ``policy_delta_l2``.
+Stage 9 of ``workflows/main/sim2real.yaml`` executes this adapter inside its
+already admitted SkyPilot GPU task, using the immutable Isaac image. The adapter
+runs ``scripts/reinforcement_learning/rsl_rl/train.py`` on
+``Isaac-Lift-Cube-Franka-v0``, uploads actual ``model_*.pt`` checkpoints, and
+selects the checkpoint with validation data. Canonical execution reports
+``npa_workflow_skypilot_task`` and creates no sibling Kubernetes Job.
 
-Unlike the in-process *reference* hook (``run_vlm_signal_training_step`` — a
-single SGD step on a scalar adapter), this runs **genuine RL training**: it
-submits an Isaac-Lab sibling k8s Job (``npa-isaac-lab`` image) that runs
-``scripts/reinforcement_learning/rsl_rl/train.py`` on
-``Isaac-Lift-Cube-Franka-v0`` for real iterations, produces a real
-``model_*.pt`` policy checkpoint, and uploads it to S3. The emitted
-``checkpoint_path`` is that real checkpoint, so promote can mark it deployable.
-
-The trainer runs **inside the orchestrator pod** (lerobot-vlm-rl image, no
-Isaac), so it cannot run Isaac in-process. It submits the sibling Job through
-the typed Kubernetes API client and reconciles structured Job and Pod state.
-
-``NPA_BYO_ISAAC_DRYRUN=1`` skips the Kubernetes API/S3 entirely and emits a deterministic
-result derived from the signal batch — used by unit tests and for wiring checks
-without a GPU.
+The component reads temporal VLM signals from ``NPA_SIM2REAL_SIGNAL_JSON`` and
+writes ``NPA_SIM2REAL_OUTPUT_JSON`` with the real checkpoint path, PPO telemetry,
+and signal-adapter measurements. The older command-hook interface and typed
+Kubernetes launcher remain finite compatibility paths outside the canonical
+workflow. ``NPA_BYO_ISAAC_DRYRUN=1`` provides deterministic unit-test output;
+it is not GPU training evidence.
 """
 
 from __future__ import annotations

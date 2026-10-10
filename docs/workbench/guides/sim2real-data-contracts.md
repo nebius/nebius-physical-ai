@@ -240,12 +240,15 @@ s3://<bucket>/<prefix>/<run-id>/
   stage_12_external_validation/external_stub.json
   stage_13_retrigger/retrigger.json
   reports/sim2real-report.json
-  reports/sim2real.rrd          # when Rerun tier WORKS
-  component-io/<component>/     # sibling K8s job scratch
+  reports/sim2real.rrd          # canonical recording
+  reports/sim2real.mcap         # canonical three-camera recording
+  component-io/<component>/     # component scratch within workflow tasks
 ```
 
-Prefix default: `sim2real-b`. Canonical URI helpers: `artifact_uris()` in
-`sim2real_loop.py`.
+The canonical workflow defaults to `sim2real/<run-id>/`. Its `prefix` and
+`root_uri` config values in `workflows/main/sim2real.yaml` define the run root;
+stage adapters publish through `workflow_io.py`. The older `sim2real-b` prefix
+belongs to the retained legacy command-hook interface.
 
 ---
 
