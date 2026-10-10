@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 from datetime import datetime, timezone
+import errno
 import hashlib
 import io
 import json
@@ -80,9 +81,16 @@ def _private_path(value: str, root: Path) -> Path:
 
 def _resolve_private_path(path: Path) -> Path:
     try:
-        return path.resolve()
+        try:
+            return path.resolve(strict=True)
+        except FileNotFoundError:
+            return path.resolve()
+    except OSError as error:
+        if error.errno != errno.ELOOP:
+            raise
+        raise ValueError("Live paths must resolve without symlink loops") from None
     except RuntimeError:
-        # Python 3.12 reports symlink loops with RuntimeError, not OSError.
+        # Older pathlib versions report symlink loops as RuntimeError.
         raise ValueError("Live paths must resolve without symlink loops") from None
 
 
