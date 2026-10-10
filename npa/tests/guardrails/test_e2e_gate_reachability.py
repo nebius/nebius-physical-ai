@@ -32,6 +32,10 @@ MANUAL_GATES = {
     "NPA_LINEAGE_POSTGRES_DSN": "requires operator-selected private Postgres and MLflow tracking services",
     "NPA_VIDEO_SWEEP_FULL_GPU": "requires real Transfer runtime, licensed model access, inputs and tracking services",
     "NPA_VIDEO_SWEEP_REASONER_MODEL": "requires an explicit available model for live paid hosted inference",
+    "NPA_ROS2_PREFLIGHT_LIVE": (
+        "requires an explicitly selected, sourced ROS 2 Jazzy runtime; "
+        "run with skills/tools/ros2/SKILL.md; no robot or cloud mutation"
+    ),
     "NPA_SPECIALISTS_LIVE": (
         "uses paid Token Factory inference with independent GLM and DeepSeek workers; "
         "run the restart and workflow-repair proof in docs/workbench/specialists.md"
