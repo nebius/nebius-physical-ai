@@ -462,11 +462,21 @@ GPU work. Resolve reported prerequisites through setup; `--skip-preflight` is
 not part of this path.
 
 Production defaults retain 10,000 scenarios, 64 rollouts, 32 action samples,
-2,000 PPO updates per inner pass, and three inner/outer iterations. Validation
-selects checkpoints; gold remains held out. Promotion uses strict 5 cm stable
+1,024 PPO environments, 24 steps per environment per update, 2,000 PPO updates
+per inner pass, and three inner/outer iterations. Validation
+selects the checkpoint used for gold evaluation; gold remains held out.
+Later training rollouts and PPO continuation load the latest training checkpoint,
+including its optimizer state for PPO. This can differ from the checkpoint
+selected for gold. Promotion uses strict 5 cm stable
 placement and threshold `0.50`. Reduced plumbing runs must declare overrides
 and cannot claim production efficacy. `--max-wait-seconds 0` removes the wave
 wait deadline without weakening success predicates.
+
+Allow hours for the full run. Measured 2,000-update PPO passes on one RTX PRO
+6000 Blackwell took about 44 minutes each, before validation and uploads;
+this is an observation, not a completion deadline. Cold cache preparation and
+renderer startup add separate time. The [ten-minute demo](sim2real-demo-script-10min.md)
+presents an already completed result.
 
 From a second shell, restore the project/run settings and inspect:
 
@@ -482,6 +492,9 @@ while GPU utilization stays low. Its log names the Kit log file, where shader
 compilation progress is recorded. PPO retains the full RSL-RL training log and
 prints its console tail when a pass finishes, so workflow logs can also stay
 quiet during optimizer updates. Check live status and pod events while waiting.
+`BYO_ROLLOUT_DONE` finishes native rollout capture; Stage 7 still materializes
+and uploads the canonical rollout artifacts afterward. `BYO_EVAL_DONE` can
+similarly precede final report and render publication.
 A running pod or GPU activity does not prove stage completion;
 require the declared output artifacts and successful scheduler status.
 
