@@ -16,7 +16,7 @@ NATIVE_PINS = {
     "torchvision": "0.26.0",
     "transformers": "5.5.4",
     "requests": "2.32.5",
-    "torchcodec": "0.10.0",
+    "torchcodec": "0.11.0",
 }
 
 
@@ -34,6 +34,9 @@ def native_runtime(root: Path) -> None:
     versions = {key: _version(key) for key in NATIVE_PINS}
     if any(versions[key].split("+")[0] != value for key, value in NATIVE_PINS.items()):
         _install(root)
+    # Import loads the decoder's native libraries: version metadata alone cannot
+    # prove its compiled ABI matches torch or the image's FFmpeg shared libraries.
+    importlib.import_module("torchcodec.decoders")
     import torch
     from .public_vla import _environment
 

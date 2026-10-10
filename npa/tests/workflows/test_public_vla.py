@@ -253,6 +253,13 @@ def test_kubernetes_job_runs_pinned_image_without_credentials_or_deadline():
     assert pod["automountServiceAccountToken"] is False
     assert "@sha256:" in pod["containers"][0]["image"]
     assert pod["containers"][0]["resources"]["limits"]["nvidia.com/gpu"] == "1"
+    container = pod["containers"][0]
+    assert container["securityContext"]["readOnlyRootFilesystem"] is True
+    assert container["securityContext"]["allowPrivilegeEscalation"] is False
+    environment = {row["name"]: row["value"] for row in container["env"]}
+    assert environment["TMPDIR"] == "/work/tmp"
+    assert environment["XDG_CACHE_HOME"] == "/work/cache"
+    assert "mkdir -p /work/source /work/tmp /work/cache" in container["command"][2]
     assert "secret" not in json.dumps(objects).lower()
     mounts = pod["containers"][0]["volumeMounts"]
     shared = next(mount for mount in mounts if mount["name"] == "shm")

@@ -210,7 +210,7 @@ def _pod_spec():
     command = "\n".join(
         [
             "set -euo pipefail",
-            "mkdir -p /work/source",
+            "mkdir -p /work/source /work/tmp /work/cache",
             "tar -xzf /pipeline/source.tgz -C /work/source",
             "export PYTHONPATH=/work/source",
             f"exec {PYTHON} -u -m {MODULE} --input-path /pipeline/recipe.json --output-path /work/run",
