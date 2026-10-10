@@ -80,6 +80,13 @@ jobs:
       - name: Run Python 3.10 compatibility regressions
         run: |
           npa/.venv-3.10/bin/python -m pytest \
+            npa/tests/test_python_compatibility.py \
+            npa/tests/scripts/test_vlm_audit_live_recheck.py::test_actual_evidence_symlink_loop_is_sanitized \
+            npa/tests/scripts/test_vlm_paired_audit_live_recheck.py::test_actual_entrypoint_symlink_loop_target_is_sanitized \
+            npa/tests/scripts/test_vlm_provenance_live_recheck.py::test_sampling_output_resolution_also_sanitizes_real_symlink_loop \
+            npa/tests/workbench/test_vlm_benchmark_rubric_paths.py \
+            npa/tests/agent_eval/test_specialist_observation_recovery.py::test_commit_failure_rolls_back_both_resolution_and_history \
+            npa/tests/agent_eval/test_specialist_observation_recovery.py::test_sqlite_failure_is_classified_without_raw_text \
             npa/tests/test_anyio_security_regressions.py \
             npa/tests/guardrails/test_ci_workflows.py \
             npa/tests/docker/test_base_image_scan.py \
@@ -102,6 +109,13 @@ jobs:
       - name: Run Python 3.14 compatibility regressions
         run: |
           npa/.venv-3.14/bin/python -m pytest \
+            npa/tests/test_python_compatibility.py \
+            npa/tests/scripts/test_vlm_audit_live_recheck.py::test_actual_evidence_symlink_loop_is_sanitized \
+            npa/tests/scripts/test_vlm_paired_audit_live_recheck.py::test_actual_entrypoint_symlink_loop_target_is_sanitized \
+            npa/tests/scripts/test_vlm_provenance_live_recheck.py::test_sampling_output_resolution_also_sanitizes_real_symlink_loop \
+            npa/tests/workbench/test_vlm_benchmark_rubric_paths.py \
+            npa/tests/agent_eval/test_specialist_observation_recovery.py::test_commit_failure_rolls_back_both_resolution_and_history \
+            npa/tests/agent_eval/test_specialist_observation_recovery.py::test_sqlite_failure_is_classified_without_raw_text \
             npa/tests/test_anyio_security_regressions.py \
             npa/tests/guardrails/test_ci_workflows.py \
             npa/tests/docker/test_base_image_scan.py \

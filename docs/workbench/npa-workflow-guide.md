@@ -722,3 +722,18 @@ interpreter keeps its original dependency environment.
 
 Advanced scheduling stays in explicit fields (`parallel`, `maxConcurrency`,
 `params`, `trigger`), never Jinja. `gang` and `foreach` remain unimplemented.
+
+### Condition-only runtime loops
+
+A sequence with `loop: {until: promote_checkpoint}` and no `max` repeats until
+its final decision-writing child emits a valid measured decision. It requires
+`metadata.executionMode: runtime`; static submission is rejected. No iteration
+limit is inferred. A missing or invalid decision fails the run, even when planning
+used `--assume-decision promote_checkpoint`.
+
+`plan-spec` previews one iteration of each such loop; that preview is not a
+promise that the live run will finish after one iteration. Use iteration-specific
+output paths with `{{loop.<state-name>}}` to preserve evidence and prevent cached
+results from being reused across attempts. The
+[robot policy train-and-serve pipeline](cookbooks/robot-policy-train-and-serve.md) demonstrates two
+independent gates.
