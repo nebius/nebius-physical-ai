@@ -33,9 +33,11 @@ from npa.cluster.gpu_driver import (
 )
 from npa.cluster.gpu_health import (
     DEFAULT_CUDA_SMOKE_IMAGE,
+    DEFAULT_GRAPHICS_SMOKE_IMAGE,
     DEFAULT_STABILIZATION_SECONDS,
     GpuHealthConfig,
     probe_gpu_health,
+    resolve_graphics_smoke_image,
     validate_gpu_health,
 )
 from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
@@ -388,6 +390,11 @@ def up_cmd(
         "--gpu-cuda-smoke-image",
         help="Container image for the post-deploy CUDA vectorAdd smoke.",
     ),
+    gpu_graphics_smoke_image: str = typer.Option(
+        DEFAULT_GRAPHICS_SMOKE_IMAGE,
+        "--gpu-graphics-smoke-image",
+        help="Operator-controlled image for RTX GLX/EGL/Vulkan validation; the default follows public-image policy.",
+    ),
     mig_enabled: bool = typer.Option(
         False,
         "--mig/--no-mig",
@@ -464,6 +471,15 @@ def up_cmd(
     gpu_platform = workload.gpu_platform
     gpu_preset = workload.gpu_preset
     gpu_driver_mode = workload.gpu_driver_mode
+    if validate and workload.graphics_smoke:
+        try:
+            gpu_graphics_smoke_image = resolve_graphics_smoke_image(
+                gpu_graphics_smoke_image
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(
+                str(exc), param_hint="--gpu-graphics-smoke-image"
+            ) from exc
     explicit_context = _apply_context_cluster_name(
         tfvars,
         context_name,
@@ -618,6 +634,7 @@ def up_cmd(
             gpu_health_timeout_minutes=validation_timeout,
             gpu_cuda_smoke=gpu_cuda_smoke,
             gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            gpu_graphics_smoke_image=gpu_graphics_smoke_image,
             gpu_workload_profile=workload.profile,
             mig=(
                 MigSpec(enabled=True, strategy=mig_strategy, config=mig_config)
@@ -1057,6 +1074,7 @@ def up_cmd(
                 gpu_cuda_smoke=gpu_cuda_smoke,
                 gpu_cuda_smoke_image=gpu_cuda_smoke_image,
                 gpu_graphics_smoke=workload.graphics_smoke,
+                gpu_graphics_smoke_image=gpu_graphics_smoke_image,
                 env=env,
             )
             typer.echo(
@@ -3843,6 +3861,7 @@ def _validate_cluster(
     gpu_cuda_smoke: bool = True,
     gpu_cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE,
     gpu_graphics_smoke: bool = False,
+    gpu_graphics_smoke_image: str = DEFAULT_GRAPHICS_SMOKE_IMAGE,
     env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     resolved_env = dict(env or os.environ)
@@ -3887,6 +3906,7 @@ def _validate_cluster(
                     cuda_smoke=gpu_cuda_smoke,
                     cuda_smoke_image=gpu_cuda_smoke_image,
                     graphics_smoke=gpu_graphics_smoke,
+                    graphics_smoke_image=gpu_graphics_smoke_image,
                 ),
                 evidence_path=kubeconfig_path.parent / "gpu-health.json",
                 on_status=lambda message: typer.echo(message),
