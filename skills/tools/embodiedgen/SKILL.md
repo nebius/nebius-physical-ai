@@ -54,6 +54,11 @@ run ID, workflow S3 prefix, input URI, bucket, and image digest for status,
 logs, artifacts, cancellation, and any `--resume-run` reconciliation. Do not
 use raw SkyPilot commands or create a parallel controller.
 
+Use the same task-scoped `--config-path` for plan, image preflight, submit, and
+resume. Its private SkyPilot configuration must select the intended context,
+the standard `skypilot-service-account`, and an existing private-registry pull
+Secret; see the [operator guide](../../../docs/workbench/embodiedgen.md#private-registry-target-configuration).
+
 The workflow declares and requires these actual S3 outputs in addition to the
 summary: `generated_asset.tar.gz` (URDF plus mesh layout), `mjcf_asset.tar.gz`,
 `pybullet_view.png`, `pybullet_settle.mp4`, and

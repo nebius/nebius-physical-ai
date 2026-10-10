@@ -702,6 +702,10 @@ def test_readiness_record_binds_workflow_and_live_blockers() -> None:
         readiness["workflow_sha256"]
         == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
     )
+    assert (
+        f"sha256:{readiness['workflow_sha256']} workflows/testing/byof-embodiedgen.yaml"
+        in readiness["planning"]["task_fidelity"]["evidence"]
+    )
     assert readiness["planning"]["validation"]["status"] == "verified"
     assert readiness["planning"]["task_fidelity"]["status"] == "verified"
     assert readiness["prerequisites"]["source_image"]["status"] == "blocked"

@@ -18,7 +18,7 @@
       "evidence": [
         "npa/tests/docker/test_embodiedgen_runtime.py",
         "npa/tests/workflows/test_byof_solution_smokes.py",
-        "sha256:01749e68cb6945dedaea4b1c0bde0f6df9c1e7b1408c8ccae266a3aa17afdedc workflows/testing/byof-embodiedgen.yaml"
+        "sha256:ad8c793f9308c046adc9887feb69f004504961c0465de6413479ba872c5c1fa1 workflows/testing/byof-embodiedgen.yaml"
       ]
     }
   },
