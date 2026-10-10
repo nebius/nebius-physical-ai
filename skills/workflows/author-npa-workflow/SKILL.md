@@ -67,8 +67,21 @@ such as `"yes"`. State names are unique; a duplicate key is rejected rather than
 silently overwriting an earlier state. Quote `{{config.*}}` tokens where YAML
 scalar parsing could otherwise assign a type before token resolution.
 
-Always run `validate-spec` on generator output and again with the intended
-`--var` overrides before planning or submission.
+Run `validate-spec` on generator output; it accepts `--preset`, not `--var`.
+Use `plan-spec` with the intended repeatable `--var KEY=VALUE` overrides to
+check the resolved configuration before submission.
+
+For editor completion, export the installed package's authoritative schema:
+
+```bash
+npa/.venv/bin/npa workbench workflow schema > ./workflow-schema.json
+```
+
+Associate that file with workflow YAML in the editor. Arbitrary tool-specific
+`config` values still require validation and planning. For saved configuration,
+the installed CLI lifecycle, shipped dataset batches, and scoped input/output
+transfers, follow
+[manual workflow operations](../../../docs/workbench/guides/manual-workflow-operations.md).
 
 ## Validation Hardening (v0.0.1)
 

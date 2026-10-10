@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from npa.workbench.insights.schemas import (
     DEFAULT_QUERY_LIMIT,
@@ -22,6 +23,7 @@ from npa.workbench.insights.schemas import (
     QueryResponse,
     RecordRequest,
     RecordResponse,
+    ReportRequest,
 )
 
 ENDPOINT_ENV = "NPA_INSIGHTS_ENDPOINT"
@@ -33,6 +35,59 @@ class InsightsServiceError(RuntimeError):
 
 class InsightsValidationInputError(ValueError):
     """Raised when local SDK inputs are invalid."""
+
+
+def report(
+    *,
+    input_path: str,
+    storage: Any | None = None,
+    service: bool = False,
+    endpoint: str = "",
+    token_env: str = DEFAULT_TOKEN_ENV,
+    timeout: float = 60.0,
+) -> dict[str, Any]:
+    """Inspect a supported report using its schema-specific gate semantics.
+
+    Args:
+        input_path: Exact local JSON path or S3 object URI.
+        storage: Optional embedded storage client; unavailable in service mode.
+        service: Read through the deployed Insights service when true.
+        endpoint: Service endpoint; defaults to ``NPA_INSIGHTS_ENDPOINT``.
+        token_env: Environment variable containing the service bearer token.
+        timeout: HTTP request timeout in seconds.
+    Returns:
+        A common envelope with a validated, source-specific diagnostic summary.
+    Raises:
+        InsightsReportError: The selected report is invalid or unsupported.
+        InsightsServiceError: The HTTP request fails.
+        ValueError: Inputs are invalid or a storage client is supplied in service mode.
+    """
+    try:
+        request = ReportRequest(input_path=input_path)
+    except ValidationError as exc:
+        raise InsightsValidationInputError(
+            "input_path must be a nonempty string"
+        ) from exc
+    if service:
+        return _service_report(request, storage, endpoint, token_env, timeout)
+    from npa.workbench.insights.reports import inspect_report
+
+    return inspect_report(request.input_path, storage=storage)
+
+
+def _service_report(
+    request: ReportRequest, storage: Any, endpoint: str, token_env: str, timeout: float
+) -> dict[str, Any]:
+    if storage is not None:
+        raise InsightsValidationInputError("storage is available only in embedded mode")
+    return _request_json(
+        "POST",
+        endpoint or os.environ.get(ENDPOINT_ENV, ""),
+        "/report",
+        payload=request.model_dump(mode="json"),
+        token_env=token_env,
+        timeout=timeout,
+    )
 
 
 def record(
@@ -378,10 +433,12 @@ __all__ = [
     "LineageResponse",
     "QueryResponse",
     "RecordResponse",
+    "ReportRequest",
     "compare",
     "dashboard",
     "ingest_run",
     "lineage",
     "query",
     "record",
+    "report",
 ]
