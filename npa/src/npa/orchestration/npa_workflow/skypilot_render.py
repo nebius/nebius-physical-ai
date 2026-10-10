@@ -47,6 +47,9 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     # Paired judging is hosted API-only and must not inherit the self-hosted
     # VLM family's heavy Cosmos image.
     "workbench.vlm_eval.compare_judges": None,
+    # Gemini Robotics is a hosted API adapter.  It uses the default CPU image
+    # with staged source and must not inherit a model or accelerator image.
+    "workbench.gemini_robotics": None,
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
