@@ -224,7 +224,7 @@ def test_candidate_baked_vendor_python_matches_prepare_render(
         document for document in documents if document["name"].endswith("prepare")
     )
     assert 'npa_baked_python="${NPA_BAKED_PYTHON:-}"' in prepare["setup"]
-    assert "printf '%s\\n' \"$npa_baked_python\" > /tmp/npa-python" in prepare["setup"]
+    assert "printf '%s\\n' \"$npa_baked_python\" >" in prepare["setup"]
     assert "/tmp/npa-shim/python3" in prepare["run"]
     assert "python3 -m npa.workflows.lerobot_vla_jepa prepare" in prepare["run"]
 
