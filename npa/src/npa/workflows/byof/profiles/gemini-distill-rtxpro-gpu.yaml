@@ -1,0 +1,54 @@
+# Gemini -> Nebius GPU distillation workflow.
+#
+# Teacher-student loop:
+#   1. plan  - ER-2 (Gemini API) produces a manipulation plan. Runs anywhere.
+#   2. demos - MuJoCo generates domain-randomized demos from the plan. CPU.
+#   3. train - PyTorch behavior-clones a student policy. **Nebius GPU.**
+#   4. eval  - MuJoCo closed-loop eval of the student. CPU.
+#
+# The student runs locally with no API key, no latency, no per-call cost.
+# New workflows are YAML files, not CLI subcommands.
+#
+# Run: npa workbench run npa/src/npa/workflows/byof/profiles/gemini-distill-rtxpro-gpu.yaml
+#   or: python -m npa.workflows.byof.gemini_robotics_distill --task "..." --output-dir ./out
+
+name: gemini-distill
+description: Distill an ER-2 manipulation plan into a local student policy (Gemini -> Nebius GPU).
+
+params:
+  task: "Pick up the red cube and place it precisely in the center of the green pad."
+  n_demos: 200
+  train_epochs: 60
+  eval_episodes: 20
+  seed: 0
+  output_dir: "/workspace/gemini-distill/output"
+
+stages:
+  - name: plan
+    uses: npa.workflows.byof.gemini_robotics_distill:plan_stage
+    description: ER-2 embodied-reasoning plan via the live Gemini API.
+    # Runs anywhere; needs GOOGLE_API_KEY (env or ~/.npa/credentials.yaml).
+
+  - name: demos
+    uses: npa.workflows.byof.gemini_robotics_distill:generate_demonstrations
+    description: Scripted MuJoCo rollouts from the plan (domain-randomized).
+    resources:
+      cpus: 4+
+      memory: 16+
+
+  - name: train
+    uses: npa.workflows.byof.gemini_robotics_distill:train_student
+    description: Behavior-clone the student policy (PyTorch).
+    resources:
+      # *** Real Nebius GPU usage is here. ***
+      # The train stage requests a GPU; without it, training falls back to CPU.
+      accelerators: RTXPRO-6000:1
+      cpus: 8+
+      memory: 32+
+
+  - name: eval
+    uses: npa.workflows.byof.gemini_robotics_distill:eval_student
+    description: Closed-loop MuJoCo eval of the student policy.
+    resources:
+      cpus: 4+
+      memory: 16+

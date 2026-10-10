@@ -134,7 +134,7 @@ class DistillConfig:
         return self.model.strip() or DEFAULT_MODEL_ID
 
 
-def generate_demonstrations(config: DistillConfig) -> dict[str, Any]:
+def generate_demonstrations(ctx: dict[str, Any] | DistillConfig) -> dict[str, Any]:
     """Run scripted plan executions in MuJoCo; return demo arrays + metadata.
 
     Requires ``mujoco``. Each episode randomizes cube/pad positions and
@@ -142,6 +142,7 @@ def generate_demonstrations(config: DistillConfig) -> dict[str, Any]:
     """
     import mujoco
 
+    config = ctx if isinstance(ctx, DistillConfig) else _config_from_context(ctx)
     rng = np.random.default_rng(config.seed)
     obs_all: list[np.ndarray] = []
     act_all: list[np.ndarray] = []
@@ -223,7 +224,9 @@ def generate_demonstrations(config: DistillConfig) -> dict[str, Any]:
     }
 
 
-def train_student(demos: dict[str, Any], config: DistillConfig) -> dict[str, Any]:
+def train_student(
+    ctx: dict[str, Any] | DistillConfig, demos: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Behavior-clone a student policy from demonstrations.
 
     Requires ``torch``. Uses CUDA when available - run this stage on a
@@ -232,6 +235,11 @@ def train_student(demos: dict[str, Any], config: DistillConfig) -> dict[str, Any
     import torch
     import torch.nn as nn
 
+    if demos is None:
+        config = _config_from_context(ctx)
+        demos = {"obs": ctx["obs"], "act": ctx["act"]}
+    else:
+        config = ctx
     obs = demos["obs"].astype(np.float32)
     act = demos["act"].astype(np.float32)
     n = len(obs)
@@ -292,12 +300,19 @@ def train_student(demos: dict[str, Any], config: DistillConfig) -> dict[str, Any
     }
 
 
-def eval_student(checkpoint: str, config: DistillConfig) -> dict[str, Any]:
+def eval_student(
+    ctx: dict[str, Any] | DistillConfig, checkpoint: str | None = None
+) -> dict[str, Any]:
     """Closed-loop MuJoCo eval of the student policy; returns success rate."""
     import mujoco
     import torch
     import torch.nn as nn
 
+    if checkpoint is None:
+        config = _config_from_context(ctx)
+        checkpoint = str(ctx["checkpoint"])
+    else:
+        config = ctx
     ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
     policy = nn.Sequential(
         nn.Linear(12, 128),
@@ -360,6 +375,37 @@ def eval_student(checkpoint: str, config: DistillConfig) -> dict[str, Any]:
             successes += 1
 
     return {"successes": successes, "trials": config.eval_episodes}
+
+
+def _config_from_context(ctx: dict[str, Any]) -> DistillConfig:
+    """Build a DistillConfig from a workflow context dict."""
+    return DistillConfig(
+        task=str(ctx.get("task", "")),
+        images=list(ctx.get("images", [])),
+        model=str(ctx.get("model", "")),
+        output_dir=str(ctx.get("output_dir", "/tmp/gemini-distill")),
+        n_demos=int(ctx.get("n_demos", 200)),
+        train_epochs=int(ctx.get("train_epochs", 60)),
+        eval_episodes=int(ctx.get("eval_episodes", 20)),
+        seed=int(ctx.get("seed", 0)),
+    )
+
+
+def plan_stage(ctx: dict[str, Any] | DistillConfig) -> dict[str, Any]:
+    """Stage 1: Get the ER-2 plan from the live Gemini API."""
+    config = ctx if isinstance(ctx, DistillConfig) else _config_from_context(ctx)
+    api_config = resolve_config()
+    client = GeminiRoboticsClient(api_config)
+    result = client.plan(
+        task=config.task,
+        images=[Path(p) for p in config.images],
+        model=config.resolved_model(),
+    )
+    return {
+        "plan_text": result.text,
+        "model": result.model,
+        "finish_reason": result.finish_reason,
+    }
 
 
 def run_distill(config: DistillConfig) -> dict[str, Any]:
