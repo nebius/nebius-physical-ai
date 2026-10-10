@@ -57,6 +57,26 @@ def test_upload_recovers_from_typed_transport_failure(
     assert "state=retrying" in output
 
 
+def test_training_upload_preserves_bootstrap_audit_for_adapter_verification(
+    monkeypatch, tmp_path
+):
+    checkpoint = tmp_path / "model_1999.pt"
+    checkpoint.write_bytes(b"test checkpoint")
+    audit = tmp_path / "bootstrap-audit.json"
+    audit.write_text('{"ppo_updates": 0, "gold_used": false}\n')
+    uploaded = {}
+
+    class Storage:
+        def upload_file(self, source, bucket, key):
+            uploaded[key] = Path(source).read_bytes()
+
+    monkeypatch.setattr(isaac_job_io, "_s3", Storage)
+    isaac_job_io.upload_training(checkpoint, tmp_path, "s3://bucket/training/")
+    assert uploaded["training/bootstrap-audit.json"] == audit.read_bytes()
+    assert uploaded["training/model_latest.pt"] == checkpoint.read_bytes()
+    assert uploaded["training/checkpoints/model_1999.pt"] == checkpoint.read_bytes()
+
+
 @pytest.mark.parametrize(
     ("status", "code"),
     [(503, "ServiceUnavailable"), (429, "SlowDown"), (400, "RequestTimeout")],

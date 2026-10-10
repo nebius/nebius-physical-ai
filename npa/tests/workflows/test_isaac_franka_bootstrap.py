@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 import copy
+import json
 import sys
 
 import pytest
@@ -15,6 +16,133 @@ from npa.workflows.sim2real.byo_isaac_trainer import (
     build_isaac_job_manifest,
 )
 from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
+
+
+class TestNativeBootstrapCheckpoint:
+    """Exercise the real RSL logger lifecycle without claiming native physics."""
+
+    @pytest.fixture(autouse=True)
+    def native_runtime(self):
+        self.torch = pytest.importorskip("torch")
+        pytest.importorskip("rsl_rl")
+        self.tensor_dict = pytest.importorskip("tensordict").TensorDict
+
+    def _environment(self):
+        runtime = self
+
+        class Environment:
+            num_envs, num_actions, max_episode_length = 4, 8, 8
+            device = "cpu"
+            cfg = {}
+            spec = SimpleNamespace(id="NPA-Lift-Cube-Franka-Scenarios-v0")
+            npa_scenario_rows = [{"env_id": str(index)} for index in range(4)]
+
+            def __init__(self):
+                self.unwrapped = self
+                self.episode_length_buf = runtime.torch.zeros(
+                    4, dtype=runtime.torch.long
+                )
+                self.state = runtime.torch.randn(4, 36)
+
+            def get_observations(self):
+                return runtime.tensor_dict(
+                    {"policy": self.state.clone()}, batch_size=[4]
+                )
+
+            def reset(self):
+                return self.get_observations()
+
+            def step(self, actions):
+                self.state[:, :8] += actions * 0.01
+                rewards = -self.state.square().mean(dim=1)
+                dones = runtime.torch.zeros(4, dtype=runtime.torch.bool)
+                return self.get_observations(), rewards, dones, {}
+
+        return Environment()
+
+    def _runner(self, output_dir):
+        from npa.genesis.train_teacher import PPOConfig
+        from rsl_rl.runners import OnPolicyRunner
+
+        config = PPOConfig(
+            actor_hidden_dims=[8],
+            critic_hidden_dims=[8],
+            num_steps_per_env=4,
+            num_learning_epochs=1,
+            num_mini_batches=2,
+        )
+        environment = self._environment()
+        runner = OnPolicyRunner(
+            environment, config.to_train_cfg(), str(output_dir), device="cpu"
+        )
+        return environment, runner
+
+    def _training_observations(self, monkeypatch, environment, tmp_path):
+        from npa.workflows.sim2real import isaac_franka_control, isaac_scenario_task
+
+        monkeypatch.setitem(sys.modules, "isaac_scenario_task", isaac_scenario_task)
+        scenarios = tmp_path / "training.jsonl"
+        scenarios.write_text(
+            "".join(json.dumps(row) + "\n" for row in environment.npa_scenario_rows)
+        )
+        monkeypatch.setenv(isaac_scenario_task.SCENARIO_ENV, str(scenarios))
+        monkeypatch.setenv("NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", "0")
+        monkeypatch.setattr(
+            isaac_franka_control,
+            "stock_franka_control_audit",
+            lambda cfg: franka_control_contract(),
+        )
+        observations = self.tensor_dict(
+            {"policy": self.torch.randn(64, 36)}, batch_size=[64]
+        )
+        monkeypatch.setattr(
+            bootstrap,
+            "_training_round",
+            lambda *args, **kwargs: (
+                observations,
+                observations["policy"][:, :8] * 0.1,
+                self.torch.ones(4, dtype=self.torch.bool),
+            ),
+        )
+        return observations
+
+    def test_bootstrap_then_real_ppo_save_and_load(self, monkeypatch, tmp_path):
+        from npa.workflows.sim2real import isaac_byo_robot_task
+
+        self.torch.manual_seed(17)
+        environment, runner = self._runner(tmp_path)
+        observations = self._training_observations(monkeypatch, environment, tmp_path)
+        actor_before = runner.alg.actor(observations).detach().clone()
+        audit = bootstrap.bootstrap_franka_actor(
+            environment,
+            runner,
+            profile="franka-ik-distillation-v1",
+            training_split="train",
+            output_dir=str(tmp_path),
+        )
+        assert audit["ppo_updates"] == runner.current_learning_iteration == 0
+        assert json.loads((tmp_path / "bootstrap-audit.json").read_text()) == audit
+        assert not self.torch.equal(
+            actor_before, runner.alg.actor(observations).detach()
+        )
+        phase = isaac_byo_robot_task.learn_ppo_phase(
+            runner,
+            start_iteration=0,
+            num_learning_iterations=2,
+            init_at_random_ep_len=False,
+        )
+        assert phase["completed_updates"] == 2
+        self._assert_checkpoint_restores_actor(runner, observations, tmp_path)
+
+    def _assert_checkpoint_restores_actor(self, runner, observations, tmp_path):
+        checkpoint = tmp_path / "model.pt"
+        runner.save(str(checkpoint))
+        expected = runner.get_inference_policy()(observations).detach()
+        _, restored = self._runner(tmp_path / "restored")
+        restored.load(str(checkpoint))
+        self.torch.testing.assert_close(
+            restored.get_inference_policy()(observations), expected
+        )
 
 
 @pytest.mark.parametrize("eligible", [False, True])

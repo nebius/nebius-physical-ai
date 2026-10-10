@@ -366,7 +366,7 @@ def _publish_bootstrap_audit(task, runner, rounds, profile, output_dir):
     (destination / "bootstrap-audit.json").write_text(
         json.dumps(audit, indent=2) + "\n"
     )
-    runner.save(str(destination / "bootstrap-checkpoint.pt"))
+    # RSL-RL initializes its checkpoint logger inside learn(); PPO owns saving.
     return audit
 
 
@@ -380,9 +380,9 @@ def bootstrap_franka_actor(
         runner: Fresh RSL-RL runner whose learned actor receives supervised updates.
         profile: Explicit ``franka-ik-distillation-v1`` training configuration.
         training_split: The caller's verified sealed ``train`` split binding.
-        output_dir: Native training directory for the audit and initial checkpoint.
+        output_dir: Native training directory for the demonstration audit.
     Returns:
-        Training-only demonstration, fit, checkpoint, and unchanged PPO-count audit.
+        Training-only demonstration, fit, and unchanged PPO-count audit.
     Raises:
         ValueError: The profile is unsupported.
         RuntimeError: The task, actor, demonstrations, or learning evidence is invalid.

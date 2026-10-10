@@ -301,6 +301,7 @@ def upload_training(checkpoint: Path, output_dir: Path, uri: str) -> None:
     optional = {
         Path("/tmp/train_full.log"): "train_full.log",
         output_dir / "applied-scenarios.json": "applied-scenarios.json",
+        output_dir / "bootstrap-audit.json": "bootstrap-audit.json",
     }
     for path, name in optional.items():
         if path.is_file():
