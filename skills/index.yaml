@@ -285,6 +285,15 @@ skills:
       - type: cli_help
         args: ["provision-if-absent", "--help"]
         contains: "--preemptible"
+  - name: gpu-capacity-quota-plan
+    category: atomic
+    when_to_use: "Before choosing a Nebius region, preset, or allocation type for a GPU VM, requesting a quota change, retrying a GPU launch across regions, classifying QuotaFailure versus NotEnoughResources, or cleaning up VMs, disks, and IP allocations left by failed launches."
+    path: skills/atomic/gpu-capacity-quota-plan/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/gpu-capacity-quota-plan.md
+      - type: file_exists
+        path: npa/src/npa/cli/cluster/capacity.py
   - name: health-preflight
     category: atomic
     when_to_use: "Before any deploy, image build, provisioning, or GPU submit: prove service credentials with `npa workbench health preflight`, request `--checks nebius` before provisioning, and verify gated-model access with `npa workbench health access`."

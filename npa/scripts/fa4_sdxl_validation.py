@@ -2,7 +2,7 @@
 
 import argparse
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import hashlib
 from importlib import metadata
 import json
@@ -84,7 +84,10 @@ def _verify_model(model_path):
     for filename, expected in manifest["files"].items():
         path = model_path / filename
         with path.open("rb") as stream:
-            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            digest_state = hashlib.sha256()
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest_state.update(chunk)
+            digest = digest_state.hexdigest()
         if digest != expected["sha256"] or path.stat().st_size != expected["bytes"]:
             raise RuntimeError(f"Pinned model file checksum mismatch: {filename}")
     return manifest
@@ -285,7 +288,7 @@ def _environment(pipeline, args, model_manifest):
         "quack-kernels",
     )
     return {
-        "created_at": datetime.now(UTC).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "model": MODEL_ID,
         "model_revision": MODEL_REVISION,
         "model_manifest": model_manifest,

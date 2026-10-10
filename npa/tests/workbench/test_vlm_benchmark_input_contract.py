@@ -181,10 +181,10 @@ def test_explicit_overlong_rubric_file_is_not_inline_text() -> None:
 def test_rubric_stat_permission_error_is_not_inline_text(
     prefix: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def inaccessible(_path: Path) -> bool:
+    def inaccessible(_path: Path):
         raise PermissionError(errno.EACCES, "Synthetic permission denial")
 
-    monkeypatch.setattr(Path, "is_file", inaccessible)
+    monkeypatch.setattr(Path, "stat", inaccessible)
     with pytest.raises(vlm_eval.VlmEvalError, match="Unable to read rubric file"):
         vlm_eval._resolve_benchmark_rubrics(
             [prefix + "protected-rubric.txt"], dataset_rubrics={}, dataset_path=""
