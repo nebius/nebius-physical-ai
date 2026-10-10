@@ -1,16 +1,14 @@
-# Pre-populate the Isaac runtime cache once, so ordinary pods start instantly.
+# Pre-populate the Isaac runtime cache once, so workload pods reuse a verified tree.
 #
 # WHY YOU WANT THIS
 #   The Isaac workbench images ship no NVIDIA Isaac bytes; Isaac Sim and Isaac Lab are
-#   downloaded on first run (see npa/docker/workbench/common/isaac_bootstrap.sh). Measured
-#   on an RTX PRO 6000 node:
+#   downloaded on first run (see npa/docker/workbench/common/isaac_bootstrap.sh).
+#   Cold setup includes the image pull, hash-pinned wheel installation, source checkout,
+#   and tree verification. Its duration depends on network and filesystem performance;
+#   installation can be quiet while pip writes many files to the shared volume.
 #
-#       cold start   111 s   (~4.5 GB downloaded, 10.04 GiB materialised)
-#       warm start    32 ms
-#
-#   With a per-pod emptyDir every pod pays the cold start, and a node running 8 GPU pods
-#   downloads ~36 GB. Warming a SHARED volume once turns that into one download per
-#   volume and a 32 ms start for everyone. It also lets you run the workload pods with
+#   With a per-pod emptyDir every pod repeats that installation. Warming a SHARED volume
+#   once lets subsequent pods use the verified tree. It also lets you run workloads with
 #   NPA_ISAAC_CACHE_READONLY=1, so the runtime user never needs write access to the cache
 #   at all - the bootstrap downloads and executes code, so shrinking its write surface in
 #   steady state is worth doing.
@@ -39,12 +37,13 @@
 #      PersistentVolumeClaim below creates.
 #   b) Per-node emptyDir: no PVC to manage, but one download per pod. Only sensible for a
 #      single-pod smoke; GPU nodes have ~890 GiB of ephemeral storage, so it fits, but you
-#      pay 111 s and ~4.5 GB of egress every time.
+#      repeat the download and installation every time.
 #
 # SIZING
-#   The cache is 10.04 GiB per pinned version. Request >= 25 Gi so a version bump can
-#   build the new tree alongside the old one without evicting the pod mid-bootstrap - an
-#   undersized ephemeral-storage request is the classic way to lose a long bootstrap.
+#   The current Isaac Sim 6 / Isaac Lab 3 tree occupies about 18 GiB. Check free space on
+#   the backing filesystem before warming: the PVC request does not prove that shared
+#   filesystem capacity is available. A version bump builds alongside existing trees;
+#   preserve those trees and arrange sufficient capacity before starting another warm.
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -86,7 +85,7 @@ spec:
           # root filesystem is immutable and /tmp is a separate scratch volume (pip needs
           # a writable TMPDIR). Flagged by Trivy KSV-0014 on the first draft of this file
           # — worth honouring rather than ignoring, because this job downloads and unpacks
-          # ~4.5 GB of third-party code and should not be able to modify the image root.
+          # third-party code and should not be able to modify the image root.
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
