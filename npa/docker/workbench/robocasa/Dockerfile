@@ -179,7 +179,7 @@ RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
         --disable-pip-version-check --no-cache-dir \
         --index-url https://pypi.org/simple \
         --extra-index-url https://download.pytorch.org/whl/cu129 \
-        --require-hashes --no-build-isolation \
+        --require-hashes --no-build-isolation --no-binary=imageio-ffmpeg \
         -r /opt/robocasa/locks/requirements.lock \
     && install -d -m 0755 /usr/share/doc/robocasa-npa-act \
     && python /opt/robocasa/derivative/filter_cudnn_runtime.py \

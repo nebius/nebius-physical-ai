@@ -67,3 +67,13 @@ This avoids retaining old seed bytes in earlier final-image layers, rather than
 attempting to hide them with a later deletion. It does not prove an absence of
 all vulnerabilities. Full exact-image vulnerability, secret, byte, license and capability
 evidence remains required; this source document is not an acceptance receipt.
+
+Regenerate dependency locks with `generate-locks.sh` using uv 0.12.5 and the
+repository's `npa/.venv/bin/python`. `UV_BIN` and `PYTHON_BIN` can select those
+executables explicitly. Both resolution and installation force
+`--no-binary=imageio-ffmpeg`: version 0.6.0 retains only its reviewed source
+archive hash, never a bundled-FFmpeg wheel. Because uv also emits wheel hashes
+for source-only resolution, `pin_imageio_source.py` narrows that one lock entry
+after verifying the declared version and source hash. Unknown or missing source
+identity fails regeneration. The ordinary version/hash declaration remains
+visible to the trusted dependency inventory without changing scanner policy.

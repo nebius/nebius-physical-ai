@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 UV_BIN="${UV_BIN:-uv}"
+PYTHON_BIN="${PYTHON_BIN:-${SCRIPT_DIR}/../../../.venv/bin/python}"
 
 if [[ "$("${UV_BIN}" --version)" != "uv 0.12.5 (x86_64-unknown-linux-gnu)" ]]; then
   echo "ERROR: RoboCasa locks require uv 0.12.5 for linux/amd64" >&2
@@ -36,4 +37,10 @@ common=(
   "${SCRIPT_DIR}/requirements.in" \
   "${common[@]}" \
   --torch-backend cu129 \
+  --no-binary=imageio-ffmpeg \
   --output-file "${SCRIPT_DIR}/requirements.lock"
+
+# uv emits wheel hashes even with --no-binary. Keep only the reviewed sdist
+# hash, so neither the installer nor a future consumer can accept a wheel.
+"${PYTHON_BIN}" "${SCRIPT_DIR}/pin_imageio_source.py" \
+  --input "${SCRIPT_DIR}/requirements.in" --lock "${SCRIPT_DIR}/requirements.lock"

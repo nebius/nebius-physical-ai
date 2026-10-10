@@ -388,7 +388,8 @@ def test_robocasa_public_runtime_excludes_restricted_optional_payloads() -> None
 
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
     assert "        ffmpeg fuse netcat-openbsd" in text
-    assert "imageio_ffmpeg-0.6.0.tar.gz#sha256=" in runtime_lock
+    assert "imageio-ffmpeg==0.6.0" in runtime_lock
+    assert "--no-binary=imageio-ffmpeg" in dependency_install
     assert "imageio_ffmpeg-0.6.0-py3-none" not in runtime_lock
     assert "imageio[ffmpeg]" not in runtime_lock
     assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dependency_install
@@ -1000,6 +1001,8 @@ def test_robocasa_lock_generation_uses_only_anonymous_indexes() -> None:
     assert "--python-version 3.12" in generator
     assert "--python-platform x86_64-manylinux_2_28" in generator
     assert "--torch-backend cu129" in generator
+    assert "--no-binary=imageio-ffmpeg" in generator
+    assert '"${PYTHON_BIN}" "${SCRIPT_DIR}/pin_imageio_source.py"' in generator
     assert "--config-file /dev/null" in generator
     assert "--default-index https://pypi.org/simple" in generator
     assert "--keyring-provider disabled" in generator

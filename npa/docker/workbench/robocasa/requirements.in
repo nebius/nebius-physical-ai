@@ -23,7 +23,8 @@ pynput
 tqdm
 termcolor
 imageio
-imageio-ffmpeg @ https://files.pythonhosted.org/packages/44/bd/c3343c721f2a1b0c9fc71c1aebf1966a3b7f08c2eea8ed5437a2865611d6/imageio_ffmpeg-0.6.0.tar.gz#sha256=e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755
+# Source-only: exclude bundled FFmpeg wheels; this is the original sdist hash.
+imageio-ffmpeg==0.6.0 --hash=sha256:e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755
 h5py
 lxml
 hidapi
@@ -39,6 +40,9 @@ httpx>=0.27
 
 # 5.0.1 closes CVE-2026-66007 in folder metadata file-name containment.
 datasets==5.0.1
+# Preserve the deployed-workbench security floors within datasets' supported cap.
+fsspec>=2026.6.0
+multidict>=6.9.1
 accelerate>=1.10.0,<2.0.0
 packaging>=24.2,<26.0
 einops>=0.8.0,<0.9.0
