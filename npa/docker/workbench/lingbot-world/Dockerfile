@@ -20,6 +20,17 @@ LABEL npa.tool="lingbot-world" \
       npa.weights="runtime-only"
 
 USER root
+# The digest-pinned Wan parent can retain vulnerable Bookworm Perl packages.
+# Keep the private derivative on the security-fixed package revision before
+# fetching the pinned LingBot source.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade \
+      perl=5.36.0-7+deb12u4 \
+      perl-base=5.36.0-7+deb12u4 \
+      libperl5.36=5.36.0-7+deb12u4 \
+      perl-modules-5.36=5.36.0-7+deb12u4 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /opt
 COPY --chmod=0755 docker/workbench/common/model_source.sh /opt/npa/model_source.sh
 RUN /opt/npa/model_source.sh \

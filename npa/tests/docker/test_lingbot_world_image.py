@@ -45,3 +45,25 @@ def test_lingbot_model_runtime_includes_pyav_for_predecessor_video_validation() 
         "/opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps" in dockerfile
     )
     assert "protobuf==6.33.6 scipy==1.15.3 av==17.1.0" in dockerfile
+
+
+def test_lingbot_upgrades_fixable_parent_perl_security_packages() -> None:
+    """The private derivative must not retain the vulnerable parent revisions."""
+
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "apt-get install -y --no-install-recommends --only-upgrade" in dockerfile
+    for package in (
+        "perl=5.36.0-7+deb12u4",
+        "perl-base=5.36.0-7+deb12u4",
+        "libperl5.36=5.36.0-7+deb12u4",
+        "perl-modules-5.36=5.36.0-7+deb12u4",
+    ):
+        assert package in dockerfile
+
+    security_upgrade = dockerfile.index("perl=5.36.0-7+deb12u4")
+    source_fetch = dockerfile.index(
+        "COPY --chmod=0755 docker/workbench/common/model_source.sh"
+    )
+    assert dockerfile.index("USER root") < security_upgrade < source_fetch
+    assert "rm -rf /var/lib/apt/lists/*" in dockerfile[security_upgrade:source_fetch]
