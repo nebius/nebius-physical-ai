@@ -79,6 +79,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Public SmolVLA/FiftyOne training, both measured retry gates, two GPU serving workers and standalone HTML proof.",
     ),
     SubmitLiveCase(
+        "digital-twin-campus-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="RTX OptiX campus rendering, native geometry counts, four camera routes and private offline HTML.",
+    ),
+    SubmitLiveCase(
+        "digital-twin-cuda-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Native Blender Cycles CUDA reference scene, OpenUSD/glTF export, and offline HTML with bound rendering evidence.",
+    ),
+    SubmitLiveCase(
         "video-variant-sweep.yaml",
         "multi",
         runtime=True,
