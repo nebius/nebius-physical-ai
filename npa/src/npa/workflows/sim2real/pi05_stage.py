@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from npa.workflows.sim2real.pi05_contract import assert_contract, build_contract
+from npa.workflows.sim2real.pi05_closed_loop import validate_effectiveness_report
 from npa.workflows.sim2real.workflow_io import (
     publish_component_record,
     read_json,
@@ -92,23 +93,58 @@ def _copy_artifact(source: str, destination: str, work: Path) -> dict[str, objec
     }
 
 
-def _comparison(baseline: dict, adapted: dict) -> dict[str, object]:
+def _validated_comparison_arm(
+    report: dict, role: str
+) -> tuple[dict | None, str | None]:
+    try:
+        return validate_effectiveness_report(report, role), None
+    except (KeyError, TypeError, ValueError, RuntimeError) as error:
+        return None, str(error)
+
+
+def _protocols_match(baseline: dict, adapted: dict) -> bool:
     baseline_protocol = baseline.get("protocol") or {}
     adapted_protocol = adapted.get("protocol") or {}
-    comparable = (
+    protocol_match = bool(
         baseline.get("split") == adapted.get("split") == "gold"
         and baseline_protocol.get("sha256") == adapted_protocol.get("sha256")
         and baseline_protocol.get("scenario_sha256")
         == adapted_protocol.get("scenario_sha256")
         and baseline.get("episode_count") == adapted.get("episode_count")
     )
-    before, after = (
-        float(baseline.get("success_rate", 0.0)),
-        float(adapted.get("success_rate", 0.0)),
+    return protocol_match and _runtime_provenance_matches(baseline, adapted)
+
+
+def _runtime_provenance_matches(baseline: dict, adapted: dict) -> bool:
+    before = baseline.get("checkpoint_provenance") or {}
+    after = adapted.get("checkpoint_provenance") or {}
+    runtime_keys = ("source_commit", "config_name", "image_digest")
+    same_runtime = all(before.get(key) == after.get(key) for key in runtime_keys)
+    distinct_checkpoint = before.get("checkpoint_sha256") != after.get(
+        "checkpoint_sha256"
+    ) and before.get("checkpoint_manifest_sha256") != after.get(
+        "checkpoint_manifest_sha256"
     )
+    return same_runtime and distinct_checkpoint
+
+
+def _comparison(baseline: dict, adapted: dict) -> dict[str, object]:
+    baseline_fresh, baseline_error = _validated_comparison_arm(baseline, "base")
+    adapted_fresh, adapted_error = _validated_comparison_arm(adapted, "adapted")
+    comparable = bool(
+        baseline_fresh and adapted_fresh and _protocols_match(baseline, adapted)
+    )
+    before = baseline_fresh["success_rate"] if baseline_fresh else None
+    after = adapted_fresh["success_rate"] if adapted_fresh else None
     improvement = after - before if comparable else None
     return {
         "comparison_protocol_identical": comparable,
+        "evaluation_contract_valid": bool(baseline_fresh and adapted_fresh),
+        "evaluation_contract_rejections": {
+            "baseline": baseline_error,
+            "adapted": adapted_error,
+        },
+        "comparison_metric": "fresh_wrist_released_surface_placement_success_rate",
         "baseline_success_rate": before,
         "adapted_success_rate": after,
         "measured_improvement": improvement,

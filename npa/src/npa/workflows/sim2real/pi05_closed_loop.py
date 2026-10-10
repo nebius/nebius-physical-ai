@@ -46,12 +46,14 @@ from npa.workflows.sim2real.pi05_isaac import (
     _rgb,
     _rgb_receipt,
     _reset_settle_sample,
+    _require_expert_phase_visibility,
     _semantic_encoding_receipt,
     _sim_time,
     _sensor_clock_reference,
     _synchronize_wrist_before_capture,
     _target_pixel_count,
     _validate_capture_ages,
+    _validate_camera_motion_metrics,
     _validate_reset_settle,
     _verify_camera_motion,
     _wrist_mount_receipt,
@@ -71,6 +73,38 @@ from npa.workflows.sim2real.pi05_policy_client import Pi05PolicyClient
 PROMPT = (
     "Pick up the object and release it inside the cyan circular target on the table."
 )
+WRIST_ABLATION_MODES = ("fresh", "frozen", "pixel_channel_shuffle")
+PI05_SAMPLER_NOISE_SHAPE = [15, 32]
+CAMERA_MOTION_METRICS = (
+    "wrist_world_motion_m",
+    "hand_world_motion_m",
+    "wrist_renderer_world_motion_m",
+    "wrist_mount_distance_drift_m",
+    "wrist_mount_angular_drift_rad",
+    "exterior_world_drift_m",
+    "wrist_renderer_position_error_m",
+    "wrist_renderer_orientation_error_rad",
+)
+EFFECTIVENESS_PROTOCOL_FIELDS = {
+    "task",
+    "split",
+    "seed",
+    "episodes",
+    "decisions",
+    "object_identity",
+    "object_usd",
+    "object_scale",
+    "object_width_m",
+    "object_height_m",
+    "object_geometry",
+    "scene_id",
+    "destination_marker_contract",
+    "support_surface_contract",
+    "robot_plant",
+    "control_hz",
+    "execution_prefix",
+    "scenarios",
+}
 MANIPULATION_EVENT_ORDER = (
     "contact",
     "grasp",
@@ -1304,17 +1338,30 @@ def _episode_passed(row: dict[str, Any]) -> bool:
     return bool(row["success"].get("released_supported_surface_placement"))
 
 
-def _sampler_noise_pairing(episodes: list[dict], modes: list[str]) -> dict[str, Any]:
-    identities: dict[tuple[int, int], list[str | None]] = {}
+def _noise_identities(
+    episodes: list[dict],
+) -> tuple[dict[tuple[int, int], dict[str, str | None]], bool]:
+    identities: dict[tuple[int, int], dict[str, str | None]] = {}
+    duplicate = False
     for episode in episodes:
         for query in episode.get("queries", []):
             key = (int(episode["scenario_seed"]), int(query["decision"]))
-            identities.setdefault(key, []).append(
-                query["inference"].get("sampler_noise_sha256")
-            )
-    noise_complete = bool(identities) and all(
-        len(values) == len(modes) and None not in values and len(set(values)) == 1
-        for values in identities.values()
+            by_mode = identities.setdefault(key, {})
+            mode = str(episode["wrist_ablation_mode"])
+            duplicate = duplicate or mode in by_mode
+            by_mode[mode] = query["inference"].get("sampler_noise_sha256")
+    return identities, duplicate
+
+
+def _sampler_noise_pairing(episodes: list[dict], modes: list[str]) -> dict[str, Any]:
+    identities, duplicate = _noise_identities(episodes)
+    expected = set(modes)
+    noise_complete = bool(identities) and not duplicate
+    noise_complete = noise_complete and all(
+        set(by_mode) == expected
+        and all(_valid_receipt_hash(value) for value in by_mode.values())
+        and len(set(by_mode.values())) == 1
+        for by_mode in identities.values()
     )
     execution_complete = bool(episodes) and all(
         episode.get("queries")
@@ -1328,7 +1375,9 @@ def _sampler_noise_pairing(episodes: list[dict], modes: list[str]) -> dict[str, 
         "sampler_noise_identity_verified": complete,
         "controller_execution_complete": execution_complete,
         "sampler_noise_identity_receipt_count": sum(
-            value is not None for values in identities.values() for value in values
+            value is not None
+            for by_mode in identities.values()
+            for value in by_mode.values()
         ),
         "sampling_noise_limitation": (
             None
@@ -1347,10 +1396,326 @@ def _query_execution_complete(query: dict[str, Any]) -> bool:
         and query.get("attempted_prefix") == EXECUTION_PREFIX
         and query.get("executed_prefix") == EXECUTION_PREFIX
         and len(proofs) == EXECUTION_PREFIX
+        and all(
+            proof.get("physics_observation_status") == "recorded" for proof in proofs
+        )
         and not any(
             proof.get("terminated") or proof.get("truncated") for proof in proofs
         )
     )
+
+
+def _valid_receipt_hash(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _validate_wrist_interventions(episodes: list[dict[str, Any]]) -> None:
+    for episode in episodes:
+        mode = episode.get("wrist_ablation_mode")
+        frozen_hash = None
+        for query in episode.get("queries") or []:
+            intervention = (query.get("inference") or {}).get(
+                "wrist_intervention"
+            ) or {}
+            source = intervention.get("source_sha256")
+            policy = intervention.get("policy_sha256")
+            if (
+                intervention.get("mode") != mode
+                or intervention.get("decision") != query.get("decision")
+                or not _valid_receipt_hash(source)
+                or not _valid_receipt_hash(policy)
+                or (mode == "fresh" and source != policy)
+                or (mode == "pixel_channel_shuffle" and source == policy)
+            ):
+                raise RuntimeError("wrist intervention receipt is invalid")
+            if mode == "frozen":
+                frozen_hash = policy if frozen_hash is None else frozen_hash
+                if policy != frozen_hash:
+                    raise RuntimeError(
+                        "frozen wrist intervention changed within episode"
+                    )
+
+
+def _validate_query_lineage(episode: dict[str, Any], query: dict[str, Any]) -> None:
+    inference = query.get("inference") or {}
+    intervention = inference.get("wrist_intervention") or {}
+    wire = inference.get("wire_input") or {}
+    transform = inference.get("model_wrist_transform") or {}
+    seed, decision = int(episode["scenario_seed"]), int(query["decision"])
+    expected_sequence = f"scene-{seed}-decision-{decision}"
+    hashes = (
+        wire.get("payload_sha256"),
+        wire.get("exterior_rgb_sha256"),
+        wire.get("wrist_rgb_sha256"),
+        transform.get("left_wrist_0_rgb_sha256"),
+        transform.get("right_wrist_0_rgb_sha256"),
+    )
+    if (
+        not all(_valid_receipt_hash(value) for value in hashes)
+        or query.get("wrist_rgb_sha256") != intervention.get("source_sha256")
+        or query.get("exterior_rgb_sha256") != wire.get("exterior_rgb_sha256")
+        or wire.get("wrist_rgb_sha256") != intervention.get("policy_sha256")
+        or wire.get("wrist_source_hash_matched") is not True
+        or transform.get("schema") != "npa.openpi.pi05-live-wrist-transform.v1"
+        or transform.get("source_wrist_sha256") != intervention.get("policy_sha256")
+        or transform.get("left_wrist_mask") is not True
+        or transform.get("right_wrist_mask") is not False
+        or inference.get("sampling_sequence") != expected_sequence
+    ):
+        raise RuntimeError("policy query wrist lineage is invalid")
+    _validate_query_numeric_receipts(query, inference, wire)
+
+
+def _validate_query_numeric_receipts(
+    query: dict[str, Any], inference: dict[str, Any], wire: dict[str, Any]
+) -> None:
+    import math
+
+    shape = inference.get("sampler_noise_shape")
+    age = wire.get("capture_age_s")
+    action = query.get("action_receipt") or {}
+    horizon = inference.get("shape")
+    if (
+        shape != PI05_SAMPLER_NOISE_SHAPE
+        or not isinstance(age, (int, float))
+        or not math.isfinite(float(age))
+        or not 0.0 <= float(age) <= 1.0 / CONTROL_HZ
+        or inference.get("dtype") != "float64"
+        or inference.get("finite") is not True
+        or not isinstance(horizon, list)
+        or len(horizon) != 2
+        or horizon[0] < 15
+        or horizon[1] != 8
+        or action.get("shape") != horizon
+        or not _valid_receipt_hash(action.get("sha256"))
+    ):
+        raise RuntimeError("policy query numeric receipt is invalid")
+
+
+def _validate_camera_evidence(episode: dict[str, Any]) -> None:
+    import math
+
+    evidence = episode.get("camera_evidence") or {}
+    visibility = evidence.get("phase_visibility") or {}
+    if any(
+        not isinstance(evidence.get(name), (int, float))
+        or not math.isfinite(float(evidence[name]))
+        for name in CAMERA_MOTION_METRICS
+    ):
+        raise RuntimeError("camera motion metric is nonfinite or absent")
+    _validate_camera_motion_metrics(evidence)
+    samples = 0
+    for phase in visibility.values():
+        count = phase.get("samples")
+        counters = (
+            phase.get("wrist_visible_samples"),
+            phase.get("exterior_visible_samples"),
+            phase.get("destination_exterior_visible_samples"),
+            phase.get("both_fingers_rendered_samples"),
+        )
+        if not isinstance(count, int) or count < 1:
+            raise RuntimeError("camera phase evidence is invalid")
+        if any(
+            not isinstance(value, int) or not 0 <= value <= count for value in counters
+        ):
+            raise RuntimeError("camera phase visibility count is invalid")
+        if phase.get("destination_exterior_visible_samples") != count:
+            raise RuntimeError("destination marker was absent at a policy query")
+        samples += count
+    if not visibility or samples != len(episode.get("queries") or []):
+        raise RuntimeError("camera evidence does not bind every policy query")
+    success = _success(episode.get("physics_trace") or [])
+    if (
+        episode.get("wrist_ablation_mode") == "fresh"
+        and success["released_supported_surface_placement"]
+    ):
+        _require_expert_phase_visibility(visibility)
+
+
+def _validate_effectiveness_cohort(episodes: list[dict[str, Any]]) -> None:
+    keys = [
+        (episode.get("scenario_seed"), episode.get("wrist_ablation_mode"))
+        for episode in episodes
+    ]
+    if len(set(keys)) != len(keys):
+        raise RuntimeError("wrist evaluation contains duplicate scenario modes")
+    seed_sets = [
+        {
+            episode.get("scenario_seed")
+            for episode in episodes
+            if episode.get("wrist_ablation_mode") == mode
+        }
+        for mode in WRIST_ABLATION_MODES
+    ]
+    if not seed_sets[0] or any(seeds != seed_sets[0] for seeds in seed_sets[1:]):
+        raise RuntimeError("wrist evaluation scenario cohorts are not paired")
+    for episode in episodes:
+        _validate_camera_evidence(episode)
+        for query in episode.get("queries") or []:
+            _validate_query_lineage(episode, query)
+        _physics_rows(episode)
+
+
+def _validate_effectiveness_artifacts(
+    artifacts: dict[str, Any], episodes: list[dict[str, Any]]
+) -> None:
+    mp4, rrd = artifacts.get("mp4") or {}, artifacts.get("rrd") or {}
+    query_count = sum(len(episode.get("queries") or []) for episode in episodes)
+    physics_count = sum(len(episode.get("physics_trace") or []) for episode in episodes)
+    if (
+        int(mp4.get("bytes", 0)) < 1
+        or int(mp4.get("frames", 0)) != query_count
+        or not mp4.get("ffprobe")
+        or int(rrd.get("bytes", 0)) < 1
+        or int(rrd.get("timeline_rows", 0)) != physics_count
+        or rrd.get("rerun_verify") is not True
+        or rrd.get("decoded_expected_entity") is not True
+    ):
+        raise RuntimeError("wrist evaluation review artifacts are incomplete")
+
+
+def _validate_effectiveness_summaries(
+    report: dict[str, Any], episodes: list[dict[str, Any]], ablation: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    for episode in episodes:
+        if episode.get("success") != _success(episode.get("physics_trace") or []):
+            raise RuntimeError("wrist evaluation success differs from physics trace")
+    grouped = _ablation_groups(episodes, list(WRIST_ABLATION_MODES))
+    passes = sum(_episode_passed(episode) for episode in episodes)
+    if (
+        ablation.get("per_mode") != grouped
+        or report.get("released_surface_placements") != passes
+        or report.get("success_rate") != passes / len(episodes)
+    ):
+        raise RuntimeError("wrist evaluation summaries differ from episodes")
+    pairing = _sampler_noise_pairing(episodes, list(WRIST_ABLATION_MODES))
+    for key, value in pairing.items():
+        if ablation.get(key) != value:
+            raise RuntimeError("wrist evaluation pairing summary is invalid")
+    if not pairing["sampler_noise_identity_verified"]:
+        raise RuntimeError("wrist evaluation lacks paired execution evidence")
+    return grouped
+
+
+def _validate_checkpoint_provenance(report: dict[str, Any], role: str) -> None:
+    provenance = report.get("checkpoint_provenance") or {}
+    image = str(provenance.get("image_digest", "")).removeprefix("sha256:")
+    source = str(provenance.get("source_commit", ""))
+    if (
+        provenance.get("checkpoint_role") != role
+        or not _valid_receipt_hash(provenance.get("checkpoint_sha256"))
+        or not _valid_receipt_hash(provenance.get("checkpoint_manifest_sha256"))
+        or not _valid_receipt_hash(image)
+        or len(source) != 40
+        or any(character not in "0123456789abcdef" for character in source)
+        or not provenance.get("config_name")
+    ):
+        raise RuntimeError("closed-loop checkpoint provenance is invalid")
+
+
+def _expected_scenario_hashes(protocol: dict[str, Any]) -> list[str]:
+    seed, count = protocol.get("seed"), protocol.get("episodes")
+    digest = protocol.get("sha256")
+    if not isinstance(seed, int) or not isinstance(count, int) or count < 1:
+        return []
+    return [_sha({"protocol": digest, "seed": seed + index}) for index in range(count)]
+
+
+def _validate_effectiveness_protocol(report: dict[str, Any], role: str) -> None:
+    protocol = report.get("protocol") or {}
+    scenarios = protocol.get("scenario_sha256") or []
+    payload = {
+        key: value
+        for key, value in protocol.items()
+        if key not in {"sha256", "scenario_sha256"}
+    }
+    expected_scenarios = _expected_scenario_hashes(protocol)
+    if (
+        not EFFECTIVENESS_PROTOCOL_FIELDS.issubset(payload)
+        or protocol.get("task") != "released_supported_surface_placement_v1"
+        or protocol.get("split") != "gold"
+        or protocol.get("control_hz") != CONTROL_HZ
+        or protocol.get("execution_prefix") != EXECUTION_PREFIX
+        or protocol.get("episodes") != len(protocol.get("scenarios") or [])
+        or protocol.get("sha256") != _sha(payload)
+        or scenarios != expected_scenarios
+    ):
+        raise RuntimeError("closed-loop protocol provenance is invalid")
+    _validate_protocol_contents(protocol)
+    _validate_checkpoint_provenance(report, role)
+
+
+def _validate_protocol_contents(protocol: dict[str, Any]) -> None:
+    scale = _vector(protocol.get("object_scale"), 3, "comparison object scale")
+    geometry = _validated_geometry_receipt(protocol.get("object_geometry") or {}, scale)
+    if (
+        protocol.get("object_width_m") != geometry["grasp_width_m"]
+        or protocol.get("object_height_m") != geometry["support_height_m"]
+        or protocol.get("support_surface_contract") != support_surface_contract()
+        or not protocol.get("destination_marker_contract")
+        or not protocol.get("object_identity")
+        or not protocol.get("scene_id")
+        or not isinstance(protocol.get("decisions"), int)
+        or protocol["decisions"] < 1
+    ):
+        raise RuntimeError("closed-loop task protocol is incomplete")
+    _validate_object_source(protocol.get("object_usd"))
+    _validated_robot_plant(protocol.get("robot_plant"))
+    _validate_gold_scenarios(protocol["scenarios"], int(protocol["seed"]))
+
+
+def _validate_effectiveness_header(
+    report: dict[str, Any], expected_role: str, episodes: list[dict[str, Any]]
+) -> None:
+    ablation = report.get("wrist_ablation") or {}
+    if (
+        report.get("schema") != "npa.sim2real.pi05.closed_loop_eval.v1"
+        or report.get("checkpoint_role") != expected_role
+        or report.get("split") != "gold"
+        or report.get("episode_count") != len(episodes)
+        or not episodes
+        or ablation.get("modes") != list(WRIST_ABLATION_MODES)
+        or ablation.get("same_checkpoint_protocol_scenarios_and_reset_seeds")
+        is not True
+        or ablation.get("same_initial_object_poses") is not True
+        or ablation.get("qualification") != "matched_effectiveness_eligible"
+    ):
+        raise RuntimeError("closed-loop effectiveness report header is invalid")
+
+
+def validate_effectiveness_report(
+    report: dict[str, Any], expected_role: str
+) -> dict[str, Any]:
+    """Validate a closed-loop report before making an efficacy comparison.
+
+    Args:
+        report: Persisted closed-loop evaluation report.
+        expected_role: Checkpoint role required for this comparison arm.
+
+    Returns:
+        Recomputed fresh-wrist cohort metrics.
+
+    Raises:
+        RuntimeError: The report lacks matched execution or review evidence.
+    """
+
+    episodes = report.get("episodes") or []
+    ablation = report.get("wrist_ablation") or {}
+    _validate_effectiveness_header(report, expected_role, episodes)
+    _validate_effectiveness_cohort(episodes)
+    _validate_effectiveness_protocol(report, expected_role)
+    scenario_seeds = {episode["scenario_seed"] for episode in episodes}
+    protocol_seeds = {row["scene_seed"] for row in report["protocol"]["scenarios"]}
+    if scenario_seeds != protocol_seeds:
+        raise RuntimeError("evaluation episodes differ from protocol scenarios")
+    _validate_wrist_interventions(episodes)
+    grouped = _validate_effectiveness_summaries(report, episodes, ablation)
+    _validate_effectiveness_artifacts(report.get("review_artifacts") or {}, episodes)
+    return grouped["fresh"]
 
 
 def _persist_evaluation(

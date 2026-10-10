@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import subprocess
@@ -23,6 +24,7 @@ from npa.workflows.sim2real import (
     pi05_closed_loop_entry,
     pi05_data,
     pi05_isaac,
+    pi05_stage,
 )
 from npa.workflows.byof.openpi_service_lifecycle import (
     _inject_checkpoint_probe,
@@ -390,38 +392,50 @@ def test_policy_query_records_applied_target_with_failed_physics_observation(
     assert record["physics_trace"] == []
 
 
-def test_effectiveness_rejects_absent_sampler_identity() -> None:
-    def episode(mode: str, identity: str | None) -> dict:
-        proofs = [{"terminated": False, "truncated": False}] * 8
-        return {
-            "scenario_seed": 9,
-            "wrist_ablation_mode": mode,
-            "queries": [
-                {
-                    "decision": 0,
-                    "execution_status": "completed",
-                    "attempted_prefix": 8,
-                    "executed_prefix": 8,
-                    "controller_proofs": proofs,
-                    "inference": {"sampler_noise_sha256": identity},
-                }
-            ],
+def _paired_noise_episode(mode: str, identity: str | None) -> dict:
+    proofs = [
+        {
+            "terminated": False,
+            "truncated": False,
+            "physics_observation_status": "recorded",
         }
+    ] * 8
+    return {
+        "scenario_seed": 9,
+        "wrist_ablation_mode": mode,
+        "queries": [
+            {
+                "decision": 0,
+                "execution_status": "completed",
+                "attempted_prefix": 8,
+                "executed_prefix": 8,
+                "controller_proofs": proofs,
+                "inference": {"sampler_noise_sha256": identity},
+            }
+        ],
+    }
+
+
+def test_effectiveness_rejects_absent_sampler_identity() -> None:
 
     modes = ["fresh", "frozen", "pixel_channel_shuffle"]
-    absent = _sampler_noise_pairing([episode(mode, None) for mode in modes], modes)
+    absent = _sampler_noise_pairing(
+        [_paired_noise_episode(mode, None) for mode in modes], modes
+    )
     assert absent["sampler_noise_identity_verified"] is False
-    paired = _sampler_noise_pairing([episode(mode, "a" * 64) for mode in modes], modes)
+    paired = _sampler_noise_pairing(
+        [_paired_noise_episode(mode, "a" * 64) for mode in modes], modes
+    )
     assert paired["sampler_noise_identity_verified"] is True
 
-    failed = [episode(mode, "a" * 64) for mode in modes]
+    failed = [_paired_noise_episode(mode, "a" * 64) for mode in modes]
     failed[0]["queries"][0]["execution_status"] = "failed"
     assert (
         _sampler_noise_pairing(failed, modes)["sampler_noise_identity_verified"]
         is False
     )
 
-    terminal = [episode(mode, "a" * 64) for mode in modes]
+    terminal = [_paired_noise_episode(mode, "a" * 64) for mode in modes]
     terminal[0]["queries"][0]["controller_proofs"][0] = {
         "terminated": True,
         "truncated": False,
@@ -429,6 +443,364 @@ def test_effectiveness_rejects_absent_sampler_identity() -> None:
     assert not _sampler_noise_pairing(terminal, modes)[
         "sampler_noise_identity_verified"
     ]
+
+
+def _comparison_trace(success: bool) -> list[dict]:
+    trace, placed = _ordered_surface_trace()
+    trace.extend([placed, placed])
+    trace.extend([placed] * (48 - len(trace)))
+    if not success:
+        trace = [{**row, "hand_object_distance_m": 0.05} for row in trace]
+    return [
+        {**row, "simulator_time_s": (index + 1) / 15.0}
+        for index, row in enumerate(trace)
+    ]
+
+
+def _comparison_proofs(decision: int) -> list[dict]:
+    proofs = []
+    for local_index in range(8):
+        index = decision * 8 + local_index
+        proofs.append(
+            {
+                "terminated": False,
+                "truncated": False,
+                "physics_observation_status": "recorded",
+                "physics_trace_index": index,
+                "command_application_time_s": index / 15.0,
+                "resulting_state_time_s": (index + 1) / 15.0,
+            }
+        )
+    return proofs
+
+
+def _comparison_inference(
+    mode: str, seed: int, decision: int, source: str, policy: str
+):
+    noise = hashlib.sha256(f"noise-{seed}-{decision}".encode()).hexdigest()
+    transform_hash = hashlib.sha256(f"transform-{policy}".encode()).hexdigest()
+    return {
+        "shape": [15, 8],
+        "dtype": "float64",
+        "finite": True,
+        "sampler_noise_sha256": noise,
+        "sampler_noise_shape": [15, 32],
+        "sampling_sequence": f"scene-{seed}-decision-{decision}",
+        "wire_input": {
+            "payload_sha256": "d" * 64,
+            "exterior_rgb_sha256": "e" * 64,
+            "wrist_rgb_sha256": policy,
+            "wrist_source_hash_matched": True,
+            "capture_age_s": 0.0,
+        },
+        "model_wrist_transform": {
+            "schema": "npa.openpi.pi05-live-wrist-transform.v1",
+            "source_wrist_sha256": policy,
+            "left_wrist_0_rgb_sha256": transform_hash,
+            "right_wrist_0_rgb_sha256": "0" * 64,
+            "left_wrist_mask": True,
+            "right_wrist_mask": False,
+        },
+        "wrist_intervention": {
+            "mode": mode,
+            "decision": decision,
+            "source_sha256": source,
+            "policy_sha256": policy,
+        },
+    }
+
+
+def _comparison_query(mode: str, seed: int, decision: int) -> dict:
+    source = hashlib.sha256(f"source-{seed}-{decision}".encode()).hexdigest()
+    frozen = hashlib.sha256(f"source-{seed}-0".encode()).hexdigest()
+    policy = frozen if mode == "frozen" else source
+    if mode == "pixel_channel_shuffle":
+        policy = hashlib.sha256(f"shuffle-{seed}-{decision}".encode()).hexdigest()
+    return {
+        "decision": decision,
+        "observation_time_s": decision * 8 / 15.0,
+        "wrist_rgb_sha256": source,
+        "exterior_rgb_sha256": "e" * 64,
+        "execution_status": "completed",
+        "attempted_prefix": 8,
+        "executed_prefix": 8,
+        "controller_proofs": _comparison_proofs(decision),
+        "action_receipt": {"sha256": "a" * 64, "shape": [15, 8]},
+        "inference": _comparison_inference(mode, seed, decision, source, policy),
+    }
+
+
+def _comparison_episode(mode: str, seed: int, success: bool) -> dict:
+    trace = _comparison_trace(success)
+    visibility = {
+        phase: {
+            "samples": 1,
+            "wrist_visible_samples": 1,
+            "exterior_visible_samples": 1,
+            "destination_exterior_visible_samples": 1,
+            "both_fingers_rendered_samples": 1,
+        }
+        for phase in ("approach", "grasp", "lift", "transport", "lower", "release")
+    }
+    camera = {
+        "wrist_world_motion_m": 0.1,
+        "hand_world_motion_m": 0.1,
+        "wrist_renderer_world_motion_m": 0.1,
+        "wrist_mount_distance_drift_m": 0.0,
+        "wrist_mount_angular_drift_rad": 0.0,
+        "exterior_world_drift_m": 0.0,
+        "wrist_renderer_position_error_m": 0.0,
+        "wrist_renderer_orientation_error_rad": 0.0,
+        "phase_visibility": visibility,
+    }
+    return {
+        "scenario_seed": seed,
+        "wrist_ablation_mode": mode,
+        "queries": [_comparison_query(mode, seed, decision) for decision in range(6)],
+        "physics_trace": trace,
+        "camera_evidence": camera,
+        "success": _success(trace),
+    }
+
+
+def _comparison_geometry() -> dict:
+    return {
+        "source_untransformed_extent_m": [0.06, 0.06, 0.06],
+        "effective_local_extent_m": [0.072, 0.072, 0.072],
+        "source_untransformed_center_m": [0.0, 0.0, 0.0],
+        "declared_spawn_scale": [1.2, 1.2, 1.2],
+        "grasp_width_axis": "object_local_y",
+        "measurement": "UsdGeom.BBoxCache composed runtime prim",
+        "grasp_width_m": 0.072,
+        "support_height_m": 0.072,
+    }
+
+
+def _comparison_scenarios() -> list[dict]:
+    return [
+        {
+            "scene_seed": seed,
+            "initial_object_position_m": [0.45, -0.15, 0.036],
+            "target_position_m": [0.5, 0.18, 0.036],
+            "destination_marker": _marker_receipt(),
+            "support_surface": support_surface_contract(),
+        }
+        for seed in (20281007, 20281008)
+    ]
+
+
+def _comparison_protocol() -> dict:
+    protocol = {
+        "task": "released_supported_surface_placement_v1",
+        "split": "gold",
+        "seed": 20281007,
+        "episodes": 2,
+        "decisions": 6,
+        "object_identity": "multicolor-cube-72mm",
+        "object_usd": "task_default",
+        "object_scale": [1.2, 1.2, 1.2],
+        "object_width_m": 0.072,
+        "object_height_m": 0.072,
+        "object_geometry": _comparison_geometry(),
+        "scene_id": "pi05-single-body-support-layout-v1",
+        "destination_marker_contract": _marker_receipt(),
+        "support_surface_contract": support_surface_contract(),
+        "robot_plant": _robot_plant(),
+        "control_hz": 15,
+        "execution_prefix": 8,
+        "scenarios": _comparison_scenarios(),
+    }
+    pi05_closed_loop._bind_protocol_hashes(protocol)
+    return protocol
+
+
+def _effectiveness_report(role: str, successes: dict[str, set[int]]) -> dict:
+    modes = list(pi05_closed_loop.WRIST_ABLATION_MODES)
+    seeds = (20281007, 20281008)
+    episodes = [
+        _comparison_episode(mode, seed, seed in successes.get(mode, set()))
+        for mode in modes
+        for seed in seeds
+    ]
+    args = Namespace(checkpoint_role=role, split="gold", wrist_ablation_modes=modes)
+    artifacts = {
+        "mp4": {"bytes": 10, "frames": 36, "ffprobe": [{"codec_name": "h264"}]},
+        "rrd": {
+            "bytes": 20,
+            "timeline_rows": 288,
+            "rerun_verify": True,
+            "decoded_expected_entity": True,
+        },
+    }
+    protocol = _comparison_protocol()
+    receipt = {
+        "source_commit": "c" * 40,
+        "config_name": "pi05_droid",
+        "checkpoint_role": role,
+        "checkpoint_sha256": ("1" if role == "base" else "4") * 64,
+        "checkpoint_manifest_sha256": ("2" if role == "base" else "5") * 64,
+        "image_digest": "3" * 64,
+    }
+    return pi05_closed_loop._result(args, episodes, artifacts, protocol, receipt)
+
+
+def test_final_comparison_uses_validated_fresh_wrist_metric() -> None:
+    baseline = _effectiveness_report("base", {"frozen": {20281007, 20281008}})
+    adapted = _effectiveness_report("adapted", {"fresh": {20281007}})
+
+    comparison = pi05_stage._comparison(baseline, adapted)
+
+    assert baseline["success_rate"] > adapted["success_rate"]
+    assert comparison["evaluation_contract_valid"] is True
+    assert comparison["baseline_success_rate"] == 0.0
+    assert comparison["adapted_success_rate"] == 0.5
+    assert comparison["measured_improvement"] == 0.5
+    assert comparison["improvement_claimed"] is True
+
+
+def _mutate_effectiveness_report(report: dict, mutation: str) -> dict:
+    invalid = copy.deepcopy(report)
+    if mutation == "execution":
+        invalid["episodes"][0]["queries"][0]["executed_prefix"] = 7
+    elif mutation == "noise":
+        invalid["episodes"][0]["queries"][0]["inference"]["sampler_noise_sha256"] = (
+            "e" * 64
+        )
+    elif mutation == "camera":
+        invalid["episodes"][0].pop("camera_evidence")
+    elif mutation == "artifact":
+        invalid["review_artifacts"]["rrd"]["rerun_verify"] = False
+    elif mutation == "intervention":
+        invalid["episodes"][0]["queries"][0]["inference"]["wrist_intervention"][
+            "mode"
+        ] = "frozen"
+    elif mutation == "summary":
+        invalid["wrist_ablation"]["per_mode"]["fresh"]["success_rate"] = 1.0
+    elif mutation == "protocol":
+        invalid["protocol"]["scenario_sha256"] = []
+    elif mutation == "physics":
+        invalid["episodes"][0]["physics_trace"] = [
+            {**row, "hand_object_distance_m": 0.05}
+            for row in invalid["episodes"][0]["physics_trace"]
+        ]
+    elif mutation == "wire":
+        invalid["episodes"][0]["queries"][0]["inference"]["wire_input"][
+            "wrist_rgb_sha256"
+        ] = "9" * 64
+    else:
+        invalid["episodes"][0]["queries"][0]["inference"]["model_wrist_transform"][
+            "left_wrist_mask"
+        ] = False
+    return invalid
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "execution",
+        "noise",
+        "camera",
+        "artifact",
+        "intervention",
+        "summary",
+        "protocol",
+        "physics",
+        "wire",
+        "transform",
+    ],
+)
+def test_final_comparison_rejects_invalid_effectiveness_report(mutation: str) -> None:
+    baseline = _effectiveness_report("base", {})
+    adapted = _effectiveness_report("adapted", {"fresh": {20281007}})
+    invalid = _mutate_effectiveness_report(adapted, mutation)
+
+    comparison = pi05_stage._comparison(baseline, invalid)
+
+    assert comparison["evaluation_contract_valid"] is False
+    assert comparison["comparison_protocol_identical"] is False
+    assert comparison["measured_improvement"] is None
+    assert comparison["improvement_claimed"] is False
+    assert comparison["evaluation_contract_rejections"]["adapted"]
+
+
+def test_final_comparison_rejects_rehashed_different_task() -> None:
+    baseline = _effectiveness_report("base", {})
+    adapted = _effectiveness_report("adapted", {"fresh": {20281007}})
+    adapted["protocol"].pop("sha256")
+    adapted["protocol"].pop("scenario_sha256")
+    adapted["protocol"]["task"] = "different_task"
+    pi05_closed_loop._bind_protocol_hashes(adapted["protocol"])
+
+    comparison = pi05_stage._comparison(baseline, adapted)
+
+    assert comparison["evaluation_contract_valid"] is False
+    assert comparison["improvement_claimed"] is False
+
+
+@pytest.mark.parametrize("key", ["source_commit", "config_name", "image_digest"])
+def test_final_comparison_rejects_different_evaluator_runtime(key: str) -> None:
+    baseline = _effectiveness_report("base", {})
+    adapted = _effectiveness_report("adapted", {"fresh": {20281007}})
+    adapted["checkpoint_provenance"][key] = (
+        "6" * 40 if key == "source_commit" else "6" * 64
+    )
+
+    comparison = pi05_stage._comparison(baseline, adapted)
+
+    assert comparison["evaluation_contract_valid"] is True
+    assert comparison["comparison_protocol_identical"] is False
+    assert comparison["improvement_claimed"] is False
+
+
+def test_final_comparison_rejects_same_checkpoint_with_new_manifest() -> None:
+    baseline = _effectiveness_report("base", {})
+    adapted = _effectiveness_report("adapted", {"fresh": {20281007}})
+    adapted["checkpoint_provenance"]["checkpoint_sha256"] = baseline[
+        "checkpoint_provenance"
+    ]["checkpoint_sha256"]
+
+    comparison = pi05_stage._comparison(baseline, adapted)
+
+    assert comparison["evaluation_contract_valid"] is True
+    assert comparison["comparison_protocol_identical"] is False
+    assert comparison["improvement_claimed"] is False
+
+
+@pytest.mark.parametrize("mutation", ["noise_shape", "frozen_hash", "camera_nan"])
+def test_final_comparison_rejects_invalid_paired_evidence(mutation: str) -> None:
+    baseline = _effectiveness_report("base", {})
+    adapted = _effectiveness_report("adapted", {"fresh": {20281007}})
+    episode = adapted["episodes"][2]
+    if mutation == "noise_shape":
+        episode["queries"][0]["inference"]["sampler_noise_shape"] = [1, 1]
+    elif mutation == "frozen_hash":
+        lineage = episode["queries"][1]["inference"]
+        lineage["wrist_intervention"]["policy_sha256"] = "7" * 64
+        lineage["wire_input"]["wrist_rgb_sha256"] = "7" * 64
+        lineage["model_wrist_transform"]["source_wrist_sha256"] = "7" * 64
+    else:
+        episode["camera_evidence"]["wrist_world_motion_m"] = float("nan")
+
+    comparison = pi05_stage._comparison(baseline, adapted)
+
+    assert comparison["evaluation_contract_valid"] is False
+    assert comparison["improvement_claimed"] is False
+
+
+@pytest.mark.parametrize("mutation", ["zero_fingers", "missing_release"])
+def test_final_comparison_requires_fresh_manipulation_visibility(mutation: str) -> None:
+    baseline = _effectiveness_report("base", {})
+    adapted = _effectiveness_report("adapted", {"fresh": {20281007}})
+    visibility = adapted["episodes"][0]["camera_evidence"]["phase_visibility"]
+    if mutation == "zero_fingers":
+        visibility["grasp"]["both_fingers_rendered_samples"] = 0
+    else:
+        visibility.pop("release")
+
+    comparison = pi05_stage._comparison(baseline, adapted)
+
+    assert comparison["evaluation_contract_valid"] is False
+    assert comparison["improvement_claimed"] is False
 
 
 def test_episode_failure_redacts_query_and_top_level_uri(monkeypatch) -> None:
