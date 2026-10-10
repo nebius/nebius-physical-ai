@@ -93,6 +93,14 @@ def is_terminal_managed_job_status(value: object) -> bool:
     return status in _TERMINAL_MANAGED_JOB_STATUSES
 
 
+def _managed_job_is_drained(value: object) -> bool:
+    """Require authoritative workload terminality before destructive cleanup."""
+    status = str(value or "").strip().upper()
+    # SkyPilot's controller-failed status is terminal for scheduling, but the
+    # controller has lost authoritative workload state. Preserve recovery state.
+    return status != "FAILED_CONTROLLER" and is_terminal_managed_job_status(status)
+
+
 JOBS_CONTROLLER_PATTERN = "sky-jobs-controller-*"
 RUN_ID_MIN_LENGTH = 12
 _RUN_ID_ALLOWED_RE = re.compile(r"^[A-Za-z0-9-]+$")
@@ -916,7 +924,7 @@ def _verify_managed_job_convergence(
     if evidence.outcome == "unavailable":
         return f"unavailable:{evidence.error or 'provider unavailable'}"
     status = str(evidence.status or "").strip().upper()
-    if is_terminal_managed_job_status(status):
+    if _managed_job_is_drained(status):
         return "terminal"
     return status or "UNKNOWN"
 
@@ -954,7 +962,7 @@ def cleanup_all_for_run(
         )
         return cleanup
     for job in matching_jobs:
-        if not is_terminal_managed_job_status(job.get("status")):
+        if not _managed_job_is_drained(job.get("status")):
             job_id = str(job.get("job_id") or job.get("id"))
             cleanup.extend(
                 _cancel_job(
@@ -1128,7 +1136,7 @@ def wait_for_jobs_terminal(
         still_running = [
             job_id
             for job_id, status in _job_statuses(snapshot.jobs).items()
-            if job_id in wanted and not is_terminal_managed_job_status(status)
+            if job_id in wanted and not _managed_job_is_drained(status)
         ]
         if not still_running:
             return True, []
@@ -1148,7 +1156,7 @@ def _job_statuses(jobs: Sequence[dict[str, Any]]) -> dict[str, str]:
         status = str(job.get("status") or "").upper()
         # A job group reports one row per task; the job is only terminal once
         # every one of its rows is.
-        if job_id in statuses and not is_terminal_managed_job_status(statuses[job_id]):
+        if job_id in statuses and not _managed_job_is_drained(statuses[job_id]):
             continue
         statuses[job_id] = status
     return statuses
@@ -1168,7 +1176,7 @@ def _nonterminal_job_ids(
     return sorted(
         job_id
         for job_id, status in _job_statuses(snapshot.jobs).items()
-        if not is_terminal_managed_job_status(status)
+        if not _managed_job_is_drained(status)
     )
 
 

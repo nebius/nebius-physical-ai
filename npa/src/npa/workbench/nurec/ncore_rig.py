@@ -50,8 +50,9 @@ WORLD_FRAME = "world"
 #: only once across a sequence's stores, so re-using ``default`` collides with the
 #: sequence's own poses component. NRE selects it with
 #: ``dataset.poses_component_group=<this>``, which is why the derived component
-#: carries a COMPLETE copy of the original edges plus the rig edge — selecting a
-#: group replaces the pose set rather than merging with it.
+#: replaces the pose set rather than merging with it. Legacy derivation copies
+#: original edges; COLMAP frame-pose mode uses virtual static calibrations and
+#: one disjoint photographic timeline containing every original camera pose.
 DERIVED_POSES_GROUP = "npa_rig"
 #: Store-file suffix for the derived store: ``<sequence>.ncore4-<group>.zarr.itar``.
 DERIVED_GROUP_NAME = "npa_rig"
@@ -298,6 +299,7 @@ def derive_rig_poses(
     output_dir: Path | str,
     reference_camera: str = "",
     sequence_meta_name: str = "",
+    frame_pose_overwrite: bool = False,
 ) -> RigPoseResult:
     """Write a derived NCore sequence that adds the ``rig -> world`` edge.
 
@@ -336,6 +338,10 @@ def derive_rig_poses(
         trajectories, pose_source = _camera_world_trajectories(reader)
         chosen = select_reference_camera(trajectories, preferred=reference_camera)
         poses, timestamps = trajectories[chosen]
+        if frame_pose_overwrite:
+            from npa.workbench.nurec.colmap_timeline import merge_world_trajectories
+
+            poses, timestamps = merge_world_trajectories(trajectories)
     except NurecError:
         raise
     except Exception as exc:  # noqa: BLE001 - surface library/IO failures as a result
@@ -372,6 +378,15 @@ def derive_rig_poses(
             SequenceComponentGroupsReader,
             SequenceComponentGroupsWriter,
         )
+        from npa.workbench.nurec.ncore_frame_poses import (
+            _camera_frame_poses,
+            _require_reference_coverage,
+            _write_static_calibrations,
+        )
+
+        virtual_cameras = _camera_frame_poses(reader) if frame_pose_overwrite else set()
+        if virtual_cameras:
+            _require_reference_coverage(reader, timestamps)
 
         writer = SequenceComponentGroupsWriter.from_reader(
             output_dir_path=_upath(target_dir),
@@ -386,21 +401,18 @@ def derive_rig_poses(
             generic_meta_data={
                 "derived_by": "npa.workbench.nurec.ncore_rig",
                 "derivation": (
-                    "rig == reference camera; rig->world is that camera's "
-                    "sensor-to-world trajectory"
+                    "virtual rig matches each independent camera at disjoint photographic indices"
+                    if frame_pose_overwrite
+                    else "rig == reference camera; rig->world is that camera's sensor-to-world trajectory"
                 ),
                 "reference_camera": chosen,
                 "pose_source": pose_source,
             },
         )
-        # Selecting a poses component group REPLACES the pose set, so every original
-        # edge is copied across before the derived rig edge is appended. A
-        # `<camera> -> rig` static identity is deliberately NOT written: the copied
-        # `<camera> -> world` edges already position the cameras, and adding both
-        # would give the pose graph two routes between the same frames.
-        # NCore stores each edge in ONE direction (store_dynamic_pose refuses a pair
-        # whose inverse already exists), so copying every edge verbatim cannot
-        # duplicate a relation.
+        # Selecting this group replaces the pose set. Legacy mode copies original
+        # edges. Frame-pose mode replaces camera edges with virtual static
+        # calibrations; NRE restores their actual world poses from frame data.
+        # Retaining both routes in one graph would make camera poses ambiguous.
         copied_dynamic: list[str] = []
         copied_static: list[str] = []
         for source_reader in reader.open_component_readers(
@@ -410,7 +422,10 @@ def derive_rig_poses(
                 edge_poses,
                 edge_ts,
             ) in source_reader.get_dynamic_poses():
-                if {edge_from, edge_to} == {RIG_FRAME, WORLD_FRAME}:
+                if {edge_from, edge_to} == {
+                    RIG_FRAME,
+                    WORLD_FRAME,
+                } or edge_from in virtual_cameras:
                     continue
                 poses_writer.store_dynamic_pose(
                     source_frame_id=edge_from,
@@ -421,12 +436,15 @@ def derive_rig_poses(
                 )
                 copied_dynamic.append(f"{edge_from}->{edge_to}")
             for (edge_from, edge_to), edge_pose in source_reader.get_static_poses():
+                if edge_from in virtual_cameras:
+                    continue
                 poses_writer.store_static_pose(
                     source_frame_id=edge_from,
                     target_frame_id=edge_to,
                     pose=edge_pose,
                 )
                 copied_static.append(f"{edge_from}->{edge_to}")
+        _write_static_calibrations(poses_writer, virtual_cameras)
         poses_writer.store_dynamic_pose(
             source_frame_id=RIG_FRAME,
             target_frame_id=WORLD_FRAME,
@@ -495,6 +513,11 @@ def derive_rig_poses(
                 "poses_component_group": DERIVED_POSES_GROUP,
                 "pose_count": int(len(timestamps)),
                 "cameras": sorted(trajectories),
+                **(
+                    {"frame_pose_mode": "independent-camera-virtual-time-v2"}
+                    if frame_pose_overwrite
+                    else {}
+                ),
             },
             indent=2,
             sort_keys=True,

@@ -149,6 +149,8 @@ jobs:
           contract = yaml.safe_load(Path("npa/docker/workbench/packaging-contract.yaml").read_text())
           entries = contract["images"]
           build_tools = tools("BUILD_TOOLS")
+          if "ncore" in build_tools:
+              raise SystemExit("NCore Actions publication is quarantined: use the private acceptance-bundle CLI route")
           # #504: automatic triggers (push/schedule) must build dev images so
           # dev-<sha> tags track HEAD; `inputs.*` is undefined on those events,
           # so derive the tool list instead of resolving an empty matrix.
@@ -156,6 +158,8 @@ jobs:
               build_tools = _automatic_build_tools(
                   os.environ.get("EVENT_NAME", ""), entries, sha
               )
+          # No private, reviewed acceptance-bundle transport exists for Actions.
+          build_tools = [tool for tool in build_tools if tool != "ncore"]
           lerobot_version = os.environ.get("LEROBOT_VERSION", "").strip()
           if lerobot_version:
               manifest = json.loads(Path("npa/src/npa/deploy/lerobot_version_manifest.json").read_text())
@@ -242,6 +246,13 @@ jobs:
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
+      - name: Refuse unsupported NCore Actions publication
+        if: matrix.tool == 'ncore'
+        run: |
+          set -euo pipefail
+          echo "NCore Actions publication is quarantined: no private acceptance-bundle transport is configured." >&2
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -968,30 +979,6 @@ jobs:
             .accepted_manifest_present == false and
             .release_authorized == false
           ' "$payload" >/dev/null
-
-      - name: Gate and publish the exact NCore OCI graph
-        if: matrix.tool == 'ncore'
-        env:
-          CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
-          INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          umask 077
-          sudo apt-get update
-          sudo apt-get install -y skopeo
-          cp "${DOCKER_CONFIG:-$HOME/.docker}/config.json" "$NCORE_OCI_ROOT/registry-auth.json"
-          chmod 0600 "$NCORE_OCI_ROOT/registry-auth.json"
-          npa/.venv/bin/python npa/scripts/publish_ncore_oci.py publish \
-            --source-sha "$DEVELOPMENT_SHA" --analysis-root "$NCORE_OCI_ROOT" \
-            --output-dir "$NCORE_OCI_ROOT/prepublication" \
-            --annex "$NCORE_OCI_ROOT/sources" --native-source "$NCORE_OCI_ROOT/sources" \
-            --metadata "$NCORE_OCI_ROOT/metadata" --bootstrap-source "$NCORE_OCI_ROOT/bootstrap-source" \
-            --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg" \
-            --authfile "$NCORE_OCI_ROOT/registry-auth.json"
-          echo "NCore exact OCI development publication verified anonymously; RTX acceptance remains required." >> "$GITHUB_STEP_SUMMARY"
-          # Raw scanner output, denylist inputs and auth remain private. Never
-          # upload the analysis root as a public Actions artifact.
 
       - name: Push only after every pre-publication gate passes
         if: matrix.tool != 'ncore'

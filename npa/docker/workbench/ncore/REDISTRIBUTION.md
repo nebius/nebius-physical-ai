@@ -8,13 +8,13 @@ separate proprietary operations.
 ## Narrow dependency boundary
 
 The image carries CPython/Debian bootstrap tools, the pinned official NCore
-converter/V4 reader Python source, trueprice's COLMAP reader, and 19 NPA source
-files (including two compatibility aliases). It does not install the NPA Python
-distribution. `npa.workflows.ncore` registers the existing
-`npa.cli.nurec.convert_colmap_cmd` callback; conversion, path validation, JSON
-output, rig derivation, full sequence validation, and immutable S3 publication
-continue to use the existing shared implementation. Public CLI and SDK source
-outside the image is unchanged.
+converter/V4 reader Python source, trueprice's COLMAP reader, and 25 NPA import
+paths (23 source files and two compatibility aliases). It does not install the NPA Python
+distribution. `npa.workflows.ncore` registers the existing conversion callback
+and the independent post-S3 audit callback. Conversion, path validation, JSON
+output, rig derivation, full sequence validation, immutable S3 publication, and
+fresh-prefix read-back continue to use the shared implementation. Public CLI and
+SDK expose the same two operations.
 
 The explicit `COPY` list is the NPA import closure: package initializers,
 `_sdk`, `errors`, `lifecycle_intent`, `clients.storage`, `cli.path_contract`, the
@@ -117,9 +117,15 @@ required base-component notices remain included.
 
 `source-lock.json` binds the upstream archive hashes. The stager retains source
 and build/licensing metadata, applies NVIDIA's original
-`deps/pycolmap/fix-python3-map.patch`, and marks two narrowly checked NPA changes:
-the unsigned maximum point sentinel remains valid under NumPy 1 and 2; and each
-downsampled camera uses its own calibration. Patches fail on source-context drift.
+`deps/pycolmap/fix-python3-map.patch`, and marks the narrow NPA changes: the unsigned maximum point sentinel remains
+valid under NumPy 1 and 2; text readers distinguish blank records from EOF;
+downsampled cameras use their own calibration and verified resized masks; and
+each frame retains its actual camera-to-world poses in `T_sensor_worlds`. The
+last change composes parent poses for downsampled cameras. Independent cameras
+also receive disjoint virtual photographic intervals; downsampled aliases retain
+their parent's interval. A merged virtual rig preserves the poses consumed by
+native training. No physical capture timing is inferred. Patches fail on
+source-context drift.
 Every retained post-patch source file is hashed in `source-inventory.json`.
 The actual converter is NVIDIA's `//tools/data_converter/colmap:convert` Python
 module, not a replacement conversion implementation or PyPI's unrelated pycolmap.
@@ -230,15 +236,17 @@ it is not evidence for a newly built image;
 any mismatch must be resolved against real bytes, never skipped. Runtime
 artifacts need their own recorded hashes, license/security review and successful
 cold/warm execution. Import checks cannot replace complete real-capture
-conversion, independent image/calibration/pose/point decoding, immutable S3
-handoff and the existing NRE RTX consumer. Quarantine, immutable image override
-and anonymous digest pullability requirements remain unchanged.
+conversion, the separate audit command's independent
+image/calibration/pose/point decoding from an enumerated immutable S3 handoff,
+and the existing NRE RTX consumer. Quarantine, immutable image override and
+anonymous digest pullability requirements remain unchanged.
 
-The acceptance record also binds source camera/frame inventories to native NRE
-loaded-frame counts, eligible training/validation splits, the resolved config,
-and the exact native recipe. These inventories describe available and eligible
-inputs; they do not invent a trace of randomly sampled training frames. The
-selected recipe's complete execution must be observed independently. Its RRD
-evidence must bind decoded frames and lineage to this conversion and the actual
-render artifacts. Missing cameras, unexplained frame loss, reduced recipe
-settings, and substituted or undecodable recordings cannot establish acceptance.
+The acceptance record binds the complete source camera/frame inventory to the
+exact NCore sequence passed to NRE, the resolved config, and the native recipe.
+NRE does not expose train/validation member identities or a random-sampler
+trace, so acceptance explicitly records `sampling_claim=not_asserted` and makes
+no per-frame training-participation claim. The selected recipe's complete
+execution must be observed independently. Its RRD evidence must bind decoded
+frames and lineage to this conversion and the actual render artifacts. Missing
+cameras, unexplained input loss, reduced recipe settings, and substituted or
+undecodable recordings cannot establish acceptance.

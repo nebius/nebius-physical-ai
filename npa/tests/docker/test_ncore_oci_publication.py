@@ -17,7 +17,16 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "npa/scripts"))
 
 from image_byte_scan import core as W  # noqa: E402
-from ncore_publication import artifact, cli, gates, process, provenance, registry  # noqa: E402
+from ncore_publication import (  # noqa: E402
+    acceptance,
+    artifact,
+    cli,
+    gates,
+    process,
+    provenance,
+    registry,
+)
+from npa.deploy import images  # noqa: E402
 
 SHA = "a" * 40
 
@@ -419,11 +428,183 @@ def test_publication_reexecutes_gates_instead_of_trusting_a_pass_file(
     )
     calls = []
     monkeypatch.setattr(
-        gates, "verify", lambda *_: (calls.append("all gates") or {}, {})
+        gates,
+        "verify",
+        lambda *_: (
+            calls.append("all gates")
+            or {
+                "image_manifest_digest": "sha256:" + "c" * 64,
+                "image_config_digest": "sha256:" + "d" * 64,
+            },
+            {},
+        ),
+    )
+    evidence = private / "evidence-manifest.json"
+    evidence.write_text("{}")
+    monkeypatch.setattr(cli, "_gate_evidence_manifest", lambda *_: evidence)
+    monkeypatch.setattr(
+        cli,
+        "_require_accepted_publication",
+        lambda *_: calls.append("accepted workload"),
     )
     monkeypatch.setattr(registry, "transfer", lambda *_: calls.append("transfer"))
     cli._check_or_publish(args)
-    assert calls == ["all gates", "transfer"]
+    assert calls == ["all gates", "accepted workload", "transfer"]
+
+
+def test_publication_cannot_transfer_quarantined_bytes_without_acceptance(
+    private, monkeypatch
+):
+    build = _build_receipt(private)
+    args = SimpleNamespace(
+        analysis_root=private,
+        source_sha=SHA,
+        action="publish",
+        output_dir=private / "gates",
+    )
+    graph = {
+        "image_manifest_digest": "sha256:" + "c" * 64,
+        "image_config_digest": "sha256:" + "d" * 64,
+    }
+    monkeypatch.setattr(gates, "verify", lambda *_: (graph, {}))
+    evidence = private / "evidence-manifest.json"
+    evidence.write_text("{}")
+    monkeypatch.setattr(cli, "_gate_evidence_manifest", lambda *_: evidence)
+    monkeypatch.setattr(
+        images,
+        "ncore_accepted_image_manifest",
+        lambda: pytest.fail("in-tree acceptance fallback must not be consulted"),
+    )
+    monkeypatch.setattr(
+        registry,
+        "transfer",
+        lambda *_: pytest.fail("registry write reached without acceptance"),
+    )
+    with pytest.raises(ValueError, match="publication_acceptance_required"):
+        cli._check_or_publish(args)
+    assert (
+        json.loads((args.output_dir / "prepublication.json").read_text())[
+            "image_digest"
+        ]
+        == build["image_digest"]
+    )
+
+
+def test_publication_acceptance_must_match_exact_graph_and_archive(
+    monkeypatch, tmp_path
+):
+    graph = {
+        "image_manifest_digest": "sha256:" + "c" * 64,
+        "image_config_digest": "sha256:" + "d" * 64,
+    }
+    build = {"image_digest": "sha256:" + "b" * 64, "archive_sha256": "e" * 64}
+    evidence_manifest_sha256 = "f" * 64
+    accepted = {
+        "development_sha": SHA,
+        "oci_digest": build["image_digest"],
+        "amd64_manifest": graph["image_manifest_digest"],
+        "config_digest": graph["image_config_digest"],
+        "prepublication": {
+            "archive_sha256": build["archive_sha256"],
+            "evidence_manifest_sha256": evidence_manifest_sha256,
+        },
+    }
+    path = tmp_path / "acceptance" / "accepted.json"
+    monkeypatch.setattr(
+        acceptance, "verify_final_acceptance", lambda *_: copy.deepcopy(accepted)
+    )
+    from ncore_publication import publication_binding
+
+    monkeypatch.setattr(publication_binding, "verify", lambda *_: None)
+    assert (
+        cli._require_accepted_publication(
+            SHA, build, graph, evidence_manifest_sha256, path
+        )["oci_digest"]
+        == build["image_digest"]
+    )
+    accepted["development_sha"] = "f" * 40
+    with pytest.raises(ValueError, match="does_not_match"):
+        cli._require_accepted_publication(
+            SHA, build, graph, evidence_manifest_sha256, path
+        )
+    accepted["development_sha"] = SHA
+    accepted["prepublication"]["archive_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="does_not_match"):
+        cli._require_accepted_publication(SHA, build, graph, "0" * 64, path)
+
+
+def test_publication_can_consume_external_acceptance_at_exact_candidate(
+    monkeypatch, tmp_path
+):
+    graph = {
+        "image_manifest_digest": "sha256:" + "c" * 64,
+        "image_config_digest": "sha256:" + "d" * 64,
+    }
+    build = {"image_digest": "sha256:" + "b" * 64, "archive_sha256": "e" * 64}
+    evidence_manifest_sha256 = "f" * 64
+    accepted = {
+        "development_sha": SHA,
+        "oci_digest": build["image_digest"],
+        "amd64_manifest": graph["image_manifest_digest"],
+        "config_digest": graph["image_config_digest"],
+        "prepublication": {
+            "archive_sha256": build["archive_sha256"],
+            "evidence_manifest_sha256": evidence_manifest_sha256,
+        },
+    }
+    path = tmp_path / "accepted.json"
+    path.write_text(json.dumps(accepted))
+    monkeypatch.setattr(
+        acceptance,
+        "verify_final_acceptance",
+        lambda analysis_root, acceptance_path: accepted,
+    )
+    from ncore_publication import publication_binding
+
+    bindings = []
+    monkeypatch.setattr(
+        publication_binding, "verify", lambda *args: bindings.append(args)
+    )
+    monkeypatch.setattr(
+        images,
+        "ncore_accepted_image_manifest",
+        lambda: pytest.fail("in-tree post-run mutation was consulted"),
+    )
+
+    with W.authorized_roots(tmp_path, ROOT):
+        result = cli._require_accepted_publication(
+            SHA,
+            build,
+            graph,
+            evidence_manifest_sha256,
+            path,
+        )
+
+    assert result == accepted
+    assert bindings == [(accepted, path.absolute(), Path(evidence_manifest_sha256))]
+
+
+def test_gate_evidence_manifest_binds_every_existing_gate_artifact(private):
+    directory = private / "gates"
+    (directory / "bytes").mkdir(parents=True)
+    (directory / "graph.json").write_text('{"graph":"verified"}')
+    (directory / "bytes/report.json").write_text('{"complete":true}')
+    build = {"image_digest": "sha256:" + "b" * 64, "archive_sha256": "e" * 64}
+    graph = {
+        "image_manifest_digest": "sha256:" + "c" * 64,
+        "image_config_digest": "sha256:" + "d" * 64,
+    }
+    output = cli._gate_evidence_manifest(directory, SHA, build, graph)
+    receipt = json.loads(output.read_text())
+    assert receipt["source_sha"] == SHA
+    assert {row["path"] for row in receipt["files"]} == {
+        "bytes/report.json",
+        "graph.json",
+    }
+    for row in receipt["files"]:
+        path = directory / row["path"]
+        assert row["bytes"] == path.stat().st_size
+        assert row["sha256"] == process.file_sha(path)
 
 
 def test_build_metadata_cannot_redirect_the_gated_digest(private, monkeypatch):
@@ -443,7 +624,9 @@ def test_build_metadata_cannot_redirect_the_gated_digest(private, monkeypatch):
 
 
 @pytest.mark.parametrize("observed", [None, "same", "different"])
-def test_immutable_tag_is_preserved_or_refused(private, monkeypatch, observed):
+def test_preacceptance_tag_must_be_absent_for_authenticated_and_anonymous_reads(
+    private, monkeypatch, observed
+):
     path, digest, _ = _archive(private)
     graph, verification = artifact.inspect(path, digest)
     build = private / "build"
@@ -464,16 +647,13 @@ def test_immutable_tag_is_preserved_or_refused(private, monkeypatch, observed):
     monkeypatch.setattr(registry, "_readback", lambda *_: calls.append("readback"))
     args = SimpleNamespace(analysis_root=private, authfile=private / "auth.json")
     receipt = {"image": gates.eligibility(SHA), "image_digest": digest}
-    if observed == "different":
-        with pytest.raises(ValueError, match="divergent"):
+    if observed is not None:
+        with pytest.raises(ValueError, match="preexisted"):
             registry.transfer(args, private, receipt, graph, verification)
         assert calls == []
     else:
         assert registry.transfer(args, private, receipt, graph, verification) == digest
-        assert calls == (["copy"] if observed is None else []) + [
-            "visibility",
-            "readback",
-        ]
+        assert calls == ["copy", "visibility", "readback"]
 
 
 @pytest.mark.parametrize(
@@ -489,6 +669,27 @@ def test_registry_errors_are_never_tag_absence(private, monkeypatch, error):
         registry._observed(
             gates.eligibility(SHA), private / "existing.json", private / "auth.json"
         )
+
+
+def test_anonymous_prepublication_lookup_disables_credentials(private, monkeypatch):
+    commands = []
+
+    def run(argv, **_kwargs):
+        commands.append(argv)
+        return subprocess.CompletedProcess(argv, 1, b"", b"manifest unknown")
+
+    monkeypatch.setattr(registry.subprocess, "run", run)
+    assert (
+        registry._observed(
+            gates.eligibility(SHA),
+            private / "anonymous-existing.json",
+            private / "empty-auth.json",
+            True,
+        )
+        is None
+    )
+    assert "--no-creds" in commands[0]
+    assert "--authfile" in commands[0]
 
 
 def test_copy_uses_all_manifests_and_preserves_original_digests(private, monkeypatch):
@@ -717,6 +918,38 @@ def test_private_inputs_reject_context_aliases_and_metadata_mixing(
         cli._inputs(args)
 
 
+@pytest.mark.parametrize("action", ["check", "publish"])
+def test_cli_acceptance_is_mandatory_and_publish_only(private, monkeypatch, action):
+    monkeypatch.setattr(cli, "committed_source", lambda _: "c" * 64)
+    monkeypatch.setenv("CUSTOMER_DENYLIST", "synthetic-customer-marker")
+    for name in ("annex", "metadata", "bootstrap"):
+        (private / name).mkdir(mode=0o700)
+    auth = private / "auth.json"
+    auth.write_text("{}")
+    auth.chmod(0o600)
+    args = SimpleNamespace(
+        analysis_root=private,
+        source_sha=SHA,
+        action=action,
+        output_dir=private / "gates",
+        annex=private / "annex",
+        native_source=private / "annex",
+        metadata=private / "metadata",
+        bootstrap_source=private / "bootstrap",
+        policy_mode="ci-regex",
+        literal_inventory=None,
+        authfile=auth,
+        acceptance=None if action == "publish" else auth,
+    )
+    expected = (
+        "external_acceptance_required"
+        if action == "publish"
+        else "acceptance_is_publish_only"
+    )
+    with pytest.raises(ValueError, match=expected):
+        cli._inputs(args)
+
+
 def test_shipped_source_is_compared_to_commit_bytes(private, monkeypatch):
     checkout = private / "source"
     packaging = checkout / "npa/docker/workbench/ncore"
@@ -803,8 +1036,10 @@ def test_workflow_scopes_ncore_away_from_generic_load_push_and_attestations():
         "Attest exact pushed digest SBOM",
     ):
         assert by_name[name]["if"] == "matrix.tool != 'ncore'"
-    ncore = by_name["Gate and publish the exact NCore OCI graph"]
+    ncore = by_name["Refuse unsupported NCore Actions publication"]
+    assert steps[0] == ncore
     assert ncore["if"] == "matrix.tool == 'ncore'"
-    assert "publish_ncore_oci.py publish" in ncore["run"]
-    assert "--metadata" in ncore["run"] and "--authfile" in ncore["run"]
+    assert "exit 1" in ncore["run"]
+    assert "publish_ncore_oci.py publish" not in str(steps)
+    assert "env" not in ncore
     assert "upload-artifact" not in str(ncore)

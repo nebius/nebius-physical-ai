@@ -216,6 +216,23 @@ daemon record reports `state: stopped` with null `pid` and `start_ticks`.
 Preserve records on any failure. Never substitute `sky api stop`, which is not
 scoped to the owned API, or remove state while processes are still alive.
 
+The additive [task-local reconciliation module](../npa/src/npa/orchestration/skypilot/cleanup_reconciliation.py)
+can bind read-only observations when the task database no longer contains its
+controller but the global owner record belongs to a different cluster. Its v1
+contract requires externally authenticated original scope and receipt hashes,
+complete task-database observations, a stable foreign owner, and separate
+closed-world client/job quiescence bound to the original API process lifetime.
+The producer and validator perform no filesystem, process or cloud operations;
+they cannot establish observation authenticity from self-consistent hashes alone.
+Keep the supplied observations and their actual timestamps. Unreadable or unknown
+clients, jobs or ownership evidence refuse reconciliation.
+
+This new receipt preserves the original false cleanup flags. It grants no stop
+authority and does not replace the three required controller booleans above or
+the PAIDF R7 caller checks. It also cannot supply NCore cleanup-v2 image, builder,
+storage, registry or orphan evidence. A passing reconciliation is neither an API
+stop receipt nor a passing qualification cleanup.
+
 ### Cluster teardown
 
 `npa cluster down` uses the kubeconfig saved for the selected NPA cluster and

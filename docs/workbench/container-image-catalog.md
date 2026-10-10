@@ -275,8 +275,12 @@ it redistribution-eligible but quarantined from public publication until its
 exact-image scans and real capability evidence are accepted. There is no
 accepted public release row or verified anonymous pull claim for this image.
 Select development bytes only with an explicit immutable image digest.
-The existing NRE GPU consumer remains separately licensed. The new full
-COLMAP-to-reconstruction workflow is **not yet live validated**.
+The shared Actions publisher excludes this candidate: no private reviewed
+acceptance-bundle transport is configured. The private OCI CLI preserves
+qualification and requires an exact reviewed acceptance bundle for any separately
+authorized publication. The existing NRE GPU consumer remains separately
+licensed. Source execution evidence and supported-image acceptance are separate;
+neither successful stage completion nor a local diagnostic scan proves acceptance.
 
 ## Pending Open3D registration image
 

@@ -114,6 +114,13 @@ leisaac = [
     # FFmpeg executable; LeIsaac packaging scans and records those bytes.
     "imageio-ffmpeg==0.6.0",
 ]
+# Apache-2.0 Pixar USD Python runtime used only to reopen post-S3-readback
+# NuRec USDZ packages during objective qualification.
+nurec-audit = [
+    "usd-core==26.8",
+    # Decode every retained MP4 using the same wrapper as the native receipt.
+    "imageio-ffmpeg==0.6.0",
+]
 genesis = [
     "genesis-world>=1.4.1,<2.0",
     # Upstream compatibility fix preserves the repository Pillow security minimum.

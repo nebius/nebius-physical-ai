@@ -878,7 +878,6 @@ def test_reconstruct_ignores_an_optional_ground_truth_export_failure(
     result = reconstruct_scene(
         config, ncore_json="/d/s.json", environ={}, runner=fake_runner
     )
-
     assert result.ok is True
     assert result.usdz_path.endswith("030000.usdz")
     assert result.gt_dir == ""
@@ -1200,7 +1199,6 @@ def test_cli_reconstruct_forwards_the_ground_truth_frame_step(
             *extra_args,
         ],
     )
-
     assert result.exit_code == 0, strip_ansi(result.output)
     assert observed == [expected_frame_step]
 

@@ -7,13 +7,34 @@ RTX NRE training/rendering and readback acceptance. This command publishes only
 `ghcr.io/nebius/nebius-physical-ai/npa-ncore:dev-<full-source-sha>`. It does not
 fill acceptance records, change a release tag or add a public catalog row.
 
-The NCore branch of `publish-public-images.yml` uses
-`npa/scripts/publish_ncore_oci.py`. Other tools retain their existing workflow.
+The separate one-shot visual-evidence helper selects `MiniMaxAI/MiniMax-M3`
+through the existing Token Factory model profile. That profile disables thinking
+and omits provider JSON-mode enforcement; the unchanged local parser still
+requires strict JSON, literal verdicts, the exact served model and a completed
+response. Selecting this model does not establish better quality. A new model
+requires its own immutable freeze and four controls, followed by a final call
+only if the fixed calibration gate passes. Preserve earlier model failures;
+never reuse their responses as evidence for the selected model or retry until
+the gate passes. Prompts, pixels, labels and thresholds remain independently
+bound, and no expected labels are sent to the judge.
+
+The aggregate acceptance consumer requires that same exact MiniMax identifier
+and rejects old or substituted models. Earlier model-profile-only revisions still
+required MiniCPM in the aggregate consumer: results from those revisions were
+comparison evidence, not aggregate publication acceptance. A passing comparison
+does not fill an acceptance record or authorize publication; every image,
+scientific-evidence and cleanup requirement remains separately enforced.
+
+The shared `publish-public-images.yml` workflow excludes NCore from automatic
+selection and rejects explicit NCore requests. No authorized private acceptance-
+bundle transport is configured for Actions. Use the private
+`npa/scripts/publish_ncore_oci.py` route for qualification and, only with separate
+publication authorization, an exact independently reviewed `--acceptance` bundle.
+There is no fallback to the in-tree manifest. Other tools retain their workflow.
 The CLI requires Linux amd64, the checkout's CPython 3.12 environment with the
 NPA development dependencies, Docker/buildx, `dpkg-deb`, `gpgv`, and
 `skopeo` plus `gh` for publication. Use an exclusively controlled builder and
-registry writer for this immutable tag. CI dispatches sharing a development SHA
-are serialized by the existing workflow concurrency group. Skopeo/OCI registry
+registry writer for this immutable tag. Skopeo/OCI registry
 tag writes do not offer a portable atomic create-if-absent operation: a separate
 writer that ignores this serialization can race a tag check. Do not run another
 publisher for the same tag concurrently.
@@ -105,10 +126,12 @@ success marker and mandatory publication gates are unchanged.
 
 An operator with an existing exact-literal policy can instead supply
 `--policy-mode exact-literals --literal-inventory <private-file>` to each
-command. The nonempty owner-only JSON inventory must be inside the analysis
-directory. It uses the existing verified native matcher with
+diagnostic preparation, build, and check command. The nonempty owner-only JSON
+inventory must be inside the analysis directory. It uses the verified native matcher with
 `exact-substring-v1`; all literal values remain private. CI keeps its existing
 regex policy. Neither mode changes the credential detector or byte coverage.
+Publication acceptance requires `regex-v1` for both raw-clean and adjudicated
+scans; an exact-literal clean report cannot authorize publication.
 
 Choose a fresh owner-only `NCORE_OCI_ROOT` directory outside the checkout and set
 `SOURCE_SHA` to the reviewed full SHA. The directory must already exist with
@@ -137,7 +160,7 @@ npa/.venv/bin/python npa/scripts/publish_ncore_oci.py check \
 existing base lock over verified HTTPS. It checks the package hash, reads the
 single regular keyring member without installing the package, and checks the
 keyring's independently locked hash. `--keyring` defaults to
-`$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg`; CI passes that path explicitly.
+`$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg`.
 Build, check and publish require the prepared owner-only file and verify its
 hash before their expensive work. No ambient Ubuntu keyring is used. The
 existing signed Debian metadata checks retain the same exact keyring hash.
@@ -234,9 +257,30 @@ attestations or graph used for publication and anonymous readback.
 
 Publication requires an owner-only Docker/containers auth file under
 `NCORE_OCI_ROOT`, supplied by the coordinator's existing registry login, and
-the existing `gh` authentication. Never put credentials on the command line.
+the existing `gh` authentication. It also requires the receipt-derived
+`$NCORE_OCI_ROOT/acceptance/accepted-manifest.json`, finalized by
+`npa/scripts/assemble_ncore_acceptance.py` after independent review of the exact
+source/image, complete-byte policy, runtime, quality, visual and cleanup evidence.
+This is a procedural independent-review boundary, not authenticated reviewer
+identity: the owner-only receipt and reviewer-ID hash bind the recorded decision
+but are not a signature or an external trust root. The operator must obtain that
+decision through the authorized independent lane and protect the entire bundle;
+the same filesystem owner can otherwise fabricate a self-consistent bundle.
+Never put credentials on the command line.
 `publish` reruns all gates into a new directory; a previous pass JSON cannot
-authorize a later write:
+authorize a later write. The original reviewed inventory stays immutable and
+fully hash-checked. Fresh log timings and filesystem snapshot metadata may differ,
+but the image/source/config/layers, scanner input hashes, full raw record ledger,
+regex policy, finding bytes and any exact attribution disposition must remain the
+same. New findings cannot inherit an old review, even with unchanged totals.
+The same restriction covers the complete Trivy finding population, selected-base
+inventory, component advisory decisions, delivered-license results and payload
+classification. Only known invocation timestamps, report IDs and separately bound
+local paths are normalized. Component database bytes remain exact; a changed
+database or advisory outcome needs fresh review even when the severity gate passes.
+`accepted-publication-binding.json` retains both distinct evidence-manifest and
+raw-report hashes plus the original review identity; neither old artifact is
+rewritten. `publish --policy-mode exact-literals` is rejected before running gates:
 
 ```bash
 npa/.venv/bin/python npa/scripts/publish_ncore_oci.py publish \
@@ -246,7 +290,8 @@ npa/.venv/bin/python npa/scripts/publish_ncore_oci.py publish \
   --metadata "$NCORE_OCI_ROOT/metadata" \
   --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg" \
   --bootstrap-source "$NCORE_OCI_ROOT/bootstrap-source" \
-  --authfile "$NCORE_OCI_ROOT/registry-auth.json"
+  --authfile "$NCORE_OCI_ROOT/registry-auth.json" \
+  --acceptance "$NCORE_OCI_ROOT/acceptance/accepted-manifest.json"
 ```
 
 The command verifies the index selected by Skopeo before its first registry
@@ -300,21 +345,63 @@ downloaded archive. Equality binds source, payload, security, bootstrap and SBOM
 evidence to those same registry bytes. A failed readback never produces a
 `published.json` receipt.
 
-Dispatch the same supported path after the coordinator commits the integrated
-metadata, native-delivery, selected-SBOM and publication changes:
-
-```bash
-gh workflow run publish-public-images.yml --ref "$REVIEWED_REF" \
-  -f dry_run=true -f development_sha="$SOURCE_SHA" \
-  -f build_development_tools=ncore -f tool=ncore
-```
-
-Here `dry_run` controls release promotion, as in the existing workflow; requesting
-a development build publishes after its gates. NCore does not enter generic
-failed-build cleanup because the tag may have existed before this run. Retain
-failed evidence privately, establish exact creation/tag/digest ownership before
+Do not dispatch `build_development_tools=ncore` through the shared Actions
+publisher: explicit requests are refused before matrix execution, and automatic
+plans exclude it. Private qualification does not require or enable that route.
+Enabling Actions publication would require a separately reviewed, authorized
+private acceptance-bundle transport; `dry_run` is not such authorization.
+NCore does not enter generic failed-build cleanup because the tag may have
+existed before this run. Retain failed evidence privately, establish exact
+creation/tag/digest ownership before
 any cleanup, and use the existing explicit cleanup procedure. Public downloads
 cannot be revoked by deleting a tag.
+
+### Retained producer and current consumer
+
+An unchanged original image can have a later evidence consumer without becoming
+a build from that later source. Aggregate assembly accepts the explicit
+`npa_ncore_retained_source_compatibility_v1` contract in
+`retained_compatibility`: `producer_commit`, `consumer_commit`, `consumer_tree`,
+and `bridge_sha256`. The original `development_sha` remains the image producer.
+Place its protected bridge at `retained/source-compatibility.json` beneath the
+qualification evidence directory; do not edit original receipts to change their
+source or status. This path does not relax the publication CLI's own source,
+policy, transfer or cleanup gates.
+
+The bridge records both complete Git contexts and host-source closures with
+every path, mode, blob and content hash. It independently derives all Dockerfile
+COPY inputs and the complete recipe/lock subtree; those inputs must remain equal.
+All host changes are enumerated for exact independent review, not accepted merely
+because the producer is an ancestor. Original build arguments, provenance,
+labels, ordered layers and receipt hashes stay bound. Conversion, runtime and
+hosted inference retain separate original execution and review identities.
+Current HEAD, relevant dirty files and imported-source origin checks remain
+mandatory; final verification rechecks the bridge on that exact consumer.
+
+Retained assembly emits statement/review/acceptance **v2**, binding both commits,
+the consumer tree and bridge digest. The independent review must explicitly set
+`retained_compatibility_reviewed: true` and repeat the exact compatibility tuple.
+Every original referenced receipt must also appear in the protected inventory.
+Neither a bridge nor a synthetic positive test is aggregate image acceptance.
+
+The S3 adapter accepts only the genuine `npa_ncore_s3_handoff_probe_v1` literal
+`status: ok`, all five literal-true controls, confirmed deletion, positive byte
+count and valid hashes. `s3-probe-provenance.json` binds the original producer,
+invocation and selected historical scope; its hash is required in
+`qualification_controls.s3_probe_provenance_sha256`. A successful old probe is
+not fresh connectivity, authorization for another prefix or universal cleanup.
+
+For the pinned scratch-image Trivy format, omitted `Results` is distinct from
+explicit null, malformed rows or a failed scanner. The optional
+`prepublication.retained_trivy_provenance_sha256` binds
+`retained-trivy-provenance.json` in the original gate directory. This adapter
+requires the original completed check driver, exact committed subprocess and
+scanner-command contract, tool/policy identities, both raw reports, independent
+config and ordered layer identities, and same-image selected-base,
+component/license/source/lock/SBOM supplements. Scanner commands derived from
+the original successful driver/source are not newly observed scanner calls.
+Missing original provenance fails closed. Zero scratch analyzer rows do not
+erase the separate selected-base findings, including unfixed CRITICALs.
 
 No passing image result follows from unit tests or this wiring. A fresh build
 and the actual native byte, source/license/payload, image and supplemental Trivy,

@@ -1168,7 +1168,9 @@ def test_a_readable_queue_that_is_already_terminal_does_not_wait(
     assert slept == []
 
 
-@pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN", "PAUSING"])
+@pytest.mark.parametrize(
+    "status", ["SUBMITTED", "WINDING_DOWN", "PAUSING", "FAILED_CONTROLLER"]
+)
 def test_wait_for_jobs_terminal_keeps_nonterminal_and_unrecognized_statuses(
     monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
@@ -1188,7 +1190,9 @@ def test_wait_for_jobs_terminal_keeps_nonterminal_and_unrecognized_statuses(
     assert still_running == ["7"]
 
 
-@pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN", "PAUSING"])
+@pytest.mark.parametrize(
+    "status", ["SUBMITTED", "WINDING_DOWN", "PAUSING", "FAILED_CONTROLLER"]
+)
 def test_job_group_stays_nonterminal_until_every_row_is_terminal(status: str) -> None:
     statuses = cleanup_module._job_statuses(
         [
@@ -1196,7 +1200,6 @@ def test_job_group_stays_nonterminal_until_every_row_is_terminal(status: str) ->
             {"job_id": "7", "status": "SUCCEEDED"},
         ]
     )
-
     assert statuses == {"7": status}
 
 

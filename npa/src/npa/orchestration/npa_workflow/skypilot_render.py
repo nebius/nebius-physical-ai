@@ -40,6 +40,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workflow.video_sweep.generate_cosmos3": "cosmos3",
     "workflow.habitat_sim.smoke": "habitat-sim",
     "workbench.nurec.convert_colmap": "ncore",
+    "workbench.nurec.audit_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
     "workbench.nurec.visualize": "rerun-viewer",
     # Blinded preference is API-only, even under a global self-hosted backend.
@@ -1724,6 +1725,8 @@ def default_npa_setup() -> str:
 #: not exist and silently fell back to this literal, so its "cannot drift" promise
 #: never actually engaged.)
 NUREC_RERUN_PIN = "rerun-sdk==0.38.1"
+# Receipt decoding uses this Python wrapper, not merely the ffmpeg executable.
+NUREC_FFMPEG_PIN = "imageio-ffmpeg==0.6.0"
 # Keep the independent NuRec consumer stable when it reads newly converted V4
 # sequences. This official Apache-2.0 wheel is fetched at runtime, not rebaked
 # into NVIDIA's proprietary NRE image.
@@ -1871,10 +1874,14 @@ def render_setup_for_tool(
         return ""
     if tool_ref == HABITAT_SIM_TOOL_REF:
         return _habitat_sim_setup(config)
-    if tool_ref == "workbench.nurec.convert_colmap":
-        # Conversion uses the committed CPU image and its hash-locked runtime
-        # bootstrap. Do not run the NRE vendor-image dependency installer or overlay
-        # a floating PyPI nvidia-ncore onto the actual pinned source reader.
+    if tool_ref in {
+        "workbench.nurec.convert_colmap",
+        "workbench.nurec.audit_colmap",
+    }:
+        # Conversion and its independent read-back use the committed CPU image and
+        # its hash-locked runtime bootstrap. Do not run the NRE vendor-image
+        # dependency installer or overlay a floating PyPI nvidia-ncore onto the
+        # actual pinned source reader.
         return (
             "set -e\n"
             "export PATH=/opt/venv/bin:/opt/ncore/bin:$PATH\n"
@@ -2072,8 +2079,9 @@ def render_setup_for_tool(
             "    return 1\n"
             "  fi\n"
             "}\n"
-            f"npa_nurec_pip 'huggingface_hub>=0.30' '{NUREC_NCORE_PIN}' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
-            '"$npa_nurec_py" -c \'import ncore, rerun; print("nurec runtime deps ready")\'\n'
+            f"npa_nurec_pip 'huggingface_hub>=0.30' '{NUREC_NCORE_PIN}' '{NUREC_RERUN_PIN}' '{NUREC_FFMPEG_PIN}' 'pillow>=10.0'\n"
+            '"$npa_nurec_py" -c \'import ncore, rerun, imageio_ffmpeg; '
+            'imageio_ffmpeg.get_ffmpeg_exe(); print("nurec runtime deps ready")\'\n'
         )
     return "".join(parts)
 

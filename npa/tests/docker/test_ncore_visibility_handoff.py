@@ -67,7 +67,12 @@ def publication(private, publication_umask):
             "status": "pass",
             "source_sha": SHA,
             "image_digest": digest,
+            "platform_digest": graph["image_manifest_digest"],
+            "config_digest": graph["image_config_digest"],
             "archive_sha256": build["archive_sha256"],
+            "evidence_manifest_sha256": process.file_sha(
+                args.output_dir / "evidence-manifest.json"
+            ),
             "release_acceptance": False,
         },
     )
@@ -141,10 +146,12 @@ def _registry(monkeypatch, publication, *, refreshed=None, observed=None):
     monkeypatch.setattr(registry.subprocess, "run", inspect)
 
 
-def _transfer(publication):
+def _visibility(publication):
     return diagnostics.run_phase(
         "registry-transfer",
-        registry.transfer,
+        diagnostics.run_phase,
+        "registry-visibility",
+        registry._public_visibility,
         publication.args,
         publication.directory,
         publication.build,
@@ -169,7 +176,7 @@ def test_exact_nonpublic_inventory_yields_bound_private_failure(
         lambda *_: pytest.fail("handoff cannot accept publication"),
     )
     with pytest.raises(handoff.AdministratorHandoffRequired) as raised:
-        _transfer(publication)
+        _visibility(publication)
     receipt = json.loads(_receipt(publication).read_bytes())
     assert _receipt(publication).stat().st_mode & 0o777 == 0o600
     assert (
@@ -202,34 +209,45 @@ def test_exact_nonpublic_inventory_yields_bound_private_failure(
     assert output.err.endswith("phase=registry-transfer status=failure\n")
 
 
-def test_public_fast_path_and_same_archive_retry_never_copy_or_patch(
+def test_visibility_recheck_after_admin_change_never_copies_or_patches(
     publication, monkeypatch
 ):
     _registry(monkeypatch, publication)
     with pytest.raises(handoff.AdministratorHandoffRequired):
-        _transfer(publication)
+        _visibility(publication)
     original_hash = process.file_sha(
         publication.args.analysis_root / "build/image.oci.tar"
     )
     publication.package = {"visibility": "public"}
-    publication.directory = publication.args.output_dir / "retry-transfer"
+    publication.directory = publication.args.output_dir / "visibility-recheck"
     publication.directory.mkdir(mode=0o700)
     publication.commands.clear()
-    readbacks = []
-    monkeypatch.setattr(registry, "_readback", lambda *args: readbacks.append(args))
-    assert _transfer(publication) == publication.build["image_digest"]
-    assert len(readbacks) == 1
-    assert [command for command in publication.commands if command[0] == "gh"] == [
-        ["gh", "api", registry.PACKAGE_API]
-    ]
-    assert not any(
-        "copy" in command or "PATCH" in command for command in publication.commands
-    )
+    assert _visibility(publication) is None
+    assert publication.commands == [["gh", "api", registry.PACKAGE_API]]
     assert not _receipt(publication).exists()
+    assert not (publication.directory / "published.json").exists()
     assert (
         process.file_sha(publication.args.analysis_root / "build/image.oci.tar")
         == original_hash
     )
+
+
+def test_transfer_rejects_even_same_bytes_at_preexisting_development_tag(
+    publication, monkeypatch
+):
+    _registry(monkeypatch, publication)
+    with pytest.raises(ValueError, match="development_tag_preexisted_acceptance"):
+        registry.transfer(
+            publication.args,
+            publication.directory,
+            publication.build,
+            publication.graph,
+            publication.verification,
+        )
+    assert not any(
+        "copy" in command or command[0] == "gh" for command in publication.commands
+    )
+    assert not _receipt(publication).exists()
 
 
 def _bad_inventory(publication, change):
@@ -318,7 +336,7 @@ def test_malformed_incomplete_extra_and_hostile_inventory_has_no_handoff(
     _bad_inventory(publication, change)
     _registry(monkeypatch, publication)
     with pytest.raises(ValueError) as raised:
-        _transfer(publication)
+        _visibility(publication)
     assert not isinstance(raised.value, handoff.AdministratorHandoffRequired)
     assert not _receipt(publication).exists()
     output = capsys.readouterr()
@@ -360,7 +378,7 @@ def test_changed_content_or_evidence_has_no_handoff(publication, monkeypatch, ch
         observed=b"changed index" if change == "tag" else None,
     )
     with pytest.raises((ValueError, OSError)) as raised:
-        _transfer(publication)
+        _visibility(publication)
     assert not isinstance(raised.value, handoff.AdministratorHandoffRequired)
     assert not _receipt(publication).exists()
 
@@ -379,7 +397,7 @@ def test_unbound_package_cannot_offer_handoff(publication, monkeypatch, field, v
     publication.package[field] = value
     _registry(monkeypatch, publication)
     with pytest.raises(ValueError) as raised:
-        _transfer(publication)
+        _visibility(publication)
     assert not isinstance(raised.value, handoff.AdministratorHandoffRequired)
     assert not _receipt(publication).exists()
 
@@ -423,7 +441,7 @@ def test_handoff_requires_exact_source_and_graph_bindings(
         publication.verification["expected_image_id"] = "sha256:" + "f" * 64
     _registry(monkeypatch, publication)
     with pytest.raises(ValueError) as raised:
-        _transfer(publication)
+        _visibility(publication)
     assert not isinstance(raised.value, handoff.AdministratorHandoffRequired)
     assert not _receipt(publication).exists()
 
@@ -447,7 +465,7 @@ def test_cli_handoff_is_nonzero_minimal_and_keeps_failure_phases(
     publication, monkeypatch, capsys
 ):
     _registry(monkeypatch, publication)
-    assert _cli(monkeypatch, publication, lambda: _transfer(publication)) == 1
+    assert _cli(monkeypatch, publication, lambda: _visibility(publication)) == 1
     output = capsys.readouterr()
     expected = handoff.AdministratorHandoffRequired(
         SHA, publication.build["image_digest"], process.file_sha(_receipt(publication))
@@ -472,7 +490,7 @@ def test_changed_receipt_cannot_be_disclosed_as_a_valid_handoff(
         return identity
 
     monkeypatch.setattr(W, "write_private_json", changed)
-    assert _cli(monkeypatch, publication, lambda: _transfer(publication)) == 1
+    assert _cli(monkeypatch, publication, lambda: _visibility(publication)) == 1
     output = capsys.readouterr()
     assert output.out == FAILURE and HOSTILE not in output.err
 

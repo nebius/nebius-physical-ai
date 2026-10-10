@@ -160,6 +160,42 @@ def test_public_redirects_stream_exact_bytes_without_credentials(
     assert all(r.closed for r in replies)
 
 
+def test_dynamic_redirect_policy_applies_only_after_exact_origin(network):
+    responses, _, requests = network
+    responses.extend(
+        [
+            Response(
+                status=302,
+                location="https://region.aws.cdn.hf.co/object?Signature=signed",
+            ),
+            Response(b"payload"),
+        ]
+    )
+    output = io.BytesIO()
+
+    def policy(host):
+        return host == "region.aws.cdn.hf.co"
+
+    transport.download_public_https(
+        ORIGIN,
+        output,
+        allowed_hosts=HOSTS,
+        redirect_host_policy=policy,
+    )
+    assert output.getvalue() == b"payload"
+    assert [item[0] for item in requests] == [
+        "huggingface.co",
+        "region.aws.cdn.hf.co",
+    ]
+    with pytest.raises(transport.PublicDownloadError):
+        transport.download_public_https(
+            "https://region.aws.cdn.hf.co/object",
+            io.BytesIO(),
+            allowed_hosts=HOSTS,
+            redirect_host_policy=policy,
+        )
+
+
 def test_https_default_path_and_explicit_standard_port(network):
     network[0].append(Response(b"data"))
     assert fetch("https://huggingface.co:443") == b"data"

@@ -40,6 +40,7 @@ GATE_PHASES = (
     "bootstrap",
     "source-recheck",
 )
+POST_GATE_PHASES = ("evidence-manifest", "accepted-workload-binding")
 SUCCESS = (
     "NCore OCI operation passed; release acceptance and quarantine are unchanged\n"
 )
@@ -81,7 +82,10 @@ def _operation(name, calls, failure, result=None):
 
 
 def _gate_pipeline(monkeypatch, calls, failure):
-    graph = {"image_config_digest": "synthetic-config"}
+    graph = {
+        "image_manifest_digest": "synthetic-platform",
+        "image_config_digest": "synthetic-config",
+    }
     verification = {"archive_sha256": "synthetic-archive"}
     build = {
         "context_sha256": "synthetic-context",
@@ -117,13 +121,39 @@ def _gate_pipeline(monkeypatch, calls, failure):
         (gates.components, "verify", "components"),
         (gates.bootstrap, "verify", "bootstrap"),
         (artifact, "assert_unchanged", "source-recheck"),
-        (registry, "transfer", "registry-transfer"),
     ):
         monkeypatch.setattr(module, attribute, _operation(name, calls, failure))
+    evidence_operation = _operation("evidence-manifest", calls, failure)
+
+    def evidence(directory, *args):
+        evidence_operation(directory, *args)
+        path = directory / "evidence-manifest.json"
+        path.write_text("{}")
+        return path
+
+    monkeypatch.setattr(cli, "_gate_evidence_manifest", evidence)
+    monkeypatch.setattr(
+        cli,
+        "_require_accepted_publication",
+        _operation("accepted-workload-binding", calls, failure),
+    )
+    monkeypatch.setattr(
+        registry,
+        "transfer",
+        _operation("registry-transfer", calls, failure),
+    )
 
 
 @pytest.mark.parametrize(
-    "failure", [None, "inputs", "build-receipt", *GATE_PHASES, "registry-transfer"]
+    "failure",
+    [
+        None,
+        "inputs",
+        "build-receipt",
+        *GATE_PHASES,
+        *POST_GATE_PHASES,
+        "registry-transfer",
+    ],
 )
 def test_cli_gate_order_and_failure_stop(tmp_path, monkeypatch, capsys, failure):
     tmp_path.chmod(0o700)
@@ -141,7 +171,13 @@ def test_cli_gate_order_and_failure_stop(tmp_path, monkeypatch, capsys, failure)
         ]
     )
     output = capsys.readouterr()
-    ordered = ["inputs", "build-receipt", *GATE_PHASES, "registry-transfer"]
+    ordered = [
+        "inputs",
+        "build-receipt",
+        *GATE_PHASES,
+        *POST_GATE_PHASES,
+        "registry-transfer",
+    ]
     reached = ordered if failure is None else ordered[: ordered.index(failure) + 1]
     assert calls == reached
     assert result == (0 if failure is None else 1)
@@ -158,7 +194,9 @@ def test_cli_gate_order_and_failure_stop(tmp_path, monkeypatch, capsys, failure)
     expected += _markers("publish", "pass" if failure is None else "failure")
     assert output.err.splitlines() == expected
     receipt = tmp_path / "publication/prepublication.json"
-    assert receipt.exists() is (failure is None or failure == "registry-transfer")
+    assert receipt.exists() is (
+        failure is None or failure in {"accepted-workload-binding", "registry-transfer"}
+    )
 
 
 def _registry_pipeline(tmp_path, monkeypatch, calls, failure):
