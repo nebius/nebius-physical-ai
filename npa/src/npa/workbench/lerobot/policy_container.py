@@ -1402,12 +1402,37 @@ def _read_dataset_tasks(dataset_root: Path) -> list[str]:
             raise PolicyContainerError(
                 "pyarrow is required to read LeRobot task metadata"
             ) from exc
-        rows = parquet.read_table(parquet_path).to_pylist()
+        table = parquet.read_table(parquet_path)
+        if "task" not in table.column_names:
+            table = _task_column_from_pandas_index(table)
+        rows = table.to_pylist()
     else:
         raise PolicyContainerError(
             f"LeRobot dataset has no meta/tasks.jsonl or meta/tasks.parquet: {dataset_root}"
         )
     return _ordered_task_rows(rows)
+
+
+def _task_column_from_pandas_index(table: Any) -> Any:
+    """Read native LeRobot v3 task text without guessing a physical column."""
+    import pyarrow as pa
+
+    indexes = (table.schema.pandas_metadata or {}).get("index_columns", [])
+    if len(indexes) != 1 or not isinstance(indexes[0], str):
+        raise PolicyContainerError(
+            "LeRobot tasks require a task column or one named Pandas index"
+        )
+    index = indexes[0]
+    if index not in table.column_names or "task_index" not in table.column_names:
+        raise PolicyContainerError(
+            "LeRobot tasks are missing task_index or their Pandas index"
+        )
+    if not (
+        pa.types.is_string(table[index].type)
+        or pa.types.is_large_string(table[index].type)
+    ):
+        raise PolicyContainerError("LeRobot task names must be strings")
+    return table.append_column("task", table[index])
 
 
 def _ordered_task_rows(rows: list[Any]) -> list[str]:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from npa.cli.workbench.robocasa.deploy import (
     DEFAULT_GPU_TYPE,
     DEFAULT_NAME,
@@ -37,6 +39,22 @@ def test_workflow_expands_all_states() -> None:
         "egl-env-reset",
         "random-rollout",
     ]
+
+
+@pytest.mark.parametrize("root", [None, "s3://example/custom", "s3://example/custom/"])
+def test_smoke_states_own_distinct_output_prefixes(root) -> None:
+    spec = load_spec(WORKFLOW)
+    if root is not None:
+        spec.config["output_uri"] = root
+    plan = build_plan(spec, run_id="test")
+    paths = []
+    for step in plan.steps:
+        path = step.argv[step.argv.index("--output-path") + 1]
+        expected_root = root or "s3://example-bucket/robocasa-smoke/test"
+        assert path == f"{expected_root}/{step.state}/"
+        assert step.outputs[0]["uri"] == path
+        paths.append(path)
+    assert len(set(paths)) == 4
 
 
 def test_workflow_dependency_order_is_topological() -> None:

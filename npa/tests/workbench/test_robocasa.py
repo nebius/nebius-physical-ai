@@ -3484,6 +3484,77 @@ def test_upload_output_resumes_same_commit_after_partial_publication(
     assert sum(kind == "commit" for kind, _key in s3.events) == 1
 
 
+def test_smoke_plan_can_publish_all_four_immutable_stage_results(monkeypatch, tmp_path):
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+
+    workflow = (
+        Path(__file__).resolve().parents[3] / "workflows/testing/robocasa-smoke.yaml"
+    )
+    plan = build_plan(load_spec(workflow), run_id="test")
+    s3 = _TransactionalFakeS3()
+    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+    monkeypatch.setattr(
+        capabilities,
+        "run_capability",
+        lambda request, **kw: {"capability": request.capability, "ok": True},
+    )
+    for step in plan.steps:
+        request = RoboCasaRunRequest(
+            capability=step.argv[step.argv.index("--capability") + 1],
+            output_uri=step.argv[step.argv.index("--output-path") + 1],
+        )
+        capabilities.run_capability_with_output(
+            request, output_dir=tmp_path / step.state
+        )
+    assert sum(kind == "claim" for kind, _key in s3.events) == 4
+    assert sum(kind == "commit" for kind, _key in s3.events) == 4
+
+
+def test_trajectory_partial_publication_resumes_from_fresh_worker(
+    monkeypatch, tmp_path
+):
+    s3 = _TransactionalFakeS3(fail_publish_number=2)
+    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+    monkeypatch.setattr(capabilities, "_make_env", lambda *a, **k: _TemporalEnv())
+
+    def synthetic_video(frames, path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"synthetic-video:" + str(len(frames)).encode())
+        return path
+
+    monkeypatch.setattr(capabilities, "_write_video", synthetic_video)
+    request = RoboCasaRunRequest(
+        capability="kitchen_trajectory_export",
+        output_uri="s3://example/resume/run",
+        seed=7,
+        iterations=3,
+        num_envs=1,
+        download_assets=False,
+    )
+    first = tmp_path / "worker-first"
+    with pytest.raises(OSError, match="injected publication failure"):
+        capabilities.run_capability_with_output(request, output_dir=first)
+    original = {
+        str(p.relative_to(first)): p.read_bytes()
+        for p in first.rglob("*")
+        if p.is_file()
+    }
+    shutil.rmtree(first)  # The service cleans its failed worker directory.
+    assert "resume/run/_NPA_COMPLETE.json" not in s3.objects
+    s3.fail_publish_number = None
+    second = tmp_path / "worker-retry"
+    capabilities.run_capability_with_output(request, output_dir=second)
+    resumed = {
+        str(p.relative_to(second)): p.read_bytes()
+        for p in second.rglob("*")
+        if p.is_file()
+    }
+    assert resumed == original
+    assert "resume/run/_NPA_COMPLETE.json" in s3.objects
+    assert sum(kind == "claim" for kind, _key in s3.events) == 1
+    assert sum(kind == "commit" for kind, _key in s3.events) == 1
+
+
 @pytest.mark.parametrize("head_metadata_case", ["title", "alternating"])
 def test_upload_output_normalizes_provider_metadata_casing_across_resume(
     monkeypatch: pytest.MonkeyPatch,

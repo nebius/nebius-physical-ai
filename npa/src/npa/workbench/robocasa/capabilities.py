@@ -1336,7 +1336,6 @@ def kitchen_trajectory_export(
         result = _trajectory_export_result(env_id, env_ids, iterations, episodes)
         if output_dir is not None:
             _write_run_metadata(output_dir, env_id, episodes)
-            result["output_dir"] = str(output_dir)
         return result
     except Exception as exc:  # pragma: no cover - depends on the container.
         raise RoboCasaError(

@@ -24,7 +24,8 @@ config:
   num_envs: "1"
   poll_seconds: "30"
   timeout_seconds: "3600"
-  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  # Each state owns an immutable child prefix below this run root.
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}"
 
 resources:
   service-client-cpu:
@@ -38,6 +39,8 @@ states:
   task-registration:
     description: Verify RoboCasa Gymnasium task registration.
     toolRef: workbench.robocasa.task_registration
+    params:
+      output_uri: "{{config.output_uri}}/task-registration/"
     resources: service-client-cpu
     outputs:
       - uri: "{{config.output_uri}}"
@@ -47,6 +50,8 @@ states:
   asset-availability:
     description: Verify RoboCasa kitchen asset availability.
     toolRef: workbench.robocasa.asset_availability
+    params:
+      output_uri: "{{config.output_uri}}/asset-availability/"
     resources: service-client-cpu
     needs: [task-registration]
     outputs:
@@ -57,6 +62,8 @@ states:
   egl-env-reset:
     description: Create and reset a headless EGL RoboCasa environment.
     toolRef: workbench.robocasa.egl_env_reset
+    params:
+      output_uri: "{{config.output_uri}}/egl-env-reset/"
     resources: service-client-cpu
     needs: [asset-availability]
     outputs:
@@ -67,6 +74,8 @@ states:
   random-rollout:
     description: Run a real RoboCasa random rollout with a video artifact.
     toolRef: workbench.robocasa.random_rollout
+    params:
+      output_uri: "{{config.output_uri}}/random-rollout/"
     resources: service-client-cpu
     needs: [egl-env-reset]
     outputs:

@@ -1,0 +1,23 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "5e3128b303b2977807a656d59bb5535916e293e35fb9df6ce454ebe3077eb03a",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema and four-state plan checks pass locally, including custom output roots.",
+      "evidence": ["../../npa/tests/workflows/test_robocasa_workflow.py"]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Each planned CLI output path matches its declared artifact and owns a distinct immutable prefix. Four distinct results commit through the real publisher with in-memory S3; this is not a native simulator execution claim.",
+      "evidence": ["../../npa/tests/workflows/test_robocasa_workflow.py", "../../npa/tests/workbench/test_robocasa.py::test_smoke_plan_can_publish_all_four_immutable_stage_results"]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {"status": "unverified", "reason": "The operator must supply and authorize the run output root. No live storage check was performed for this repair.", "evidence": []},
+    "worker_input": {"status": "unverified", "reason": "Native task registration and kitchen assets are checked by the workflow, not by local planning tests.", "evidence": []},
+    "credentials": {"status": "unverified", "reason": "Service token and scoped storage credentials must be available to the selected workers. No credentials were exercised locally.", "evidence": []},
+    "source_image": {"status": "blocked", "reason": "The shipped zero source and digest placeholders require an exact qualified service image override; planning is not image qualification.", "evidence": ["robocasa-smoke.yaml"]},
+    "target_runtime": {"status": "unverified", "reason": "No L40S service, EGL renderer, or native RoboCasa workload was run for this repair.", "evidence": []}
+  }
+}
