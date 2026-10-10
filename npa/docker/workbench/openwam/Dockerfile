@@ -122,6 +122,10 @@ COPY pyproject.toml README.md /opt/npa/
 # make the baked adapter source readable regardless of this isolated checkout's
 # private source-file mode.
 COPY --chmod=0755 src/npa /opt/npa/src/npa
+RUN /opt/openwam-venv/bin/python -m pip install --no-cache-dir -e /opt/npa \
+    && /opt/openwam-venv/bin/python -m pip check \
+    && env -u PYTHONPATH /opt/openwam-venv/bin/python -m npa --help >/dev/null \
+    && runuser -u ubuntu -- env -u PYTHONPATH HOME=/home/ubuntu /opt/openwam-venv/bin/python -m npa --help >/dev/null
 # Each upstream environment declares imageio-ffmpeg, whose wheel bundles a
 # second static executable. Each install layer removes it before that layer is
 # committed; the Ubuntu ffmpeg package above is sufficient for the runtime.

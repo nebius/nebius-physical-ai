@@ -59,9 +59,20 @@ def test_openwam_exposes_exact_source_without_incomplete_npa_metadata() -> None:
     source_path = "npa-exact-source.pth"
     assert source_path in dockerfile
     assert "pip install --no-cache-dir --no-deps /opt/npa" not in dockerfile
+    editable_npa_install = (
+        "/opt/openwam-venv/bin/python -m pip install --no-cache-dir -e /opt/npa"
+    )
+    assert editable_npa_install in dockerfile
     assert dockerfile.index(
         "/opt/openwam-venv/bin/python -m pip check"
     ) < dockerfile.index(source_path)
+    root_npa_help = "env -u PYTHONPATH /opt/openwam-venv/bin/python -m npa --help"
+    assert root_npa_help in dockerfile
+    assert dockerfile.index(editable_npa_install) < dockerfile.index(root_npa_help)
+    assert (
+        "runuser -u ubuntu -- env -u PYTHONPATH HOME=/home/ubuntu "
+        "/opt/openwam-venv/bin/python -m npa --help"
+    ) in dockerfile
     assert (
         "env -u PYTHONPATH /opt/openwam-venv/bin/python "
         "-m npa.workflows.openwam_pipeline --help"
