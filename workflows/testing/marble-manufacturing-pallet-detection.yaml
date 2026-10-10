@@ -1,0 +1,98 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: marble-manufacturing-pallet-detection
+  description: >-
+    Test whether Marble factory backgrounds improve pallet detection: validate
+    real train/test data, generate through the World API, render on Nebius CUDA,
+    train matched-budget Faster R-CNN baselines and augmented models, and report
+    measured AP changes on held-out real images. Fully headless; requires WLT_API_KEY.
+config:
+  source_overlay: true
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/marble-manufacturing"
+  world_source: generate
+  world_model: marble-1.1
+  world_prompt: >-
+    An empty industrial manufacturing receiving bay with concrete floor,
+    painted safety lines, loading doors, overhead lights and distant machinery.
+    No pallets, crates, people, forklifts or loose objects. Clear foreground floor.
+  frames: 120
+  width: 960
+  height: 540
+  train_epochs: 10
+  train_batch_size: 2
+  train_learning_rate: 0.005
+  seed: 42
+
+  dataset_uri: "s3://{{config.bucket}}/datasets/pallets/manifest.json"
+  snapshot_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset/"
+  world_uri: "s3://{{config.bucket}}/{{config.prefix}}/world/"
+  results_uri: "s3://{{config.bucket}}/{{config.prefix}}/captures/"
+  benchmark_uri: "s3://{{config.bucket}}/{{config.prefix}}/benchmark/"
+  reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 64Gi
+initial: preflight
+states:
+  preflight:
+    description: Require the API token and validate/snapshot real image labels, disjoint capture groups, and training-only alpha cutouts.
+    toolRef: workbench.marble.pallet_preflight
+    resources: cpu
+    inputs:
+      - uri: "{{config.dataset_uri}}"
+    outputs:
+      - uri: "{{config.snapshot_uri}}dataset.json"
+        schema: npa.marble.pallet-data.v1
+    next: generate
+  generate:
+    description: Generate an empty manufacturing receiving bay through the authenticated hosted World API.
+    toolRef: workbench.marble.acquire
+    params:
+      world_source: generate
+    resources: cpu
+    outputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+    next: render
+  render:
+    description: Render reproducible factory-background camera views with gsplat on the Nebius GPU.
+    toolRef: workbench.marble.capture
+    resources: gpu
+    inputs:
+      - uri: "{{config.world_uri}}world.json"
+    outputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+    next: benchmark
+  benchmark:
+    description: Composite labeled training pallets, train both Faster R-CNN arms with matched updates on CUDA, and evaluate the same real test partition.
+    toolRef: workbench.marble.pallet_benchmark
+    resources: gpu
+    inputs:
+      - uri: "{{config.results_uri}}result.json"
+      - uri: "{{config.snapshot_uri}}dataset.json"
+    outputs:
+      - uri: "{{config.benchmark_uri}}comparison.json"
+        schema: npa.marble.pallet-benchmark.v1
+    next: report
+  report:
+    description: Publish signed AP changes and provenance as JSON and static HTML, including negative outcomes.
+    toolRef: workbench.marble.pallet_report
+    resources: cpu
+    inputs:
+      - uri: "{{config.benchmark_uri}}comparison.json"
+    outputs:
+      - uri: "{{config.reports_uri}}comparison.json"
+        schema: npa.marble.pallet-benchmark.v1
+      - uri: "{{config.reports_uri}}index.html"
+        schema: text/html
+    terminal: true
