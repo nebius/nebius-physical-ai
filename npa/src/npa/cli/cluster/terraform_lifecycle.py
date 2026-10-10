@@ -1241,6 +1241,21 @@ def down_cmd(
                 "nothing was deleted."
             )
         shared_metadata = candidate
+    if not metadata_present:
+        from npa.cluster_backends.standalone_recovery import partial_backend_metadata
+
+        try:
+            shared_metadata = partial_backend_metadata(
+                context=preview_context,
+                project_id=exact_project_id,
+                tenant_id=str(cleanup_identity.get("tenant_id") or ""),
+                region=str(cleanup_identity.get("region") or ""),
+                operation_id=operation_id,
+            )
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise typer.BadParameter(
+                f"Partial standalone recovery failed: {exc}"
+            ) from exc
     if saved_cluster is not None and not metadata_present:
         raise typer.BadParameter(
             "Local cluster state exists without its ownership metadata; nothing was "
@@ -1339,6 +1354,11 @@ def down_cmd(
             raise RuntimeError(
                 "; ".join(str(item) for item in destroyed.get("errors") or [])
             )
+        recovery_id = str(shared_metadata.get("backend_recovery_operation_id") or "")
+        if recovery_id:
+            from npa.provisioning_journal import load_operation
+
+            load_operation(recovery_id).transition("destroyed")
         if not keep_local_state:
             delete_cluster_state(preview_context)
         response = {

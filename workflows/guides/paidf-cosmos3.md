@@ -364,6 +364,11 @@ Check `status` and `preflight.decision`: a dry run can exit zero while reporting
 `blocked`. Resolve the listed `preflight.reasons` first; reserved GPU capacity
 does not replace the boot-disk quota required by the cluster.
 
+The CPU pool also needs eight available non-GPU vCPUs under
+`compute.instance.non-gpu.vcpu`. GPU-node vCPUs use the GPU allowance. The
+preview checks the missing CPU-node demand before any cluster resources are
+created; preemptible GPU placement does not remove the CPU quota requirement.
+
 The default boot disks require 1,151 GiB of network SSD capacity: 128 GiB for the
 CPU node and 1,023 GiB for the GPU node. Disk-count quota is separate. If the
 preview blocks on disk capacity, obtain enough quota or size the disks for your
@@ -391,6 +396,13 @@ npa provision-if-absent --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME
 Wait for provisioning and node health checks to succeed. Do not proceed with a
 degraded cluster. This creates cloud resources; use the
 [teardown guide](../../docs/teardown.md) when you finish with a cluster you own.
+
+If creation fails partway through, keep the private backend state and operation
+journal. Use the recovery command reported by `npa`, with the exact project,
+context, and `--operation-id` when more than one attempt exists. `npa cluster
+down` can recover a partial native backend from its journal, private sidecar,
+and Terraform state; it does not require a completed kubeconfig. Do not delete
+state files or reconstruct ownership by hand.
 
 Inspect the resulting cluster and set `KUBECONFIG` to the exact path reported
 by provisioning. The default is `~/.npa/clusters/<cluster-name>/kubeconfig`:
