@@ -28,7 +28,29 @@ EXACT_INPUT_SPECS = (
     "rgbd-scan-to-isaac.yaml",
     "scan-to-isaac-navigation.yaml",
 )
+EXACT_INPUT_PATHS = {
+    name: ROOT / "workflows/testing" / name for name in EXACT_INPUT_SPECS
+}
+EXACT_INPUT_PATHS["rgbd-scan-to-policy-demo.yaml"] = (
+    ROOT / "workflows/main/rgbd-scan-to-policy-demo.yaml"
+)
 GOVERNED_SPECS = ("franka-rl-transfer.yaml",)
+WORKFLOW_PATHS = {
+    name: EXACT_INPUT_PATHS.get(name, ROOT / "workflows/testing" / name)
+    for name in (*EXACT_INPUT_SPECS, *GOVERNED_SPECS)
+}
+
+# These are the retired defaults preserved in workflow-defaults-807.  They are
+# byte identities, not package identities: newer immutable development
+# candidates for the same package have separate qualification/promotion paths.
+WITHDRAWN_AUTOMATIC_IMAGE_REFS = frozenset(
+    {
+        "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:"
+        "e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6",
+        "ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:"
+        "c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb",
+    }
+)
 
 
 def _spec(tmp_path, config):
@@ -197,13 +219,13 @@ def test_tagged_digest_explains_the_required_canonical_form(tmp_path):
 
 @pytest.mark.parametrize("name", EXACT_INPUT_SPECS)
 def test_shipped_exact_image_consumers_require_operator_input_before_planning(name):
-    spec = load_spec(ROOT / "workflows/testing" / name)
+    spec = load_spec(EXACT_INPUT_PATHS[name])
     with pytest.raises(NpaWorkflowError, match="requires an explicit.*--var"):
         interpreter.build_plan(spec, run_id="missing-images")
 
 
 def _supplied_spec(name):
-    spec = load_spec(ROOT / "workflows/testing" / name)
+    spec = load_spec(EXACT_INPUT_PATHS[name])
     images = {
         "isaac_image": ISAAC,
         "navigation_image": ISAAC,
@@ -354,19 +376,14 @@ def test_no_shipped_workflow_automatically_selects_withdrawn_isaac_or_sonic_byte
         )
         for value in automatic:
             if isinstance(value, str):
-                assert not any(
-                    f"ghcr.io/nebius/nebius-physical-ai/npa-{tool}@sha256:" in value
-                    for tool in ("isaac-lab", "sonic")
-                ), path
+                assert value not in WITHDRAWN_AUTOMATIC_IMAGE_REFS, path
 
 
 @pytest.mark.parametrize("name", [*EXACT_INPUT_SPECS, *GOVERNED_SPECS])
 def test_historical_records_remain_bound_and_current_records_await_workload_proof(name):
     archived = ROOT / "docs/workbench/evidence/workflow-defaults-807" / name
     old = load_readiness_record(archived.with_suffix(".readiness.json"))
-    current = load_readiness_record(
-        (ROOT / "workflows/testing" / name).with_suffix(".readiness.json")
-    )
+    current = load_readiness_record(WORKFLOW_PATHS[name].with_suffix(".readiness.json"))
     assert old["workflow_sha256"] != current["workflow_sha256"]
     assert current["planning"]["task_fidelity"]["status"] == "unverified"
     assert current["prerequisites"]["source_image"]["status"] == "unverified"

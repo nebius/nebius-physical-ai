@@ -40,6 +40,15 @@ resources:
     cpus: 16
     memory: 64Gi
     image: '{{config.isaac_image}}'
+    kubernetes:
+      pod_config:
+        spec:
+          runtimeClassName: nvidia
+          containers:
+          - name: ray-node
+            env:
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: all
   reconstruction:
     cloud: kubernetes
     cpus: 4

@@ -184,7 +184,7 @@ still required for the operator-selected bytes.
 | --- | --- |
 | `workflows/testing/field-failure-reference-demo.yaml` | `navigation_image, reconstruction_image` |
 | `workflows/testing/multicamera-rgbd-warehouse.yaml` | `isaac_image` |
-| `workflows/testing/rgbd-scan-to-policy-demo.yaml` | `assembly_image, reconstruction_image, isaac_image` |
+| `workflows/main/rgbd-scan-to-policy-demo.yaml` | `assembly_image, reconstruction_image, isaac_image` |
 | `workflows/testing/rgbd-scan-to-isaac.yaml` | `isaac_image` |
 | `workflows/testing/scan-to-isaac-navigation.yaml` | `isaac_image` |
 

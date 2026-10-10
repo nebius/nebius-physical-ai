@@ -64,6 +64,9 @@ and does not qualify image bytes. Other image defaults still follow the central
 public-release quarantine. The public demo aliases accept the same repeatable
 `--var` syntax; their storage bucket and prefix remain selected by `--project`.
 
+For execution, follow the [manual run sequence](../docs/workbench/guides/manual-workflow-operations.md).
+For multiple episodes, use [dataset batches and capacity planning](../docs/workbench/guides/paidf-dataset-batches.md).
+
 For execution, follow the selected runbook in order:
 
 1. Configure the project and prepare its input, storage, credentials, and compute.
