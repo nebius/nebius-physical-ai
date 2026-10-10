@@ -212,6 +212,41 @@ def codes(report):
     return {finding["code"] for finding in report["findings"]}
 
 
+@pytest.mark.parametrize("mutate_after_binding", [False, True])
+def test_payload_scan_reconciles_streamed_bytes_with_actual_graph_verification(
+    tmp_path, payload, monkeypatch, mutate_after_binding
+):
+    archive, image_id = save_image(tmp_path, [payload[1]])
+    verified = VERIFIER.verify_image(
+        archive, expected_image_id=image_id, contract=payload[0]
+    )
+    assert verified["valid"] is True
+    report_path = tmp_path / "verified.json"
+    report_path.write_text(json.dumps(verified))
+    original_bind = PAYLOAD_SCANNER._verify_archive_binding
+
+    def bind_then_change(*args, **kwargs):
+        binding = original_bind(*args, **kwargs)
+        # Keep the graph and every tar member unchanged. Only the independently
+        # bound outer bytes change between graph validation and the scan read.
+        archive.write_bytes(archive.read_bytes() + b"changed trailing bytes")
+        return binding
+
+    if mutate_after_binding:
+        monkeypatch.setattr(
+            PAYLOAD_SCANNER, "_verify_archive_binding", bind_then_change
+        )
+        with pytest.raises(RuntimeError, match="differs from complete verification"):
+            PAYLOAD_SCANNER.scan(None, archive, verification_report=report_path)
+    else:
+        report = PAYLOAD_SCANNER.scan(None, archive, verification_report=report_path)
+        assert report.clean
+        serialized = report.to_dict()
+        assert serialized["archive_sha256"] == verified["docker_save_sha256"]
+        assert serialized["archive_bytes"] == archive.stat().st_size
+        assert report.archive_binding["docker_save_sha256"] == report.archive_sha256
+
+
 def test_bootstrap_seeds_and_build_receipt_are_verified(tmp_path, payload):
     report = verify(tmp_path, payload)
     assert report["valid"] is True

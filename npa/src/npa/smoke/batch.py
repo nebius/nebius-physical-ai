@@ -155,7 +155,10 @@ def run_container_eval(
         command=ge.command,
     )
 
-    if (registry or tag) and not serverless:
+    if (
+        any(value is not None for value in (registry, tag, expected_image_digest))
+        and not serverless
+    ):
         return ContainerRunResult(
             name=name,
             mode=mode,
@@ -167,7 +170,7 @@ def run_container_eval(
             detail={
                 "error": "CandidateOverrideRequiresServerless",
                 "message": (
-                    "registry/tag overrides require serverless execution; local and "
+                    "registry/tag/expected_image_digest overrides require serverless execution; local and "
                     "dry-run commands do not resolve candidate images"
                 ),
             },

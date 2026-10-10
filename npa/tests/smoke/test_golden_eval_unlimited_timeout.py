@@ -200,6 +200,54 @@ def test_batch_local_execution_passes_exact_deadline(
     )
 
 
+@pytest.mark.parametrize("execute", [False, True])
+@pytest.mark.parametrize("field", ["registry", "tag", "expected_image_digest"])
+@pytest.mark.parametrize("value", [None, "", "sha256:" + "a" * 64])
+def test_batch_candidate_options_match_cli_nonserverless_contract(
+    monkeypatch, execute, field, value
+):
+    spec = _spec(monkeypatch, 45)
+    monkeypatch.setattr(batch, "container", lambda _name: spec)
+    monkeypatch.setattr(cli, "container", lambda _name: spec)
+    run = Mock(return_value=subprocess.CompletedProcess(["fixture-capability"], 0))
+    monkeypatch.setattr(batch.subprocess, "run", run)
+    submit = Mock(side_effect=AssertionError("must not submit a local evaluation"))
+    monkeypatch.setattr(serverless_runner, "submit_golden_eval", submit)
+    result = batch.run_container_eval(spec.name, execute=execute, **{field: value})
+    if value is None:
+        assert result.ok
+        assert run.call_count == int(execute)
+    else:
+        assert not result.ok
+        assert result.exit_code == 2
+        assert result.detail["error"] == "CandidateOverrideRequiresServerless"
+        assert "expected_image_digest" in result.detail["message"]
+        run.assert_not_called()
+    run.reset_mock()
+    argv = ["workbench", "golden-eval", "run", spec.name]
+    if execute:
+        argv.append("--execute")
+    if value is not None:
+        argv.extend(["--" + field.replace("_", "-"), value])
+    cli_result = CliRunner().invoke(app, argv)
+    assert cli_result.exit_code == (0 if value is None else 2), cli_result.output
+    assert run.call_count == int(execute and value is None)
+    submit.assert_not_called()
+
+
+@pytest.mark.parametrize("digest", [None, "", "sha256:" + "a" * 64])
+def test_batch_forwards_expected_digest_without_coercion(monkeypatch, digest):
+    spec = _spec(monkeypatch, 45)
+    monkeypatch.setattr(batch, "container", lambda _name: spec)
+    submit = Mock(return_value={"ok": True})
+    monkeypatch.setattr(serverless_runner, "submit_golden_eval", submit)
+    result = batch.run_container_eval(
+        spec.name, serverless=True, expected_image_digest=digest
+    )
+    assert result.ok
+    assert submit.call_args.kwargs["expected_image_digest"] == digest
+
+
 def test_unlimited_cli_serverless_fails_before_submission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

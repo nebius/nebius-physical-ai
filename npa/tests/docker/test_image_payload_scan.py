@@ -1579,6 +1579,10 @@ def test_metadata_scope_distinguishes_uninspected_manifests(
     source, history_only, expected
 ):
     report = scanner.ScanReport(
-        image="example", source=source, history_only=history_only
+        image="example",
+        source=source,
+        history_only=history_only,
+        archive_sha256="a" * 64 if source == "tarball" else None,
+        archive_bytes=1024 if source == "tarball" else None,
     )
     assert report.to_dict()["metadata_validation_scope"] == expected
