@@ -138,6 +138,11 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.sonic.export` | `npa workbench sonic export` | `config.checkpoint_uri` | `config.onnx_uri` | no |
 | `workbench.sonic.eval` | `npa workbench sonic eval` | `config.onnx_uri` | eval report | no |
 | `workbench.lerobot.policy_rollout` | `python3 -m npa.workbench.lerobot.policy_container eval` | `config.policy_checkpoint`, `config.rollout_episodes` | rendered episodes under `config.rollouts_uri` | no |
+| `workbench.lerobot.fastwam_prepare` | `python3 -m npa.workflows.fastwam_policy prepare` | operator LeRobot dataset URI, immutable identity and license | validated episode-disjoint FastWAM recipe | no |
+| `workbench.lerobot.fastwam_train` | `python3 -m npa.workflows.fastwam_policy train` | sealed recipe and runtime-fetched immutable FastWAM/Wan/UMT5 inputs | native LeRobot FastWAM checkpoint and training receipt | no |
+| `workbench.lerobot.fastwam_rollout` | `python3 -m npa.workflows.fastwam_policy rollout` | exact prepared recipe and checkpoint | native direct-action rollout metrics and MP4s | no |
+| `workbench.lerobot.fastwam_evaluate` | `python3 -m npa.workflows.fastwam_policy evaluate` | exact checkpoint, rollout and held-out observations | numerical simulator success and CUDA `select_action` latency | no |
+| `workbench.lerobot.fastwam_report` | `python3 -m npa.workflows.fastwam_policy report` | native evaluation and decoded rollout MP4s | inspected RRD, report and upstream provenance | no |
 | `workbench.lerobot.transfer_prepare` | `python3 -m npa.workflows.lerobot_transfer prepare` | pinned PushT demonstrations and experiment settings | sealed dataset, episode split, training-only statistics and recipe | no |
 | `workbench.lerobot.transfer_train` | `python3 -m npa.workflows.lerobot_transfer train` | `config.prepared_uri`, `config.arm` | native ACT checkpoint, training log and byte provenance | no |
 | `workbench.lerobot.transfer_evaluate` | `python3 -m npa.workflows.lerobot_transfer evaluate` | prepared recipe and both exact checkpoints | paired native PushT trials and real rollout videos | no |

@@ -1,0 +1,172 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: fastwam-policy-qualification
+  description: >-
+    Native LeRobot FastWAM qualification: seal an episode-disjoint robot-data
+    split, fine-tune the video world/action model, run direct-action simulator
+    rollouts, numerically measure success and CUDA action latency, then inspect
+    factual MP4 and RRD evidence. This is distinct from the Cosmos3 FastWAM-K2
+    experiment and never represents simulator results as physical-robot success.
+
+config:
+  bucket: example-bucket
+  prefix: "fastwam/{{run.id}}"
+  # Supply an operator-built, immutable LeRobot 0.6.1 + fastwam-extra image at
+  # submit time. No registry, credential, or project identity is committed here.
+  fastwam_image: "REQUIRED_OPERATOR_IMAGE@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  input_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  dataset_repo_id: "operator/lerobot-dataset"
+  dataset_revision: "REQUIRED_IMMUTABLE_DATASET_REVISION"
+  dataset_license: "REQUIRED_AUTHORITATIVE_DATASET_LICENSE"
+  train_fraction: "0.9"
+  seed: "42"
+  # These public upstream revisions are resolved into the configured shared HF
+  # cache at runtime, never copied into the container image.
+  fastwam_base_revision: "0a868ec1dcf6ff00bcdfa9b7196d6e211ed7e616"
+  wan_revision: "921dbaf3f1674a56f47e83fb80a34bac8a8f203e"
+  wan_diffusers_revision: "b8fff7315c768468a5333511427288870b2e9635"
+  umt5_revision: "66cb9e7e85526fe440a945569e42c72fb6cbc0ad"
+  train_steps: "300000"
+  batch_size: "8"
+  # Matches the upstream LeRobot 0.6.1 default. Complete checkpoints are
+  # mirrored to the task-owned training prefix before recovery may advance.
+  checkpoint_save_freq: "20000"
+  policy_device: "cuda"
+  rollout_environment: "REQUIRED_OPERATOR_SIMULATOR_ENV"
+  rollout_task: "REQUIRED_OPERATOR_SIMULATOR_TASK"
+  rollout_episode_length: "600"
+  rollout_observation_height: "224"
+  rollout_observation_width: "224"
+  rollout_eval_batch_size: "1"
+  fastwam_policy_dtype: "float32"
+  fastwam_n_action_steps: "10"
+  rollout_episodes: "50"
+  latency_warmup_actions: "10"
+  latency_measured_actions: "50"
+  # The operator resolves the target hardware by config override. This default
+  # preserves the documented qualification profile without committing a cluster.
+  gpu_type: "B200"
+  gpu_count: "1"
+
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
+  evaluation_uri: "s3://{{config.bucket}}/{{config.prefix}}/evaluation/"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+    image: "{{config.fastwam_image}}"
+  gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
+    cpus: 32
+    memory: 128Gi
+    image: "{{config.fastwam_image}}"
+
+initial: prepare
+
+states:
+  prepare:
+    description: >-
+      Materialize actual LeRobot robot data, validate its FastWAM
+      vision/state/action/language feature contract, and write the reproducible
+      episode-disjoint train/held-out receipt.
+    toolRef: workbench.lerobot.fastwam_prepare
+    resources: cpu
+    inputs:
+      - uri: "{{config.input_dataset_uri}}"
+        schema: lerobot.dataset.v3
+        kind: directory
+    outputs:
+      - uri: "{{config.prepared_uri}}recipe.json"
+        schema: npa.fastwam.recipe.v1
+      - uri: "{{config.prepared_uri}}"
+        schema: npa.fastwam.prepared.v1
+        kind: directory
+    next: train
+
+  train:
+    description: >-
+      Fine-tune upstream LeRobot FastWAM with video-world-model training from
+      the sealed training episodes and runtime-fetched immutable components.
+      Complete native optimizer/RNG checkpoints are mirrored to the task-owned
+      training output so a supported recovery can resume the same protocol.
+    toolRef: workbench.lerobot.fastwam_train
+    resources: gpu
+    inputs:
+      - uri: "{{config.prepared_uri}}recipe.json"
+        schema: npa.fastwam.recipe.v1
+    outputs:
+      - uri: "{{config.training_uri}}training.json"
+        schema: npa.fastwam.training.v1
+      - uri: "{{config.training_uri}}checkpoint/"
+        schema: lerobot.policy.checkpoint.v1
+        kind: directory
+      - uri: "{{config.training_uri}}recovery/latest.json"
+        schema: npa.fastwam.recovery.v1
+    next: rollout
+
+  rollout:
+    description: >-
+      Run upstream lerobot-eval against the exact checkpoint. FastWAM uses direct
+      action prediction here; it does not generate future video at inference.
+    toolRef: workbench.lerobot.fastwam_rollout
+    resources: gpu
+    inputs:
+      - uri: "{{config.prepared_uri}}recipe.json"
+        schema: npa.fastwam.recipe.v1
+      - uri: "{{config.training_uri}}checkpoint/"
+        schema: lerobot.policy.checkpoint.v1
+        kind: directory
+    outputs:
+      - uri: "{{config.rollouts_uri}}rollout.json"
+        schema: npa.fastwam.rollout.v1
+      - uri: "{{config.rollouts_uri}}native-eval/"
+        schema: lerobot.evaluation.v1
+        kind: directory
+    next: evaluate
+
+  evaluate:
+    description: >-
+      Consume the exact rollout and checkpoint artifacts, calculate native task
+      success, and time native FastWAM select_action calls on held-out frames.
+    toolRef: workbench.lerobot.fastwam_evaluate
+    resources: gpu
+    inputs:
+      - uri: "{{config.prepared_uri}}recipe.json"
+        schema: npa.fastwam.recipe.v1
+      - uri: "{{config.training_uri}}training.json"
+        schema: npa.fastwam.training.v1
+      - uri: "{{config.rollouts_uri}}rollout.json"
+        schema: npa.fastwam.rollout.v1
+    outputs:
+      - uri: "{{config.evaluation_uri}}evaluation.json"
+        schema: npa.fastwam.evaluation.v1
+    next: report
+
+  report:
+    description: >-
+      Decode actual native MP4 rollout evidence, write and independently inspect
+      a Rerun recording, then publish report and provenance artifacts.
+    toolRef: workbench.lerobot.fastwam_report
+    resources: cpu
+    inputs:
+      - uri: "{{config.evaluation_uri}}evaluation.json"
+        schema: npa.fastwam.evaluation.v1
+      - uri: "{{config.rollouts_uri}}native-eval/"
+        schema: lerobot.evaluation.v1
+        kind: directory
+    outputs:
+      - uri: "{{config.report_uri}}report.json"
+        schema: npa.fastwam.report.v1
+      - uri: "{{config.report_uri}}fastwam.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.report_uri}}fastwam.inspection.txt"
+        schema: text/plain
+    terminal: true

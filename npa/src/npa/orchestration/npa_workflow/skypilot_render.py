@@ -206,6 +206,26 @@ DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "workbench.lerobot.fastwam_prepare": (
+        ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
+        ("python:pyarrow", "pyarrow>=15,<22"),
+    ),
+    "workbench.lerobot.fastwam_train": (
+        ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
+        ("python:pyarrow", "pyarrow>=15,<22"),
+    ),
+    "workbench.lerobot.fastwam_rollout": (
+        ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
+        ("python:av", "av>=12,<17"),
+    ),
+    "workbench.lerobot.fastwam_evaluate": (
+        ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
+        ("python:pyarrow", "pyarrow>=15,<22"),
+    ),
+    "workbench.lerobot.fastwam_report": (
+        ("python:av", "av>=12,<17"),
+        ("python:rerun", "rerun-sdk==0.38.1"),
+    ),
     "workbench.lerobot.transfer_prepare": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
         ("python:pyarrow", "pyarrow>=15,<22"),
@@ -340,9 +360,10 @@ def render_vendor_interpreter_setup(candidates: Sequence[str]) -> str:
     # --no-deps first, because a vendor image ships a PINNED stack and resolving npa's
     # requirements inside it can bump torch, after which the vendor's own compiled extensions
     # stop loading (live job 253: torchcodec's libtorchcodec_core4.so failed with
-    # `undefined symbol: _ZN3c1013MessageLogger…`, the classic torch-ABI mismatch). Where the
-    # vendor environment already carries npa's dependencies — LeRobot's venv does — this is all
-    # that is needed and nothing is perturbed.
+    # `undefined symbol: _ZN3c1013MessageLogger…`, the classic torch-ABI mismatch). Keep that
+    # path only while the vendor interpreter can import the actual NPA CLI. A shallow
+    # source overlay can make ``npa.workbench`` importable while its declared CLI dependencies
+    # are absent, which would otherwise defer a real bootstrap failure into the stage body.
     #
     # Then WITH deps, because some vendor environments carry almost none of them. Isaac Lab's
     # Omniverse kit python is one: live job 268 installed npa there with --no-deps, and the
@@ -356,7 +377,7 @@ def render_vendor_interpreter_setup(candidates: Sequence[str]) -> str:
     install_block = ""
     for flags, why in attempts:
         install_block += (
-            f"    if ! \"$npa_vendor_python\" -c 'import npa.workbench' >/dev/null 2>&1; then\n"
+            f"    if ! \"$npa_vendor_python\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
             f'      echo "installing npa into $npa_vendor_python {why}" >&2\n'
             f'      "$npa_vendor_python" -m pip install -q {flags}-e "$npa_vendor_src" \\\n'
             f'        || "$npa_vendor_python" -m pip install -q {flags}-e "$npa_vendor_src" '
@@ -381,18 +402,18 @@ def render_vendor_interpreter_setup(candidates: Sequence[str]) -> str:
         '  if [ -n "$npa_vendor_src" ]; then\n'
         f"{install_block}"
         "  fi\n"
-        # `import npa` is not enough: a vendor image may bake a PARTIAL npa on PYTHONPATH for
-        # its own entrypoint, which shadows the real install — `import npa` passes and
-        # `import npa.workbench` fails (live job 250). Probe a real subpackage.
-        "  if \"$npa_vendor_python\" -c 'import npa.workbench' >/dev/null 2>&1; then\n"
+        # A shallow source overlay may make a low-level package importable while the CLI's
+        # declared dependencies remain absent. Probe the same CLI surface that stage shims use,
+        # so setup installs dependencies before a policy stage begins.
+        "  if \"$npa_vendor_python\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
         '    echo "$npa_vendor_python" > /tmp/npa-python\n'
         '    echo "npa interpreter switched to vendor python: $npa_vendor_python" >&2\n'
         "    break\n"
         "  fi\n"
         # Print WHY. A bare warning sent job 268's debugging down the wrong path: the message
         # blamed a shadowing partial npa when the real cause was missing dependencies.
-        '  echo "warning: npa.workbench is not importable from $npa_vendor_python:" >&2\n'
-        "  \"$npa_vendor_python\" -c 'import npa.workbench' 2>&1 | tail -3 >&2 || true\n"
+        '  echo "warning: npa.cli.main is not importable from $npa_vendor_python:" >&2\n'
+        "  \"$npa_vendor_python\" -c 'import npa.cli.main' 2>&1 | tail -3 >&2 || true\n"
         "done\n"
     )
 
@@ -1499,7 +1520,11 @@ def default_npa_setup() -> str:
         # launcher is already on PATH: vendor-interpreter setup still needs the source root
         # to install NPA into the runtime-fetched Isaac environment.  Live Isaac job 4
         # otherwise retained NPA_BAKED_PYTHON and failed on `No module named isaaclab`.
-        "if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
+        # ``pyproject.toml`` declares NPA's custom Hatch hook.  A partial image
+        # projection is not installable even when it has the package directory:
+        # fall through to the verified staged source rather than failing before
+        # its branch overlay can be applied.
+        "if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ] && [ -f /opt/npa/src/npa/workflow_build.py ]; then\n"
         "  npa_record_src_root /opt/npa\n"
         "fi\n"
         # Debian/Ubuntu >= 24.04 mark the system interpreter externally managed
@@ -1538,7 +1563,7 @@ def default_npa_setup() -> str:
         # branch, has no staged source URI, and exits before its GPU command runs.
         # Install from the image-local source before falling back to the legacy
         # layout or external source staging.
-        "  if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
+        "  if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ] && [ -f /opt/npa/src/npa/workflow_build.py ]; then\n"
         "    npa_pip_install -e /opt/npa\n"
         "    npa_record_src_root /opt/npa\n"
         "  elif [ -d /opt/nebius-physical-ai/npa ]; then\n"
@@ -1679,12 +1704,12 @@ def default_npa_setup() -> str:
         # The overlay is the freshest tree, so it is the one worth putting on the import path.
         "  npa_record_src_root /tmp/npa-src-overlay\n"
         "fi\n"
-        # Record the interpreter that can actually import npa, i.e. the one pip just
+        # Record the interpreter that can actually import NPA's CLI, i.e. the one pip just
         # installed into (it has npa AND its dependencies). Stage bodies use it via a
         # PATH shim, because a task image's default `python3` may be a different
         # interpreter entirely: SkyPilot's GPU default image ships /usr/bin/python3
         # with no pip, and the Isaac Lab image's PATH python3 is Isaac's kit python.
-        # Record a python COMMAND that can import npa, so stage bodies can be pointed
+        # Record a python COMMAND that can import the NPA CLI, so stage bodies can be pointed
         # at it. Three candidates are tried in order, because each of them is the right
         # answer on some real image:
         #   1. npa_setup_python - the interpreter used and verified above;
@@ -1694,8 +1719,8 @@ def default_npa_setup() -> str:
         #      cannot import its own site-packages unless launched through that
         #      wrapper (live run: "could not record a usable npa interpreter");
         #   4. `type -P python3` - the PATH binary, ignoring any alias.
-        "\"$npa_setup_python\" -c 'import npa' >/dev/null 2>&1 || "
-        "{ echo 'npa is not importable after setup' >&2; exit 1; }\n"
+        "\"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1 || "
+        "{ echo 'npa CLI is not importable after setup' >&2; exit 1; }\n"
         'npa_python=""\n'
         'alias_target="$(alias python3 2>/dev/null | sed -e "s/^alias python3=//" '
         '-e "s/^\'//" -e "s/\'$//")"\n'
@@ -1704,7 +1729,7 @@ def default_npa_setup() -> str:
         '2>/dev/null || true)" "$alias_target" "$(type -P python3 2>/dev/null '
         '|| true)"; do\n'
         '  if [ -n "$candidate" ] && [ -x "$candidate" ] && '
-        "\"$candidate\" -c 'import npa' >/dev/null 2>&1; then\n"
+        "\"$candidate\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
         '    npa_python="$candidate"\n'
         "    break\n"
         "  fi\n"

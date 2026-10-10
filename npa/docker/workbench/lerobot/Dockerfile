@@ -72,19 +72,21 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown ubuntu:ubuntu /opt/lerobot/.env \
     && chmod 600 /opt/lerobot/.env
 
+COPY --chown=ubuntu:ubuntu docker/workbench/curobo/remove_scikit_image_recipe.py /opt/lerobot/remove_scikit_image_recipe.py
+
 USER ubuntu
 WORKDIR /opt/lerobot
 
 # 0.5.1 keeps the historic [pusht,libero] extra bundle + pinned torch upgrades.
-# 0.6.0 uses lean feature extras and must NOT force torch>=2.12 (upstream ceiling).
-# 0.6.0 also moved diffusers/transformers behind extras and enforces them in each
+# 0.6.x uses lean feature extras and must NOT force torch>=2.12 (upstream ceiling).
+# 0.6.x also moved diffusers/transformers behind extras and enforces them in each
 # policy's __init__, so diffusion and smolvla must be requested explicitly or
 # --policy.type=diffusion fails inside make_policy() at run time, not at build.
 RUN python3.12 -m venv /opt/lerobot/venv \
     && /opt/lerobot/venv/bin/python -m pip install --upgrade pip setuptools wheel \
-    && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \
+    && if [ "${LEROBOT_VERSION}" = "0.6.0" ] || [ "${LEROBOT_VERSION}" = "0.6.1" ]; then \
          /opt/lerobot/venv/bin/pip install \
-           "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]==${LEROBOT_VERSION}" \
+           "lerobot[training,evaluation,pusht,libero,diffusion,smolvla,fastwam]==${LEROBOT_VERSION}" \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
@@ -103,7 +105,9 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            "torchvision==0.27.1" \
            "diffusers>=0.38.0"; \
        fi \
-    && /opt/lerobot/venv/bin/pip uninstall -y wandb \
+    && /opt/lerobot/venv/bin/python /opt/lerobot/remove_scikit_image_recipe.py \
+      --site-packages "$(/opt/lerobot/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+    && /opt/lerobot/venv/bin/python -m pip check \
     && find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test "$(/opt/lerobot/venv/bin/python -c \
@@ -120,6 +124,24 @@ COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa/__init__.py /opt/npa/src/npa/__init__.py
 COPY --chown=ubuntu:ubuntu src/npa/server /opt/npa/src/npa/server
 COPY --chown=ubuntu:ubuntu src/npa/smoke /opt/npa/src/npa/smoke
+
+# This thin source projection is installed by the SkyPilot bootstrap before a
+# staged source overlay is available. Hatch validates every wheel force-include
+# during editable-install metadata generation, so retain those package-data
+# inputs even though this image does not serve the corresponding tool surfaces.
+COPY --chown=ubuntu:ubuntu src/npa/solutions/solutions.toml /opt/npa/src/npa/solutions/solutions.toml
+COPY --chown=ubuntu:ubuntu src/npa/deploy/sonic_image_manifest.json /opt/npa/src/npa/deploy/sonic_image_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/wan2_2_image_manifest.json /opt/npa/src/npa/deploy/wan2_2_image_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/content_agents_image_manifest.json /opt/npa/src/npa/deploy/content_agents_image_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/ltx2_image_manifest.json /opt/npa/src/npa/deploy/ltx2_image_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/public_release_manifest.json /opt/npa/src/npa/deploy/public_release_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/lerobot_version_manifest.json /opt/npa/src/npa/deploy/lerobot_version_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/libero_image_manifest.json /opt/npa/src/npa/deploy/libero_image_manifest.json
+COPY --chown=ubuntu:ubuntu src/npa/deploy/terraform/.terraform.lock.hcl /opt/npa/src/npa/deploy/terraform/.terraform.lock.hcl
+COPY --chown=ubuntu:ubuntu src/npa/deploy/terraform/.terraform.lock.npa.json /opt/npa/src/npa/deploy/terraform/.terraform.lock.npa.json
+COPY --chown=ubuntu:ubuntu src/npa/smoke/golden_evals.yaml /opt/npa/src/npa/smoke/golden_evals.yaml
+COPY --chown=ubuntu:ubuntu src/npa/cli/agent_ui.html /opt/npa/src/npa/cli/agent_ui.html
+COPY --chown=ubuntu:ubuntu src/npa/assets/paidf_starter_video.json /opt/npa/src/npa/assets/paidf_starter_video.json
 
 RUN python -m npa.smoke.test_lerobot_env
 
@@ -171,6 +193,21 @@ RUN apt-get update \
 
 
 USER ubuntu
+
+# Keep FastWAM attribution and the runtime-fetch/redistribution boundary with
+# the image without invalidating the large dependency-installation layer above.
+USER root
+RUN install -d -m 0755 /usr/share/doc/npa
+COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/notices/NOTICE-FASTWAM /usr/share/doc/npa/NOTICE-FASTWAM
+# ``pyproject.toml`` declares this custom Hatch build hook.  Keep it with the
+# otherwise-minimal NPA source projection so SkyPilot can install that project
+# before applying a staged source overlay.  This late copy deliberately avoids
+# invalidating the preceding CUDA/LeRobot dependency layers.
+COPY --chown=ubuntu:ubuntu src/npa/workflow_build.py /opt/npa/src/npa/workflow_build.py
+USER ubuntu
+
+LABEL org.opencontainers.image.source="https://github.com/huggingface/lerobot" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
 EXPOSE 8080
 

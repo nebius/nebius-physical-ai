@@ -149,6 +149,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         (
             "npa/demo/generate_observation.py",
             "npa/src/npa/workflows/behavior_challenge/comet_training_data.py",
+            "npa/src/npa/workflows/fastwam_policy.py",
             "npa/src/npa/workflows/lerobot_dataset.py",
             "npa/src/npa/workflows/policy_training/public_vla_verify.py",
         ),
@@ -180,6 +181,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "npa/src/npa/genesis/eval_student.py",
             "npa/src/npa/server/app.py",
             "npa/src/npa/workbench/robocasa/capabilities.py",
+            "npa/src/npa/workflows/fastwam_policy.py",
             "research/lerobot-deploy/training/profile_train.py",
         ),
     ),
@@ -229,6 +231,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "npa/src/npa/genesis/eval_student.py",
             "npa/src/npa/server/app.py",
             "npa/src/npa/workbench/robocasa/capabilities.py",
+            "npa/src/npa/workflows/fastwam_policy.py",
             "npa/src/npa/workflows/policy_training/public_vla_verify.py",
             "research/lerobot-deploy/training/profile_train.py",
         ),
@@ -264,6 +267,19 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "npa/src/npa/genesis/eval_student.py",
             "npa/src/npa/smoke/test_lerobot_env.py",
         ),
+    ),
+    (
+        "lerobot.policies.fastwam.configuration_fastwam",
+        "FastWAMConfig",
+        (
+            "npa/src/npa/smoke/test_lerobot_env.py",
+            "npa/src/npa/workflows/fastwam_policy.py",
+        ),
+    ),
+    (
+        "lerobot.policies.fastwam.modeling_fastwam",
+        "FastWAMPolicy",
+        ("npa/src/npa/workflows/fastwam_policy.py",),
     ),
     (
         "lerobot.policies.smolvla.modeling_smolvla",

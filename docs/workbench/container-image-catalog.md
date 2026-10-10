@@ -106,6 +106,13 @@ that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
 no new image publication is required for the experiment.
 
+The LeRobot Dockerfile also carries the upstream `fastwam` optional extra for
+0.6.0. This enables the native FastWAM package gate only; it does **not** make
+the existing accepted 0.6.0 digest a qualified FastWAM image. FastWAM model
+components, datasets and outputs remain runtime-only, and a new immutable image
+must complete its own exact-byte, GPU and workflow validation before any
+FastWAM live-ready claim. See the FastWAM notice and qualification guide.
+
 SAM 3.1 has a [public GHCR development image](https://github.com/orgs/nebius/packages/container/package/nebius-physical-ai%2Fnpa-sam3).
 Its immutable tag is `dev-f287041cffa5a703270413e1746348dccb8e7591`;
 [publication evidence](validation/sam31-public-development-20260919.json) records
