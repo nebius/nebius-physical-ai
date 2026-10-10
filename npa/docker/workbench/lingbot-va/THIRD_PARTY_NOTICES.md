@@ -18,11 +18,13 @@ They are not presented as original LingBot-VA research.
 LingBot-VA credits Wan-Video and Mixture-of-Transformers (MoT). The image
 inherits the neutral OS/bootstrap layers of the pinned `npa-wan2-2` parent; its
 existing redistribution records remain in `/usr/share/doc/npa-wan2-2`. The
-LingBot-VA runtime uses its own security-maintained PyTorch 2.13/CUDA 12.6
-environment, within the upstream project's declared Torch lower bound, and
-does not claim compatibility with the parent's CUDA 13 runtime. The pinned
-source has no TorchAudio or Accelerate import; both are intentionally absent
-from the runtime closure. Native GPU qualification is still required.
+LingBot-VA runtime uses its own isolated security-maintained PyTorch 2.13/CUDA
+13.0 environment, within the upstream project's declared Torch lower bound:
+the documented CUDA 12.6 wheel channel stops at `sm_90`, while the selected RTX
+PRO 6000 target needs `sm_120`. It neither reuses the parent runtime cache nor
+claims native compatibility before image qualification. The pinned source has
+no TorchAudio or Accelerate import; both are intentionally absent from the
+runtime closure. Native GPU qualification is still required.
 
 The pinned source imports Flash Attention even though the official LIBERO path
 uses Flex Attention for training and Torch attention for server inference. NPA

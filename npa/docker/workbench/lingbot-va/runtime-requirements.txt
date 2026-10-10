@@ -1,15 +1,14 @@
-# Runtime-only closure for LingBot-VA's documented Python 3.10 / CUDA 12.6
-# environment.  Models and datasets are intentionally absent.  The CUDA wheel
-# index is the exact upstream PyTorch channel; non-CUDA dependencies are from
-# PyPI. Security-motivated updates still require verified native GPU execution
-# before they can support a capability claim.
---extra-index-url https://download.pytorch.org/whl/cu126
+# Runtime-only closure for LingBot-VA's documented Python 3.10 / CUDA 13.0
+# environment. Models and datasets are intentionally absent. The compatible
+# RTX PRO 6000 target requires the CUDA 13.0 wheel channel because cu126 stops
+# at sm_90; non-CUDA dependencies are from PyPI. Security-motivated updates
+# still require verified native GPU execution before a capability claim.
+--extra-index-url https://download.pytorch.org/whl/cu130
 # LingBot's project metadata declares torch/torchvision lower bounds (2.9/0.24),
-# rather than an upper bound.  Keep CUDA 12.6 but use the first patched Torch
-# line accepted by the repository security gate.  Native GPU qualification is
-# required before this maintained ABI can support a capability claim.
-torch==2.13.0+cu126
-torchvision==0.28.0+cu126
+# rather than an upper bound. Use the first security-maintained CUDA 13.0 pair
+# whose wheel includes sm_120. Native GPU qualification is still required.
+torch==2.13.0+cu130
+torchvision==0.28.0+cu130
 diffusers==0.38.0
 transformers==5.10.0
 # The upstream requirements file names torchaudio and accelerate, but the pinned
@@ -35,7 +34,9 @@ safetensors==0.8.0
 Pillow==12.3.0
 # LeRobot itself is installed with --no-deps by the runtime, exactly as the
 # upstream LingBot-VA instructions require: its metadata caps Torch below the
-# source-required 2.9.0. Keep the non-Torch 0.3.3 data dependencies explicit.
+# source-required 2.9.0 and datasets at 3.6.0. Keep the non-Torch 0.3.3 data
+# dependencies explicit. The native reader probe exercises this maintained
+# 5.0.1 pin before GPU submission; it is not a capability-acceptance result.
 datasets==5.0.1
 pyarrow==25.0.1
 cmake==4.0.3

@@ -1,6 +1,7 @@
 # Source-only LingBot-VA runtime.  The parent is pinned for its neutral OS,
-# ffmpeg, and SkyPilot bootstrap only; its CUDA 13 Wan runtime is deliberately
-# not reused because the upstream LingBot-VA recipe pins PyTorch 2.9/CUDA 12.6.
+# ffmpeg, and SkyPilot bootstrap only. Upstream documents PyTorch 2.9/CUDA 12.6,
+# but its cu126 wheels stop at sm_90; the isolated LingBot runtime uses cu130
+# for the selected RTX PRO 6000 sm_120 target rather than reusing the parent cache.
 # The canonical public parent remains the default.  An operator-private,
 # already-qualified parent may be supplied only as a digest-pinned build arg;
 # the validation below rejects tags and malformed references before this recipe
@@ -24,7 +25,7 @@ LABEL npa.tool="lingbot-va" \
       npa.model.libero_long="robbyant/lingbot-va-posttrain-libero-long@0e89d1e753019988aba484e8da2dc0810e264d9f" \
       npa.weights="runtime-only" \
       npa.dataset="operator-staged-only" \
-      npa.cuda.runtime="runtime-fetch:torch-2.13.0-cu126" \
+      npa.cuda.runtime="runtime-fetch:torch-2.13.0-cu130" \
       org.opencontainers.image.title="NPA LingBot-VA LIBERO-Long runtime" \
       org.opencontainers.image.description="Pinned Apache-2.0 source; models, CUDA, and data are runtime-only" \
       org.opencontainers.image.licenses="Apache-2.0" \

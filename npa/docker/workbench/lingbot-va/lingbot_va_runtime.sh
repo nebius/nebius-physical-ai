@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Create one immutable-identity CUDA 12.6 runtime in an operator-owned volume.
-# This script never asks for consent and never fetches datasets.  The public
+# Create one immutable-identity CUDA 13.0 runtime in an operator-owned volume.
+# CUDA 13.0 carries the sm_120 wheel required by the selected RTX target. This
+# script never asks for consent and never fetches datasets. The public
 # LingBot checkpoints are fetched only by the invoked workload.
 set -euo pipefail
 
@@ -25,13 +26,15 @@ ready() { [[ -x "$1/venv/bin/python" && -f "$1/.complete" ]]; }
 
 verify() {
   # The exact upstream LeRobot 0.3.3 installation deliberately overrides its
-  # stale Torch/TorchVision upper bounds. Its optional Linux physical-input
-  # backend also declares evdev and python-xlib, neither of which the offline
-  # LIBERO path imports. Keep pip's full integrity check, but reject every
-  # mismatch other than these four documented compatibility overrides.
+  # stale Torch, TorchVision, Transformers, and datasets upper bounds. The
+  # pinned datasets 5.0.1 reader is exercised against the native LingBot
+  # loader before GPU submission. Its optional Linux physical-input backend
+  # also declares evdev and python-xlib, neither of which the offline LIBERO
+  # path imports. Keep pip's full integrity check, but reject every mismatch
+  # other than these explicitly named compatibility overrides.
   local pip_check unexpected
   if ! pip_check="$("$1/venv/bin/python" -m pip check 2>&1)"; then
-    unexpected="$(printf '%s\n' "$pip_check" | grep -Ev '^(lerobot 0\.3\.3 has requirement (torch|torchvision|transformers).*, but you have |pynput 1\.8\.1 requires (evdev|python-xlib), which is not installed\.)' || true)"
+    unexpected="$(printf '%s\n' "$pip_check" | grep -Ev '^(lerobot 0\.3\.3 has requirement (datasets|torch|torchvision|transformers).*, but you have |pynput 1\.8\.1 requires (evdev|python-xlib), which is not installed\.)' || true)"
     if [[ -n "$unexpected" ]]; then
       printf 'lingbot-va-runtime: unexpected dependency mismatch: %s\n' "$unexpected" >&2
       return "$EX_SOFTWARE"
@@ -40,8 +43,10 @@ verify() {
   fi
   "$1/venv/bin/python" - <<'PY'
 import torch
+import datasets
 assert torch.__version__.split('+', 1)[0] == '2.13.0', torch.__version__
-assert torch.version.cuda == '12.6', torch.version.cuda
+assert torch.version.cuda == '13.0', torch.version.cuda
+assert datasets.__version__ == '5.0.1', datasets.__version__
 from torch.nn.attention.flex_attention import flex_attention
 import wan_va.modules.model
 print(f'torch={torch.__version__} cuda={torch.version.cuda} flex_attention=ready')
@@ -90,12 +95,12 @@ ensure() {
     rm -rf -- "$tmp"
     python3 -m venv "$tmp/venv"
     "$tmp/venv/bin/python" -m pip install --upgrade 'pip==25.1.1' 'setuptools==80.9.0' 'wheel==0.45.1'
-    # flash-attn's metadata imports torch. Install the maintained CUDA 12.6
+    # flash-attn's metadata imports torch. Install the CUDA 13.0 sm_120-capable
     # Torch/TorchVision pair first, then resolve the rest of the upstream
     # closure. The selected Flex training and Torch inference paths do not
     # execute Flash Attention, TorchAudio, or Accelerate.
-    "$tmp/venv/bin/python" -m pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu126 \
-      'torch==2.13.0+cu126' 'torchvision==0.28.0+cu126'
+    "$tmp/venv/bin/python" -m pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu130 \
+      'torch==2.13.0+cu130' 'torchvision==0.28.0+cu130'
     "$tmp/venv/bin/python" -m pip install --no-cache-dir -r "$REQUIREMENTS"
     # Upstream explicitly installs this historical LeRobot revision with
     # --no-deps because its package metadata caps Torch below LingBot-VA's

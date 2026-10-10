@@ -24,12 +24,13 @@ workflow input. Source access is not treated as a license grant for weights,
 data, outputs, or caches.
 
 CUDA and Python dependencies are built into an operator-owned writable runtime
-cache by `lingbot-va-runtime ensure`. Runtime installation retains CUDA 12.6
-while using the security-maintained PyTorch 2.13 line permitted by the
-upstream project's Torch lower bound. The pinned source has no TorchAudio or
-Accelerate import, so those scanner-blocked unused packages are absent. This
-does not add an EULA, acceptance variable, telemetry consent, or
-vendor-specific attestation.
+cache by `lingbot-va-runtime ensure`. Runtime installation uses the
+security-maintained PyTorch 2.13/CUDA 13.0 wheel line permitted by the
+upstream project's Torch lower bound: upstream's documented CUDA 12.6 channel
+stops at `sm_90`, while the selected RTX PRO 6000 target needs `sm_120`. The
+pinned source has no TorchAudio or Accelerate import, so those scanner-blocked
+unused packages are absent. This does not add an EULA, acceptance variable,
+telemetry consent, or vendor-specific attestation.
 
 The Dockerfile's canonical Wan parent remains its checked-in digest-pinned
 default. An operator-private qualification may pass

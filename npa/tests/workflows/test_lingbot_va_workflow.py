@@ -467,8 +467,13 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
 
     assert L.SOURCE_REF in dockerfile
     assert L.POSTTRAIN_MODEL_REF in dockerfile
-    assert "torch==2.13.0+cu126" in requirements
-    assert "torchvision==0.28.0+cu126" in requirements
+    assert "--extra-index-url https://download.pytorch.org/whl/cu130" in requirements
+    assert "torch==2.13.0+cu130" in requirements
+    assert "torchvision==0.28.0+cu130" in requirements
+    active_requirements = [
+        line for line in requirements.splitlines() if line and not line.startswith("#")
+    ]
+    assert all("cu126" not in line for line in active_requirements)
     assert "torchaudio==" not in requirements
     assert "diffusers==0.38.0" in requirements
     safetensors = next(
@@ -494,7 +499,12 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
     assert "pyarrow==25.0.1" in requirements
     assert "lerobot==0.3.3" in runtime_script
     assert "--no-deps" in runtime_script
-    assert "torch==2.13.0+cu126" in runtime_script
+    assert "torch==2.13.0+cu130" in runtime_script
+    assert "torch.version.cuda == '13.0'" in runtime_script
+    assert "datasets.__version__ == '5.0.1'" in runtime_script
+    assert "(datasets|torch|torchvision|transformers)" in runtime_script
+    assert "cu126" not in runtime_script
+    assert 'npa.cuda.runtime="runtime-fetch:torch-2.13.0-cu130"' in dockerfile
     assert "ACCEPT_" not in dockerfile
     assert "robbyant/libero-long-lerobot" not in dockerfile
     assert "npa-wan2-2@sha256:" in dockerfile
