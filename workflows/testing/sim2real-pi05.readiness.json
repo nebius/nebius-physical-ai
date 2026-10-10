@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "ba98c0d1ad57c3ce7d968139d0105f5996100589f077fa6b296d965e1aba68ca",
+  "workflow_sha256": "9395cd7fd7ac531e1a65398e90ce534237684c578fef099c9092b365dabd86a5",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The separate 14-state npa.workflow validates, plans, and renders with explicit immutable-image and source placeholders; module argv, live-matrix, schema-chain, declared-output, and independent training/service GPU-allocation checks cover the new toolRefs.",
+      "reason": "The separate 14-state npa.workflow validates, plans, and renders with explicit immutable-image and source placeholders; module argv, live-matrix, schema-chain, declared-output, independent training/service GPU-allocation checks, and distinct run-scoped base/adapted controller identities cover the new toolRefs. Preparation rejects accounts that do not match the existing exact-name RBAC helper for each suffixed service run.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/sim2real-pi05.yaml",
         "npa workbench workflow plan-spec workflows/testing/sim2real-pi05.yaml --json --check-render",
@@ -29,8 +29,8 @@
       ]
     },
     "worker_input": {
-      "status": "blocked",
-      "reason": "All 27 authoritative public Polaris checkpoint objects and the separate public tokenizer were downloaded anonymously and integrity-verified at exact generations. A historical corrected image loaded the real checkpoint and ran deterministic fixed-noise inference on actual captures, proving model consumption and input sensitivity but not helpful control. The 48 mm collection has eight admitted demonstrations, but historical held-out collection produced only one valid 60 mm episode and no valid 72 mm episode. The size-aware successor must produce complete validation and gold cohorts before dataset export/readback and training input can be complete.",
+      "status": "verified",
+      "reason": "All 27 authoritative public Polaris checkpoint objects and the separate public tokenizer were downloaded anonymously and integrity-verified at exact generations. A prospective c9 collector produced eight admitted demonstrations in each 48/60/72 mm train/validation/gold cohort with the final clock and clearance contract, and the baked CPU image exported and independently read back all 691 train and 695 validation chunks with no gold arrays. These historical input bytes remain immutable evidence; they do not qualify the final source images, training, or policy outcomes.",
       "evidence": [
         "Private public-artifact receipts record 27 complete checkpoint objects and the separate tokenizer payload with exact generation, byte count, authoritative MD5, and computed SHA256 without credentials.",
         "Private live receipts retain real checkpoint load/inference and failed expert/camera attempts without publishing infrastructure identifiers."
@@ -52,7 +52,7 @@
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "The isolated route has two one-GPU RTX PRO 6000 workers that passed CUDA, GLX/EGL, NVIDIA Vulkan, and 120-second stability checks with runtimeClass nvidia. Historical source-overlay execution admitted eight expert episodes for each 48/60/72 mm cohort and independently verified real checkpoint loading, authenticated fixed-noise inference and same-state wrist sensitivity. Those rows predate the final clearance/clock contract. Later policy diagnostics exposed device, scalar-scale, invented raw-action-domain, finite gripper-score and query-persistence adapter defects before task execution; this revision corrects them, records every model response before controller execution, and makes incomplete prefixes ineligible for effectiveness. Rerun readback now uses the installed SDK module rather than assuming a sibling console script. It has no final-source closed-loop result or image qualification. Typed capacity evidence records that an eight-GPU node was not placed; no eight-GPU or multi-host training claim is made. The interpreter has no finally/on_failure transition, so an owned failure monitor or real failure transition remains required before service operation. Prospective cohorts, dataset export, fine-tuning, selected-checkpoint reload, matched closed-loop outcomes, MP4 and Rerun outputs remain unverified.",
+      "reason": "The isolated route has two one-GPU RTX PRO 6000 workers that passed CUDA, GLX/EGL, NVIDIA Vulkan, and 120-second stability checks with runtimeClass nvidia. Historical execution admitted eight expert episodes for each 48/60/72 mm cohort, exported every train/validation chunk, completed 1000 finite LoRA updates, saved and reloaded the resulting checkpoint, and independently verified real checkpoint loading, authenticated fixed-noise inference and same-state wrist sensitivity. These runs used earlier separately identified source/image combinations and do not qualify final-source execution. This revision records every model response before controller execution, makes incomplete prefixes ineligible for effectiveness, requires full efficacy-report evidence, assigns distinct exact-owner service controllers, and uses batch size one to cover every held-out sample without padding or dropping a tail. It has no final-source closed-loop result or image qualification. Typed capacity evidence records that an eight-GPU node was not placed; no eight-GPU or multi-host training claim is made. The interpreter has no finally/on_failure transition, so an owned failure monitor or real failure transition remains required before service operation. Final-source image builds, selected-checkpoint reload, matched closed-loop outcomes, MP4 and Rerun outputs remain unverified.",
       "evidence": [
         "Sanitized private helper preflight, image-launch, and reset-failure receipts are retained outside Git; no live resource identifiers are committed."
       ]

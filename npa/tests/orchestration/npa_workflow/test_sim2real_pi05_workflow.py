@@ -7,10 +7,12 @@ import pytest
 from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
 from npa.orchestration.npa_workflow.spec import load_spec
+from npa.orchestration.npa_workflow.submit import merge_config_overrides
 from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 from npa.workflows.sim2real.pi05_closed_loop import _validate_gold_scenarios
 from npa.workflows.sim2real.pi05_collect_all import SPLITS
 from npa.workflows.sim2real.pi05_isaac import support_surface_contract
+from npa.workflows.byof.openpi_service import controller_service_account_name
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -155,11 +157,71 @@ def test_all_cpu_roles_share_one_exact_source_image() -> None:
     assert spec.config["cpu_image"] == ""
     assert spec.resources["cpu"]["image"] == cpu_image
     assert spec.resources["data"]["image"] == cpu_image
-    assert spec.resources["service-control"]["image"] == cpu_image
+    assert spec.resources["base-service-control"]["image"] == cpu_image
+    assert spec.resources["adapted-service-control"]["image"] == cpu_image
     assert spec.resources["viewer"]["image"] == cpu_image
     assert "controller_image" not in spec.config
     assert "data_image" not in spec.config
     assert "viewer_image" not in spec.config
+
+
+def test_service_arms_use_distinct_exact_owner_accounts() -> None:
+    spec = load_spec(SPEC)
+    run_id = "pi05-rbac"
+    overrides = {
+        "base_service_account": controller_service_account_name(f"{run_id}-base"),
+        "adapted_service_account": controller_service_account_name(f"{run_id}-adapted"),
+    }
+    spec = merge_config_overrides(spec, overrides)
+    plan = build_plan(spec, run_id=run_id)
+    steps = {step.state: step for step in plan.steps}
+    prepare = steps["prepare-contract"].argv
+
+    assert (
+        _value(prepare, "--base-service-account") == overrides["base_service_account"]
+    )
+    assert (
+        _value(prepare, "--adapted-service-account")
+        == overrides["adapted_service_account"]
+    )
+    assert spec.states["start-base-service"].resources == "base-service-control"
+    assert spec.states["cleanup-base-service"].resources == "base-service-control"
+    assert spec.states["start-adapted-service"].resources == ("adapted-service-control")
+    assert spec.states["cleanup-adapted-service"].resources == (
+        "adapted-service-control"
+    )
+
+
+def test_service_controller_pods_bind_their_arm_account() -> None:
+    run_id = "pi05-pod-rbac"
+    accounts = {
+        role: controller_service_account_name(f"{run_id}-{role}")
+        for role in ("base", "adapted")
+    }
+    spec = merge_config_overrides(
+        load_spec(SPEC),
+        {f"{role}_service_account": account for role, account in accounts.items()},
+    )
+    plan = {step.state: step for step in build_plan(spec, run_id=run_id).steps}
+
+    for role in ("base", "adapted"):
+        for operation in ("start", "cleanup"):
+            state = f"{operation}-{role}-service"
+            task = build_scheduler_task(spec, plan[state], run_id=run_id)
+            pod = task["resources"]["kubernetes"]["pod_config"]["spec"]
+            assert pod["serviceAccountName"] == accounts[role]
+
+
+def test_default_evaluation_batch_covers_every_exported_heldout_sample() -> None:
+    spec = load_spec(SPEC)
+    heldout_count = 695
+    batch_size = int(spec.config["evaluation_batch_size"])
+    plan = {step.state: step for step in build_plan(spec).steps}
+
+    assert batch_size == 1
+    assert _value(plan["reload-validation"].argv, "--batch-size") == "1"
+    assert heldout_count % batch_size == 0
+    assert heldout_count // batch_size == heldout_count
 
 
 def test_gold_controller_states_share_exact_protocol_inputs() -> None:

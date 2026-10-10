@@ -19,6 +19,10 @@ from npa.workflows.byof.openpi_pipeline import (
     _single_host_runtime_evidence,
 )
 from npa.workflows.byof import openpi_service_lifecycle
+from npa.workflows.byof.openpi_service import (
+    build_controller_rbac_manifests,
+    controller_service_account_name,
+)
 from npa.workflows.sim2real import (
     pi05_closed_loop,
     pi05_closed_loop_entry,
@@ -65,6 +69,46 @@ SUCCESS_EVENTS = [
     "support_contact",
     "stable",
 ]
+
+
+def test_pi05_service_rbac_contract_uses_two_exact_owners() -> None:
+    run_id = "pi05-rbac"
+    args = Namespace(
+        run_id=run_id,
+        service_namespace="default",
+        base_service_account=controller_service_account_name(f"{run_id}-base"),
+        adapted_service_account=controller_service_account_name(f"{run_id}-adapted"),
+    )
+    contract = pi05_stage._service_rbac_contract(args)
+
+    for role in ("base", "adapted"):
+        arm = contract[role]
+        manifests = build_controller_rbac_manifests(
+            run_id=arm["run_id"],
+            namespace=arm["namespace"],
+            service_account=arm["service_account"],
+        )
+        assert manifests["role"]["metadata"]["annotations"] == {
+            "npa.nebius.ai/cleanup-owner": f"{run_id}-{role}"
+        }
+        assert (
+            manifests["role_binding"]["subjects"][0]["name"] == arm["service_account"]
+        )
+    assert contract["base"]["service_account"] != contract["adapted"]["service_account"]
+
+
+def test_pi05_service_rbac_contract_rejects_parent_or_other_arm_account() -> None:
+    run_id = "pi05-rbac"
+    expected_base = controller_service_account_name(f"{run_id}-base")
+    args = Namespace(
+        run_id=run_id,
+        service_namespace="default",
+        base_service_account=expected_base,
+        adapted_service_account=expected_base,
+    )
+
+    with pytest.raises(RuntimeError, match="adapted service account must be"):
+        pi05_stage._service_rbac_contract(args)
 
 
 def _robot_plant() -> dict:

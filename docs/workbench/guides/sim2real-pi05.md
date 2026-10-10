@@ -170,7 +170,12 @@ The checked-in spec is intentionally non-runnable until an operator supplies:
 - a writable bucket and fresh prefix;
 - exact immutable CPU, Isaac, and OpenPI images carrying the selected NPA
   source revision;
-- the read-only Isaac cache PVC and scoped service account/RBAC;
+- the read-only Isaac cache PVC and two distinct run-scoped controller
+  ServiceAccount/Role/RoleBinding sets, one each for `<run-id>-base` and
+  `<run-id>-adapted`; generate each with
+  `build_controller_rbac_manifests` and its exact suffixed run ID, then pass
+  the resulting account names as `base_service_account` and
+  `adapted_service_account`;
 - an operator-managed Kubernetes Secret whose `auth_token` key authenticates
   the private policy data path;
 - healthy, separately routed capacity for Isaac, OpenPI training, and the
@@ -185,6 +190,13 @@ Kit portable state, XDG data, logs, and shader caches. Both collector and gold
 evaluator pass that validated portable root into `AppLauncher`; a path outside
 the job-state mount, an escaped path, or duplicate portable-root option fails
 before Kit starts.
+
+The reference held-out model evaluation uses batch size one. This deliberately
+covers every exported validation sample, including the observed 695-sample
+corpus, without dropping or padding a tail batch. An operator override may use a
+larger fixed batch only when it divides the held-out sample count and the
+allocated device count exactly; evaluation rejects any mismatch before fetching
+the trained checkpoint.
 
 NPA adds no OpenPI/Gemma consent variable. Upstream terms remain the operator's
 responsibility through use. The Isaac expert can be qualified independently

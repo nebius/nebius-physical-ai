@@ -2377,6 +2377,12 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.preparation_uri}}",
             "--component-root-uri",
             "{{config.component_root_uri}}",
+            "--service-namespace",
+            "{{config.service_namespace}}",
+            "--base-service-account",
+            "{{config.base_service_account}}",
+            "--adapted-service-account",
+            "{{config.adapted_service_account}}",
         ],
     ),
     "workbench.sim2real.pi05_external_seam": ToolEntry(

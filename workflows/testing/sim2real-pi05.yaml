@@ -57,11 +57,12 @@ config:
   train_fsdp_devices: "1"
   train_seed: "20261007"
   evaluation_seed: "20261008"
-  evaluation_batch_size: "4"
+  evaluation_batch_size: "1"
 
   service_namespace: default
   service_auth_secret: replace-with-operator-openpi-auth-secret
-  service_account: npa-openpi-pi05-controller
+  base_service_account: replace-with-run-scoped-base-controller
+  adapted_service_account: replace-with-run-scoped-adapted-controller
   service_gpu_count: "1"
   service_expected_gpu_type: B200
   service_expected_compute_capability: "10.0"
@@ -175,7 +176,7 @@ resources:
               persistentVolumeClaim: {claimName: "{{config.isaac_cache_pvc}}", readOnly: true}
             - name: npa-isaac-job-state
               emptyDir: {}
-  service-control:
+  base-service-control:
     cloud: kubernetes
     cpus: "2"
     memory: 8Gi
@@ -184,7 +185,17 @@ resources:
     kubernetes:
       pod_config:
         spec:
-          serviceAccountName: "{{config.service_account}}"
+          serviceAccountName: "{{config.base_service_account}}"
+  adapted-service-control:
+    cloud: kubernetes
+    cpus: "2"
+    memory: 8Gi
+    disk_size: "20"
+    image: "{{config.cpu_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          serviceAccountName: "{{config.adapted_service_account}}"
   viewer:
     cloud: kubernetes
     cpus: "{{config.cpu_cpus}}"
@@ -250,7 +261,7 @@ states:
     description: Start a private digest-pinned base pi0.5 server; the graph owns the later Isaac client and cleanup.
     needs: [artifact-preflight]
     toolRef: workbench.openpi.pi05_base_service_start
-    resources: service-control
+    resources: base-service-control
     outputs:
       - {uri: "{{config.base_service_start_uri}}", schema: npa.workbench.openpi.pi05-service-start.v1}
       - {uri: "{{config.component_root_uri}}/components/stage_05.json", schema: npa.sim2real.component_record.v1}
@@ -272,7 +283,7 @@ states:
     description: Remove and verify absence of only the exact base-service resources.
     needs: [evaluate-base-gold]
     toolRef: workbench.openpi.pi05_base_service_cleanup
-    resources: service-control
+    resources: base-service-control
     outputs:
       - {uri: "{{config.base_service_cleanup_uri}}", schema: npa.workbench.openpi.pi05-service-cleanup.v1}
       - {uri: "{{config.component_root_uri}}/components/stage_07.json", schema: npa.sim2real.component_record.v1}
@@ -303,7 +314,7 @@ states:
     description: Start the exact validation-selected private checkpoint with scoped credentials and no public ingress.
     needs: [reload-validation]
     toolRef: workbench.openpi.pi05_adapted_service_start
-    resources: service-control
+    resources: adapted-service-control
     outputs:
       - {uri: "{{config.adapted_service_start_uri}}", schema: npa.workbench.openpi.pi05-service-start.v1}
       - {uri: "{{config.component_root_uri}}/components/stage_10.json", schema: npa.sim2real.component_record.v1}
@@ -325,7 +336,7 @@ states:
     description: Remove and verify absence of only the exact adapted-service resources.
     needs: [physical-robot-seam]
     toolRef: workbench.openpi.pi05_adapted_service_cleanup
-    resources: service-control
+    resources: adapted-service-control
     outputs:
       - {uri: "{{config.adapted_service_cleanup_uri}}", schema: npa.workbench.openpi.pi05-service-cleanup.v1}
       - {uri: "{{config.component_root_uri}}/components/stage_13.json", schema: npa.sim2real.component_record.v1}

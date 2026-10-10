@@ -8,6 +8,10 @@ import json
 import tempfile
 from pathlib import Path
 
+from npa.workflows.byof.openpi_service import (
+    controller_service_account_name,
+    service_resource_names,
+)
 from npa.workflows.sim2real.pi05_contract import assert_contract, build_contract
 from npa.workflows.sim2real.pi05_closed_loop import validate_effectiveness_report
 from npa.workflows.sim2real.workflow_io import (
@@ -36,7 +40,7 @@ def _prepare(args: argparse.Namespace) -> dict:
             "polaris_artifact": "anonymous public GCS generation/checksum and payload-byte preflight",
             "gated_hf_artifacts": "operator token plus exact-revision payload-byte access when selected",
             "isaac_eula": "standard submit-time product routing",
-            "private_clusterip_and_scoped_rbac": True,
+            "private_clusterip_and_scoped_rbac": _service_rbac_contract(args),
         },
     }
     with tempfile.TemporaryDirectory(prefix="npa-pi05-prepare-") as directory:
@@ -50,6 +54,27 @@ def _prepare(args: argparse.Namespace) -> dict:
         artifacts={"preparation": args.output_uri},
     )
     return result
+
+
+def _service_rbac_contract(args: argparse.Namespace) -> dict[str, dict]:
+    arms = {}
+    for role in ("base", "adapted"):
+        run_id = f"{args.run_id}-{role}"
+        expected = controller_service_account_name(run_id)
+        actual = getattr(args, f"{role}_service_account")
+        if actual != expected:
+            raise RuntimeError(
+                f"{role} service account must be {expected!r} for run {run_id!r}"
+            )
+        arms[role] = {
+            "run_id": run_id,
+            "namespace": args.service_namespace,
+            "service_account": actual,
+            "resource_names": service_resource_names(run_id),
+        }
+    if arms["base"]["service_account"] == arms["adapted"]["service_account"]:
+        raise RuntimeError("base and adapted services require distinct accounts")
+    return arms
 
 
 def _external_seam(args: argparse.Namespace) -> dict:
@@ -249,6 +274,9 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--run-id", required=True)
     prepare.add_argument("--output-uri", required=True)
     prepare.add_argument("--component-root-uri", required=True)
+    prepare.add_argument("--service-namespace", required=True)
+    prepare.add_argument("--base-service-account", required=True)
+    prepare.add_argument("--adapted-service-account", required=True)
     external = commands.add_parser("external-seam")
     external.add_argument("--run-id", required=True)
     external.add_argument("--output-uri", required=True)
