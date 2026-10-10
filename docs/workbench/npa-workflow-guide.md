@@ -148,9 +148,9 @@ opt-in environment contract.
 ### Choose another spec
 
 Browse the [workflow catalog](../../workflows/README.md). `workflows/main/`
-contains `sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`;
-other catalog workflows live in `workflows/testing/`. A directory name does not
-establish a workflow's validation scope; read its guide.
+contains the promoted principal pipelines; general references live in
+`workflows/testing/` and partner integrations in `workflows/partners/<partner>/`.
+A directory name does not establish a workflow's validation scope; read its guide.
 
 Reference specs (all pytest-guarded):
 
