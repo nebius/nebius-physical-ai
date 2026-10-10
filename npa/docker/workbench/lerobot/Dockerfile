@@ -147,7 +147,8 @@ COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 # must supply npa.workbench; shipping it here would make the repair's import
 # probe pass against the baked tree.
 COPY --chown=ubuntu:ubuntu src/npa/__init__.py /opt/npa/src/npa/__init__.py
-COPY --chown=ubuntu:ubuntu src/npa/clients /opt/npa/src/npa/clients
+COPY --chown=ubuntu:ubuntu src/npa/clients/__init__.py /opt/npa/src/npa/clients/__init__.py
+COPY --chown=ubuntu:ubuntu src/npa/clients/storage.py /opt/npa/src/npa/clients/storage.py
 COPY --chown=ubuntu:ubuntu src/npa/server /opt/npa/src/npa/server
 COPY --chown=ubuntu:ubuntu src/npa/smoke /opt/npa/src/npa/smoke
 

@@ -436,7 +436,8 @@ images:
       the receipt identifies that changed source file separately from native model code.
       Real offline default-camera, ACT, Diffusion, server and native logger gates precede
       publication. GPU/default acceptance remains a separate qualification.
-      Optional 0.6.0 and the additive B300 recipe retain distinct source scopes.
+      Optional 0.6.0 retains W&B and must pass its own image-security gate; it
+      and the additive B300 recipe retain distinct source scopes.
   lerobot-policy:
     dockerfile: lerobot-policy/Dockerfile
     tier: service

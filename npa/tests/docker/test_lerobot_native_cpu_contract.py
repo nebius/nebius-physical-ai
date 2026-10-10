@@ -69,11 +69,19 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     assert recipe.count(check) == 1
     assert recipe.index(check) > recipe.index("Unsupported LeRobot package version")
     assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" not in recipe
-    for copied_path in ("__init__.py", "clients", "server", "smoke"):
-        assert (
-            f"COPY --chown=ubuntu:ubuntu src/npa/{copied_path} /opt/npa/src/npa/"
-            in recipe
-        )
+    expected_copies = (
+        ("src/npa/__init__.py", "/opt/npa/src/npa/__init__.py"),
+        ("src/npa/clients/__init__.py", "/opt/npa/src/npa/clients/__init__.py"),
+        ("src/npa/clients/storage.py", "/opt/npa/src/npa/clients/storage.py"),
+        ("src/npa/server", "/opt/npa/src/npa/server"),
+        ("src/npa/smoke", "/opt/npa/src/npa/smoke"),
+    )
+    for source_path, target_path in expected_copies:
+        assert f"COPY --chown=ubuntu:ubuntu {source_path} {target_path}" in recipe
+    assert (
+        "COPY --chown=ubuntu:ubuntu src/npa/clients /opt/npa/src/npa/clients"
+        not in recipe
+    )
     assert "stage's own NPA install" in recipe
     assert "shipping it here would make the repair's import" in recipe
     assert "prepare-secure-wheel.py" in recipe
