@@ -1,5 +1,8 @@
 # PAIDF with Cosmos 3 video conditioning
 
+For whole-dataset submission, read-only robot input checks and private source/image integration,
+see [PAIDF dataset batches](paidf-dataset-batches.md).
+
 [Guides](README.md)
 
 For a complete manual setup and run, start with the
@@ -55,6 +58,56 @@ the terminal disposition controls the final branch. An explicit `--no-runtime`
 is rejected before staging or submission. `--assume-decision` is allowed only
 for planning previews; execution requires actual evaluator decisions.
 
+## Native variant recovery
+
+The standard immutable-image `Cosmos3-Nano` workflow with
+`structural_control: edge` retains each completely published variant across
+worker recovery. It resolves the actual Hugging Face revision once and seals
+that full revision with the run, prepared input bytes, captions, configuration,
+effective prompts, seeds, sampling controls, source fingerprints, immutable
+image request and measured GPU model/driver/capability. A changed contract or a
+corrupt completed receipt fails closed. Existing progress documents and legacy
+partials do not qualify for reuse.
+
+The native pipeline keeps the explicit Cosmos3-Nano YAML and eager sampling.
+The sound tokenizer is selected from that same pinned Nano snapshot using the
+native [`from_checkpoint` path](https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/cosmos_framework/inference/inference.py#L1163).
+This invokes the same [AVAE converter](https://github.com/NVIDIA/cosmos-framework/blob/5e67049cd94acb667786f1e6dd0dab821cb90c97/cosmos_framework/inference/common/checkpoints.py#L61)
+used by the default sound download; converted tensor names, dtypes, shapes and values must
+match the pinned source tensors. The separately registered Wan VAE remains on
+its native immutable revision. All downloaded snapshot files, auxiliary bytes,
+native source, derived sound tensors and the actual post-construction model
+configuration are hash bound. The model-selection receipt states that its basis
+is the native configuration and resolver contract; it does not claim loader-open
+instrumentation.
+
+Each clip is published under its batch and final published-video SHA, with
+conditional creation and byte readback for the complete video, canonical
+numbered PNGs, edge and optional RGB controls, metadata, native execution and
+transfer reports. When source padding is restored, the same immutable object
+set retains `raw_model_video.mp4` and its metadata: the native guarded hash
+binds the raw bytes while the publication directory and descriptor bind the
+final padding-preserved bytes. Completion is sealed last. Recovery verifies
+both lineages, every object, and the full final video against the same source
+timeline before skipping that variant. The normal collector writes the
+canonical manifest after all requested variants complete;
+`recovered_variant_count` reports how many verified variants that invocation
+reused. Guardrails and evaluator thresholds retain their existing behavior.
+
+This path requires the normal workflow's `NPA_TASK_IMAGE` immutable reference.
+Direct calls lacking that identity, mutable image references, non-structural
+generation, and custom checkpoints retain fresh generation. Set
+`variant_recovery: disabled` (or `--variant-recovery disabled`) to deliberately
+regenerate rather than reuse after an operational runtime change. An unchanged
+immutable batch remains fail-closed: a changed GPU runtime rejects reuse and
+points to that explicit regeneration mode. `NPA_COSMOS3_NANO_REVISION` is an
+internal handoff set by the coordinator, not an operator model-selection option.
+Stage the reviewed checkout through normal workflow submission. Keep native
+acceptance pending until a fresh candidate-source run passes the
+[read-only live receipt audit](../../../npa/tests/e2e/README.md#paidf-native-variant-recovery);
+fixture interruption tests establish the recovery protocol and do not prove
+model inference or training-data suitability.
+
 ## Inputs and configuration
 
 For `workflow submit`, use `--input-video` / `--input-uri` for MP4, or
@@ -94,9 +147,9 @@ bucket, or infrastructure identifier is embedded.
 
 Generation behavior is configuration-driven through `cosmos3_checkpoint`,
 `cosmos3_mode`, `seed`, `guidance`, `steps`, `variant_count`,
-`variant_parallelism`, and `parallelism_preset`. `augmentation_seed` defaults to
-`30`, keeping appearance profiles consistent across fresh run IDs; change it for
-new appearance experiments. Quality and retries use
+`variant_parallelism`, `parallelism_preset`, and `variant_recovery`.
+`augmentation_seed` defaults to `30`, keeping appearance profiles consistent
+across fresh run IDs; change it for new appearance experiments. Quality and retries use
 `grade_threshold`, `attribute_threshold`, `refinement_iterations`, `retry_seed_stride`,
 `retry_guidance_delta`, and `retry_steps_delta`. `source_motion_weight` is a
 compatibility setting that must be `0.0` (the default). Nonzero values fail
@@ -212,8 +265,9 @@ failed variant still fails the stage; the batch does not write a new successful
 `manifest.json`. Other completed variants remain available as review evidence.
 Consumers must use the committed manifest, never infer a complete batch by
 listing the prefix. Progress evidence is not a training-data promotion signal.
-Recovery remains at workflow-stage granularity; retaining variants does not
-skip them automatically when a failed stage is retried.
+The immutable Nano structural path verifies new completion receipts before
+reusing variants within a recovered stage. Other paths retain workflow-stage
+recovery and regenerate their variants; progress documents alone never skip work.
 
 Concurrent generations lease distinct available GPUs. A faster variant can
 release its GPU to the next waiting variant without assigning that work to a GPU
