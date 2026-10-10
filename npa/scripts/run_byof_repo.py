@@ -2802,12 +2802,29 @@ def _run_parsed(
             )
         )
         return 64
-    base_candidates = _base_image_candidates(
-        profile=base_profile,
-        image=image,
-        registry=registry,
-        explicit_base=explicit_base,
-    )
+    try:
+        base_candidates = _base_image_candidates(
+            profile=base_profile,
+            image=image,
+            registry=registry,
+            explicit_base=explicit_base,
+        )
+    except ValueError as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "refused",
+                    "build_started": False,
+                    "push_started": False,
+                    "run_started": False,
+                    "error": str(exc),
+                    "hint": "Pass --base-image with a reviewed immutable operator image.",
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 64
     if not base_candidates:
         raise RuntimeError("unable to resolve a BYOF base image candidate")
     base_image = base_candidates[0]

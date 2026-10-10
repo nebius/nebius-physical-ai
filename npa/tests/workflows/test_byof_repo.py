@@ -3057,6 +3057,53 @@ def test_base_image_candidates_isaac_lab_profile(monkeypatch) -> None:
     assert "nvcr.io/nvidia/isaac-sim:4.5.0" in candidates
 
 
+def test_isaac_lab_base_quarantine_refuses_before_clone_build_or_run(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+
+    def unexpected_operation(*_args, **_kwargs):
+        pytest.fail("quarantined base must fail before clone, build, push or launch")
+
+    monkeypatch.setattr(module, "_run", unexpected_operation)
+    rc = module.main(
+        [
+            "--run-id",
+            "isaac-base-quarantine",
+            "--base-profile",
+            "isaac-lab",
+            "--registry",
+            "registry.example/byof",
+        ]
+    )
+
+    assert rc == 64
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+    assert payload["status"] == "refused"
+    assert "has no consumable public release" in payload["error"]
+    assert "--base-image" in payload["hint"]
+    assert (
+        payload["build_started"]
+        is payload["push_started"]
+        is payload["run_started"]
+        is False
+    )
+    assert "Traceback" not in output.err
+
+
+def test_isaac_lab_explicit_base_preserves_operator_bytes() -> None:
+    module = _load_module()
+    image = "registry.example/isaac-lab@sha256:" + "1" * 64
+
+    assert module._base_image_candidates(
+        profile="isaac-lab",
+        image="registry.example/byof:example",
+        registry="registry.example/byof",
+        explicit_base=image,
+    ) == [image]
+
+
 def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
     monkeypatch, capsys
 ) -> None:
