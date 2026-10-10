@@ -4317,6 +4317,79 @@ def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:
     assert result.job_id == "42"
 
 
+def test_workflow_status_accepts_exact_allowed_clouds_warning_before_queue_json(
+    monkeypatch, tmp_path
+) -> None:
+    """SkyPilot 0.12.2's known config warning must not hide a pending job."""
+
+    sky_bin = _fake_sky(tmp_path)
+    warning = (
+        'The following keys (["allowed_clouds"]) have different values in the client '
+        "SkyPilot config with the server and will be ignored. Remove these keys to "
+        "disable this warning. If you want to specify it, please modify it on server "
+        "side or contact your administrator."
+    )
+    payload = '[{"job_id": 42, "name": "run", "status": "PENDING"}]'
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=f"{warning}\n{payload}", stderr=""
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "PENDING"
+    assert result.error == ""
+
+
+def test_lookup_managed_job_accepts_exact_allowed_clouds_warning(
+    monkeypatch, tmp_path
+) -> None:
+    """Exact-job reconciliation must observe the same known SkyPilot protocol."""
+
+    sky_bin = _fake_sky(tmp_path)
+    warning = (
+        'The following keys (["allowed_clouds"]) have different values in the client '
+        "SkyPilot config with the server and will be ignored. Remove these keys to "
+        "disable this warning. If you want to specify it, please modify it on server "
+        "side or contact your administrator."
+    )
+    payload = '[{"job_id": 42, "job_name": "run", "status": "PENDING"}]'
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=f"{warning}\n{payload}", stderr=""
+        ),
+    )
+
+    evidence = workflow_module.lookup_managed_job("run", job_id="42", sky_bin=sky_bin)
+
+    assert evidence.outcome == "found"
+    assert evidence.status == "PENDING"
+
+
+def test_workflow_status_rejects_unknown_queue_preamble(monkeypatch, tmp_path) -> None:
+    """Only the known SkyPilot preamble may accompany structured queue JSON."""
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = '[{"job_id": 42, "name": "run", "status": "PENDING"}]'
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=f"unrecognized protocol notice\n{payload}", stderr=""
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "UNKNOWN"
+    assert "malformed, ambiguous, or schema-invalid" in result.error
+
+
 def test_workflow_status_treats_successful_empty_queue_as_verified_absence(
     monkeypatch, tmp_path
 ) -> None:

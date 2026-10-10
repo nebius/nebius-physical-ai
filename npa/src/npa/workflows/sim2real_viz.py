@@ -122,6 +122,17 @@ class Sim2RealVizResult:
     synthetic_frame_count: int = 0
     mp4_paths: list[str] = field(default_factory=list)
 
+    @property
+    def has_factual_observation_evidence(self) -> bool:
+        """Return whether the recording contains factual observations or scores."""
+
+        return bool(
+            self.frame_count
+            or self.rollout_count
+            or self.heldout_env_count
+            or self.heldout_frame_count
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
@@ -327,19 +338,7 @@ def emit_sim2real_rerun(
 
     if not output_rrd.exists() or output_rrd.stat().st_size == 0:
         raise Sim2RealVizError(f"Rerun recording was not written: {output_rrd}")
-    if (
-        frame_count == 0
-        and rollout_count == 0
-        and heldout_env_count == 0
-        and heldout_frame_count == 0
-        and not (allow_progress_only and stage_components)
-    ):
-        raise Sim2RealVizError(
-            "Sim2Real Rerun recording has no real rollout frames, held-out cameras, or held-out scores; "
-            f"synthetic descriptor previews logged={synthetic_frame_count}"
-        )
-
-    return Sim2RealVizResult(
+    visualization = Sim2RealVizResult(
         status="written",
         output_rrd_path=str(output_rrd),
         entity_counts=counts,
@@ -351,6 +350,15 @@ def emit_sim2real_rerun(
         synthetic_frame_count=synthetic_frame_count,
         mp4_paths=mp4_paths,
     )
+    if not visualization.has_factual_observation_evidence and not (
+        allow_progress_only and stage_components
+    ):
+        raise Sim2RealVizError(
+            "Sim2Real Rerun recording has no real rollout frames, held-out cameras, or held-out scores; "
+            f"synthetic descriptor previews logged={synthetic_frame_count}"
+        )
+
+    return visualization
 
 
 def _log_rollout(

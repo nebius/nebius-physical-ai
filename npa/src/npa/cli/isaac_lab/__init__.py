@@ -104,6 +104,7 @@ from npa.serverless_common import (
     validate_output_path,
 )
 from npa.workbench.isaac_lab import routing as isaac_lab_routing
+from npa.cli.isaac_lab.gpu_guidance import gpu_selection_error
 from npa.cli.isaac_lab.trajectory_export_script import TRAJECTORY_CAMERA_HELPERS
 from npa.workbench.training_config import (
     TrainingConfig,
@@ -728,20 +729,9 @@ def _prepare_remote_input_path(ssh: SSHClient, cfg, input_path: str) -> str:
         return remote_checkpoint
 
 
-def _gpu_selection_error() -> str:
-    return (
-        "GPU selection is required for Isaac Lab deploy. Provide --gpu-type and --gpu-preset.\n"
-        "  Suggested starting points:\n"
-        "    Simulation workloads (L40S): --gpu-type gpu-l40s-a --gpu-preset 1gpu-40vcpu-160gb\n"
-        "    RTX Pro 6000 fallback: --gpu-type gpu-rtx-pro-6000 --gpu-preset 1gpu-24vcpu-218gb\n"
-        "  A deployed workbench is the render surface, so it needs RT cores; headless\n"
-        "  training may select H100/H200/B200 via `isaac-lab train --runtime serverless`."
-    )
-
-
 def _validate_gpu_selection(gpu_type: str, gpu_preset: str) -> None:
     if not gpu_type and not gpu_preset:
-        _fail(_gpu_selection_error())
+        _fail(gpu_selection_error())
     if not gpu_type:
         _fail(
             "Missing --gpu-type. Isaac Lab deploy does not provide a default GPU type."
@@ -1925,6 +1915,12 @@ def deploy_cmd(
         )
     if not destroy and not byovm:
         _validate_gpu_selection(gpu_type, gpu_preset)
+    container_image = ""
+    if not destroy and not skip_app and runtime_uses_container(runtime):
+        try:
+            container_image = image.strip() or container_image_for_tool("isaac-lab")
+        except ValueError as exc:
+            _fail(str(exc))
     proj_alias = _project_alias or None
     wb_name = _workbench_name or "isaac-lab"
     use_remote_state = not tf_dir and not byovm
@@ -2447,7 +2443,7 @@ def deploy_cmd(
                     service_env,
                     owner=ssh_user,
                 )
-                image_ref = image.strip() or container_image_for_tool("isaac-lab")
+                image_ref = container_image
                 deploy_workbench_container(
                     ssh,
                     image_ref=image_ref,

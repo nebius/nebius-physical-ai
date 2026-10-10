@@ -1506,14 +1506,34 @@ def default_npa_setup() -> str:
         "    return 1\n"
         "  fi\n"
         "}\n"
+        # Some immutable non-root images deliberately bake the exact source into
+        # the declared interpreter without installing the console script.  A
+        # private user-level shim preserves the CLI contract without attempting
+        # a writable-site reinstall in that image.
+        "if ! command -v npa >/dev/null 2>&1 && "
+        '[ "$npa_setup_python" = "${NPA_BAKED_PYTHON:-}" ] && '
+        "\"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
+        '  mkdir -p "$HOME/.local/bin"\n'
+        "  printf '%s\\n' '#!/bin/sh' 'exec \"$NPA_BAKED_PYTHON\" -m npa.cli.main \"$@\"' "
+        '> "$HOME/.local/bin/npa"\n'
+        '  chmod 0755 "$HOME/.local/bin/npa"\n'
+        "fi\n"
         "if ! command -v npa >/dev/null 2>&1; then\n"
+        # An explicit overlay is the task's source selection.  Do not try to
+        # install a thin image-local project first: several workbench images
+        # deliberately retain only the modules their entrypoint needs while
+        # their copied pyproject still names NPA's custom build hook.  That
+        # project is not independently editable-installable, whereas the
+        # declared overlay is the complete, guarded source tree below.
+        '  if [ "$NPA_SRC_OVERLAY" = "1" ] && [ -n "$NPA_SRC_S3_URI" ]; then\n'
+        "    : # stage the explicitly selected source before any image-local install\n"
         # The active runtime-fetch images intentionally ship the installable
         # project under /opt/npa but not a shell-visible `npa` launcher. Recording
         # that tree alone is insufficient: the first task then skips the legacy
         # branch, has no staged source URI, and exits before its GPU command runs.
         # Install from the image-local source before falling back to the legacy
         # layout or external source staging.
-        "  if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
+        "  elif [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
         "    npa_pip_install -e /opt/npa\n"
         "    npa_record_src_root /opt/npa\n"
         "  elif [ -d /opt/nebius-physical-ai/npa ]; then\n"

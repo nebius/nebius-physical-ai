@@ -18,6 +18,12 @@ from npa.workflows.sim2real import (
     run_single_outer_iteration,
     signal_mapping_rules,
 )
+from npa.workflows.sim2real.artifact_config import (
+    build_artifact_config_from_env,
+    resolve_run_id,
+    resolve_trigger_dataset_uri,
+)
+from npa.workflows.sim2real.config import artifact_uris_for_run
 
 
 def run(
@@ -178,9 +184,28 @@ def finalize(
 
 
 def output_paths(**overrides: Any) -> dict[str, str]:
-    """Return run-scoped S3 artifact URIs."""
+    """Return run-scoped S3 artifact URIs without resolving execution images."""
 
-    return artifact_uris(build_config_from_env(**overrides))
+    run_id = resolve_run_id(str(overrides.get("run_id") or ""))
+    config = build_artifact_config_from_env(
+        run_id=run_id,
+        s3_bucket=str(overrides.get("s3_bucket") or ""),
+        s3_prefix=overrides["s3_prefix"] if "s3_prefix" in overrides else None,
+        s3_endpoint=str(overrides.get("s3_endpoint") or ""),
+        outer_iterations=overrides.get("outer_iterations"),
+    )
+    trigger_dataset_uri = resolve_trigger_dataset_uri(
+        str(overrides.get("trigger_dataset_uri") or ""),
+        s3_bucket=config.s3_bucket,
+        run_id=config.run_id,
+    )
+    return artifact_uris_for_run(
+        s3_bucket=config.s3_bucket,
+        s3_prefix=config.s3_prefix,
+        run_id=config.run_id,
+        trigger_dataset_uri=trigger_dataset_uri,
+        outer_iterations=config.outer_iterations,
+    )
 
 
 def status(

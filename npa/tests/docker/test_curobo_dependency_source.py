@@ -68,6 +68,8 @@ def test_exact_correction_preserves_loader_and_notices_and_updates_record(instal
     assert (dist / "LICENSE").read_bytes() == b"complete original dependency license\n"
     assert unrelated.read_bytes() == b"unrelated bytecode must stay identical"
     assert report["executable_ast_preserved"] and report["primary_docstring_preserved"]
+    assert report["schema_version"] == "npa.dependency-source-correction.v2"
+    assert report["capability"] == "curobo"
     assert report["record_sha256_before"] != report["record_sha256_after"]
     rows = list(csv.reader(io.StringIO((dist / "RECORD").read_text())))
     source_row = next(row for row in rows if row[0] == module.MODULE)
@@ -94,6 +96,29 @@ def test_exact_correction_preserves_loader_and_notices_and_updates_record(instal
         assert namespace["grass"].__doc__ == "Primary public documentation."
     assert outputs == ["same result", "same result"]
     assert calls == ["data/grass.png", "data/grass.png"]
+
+
+@pytest.mark.parametrize("capability", ["curobo", "envgen", "fiftyone"])
+def test_correction_receipt_uses_a_shared_schema_and_declared_capability(
+    installed, capability
+):
+    module, root, _path, _dist, _source, _sanitized, _unrelated = installed
+    report = module.sanitize_installation(
+        root,
+        capability=capability,
+    )
+    assert report["schema_version"] == "npa.dependency-source-correction.v2"
+    assert report["capability"] == capability
+
+
+def test_correction_refuses_an_unsupported_capability(installed):
+    module, root, path, _dist, _source, _sanitized, _unrelated = installed
+    before = path.read_bytes()
+    with pytest.raises(
+        ValueError, match="unsupported dependency-correction capability"
+    ):
+        module.sanitize_installation(root, capability="unknown")
+    assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize(
@@ -189,9 +214,21 @@ def test_correction_runs_before_installation_layer_commits():
     end = dockerfile.index("\n\n", start)
     instruction = dockerfile[start:end]
     assert "python /opt/remove_scikit_image_recipe.py" in instruction
+    assert "--capability curobo" in instruction
     assert instruction.index("remove_scikit_image_recipe.py") < instruction.index(
         "pip check"
     )
     source = (IMAGE / "remove_scikit_image_recipe.py").read_text()
     assert "50e6234fa2170820eaf8d0f8f42b51905822afc3680a4f09113fa11d435f7fb4" in source
     assert "7f505612106adcc880746de642ceb91c9cbb74a6bd0c8100689c0da539c96abf" in source
+
+
+def test_correction_consumers_declare_their_capabilities() -> None:
+    consumers = {
+        "curobo/Dockerfile": "--capability curobo",
+        "sim2real-envgen/Dockerfile": "--capability envgen",
+        "fiftyone/Dockerfile": "--capability fiftyone",
+    }
+    workbench = IMAGE.parent
+    for relative, capability in consumers.items():
+        assert capability in (workbench / relative).read_text()

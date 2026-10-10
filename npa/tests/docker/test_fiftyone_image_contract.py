@@ -50,3 +50,11 @@ def test_fiftyone_pins_native_lerobot_temporal_release() -> None:
     assert "ARG FIFTYONE_VERSION=1.22.0" in dockerfile
     assert 'getattr(fo.types, "LeRobotDataset", None)' in smoke
     assert "TemporalTag" in smoke
+
+
+def test_fiftyone_pins_graphql_core_compatible_with_its_strawberry_release() -> None:
+    """A resolver update must not recreate the first-import failure in the image."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "ARG GRAPHQL_CORE_VERSION=3.2.13" in dockerfile
+    assert '"graphql-core==${GRAPHQL_CORE_VERSION}"' in dockerfile

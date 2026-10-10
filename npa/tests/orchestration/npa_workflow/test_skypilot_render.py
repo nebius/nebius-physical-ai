@@ -6,6 +6,9 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import shlex
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -2730,14 +2733,56 @@ def test_default_npa_setup_installs_the_image_local_runtime_source_first() -> No
     modern_guard = "[ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]"
     assert modern_guard in setup
     assert "npa_pip_install -e /opt/npa" in setup
-    # The image-local source must win before legacy / external paths, otherwise
-    # a runtime-fetch task can acquire a GPU and then fail solely because no
-    # NPA_SRC_S3_URI was supplied.
+    # Without an explicitly selected overlay, the image-local source must win
+    # before legacy / staged-source installers. A source-overlay guard mentions
+    # NPA_SRC_S3_URI earlier, so compare the actual install targets rather than
+    # the first textual environment-variable occurrence.
     assert (
         setup.index("npa_pip_install -e /opt/npa")
         < setup.index("npa_pip_install -e /opt/nebius-physical-ai/npa")
-        < setup.index("NPA_SRC_S3_URI")
+        < setup.index("npa_pip_install -e /tmp/npa-src")
     )
+
+
+def test_default_npa_setup_uses_an_importable_baked_runtime_without_reinstalling(
+    tmp_path: Path,
+) -> None:
+    """A non-root baked image needs a CLI shim, not a site-package reinstall."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    invocations = tmp_path / "baked-python-invocations.txt"
+    baked_python = tmp_path / "baked-python"
+    baked_python.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" >> {shlex.quote(str(invocations))}\n"
+        f'exec {shlex.quote(sys.executable)} "$@"\n',
+        encoding="utf-8",
+    )
+    baked_python.chmod(0o755)
+    home = tmp_path / "home"
+    environment = {
+        "HOME": str(home),
+        "PATH": "/usr/bin:/bin",
+        "PYTHONPATH": str(REPO_ROOT / "npa" / "src"),
+        "NPA_BAKED_PYTHON": str(baked_python),
+    }
+
+    setup = default_npa_setup()
+    subprocess.run(["bash", "-c", setup], check=True, env=environment)
+
+    shim = home / ".local" / "bin" / "npa"
+    assert shim.is_file()
+    assert os.access(shim, os.X_OK)
+    result = subprocess.run(
+        [str(shim), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "-m pip" not in invocations.read_text(encoding="utf-8")
 
 
 def test_openpi_full_droid_prepare_forces_cpu_jax_before_cli_import() -> None:
