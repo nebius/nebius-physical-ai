@@ -48,22 +48,41 @@ def test_lingbot_model_runtime_includes_pyav_for_predecessor_video_validation() 
 
 
 def test_lingbot_upgrades_fixable_parent_perl_security_packages() -> None:
-    """The private derivative must not retain the vulnerable parent revisions."""
+    """The private derivative has a reproducible fixed parent Perl floor."""
 
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
 
+    fixed_version = "5.36.0-7+deb12u4"
+    assert "ARG DEBIAN_SNAPSHOT=20261010T000000Z" in dockerfile
+    assert f"ARG DEBIAN_PERL_SECURITY_VERSION={fixed_version}" in dockerfile
+    assert (
+        "https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/" in dockerfile
+    )
+    assert (
+        "https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/"
+        in dockerfile
+    )
+    assert "Suites: bookworm bookworm-updates" in dockerfile
+    assert "Suites: bookworm-security" in dockerfile
+    assert 'Acquire::Check-Valid-Until "false";' in dockerfile
     assert "apt-get install -y --no-install-recommends --only-upgrade" in dockerfile
     for package in (
-        "perl=5.36.0-7+deb12u4",
-        "perl-base=5.36.0-7+deb12u4",
-        "libperl5.36=5.36.0-7+deb12u4",
-        "perl-modules-5.36=5.36.0-7+deb12u4",
+        "perl",
+        "perl-base",
+        "libperl5.36",
+        "perl-modules-5.36",
     ):
-        assert package in dockerfile
+        assert f'"{package}=${{DEBIAN_PERL_SECURITY_VERSION}}"' in dockerfile
 
-    security_upgrade = dockerfile.index("perl=5.36.0-7+deb12u4")
+    snapshot_config = dockerfile.index("/etc/apt/apt.conf.d/99snapshot")
+    security_upgrade = dockerfile.index('"perl=${DEBIAN_PERL_SECURITY_VERSION}"')
     source_fetch = dockerfile.index(
         "COPY --chmod=0755 docker/workbench/common/model_source.sh"
     )
-    assert dockerfile.index("USER root") < security_upgrade < source_fetch
+    assert (
+        dockerfile.index("USER root")
+        < snapshot_config
+        < security_upgrade
+        < source_fetch
+    )
     assert "rm -rf /var/lib/apt/lists/*" in dockerfile[security_upgrade:source_fetch]

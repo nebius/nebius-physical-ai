@@ -5,6 +5,10 @@ ARG WAN_BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca
 FROM ${WAN_BASE_IMAGE}
 
 ARG NPA_SOURCE_SHA
+# Snapshot the Bookworm archives so the inherited Perl security floor remains
+# reproducibly installable after Debian's rolling mirrors advance.
+ARG DEBIAN_SNAPSHOT=20261010T000000Z
+ARG DEBIAN_PERL_SECURITY_VERSION=5.36.0-7+deb12u4
 LABEL npa.tool="lingbot-world" \
       npa.version="a43bec7f8091c83e9b30b16b912f6fc906236fa6-runtime-fetch" \
       org.opencontainers.image.title="NPA lingbot-world native GPU workflow runtime" \
@@ -21,14 +25,32 @@ LABEL npa.tool="lingbot-world" \
 
 USER root
 # The digest-pinned Wan parent can retain vulnerable Bookworm Perl packages.
-# Keep the private derivative on the security-fixed package revision before
+# Use the dated archives so the fixed revision remains available before
 # fetching the pinned LingBot source.
-RUN apt-get update \
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+      /etc/apt/sources.list.d/*.sources \
+    && printf '%s\n' \
+      'Types: deb' \
+      "URIs: https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/" \
+      'Suites: bookworm bookworm-updates' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/debian.sources \
+    && printf '%s\n' \
+      'Types: deb' \
+      "URIs: https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/" \
+      'Suites: bookworm-security' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/debian-security.sources \
+    && printf 'Acquire::Check-Valid-Until "false";\n' \
+      > /etc/apt/apt.conf.d/99snapshot \
+    && apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade \
-      perl=5.36.0-7+deb12u4 \
-      perl-base=5.36.0-7+deb12u4 \
-      libperl5.36=5.36.0-7+deb12u4 \
-      perl-modules-5.36=5.36.0-7+deb12u4 \
+      "perl=${DEBIAN_PERL_SECURITY_VERSION}" \
+      "perl-base=${DEBIAN_PERL_SECURITY_VERSION}" \
+      "libperl5.36=${DEBIAN_PERL_SECURITY_VERSION}" \
+      "perl-modules-5.36=${DEBIAN_PERL_SECURITY_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt
