@@ -20,6 +20,7 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 
 | Goal | Spec and runbook |
 | --- | --- |
+| Generate robot inspection datasets in five sites | [Marble Go1 presets](../docs/workbench/guides/marble-robot-presets.md) — warehouse, shipyard, home, factory and utility; one GPU per site, optional five-site fan-out; new presets await live validation |
 | Run a complete public sample with one command | [Four workflow demos](../docs/workbench/guides/public-workflow-demos.md) — automatic inputs, standard GPU execution, and offline HTML results |
 | Label videos in Encord and export an annotated MP4 | [Encord partner workflows](partners/encord/README.md) — real object tracks, exported-label verification, and media roundtrip |
 | Augment a video or LeRobot episode | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) — public starter, local MP4, and episode/camera inputs; [twelve variants with preserved padding](../docs/workbench/guides/paidf-appearance-12.md#apply-the-recipe) |
