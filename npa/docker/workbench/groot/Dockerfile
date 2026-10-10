@@ -21,8 +21,12 @@ ARG GROOT_REPO_REF=3df8b3825d67f755e69141446f4315f281b9b7e6
 ARG ISAAC_LAB_VERSION=2.3.2.post1
 ARG ISAAC_SIM_VERSION=5.1.0.0
 ARG ISAAC_LAB_SRC_COMMIT=37ddf626871758333d6ed89cf64ad702aef127d0
-ARG GROOT_UBUNTU_SNAPSHOT=20260827T000000Z
-ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-190.200
+# The prior frozen snapshot retained linux-libc-dev 5.15.0-194.204, which is
+# vulnerable to CVE-2026-64535, CVE-2026-64564, and CVE-2026-74394. This newer
+# immutable snapshot contains the fixed 5.15.0-198.208 build in both Jammy
+# updates and security suites.
+ARG GROOT_UBUNTU_SNAPSHOT=20261008T000000Z
+ARG GROOT_LINUX_LIBC_DEV_VERSION=5.15.0-198.208
 ARG COSMOS_REASON_MODEL=nvidia/Cosmos-Reason2-2B
 ARG COSMOS_REASON_REVISION=9ce19a195e423419c349abfc86fd07178b230561
 
@@ -131,6 +135,9 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && test "$(git -C "${GROOT_REPO}" rev-parse HEAD)" = "${GROOT_REPO_REF}" \
     && git -C "${GROOT_REPO}" submodule update --init --recursive
 
+COPY --chown=ubuntu:ubuntu docker/workbench/groot/sanitize_scikit_image_grass.py \
+    /opt/npa/docker/workbench/groot/sanitize_scikit_image_grass.py
+
 RUN python3.10 - <<'PY'
 from pathlib import Path
 import os
@@ -225,8 +232,11 @@ replace_once(
 print("GROOT_RUNTIME_PIN_PATCH_OK " + cosmos_revision)
 PY
 
-RUN cd "${GROOT_REPO}" \
+RUN export UV_CACHE_DIR=/tmp/groot-uv-cache \
+    && cd "${GROOT_REPO}" \
     && uv sync --python 3.10 \
+    && python3.10 /opt/npa/docker/workbench/groot/sanitize_scikit_image_grass.py \
+      --python "${GROOT_VENV}/bin/python" \
     && uv pip install --python "${GROOT_VENV}/bin/python" \
       boto3==1.42.91 \
       fastapi==0.136.1 \
@@ -237,6 +247,7 @@ RUN cd "${GROOT_REPO}" \
       pyyaml==6.0.3 \
       rich==15.0.0 \
       jinja2==3.1.6 \
+      tomli==2.4.1 \
       "mcap>=1.3,<2" \
     && uv pip install --python "${GROOT_VENV}/bin/python" --no-deps --upgrade \
       "GitPython>=3.1.50" \
@@ -256,7 +267,8 @@ RUN cd "${GROOT_REPO}" \
       "transformers>=5.3.0" \
       "urllib3>=2.7.0" \
       "wheel>=0.46.2" \
-    && (uv pip uninstall --python "${GROOT_VENV}/bin/python" -y wandb lxml || true)
+    && (uv pip uninstall --python "${GROOT_VENV}/bin/python" -y wandb lxml || true) \
+    && rm -rf "${UV_CACHE_DIR}"
 
 # The Isaac side of the image: python3.11 + PyTorch + the OSS dependency closure Isaac
 # needs, the runtime-fetch bootstrap, and the /isaac-sim/python.sh shim. What used to be
@@ -285,7 +297,7 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
 # run time, so the runtime user must not be able to rewrite it.
 USER ubuntu
 
-RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
+RUN /opt/isaac-lab/venv/bin/python -m pip install --no-cache-dir --no-deps --upgrade \
       "GitPython>=3.1.50" \
       "PyJWT>=2.13.0" \
       "aiohttp>=3.13.3" \
@@ -314,7 +326,7 @@ COPY --chown=ubuntu:ubuntu docker/workbench/groot/entrypoint.sh /opt/npa/docker/
 
 RUN chmod 0755 /opt/npa/docker/workbench/groot/entrypoint.sh
 
-RUN uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa \
+RUN uv pip install --no-cache --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa \
     && "${GROOT_VENV}/bin/python" -c 'from npa.cli.entry import main; main()' \
       workbench groot finetune --help >/dev/null \
     && "${GROOT_VENV}/bin/python" - <<'PY'

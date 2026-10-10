@@ -45,6 +45,7 @@ PARSER_FACTORIES = {
     "npa.workflows.isaac_rgbd.cli": "build_parser",
     "npa.workflows.groot_visualization": "build_parser",
     "npa.workflows.groot_learning": "build_parser",
+    "npa.workflows.groot_libero_x": "build_parser",
     "npa.workflows.groot_task_performance": "build_parser",
     "npa.workflows.byof.openpi_pipeline": "build_parser",
     "npa.workflows.byof.molmoact_pipeline": "build_parser",

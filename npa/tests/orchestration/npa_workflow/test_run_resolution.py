@@ -544,6 +544,53 @@ def test_runtime_ledger_recovers_exact_active_wave_identity(
     assert lookups == [(f"{run_id}-02-curate", "41")]
 
 
+def test_runtime_ledger_resolves_submit_time_run_root(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The submit-time --workflow-s3-uri names the root, not its control leaf."""
+
+    run_id = "runtime-explicit-root"
+    root = f"custom/runtime/{run_id}"
+    resolver_env.put_json(
+        "alias-bucket",
+        f"{root}/npa-workflow/runtime.json",
+        {
+            "schema_version": "npa.workflow.runtime.v1",
+            "workflow": "groot-libero-x-observed-paired",
+            "run_id": run_id,
+            "status": "running",
+            "waves": [
+                {
+                    "key": "001|serial|:prepare:-",
+                    "states": ["prepare"],
+                    "status": "running",
+                    "job_id": "81",
+                    "job_name": f"{run_id}-01-prepare",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda name, *, job_id="", **_kwargs: ManagedJobEvidence(
+            "found", job_id=job_id, status="RUNNING"
+        ),
+    )
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{root}",
+        sky_bin="/opt/npa/sky",
+    )
+
+    assert resolved.source == "explicit_workflow_s3_uri"
+    assert resolved.manifest_pending is True
+    assert resolved.runtime_state["status"] == "running"
+    assert resolved.job_id == "81"
+    assert resolved.job_name == f"{run_id}-01-prepare"
+
+
 def test_resume_planning_preserves_exact_runtime_location(
     resolver_env: ExactS3,
 ) -> None:

@@ -1,6 +1,6 @@
 # GR00T runtime image
 
-[Workbench docs](../../../../docs/workbench/README.md) · [Training cookbook](../../../../docs/workbench/cookbooks/groot-1-7-training.md)
+[Workbench docs](../../../../docs/workbench/README.md) · [Training cookbook](../../../../docs/workbench/cookbooks/groot-1-7-training.md) · [LIBERO-X closed-loop evaluation](../../../../docs/workbench/groot-libero-x.md)
 
 This image runs NVIDIA Isaac-GR00T N1.7 inference and fine-tuning on Linux
 x86_64. For a first workload, follow the training cookbook and use an accepted
@@ -42,6 +42,14 @@ GR00T and Cosmos Reason2 weights. They do not need Isaac simulation or its
 runtime download. Isaac simulation additionally needs an RT-core GPU and the
 operator's accepted NVIDIA terms; see the
 [GR00T operating guidance](../../../../skills/tools/groot/SKILL.md).
+
+The distinct `groot-libero-x-closed-loop.yaml` workflow does not use the Isaac
+simulation path. Its native LIBERO evaluator needs newer Isaac-GR00T source
+than this immutable bootstrap embeds, so it fetches the reviewed public
+Apache-2.0 source revision at runtime, verifies it, and builds the upstream
+Python 3.12 LIBERO environment in a lock-protected run cache. It adds neither
+an image layer nor a new acceptance flag; model/data terms and provenance are
+recorded in [the evaluation guide](../../../../docs/workbench/groot-libero-x.md).
 
 ## Run and verify
 

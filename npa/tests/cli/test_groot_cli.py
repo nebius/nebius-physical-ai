@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import re
 import shlex
 from concurrent.futures import ThreadPoolExecutor
@@ -1004,11 +1005,99 @@ def test_groot_container_dockerfile_pins_runtime_versions() -> None:
     assert "huggingface-cli download nvidia/GR00T-N1.7-3B" not in dockerfile
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
     assert "NPA_LIGHT_WORKBENCH_TOOL=groot" in dockerfile
+    tomli_install = "      tomli==2.4.1 \\\n"
+    assert tomli_install in dockerfile
+    assert dockerfile.index(tomli_install) < dockerfile.index(
+        'uv pip install --no-cache --python "${GROOT_VENV}/bin/python" '
+        "--no-deps -e /opt/npa"
+    )
     assert "workbench groot finetune --help >/dev/null" in dockerfile
     assert '"mcap>=1.3,<2"' in dockerfile
     assert "from mcap.writer import Writer" in dockerfile
     assert "make_reader(BytesIO(buffer.getvalue())).get_summary()" in dockerfile
     assert "--platform linux/amd64" in build_script
+
+
+def test_groot_container_scanned_dependency_layers_do_not_commit_package_caches() -> (
+    None
+):
+    dockerfile = (PACKAGE_ROOT / "docker/workbench/groot/Dockerfile").read_text()
+
+    uv_layer_start = dockerfile.index("RUN export UV_CACHE_DIR=/tmp/groot-uv-cache")
+    uv_layer_end = dockerfile.index("\n\n", uv_layer_start)
+    uv_layer = dockerfile[uv_layer_start:uv_layer_end]
+    assert "uv sync --python 3.10" in uv_layer
+    sanitizer = (
+        "python3.10 /opt/npa/docker/workbench/groot/sanitize_scikit_image_grass.py"
+    )
+    assert "docker/workbench/groot/sanitize_scikit_image_grass.py" in dockerfile
+    assert sanitizer in uv_layer
+    assert '--python "${GROOT_VENV}/bin/python"' in uv_layer
+    assert uv_layer.index("uv sync --python 3.10") < uv_layer.index(sanitizer)
+    assert 'rm -rf "${UV_CACHE_DIR}"' in uv_layer
+    assert uv_layer.index("uv sync --python 3.10") < uv_layer.index(
+        'rm -rf "${UV_CACHE_DIR}"'
+    )
+    assert (
+        "RUN /opt/isaac-lab/venv/bin/python -m pip install "
+        "--no-cache-dir --no-deps --upgrade"
+    ) in dockerfile
+    assert (
+        'RUN uv pip install --no-cache --python "${GROOT_VENV}/bin/python" '
+        "--no-deps -e /opt/npa"
+    ) in dockerfile
+
+
+def _scikit_image_sanitizer_module():
+    path = PACKAGE_ROOT / "docker/workbench/groot/sanitize_scikit_image_grass.py"
+    spec = importlib.util.spec_from_file_location("groot_scikit_image_sanitizer", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_groot_scikit_image_sanitizer_removes_only_scoped_documentation_token(
+    tmp_path: Path,
+) -> None:
+    module = _scikit_image_sanitizer_module()
+    token = "eyJexample.payload.signature"
+    fetchers = tmp_path / "_fetchers.py"
+    fetchers.write_text(
+        "def grass():\n"
+        '    """The public function docstring stays untouched."""\n'
+        f'    """Standalone historical note: {token}"""\n'
+        "    return 'grass-result'\n"
+    )
+
+    assert module.sanitize_fetchers_module(fetchers) == 1
+
+    sanitized = fetchers.read_text()
+    assert token not in sanitized
+    assert "[redacted-token]" in sanitized
+    sanitized_spec = importlib.util.spec_from_file_location(
+        "sanitized_fetchers", fetchers
+    )
+    assert sanitized_spec and sanitized_spec.loader
+    sanitized_module = importlib.util.module_from_spec(sanitized_spec)
+    sanitized_spec.loader.exec_module(sanitized_module)
+    assert sanitized_module.grass() == "grass-result"
+
+
+def test_groot_scikit_image_sanitizer_rejects_ambiguous_upstream_literals(
+    tmp_path: Path,
+) -> None:
+    module = _scikit_image_sanitizer_module()
+    fetchers = tmp_path / "_fetchers.py"
+    fetchers.write_text(
+        "def grass():\n"
+        '    """The public function docstring stays untouched."""\n'
+        '    """eyJfirst.payload.signature eyJsecond.payload.signature"""\n'
+        "    return 'grass-result'\n"
+    )
+
+    with pytest.raises(module.ScikitImageSanitizationError, match="exactly one"):
+        module.sanitize_fetchers_module(fetchers)
 
 
 def test_groot_install_command_never_inlines_service_env() -> None:

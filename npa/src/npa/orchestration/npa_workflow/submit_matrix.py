@@ -1236,6 +1236,42 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "groot-libero-x-closed-loop.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        image_tool="groot",
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an operator-supplied exact 60-task derivative manifest, a "
+            "disjoint native LIBERO task/trajectory manifest, and the matching "
+            "materialized GR00T-format LIBERO-X input inventory."
+        ),
+        notes=(
+            "Five connected substantive stages: hash-bound disjoint preparation; "
+            "NVIDIA baseline and derivative real action-forward/native-LIBERO "
+            "rollouts; matched success/MAE/MSE comparison; MP4 readback and "
+            "independently inspected RRD evidence. Simulator evidence only."
+        ),
+    ),
+    SubmitLiveCase(
+        "groot-libero-x-observed-paired.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        image_tool="groot",
+        rotation_skip=True,
+        skip_reason=(
+            "Requires a run-scoped observed-task manifest and matching materialized "
+            "LIBERO-X inventory; the derivative training-task inventory remains "
+            "unknown, so this route cannot claim held-out performance."
+        ),
+        notes=(
+            "Five connected substantive stages: paired observed-task preparation; "
+            "NVIDIA baseline and derivative native-LIBERO rollouts; matched "
+            "success/MAE/MSE comparison; MP4 readback and independently inspected "
+            "RRD evidence. Training coverage unknown and disjointness unverified."
+        ),
+    ),
+    SubmitLiveCase(
         "mjlab-train-eval.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

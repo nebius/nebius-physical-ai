@@ -1094,7 +1094,19 @@ def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in text
     assert "add-apt-repository" not in text
     assert "sha256sum --check --strict" in text
-    assert text.count("3.11.15-1+jammy1") >= 9
+    assert 'PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.17-1+jammy1}"' in text
+    expected_python311_debs = (
+        "libpython3.11_3.11.17-1+jammy1_amd64.deb|37cf74d9a83c16aaff5212ba16a387ddfa6475c3d949c82e63e32269f3e11652",
+        "libpython3.11-dev_3.11.17-1+jammy1_amd64.deb|ddfb00db5ad8a98a41b78d54801eeb9bdd166b45c9125d25e11ab854e2597df3",
+        "libpython3.11-minimal_3.11.17-1+jammy1_amd64.deb|c43729651a145caa062c62dac63259512fac11e023a55a8666bc449e1af77c36",
+        "libpython3.11-stdlib_3.11.17-1+jammy1_amd64.deb|e1f406d5f6a3b368aac2088dfdc0ae69a7d28ec2d71d2ed423396673b3b95a58",
+        "python3.11_3.11.17-1+jammy1_amd64.deb|8f7452c61dcf1da97fd7adcfdaa71051329e2cbf8b85b1db1f39f3059c67198b",
+        "python3.11-dev_3.11.17-1+jammy1_amd64.deb|345a09eb7f5de4ddd4f9c9041aecc7166ba2a7de96bf9a3b07039929a8366c84",
+        "python3.11-minimal_3.11.17-1+jammy1_amd64.deb|dfef050f38aa2cd310b262712c7673a51dc08869f625abefcb3e5fcdc0f7b410",
+        "python3.11-venv_3.11.17-1+jammy1_amd64.deb|0572285b02976487ee908ce58b865ec608ad181618b820ea22671d9ee02874a2",
+    )
+    for package in expected_python311_debs:
+        assert package in text
     for requirement in (
         "pip==26.2.1",
         "setuptools==84.0.0",

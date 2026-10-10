@@ -1,0 +1,59 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "f2ad0579cb6af1c6be96e31a566c628acf56b24685ceabd5a3f9e6188f77d3b8",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The five-state observed-paired workflow passed spec validation and planning. It binds one run-scoped observed-task/data protocol to both native policy arms and retains the NPA-configured accelerator without invoking Isaac Sim or a new EULA control.",
+      "evidence": [
+        "npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/groot-libero-x-observed-paired.yaml",
+        "npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/groot-libero-x-observed-paired.yaml --run-id groot-libero-x-observed-plan"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Contract tests prove five connected substantive stages, hash-bound paired task/data inputs, same-protocol rollout comparison, real-result refusal, and a claim classification that rejects held-out or generalization labels when training coverage is unknown.",
+      "evidence": [
+        "npa/.venv/bin/python -m pytest npa/tests/workflows/test_groot_libero_x.py npa/tests/orchestration/npa_workflow/test_groot_libero_x_closed_loop_workflow.py npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py -q"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The scoped private execution route verified list, put, get, and delete access to its project-owned output storage. Run-scoped prefixes are resolved only by that route at submission time.",
+      "evidence": [
+        "Sanitized private execution-route storage preflight record"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The private-only candidate image has an immutable digest, completed payload and security scans, and an exact-target authenticated pull/bootstrap proof. Its private/quarantined disposition remains unchanged.",
+      "evidence": [
+        "Sanitized private image qualification and exact-target pull records"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "A selected pinned MIT LIBERO-X BDDL profile and a run-scoped GR00T/LeRobot observation subset were materialized and hash-recorded through the scoped private route. The materialization explicitly records that its BDDL-to-dataset and initial-state bindings are unverified; those boundaries and the derivative's unknown training cohort remain claim constraints rather than inferred facts.",
+      "evidence": [
+        "Sanitized private observed-input materialization receipt: completed GR00T/LeRobot observation subset, direct BDDL hash/language, and explicit non-binding classification",
+        "docs/workbench/groot-libero-x.md#observed-paired-mode-when-coverage-is-unknown"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The scoped private execution route passed exact GR00T and LIBERO-X payload-access checks under existing operator credentials. This records runtime access only and does not alter redistribution rights.",
+      "evidence": [
+        "Sanitized private health and payload-access preflight records"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "The scoped private multi-target route verified its existing cluster identity, compatible GPU route, and exact private-image pull/bootstrap contract. No benchmark or closed-loop result is implied before a workflow run completes.",
+      "evidence": [
+        "Sanitized private cluster-identity and image-preflight records"
+      ]
+    }
+  }
+}

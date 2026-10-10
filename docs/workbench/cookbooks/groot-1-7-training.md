@@ -7,6 +7,12 @@ GR00T-format LeRobot dataset through distributed optimizer work, an immutable
 checkpoint, aligned offline inference, synchronized RRD/MCAP diagnostics, S3
 publication, and the deployed NPA agent viewer APIs.
 
+For the public GR00T N1.7 LIBERO-X derivative, use the separate
+[closed-loop evaluation guide](../groot-libero-x.md) and
+`groot-libero-x-closed-loop.yaml`. The derivative card's MAE/MSE is open-loop
+action prediction; it must not be presented as simulator task success or mixed
+with this training workflow's offline metrics.
+
 This reference is deliberately a short plumbing validation. It does not claim
 statistically meaningful learning, a closed-loop rollout, or physical-robot
 performance. Machine-readable output keeps `pipeline_status` separate from

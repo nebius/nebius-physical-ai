@@ -72,6 +72,17 @@ publication contract. The current canonical GR00T source now includes that
 contract and is in the attested-tool inventory; this does not retroactively
 attest the historical release bytes.
 
+`scripts/build-workbench-image-in-cluster.sh` normally lets Kubernetes place a
+CPU-only Kaniko build. When the default placement has disk pressure, an operator
+may set `NPA_BUILD_NODE_SELECTOR=<label>=<value>` for that build only. The script
+accepts exactly one safe Kubernetes label selector and renders it as the build
+pod's `nodeSelector`; it does not alter a cluster default, GPU-workload
+placement, or a shared controller configuration. `NPA_BUILD_CPU_REQUEST` and
+`NPA_BUILD_MEMORY_REQUEST` optionally replace its default build-pod requests
+when verified available capacity requires it; they do not change runtime
+workload requests. Keep the selector, quantities, and any concrete node identity
+in private run evidence rather than source or a PR.
+
 Submit resolves the selected tag to an immutable digest and validates metadata
 on that digest. Missing/mismatched first-party evidence fails before launch.
 Arbitrary unattested vendor images get an exact-context capability pod that
