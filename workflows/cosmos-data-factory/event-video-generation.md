@@ -85,6 +85,10 @@ description are not included in this adapter. Configurable/weighted event
 distributions remain an implementation gap. A YAML override named after an
 unsupported event does not make that event run; inspect `configs/manifest.json`
 for the actual sampled values.
+The reused upstream caption instructions remain warehouse-specific even when
+the adapter samples another environment. Review that prompt/scene mismatch
+explicitly for retail, office, or education-facility results; those samples do
+not establish environment-specific caption fidelity.
 
 The NPA path enables request guardrails, unlike upstream's disabled template.
 Guardrail/model snapshots and exact source adaptations are verified offline.

@@ -81,6 +81,9 @@ upstream's full configurable attribute vocabulary or weighted distributions.
 Accessory edit controls and grouped same-person views remain implementation
 gaps; downstream labels must not be presented as proof of a requested accessory
 edit or identity-preserving multi-view augmentation.
+The pinned upstream verifier excludes shoe type and shoe color from its attribute
+checks. Review footwear in the actual generated image separately from the
+automated clothing-verification verdict.
 
 ## Find and assess outputs
 
