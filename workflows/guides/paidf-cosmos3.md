@@ -727,9 +727,7 @@ can dominate GPU startup. Inspect stage logs to distinguish setup from payload
 progress, and keep the submit command running so its driver can launch later
 stages. R4 describes recovery if that driver is interrupted.
 
-`--max-wait-seconds 0` waits without a per-stage deadline. The CLI default
-is one hour, which can cancel a healthy generation stage when a video or
-variant batch takes longer. Keep the submit driver running while work proceeds.
+The shared Workbench workflow runtime defaults to a 3600-second deadline per wave (covering all variants in `generate-variants`) and requests cancellation on timeout; pass `--max-wait-seconds 0` to `npa workbench workflow submit` to wait indefinitely, or `--max-wait-seconds 14400` for four hours per wave.
 
 `--runtime` lets the orchestrator read evaluator decisions and execute real
 refinement loops. This workflow declares `metadata.executionMode: runtime`, so
