@@ -16,7 +16,7 @@ import requests
 
 from npa.literal_values import require_integer, require_number
 from npa.workbench.nurec.render_evidence import RenderTelemetry
-from npa.workflows.navigation.artifacts import publish
+from npa.workflows.digital_twin_publication import publish, recover
 from npa.workflows.preview_html import image_preview, write_preview
 
 BLENDER_VERSION = "4.5.3"
@@ -352,6 +352,18 @@ def _command(executable, rendered, views, samples, scene_id, backend):
     ]
 
 
+def _render_request(views, samples, scene_id, backend):
+    return {
+        "schema": "npa.digital-twin.render-request.v1",
+        "scene_id": scene_id,
+        "backend": next(name for name, value in BACKENDS.items() if value == backend),
+        "views": views,
+        "samples": samples,
+        "blender_archive_sha256": BLENDER_SHA256,
+        "scene_sources_sha256": _scene_sources(scene_id),
+    }
+
+
 def _run(output, views, samples, scene_id="factory-cell", backend="CUDA"):
     if scene_id not in SCENES or backend not in BACKENDS.values():
         raise ValueError("Select a supported authored scene and native GPU backend")
@@ -359,6 +371,9 @@ def _run(output, views, samples, scene_id="factory-cell", backend="CUDA"):
         raise ValueError(
             "Rendering requires at least two views and one path-tracing sample"
         )
+    request = _render_request(views, samples, scene_id, backend)
+    if recover(output, request):
+        return
     with tempfile.TemporaryDirectory(prefix="npa-digital-twin-") as temporary:
         root = Path(temporary)
         executable = _blender(root)
@@ -375,7 +390,7 @@ def _run(output, views, samples, scene_id="factory-cell", backend="CUDA"):
         )
         _receipt(rendered, measurements, views)
         _preview(rendered)
-        publish(rendered, output)
+        publish(rendered, output, request)
 
 
 def _main():

@@ -69,6 +69,21 @@ on-demand and preserve GPU count, driver profile and disk allocations. A reclaim
 can interrupt a render; inspect the same run and use its standard resume path.
 Only completed, verified bundles receive a publication receipt.
 
+For the Blender campus and CUDA workflows, the output prefix is bound to the
+requested scene, backend, view count, samples, Blender archive and scene-source
+hashes before rendering. Each upload uses a fresh immutable attempt. The stable
+claim is created only after complete upload and verified readback. If interrupted
+earlier, resume renders a fresh attempt; partial attempts remain unselected. If
+interrupted after selection, resume verifies the selected bytes and finishes the
+completion record without launching Blender again. Concurrent retries select one
+complete result, and different settings cannot reuse the same output prefix.
+These workflows retain the standard `completion.json` artifact contract.
+
+Completed bundles from the earlier publisher remain readable and can be reused
+when their scene and settings match. An incomplete claim made by that earlier
+publisher remains fail-closed: reconcile the old run before selecting a fresh
+run and output prefix. Existing claims and attempt bytes are never overwritten.
+
 For another region, select a project belonging to that region and use the
 provider's advertised platform and preset. Some regions expose
 `gpu-rtx6000-a`; preserve that exact platform so Fleet configures the matching
@@ -154,7 +169,7 @@ the scene and media hashes before displaying the record; changed bytes or frame
 counts fail rather than inheriting evidence from another render. Older runs
 without a record remain viewable with an unavailable-evidence label.
 
-`reports/index.html` embeds up to 32 images per timeline, at up to 960 pixels.
+`reports/index.html` embeds up to 32 images per timeline, at up to 1600 pixels.
 Playback presents sampled output frames, not a newly synthesized video. The file
 works offline and blocks network connections through its content security policy.
 Only selected hardware measurements and content hashes enter the report; private

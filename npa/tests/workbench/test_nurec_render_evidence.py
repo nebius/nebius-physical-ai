@@ -147,6 +147,32 @@ def test_non_rt_gpu_telemetry_does_not_claim_rt_rendering(tmp_path):
     assert evidence.verified_render_summary(tmp_path)["render GPU"] == "Unverified"
 
 
+@pytest.mark.parametrize(
+    "model, expected",
+    [
+        ("NVIDIA RTX A6000", "RT-capable GPU"),
+        ("NVIDIA Quadro RTX 6000", "RT-capable GPU"),
+        ("NVIDIA RTX 6000 Ada Generation", "RT-capable GPU"),
+        ("NVIDIA RTX PRO 6000 Blackwell Server Edition", "RTX PRO 6000"),
+        ("NVIDIA RTX PRO 6000 Blackwell Workstation Edition", "RTX PRO 6000"),
+        ("NVIDIA RTX PRO 60000", "RT-capable GPU"),
+    ],
+)
+def test_gpu_family_label_matches_observed_model(tmp_path, model, expected):
+    record = _record(tmp_path)
+    record["telemetry"]["gpu_models"] = [model]
+    (tmp_path / "novel_views" / evidence.EVIDENCE_FILENAME).write_text(
+        json.dumps(record)
+    )
+    assert evidence.verified_render_summary(tmp_path)["render GPU"] == expected
+    output = tmp_path / "twin.html"
+    write_nurec_preview(tmp_path, output)
+    html = output.read_text()
+    assert expected in html
+    if expected != "RTX PRO 6000":
+        assert "RTX PRO 6000" not in html
+
+
 def test_training_camera_replay_is_not_labeled_a_novel_view(tmp_path):
     record = _record(tmp_path)
     record["novel_view"] = False

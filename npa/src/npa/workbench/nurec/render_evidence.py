@@ -234,7 +234,7 @@ def _portable_summary(record: dict) -> dict:
 
     gpu = (
         "RTX PRO 6000"
-        if any("6000" in str(value) and has_rt_cores(str(value)) for value in models)
+        if any(re.search(r"\bRTX PRO 6000\b", value) for value in models)
         else "RT-capable GPU"
     )
     active = telemetry.get("peak_utilization_percent", 0)
