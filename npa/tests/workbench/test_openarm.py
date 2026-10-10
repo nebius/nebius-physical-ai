@@ -422,8 +422,8 @@ def test_packaging_pins_and_excludes_isaac_payload() -> None:
     assert 'm.version("starlette") == "1.6.0"' in dockerfile
     assert '"serve", "--host", "0.0.0.0"' in dockerfile
     assert "OPENARM_GNUPG_VERSION=2.2.27-3ubuntu2.5" in dockerfile
-    assert "OPENARM_OPENSSL_VERSION=3.0.2-0ubuntu1.26" in dockerfile
-    assert "OPENARM_LINUX_LIBC_DEV_VERSION=5.15.0-190.200" in dockerfile
+    assert "OPENARM_OPENSSL_VERSION=3.0.2-0ubuntu1.30" in dockerfile
+    assert "OPENARM_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in dockerfile
     assert '"gnupg2=${OPENARM_GNUPG_VERSION}"' in dockerfile
     assert "rm -f /etc/ssh/ssh_host_*" in dockerfile
     service_lock = (

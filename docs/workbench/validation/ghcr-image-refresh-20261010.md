@@ -15,10 +15,12 @@ functional qualification before promotion.
 - Cosmos Transfer: pin the fixed PyJWT 2.15.1 wheel with its upstream hash.
 - Envgen: select the October 9 Ubuntu snapshot and fixed userspace headers;
   retain the existing exact-source scikit-image recipe removal before flattening.
-- FiftyOne: pin GraphQL Core 3.2.11, compatible with its Strawberry 0.316 dependency.
+- FiftyOne: pin GraphQL Core 3.2.11, compatible with its Strawberry 0.316 dependency,
+  and require all four environment checks including the LeRobot temporal API.
 - Lyra: install the hash-pinned cryptography 50.0.2 wheel required by current NPA.
 - OpenArm: refresh unavailable deadsnakes artifacts using exact package-index
-  hashes, fixed userspace headers, and the October 9 Ubuntu snapshot.
+  hashes, fixed userspace headers, and the October 9 Ubuntu snapshot; add the
+  cryptography dependency required by current NPA image routing.
 - SONIC MuJoCo: refresh the Debian snapshot to include the fixed Perl packages.
 - Diffusers, LingBot World, and SAM2: derive from the verified refreshed Wan
   digest rather than the older supported Wan runtime.

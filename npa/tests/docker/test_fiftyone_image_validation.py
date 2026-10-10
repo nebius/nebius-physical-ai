@@ -685,7 +685,7 @@ def test_actual_entrypoint_contract_requires_exec_and_literal_arguments(
 
 
 @pytest.mark.parametrize(
-    "filename,total", [("smoke_env.py", 3), ("smoke_functional.py", 5)]
+    "filename,total", [("smoke_env.py", 4), ("smoke_functional.py", 5)]
 )
 @pytest.mark.parametrize("reported", ["complete", "incomplete", "missing"])
 def test_smoke_exit_zero_still_requires_complete_real_check_summary(

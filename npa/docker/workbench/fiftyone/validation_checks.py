@@ -544,7 +544,7 @@ def _smoke(name: str, filename: str) -> dict:
     summaries = re.findall(
         r"^SUMMARY: (\d+)/(\d+) checks passed$", output, re.MULTILINE
     )
-    expected = 3 if filename == "smoke_env.py" else 5
+    expected = 4 if filename == "smoke_env.py" else 5
     _require(
         summaries == [(str(expected), str(expected))],
         "Real smoke did not report its complete checks",
