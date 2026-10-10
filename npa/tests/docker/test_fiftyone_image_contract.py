@@ -48,5 +48,6 @@ def test_fiftyone_pins_native_lerobot_temporal_release() -> None:
     smoke = (DOCKERFILE.parent / "smoke_env.py").read_text(encoding="utf-8")
 
     assert "ARG FIFTYONE_VERSION=1.22.0" in dockerfile
+    assert '"fiftyone[multimodal]==${FIFTYONE_VERSION}"' in dockerfile
     assert 'getattr(fo.types, "LeRobotDataset", None)' in smoke
     assert "TemporalTag" in smoke

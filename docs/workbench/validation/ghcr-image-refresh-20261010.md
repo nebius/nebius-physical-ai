@@ -16,7 +16,8 @@ functional qualification before promotion.
 - Envgen: select the October 9 Ubuntu snapshot and fixed userspace headers;
   retain the existing exact-source scikit-image recipe removal before flattening.
 - FiftyOne: pin GraphQL Core 3.2.11, compatible with its Strawberry 0.316 dependency,
-  and require all four environment checks including the LeRobot temporal API.
+  install its multimodal extra with the upstream-pinned Protobuf runtime, and
+  require all four environment checks including the LeRobot temporal API.
 - Lyra: install the hash-pinned cryptography 50.0.2 wheel required by current NPA.
 - OpenArm: refresh unavailable deadsnakes artifacts using exact package-index
   hashes, fixed userspace headers, and the October 9 Ubuntu snapshot; add the
