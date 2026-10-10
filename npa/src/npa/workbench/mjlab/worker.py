@@ -121,6 +121,7 @@ def _evaluate(request, inputs, outputs):
     try:
         policy = runner.get_inference_policy(device=request.device)
         report = measure_episodes(env, policy, request, outputs)
+        report["runtime"] = _runtime_provenance(request.device)
         if request.video:
             report["video_frames"] = _verify_video(outputs / "rollout.mp4")
             write_video_report(outputs, request, report, inputs["checkpoint"]["sha256"])
@@ -130,6 +131,21 @@ def _evaluate(request, inputs, outputs):
         return report
     finally:
         env.close()
+
+
+def _runtime_provenance(device):
+    import torch
+
+    runtime = {
+        "device": device,
+        "torch": torch.__version__,
+        "cuda": torch.version.cuda,
+        "image_source_sha": os.environ.get("NPA_IMAGE_SOURCE_SHA", ""),
+    }
+    if device.startswith("cuda"):
+        runtime["gpu_name"] = torch.cuda.get_device_name(device)
+        runtime["compute_capability"] = list(torch.cuda.get_device_capability(device))
+    return runtime
 
 
 def _verify_video(path):

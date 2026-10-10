@@ -116,7 +116,9 @@ that the MP4 decodes before publishing it. The result manifest lists both
 and byte count.
 
 `rollout.html` embeds the unchanged MP4 bytes, measured evaluation results and
-the input checkpoint hash. Download and open it directly, or create an
+the input checkpoint hash. It also records the evaluated device, measured GPU
+model and compute capability, Torch/CUDA versions, and baked source revision.
+Download and open it directly, or create an
 authenticated S3 GET URL with response content type `text/html` and content
 disposition `inline`. The page needs no separate viewer server, JavaScript,
 external media request or bucket CORS change. Keep signed links out of Git and

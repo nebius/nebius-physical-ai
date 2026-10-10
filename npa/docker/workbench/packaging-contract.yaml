@@ -585,6 +585,7 @@ images:
     ports: [8080]
     passwordless_root_exemption: "SkyPilot bootstrap only; service deployment disables privilege escalation, no default SSH daemon or credentials."
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
     notes: >-
       Apache-2.0 MJLab 1.6.0 and MuJoCo with a hash-locked CUDA wheel closure.
       No checkpoints, motion datasets, credentials or populated runtime caches.

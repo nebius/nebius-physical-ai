@@ -30,6 +30,9 @@ MJLAB_SOURCE_EPOCH="$(git -C "$REPO_ROOT" show -s --format=%ct "$SOURCE_SHA")"
 BUILD_INPUTS=(
   npa/src/npa npa/pyproject.toml npa/README.md npa/.dockerignore
   npa/docker/workbench/mjlab
+  npa/docker/workbench/curobo/filter_cudnn_runtime.py
+  npa/docker/workbench/open3d/notices/mcap-LICENSE.txt
+  npa/docker/workbench/common/workflow_runtime_entrypoint.sh
   workflows/main workflows/testing
 )
 # The immutable image identity must cover the actual bytes Docker receives.

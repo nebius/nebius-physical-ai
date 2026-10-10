@@ -230,6 +230,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "ncore",
         "robotwin",
         "libero",
+        "mjlab",
         "fiftyone",
         "groot",
         "habitat-sim",

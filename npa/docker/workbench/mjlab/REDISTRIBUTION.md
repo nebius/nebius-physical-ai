@@ -12,6 +12,21 @@ upstream notices. The robot assets installed by MJLab retain the package's
 per-asset licenses. PyTorch and its NVIDIA CUDA/cuDNN dependency wheels are
 separate runtime license boundaries. The Python base is pinned by digest.
 
+The current recipe pins Debian package resolution to the signed 2026-10-02
+snapshot. Python distributions retain their installed license files and Debian
+packages retain `/usr/share/doc/*/copyright`. The installed cuDNN 9.20.0.48
+wheel uses the same reviewed runtime-only filter as cuRobo before the dependency
+layer commits: SDK headers/static files are removed, shared runtime libraries
+and the full wheel license remain, and retained hashes are recorded in
+`/usr/share/doc/npa-mjlab/cudnn-runtime.json`.
+
+The image retains hash-verified notices omitted by the mcap 1.4.0 and NVSHMEM
+3.4.5 wheel distributions. These are the same exact notices already used by
+the repository's Open3D and cuRobo recipes. System FFmpeg replaces
+imageio-ffmpeg's bundled executable in the dependency install layer. These
+controls narrow the shipped payload; publication still requires the actual
+built-layer audit and corresponding-source review.
+
 The image contains no trained weights, motion datasets, operator credentials,
 accepted-terms files, or populated model/kernel caches. Training produces native
 RSL-RL checkpoints; an operator supplies any tracking motion NPZ at runtime.

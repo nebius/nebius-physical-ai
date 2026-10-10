@@ -939,7 +939,11 @@ original immutable builds; GPU train/save/load/export and demo validation must
 complete before promoting a replacement release.
 
 MJLab's dedicated `npa-mjlab` recipe is excluded from the public table and the
-publication plan. A historical private CUDA 12.8 image completed native B200 and
+publication plan. Its current recipe freezes Debian packages at a signed
+snapshot, removes cuDNN SDK files in the install layer while preserving runtime
+libraries/notices, retains the missing mcap and NVSHMEM notices, and proves the
+declared SkyPilot argument-forwarding and SSH bootstrap contract at build time.
+A historical private CUDA 12.8 image completed native B200 and
 RTX PRO 6000 GPU qualification. The current CUDA 13.0 candidate replaces vulnerable
 Torch and setuptools pins and has separate [trained G1 rollout evidence](validation/mjlab-trained-g1-20260925.json)
 on RTX PRO 6000. Public promotion still requires the exact-image security,

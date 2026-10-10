@@ -37,6 +37,7 @@ def write_video_report(outputs, request, report, checkpoint_sha256) -> None:
         "mean_episode_length": report["mean_episode_length"],
         "survival_fraction": report["score"],
         "episodes": report["episodes"],
+        "runtime": report.get("runtime", {}),
     }
     encoded_video = base64.b64encode(video).decode("ascii")
     page = _page(request.task, encoded_video, provenance)
