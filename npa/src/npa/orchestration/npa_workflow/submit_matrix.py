@@ -1825,6 +1825,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "molmoact2-official-policies.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "The shared submit rotation has no safe materializer for the separately "
+            "qualified private MolmoAct2 runtime digest and scoped LIBERO artifact prefix."
+        ),
+        notes=(
+            "Five connected native stages prepare LIBERO, fine-tune the upstream "
+            "LeRobot policy, perform closed-loop evaluation, score held-out actions, "
+            "and emit evaluator MP4 plus factual RRD. Dedicated private qualification "
+            "must bind an immutable runtime and independently inspect final artifacts."
+        ),
+    ),
+    SubmitLiveCase(
         "rl-policy-training-sim-success.yaml",
         "multi",
         plan_only=True,

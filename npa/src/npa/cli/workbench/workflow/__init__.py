@@ -4786,11 +4786,39 @@ def _preflight_submit_images(
         f"image-preflight: {len(checks)} image(s) pullable and bootstrap-compatible",
         err=True,
     )
-    return {
-        str(item["_requested_image"]): str(item.get("image") or "")
-        for item in contract_checks
-        if str(item.get("_requested_image") or "").strip()
-    }
+    # Bootstrap evidence can be shared by byte-identical mirrors, and therefore
+    # its ``image`` field may name the repository where the evidence originated.
+    # That provenance must never rewrite the image selected by the workflow: the
+    # target pull check was performed for ``_requested_image`` and the rendered
+    # task must retain that repository/attribution boundary.  Bind it to the
+    # verified immutable digest instead.
+    from npa.orchestration.skypilot.image_bootstrap_contract import (
+        ImageBootstrapContractError,
+        immutable_image_reference,
+        parse_oci_reference,
+    )
+
+    pinned_images: dict[str, str] = {}
+    for item in contract_checks:
+        requested = str(item.get("_requested_image") or "").strip()
+        if not requested:
+            continue
+        digest = str(item.get("digest") or "").strip()
+        if not digest:
+            evidence_image = str(item.get("image") or "").strip()
+            try:
+                digest = parse_oci_reference(evidence_image).digest
+            except ImageBootstrapContractError:
+                digest = ""
+        try:
+            pinned_images[requested] = immutable_image_reference(requested, digest)
+        except ImageBootstrapContractError as exc:
+            _fail(
+                "image-preflight bootstrap evidence cannot bind the requested "
+                f"immutable image {requested!r}: {exc}"
+            )
+            return {}
+    return pinned_images
 
 
 def _image_pull_execution_paths(

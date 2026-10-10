@@ -19,6 +19,7 @@ from npa.deploy.images import (
     PUBLICATION_QUARANTINE_TOOLS,
     public_release_tag_for_tool,
     registry_from_env,
+    supported_tool_version,
 )
 
 
@@ -86,15 +87,20 @@ def test_quarantined_public_release_metadata_fails_closed(tool: str) -> None:
     ),
 )
 def test_quarantined_public_releases_fail_closed_for_consumers(tool: str) -> None:
-    with pytest.raises(ValueError, match="quarantined|no accepted release"):
+    refusal = (
+        "not publicly redistributable"
+        if tool == "molmoact2"
+        else "quarantined|no accepted release"
+    )
+    with pytest.raises(ValueError, match=refusal):
         container_image_for_tool(tool)
-    configured_tag = SUPPORTED_TOOL_VERSIONS[tool]
+    configured_tag = supported_tool_version(tool)
     if re.fullmatch(r"dev-[0-9a-f]{40}", configured_tag):
         assert container_image_for_tool(tool, tag=configured_tag).endswith(
             f":{configured_tag}"
         )
     else:
-        with pytest.raises(ValueError, match="quarantined|no accepted release"):
+        with pytest.raises(ValueError, match=refusal):
             container_image_for_tool(tool, tag=configured_tag)
 
 
@@ -172,8 +178,21 @@ def test_sonic_public_tag_cannot_override_active_manifest_with_stale_release() -
 @pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS))
 def test_quarantined_tools_retain_explicit_candidate_paths(tool: str) -> None:
     sha = "a" * 40
-    assert container_image_for_tool(tool, tag=f"dev-{sha}").endswith(f":dev-{sha}")
-    custom_tag = f"dev-{sha}" if tool in {"ncore", "robomimic", "robotwin"} else None
+    candidate_tag = f"dev-{sha}"
+    if tool == "molmoact2":
+        # This neutral BYOF candidate has no public redistribution decision yet.
+        # An explicit candidate tag is still public consumption and must fail closed.
+        with pytest.raises(ValueError, match="not publicly redistributable"):
+            container_image_for_tool(tool, tag=candidate_tag)
+    else:
+        assert container_image_for_tool(tool, tag=candidate_tag).endswith(
+            f":{candidate_tag}"
+        )
+    custom_tag = (
+        candidate_tag
+        if tool in {"molmoact2", "ncore", "robomimic", "robotwin"}
+        else None
+    )
     assert container_image_for_tool(
         tool, registry="registry.example/operator", tag=custom_tag
     ).startswith("registry.example/operator/")
