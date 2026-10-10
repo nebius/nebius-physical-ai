@@ -74,9 +74,9 @@ complete SDXL generations. The opt-in FA4 inference profile improves selected
 attention calls; complete-model performance is effectively tied with FA2.
 These candidates do not change the accepted images listed below.
 
-The current source inventory has **62 packaging entries** (53 redistribution-eligible
-and nine restricted) and **53 mapped tools**: 27 public-release members, two
-restricted tools, and 24 quarantined tools. These counts come from
+The current source inventory has **63 packaging entries** (54 redistribution-eligible
+and nine restricted) and **54 mapped tools**: 27 public-release members, two
+restricted tools, and 25 quarantined tools. These counts come from
 `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
@@ -281,6 +281,25 @@ accepted public release row or verified anonymous pull claim for this image.
 Select development bytes only with an explicit immutable image digest.
 The existing NRE GPU consumer remains separately licensed. The new full
 COLMAP-to-reconstruction workflow is **not yet live validated**.
+
+## Pending SeedVR2 restoration image
+
+`npa-seedvr2` is a zero-weight, zero-input public-image candidate for official
+SeedVR2-3B video restoration. It bakes pinned Apache-2.0 source and a
+hash-locked CUDA/PyTorch inference closure; the public Apache-2.0 model
+payloads, sensor clips, outputs, credentials, and populated caches remain
+runtime-only. Repository packaging marks it redistribution-eligible but
+publication-quarantined until complete built-byte scans, anonymous digest
+verification, real H100 or B200 workflow execution, objective preservation metrics,
+calibrated VLM review, and independent review are accepted for the same commit
+and digest. There is no accepted public release row or verified anonymous pull
+claim for this image.
+
+The candidate recipe now exports its repaired runtime filesystem through a
+clean-root stage, separately pins the full setuptools bootstrap seed, and
+requires the measured NVIDIA/NPA runtime-config contract. This source change
+does not repair prior image digests or qualify a replacement image; complete
+byte, bootstrap, GPU and quality evidence remain separate gates.
 
 ## Pending Open3D registration image
 

@@ -474,7 +474,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
     assert UNVALIDATED_PUBLICATION_TOOLS == (
-        frozenset({"openpi", "curobo", "ncore", "libero", "sam3"})
+        frozenset({"seedvr2", "openpi", "curobo", "ncore", "libero", "sam3"})
         | ({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
     )
     assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset()

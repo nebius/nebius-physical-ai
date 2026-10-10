@@ -26,6 +26,9 @@ def _prepare_catalog_workflow(spec_path):
         "on",
     }
     image_overrides = {"*": TEST_BAKED_IMAGE} if requires_baked_image else {}
+    if spec_path.name == "seedvr2-video-restoration.yaml":
+        # SeedVR2 also requires an inert digest for render-only validation.
+        image_overrides["workbench.seedvr2"] = TEST_BAKED_IMAGE
     if spec_path.name == "habitat-sim-smoke.yaml":
         # Habitat requires a digest independently of the optional baked flag.
         # This inert render-only identity is not a published or pullable image.

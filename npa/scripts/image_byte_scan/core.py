@@ -1606,6 +1606,15 @@ def walk_tar(reader, sink, scope, file_handler):
 
 def graph(fd, length, verification, expected_id):
     """Rebind metadata to the accepted exact archive before scanning its layers."""
+    if (
+        verification.get("schema_version")
+        == "npa.seedvr2.direct-manifest-verification.v1"
+    ):
+        from . import seedvr2_verification as S
+
+        result = S.inspect(fd, length, expected_id)
+        S.bind(result, verification, expected_id)
+        return result["layers"]
     if verification.get("schema_version") in (
         "npa.ncore.oci-verification.v1",
         "npa.robotwin.image-verification.v1",
@@ -1868,6 +1877,7 @@ def verification_archive_digest(verification):
             "npa.curobo.image-verification.v1",
             "npa.ncore.oci-verification.v1",
             "npa.robotwin.image-verification.v1",
+            "npa.seedvr2.direct-manifest-verification.v1",
         ),
         "verification_schema",
     )
@@ -1956,6 +1966,11 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
         )
     archive_path, fd, initial = open_private_fd(authorization["archive"]["path"])
     try:
+        encoded_transport_only = verification["schema_version"] in (
+            "npa.curobo.image-verification.v1",
+            "npa.docker-save.image-verification.v1",
+            "npa.seedvr2.direct-manifest-verification.v1",
+        )
         require(
             descriptor_digest(fd) == authorization["archive"]["sha256"],
             "input_binding_changed",
@@ -1995,6 +2010,16 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
             N.bind(result, verification, authorization["expected_image_id"])
             layers = result["layers"]
             report["oci_graph"] = result["receipt"]
+        elif (
+            verification["schema_version"]
+            == "npa.seedvr2.direct-manifest-verification.v1"
+        ):
+            from . import seedvr2_verification as S
+
+            result = S.inspect(fd, initial.st_size, authorization["expected_image_id"])
+            S.bind(result, verification, authorization["expected_image_id"])
+            layers = result["layers"]
+            report["direct_manifest_graph"] = result["receipt"]
         elif verification["schema_version"] == "npa.habitat-sim.oci-verification.v1":
             from . import habitat_sim_verification as H
 
@@ -2034,7 +2059,7 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
         def outer_file(reader, size, name, context):
             offset = reader.tell()
             if name in layer_names:
-                if "oci_graph" in report:
+                if not encoded_transport_only:
                     value = sink.send(reader, size, "outer_regular_content", context)
                 else:
                     digest = hashlib.sha256()
