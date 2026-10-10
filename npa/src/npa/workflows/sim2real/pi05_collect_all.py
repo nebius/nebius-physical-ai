@@ -14,19 +14,19 @@ from npa.workflows.sim2real.workflow_io import publish_component_record
 SPLITS = {
     "train": {
         "seed_offset": 0,
-        "object_identity": "isaac-multicolor-cube-040mm",
+        "object_identity": "isaac-multicolor-cube-048mm",
         "object_scale": (0.8, 0.8, 0.8),
         "scene_id": "pi05-single-body-support-layout-v1",
     },
     "validation": {
         "seed_offset": 10_000,
-        "object_identity": "isaac-multicolor-cube-050mm",
+        "object_identity": "isaac-multicolor-cube-060mm",
         "object_scale": (1.0, 1.0, 1.0),
         "scene_id": "pi05-single-body-support-layout-v1",
     },
     "gold": {
         "seed_offset": 20_000,
-        "object_identity": "isaac-multicolor-cube-060mm",
+        "object_identity": "isaac-multicolor-cube-072mm",
         "object_scale": (1.2, 1.2, 1.2),
         "scene_id": "pi05-single-body-support-layout-v1",
     },
@@ -46,6 +46,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _collector_argv(args: argparse.Namespace, split: str) -> list[str]:
     config = SPLITS[split]
+    identity = str(config["object_identity"])
+    if args.object_usd:
+        percent = round(float(config["object_scale"][0]) * 100)
+        identity = f"operator-custom-usd-scale-{percent:03d}"
     return [
         sys.executable,
         "-m",
@@ -57,7 +61,7 @@ def _collector_argv(args: argparse.Namespace, split: str) -> list[str]:
         "--seed",
         str(args.seed + int(config["seed_offset"])),
         "--object-identity",
-        str(config["object_identity"]),
+        identity,
         "--object-usd",
         args.object_usd,
         "--object-scale",

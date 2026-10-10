@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from npa.workflows.sim2real.pi05_contract import (
     JOINT_NAMES,
     MAX_GRIPPER_WIDTH_M,
     build_contract,
+    release_width_threshold,
 )
 
 
@@ -38,6 +40,16 @@ SUPPORT_SURFACE_SIZE_M = (1.0, 0.8, 0.05)
 SUPPORT_SURFACE_CENTER_M = (0.5, 0.0, -0.025)
 WRIST_MOUNT_TRANSLATION_M = (0.025, 0.0, 0.035)
 WRIST_MOUNT_QUATERNION_XYZW = (0.0, 0.0, 0.0, 1.0)
+DOWNWARD_HAND_QUATERNION_XYZW = (1.0, 0.0, 0.0, 0.0)
+RESET_SETTLE_CONTROL_STEPS = 2
+EXPECTED_SEMANTIC_LABELS = frozenset(
+    {
+        "pi05_target_object",
+        DESTINATION_LABEL,
+        "pi05_left_finger",
+        "pi05_right_finger",
+    }
+)
 
 
 class CollectionFailure(RuntimeError):
@@ -380,9 +392,16 @@ def _semantic_pixel_count(native: Any, sensor_name: str, label: str) -> int:
 
     sensor = native.scene[sensor_name]
     segmentation, labels = _semantic_encoding(sensor, sensor_name)
+    verified = getattr(native, "_npa_pi05_verified_semantic_paths", {})
+    if label not in EXPECTED_SEMANTIC_LABELS or label not in verified:
+        raise RuntimeError(f"{sensor_name} requested an unverified semantic label")
     target_ids = [code for code, value in labels.items() if value == label]
+    if not target_ids:
+        return 0
     if len(target_ids) != 1:
-        raise RuntimeError(f"{sensor_name} semantic output has no {label} label")
+        raise RuntimeError(
+            f"{sensor_name} semantic output has ambiguous {label} labels"
+        )
     return int(np.isin(segmentation.reshape(224, 224), target_ids).sum())
 
 
@@ -619,6 +638,34 @@ def _install_finger_semantics(native: Any) -> dict[str, str]:
     return paths
 
 
+def _verify_scene_semantics(native: Any) -> dict[str, str]:
+    """Verify expected tags independently of per-view renderer metadata."""
+
+    from isaaclab.sim import find_first_matching_prim
+    from isaaclab.sim.utils.semantics import get_labels
+
+    paths = _install_finger_semantics(native)
+    expected = {
+        "object": "pi05_target_object",
+        "pi05_destination": DESTINATION_LABEL,
+    }
+    for name, label in expected.items():
+        prim = find_first_matching_prim(native.scene[name].cfg.prim_path)
+        if not prim or not prim.IsValid():
+            raise RuntimeError(f"missing prim for semantic tag: {name}")
+        if label not in get_labels(prim).get("class", []):
+            raise RuntimeError(f"missing expected semantic tag: {label}")
+        paths[name] = str(prim.GetPath())
+    verified = {
+        "pi05_left_finger": paths["left"],
+        "pi05_right_finger": paths["right"],
+        "pi05_target_object": paths["object"],
+        DESTINATION_LABEL: paths["pi05_destination"],
+    }
+    native._npa_pi05_verified_semantic_paths = verified
+    return verified
+
+
 def _finger_local_bounds(native: Any) -> dict[str, Any]:
     from pxr import Usd, UsdGeom
 
@@ -634,6 +681,48 @@ def _untransformed_aligned_bounds(cache: Any, prim: Any) -> tuple[Any, Any]:
 
     aligned = cache.ComputeUntransformedBound(prim).ComputeAlignedBox()
     return aligned.GetMin(), aligned.GetMax()
+
+
+def _aligned_extent(bound: Any) -> list[float]:
+    import numpy as np
+
+    aligned = bound.ComputeAlignedBox()
+    extent = np.asarray(aligned.GetMax(), dtype=float) - np.asarray(
+        aligned.GetMin(), dtype=float
+    )
+    if extent.shape != (3,) or not np.isfinite(extent).all() or (extent <= 0).any():
+        raise RuntimeError("object USD geometry has invalid measured extent")
+    return extent.astype(float).tolist()
+
+
+def _object_asset_geometry(native: Any, scale: tuple[float, ...]) -> dict[str, Any]:
+    """Measure source and effective object extents from the composed runtime USD."""
+
+    from isaaclab.sim import find_first_matching_prim
+    from pxr import Usd, UsdGeom
+
+    prim = find_first_matching_prim(native.scene["object"].cfg.prim_path)
+    if not prim or not prim.IsValid():
+        raise RuntimeError("object prim is missing from the composed runtime stage")
+    cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
+    source_bound = cache.ComputeUntransformedBound(prim).ComputeAlignedBox()
+    source = _aligned_extent(cache.ComputeUntransformedBound(prim))
+    effective = _aligned_extent(cache.ComputeLocalBound(prim))
+    source_center = list(map(float, source_bound.GetMidpoint()))
+    if any(abs(value) > 1.0e-4 for value in source_center):
+        raise RuntimeError("object USD geometry must be centered on its rigid root")
+    if effective[1] > MAX_GRIPPER_WIDTH_M:
+        raise RuntimeError("measured object grasp width exceeds the Franka gripper")
+    return {
+        "source_untransformed_extent_m": source,
+        "effective_local_extent_m": effective,
+        "declared_spawn_scale": list(map(float, scale)),
+        "grasp_width_axis": "object_local_y",
+        "grasp_width_m": effective[1],
+        "support_height_m": effective[2],
+        "source_untransformed_center_m": source_center,
+        "measurement": "UsdGeom.BBoxCache composed runtime prim",
+    }
 
 
 def _bounds_corners(bounds: Any) -> Any:
@@ -673,6 +762,35 @@ def _finger_bounds(native: Any) -> dict[str, Any]:
             "pose_source": "live_articulation_body_pos_w_body_quat_w_xyzw",
         }
     return result
+
+
+def _finger_grasp_reference_geometry(native: Any) -> dict[str, Any]:
+    """Measure the finger-link centroid reference in the live hand frame."""
+
+    import numpy as np
+
+    robot = native.scene["robot"]
+    hand_index = list(robot.body_names).index("panda_hand")
+    hand_position = _proxy_torch(robot.data.body_pos_w)[0, hand_index]
+    hand_position = hand_position.detach().cpu().numpy()
+    hand_xyzw = _proxy_torch(robot.data.body_quat_w)[0, hand_index]
+    hand_wxyz = _xyzw_to_wxyz(hand_xyzw.detach().cpu().numpy())
+    centers = [
+        np.mean(value["world_corners_m"], axis=0)
+        for value in _finger_bounds(native).values()
+    ]
+    world_midpoint = np.mean(centers, axis=0)
+    inverse = hand_wxyz * np.asarray([1.0, -1.0, -1.0, -1.0])
+    local = _rotate_vector(inverse, world_midpoint - hand_position)
+    if np.linalg.norm(local[:2]) > 0.03 or not 0.04 <= local[2] <= 0.14:
+        raise RuntimeError("measured Franka grasp reference is outside hand geometry")
+    return {
+        "hand_to_finger_link_centroid_local_m": local.astype(float).tolist(),
+        "measured_finger_link_centroid_world_m": world_midpoint.astype(float).tolist(),
+        "hand_pose_source": "ArticulationData.body_pos_w/body_quat_w XYZW",
+        "finger_geometry_source": "live link poses plus untransformed USD bounds",
+        "contact_geometry_claim": "link-centroid reference; bilateral contact required",
+    }
 
 
 def _finger_in_frustum(native: Any) -> dict[str, Any]:
@@ -884,6 +1002,37 @@ def _action_layout(native: Any) -> tuple[int, int, int]:
     if dimensions[arm_index] != 6 or dimensions[grip_index] != 1:
         raise RuntimeError("expert requires 6D differential IK plus binary gripper")
     return sum(dimensions), arm_start, grip_start
+
+
+def _expert_action_scale(native: Any) -> Any:
+    """Read the actual six-axis scaling applied by the IK action term."""
+
+    import numpy as np
+
+    term = native.action_manager.get_term("arm_action")
+    value = _proxy_torch(getattr(term, "_scale", None))
+    if value is None or not hasattr(value, "detach"):
+        raise RuntimeError("expert IK term does not expose its action scale")
+    scale = value[0].detach().cpu().numpy().astype(float)
+    if scale.shape != (6,) or not np.isfinite(scale).all() or (scale <= 0).any():
+        raise RuntimeError("expert IK action scale must be six finite positive values")
+    return scale
+
+
+def _axis_angle_error_xyzw(current: Any, target: Any) -> Any:
+    """Match pinned Isaac compute_pose_error for world-frame XYZW rotations."""
+
+    import numpy as np
+
+    current = np.asarray(current, dtype=float)
+    target = np.asarray(target, dtype=float)
+    inverse = np.asarray([-current[0], -current[1], -current[2], current[3]])
+    error = _multiply_xyzw(target, inverse)
+    error *= 1.0 if error[3] >= 0.0 else -1.0
+    magnitude = float(np.linalg.norm(error[:3]))
+    if magnitude < 1.0e-8:
+        return np.zeros(3, dtype=float)
+    return error[:3] * (2.0 * np.arctan2(magnitude, error[3]) / magnitude)
 
 
 def _controller_target(native: Any) -> Any:
@@ -1400,17 +1549,26 @@ def _camera_time(native: Any, name: str) -> float:
 
 
 def _expert_waypoints(
-    object_position: Any, target: Any
+    object_position: Any, target: Any, grasp_reference_local: Any
 ) -> list[tuple[str, Any, float]]:
+    import numpy as np
+
+    world_offset = _rotate_vector(
+        _xyzw_to_wxyz(DOWNWARD_HAND_QUATERNION_XYZW), grasp_reference_local
+    )
+
+    def hand_goal(grasp_reference_goal: Any) -> Any:
+        return np.asarray(grasp_reference_goal, dtype=float) - world_offset
+
     return [
-        ("approach", object_position + [0.0, 0.0, 0.14], 0.0),
-        ("contact", object_position + [0.0, 0.0, 0.025], 0.0),
-        ("grasp", object_position + [0.0, 0.0, 0.025], 1.0),
-        ("lift", object_position + [0.0, 0.0, 0.16], 1.0),
-        ("transport", target + [0.0, 0.0, 0.16], 1.0),
-        ("lower", target + [0.0, 0.0, 0.025], 1.0),
-        ("release", target + [0.0, 0.0, 0.025], 0.0),
-        ("retreat", target + [0.0, 0.0, 0.16], 0.0),
+        ("approach", hand_goal(object_position + [0.0, 0.0, 0.14]), 0.0),
+        ("contact", hand_goal(object_position), 0.0),
+        ("grasp", hand_goal(object_position), 1.0),
+        ("lift", hand_goal(object_position + [0.0, 0.0, 0.16]), 1.0),
+        ("transport", hand_goal(target + [0.0, 0.0, 0.16]), 1.0),
+        ("lower", hand_goal(target), 1.0),
+        ("release", hand_goal(target), 0.0),
+        ("retreat", hand_goal(target + [0.0, 0.0, 0.16]), 0.0),
     ]
 
 
@@ -1536,17 +1694,38 @@ def _causal_observation(
 
 def _expert_command(
     context: dict[str, Any], goal: Any, gripper: float
-) -> tuple[Any, float]:
+) -> tuple[Any, float, float]:
+    import numpy as np
     import torch
 
     native = context["native"]
     ee = _proxy_torch(native.scene["ee_frame"].data.target_pos_w)[0, 0, :3]
+    ee_quaternion = _proxy_torch(native.scene["ee_frame"].data.target_quat_w)[0, 0, :4]
     error = torch.as_tensor(goal, device=ee.device) - ee
+    rotation = _axis_angle_error_xyzw(
+        ee_quaternion.detach().cpu().numpy(), DOWNWARD_HAND_QUATERNION_XYZW
+    )
+    processed = np.r_[
+        np.clip(error.detach().cpu().numpy(), -0.07, 0.07),
+        np.clip(rotation, -0.25, 0.25),
+    ]
+    raw = np.clip(processed / context["expert_action_scale"], -1.0, 1.0)
     command = torch.zeros((1, context["total_dim"]), device=ee.device)
     start = context["arm_start"]
-    command[0, start : start + 3] = torch.clamp(error * 5.0, -0.35, 0.35)
+    command[0, start : start + 6] = torch.as_tensor(raw, device=ee.device)
     command[0, context["grip_start"]] = -1.0 if gripper > 0.5 else 1.0
-    return command, float(torch.linalg.norm(error).item())
+    context["orientation_control"] = {
+        "current_quaternion_xyzw": ee_quaternion.detach().cpu().numpy().tolist(),
+        "target_quaternion_xyzw": list(DOWNWARD_HAND_QUATERNION_XYZW),
+        "axis_angle_error_rad": rotation.tolist(),
+        "processed_delta": processed.tolist(),
+        "raw_scaled_action": raw.tolist(),
+    }
+    return (
+        command,
+        float(torch.linalg.norm(error).item()),
+        float(np.linalg.norm(rotation)),
+    )
 
 
 def _step_command(
@@ -1603,7 +1782,8 @@ def _physics_sample(
     bilateral = left > 1.0e-3 and right > 1.0e-3
     lifted = float(obj_np[2] - context["initial_z"]) >= 0.05
     xy_error = float(np.linalg.norm(obj_np[:2] - context["target"][:2]))
-    released = width >= 0.06 and phase in {"release", "retreat"}
+    release_width = release_width_threshold(context["object_width_m"])
+    released = width >= release_width and phase in {"release", "retreat"}
     retreat_distance = _hand_object_distance(native, obj_np)
     retreated = phase == "retreat" and retreat_distance >= 0.10
     supported = support > 1.0e-3 and not bilateral and released and retreated
@@ -1710,19 +1890,20 @@ def _trace_receipts(
         "exterior_destination_pixels": observation["exterior_destination_pixels"],
         "wrist_target_pixels": observation["wrist_pixels"],
         "stable_steps": context["stable_steps"],
+        "orientation_control": dict(context["orientation_control"]),
     }
 
 
 def _run_phase(context: dict[str, Any], phase: str, goal: Any, intent: float) -> None:
     reached = 0
     for _ in range(90):
-        command, distance = _expert_command(context, goal, intent)
+        command, distance, orientation_error = _expert_command(context, goal, intent)
         observation = _causal_observation(
             context["native"], context["joint_indices"], context["buffers"]
         )
         command_time, resulting_time = _step_command(context, command, phase)
         _record_step(context, observation, intent, phase, command_time, resulting_time)
-        reached = reached + 1 if distance < 0.012 else 0
+        reached = reached + 1 if distance < 0.012 and orientation_error < 0.08 else 0
         hold = 12 if phase in {"grasp", "release"} else 3
         if reached >= hold or (phase == "retreat" and context["stable_steps"] >= 3):
             return
@@ -1926,8 +2107,15 @@ def _episode_metadata(
         "step_count": len(buffers["actions"]),
         "object_identity": identity,
         "object_width_m": context["object_width_m"],
+        "object_height_m": context["object_height_m"],
+        "finger_grasp_reference_geometry": context["finger_grasp_reference_geometry"],
         "initial_object_position_m": context["initial_object_position"].tolist(),
         "target_position_m": context["target"].tolist(),
+        "active_surface_command_m": context["active_surface_command_m"],
+        "reset_settle": context["reset_settle"],
+        "scene_semantic_tags": dict(
+            context["native"]._npa_pi05_verified_semantic_paths
+        ),
         "support_surface": support_surface_contract(),
         "scene_configuration_digest": _scene_digest(context, scene_id, attempt),
         "scene_seed": context["scene_seed"],
@@ -1951,6 +2139,16 @@ def _scene_digest(context: dict[str, Any], scene_id: str, attempt: int) -> str:
             "support_surface": support_surface_contract(),
             "attempt": attempt,
             "initial_z": context["initial_z"],
+            "object_width_m": context["object_width_m"],
+            "object_height_m": context["object_height_m"],
+            "finger_grasp_reference_geometry": context[
+                "finger_grasp_reference_geometry"
+            ],
+            "active_surface_command_m": context["active_surface_command_m"],
+            "reset_settle": context["reset_settle"],
+            "scene_semantic_tags": dict(
+                context["native"]._npa_pi05_verified_semantic_paths
+            ),
             "scene_seed": context["scene_seed"],
         }
     )
@@ -1981,9 +2179,11 @@ def _attempt_context(
     object_position: Any,
     target: Any,
     object_width_m: float,
+    object_height_m: float,
 ) -> dict[str, Any]:
     total_dim, arm_start, grip_start = _action_layout(native)
     robot = native.scene["robot"]
+    grasp_geometry = _finger_grasp_reference_geometry(native)
     return {
         "native": native,
         "env": env,
@@ -1992,12 +2192,105 @@ def _attempt_context(
         "initial_object_position": object_position.copy(),
         "initial_z": float(object_position[2]),
         "object_width_m": object_width_m,
+        "object_height_m": object_height_m,
+        "finger_grasp_reference_geometry": grasp_geometry,
         "total_dim": total_dim,
         "arm_start": arm_start,
         "grip_start": grip_start,
+        "expert_action_scale": _expert_action_scale(native),
         "joint_indices": [list(robot.joint_names).index(name) for name in JOINT_NAMES],
         "stable_steps": 0,
+        "orientation_control": {},
     }
+
+
+def _reset_settle_sample(native: Any, command_time: float) -> dict[str, Any]:
+    position, speed = _object_kinematics(native)
+    _left, _right, support = _contact_forces(native)
+    return {
+        "command_time_s": command_time,
+        "result_time_s": _sim_time(native),
+        "object_position_m": position.astype(float).tolist(),
+        "object_speed_m_s": speed,
+        "object_support_force_n": support,
+    }
+
+
+def _validate_reset_settle(samples: list[dict[str, Any]], steps: int) -> None:
+    final = samples[-1]
+    if steps != RESET_SETTLE_CONTROL_STEPS:
+        raise RuntimeError("reset settle did not advance its declared control steps")
+    if final["object_speed_m_s"] >= 0.03:
+        raise RuntimeError("reset settle object remained in motion")
+    if final["object_support_force_n"] <= 1.0e-3:
+        raise RuntimeError("reset settle object lacked support contact")
+    prior_result = None
+    for sample in samples:
+        command = float(sample["command_time_s"])
+        result = float(sample["result_time_s"])
+        if not math.isfinite(command) or not math.isfinite(result):
+            raise RuntimeError("reset settle clocks were not finite")
+        if abs((result - command) - 1.0 / CONTROL_HZ) > 1.0e-6:
+            raise RuntimeError("reset settle did not hold the 15 Hz cadence")
+        if prior_result is not None and abs(command - prior_result) > 1.0e-6:
+            raise RuntimeError("reset settle clocks were not contiguous")
+        prior_result = result
+
+
+def _settle_expert_reset(native: Any, env: Any) -> dict[str, Any]:
+    """Advance two measured control intervals before any training capture."""
+
+    import torch
+
+    total_dim, _arm_start, grip_start = _action_layout(native)
+    action = torch.zeros((1, total_dim), device=native.device)
+    action[0, grip_start] = 1.0
+    before = int(_proxy_torch(native.episode_length_buf)[0].item())
+    samples = []
+    for _ in range(RESET_SETTLE_CONTROL_STEPS):
+        command_time = _sim_time(native)
+        _, _, terminated, truncated, _ = env.step(action)
+        if bool(terminated[0]) or bool(truncated[0]):
+            raise RuntimeError("expert environment reset during declared settle")
+        samples.append(_reset_settle_sample(native, command_time))
+    after = int(_proxy_torch(native.episode_length_buf)[0].item())
+    _validate_reset_settle(samples, after - before)
+    return {
+        "control_steps": RESET_SETTLE_CONTROL_STEPS,
+        "physics_steps": RESET_SETTLE_CONTROL_STEPS * int(native.cfg.decimation),
+        "start_control_step": before,
+        "result_control_step": after,
+        "object_speed_m_s": samples[-1]["object_speed_m_s"],
+        "object_support_force_n": samples[-1]["object_support_force_n"],
+        "samples": samples,
+        "training_row": False,
+    }
+
+
+def _bind_surface_command(native: Any, target: Any) -> list[float]:
+    """Bind the inherited task command to the measured surface object center."""
+
+    import torch
+
+    command = native.command_manager.get_command("object_pose")
+    target_tensor = torch.as_tensor(target, device=command.device, dtype=command.dtype)
+    if command.ndim != 2 or command.shape[0] != 1 or command.shape[1] < 3:
+        raise RuntimeError("object_pose command does not expose one Cartesian target")
+    command[0, :3] = target_tensor
+    actual = command[0, :3].detach().cpu().numpy().astype(float).tolist()
+    if any(abs(left - right) > 1.0e-6 for left, right in zip(actual, target)):
+        raise RuntimeError("object_pose command rejected measured surface target")
+    return actual
+
+
+def _run_expert_waypoints(context: dict[str, Any]) -> None:
+    reference = context["finger_grasp_reference_geometry"]
+    for phase, goal, intent in _expert_waypoints(
+        context["initial_object_position"],
+        context["target"],
+        reference["hand_to_finger_link_centroid_local_m"],
+    ):
+        _run_phase(context, phase, goal, intent)
 
 
 def _capture_attempt(
@@ -2010,24 +2303,22 @@ def _capture_attempt(
     scene_id: str,
     buffers: dict[str, list[Any]],
     object_width_m: float,
+    object_height_m: float,
     scene_seed: int,
 ) -> dict[str, Any]:
     import numpy as np
 
-    object_position = (
-        _proxy_torch(native.scene["object"].data.root_pos_w)[0, :3]
-        .detach()
-        .cpu()
-        .numpy()
-    )
+    settle = _settle_expert_reset(native, env)
+    object_position, _speed = _object_kinematics(native)
     target = np.asarray([0.50, 0.18, float(object_position[2])], dtype=np.float32)
     context = _attempt_context(
-        native, env, buffers, object_position, target, object_width_m
+        native, env, buffers, object_position, target, object_width_m, object_height_m
     )
     context["scene_seed"] = scene_seed
+    context["reset_settle"] = settle
+    context["active_surface_command_m"] = _bind_surface_command(native, target)
     mounted = _wrist_mount_evidence(native, buffers)
-    for phase, goal, intent in _expert_waypoints(object_position, target):
-        _run_phase(context, phase, goal, intent)
+    _run_expert_waypoints(context)
     episode = output / f"episode-{attempt:06d}"
     episode.mkdir(parents=True)
     _write_episode_arrays(episode, buffers)
@@ -2117,7 +2408,7 @@ def _make_environment(
             gym, base_id=EXPERT_BASE_TASK_ID, task_id=EXPERT_SURFACE_TASK_ID
         )
         env = gym.make(EXPERT_SURFACE_TASK_ID, cfg=cfg)
-        _install_finger_semantics(env.unwrapped)
+        _verify_scene_semantics(env.unwrapped)
         env.reset(seed=seed)
         return app, env
     except Exception as error:
@@ -2170,7 +2461,7 @@ def _configure_environment(
         cfg.scene.object.spawn.usd_path = object_usd
     cfg.scene.object.spawn.scale = object_scale
     cfg.scene.object.spawn.semantic_tags = [("class", "pi05_target_object")]
-    target = (0.50, 0.18, 0.025 * object_scale[2])
+    target = (0.50, 0.18, 0.0)
     configure_finger_semantics(cfg)
     configure_support_surface(cfg)
     configure_surface_goal(cfg, target)
@@ -2198,6 +2489,7 @@ def _collect_attempts(
     identity: str,
     scene_id: str,
     scale: tuple[float, float, float],
+    geometry: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     attempts = []
     for attempt in range(episodes):
@@ -2213,7 +2505,8 @@ def _collect_attempts(
                 object_identity=identity,
                 scene_id=scene_id,
                 buffers=buffers,
-                object_width_m=0.05 * scale[1],
+                object_width_m=float(geometry["grasp_width_m"]),
+                object_height_m=float(geometry["support_height_m"]),
                 scene_seed=seed + attempt,
             )
         except Exception as exc:
@@ -2269,6 +2562,7 @@ def _collection_report(
     object_usd: str,
     scale: tuple[float, float, float],
     scene_id: str,
+    geometry: Mapping[str, Any],
     graphics_preflight: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     scenarios = _successful_scenarios(attempts)
@@ -2285,6 +2579,7 @@ def _collection_report(
             "identity": identity,
             "usd": object_usd or "task_default",
             "scale": list(scale),
+            "geometry": dict(geometry),
         },
         "scene_id": scene_id,
         "scene_layout_holdout": False,
@@ -2443,9 +2738,12 @@ def _run_collection(
     scene_id: str,
     graphics: Mapping[str, Any],
 ) -> dict[str, Any]:
-    attempts = _collect_attempts(env, work, episodes, seed, identity, scene_id, scale)
+    geometry = _object_asset_geometry(env.unwrapped, scale)
+    attempts = _collect_attempts(
+        env, work, episodes, seed, identity, scene_id, scale, geometry
+    )
     report = _collection_report(
-        attempts, identity, object_usd, scale, scene_id, graphics
+        attempts, identity, object_usd, scale, scene_id, geometry, graphics
     )
     (work / "collection.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n"

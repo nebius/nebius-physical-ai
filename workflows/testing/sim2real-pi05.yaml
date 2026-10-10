@@ -195,7 +195,7 @@ states:
 
   collect-expert:
     description: >
-      Run the differential-IK expert in real Isaac physics for 40/50/60 mm size
+      Run the differential-IK expert in real Isaac physics for measured 48/60/72 mm size
       and randomized-physics holdouts of one multicolor-cube family on the same
       task-owned single-body support layout; record every causal exterior+wrist/state/action row,
       bilateral grasp forces, lift, transport, release and table support dwell.

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from npa.workflows.sim2real import pi05_isaac
 from npa.workflows.sim2real.pi05_closed_loop import _new_episode_record
 from npa.workflows.sim2real.pi05_isaac import (
     DESTINATION_LABEL,
@@ -17,9 +18,14 @@ from npa.workflows.sim2real.pi05_isaac import (
     _contact_config,
     _destination_pixel_count,
     _finger_bounds,
+    _finger_grasp_reference_geometry,
     _finger_in_frustum,
     _finger_pixel_counts,
     _multiply_xyzw,
+    _object_asset_geometry,
+    _axis_angle_error_xyzw,
+    _expert_waypoints,
+    _expert_command,
     _quaternion_angle_xyzw,
     _relative_camera_quaternion,
     _require_isaac_camera_runtime,
@@ -28,6 +34,8 @@ from npa.workflows.sim2real.pi05_isaac import (
     _rotate_vector,
     _sim_time,
     _sensor_clock_reference,
+    _semantic_pixel_count,
+    _settle_expert_reset,
     _synchronize_wrist_before_capture,
     _target_pixel_count,
     _untransformed_aligned_bounds,
@@ -440,7 +448,15 @@ def _semantic_native(segmentation: np.ndarray) -> SimpleNamespace:
         },
         output={"semantic_segmentation": _Proxy(segmentation)},
     )
-    return SimpleNamespace(scene={"camera": SimpleNamespace(data=data)})
+    return SimpleNamespace(
+        scene={"camera": SimpleNamespace(data=data)},
+        _npa_pi05_verified_semantic_paths={
+            "pi05_target_object": "/World/envs/env_0/Object",
+            DESTINATION_LABEL: "/World/envs/env_0/Pi05DestinationMarker",
+            "pi05_left_finger": "/World/envs/env_0/Robot/panda_leftfinger",
+            "pi05_right_finger": "/World/envs/env_0/Robot/panda_rightfinger",
+        },
+    )
 
 
 def test_semantic_visibility_rejects_rgba_and_counts_packed_metadata_pixels() -> None:
@@ -468,8 +484,24 @@ def test_semantic_visibility_rejects_rgba_and_counts_packed_metadata_pixels() ->
         "(8, 0, 0, 0)": {"class": "pi05_right_finger"},
     }
     labels[0, 12, 20, 0] = 8
-    native = SimpleNamespace(scene={"camera": SimpleNamespace(data=finger_data)})
+    native = _semantic_native(labels)
+    native.scene["camera"] = SimpleNamespace(data=finger_data)
     assert _finger_pixel_counts(native, "camera") == {"left": 2, "right": 1}
+
+
+def test_known_but_out_of_view_semantic_class_counts_as_zero() -> None:
+    labels = np.zeros((1, 224, 224, 1), dtype=np.int32)
+    native = _semantic_native(labels)
+    native.scene["camera"].data.info["semantic_segmentation"]["idToLabels"] = {
+        "(0, 0, 0, 0)": {"class": "BACKGROUND"}
+    }
+
+    assert _target_pixel_count(native, "camera") == 0
+    del native._npa_pi05_verified_semantic_paths
+    with pytest.raises(RuntimeError, match="unverified semantic label"):
+        _target_pixel_count(native, "camera")
+    with pytest.raises(RuntimeError, match="unverified semantic label"):
+        _semantic_pixel_count(native, "camera", "operator_unverified_label")
 
 
 def test_semantic_visibility_decodes_signed_live_packed_rgba_code() -> None:
@@ -763,6 +795,170 @@ def test_finger_geometry_excludes_the_authored_link_transform() -> None:
 
     bounds = _untransformed_aligned_bounds(_Cache(), "nonidentity-finger-link")
     assert bounds == ((-0.01, -0.02, 0.0), (0.01, 0.02, 0.1))
+
+
+def test_custom_object_geometry_uses_composed_runtime_extent(monkeypatch) -> None:
+    from pxr import Gf, Usd, UsdGeom
+
+    stage = Usd.Stage.CreateInMemory()
+    cube = UsdGeom.Cube.Define(stage, "/Object")
+    cube.GetSizeAttr().Set(0.073)
+    xform = UsdGeom.Xformable(cube)
+    xform.AddTranslateOp().Set(Gf.Vec3d(0.45, -0.15, 0.03))
+    xform.AddScaleOp().Set(Gf.Vec3d(0.8, 0.9, 1.1))
+    sim = types.ModuleType("isaaclab.sim")
+    sim.find_first_matching_prim = lambda _path: cube.GetPrim()
+    monkeypatch.setitem(sys.modules, "isaaclab.sim", sim)
+    native = SimpleNamespace(
+        scene={"object": SimpleNamespace(cfg=SimpleNamespace(prim_path="/Object"))}
+    )
+
+    geometry = _object_asset_geometry(native, (0.8, 0.9, 1.1))
+
+    assert geometry["source_untransformed_extent_m"] == pytest.approx([0.073] * 3)
+    assert geometry["effective_local_extent_m"] == pytest.approx(
+        [0.0584, 0.0657, 0.0803]
+    )
+    assert geometry["grasp_width_m"] == pytest.approx(0.0657)
+    assert geometry["support_height_m"] == pytest.approx(0.0803)
+    assert geometry["source_untransformed_center_m"] == pytest.approx([0.0] * 3)
+
+
+def test_custom_object_geometry_rejects_offset_rigid_origin(monkeypatch) -> None:
+    from pxr import Gf, Usd, UsdGeom
+
+    stage = Usd.Stage.CreateInMemory()
+    root = UsdGeom.Xform.Define(stage, "/Object")
+    cube = UsdGeom.Cube.Define(stage, "/Object/Cube")
+    cube.GetSizeAttr().Set(0.04)
+    UsdGeom.Xformable(cube).AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.03))
+    sim = types.ModuleType("isaaclab.sim")
+    sim.find_first_matching_prim = lambda _path: root.GetPrim()
+    monkeypatch.setitem(sys.modules, "isaaclab.sim", sim)
+    native = SimpleNamespace(
+        scene={"object": SimpleNamespace(cfg=SimpleNamespace(prim_path="/Object"))}
+    )
+
+    with pytest.raises(RuntimeError, match="centered on its rigid root"):
+        _object_asset_geometry(native, (1.0, 1.0, 1.0))
+
+
+def test_downward_orientation_and_measured_grasp_reference_waypoints() -> None:
+    tilted = np.asarray([-0.912, 0.02, -0.406, 0.054])
+    target = np.asarray([1.0, 0.0, 0.0, 0.0])
+    error = _axis_angle_error_xyzw(tilted, target)
+    assert np.linalg.norm(error) > 0.1
+    angle = np.linalg.norm(error)
+    delta = np.r_[error / angle * np.sin(angle / 2.0), np.cos(angle / 2.0)]
+    reached = _multiply_xyzw(delta, tilted)
+    assert abs(float(np.dot(reached, target))) == pytest.approx(1.0)
+    assert np.linalg.norm(_axis_angle_error_xyzw(target, target)) < 1.0e-8
+
+    grasp_reference = np.asarray([0.01, -0.02, 0.0854166])
+    waypoints = _expert_waypoints(np.zeros(3), np.ones(3), grasp_reference)
+    contact = next(goal for phase, goal, _intent in waypoints if phase == "contact")
+    downward = _xyzw_to_wxyz([1.0, 0.0, 0.0, 0.0])
+    reconstructed_reference = contact + _rotate_vector(downward, grasp_reference)
+    assert reconstructed_reference == pytest.approx([0.0, 0.0, 0.0])
+    assert contact == pytest.approx([-0.01, -0.02, 0.0854166])
+
+
+def test_grasp_reference_recovers_selected_asset_link_centroid(monkeypatch) -> None:
+    import torch
+
+    hand = np.asarray([0.39, 0.0, 0.46])
+    local = np.asarray([3.38e-7, 3.08e-9, 0.0854165984])
+    robot = SimpleNamespace(
+        body_names=["panda_hand"],
+        data=SimpleNamespace(
+            body_pos_w=torch.as_tensor(hand.reshape(1, 1, 3), dtype=torch.float64),
+            body_quat_w=torch.tensor([[[0.0, 0.0, 0.0, 1.0]]]),
+        ),
+    )
+    corners = np.asarray(
+        [hand + local + [-0.005, -0.005, -0.01], hand + local + [0.005, 0.005, 0.01]]
+    )
+    bounds = {side: {"world_corners_m": corners} for side in ("left", "right")}
+    monkeypatch.setattr(pi05_isaac, "_finger_bounds", lambda _native: bounds)
+
+    receipt = _finger_grasp_reference_geometry(SimpleNamespace(scene={"robot": robot}))
+
+    assert receipt["hand_to_finger_link_centroid_local_m"] == pytest.approx(local)
+    assert "bilateral contact required" in receipt["contact_geometry_claim"]
+
+
+def _expert_settle_fixture():
+    import torch
+
+    native = SimpleNamespace(
+        device="cpu",
+        step_dt=1.0 / 15.0,
+        cfg=SimpleNamespace(decimation=4),
+        episode_length_buf=torch.tensor([0]),
+        action_manager=SimpleNamespace(
+            active_terms=["arm_action", "gripper_action"], action_term_dim=[6, 1]
+        ),
+    )
+
+    class Env:
+        def step(self, action):
+            assert action.shape == (1, 7) and float(action[0, 6]) == 1.0
+            native.episode_length_buf += 1
+            return None, None, torch.tensor([False]), torch.tensor([False]), {}
+
+    return native, Env()
+
+
+def test_expert_command_uses_all_six_scaled_relative_pose_channels() -> None:
+    import torch
+
+    data = SimpleNamespace(
+        target_pos_w=torch.tensor([[[0.4, 0.0, 0.3]]]),
+        target_quat_w=torch.tensor([[[-0.912, 0.02, -0.406, 0.054]]]),
+    )
+    context = {
+        "native": SimpleNamespace(scene={"ee_frame": SimpleNamespace(data=data)}),
+        "total_dim": 7,
+        "arm_start": 0,
+        "grip_start": 6,
+        "expert_action_scale": np.asarray([0.5] * 6),
+    }
+    command, distance, orientation = _expert_command(
+        context, np.asarray([0.45, 0.0, 0.25]), 0.0
+    )
+
+    assert distance > 0.0 and orientation > 0.1
+    assert np.linalg.norm(command[0, 3:6].numpy()) > 0.1
+    assert float(command[0, 6]) == 1.0
+    assert context["orientation_control"]["target_quaternion_xyzw"] == [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+    ]
+
+
+def test_reset_settle_advances_physics_without_admitting_training_row(
+    monkeypatch,
+) -> None:
+    native, env = _expert_settle_fixture()
+    samples = iter(
+        [
+            (np.asarray([0.45, -0.15, 0.02775]), 0.08),
+            (np.asarray([0.45, -0.15, 0.024]), 0.0),
+        ]
+    )
+    support = iter([(0.0, 0.0, 0.0), (0.0, 0.0, 0.6)])
+    monkeypatch.setattr(pi05_isaac, "_object_kinematics", lambda _native: next(samples))
+    monkeypatch.setattr(pi05_isaac, "_contact_forces", lambda _native: next(support))
+    receipt = _settle_expert_reset(native, env)
+    assert receipt["control_steps"] == 2
+    assert receipt["physics_steps"] == 8
+    assert [row["object_position_m"][2] for row in receipt["samples"]] == pytest.approx(
+        [0.02775, 0.024]
+    )
+    assert receipt["object_support_force_n"] == pytest.approx(0.6)
+    assert receipt["training_row"] is False
 
 
 def test_finger_bounds_transform_local_geometry_with_live_body_pose(

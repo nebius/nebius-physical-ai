@@ -89,7 +89,7 @@ def _surface_success_contract() -> dict[str, Any]:
         "object_speed_m_s_lt": 0.03,
         "stable_steps_gte": 3,
         "lift_delta_m_gte": 0.05,
-        "gripper_released_width_m_gte": 0.06,
+        "gripper_released_width": "min(0.079 m, measured_object_width_m + 0.005 m)",
         "hand_object_retreat_distance_m_gte": 0.10,
         "old_goal_distance_5cm": "diagnostic_only_not_cross_task_comparison",
     }
@@ -192,7 +192,7 @@ def _data_contract() -> dict[str, Any]:
             "failures_retained_as_evidence": True,
             "normalization": "train_split_only",
             "split_keys": ["object_identity", "scene_configuration_digest"],
-            "asset_holdout": "one multicolor-cube USD at 40/50/60 mm",
+            "asset_holdout": "one measured 60 mm multicolor-cube USD scaled to 48/60/72 mm",
             "novel_object_categories": False,
             "distinct_scene_layouts": False,
             "public_seed": "rejected: lift-only 7D relative actions and insufficient task/camera contract",
@@ -258,6 +258,15 @@ def width_to_droid_gripper(width_m: float) -> float:
     if not math.isfinite(width) or not 0.0 <= width <= MAX_GRIPPER_WIDTH_M:
         raise Pi05ContractError("physical gripper width must be in [0, 0.08] m")
     return 1.0 - width / MAX_GRIPPER_WIDTH_M
+
+
+def release_width_threshold(object_width_m: float) -> float:
+    """Return released width. Args: object width. Returns: Width. Raises: Error."""
+
+    width = float(object_width_m)
+    if not math.isfinite(width) or not 0.01 <= width <= MAX_GRIPPER_WIDTH_M:
+        raise Pi05ContractError("object grasp width must be in [0.01, 0.08] m")
+    return min(MAX_GRIPPER_WIDTH_M - 0.001, width + 0.005)
 
 
 def absolute_to_isaac_action(
@@ -465,17 +474,16 @@ def _validate_episode_header(episode: Mapping[str, Any]) -> None:
         raise Pi05ContractError(
             "7D, relative, delta, or unspecified action targets are incompatible"
         )
-    _finite_vector(episode.get("target_position_m", []), 3, "target_position_m")
+    _validate_task_target(episode)
     _finite_vector(
         episode.get("initial_object_position_m", []),
         3,
         "initial_object_position_m",
     )
-    width = float(episode.get("object_width_m", math.nan))
-    if not math.isfinite(width) or not 0.01 <= width <= MAX_GRIPPER_WIDTH_M:
-        raise Pi05ContractError("object width is missing or incompatible with Franka")
+    _validate_episode_geometry(episode)
     if not isinstance(episode.get("scene_seed"), int):
         raise Pi05ContractError("scene randomization seed provenance is missing")
+    _validate_reset_settle(episode)
     marker = episode.get("destination_marker")
     if not isinstance(marker, Mapping):
         raise Pi05ContractError("episode lacks rendered destination provenance")
@@ -487,6 +495,63 @@ def _validate_episode_header(episode: Mapping[str, Any]) -> None:
         raise Pi05ContractError(
             "destination must be a rendered non-colliding exterior-visible marker"
         )
+
+
+def _validate_task_target(episode: Mapping[str, Any]) -> None:
+    target = _finite_vector(
+        episode.get("target_position_m", []), 3, "target_position_m"
+    )
+    active = _finite_vector(
+        episode.get("active_surface_command_m", []), 3, "active_surface_command_m"
+    )
+    if any(abs(left - right) > 1.0e-6 for left, right in zip(target, active)):
+        raise Pi05ContractError("active task command differs from placement target")
+
+
+def _validate_episode_geometry(episode: Mapping[str, Any]) -> None:
+    width = float(episode.get("object_width_m", math.nan))
+    if not math.isfinite(width) or not 0.01 <= width <= MAX_GRIPPER_WIDTH_M:
+        raise Pi05ContractError("object width is missing or incompatible with Franka")
+    height = float(episode.get("object_height_m", math.nan))
+    if not math.isfinite(height) or not 0.01 <= height <= 0.25:
+        raise Pi05ContractError("measured object support height is missing or invalid")
+
+
+def _validate_reset_settle(episode: Mapping[str, Any]) -> None:
+    settle = episode.get("reset_settle")
+    if not isinstance(settle, Mapping) or settle.get("training_row") is not False:
+        raise Pi05ContractError("episode lacks a non-training physics reset settle")
+    if int(settle.get("control_steps") or 0) != 2:
+        raise Pi05ContractError(
+            "episode reset settle must be exactly two control steps"
+        )
+    if int(settle.get("physics_steps") or 0) != 8:
+        raise Pi05ContractError("episode reset settle must contain eight physics steps")
+    samples = settle.get("samples")
+    if not isinstance(samples, list) or len(samples) != 2:
+        raise Pi05ContractError("episode reset settle lacks two physics samples")
+    _validate_settle_clocks(samples)
+    final = samples[-1]
+    if float(final.get("object_speed_m_s", math.inf)) >= 0.03:
+        raise Pi05ContractError("episode reset settle object remained in motion")
+    if float(final.get("object_support_force_n", 0.0)) <= 1.0e-3:
+        raise Pi05ContractError("episode reset settle lacks support contact")
+
+
+def _validate_settle_clocks(samples: list[Any]) -> None:
+    prior_result = None
+    for sample in samples:
+        if not isinstance(sample, Mapping):
+            raise Pi05ContractError("episode reset settle sample is not a mapping")
+        command = float(sample.get("command_time_s", math.nan))
+        result = float(sample.get("result_time_s", math.nan))
+        if not math.isfinite(command) or not math.isfinite(result):
+            raise Pi05ContractError("episode reset settle clocks are not finite")
+        if abs((result - command) - 1.0 / CONTROL_HZ) > 1.0e-6:
+            raise Pi05ContractError("episode reset settle cadence is not 15 Hz")
+        if prior_result is not None and abs(command - prior_result) > 1.0e-6:
+            raise Pi05ContractError("episode reset settle clocks are not contiguous")
+        prior_result = result
 
 
 def validate_dense_episode(episode: Mapping[str, Any]) -> dict[str, Any]:

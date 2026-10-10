@@ -14,12 +14,14 @@ from npa.workflows.sim2real.pi05_contract import (
     EXECUTION_PREFIX,
     JOINT_NAMES,
     absolute_to_isaac_action,
+    release_width_threshold,
     verify_controller_roundtrip,
     width_to_droid_gripper,
 )
 from npa.workflows.sim2real.pi05_isaac import (
     POLICY_BASE_TASK_ID,
     POLICY_SURFACE_TASK_ID,
+    RESET_SETTLE_CONTROL_STEPS,
     _camera_config,
     _camera_pose_sample,
     _camera_time,
@@ -31,17 +33,20 @@ from npa.workflows.sim2real.pi05_isaac import (
     _finger_controller_target,
     _gripper_width,
     _graphics_preflight,
-    _install_finger_semantics,
+    _verify_scene_semantics,
     _physics_randomization,
+    _object_asset_geometry,
     _proxy_torch,
     _rgb,
     _rgb_receipt,
+    _reset_settle_sample,
     _semantic_encoding_receipt,
     _sim_time,
     _sensor_clock_reference,
     _synchronize_wrist_before_capture,
     _target_pixel_count,
     _validate_capture_ages,
+    _validate_reset_settle,
     _verify_camera_motion,
     _wrist_mount_receipt,
     configure_surface_goal,
@@ -216,7 +221,7 @@ def _qualified_grasp(row: dict[str, Any]) -> bool:
 
 
 def _supported_release(row: dict[str, Any]) -> tuple[bool, bool]:
-    released = row["gripper_width_m"] >= 0.06
+    released = row["gripper_width_m"] >= release_width_threshold(row["object_width_m"])
     released = released and not row["bilateral_finger_contact"]
     supported = released and row["object_support_force_n"] > 1.0e-3
     supported = supported and row["target_xy_distance_m"] < 0.05
@@ -508,6 +513,8 @@ def _episode(
     import numpy as np
 
     native = env.unwrapped
+    bridge = _joint_bridge(native)
+    settle = _settle_policy_reset(env, bridge)
     initial = _verified_initial_object_position(native, scenario)
     _wrist_mount_receipt(native, record)
     context = {
@@ -515,7 +522,7 @@ def _episode(
         "native": native,
         "client": client,
         "record": record,
-        "bridge": _joint_bridge(native),
+        "bridge": bridge,
         "initial_z": float(initial[2]),
         "target_xy": np.asarray(scenario["target_position_m"][:2]),
         "object_width_m": object_width_m,
@@ -526,10 +533,57 @@ def _episode(
     }
     record["wrist_ablation_mode"] = wrist_mode
     record["scenario_seed"] = int(scenario["scene_seed"])
+    record["reset_settle"] = settle
     for decision in range(decisions):
         if _decision_step(context, decision):
             break
     return _finish_episode(record)
+
+
+def _open_joint_target(native: Any) -> Any:
+    import numpy as np
+
+    robot = native.scene["robot"]
+    indices = [list(robot.joint_names).index(name) for name in JOINT_NAMES]
+    joints = _proxy_torch(robot.data.joint_pos)[0, indices].detach().cpu().numpy()
+    return np.r_[joints, 0.0].astype(np.float32)
+
+
+def _settle_policy_reset(env: Any, bridge: tuple) -> dict[str, Any]:
+    """Hold measured joints open through the declared reset-settle protocol."""
+
+    native = env.unwrapped
+    target = _open_joint_target(native)
+    before = int(_proxy_torch(native.episode_length_buf)[0].item())
+    proofs, samples = [], []
+    for _ in range(RESET_SETTLE_CONTROL_STEPS):
+        command_time = _sim_time(native)
+        proof = _apply_target(
+            env,
+            target,
+            defaults=bridge[0],
+            scales=bridge[1],
+            total_dim=bridge[2],
+            arm_start=bridge[3],
+            grip_start=bridge[4],
+        )
+        proofs.append(proof)
+        samples.append(_reset_settle_sample(native, command_time))
+    after = int(_proxy_torch(native.episode_length_buf)[0].item())
+    if any(proof["terminated"] or proof["truncated"] for proof in proofs):
+        raise RuntimeError("policy environment failed its declared reset settle")
+    _validate_reset_settle(samples, after - before)
+    return {
+        "control_steps": RESET_SETTLE_CONTROL_STEPS,
+        "physics_steps": RESET_SETTLE_CONTROL_STEPS * int(native.cfg.decimation),
+        "start_control_step": before,
+        "result_control_step": after,
+        "object_speed_m_s": samples[-1]["object_speed_m_s"],
+        "object_support_force_n": samples[-1]["object_support_force_n"],
+        "samples": samples,
+        "training_or_evaluation_row": False,
+        "controller_proofs": proofs,
+    }
 
 
 def _verified_initial_object_position(native: Any, scenario: dict[str, Any]) -> Any:
@@ -705,6 +759,7 @@ def _load_gold_protocol(args: argparse.Namespace, work: Path) -> dict[str, Any]:
     if collection.get("schema") != "npa.sim2real.pi05.expert_collection.v1":
         raise RuntimeError("gold collection has the wrong task schema")
     asset = collection.get("object_asset") or {}
+    geometry = asset.get("geometry") or {}
     support = collection.get("support_surface_contract") or {}
     if support != support_surface_contract():
         raise RuntimeError("gold collection support geometry differs from evaluator")
@@ -720,8 +775,7 @@ def _load_gold_protocol(args: argparse.Namespace, work: Path) -> dict[str, Any]:
         "seed": args.seed,
         "episodes": args.episodes,
         "decisions": args.decisions,
-        "object_identity": asset.get("identity"),
-        "object_scale": scale,
+        **_protocol_object_fields(asset, geometry, scale),
         "scene_id": collection.get("scene_id"),
         "destination_marker_contract": collection.get("destination_marker_contract"),
         "support_surface_contract": support,
@@ -731,8 +785,27 @@ def _load_gold_protocol(args: argparse.Namespace, work: Path) -> dict[str, Any]:
     }
     if not protocol["object_identity"] or not protocol["scene_id"]:
         raise RuntimeError("gold collection lacks object or scene identity")
+    _validate_object_source(protocol["object_usd"])
     _bind_protocol_hashes(protocol)
     return protocol
+
+
+def _protocol_object_fields(
+    asset: dict[str, Any], geometry: dict[str, Any], scale: list[float]
+) -> dict[str, Any]:
+    return {
+        "object_identity": asset.get("identity"),
+        "object_usd": asset.get("usd"),
+        "object_scale": scale,
+        "object_width_m": _measured_dimension(geometry, "grasp_width_m", 0.08),
+        "object_height_m": _measured_dimension(geometry, "support_height_m", 0.25),
+        "object_geometry": _validated_geometry_receipt(geometry, scale),
+    }
+
+
+def _validate_object_source(value: Any) -> None:
+    if not isinstance(value, str) or not value:
+        raise RuntimeError("gold collection lacks the exact object USD source")
 
 
 def _validate_gold_scenarios(scenarios: list[dict[str, Any]], seed: int) -> None:
@@ -753,6 +826,41 @@ def _validate_gold_scenarios(scenarios: list[dict[str, Any]], seed: int) -> None
             )
 
 
+def _measured_dimension(geometry: dict[str, Any], name: str, maximum: float) -> float:
+    value = geometry.get(name)
+    if not isinstance(value, (int, float)) or not 0.01 <= float(value) <= maximum:
+        raise RuntimeError(f"gold collection lacks valid measured {name}")
+    return float(value)
+
+
+def _validated_geometry_receipt(
+    geometry: dict[str, Any], scale: list[float]
+) -> dict[str, Any]:
+    vectors = {
+        name: _vector(geometry.get(name), 3, f"gold {name}")
+        for name in (
+            "source_untransformed_extent_m",
+            "effective_local_extent_m",
+            "source_untransformed_center_m",
+            "declared_spawn_scale",
+        )
+    }
+    if vectors["declared_spawn_scale"] != scale:
+        raise RuntimeError("gold geometry scale differs from object asset scale")
+    strings = {
+        "grasp_width_axis": "object_local_y",
+        "measurement": "UsdGeom.BBoxCache composed runtime prim",
+    }
+    if any(geometry.get(key) != value for key, value in strings.items()):
+        raise RuntimeError("gold geometry measurement provenance is invalid")
+    return {
+        **geometry,
+        **vectors,
+        "grasp_width_m": _measured_dimension(geometry, "grasp_width_m", 0.08),
+        "support_height_m": _measured_dimension(geometry, "support_height_m", 0.25),
+    }
+
+
 def _bind_protocol_hashes(protocol: dict[str, Any]) -> None:
     protocol["sha256"] = _sha(protocol)
     protocol["scenario_sha256"] = [
@@ -769,8 +877,7 @@ def _configure_eval(
     cfg.seed, cfg.sim.dt, cfg.decimation = args.seed, 1.0 / 60.0, 4
     cfg.episode_length_s = 240.0
     remap_moved_franka_usd(cfg)
-    cfg.scene.object.spawn.scale = tuple(protocol["object_scale"])
-    cfg.scene.object.spawn.semantic_tags = [("class", "pi05_target_object")]
+    _configure_eval_object(cfg, protocol)
     configure_finger_semantics(cfg)
     target = tuple(protocol["scenarios"][0]["target_position_m"])
     if any(
@@ -784,6 +891,42 @@ def _configure_eval(
     _camera_config(cfg)
     _contact_config(cfg)
     _physics_randomization(cfg)
+
+
+def _configure_eval_object(cfg: Any, protocol: dict[str, Any]) -> None:
+    if protocol["object_usd"] != "task_default":
+        cfg.scene.object.spawn.usd_path = protocol["object_usd"]
+    cfg.scene.object.spawn.scale = tuple(protocol["object_scale"])
+    cfg.scene.object.spawn.semantic_tags = [("class", "pi05_target_object")]
+
+
+def _validate_eval_geometry(native: Any, protocol: dict[str, Any]) -> dict[str, Any]:
+    """Remeasure the composed evaluator asset against collection provenance."""
+
+    import numpy as np
+
+    actual = _object_asset_geometry(native, tuple(protocol["object_scale"]))
+    expected = protocol["object_geometry"]
+    vector_keys = (
+        "source_untransformed_extent_m",
+        "effective_local_extent_m",
+        "source_untransformed_center_m",
+        "declared_spawn_scale",
+    )
+    if any(
+        not np.allclose(actual.get(key), expected.get(key), atol=1.0e-6, rtol=0.0)
+        for key in vector_keys
+    ):
+        raise RuntimeError("evaluator object geometry differs from gold collection")
+    scalar_keys = ("grasp_width_m", "support_height_m")
+    if any(
+        abs(float(actual[key]) - float(expected[key])) > 1.0e-6 for key in scalar_keys
+    ):
+        raise RuntimeError("evaluator object dimensions differ from gold collection")
+    string_keys = ("grasp_width_axis", "measurement")
+    if any(actual.get(key) != expected.get(key) for key in string_keys):
+        raise RuntimeError("evaluator object provenance differs from gold collection")
+    return actual
 
 
 def _evaluate(
@@ -806,7 +949,7 @@ def _evaluate(
                     protocol["scenarios"][index],
                     mode,
                     args.ablation_seed + index,
-                    0.05 * float(protocol["object_scale"][1]),
+                    float(protocol["object_width_m"]),
                 )
             except Exception as exc:
                 record.update(
@@ -1041,7 +1184,8 @@ def _run_evaluation(
     )
     env = gym.make(POLICY_SURFACE_TASK_ID, cfg=cfg)
     try:
-        _install_finger_semantics(env.unwrapped)
+        _verify_scene_semantics(env.unwrapped)
+        _validate_eval_geometry(env.unwrapped, protocol)
         episodes = _evaluate(env, client, args, protocol)
         artifacts = _write_review_artifacts(work, episodes, args.checkpoint_role)
         result = _result(args, episodes, artifacts, protocol, receipt)

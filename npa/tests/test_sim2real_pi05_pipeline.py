@@ -23,9 +23,13 @@ from npa.workflows.byof.openpi_service_lifecycle import (
     _patch_private_s3_checkpoint,
 )
 from npa.workflows.sim2real.pi05_closed_loop import (
+    _configure_eval_object,
     _policy_phase,
     _sampler_noise_pairing,
+    _settle_policy_reset,
     _success,
+    _validate_eval_geometry,
+    _validated_geometry_receipt,
     _wrist_variant,
 )
 from npa.workflows.sim2real.pi05_contract import EPISODE_SCHEMA, Pi05ContractError
@@ -204,7 +208,18 @@ def test_surface_task_replaces_airborne_goal_and_exports_exact_scenario() -> Non
     attempt = _episode_metadata("cube", "scene", 16)
     attempt["scene_seed"] = 7
     attempt["support_surface"] = support_surface_contract()
-    report = _collection_report([attempt], "cube", "", (1.0, 1.0, 1.0), "scene")
+    geometry = {
+        "source_untransformed_extent_m": [0.06, 0.06, 0.06],
+        "effective_local_extent_m": [0.06, 0.06, 0.06],
+        "declared_spawn_scale": [1.0, 1.0, 1.0],
+        "grasp_width_axis": "object_local_y",
+        "grasp_width_m": 0.06,
+        "support_height_m": 0.06,
+        "measurement": "UsdGeom.BBoxCache composed runtime prim",
+    }
+    report = _collection_report(
+        [attempt], "cube", "", (1.0, 1.0, 1.0), "scene", geometry
+    )
     assert report["successful_scenarios"] == [
         {
             "scene_seed": 7,
@@ -265,6 +280,56 @@ def test_each_split_collector_runs_in_a_fresh_isaac_process() -> None:
     assert argv[argv.index("--seed") + 1] == "20041"
     assert argv[argv.index("--object-scale") + 1] == "1.2,1.2,1.2"
 
+    args.object_usd = "/runtime/operator-object.usd"
+    custom = _collector_argv(args, "validation")
+    assert custom[custom.index("--object-identity") + 1] == (
+        "operator-custom-usd-scale-100"
+    )
+
+
+def test_gold_evaluator_reuses_exact_custom_usd_and_scale() -> None:
+    spawn = Namespace(usd_path="stock.usd", scale=(1.0, 1.0, 1.0))
+    cfg = Namespace(scene=Namespace(object=Namespace(spawn=spawn)))
+    protocol = {
+        "object_usd": "/runtime/operator-object.usd",
+        "object_scale": [0.8, 0.9, 1.1],
+    }
+
+    _configure_eval_object(cfg, protocol)
+
+    assert spawn.usd_path == "/runtime/operator-object.usd"
+    assert spawn.scale == (0.8, 0.9, 1.1)
+    assert spawn.semantic_tags == [("class", "pi05_target_object")]
+
+
+def test_gold_evaluator_remeasures_custom_geometry(monkeypatch) -> None:
+    geometry = {
+        "source_untransformed_extent_m": [0.073, 0.073, 0.073],
+        "effective_local_extent_m": [0.0584, 0.0657, 0.0803],
+        "source_untransformed_center_m": [0.0, 0.0, 0.0],
+        "declared_spawn_scale": [0.8, 0.9, 1.1],
+        "grasp_width_m": 0.0657,
+        "support_height_m": 0.0803,
+        "grasp_width_axis": "object_local_y",
+        "measurement": "UsdGeom.BBoxCache composed runtime prim",
+    }
+    monkeypatch.setattr(
+        pi05_closed_loop, "_object_asset_geometry", lambda _native, _scale: geometry
+    )
+    protocol = {"object_scale": [0.8, 0.9, 1.1], "object_geometry": geometry}
+    assert _validate_eval_geometry(object(), protocol) == geometry
+
+    changed = {**geometry, "grasp_width_m": 0.06}
+    monkeypatch.setattr(
+        pi05_closed_loop, "_object_asset_geometry", lambda _native, _scale: changed
+    )
+    with pytest.raises(RuntimeError, match="dimensions differ"):
+        _validate_eval_geometry(object(), protocol)
+
+    invalid = {**geometry, "measurement": "unverified guess"}
+    with pytest.raises(RuntimeError, match="measurement provenance"):
+        _validated_geometry_receipt(invalid, [0.8, 0.9, 1.1])
+
 
 def test_default_asset_split_is_size_only_on_one_scene_layout() -> None:
     assert {row["scene_id"] for row in SPLITS.values()} == {
@@ -274,6 +339,11 @@ def test_default_asset_split_is_size_only_on_one_scene_layout() -> None:
         (0.8, 0.8, 0.8),
         (1.0, 1.0, 1.0),
         (1.2, 1.2, 1.2),
+    }
+    assert {row["object_identity"] for row in SPLITS.values()} == {
+        "isaac-multicolor-cube-048mm",
+        "isaac-multicolor-cube-060mm",
+        "isaac-multicolor-cube-072mm",
     }
 
 
@@ -476,6 +546,42 @@ def _dense_steps(length: int) -> list[dict]:
     return steps
 
 
+def _settle_receipt() -> dict:
+    return {
+        "control_steps": 2,
+        "physics_steps": 8,
+        "training_row": False,
+        "samples": [
+            {
+                "command_time_s": 0.0,
+                "result_time_s": 1.0 / 15.0,
+                "object_speed_m_s": 0.08,
+                "object_support_force_n": 0.0,
+            },
+            {
+                "command_time_s": 1.0 / 15.0,
+                "result_time_s": 2.0 / 15.0,
+                "object_speed_m_s": 0.0,
+                "object_support_force_n": 0.6,
+            },
+        ],
+    }
+
+
+def _marker_receipt() -> dict:
+    return {
+        "source": "isaaclab_noncolliding_cylinder_primitive",
+        "center_xy_m": [0.50, 0.18],
+        "support_z_m": 0.0,
+        "radius_m": 0.05,
+        "height_m": 0.001,
+        "color_rgb": [0.0, 0.85, 0.85],
+        "semantic_label": "pi05_destination_marker",
+        "minimum_exterior_semantic_pixels": 16,
+        "physics_collision": False,
+    }
+
+
 def _episode_metadata(identity: str, scene: str, length: int) -> dict:
     return {
         "schema": EPISODE_SCHEMA,
@@ -485,19 +591,12 @@ def _episode_metadata(identity: str, scene: str, length: int) -> dict:
         "action_semantics": "absolute_joint_position_plus_normalized_gripper",
         "object_identity": identity,
         "object_width_m": 0.05,
+        "object_height_m": 0.05,
         "initial_object_position_m": [0.45, -0.15, 0.025],
         "target_position_m": [0.50, 0.18, 0.025],
-        "destination_marker": {
-            "source": "isaaclab_noncolliding_cylinder_primitive",
-            "center_xy_m": [0.50, 0.18],
-            "support_z_m": 0.0,
-            "radius_m": 0.05,
-            "height_m": 0.001,
-            "color_rgb": [0.0, 0.85, 0.85],
-            "semantic_label": "pi05_destination_marker",
-            "minimum_exterior_semantic_pixels": 16,
-            "physics_collision": False,
-        },
+        "active_surface_command_m": [0.50, 0.18, 0.025],
+        "reset_settle": _settle_receipt(),
+        "destination_marker": _marker_receipt(),
         "support_surface": support_surface_contract(),
         "scene_configuration_digest": scene,
         "scene_seed": 41,
@@ -662,7 +761,7 @@ def test_export_rejects_claimed_success_without_post_retreat_physics(
         )
 
 
-def test_surface_success_requires_three_consecutive_supported_release_steps() -> None:
+def _ordered_surface_trace() -> tuple[list[dict], dict]:
     base = {
         "bilateral_finger_contact": False,
         "gripper_closing_intent": False,
@@ -688,7 +787,7 @@ def test_surface_success_requires_three_consecutive_supported_release_steps() ->
         "object_support_force_n": 1.0,
         "hand_object_distance_m": 0.12,
     }
-    trace = [
+    return [
         {**gripping, "object_speed_m_s": 0.0},
         gripping,
         gripping,
@@ -696,7 +795,11 @@ def test_surface_success_requires_three_consecutive_supported_release_steps() ->
         {**gripping, "object_lift_m": 0.06, "target_xy_distance_m": 0.01},
         placed,
         placed,
-    ]
+    ], placed
+
+
+def test_surface_success_requires_three_consecutive_supported_release_steps() -> None:
+    trace, placed = _ordered_surface_trace()
     assert not _success(trace)["released_supported_surface_placement"]
     trace.append(placed)
     assert not _success(trace)["released_supported_surface_placement"]
@@ -707,6 +810,53 @@ def test_surface_success_requires_three_consecutive_supported_release_steps() ->
     assert list(result["ordered_event_steps"]) == result["required_event_order"]
     trace[-1] = {**placed, "hand_object_distance_m": 0.05}
     assert not _success(trace)["released_supported_surface_placement"]
+
+
+def _policy_settle_native():
+    import torch
+
+    return Namespace(
+        step_dt=1.0 / 15.0,
+        cfg=Namespace(decimation=4),
+        episode_length_buf=torch.tensor([0]),
+        scene={
+            "robot": Namespace(
+                joint_names=[f"panda_joint{i}" for i in range(1, 8)],
+                data=Namespace(joint_pos=torch.tensor([[0.1] * 7])),
+            ),
+            "object": Namespace(
+                data=Namespace(
+                    root_pos_w=torch.tensor([[0.45, -0.15, 0.024]]),
+                    root_lin_vel_w=torch.zeros((1, 3)),
+                )
+            ),
+        },
+    )
+
+
+def test_policy_reset_settle_holds_measured_joints_with_open_droid_gripper(
+    monkeypatch,
+) -> None:
+    native = _policy_settle_native()
+    env = Namespace(unwrapped=native)
+    captured = {}
+
+    def apply(_env, target, **_kwargs):
+        captured["target"] = target.copy()
+        native.episode_length_buf += 1
+        return {"terminated": False, "truncated": False}
+
+    monkeypatch.setattr(pi05_closed_loop, "_apply_target", apply)
+    monkeypatch.setattr(pi05_isaac, "_contact_forces", lambda _native: (0.0, 0.0, 0.6))
+    receipt = _settle_policy_reset(env, ([0.0] * 7, [1.0] * 7, 8, 0, 7))
+
+    assert np.allclose(captured["target"][:7], [0.1] * 7)
+    assert captured["target"][7] == 0.0
+    assert receipt["physics_steps"] == 8
+    assert len(receipt["samples"]) == 2
+    assert len(receipt["controller_proofs"]) == 2
+    assert receipt["object_speed_m_s"] == 0.0
+    assert receipt["training_or_evaluation_row"] is False
 
 
 def test_policy_phase_requires_ordered_release_before_retreat() -> None:
@@ -869,10 +1019,7 @@ def test_cleanup_reconstructs_owned_runtime_secret_without_credentials(
     assert "data" not in runtime_secret and "stringData" not in runtime_secret
 
 
-def test_closed_loop_closes_app_and_temporary_directory_on_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    lifecycle = {"app_closed": False, "temp_exited": False}
+def _install_closed_loop_test_modules(monkeypatch, lifecycle) -> None:
     app_module = types.SimpleNamespace(
         AppLauncher=lambda **_kwargs: types.SimpleNamespace(
             app=_LifecycleApp(lifecycle)
@@ -887,6 +1034,13 @@ def test_closed_loop_closes_app_and_temporary_directory_on_failure(
         types.SimpleNamespace(parse_env_cfg=lambda *_args, **_kwargs: None),
     )
     monkeypatch.setitem(sys.modules, "gymnasium", types.SimpleNamespace())
+
+
+def test_closed_loop_closes_app_and_temporary_directory_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lifecycle = {"app_closed": False, "temp_exited": False}
+    _install_closed_loop_test_modules(monkeypatch, lifecycle)
     monkeypatch.setattr(
         pi05_closed_loop.tempfile,
         "TemporaryDirectory",

@@ -13,6 +13,7 @@ from npa.workflows.sim2real.pi05_contract import (
     assert_contract,
     build_contract,
     droid_gripper_to_width,
+    release_width_threshold,
     validate_dense_episode,
     validate_split_manifest,
     verify_controller_roundtrip,
@@ -32,6 +33,14 @@ EVENTS = [
     "support_contact",
     "stable",
 ]
+
+
+def test_release_width_threshold_tracks_measured_asset_width() -> None:
+    assert release_width_threshold(0.048) == pytest.approx(0.053)
+    assert release_width_threshold(0.072) == pytest.approx(0.077)
+    assert release_width_threshold(0.079) == pytest.approx(0.079)
+    with pytest.raises(Pi05ContractError, match="object grasp width"):
+        release_width_threshold(0.081)
 
 
 def _episode_step(index: int) -> dict:
@@ -55,6 +64,28 @@ def _episode_step(index: int) -> dict:
     }
 
 
+def _reset_settle() -> dict:
+    return {
+        "control_steps": 2,
+        "physics_steps": 8,
+        "training_row": False,
+        "samples": [
+            {
+                "command_time_s": 0.0,
+                "result_time_s": 1.0 / 15.0,
+                "object_speed_m_s": 0.08,
+                "object_support_force_n": 0.0,
+            },
+            {
+                "command_time_s": 1.0 / 15.0,
+                "result_time_s": 2.0 / 15.0,
+                "object_speed_m_s": 0.0,
+                "object_support_force_n": 0.6,
+            },
+        ],
+    }
+
+
 def _episode() -> dict:
     return {
         "schema": EPISODE_SCHEMA,
@@ -64,8 +95,11 @@ def _episode() -> dict:
         "action_semantics": "absolute_joint_position_plus_normalized_gripper",
         "object_identity": "cube-red-v1",
         "object_width_m": 0.05,
+        "object_height_m": 0.05,
         "initial_object_position_m": [0.45, -0.15, 0.025],
         "target_position_m": [0.50, 0.18, 0.025],
+        "active_surface_command_m": [0.50, 0.18, 0.025],
+        "reset_settle": _reset_settle(),
         "destination_marker": {
             "semantic_label": "pi05_destination_marker",
             "physics_collision": False,
@@ -172,6 +206,18 @@ def test_dense_episode_requires_real_aligned_wrist_and_ordered_physics_evidence(
     invisible_destination["destination_marker"]["minimum_exterior_semantic_pixels"] = 0
     with pytest.raises(Pi05ContractError, match="exterior-visible"):
         validate_dense_episode(invisible_destination)
+
+
+def test_dense_episode_rejects_unmeasured_reset_settle_cadence() -> None:
+    missing_clock = _episode()
+    del missing_clock["reset_settle"]["samples"][0]["command_time_s"]
+    with pytest.raises(Pi05ContractError, match="clocks are not finite"):
+        validate_dense_episode(missing_clock)
+
+    wrong_cadence = _episode()
+    wrong_cadence["reset_settle"]["samples"][1]["result_time_s"] = 0.3
+    with pytest.raises(Pi05ContractError, match="cadence is not 15 Hz"):
+        validate_dense_episode(wrong_cadence)
 
 
 def test_split_manifest_rejects_object_or_scene_leakage() -> None:

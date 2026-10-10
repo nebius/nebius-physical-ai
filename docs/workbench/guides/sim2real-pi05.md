@@ -54,8 +54,14 @@ or moving destination locations.
 
 ### Default simulation asset scope
 
-The checked-in train/validation/gold split is one Isaac multicolor-cube USD at
-40, 50, and 60 mm respectively. It is a size/morphology holdout within one
+The checked-in train/validation/gold split is one Isaac multicolor-cube USD
+whose runtime-composed source extent is measured as 60 mm per axis, scaled to
+48, 60, and 72 mm respectively. Every run records the measured source and
+effective extents and uses the effective grasp width/support height, including
+for an operator-supplied USD whose geometry is centered on its rigid root,
+instead of assuming a 50 mm cube. Offset-origin assets fail closed until an
+explicit grasp-frame adapter is supplied. It is a
+size/morphology holdout within one
 asset family, not evidence for novel object categories or another robot
 embodiment. All three splits use the same task-owned, single-rigid-body support
 surface layout; this replaces the stock multi-body table so object/support
@@ -64,6 +70,17 @@ exercise the configured pose, mass, and friction randomization; their old
 human-readable scene labels did not create independently authored scenes and
 are no longer represented as such. Source-derived asset diagrams must remain
 labelled as schematics until actual simulator frames exist.
+
+Each expert and policy episode begins with the same two 15 Hz control intervals
+outside the training/evaluation rows. The receipt records both object poses,
+speeds, support forces, and episode-local command/result clocks; admission
+requires the second sample to be supported and below 0.03 m/s. The expert also
+measures the centroid reference of the two complete finger-link bounds in the
+live `panda_hand` frame and transforms that offset through the commanded
+downward hand orientation. This is explicitly a link-geometry grasp reference,
+not a claimed pad center; live bilateral contact is still required. Contact and
+lower waypoints align that measured reference with the object center rather
+than treating half the cube height as a tool offset.
 
 The base and adapted policies use the pinned OpenPI source, Polaris config, and
 checkpoint documented in [the OpenPI pi0.5 guide](../openpi-pi05-polaris.md).
