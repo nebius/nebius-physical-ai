@@ -349,6 +349,12 @@ Current EnvGen build sources replace the pinned Genesis parent's GitPython
 3.1.57 with 3.1.62 before flattening the published filesystem. This addresses
 the GitPython security findings that blocked a subsequent development build;
 see the [upstream security releases](https://gitpython.readthedocs.io/en/latest/changes.html).
+EnvGen also applies the existing exact-source scikit-image 0.26.0 correction
+before flattening its filesystem. It removes one inert token-bearing recipe,
+preserves the executable loader and primary documentation, updates package
+metadata and bytecode, and refuses unrecognized source bytes. The all-severity
+secret scan remains mandatory.
+
 The shared Genesis requirements own this installation pin. Regression checks
 require EnvGen's installed-version assertion to match that shared pin.
 

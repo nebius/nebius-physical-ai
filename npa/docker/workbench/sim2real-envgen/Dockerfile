@@ -27,6 +27,8 @@ COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
 COPY docker/workbench/common/sanitize_sim2real_envgen_parent.py \
     /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py
+COPY docker/workbench/curobo/remove_scikit_image_recipe.py \
+    /usr/local/lib/npa/remove-scikit-image-recipe.py
 COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
     /opt/npa/compat/tetgen.py
 
@@ -37,6 +39,8 @@ COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
 # * the AGPL tetgen Python wrapper (used only for optional tetrahedralization);
 # * optional W&B and Nsight Compute tooling, including separately compiled Go
 #   binaries that are not part of canonical environment generation.
+# * an inert token-bearing scikit-image recipe, removed by the existing
+#   exact-source correction while preserving the image loader and license.
 #
 # Retain MoviePy while replacing imageio-ffmpeg with its hash-pinned
 # pure-Python sdist. Remove the optional packages and their parent metadata
@@ -56,6 +60,8 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVG
     && python -m pip uninstall -y npa \
     && python -m pip uninstall -y transformers imageio-ffmpeg wandb tetgen \
     && python /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py \
+    && python /usr/local/lib/npa/remove-scikit-image-recipe.py \
+      --site-packages /opt/npa/venv/lib/python3.11/site-packages \
     && rm -rf /opt/nvidia/nsight-compute \
     && python -m pip install --no-deps \
       'imageio-ffmpeg @ https://files.pythonhosted.org/packages/44/bd/c3343c721f2a1b0c9fc71c1aebf1966a3b7f08c2eea8ed5437a2865611d6/imageio_ffmpeg-0.6.0.tar.gz#sha256=e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755' \
