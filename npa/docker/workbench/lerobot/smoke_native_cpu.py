@@ -46,10 +46,18 @@ def _dataset_features() -> dict:
     return features
 
 
+def _assert_native_decoder_contract(codec: str, version: str) -> None:
+    assert codec == "torchcodec", f"expected torchcodec default decoder, got {codec!r}"
+    assert version == "0.16.0", f"expected torchcodec 0.16.0, got {version!r}"
+
+
 def _native_dataset(root: Path) -> dict:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.datasets.video_utils import get_safe_default_codec
 
+    codec = get_safe_default_codec()
+    torchcodec_version = metadata.version("torchcodec")
+    _assert_native_decoder_contract(codec, torchcodec_version)
     dataset = LeRobotDataset.create(
         "npa/native-cpu-smoke",
         fps=10,
@@ -81,7 +89,7 @@ def _native_dataset(root: Path) -> dict:
             assert torch.isfinite(image).all() and image.min() >= 0 and image.max() <= 1
         assert sample["frame_index"].item() == index
         assert abs(sample["timestamp"].item() - index / 10) < 1e-6
-    return {"frames": len(loaded), "backend": get_safe_default_codec()}
+    return {"frames": len(loaded), "backend": codec}
 
 
 def _act_configuration():

@@ -115,6 +115,33 @@ def test_build_gate_uses_native_default_decoder():
         "video_backend" not in {arg.arg for arg in call.keywords}
         for call in dataset_calls
     )
+    functions = {
+        node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
+    }
+    decoder_contract = functions["_assert_native_decoder_contract"]
+    assertions = [
+        ast.unparse(node.test)
+        for node in decoder_contract.body
+        if isinstance(node, ast.Assert)
+    ]
+    assert "codec == 'torchcodec'" in assertions
+    assert "version == '0.16.0'" in assertions
+    native_dataset = functions["_native_dataset"]
+    contract_call = next(
+        node
+        for node in ast.walk(native_dataset)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_assert_native_decoder_contract"
+    )
+    dataset_create = next(
+        node
+        for node in ast.walk(native_dataset)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "create"
+    )
+    assert contract_call.lineno < dataset_create.lineno
     assert "loss.backward()" in source and "optimizer.step()" in source
     assert "changed > 0" in source
     assert "ACTPolicy.from_pretrained(checkpoint)" in source
@@ -133,6 +160,39 @@ def test_build_gate_uses_native_default_decoder():
         and call.func.id == "_http_request"
     }
     assert {("GET", "/health"), ("POST", "/serve"), ("POST", "/infer")} <= http_calls
+
+
+@pytest.mark.parametrize(
+    "codec,version",
+    [("pyav", "0.16.0"), ("torchcodec", "0.15.0")],
+)
+def test_native_decoder_contract_rejects_fallback_or_wrong_version(codec, version):
+    """The offline contract must reject PyAV fallback and an ABI-drifted codec."""
+
+    source = (RECIPE / "smoke_native_cpu.py").read_text()
+    tree = ast.parse(source)
+    decoder_contract = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_assert_native_decoder_contract"
+    )
+    namespace = {}
+    exec(
+        compile(
+            ast.Module(body=[decoder_contract], type_ignores=[]), "<contract>", "exec"
+        ),
+        namespace,
+    )
+    with pytest.raises(AssertionError):
+        namespace["_assert_native_decoder_contract"](codec, version)
+
+
+def test_run_smoke_uses_explicit_lerobot_venv_interpreter():
+    smoke = (RECIPE / "run_smoke.sh").read_text()
+    assert smoke.count("/opt/lerobot/venv/bin/python -m npa.smoke.") == 2
+    assert "\npython -m npa.smoke.test_lerobot_env" not in smoke
+    assert "\npython -m npa.smoke.test_lerobot_functional" not in smoke
 
 
 def test_native_server_startup_has_a_bounded_wait():
