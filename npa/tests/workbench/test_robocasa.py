@@ -879,7 +879,7 @@ def test_poisoned_gpu_gate_wakes_waiters_and_rejects_new_runs(
         "/run", json=_service_run_payload(source_sha, manifest_digest)
     )
 
-    assert health.status_code == 200
+    assert health.status_code == 503
     assert health.json()["status"] == "degraded"
     assert health.json()["execution_available"] is False
     assert response.status_code == 503
@@ -1470,6 +1470,10 @@ def test_unstopped_worker_discards_successful_result(
     assert status.error == (
         "RoboCasa worker cleanup could not prove all descendants stopped"
     )
+    client = TestClient(create_app(auth_mode="none", runs=runs, execution_lock=gate))
+    health = client.get("/health")
+    assert health.status_code == 503
+    assert health.json()["execution_available"] is False
 
 
 def test_service_publishes_retained_output_after_worker_cleanup(

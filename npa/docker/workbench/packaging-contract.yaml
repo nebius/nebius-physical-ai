@@ -471,8 +471,9 @@ images:
       and matched ACT rollout path do not import it. Other RoboCasa benchmark and
       LeRobot policy and training paths remain unqualified. The image uses a
       uv-generated,
-      hash-verified Python 3.12 linux/amd64 closure on one digest-pinned CUDA
-      12.4 cuDNN development base. Ubuntu's system FFmpeg replaces the
+      hash-verified Python 3.12 linux/amd64 closure on one digest-pinned
+      nvidia/cuda:12.9.1-base-ubuntu22.04 runtime base without cuDNN or
+      development toolkits. Ubuntu's system FFmpeg replaces the
       imageio-ffmpeg wheel-bundled static executable, and
       the unused Robosuite Omniverse rendering helper is excluded in the same
       dependency layer. Kitchen assets (textures, fixtures, objects) are NOT

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from npa.workbench.robocasa.capabilities import (
@@ -282,8 +282,10 @@ def create_app(
             raise HTTPException(status_code=401, detail="invalid token")
 
     @app.get("/health")
-    async def health() -> dict[str, Any]:
+    async def health(response: Response) -> dict[str, Any]:
         execution_available = _execution_available(gpu_lock)
+        if not execution_available:
+            response.status_code = 503
         return {
             "status": "ok" if execution_available else "degraded",
             "runs": len(registry),

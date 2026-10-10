@@ -86,9 +86,35 @@ def test_deploy_dry_run_renders_ephemeral_storage_request(
     deployment = next(
         item for item in manifest["items"] if item["kind"] == "Deployment"
     )
-    resources = deployment["spec"]["template"]["spec"]["containers"][0]["resources"]
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    resources = container["resources"]
     assert resources["requests"]["ephemeral-storage"] == expected_request
     assert "ephemeral-storage" not in resources["limits"]
+    _assert_readiness_preserves_worker_containment(container)
+
+
+def _assert_readiness_preserves_worker_containment(container) -> None:
+    from fastapi.testclient import TestClient
+    from npa.workbench.robocasa.service import GpuExecutionGate, RunRegistry, create_app
+
+    probe = container["readinessProbe"]["httpGet"]
+    assert probe["port"] == "http"
+    assert "livenessProbe" not in container
+    gate = GpuExecutionGate()
+    client = TestClient(
+        create_app(
+            auth_mode="token", token="test", runs=RunRegistry(), execution_lock=gate
+        )
+    )
+    assert client.get(probe["path"]).status_code == 200
+    assert gate.acquire()  # Busy is not poisoned; queued work is still admissible.
+    assert client.get(probe["path"]).status_code == 200
+    gate.poison()
+    response = client.get(probe["path"])
+    assert response.status_code == 503
+    assert response.json()["execution_available"] is False
+    assert response.json()["status"] == "degraded"
+    assert gate.available is False
 
 
 def test_deploy_service_env_prefers_project_scoped_storage(

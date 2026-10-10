@@ -423,6 +423,8 @@ def _service_container(
                 "nvidia.com/gpu": "1",
             },
         },
+        # A poisoned gate must leave the Service endpoints, but restarting the
+        # parent cannot establish that abandoned GPU workers have stopped.
         "readinessProbe": {
             "httpGet": {"path": "/health", "port": "http"},
             "initialDelaySeconds": 10,

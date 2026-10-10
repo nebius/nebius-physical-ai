@@ -118,7 +118,9 @@ def build(work: Path, output: Path) -> Path:
     if work.exists():
         raise FileExistsError(f"Refusing to reuse secure-pip work directory: {work}")
     if output.exists():
-        raise FileExistsError(f"Refusing to reuse secure-pip output directory: {output}")
+        raise FileExistsError(
+            f"Refusing to reuse secure-pip output directory: {output}"
+        )
     if sys.version_info < (3, 11):
         raise RuntimeError("The pinned vendoring build tool requires Python 3.11+")
     manifest = json.loads((HERE / "inputs.json").read_text())
