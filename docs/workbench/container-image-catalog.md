@@ -513,6 +513,12 @@ checks all shipped plans without image overrides and records the remaining
 blocked workflows and derivative images. It distinguishes canonical Sim2Real's
 required operator images from legacy automatic public-image selection.
 
+The scan-to-policy workflow selects repaired immutable development candidates
+for Isaac Lab and SONIC, and the GR00T training workflow selects a development
+image with Kubernetes bootstrap and MCAP support. Their workflow guides track
+exact workload qualification. These workflow pins do not change the supported
+release table or lift the historical image quarantines.
+
 ## 2026-09-24 OCI metadata and runtime-user quarantine
 
 Exact-config inspection found that six more previously accepted releases no
