@@ -86,3 +86,54 @@ def test_mutable_cas_preserves_operation_phase_and_current_version(
         with pytest.raises(expected[failure]):
             mutate()
         assert client.writes == 0
+
+
+@pytest.mark.parametrize("operation", ["write", "delete"])
+@pytest.mark.parametrize("notes", ["native", "unavailable", "broken"])
+@pytest.mark.parametrize(
+    "secondary_type", [RuntimeError, KeyboardInterrupt, SystemExit]
+)
+def test_failed_publication_readback_preserves_primary_and_portable_notes(
+    operation, notes, secondary_type
+):
+    primary = RuntimeError("original publication failure")
+    if notes == "unavailable":
+        primary.add_note = None
+    elif notes == "broken":
+
+        def broken_note(_note):
+            raise KeyboardInterrupt("note attachment interrupted")
+
+        primary.add_note = broken_note
+
+    class Client:
+        reads = 0
+        mutations = 0
+
+        def put_bytes_conditional(self, *_args, **_kwargs):
+            self.mutations += 1
+            raise primary
+
+        delete_file_conditional = put_bytes_conditional
+
+        def read_bytes_with_etag(self, _uri):
+            self.reads += 1
+            raise secondary_type("untrusted transport diagnostic")
+
+    client = Client()
+    uri = "s3://demo-bucket/run/reports/sim2real.rrd"
+    with pytest.raises(RuntimeError) as caught:
+        if operation == "write":
+            publication._replace_mutable_bytes(client, b"new result", uri, None)
+        else:
+            publication._delete_mutable_object(client, uri, if_match="prior-version")
+
+    assert caught.value is primary
+    assert client.mutations == 1 and client.reads == 1
+    assert str(primary) == "original publication failure"
+    if notes == "broken":
+        assert not getattr(primary, "__notes__", [])
+    else:
+        assert primary.__notes__ == [
+            f"publication readback also failed: builtins.{secondary_type.__name__}"
+        ]

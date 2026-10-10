@@ -23,6 +23,7 @@ from npa.agent_backend.publication_reader import (
     valid_publication_id,
 )
 from npa.clients.storage import StoragePreconditionFailed
+from npa.exception_notes import add_exception_note
 
 
 _UNSET_SNAPSHOT = object()
@@ -398,7 +399,7 @@ def _attach_secondary_failure(
     except BaseException:
         failure_type = "unknown secondary exception"
     try:
-        BaseException.add_note(primary, f"{operation} also failed: {failure_type}")
+        add_exception_note(primary, f"{operation} also failed: {failure_type}")
     except BaseException:
         pass
 
