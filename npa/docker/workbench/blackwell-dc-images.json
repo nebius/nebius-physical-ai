@@ -53,6 +53,28 @@
   },
   "images": [
     {
+      "name": "npa-lyra2",
+      "dockerfile": "lyra2/Dockerfile",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "redistribution": "public",
+      "smoke": "Native Lyra 2 reconstruction of a checksummed RGB capture, with Gaussian PLY, predicted geometry, decoded rendered MP4 and offline HTML.",
+      "notes": "Current rtfetch2 bytes completed cold runtime setup, native Lyra reconstruction, 320 rendered frames, offline HTML and verified S3 publication on preemptible RTX PRO 6000. Runtime Torch and source-compiled gsplat executed on sm_120. The earlier rtfetch1 digest retains separate B200 acceptance; current rtfetch2 B200/B300 inference remains unverified.",
+      "measured_torch": "2.11.0+cu128",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "candidate_digest": "sha256:c959e2338409195b8b2082e5f199a84c782ff81f2b2dac794e10c70f233a5bf6",
+      "candidate_tag": "dev-51be9e81450233d6742489c95b2cd250ed482acc",
+      "qualification": "docs/workbench/validation/lyra2-rtx-20261009.json",
+      "historical_b200_qualification": "docs/workbench/validation/lyra2-b200-20261008.json"
+    },
+    {
       "name": "npa-mjlab",
       "dockerfile": "mjlab/Dockerfile",
       "build_script": "mjlab/build.sh",
@@ -931,7 +953,7 @@
       "torch": "2.10.0+cu130 inherited from the exact accepted npa-cosmos3 digest",
       "source_compiled_extensions": [],
       "smoke": "guarded two-sample Cosmos3-Nano request through native @ray.serve.batch with structured outputs",
-      "notes": "The exact public development digest passed payload, vulnerability, secret, license, SBOM, provenance, and anonymous-pull gates, then independent guarded two-sample native Ray Serve generation on B200 sm_100 and RTX PRO 6000 sm_120. Each target produced two structured outputs and two decoded images with durable S3 request, response, media, hashes, and provenance; no result was inferred across CUDA majors.",
+      "notes": "The exact public development digest passed payload, vulnerability, secret, license, SBOM, provenance, and anonymous-pull gates, then independent guarded two-sample native Ray Serve generation on B200 sm_100 and RTX PRO 6000 sm_120. Each target produced two structured outputs and two decoded images with durable S3 request, response, media, hashes, and provenance; no result was inferred across CUDA majors. On 2026-10-08 the same digest passed the Hopper checker on eight H200 devices and an independent two-sample batch with guardrails requested on one H200; its five durable S3 objects were read back and both images decoded at 960x960.",
       "measured_torch": "2.10.0+cu130",
       "measured_arch_list": [
         "sm_75",
@@ -1240,12 +1262,17 @@
     "npa-cosmos3": {
       "built": true,
       "payload_scan": "passed all built-image filesystem, layer, history, secret, vulnerability, licensing, SBOM, provenance, and anonymous-pull publication gates",
-      "hardware_run": "The exact promoted image completed real 50-step Cosmos3-Nano text-to-image inference on a physical RTX PRO 6000 on 2026-09-12. It discovered and evaluated Blocklist and Qwen3Guard before generation, evaluated VideoContentSafetyFilter on 1/1 generated-media inputs, ran RetinaFace postprocessing, required an effective guardrail receipt, and produced a nonblank 960x960 JPEG.",
+      "hardware_run": "The exact promoted image completed real 50-step Cosmos3-Nano text-to-image inference on a physical RTX PRO 6000 on 2026-09-12. It discovered and evaluated Blocklist and Qwen3Guard before generation, evaluated VideoContentSafetyFilter on 1/1 generated-media inputs, ran RetinaFace postprocessing, required an effective guardrail receipt, and produced a nonblank 960x960 JPEG. On 2026-10-07 the same digest passed the Hopper checker on eight H200 devices and the same guarded golden evaluation on one H200, with an effective guardrail receipt and a decodable 960x960 JPEG.",
       "validated_gpus": {
         "RTX PRO 6000": {
           "platform": "gpu-rtx6000",
           "capability": "12.0",
           "result": "COSMOS3_GUARDRAILS_RTX_PRO_6000_VALIDATION_PASSED"
+        },
+        "H200": {
+          "platform": "gpu-h200-sxm",
+          "capability": "9.0",
+          "result": "COSMOS3_GUARDRAILS_H200_VALIDATION_PASSED"
         }
       },
       "validated_tag": "1.2.2-cu130-r7",
@@ -1277,7 +1304,7 @@
     "npa-flex-pi": {
       "built": true,
       "payload_scan": "Passed source/licensing, full-layer payload and history checks, the configured vulnerability/secret/license policy, SBOM/provenance attestations, and anonymous full-layer pull validation. No checkpoint, observation media, populated model cache, token, or credential payload was found.",
-      "hardware_run": "On 2026-09-17 the exact r2 digest completed strict checkpoint loading and real compiled four-step action-only inference independently on one B200 and one RTX PRO 6000. Both workflows terminated successfully with zero restarts, finite 32x14 actions, and three independently read-back-verified objects each. Native GPU architecture and baked source hashes were verified on each exact-image worker. This is observation-level inference and artifact-integrity evidence, not a new fan-out benchmark, paired speedup measurement, or closed-loop task-success claim.",
+      "hardware_run": "On 2026-09-17 the exact r2 digest completed strict checkpoint loading and real compiled four-step action-only inference independently on one B200 and one RTX PRO 6000. Both workflows terminated successfully with zero restarts, finite 32x14 actions, and three independently read-back-verified objects each. Native GPU architecture and baked source hashes were verified on each exact-image worker. This is observation-level inference and artifact-integrity evidence, not a new fan-out benchmark, paired speedup measurement, or closed-loop task-success claim. On 2026-10-08 the same digest passed the Hopper checker on eight H200 devices and one eager (uncompiled) four-step action-only inference on one H200 in a direct Docker smoke; the compiled workflow was not run on H200 and its artifacts were not read back.",
       "validated_gpus": {
         "B200": {
           "platform": "gpu-b200-sxm",
@@ -1324,6 +1351,22 @@
           "terminal_status": "SUCCEEDED",
           "restart_count": 0,
           "baked_module_hashes_verified": 3
+        },
+        "H200": {
+          "platform": "gpu-h200-sxm",
+          "capability": "9.0",
+          "result": "FLEX_PI_REAL_INFERENCE_PASSED",
+          "observed_image_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+          "gpu_count": 1,
+          "torch_compile": false,
+          "execution": "direct Docker smoke, not the Workbench workflow",
+          "finite_action_shape": [
+            32,
+            14
+          ],
+          "inference_seconds": 0.6105937969987281,
+          "peak_memory_bytes": 25293465088,
+          "readback_verified_objects": 0
         }
       },
       "validated_tag": "0.1.0-cu128-r2",

@@ -1,0 +1,959 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Physics in action · Nebius Physical AI</title>
+    <style>
+      :root {
+        font-family:
+          Inter,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        color: #e8f1fa;
+        background: #07111c;
+        font-synthesis: none;
+        --muted: #91a6ba;
+        --line: #223343;
+        --mint: #80edd0;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(ellipse at 80% 0, #123146 0, transparent 50%), #07111c;
+      }
+      button,
+      select,
+      input {
+        font: inherit;
+      }
+      button,
+      select {
+        cursor: pointer;
+      }
+      button:focus-visible,
+      select:focus-visible,
+      input:focus-visible,
+      a:focus-visible {
+        outline: 3px solid #80edd0;
+        outline-offset: 4px;
+      }
+      button {
+        border: 1px solid var(--line);
+        background: #142332;
+        color: inherit;
+        border-radius: 9px;
+        padding: 10px 16px;
+      }
+      button:hover {
+        background: #213b4d;
+      }
+      select {
+        border: 1px solid #395169;
+        background: #122332;
+        color: #edf5fc;
+        padding: 9px;
+        border-radius: 8px;
+      }
+      a {
+        color: var(--mint);
+      }
+      .shell {
+        max-width: 1640px;
+        margin: auto;
+        padding: 26px 36px 36px;
+      }
+      .mast {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 15px;
+        font-size: 12px;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+      .brand {
+        font-weight: 750;
+      }
+      .brand i {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        background: var(--mint);
+        border-radius: 3px;
+        margin-right: 10px;
+        box-shadow: 0 0 22px #80edd050;
+      }
+      .badge {
+        border: 1px solid #314759;
+        border-radius: 30px;
+        padding: 7px 12px;
+        color: #bfcedc;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+      }
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: end;
+        gap: 32px;
+        padding: 32px 0 26px;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 0.17em;
+        color: var(--mint);
+        text-transform: uppercase;
+        font-weight: 650;
+      }
+      h1 {
+        font-size: clamp(32px, 4vw, 54px);
+        letter-spacing: -0.045em;
+        margin: 10px 0 12px;
+        font-weight: 650;
+        line-height: 1.04;
+      }
+      h1 span {
+        color: #92a8bd;
+      }
+      .intro {
+        max-width: 630px;
+        font-size: 14px;
+        line-height: 1.7;
+        color: #abc0d2;
+        margin: 0;
+      }
+      .summary {
+        display: flex;
+        gap: 30px;
+        flex-shrink: 0;
+      }
+      .stat strong {
+        font-size: 34px;
+        font-weight: 570;
+        letter-spacing: -0.05em;
+        display: block;
+      }
+      .stat span {
+        display: block;
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-top: 5px;
+      }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        background: #0e1d2b;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 16px;
+        margin-bottom: 18px;
+      }
+      .play {
+        background: var(--mint);
+        color: #07271f;
+        border-color: var(--mint);
+        font-weight: 750;
+        min-width: 122px;
+      }
+      .play:hover {
+        background: #a7ffe6;
+      }
+      .scrub {
+        accent-color: var(--mint);
+        flex: 1;
+        min-width: 70px;
+        cursor: pointer;
+      }
+      .clock {
+        font:
+          12px ui-monospace,
+          SFMono-Regular,
+          monospace;
+        color: #d3e4f3;
+        min-width: 100px;
+      }
+      .seed-label {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        background: #0e1b29;
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 12px 35px #0002;
+      }
+      .card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 15px 18px;
+      }
+      .card-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      h2 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 630;
+      }
+      .case-spec {
+        margin: 4px 0 0 18px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .outcome {
+        font-size: 10px;
+        font-weight: 750;
+        letter-spacing: 0.09em;
+        padding: 6px 9px;
+        border-radius: 5px;
+        white-space: nowrap;
+      }
+      .accepted {
+        color: #99f7d7;
+        background: #153b33;
+      }
+      .rejected {
+        color: #ffbaa5;
+        background: #432d2b;
+      }
+      .viewport {
+        position: relative;
+        background: #07111c;
+        aspect-ratio: 16/9;
+        overflow: hidden;
+      }
+      .viewport video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+      }
+      .video-tag {
+        position: absolute;
+        left: 14px;
+        top: 12px;
+        font-size: 10px;
+        letter-spacing: 0.1em;
+        color: #d8e8f4;
+        background: #06111ad4;
+        border: 1px solid #ffffff18;
+        padding: 6px 8px;
+        border-radius: 5px;
+      }
+      .end-tag {
+        display: none;
+        position: absolute;
+        right: 12px;
+        bottom: 12px;
+        background: #07111cdd;
+        border: 1px solid #3b5366;
+        padding: 6px 9px;
+        font-size: 10px;
+        border-radius: 5px;
+        color: #c6d9e7;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 16px;
+        padding: 14px 18px;
+      }
+      .metric-label {
+        font-size: 10px;
+        color: var(--muted);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .metric-value {
+        font:
+          22px ui-monospace,
+          SFMono-Regular,
+          monospace;
+        letter-spacing: -0.04em;
+        margin-top: 5px;
+      }
+      .metric-value small {
+        font:
+          11px -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+        color: var(--muted);
+        letter-spacing: 0;
+      }
+      .bar {
+        height: 3px;
+        background: #25394a;
+        margin-top: 9px;
+        border-radius: 9px;
+        overflow: hidden;
+      }
+      .bar i {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+        transition: width 0.08s linear;
+      }
+      .good {
+        color: var(--mint);
+      }
+      .action {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 10px 18px;
+        border-top: 1px solid #213444;
+        color: #9cb3c7;
+        font-size: 10px;
+      }
+      .action code {
+        font-size: 11px;
+        color: #cdddeb;
+      }
+      .gripper {
+        color: var(--accent);
+        font-weight: 650;
+      }
+      .under {
+        display: grid;
+        grid-template-columns: 1.1fr 1fr;
+        gap: 24px;
+        padding-top: 24px;
+      }
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 20px;
+        background: #0c1926;
+      }
+      .panel h3 {
+        font-size: 14px;
+        margin: 0 0 8px;
+      }
+      .panel p {
+        font-size: 12px;
+        line-height: 1.65;
+        color: #a5b9cd;
+        margin: 7px 0;
+      }
+      .steps {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin: 15px 0;
+      }
+      .step {
+        font-size: 10px;
+        color: #c6deed;
+        border: 1px solid #2c4356;
+        border-radius: 5px;
+        padding: 8px;
+      }
+      .arrow {
+        color: #617b91;
+      }
+      .criteria {
+        display: flex;
+        gap: 9px;
+        flex-wrap: wrap;
+        padding-top: 5px;
+      }
+      .criteria span {
+        font-size: 11px;
+        color: #bed3e3;
+        background: #142738;
+        border-radius: 5px;
+        padding: 7px 9px;
+      }
+      .trials {
+        margin-top: 22px;
+      }
+      .trials h3 {
+        font-size: 14px;
+        margin: 0 0 12px;
+      }
+      .trial-grid {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .trial-button {
+        font-size: 11px;
+        padding: 8px 12px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .trial-button.selected {
+        border-color: var(--mint);
+        background: #17352f;
+      }
+      .pass-dot,
+      .fail-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .pass-dot {
+        background: #80edd0;
+      }
+      .fail-dot {
+        background: #ff9676;
+      }
+      .footer {
+        margin-top: 23px;
+        padding-top: 17px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        justify-content: space-between;
+        gap: 22px;
+        align-items: center;
+        font-size: 10px;
+        line-height: 1.6;
+        color: #7893aa;
+      }
+      .footer code {
+        color: #a5bbcc;
+      }
+      .error {
+        background: #4a2928;
+        color: #ffdfd7;
+        padding: 18px;
+        border-radius: 10px;
+        margin: 16px 0;
+      }
+      .hidden {
+        display: none;
+      }
+      .loading {
+        color: var(--muted);
+        padding: 24px;
+      }
+      details {
+        margin-top: 14px;
+        font-size: 11px;
+        color: #9fb7ca;
+      }
+      summary {
+        cursor: pointer;
+      }
+      details p {
+        max-width: 950px;
+      }
+      .data-button {
+        font-size: 11px;
+        padding: 8px 12px;
+      }
+      @media (min-width: 1500px) {
+        .hero {
+          padding-top: 42px;
+        }
+        .metrics {
+          padding: 17px 20px;
+        }
+      }
+      @media (max-width: 850px) {
+        .shell {
+          padding: 20px 16px;
+        }
+        .hero {
+          display: block;
+        }
+        .summary {
+          margin-top: 24px;
+          gap: 35px;
+        }
+        .grid,
+        .under {
+          grid-template-columns: 1fr;
+        }
+        .toolbar {
+          flex-wrap: wrap;
+        }
+        .seed-label {
+          margin-left: auto;
+        }
+        .scrub {
+          order: 6;
+          flex-basis: 70%;
+        }
+        .clock {
+          order: 7;
+          min-width: auto;
+        }
+        .mast {
+          font-size: 10px;
+          letter-spacing: 0.08em;
+        }
+        .badge {
+          font-size: 9px;
+        }
+        .footer {
+          display: block;
+        }
+        .metric-value {
+          font-size: 20px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .bar i {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="mast">
+        <div class="brand"><i></i>Nebius Physical AI</div>
+        <span class="badge">Actual Isaac Sim recordings · RTX rendered</span>
+      </header>
+      <section class="hero">
+        <div>
+          <div class="eyebrow">Physical augmentation / manipulation</div>
+          <h1>Same task.<br /><span>A different physical world.</span></h1>
+          <p class="intro">
+            Move the object. Change its mass. Reduce friction. Execute fresh
+            robot actions in each scene—and verify what actually happened.
+          </p>
+        </div>
+        <div class="summary" aria-label="Experiment results">
+          <div class="stat">
+            <strong id="acceptance">—</strong><span>Accepted trials</span>
+          </div>
+          <div class="stat">
+            <strong>4</strong><span>Physical conditions</span>
+          </div>
+          <div class="stat">
+            <strong id="frequency">—</strong><span>Actions / second</span>
+          </div>
+        </div>
+      </section>
+      <div id="error" class="error hidden" role="alert"></div>
+      <section class="toolbar" aria-label="Replay controls">
+        <button class="play" id="play" type="button">▶ Play all</button
+        ><button id="restart" type="button" aria-label="Restart replay">
+          ↺
+        </button>
+        <input
+          class="scrub"
+          id="scrub"
+          type="range"
+          min="0"
+          max="1"
+          step="0.02"
+          value="0"
+          aria-label="Replay time"
+        />
+        <span class="clock" id="clock">0.00 / 0.00 s</span>
+        <label class="seed-label" for="seed">Paired reset</label
+        ><select id="seed" aria-label="Paired reset seed"></select>
+        <select id="rate" aria-label="Playback speed">
+          <option value="0.5">0.5× speed</option>
+          <option value="1" selected>1× speed</option>
+          <option value="2">2× speed</option>
+        </select>
+      </section>
+      <section
+        class="grid"
+        id="cases"
+        aria-label="Synchronized physical-condition replays"
+      >
+        <div class="loading">Loading embedded simulator recordings…</div>
+      </section>
+      <section class="under">
+        <div class="panel">
+          <div class="eyebrow">Data that carries its actions</div>
+          <h3 style="margin-top: 9px">
+            An executed trajectory for every world.
+          </h3>
+          <p>
+            The controller observes the simulated scene, commands the robot, and
+            records each resulting transition. The dataset contains only trials
+            that meet every acceptance condition.
+          </p>
+          <div class="steps">
+            <span class="step">Change physics</span><span class="arrow">→</span
+            ><span class="step">Execute actions</span
+            ><span class="arrow">→</span
+            ><span class="step">Measure outcome</span
+            ><span class="arrow">→</span
+            ><span class="step">Export dataset</span>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="eyebrow">Measured acceptance</div>
+          <h3 style="margin-top: 9px">A lift must also be a stable hold.</h3>
+          <div class="criteria">
+            <span>Lift ≥ 10 cm</span><span>Speed ≤ 3 cm/s</span
+            ><span>30 consecutive steps</span
+            ><span>Tool proximity + drift checks</span>
+          </div>
+          <p>
+            Values below each video describe the measured state after its
+            recorded action. Videos show the state before that action.
+          </p>
+        </div>
+      </section>
+      <section class="trials">
+        <h3>Every trial. Every outcome.</h3>
+        <div id="trial-grid" class="trial-grid"></div>
+      </section>
+      <details>
+        <summary>Action contract, provenance and scope</summary>
+        <p id="contract"></p>
+        <p>
+          Public procedural Franka lift task with a scripted state-aware
+          controller. This is simulator demonstration collection; physical-robot
+          transfer and policy improvement have not been evaluated. A
+          reconstructed scene needs calibrated collision geometry, robot
+          configuration and a task adapter.
+        </p>
+        <button class="data-button" id="download" type="button">
+          Download measured replay data
+        </button>
+      </details>
+      <footer class="footer">
+        <div>
+          Self-contained replay · No account, GPU, server or network connection
+          needed<br />All displayed frames and measurements come from the
+          recorded run.
+        </div>
+        <div id="provenance"></div>
+      </footer>
+    </main>
+    <script id="demo-data" type="application/json">
+      __NPA_DEMO_DATA__
+    </script>
+    <script>
+      "use strict";
+      const data = JSON.parse(document.getElementById("demo-data").textContent);
+      const order = ["nominal", "displaced", "heavy", "slippery"];
+      const titles = {
+        nominal: "Baseline",
+        displaced: "Position shift",
+        heavy: "Double mass",
+        slippery: "Low friction",
+      };
+      const colors = {
+        nominal: "#80edd0",
+        displaced: "#8fbbff",
+        heavy: "#dab0ff",
+        slippery: "#ffbc80",
+      };
+      const byId = (id) => document.getElementById(id);
+      let cards = [],
+        selected = [],
+        clock = 0,
+        duration = 0,
+        playing = false,
+        master = 0;
+      const seeds = [...new Set(data.trials.map((trial) => trial.seed))].sort(
+        (a, b) => a - b,
+      );
+      const fail = (message) => {
+        byId("error").textContent = message;
+        byId("error").classList.remove("hidden");
+      };
+      byId("acceptance").textContent =
+        `${data.trials.filter((trial) => trial.success).length}/${data.trials.length}`;
+      byId("frequency").textContent = data.fps;
+      byId("contract").textContent =
+        `${data.action_semantics}. Outcome samples follow each video frame by ${data.outcome_time_offset_s.toFixed(3)} s. The film and default comparison use the first paired reset, with all remaining resets available above.`;
+      byId("provenance").textContent =
+        `Isaac Lab ${data.runtime} · Recipe SHA-256 ${data.recipe_sha256.slice(0, 16)}…`;
+      for (const seed of seeds) {
+        const option = document.createElement("option");
+        option.value = seed;
+        option.textContent = `Seed ${seed}`;
+        byId("seed").append(option);
+      }
+      function specification(condition) {
+        const item = data.conditions[condition];
+        const shift = item.offset_xy_m.map((value) => (value * 100).toFixed(0));
+        return `${item.mass_kg.toFixed(2)} kg · friction ${item.friction.toFixed(2)} · offset (${shift[0]}, ${shift[1]}) cm`;
+      }
+      function makeCard(condition) {
+        const element = document.createElement("article");
+        element.className = "card";
+        element.style.setProperty("--accent", colors[condition]);
+        element.innerHTML =
+          '<header class="card-head"><div><div class="card-title"><i class="dot"></i><h2></h2></div><p class="case-spec"></p></div><span class="outcome"></span></header><div class="viewport"><video muted playsinline preload="auto"></video><span class="video-tag">RTX CAMERA / EXECUTED ACTIONS</span><span class="end-tag">Trial complete · final frame</span></div><div class="metrics"><div><div class="metric-label">Measured lift</div><div class="metric-value lift"></div><div class="bar"><i class="lift-bar"></i></div></div><div><div class="metric-label">Object speed</div><div class="metric-value speed"></div><div class="bar"><i class="speed-bar"></i></div></div><div><div class="metric-label">Stable hold</div><div class="metric-value hold"></div><div class="bar"><i class="hold-bar"></i></div></div></div><div class="action"><span>COMMANDED TCP <code class="tcp"></code></span><span class="gripper"></span></div>';
+        element.querySelector("h2").textContent = titles[condition];
+        element.querySelector(".case-spec").textContent =
+          specification(condition);
+        const video = element.querySelector("video");
+        video.muted = true;
+        video.addEventListener("error", () =>
+          fail(
+            "A recorded video could not be decoded. Open this file in current Chrome, Edge or Safari.",
+          ),
+        );
+        return {
+          element,
+          video,
+          query: (selector) => element.querySelector(selector),
+        };
+      }
+      byId("cases").replaceChildren();
+      cards = order.map(makeCard);
+      cards.forEach((card) => byId("cases").append(card.element));
+      function renderMetric(card, name, value, unit, valid, percentage) {
+        card.query(`.${name}`).innerHTML = `${value} <small>${unit}</small>`;
+        card.query(`.${name}`).classList.toggle("good", valid);
+        card.query(`.${name}-bar`).style.width =
+          `${Math.max(0, Math.min(100, percentage))}%`;
+      }
+      function renderGauges(card, telemetry, frame) {
+        const lift = telemetry.lift_cm[frame];
+        const speed = telemetry.speed_cm_s[frame];
+        const hold = telemetry.hold_steps[frame];
+        renderMetric(
+          card,
+          "lift",
+          lift.toFixed(1),
+          "cm",
+          lift >= data.criteria.lift_m * 100,
+          (lift / 20) * 100,
+        );
+        renderMetric(
+          card,
+          "speed",
+          speed.toFixed(2),
+          "cm/s",
+          speed <= data.criteria.max_speed_m_s * 100,
+          (speed / 20) * 100,
+        );
+        renderMetric(
+          card,
+          "hold",
+          Math.min(hold, data.criteria.hold_steps),
+          `/ ${data.criteria.hold_steps} steps`,
+          hold >= data.criteria.hold_steps,
+          (hold / data.criteria.hold_steps) * 100,
+        );
+      }
+      function renderCard(card, trial) {
+        const time = playing ? card.video.currentTime : clock;
+        const frame = Math.min(
+          trial.frames - 1,
+          Math.max(0, Math.floor(time * data.fps)),
+        );
+        const telemetry = trial.telemetry;
+        renderGauges(card, telemetry, frame);
+        card.query(".tcp").textContent = telemetry.actions[frame]
+          .slice(0, 3)
+          .map((value) => value.toFixed(3))
+          .join(" / ");
+        card.query(".gripper").textContent =
+          telemetry.actions[frame][7] < 0 ? "GRIPPER CLOSED" : "GRIPPER OPEN";
+        card.query(".end-tag").style.display =
+          clock >= (trial.frames - 1) / data.fps ? "block" : "none";
+      }
+      function renderMetrics() {
+        cards.forEach((card, index) => renderCard(card, selected[index]));
+        byId("scrub").value = clock;
+        byId("clock").textContent =
+          `${clock.toFixed(2)} / ${duration.toFixed(2)} s`;
+      }
+      function seek(time) {
+        clock = Math.max(0, Math.min(duration, time));
+        cards.forEach((card, index) => {
+          card.video.currentTime = Math.min(
+            clock,
+            (selected[index].frames - 1) / data.fps,
+          );
+        });
+        renderMetrics();
+      }
+      function pause() {
+        playing = false;
+        cards.forEach((card) => card.video.pause());
+        byId("play").textContent = "▶ Play all";
+      }
+      async function play() {
+        if (clock >= duration - 0.01) seek(0);
+        cards.forEach((card) => {
+          card.video.playbackRate = Number(byId("rate").value);
+        });
+        try {
+          await Promise.all(
+            cards
+              .filter(
+                (card, index) => clock < selected[index].frames / data.fps,
+              )
+              .map((card) => card.video.play()),
+          );
+          playing = true;
+          byId("play").textContent = "Ⅱ Pause all";
+          requestAnimationFrame(tick);
+        } catch (error) {
+          pause();
+          fail(
+            "Playback needs a browser click or a supported video decoder. Select Play all to retry.",
+          );
+        }
+      }
+      function tick() {
+        if (!playing) return;
+        clock = Math.min(duration, cards[master].video.currentTime);
+        cards.forEach((card, index) => {
+          const target = Math.min(
+            clock,
+            (selected[index].frames - 1) / data.fps,
+          );
+          if (
+            index !== master &&
+            !card.video.seeking &&
+            Math.abs(card.video.currentTime - target) > 0.08
+          )
+            card.video.currentTime = target;
+        });
+        renderMetrics();
+        if (cards[master].video.ended) {
+          pause();
+          return;
+        }
+        requestAnimationFrame(tick);
+      }
+      function loadTrial(card, trial) {
+        card.video.src = trial.video;
+        card.video.load();
+        const result = card.query(".outcome");
+        result.className = `outcome ${trial.success ? "accepted" : "rejected"}`;
+        result.textContent = trial.success ? "ACCEPTED" : "REJECTED";
+      }
+      function selectSeed(seed) {
+        pause();
+        selected = order.map((condition) =>
+          data.trials.find(
+            (trial) =>
+              trial.condition === condition && trial.seed === Number(seed),
+          ),
+        );
+        if (selected.some((trial) => !trial))
+          throw new Error("Paired condition recording is missing");
+        duration = Math.max(
+          ...selected.map((trial) => trial.frames / data.fps),
+        );
+        byId("scrub").max = duration;
+        master = selected.findIndex(
+          (trial) =>
+            trial.frames === Math.max(...selected.map((item) => item.frames)),
+        );
+        cards.forEach((card, index) => loadTrial(card, selected[index]));
+        clock = 0;
+        renderMetrics();
+        document
+          .querySelectorAll(".trial-button")
+          .forEach((button) =>
+            button.classList.toggle(
+              "selected",
+              Number(button.dataset.seed) === Number(seed),
+            ),
+          );
+      }
+      byId("play").addEventListener("click", () =>
+        playing ? pause() : play(),
+      );
+      byId("restart").addEventListener("click", () => {
+        pause();
+        seek(0);
+      });
+      byId("scrub").addEventListener("input", (event) => {
+        pause();
+        seek(Number(event.target.value));
+      });
+      byId("seed").addEventListener("change", (event) =>
+        selectSeed(event.target.value),
+      );
+      byId("rate").addEventListener("change", () =>
+        cards.forEach((card) => {
+          card.video.playbackRate = Number(byId("rate").value);
+        }),
+      );
+      for (const trial of data.trials) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "trial-button";
+        button.dataset.seed = trial.seed;
+        const dot = document.createElement("i");
+        dot.className = trial.success ? "pass-dot" : "fail-dot";
+        button.append(
+          dot,
+          document.createTextNode(
+            `${titles[trial.condition]} · seed ${trial.seed} · ${trial.success ? "accepted" : "rejected"}`,
+          ),
+        );
+        button.addEventListener("click", () => {
+          byId("seed").value = trial.seed;
+          selectSeed(trial.seed);
+        });
+        byId("trial-grid").append(button);
+      }
+      byId("download").addEventListener("click", () => {
+        const exported = {
+          ...data,
+          trials: data.trials.map(({ video, ...trial }) => trial),
+        };
+        const url = URL.createObjectURL(
+          new Blob([JSON.stringify(exported, null, 2)], {
+            type: "application/json",
+          }),
+        );
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "physical-augmentation-replay.json";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
+      selectSeed(seeds[0]);
+      window.npaDemo = {
+        seek,
+        pause,
+        play,
+        get state() {
+          return {
+            time: clock,
+            duration,
+            playing,
+            seed: Number(byId("seed").value),
+            trials: selected.map((trial) => ({
+              condition: trial.condition,
+              seed: trial.seed,
+              success: trial.success,
+            })),
+          };
+        },
+      };
+    </script>
+  </body>
+</html>
