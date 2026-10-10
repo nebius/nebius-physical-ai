@@ -5,7 +5,7 @@
 
 Use the single canonical spec and complete the operator runbook before submit:
 
-- [onboarding, preflight, submit, and remediation](../../../../docs/workbench/guides/sim2real-workflow.md)
+- [manual fresh-checkout setup, image release gate, submit, and resume](../../../../docs/workbench/guides/sim2real-workflow.md)
 - [data and customer-asset contracts](../../../../docs/workbench/guides/sim2real-customer-assets.md)
 - [canonical RobotSpec and URDF example](../../../../docs/workbench/guides/sim2real-robot-spec.md)
 - [architecture and durable resume](../../../../docs/architecture/sim2real-compositional-workflow.md)
@@ -21,7 +21,7 @@ Use the single canonical spec and complete the operator runbook before submit:
 From the repository root, validate the canonical spec locally:
 
 ```bash
-npa workbench workflow validate-spec workflows/main/sim2real.yaml
+npa/.venv/bin/npa workbench workflow validate-spec workflows/main/sim2real.yaml
 ```
 
 This checks the declaration; it does not prove image access, model access, GPU
@@ -29,7 +29,11 @@ placement, or customer-data compatibility. Continue with the operator runbook's
 preflight and complete `submit --runtime` command using your verified inputs.
 Keep the returned run ID for status, logs, artifacts, and durable resume.
 
-## One seam, one value
+## Archived compatibility seams
+
+The table below describes the retained legacy CLI/SDK contract. Canonical
+workflow submissions use the runbook's `--var` arguments and five image keys;
+these legacy `run` flags are not its setup interface.
 
 Every BYO seam is one value addressed four ways. This table is generated from
 the canonical `SIM2REAL_SEAMS` tuple in
@@ -65,7 +69,8 @@ drifts, the coherence guardrail test fails.
 The YAML exposes all 14 stages and runs through the standard workflow runtime.
 Each real solution has its own image/resource state, S3 inputs and outputs, and
 ComponentRecord. Parallel Stage 4 leaves publish attributable lane records;
-Stage 8 is one CPU-only hosted Cosmos3 evaluator with a direct Stage 9 barrier. Stage 11 early
+Stage 8 is one CPU-only hosted vision-language evaluator (MiniMax-M3 by default)
+with a direct Stage 9 barrier. Stage 11 early
 exit is explicit (`allow_early_exit`), Stage 13/14 use the completed loop
 iteration, shard cardinality is validated before submission, and visualization
 downloads only its declared artifact set into cleaned ephemeral storage.

@@ -30,7 +30,7 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Prepare a reconstructed scene for Isaac navigation | [Scan-to-Isaac handoff](../docs/workbench/guides/scan-to-isaac-navigation.md) — supplied collision mesh, portable USDZ, and native PhysX probes |
 | Reconstruct metric RGB-D into a collision scene | [RGB-D scan to Isaac](../docs/workbench/guides/rgbd-scan-to-isaac.md) — measured TSDF surface, held-out depth qualification, colored USDZ, native PhysX; [explicit native-training handoff](../docs/workbench/guides/rgbd-scan-to-isaac.md#continue-into-native-navigation-training) requires the companion navigation implementation |
-| Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
+| Run the 14-stage robot loop manually | [Sim2Real from a fresh checkout](../docs/workbench/guides/sim2real-workflow.md), starting with the qualified-image release gate |
 | Fine-tune and inspect a GR00T policy | [GR00T N1.7](main/groot-1-7-finetune.yaml) · [runbook](../docs/workbench/cookbooks/groot-1-7-training.md) — distributed optimizer smoke, held-out action prediction, and synchronized diagnostics |
 | Evaluate a BEHAVIOR 2026 policy | [Start here](../docs/workbench/challenge-onboarding.md) · [Workflow](testing/behavior-challenge-eval.yaml) · [measured scope and limits](../docs/workbench/behavior-campaign.md#scope-and-validation-status) — operator runtime required |
 | Run a live π0.5 robot pickup in Antioch | [OpenPI live pickup](partners/antioch/openpi-live-pickup.md) — pretrained-policy inference, physical success checks, and native recording |
