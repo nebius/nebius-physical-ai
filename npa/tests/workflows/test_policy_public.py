@@ -64,6 +64,29 @@ def _evaluation(successes=7):
     }
 
 
+def test_stage_bootstrap_uses_the_complete_overlay_and_native_interpreter(monkeypatch):
+    import yaml
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source/")
+    spec = load_spec(SPEC.resolve())
+    plan = build_plan(spec, run_id="public-test", assume_decision="promote_checkpoint")
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="public-test",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    tasks = [task for task in yaml.safe_load_all(rendered) if "resources" in task]
+    for task, step in zip(tasks, plan.steps, strict=True):
+        vendor = "lerobot" if step.resources in ("gpu", "serving") else "fiftyone"
+        assert task["envs"]["NPA_BAKED_PYTHON"] == f"/opt/{vendor}/venv/bin/python"
+        assert task["envs"]["NPA_SRC_OVERLAY"] == "1"
+
+
 @pytest.mark.parametrize(
     "successes,expected", [(6, "loop_back"), (7, "promote_checkpoint")]
 )

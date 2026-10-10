@@ -13,12 +13,19 @@ separate GPU workers with 4 CPUs and 24 GiB each. CPU stages use 4 CPUs and 16 G
 The immutable published images are checked through the standard image preflight.
 Public HF snapshots are revision-pinned and fetched without an HF credential.
 
+If the existing cluster was provisioned outside this Workbench configuration,
+first adopt its verified provider identity with `npa cluster kubeconfig
+--cluster-name <provider-cluster-name> --project <project> --context <context>`.
+This writes local state without provisioning another cluster. Use the resulting
+kubeconfig for the checks and submission below.
+
 ```bash
 npa workbench health preflight --checks s3,nebius --project "<project>" --json
 npa skypilot verify --cluster "<context>" --kubeconfig "<kubeconfig>"
 npa workbench workflow validate-spec workflows/testing/policy-public-training.yaml --json
 npa workbench workflow submit workflows/testing/policy-public-training.yaml \
   --project "<project>" --infra "k8s/<context>" --runtime --stage-src \
+  --max-wait-seconds 0 --image-bootstrap-timeout-seconds 0 \
   --var "bucket=<private-bucket>" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```

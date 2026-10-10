@@ -87,6 +87,7 @@ def test_all_native_videos_decode_and_html_is_standalone(collected):
     ):
         assert forbidden not in html
     with av.open(str(report / "demo.mp4")) as video:
-        frames = list(video.decode(video=0))
-        assert len(frames) > 20 and frames[0].width == 1280
-        assert frames[0].to_ndarray().std() > 1
+        frames = video.decode(video=0)
+        first = next(frames)
+        assert first.width == 1280 and first.to_ndarray().std() > 1
+        assert 1 + sum(1 for _ in frames) > 20

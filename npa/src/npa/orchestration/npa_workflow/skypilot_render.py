@@ -1527,7 +1527,11 @@ def default_npa_setup() -> str:
         "    return 1\n"
         "  fi\n"
         "}\n"
-        "if ! command -v npa >/dev/null 2>&1; then\n"
+        # An explicit staged overlay is the complete source of truth. Thin vendor
+        # images may contain a partial /opt/npa tree without the build hook; do
+        # not try installing it before the requested overlay can be fetched.
+        "if ! command -v npa >/dev/null 2>&1 && { "
+        '[ "$NPA_SRC_OVERLAY" != "1" ] || [ -z "$NPA_SRC_S3_URI" ]; }; then\n'
         # The active runtime-fetch images intentionally ship the installable
         # project under /opt/npa but not a shell-visible `npa` launcher. Recording
         # that tree alone is insufficient: the first task then skips the legacy
@@ -2565,6 +2569,7 @@ def _build_skypilot_task_doc(
         from npa.orchestration.npa_workflow.runtime import _workflow_identity
 
         envs["NPA_WORKFLOW_SHA256"] = _workflow_identity(spec)
+        envs["NPA_BAKED_PYTHON"] = tool_vendor_interpreters(tool_ref)[0]
         envs["NVIDIA_DRIVER_CAPABILITIES"] = "all"
         envs["MUJOCO_GL"] = "egl"
         envs["PYOPENGL_PLATFORM"] = "egl"
