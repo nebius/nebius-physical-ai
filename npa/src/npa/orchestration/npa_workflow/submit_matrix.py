@@ -303,6 +303,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
+        "lingbot-world-controlled-continuation.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an eight-GPU Kubernetes pod and explicit checksum-bound context "
+            "plus provenance inputs; keep it out of the shared rotation until a "
+            "compatible single-node topology is configured."
+        ),
+        notes=(
+            "Five connected Base (Cam) stages with two native eight-rank continuations, "
+            "decode/control evaluation, and MP4/RRD artifacts. GPU acceptance remains "
+            "unverified until its own final artifacts are independently inspected."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-depth-anything-v2.yaml",
         "gpu",
         plan_only=True,

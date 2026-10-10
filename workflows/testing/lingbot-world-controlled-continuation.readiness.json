@@ -1,0 +1,70 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "67e6109646164c09f687c5e6e9f5a90020eea5a92ba4caea9717cefe46ceb09c",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The local NPA CLI validated the exact five-state spec and planned its CPU and configurable eight-GPU stages with run-scoped S3 handoffs, including a required image checksum and a separate author/terms/derivation provenance record.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/lingbot-world-controlled-continuation.yaml --json: status valid",
+        "npa workbench workflow plan-spec workflows/testing/lingbot-world-controlled-continuation.yaml --run-id lingbot-world-readiness --json: 5 ordered steps",
+        "configured plan: preparation requires both a selected image and input provenance sidecar",
+        "default configured plan: B200:8 prescribed and alternative stages; an operator-selected compatible eight-GPU product is resolved through workflow configuration; each downstream URI consumes its predecessor artifact"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The graph test requires five genuine module stages and exact preparation, prescribed generation, alternative-generation, evaluation, and visualization handoffs. The generation states use the runtime-fetch CUDA interpreter through model-runtime exec, while retaining the staged source path; the local artifact test creates both 161-frame MP4s, fully decodes and measures them, and independently verifies the emitted RRD.",
+      "evidence": [
+        "npa/tests/workflows/test_lingbot_world.py: 6 passed",
+        "npa/tests/smoke/test_all_workflow_yamls.py -k lingbot-world-controlled-continuation: 2 passed"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The manager-provided private route passed storage-owner and read/write preflight, and the lawful CC0 context image plus checksum-bound sidecar were independently uploaded and read back there. This proves staging, not a completed workflow run.",
+      "evidence": [
+        "private route scope/storage preflight (2026-10-04)",
+        "private CC0 input and provenance sidecar staging/readback receipt (2026-10-04)"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The selected CC0 image and its source/author/license/source-hash/derivation sidecar are staged under content-addressed private keys. The prepare stage still verifies those exact selected bytes before it creates control arrays.",
+      "evidence": [
+        "input-provenance contract is covered by npa/tests/workflows/test_lingbot_world.py",
+        "private CC0 input and provenance sidecar staging/readback receipt (2026-10-04)"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "NPA Nebius authentication passed live preflight. The public Base (Cam) model page has no observed gate or separate acceptance mechanism at the pinned revision. The final bucket/cluster ownership relation remains separately unverified.",
+      "evidence": [
+        "npa workbench health preflight --checks nebius --json: PASS",
+        "NPA storage preflight must be repeated in the coherent private execution scope"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The public digest remains unsuitable for this private target, but the corrected LingBot child was built against a freshly scanned private Wan parent. Both local/archive and private-registry-byte scans passed, and the exact private digest passed the Kubernetes target pull preflight. The candidate remains operator-private and is not a public release.",
+      "evidence": [
+        "private Wan parent archive scan: zero findings (2026-10-04)",
+        "corrected LingBot child local/archive and registry-byte scans: zero findings (2026-10-04)",
+        "private target image preflight: exact immutable candidate pull verified (2026-10-04)"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The upstream topology is eight local FSDP/Ulysses ranks, while the accelerator product is selected through NPA workflow configuration. The coherent private route resolves an eight-RTX configuration with staged lawful input and an exact scanner-qualified, target-pull-qualified private image; this is not B200 or Thor equivalence. The retained admitted run was reconciled from its original scoped state: prepare succeeded and prescribed generation terminally failed because the old shell selected the control interpreter after preparing the runtime-cache CUDA environment, yielding ModuleNotFoundError: torch. The saved graph now invokes prescribed and alternative generation through model-runtime exec python3, which selects the runtime cache while retaining the staged source overlay. This repair has not yet completed a new native run. The graph remains unverified until a compatible target completes all stages and final MP4/RRD, provenance, lineage, and control-response artifacts are independently inspected.",
+      "evidence": [
+        "private route scope/GPU preflight (2026-10-04)",
+        "retained-run reconciliation: prepare succeeded and generate-prescribed terminally failed (private receipt, 2026-10-04)",
+        "private prescribed-stage log captured ModuleNotFoundError: torch after runtime-cache preparation; current graph uses model-runtime exec python3",
+        "npa/tests/workflows/test_lingbot_world.py asserts the runtime-interpreter contract",
+        "/tmp/npa-onboarding-20261002-lingbot-world/novel-issues.md"
+      ]
+    }
+  }
+}

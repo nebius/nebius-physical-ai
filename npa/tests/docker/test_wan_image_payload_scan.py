@@ -34,9 +34,9 @@ def test_libssh2_audit_matches_reviewed_debian_package() -> None:
         item for item in lock["debian_binaries"] if item["name"] == "libssh2-1"
     )
     library = package["elf_files"][0]
-    assert (
-        scanner.AUDITED_SECRET_LITERAL_FILE_SHA256[library["path"]] == library["sha256"]
-    )
+    audited = scanner.AUDITED_SECRET_LITERAL_FILE_SHA256[library["path"]]
+    assert library["sha256"] in audited
+    assert "66f751ec9d3d5bff254a498e020d37f9bbde8e0193ba11d1b78f29153ffe694a" in audited
 
 
 def _gzip(payload: bytes) -> bytes:
@@ -637,6 +637,35 @@ def test_secret_literal_exception_requires_exact_audited_bytes(
     assert (
         scanner.scan(_tar(tmp_path / "audited.tar", {path: audited_payload}), {}) == []
     )
+
+
+def test_secret_literal_exception_accepts_only_explicit_reviewed_rebuilds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1"
+    earlier = b"\x7fELF\x00-----BEGIN PRIVATE KEY-----\x00earlier"
+    rebuild = b"\x7fELF\x00-----BEGIN PRIVATE KEY-----\x00rebuild"
+    monkeypatch.setattr(
+        scanner,
+        "AUDITED_SECRET_LITERAL_FILE_SHA256",
+        {
+            path: frozenset(
+                {
+                    hashlib.sha256(earlier).hexdigest(),
+                    hashlib.sha256(rebuild).hexdigest(),
+                }
+            )
+        },
+    )
+
+    assert scanner.scan(_tar(tmp_path / "rebuild.tar", {path: rebuild}), {}) == []
+    findings = scanner.scan(
+        _tar(tmp_path / "modified-rebuild.tar", {path: rebuild + b"changed"}),
+        {},
+    )
+    kinds = {item.kind for item in findings}
+    assert "audited_literal_byte_drift" in kinds
+    assert "credential_content" in kinds
 
 
 def test_secret_literal_allowlist_contains_no_precompiled_bytecode() -> None:
