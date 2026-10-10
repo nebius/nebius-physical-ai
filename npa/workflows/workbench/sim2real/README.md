@@ -72,6 +72,10 @@ Stage 11 early
 exit is explicit (`allow_early_exit`), Stage 13/14 use the completed loop
 iteration, shard cardinality is validated before submission, and visualization
 downloads only its declared artifact set into cleaned ephemeral storage.
+Stage 7 downloads declared camera frames with sixteen concurrent transfers and
+rejects any failed transfer before writing a rollout manifest. Stage 14 also
+loads earlier outer-loop evidence documents so every completed PPO pass appears
+in the final loss curves, without mirroring historical camera trees.
 Runtime values are operator inputs; this directory contains no
 tenant, project, registry, bucket, cluster, credential, or run identifier.
 

@@ -970,6 +970,34 @@ def test_retired_materialize_command_gives_actionable_migration() -> None:
     assert "workflow submit" in representative_old_call.output
 
 
+def test_finalization_retains_prior_ppo_evidence_without_old_camera_trees():
+    root = "s3://unit/run"
+    gold = {
+        "render_lineage": {
+            "canonical_s3_uri": f"{root}/eval/gold-heldout/outer-03/renders/",
+            "local_relative_dir": "eval/gold-heldout/outer-03/renders",
+        }
+    }
+    plan = _stage14_download_plan(
+        root=root, outer_iteration=3, evidence={"iterations": []}, gold=gold
+    )
+    historical = [
+        item for item in plan if "outer-01/" in item[0] or "outer-02/" in item[0]
+    ]
+    assert historical == [
+        (
+            f"{root}/inner_loop/outer-01/evidence.json",
+            "inner_loop/outer-01/evidence.json",
+            False,
+        ),
+        (
+            f"{root}/inner_loop/outer-02/evidence.json",
+            "inner_loop/outer-02/evidence.json",
+            False,
+        ),
+    ]
+
+
 def test_stage_adapter_import_does_not_load_legacy_controller() -> None:
     script = """
 import sys

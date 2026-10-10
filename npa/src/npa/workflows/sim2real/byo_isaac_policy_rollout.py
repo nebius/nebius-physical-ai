@@ -22,6 +22,7 @@ unit-test fixtures and does not establish rendered policy behavior.
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import sys
@@ -976,6 +977,19 @@ def _expected_camera_frame_count(capture: dict[str, Any]) -> int:
     return len(captured)
 
 
+def _download_rollout_frames(s3, bucket, prefix, directory, names) -> None:
+    targets = [safe_s3_download_target(directory, name, "") for name in names]
+    for target in targets:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        downloads = [
+            executor.submit(s3.download_file, bucket, f"{prefix}/{name}", str(target))
+            for name, target in zip(names, targets, strict=True)
+        ]
+        for download in downloads:
+            download.result()
+
+
 def materialize_rollout_dirs(
     output_dir: Path,
     meta: dict[str, Any],
@@ -984,13 +998,30 @@ def materialize_rollout_dirs(
     checkpoint_uri: str,
     s3_endpoint: str,
 ) -> list[str]:
-    """Download per-env frames from S3 and write local action_rollout.v1 dirs."""
+    """Download complete camera sets before publishing local rollout manifests.
+
+    Args:
+        output_dir: Directory receiving the real rollout inputs.
+        meta: Simulator-produced rollout and camera metadata.
+        out_s3_prefix: Run-scoped source frame prefix.
+        checkpoint_uri: Exact policy checkpoint used for capture.
+        s3_endpoint: Operator object storage endpoint.
+    Returns:
+        Complete local rollout directories in simulator order.
+    Raises:
+        RuntimeError: Simulator status, policy, or camera coverage is inconsistent.
+        StorageError: A declared output path escapes its rollout directory.
+        ClientError: A source camera frame cannot be downloaded.
+    """
 
     import boto3
+    from botocore.config import Config
     from urllib.parse import urlparse
     from npa.workflows.sim2real.episode_boundaries import validate_episode_sequence
 
-    s3 = boto3.client("s3", endpoint_url=s3_endpoint or None)
+    s3 = boto3.client(
+        "s3", endpoint_url=s3_endpoint or None, config=Config(max_pool_connections=16)
+    )
     u = urlparse(out_s3_prefix)
     base = u.path.lstrip("/").rstrip("/")
     is_trained = bool(meta.get("policy_trained"))
@@ -1066,16 +1097,7 @@ def materialize_rollout_dirs(
         all_frames = list(
             dict.fromkeys(frame for frames in view_frames.values() for frame in frames)
         )
-        for name in all_frames:
-            target = safe_s3_download_target(rdir, name, "")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                s3.download_file(u.netloc, f"{base}/{rid}/{name}", str(target))
-            except Exception as exc:  # pragma: no cover - network
-                print(
-                    f"byo_isaac_policy_rollout: frame download failed {rid}/{name}: {exc!r}",
-                    flush=True,
-                )
+        _download_rollout_frames(s3, u.netloc, f"{base}/{rid}", rdir, all_frames)
         manifest = build_rollout_manifest(
             rollout_id=rid,
             frames=roll.get("frames", []),

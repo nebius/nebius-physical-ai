@@ -60,8 +60,10 @@ def _make_env(task: str, num_envs: int, device: str) -> Any:
     import gymnasium as gym
     import isaaclab_tasks  # noqa: F401
     from isaaclab_tasks.utils import parse_env_cfg
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
 
     env_cfg = parse_env_cfg(task, device=device, num_envs=num_envs)
+    print("ISAAC_LAB_SMOKE_ROBOT_USD", remap_moved_franka_usd(env_cfg), flush=True)
     return gym.make(task, cfg=env_cfg)
 
 

@@ -17,6 +17,36 @@ def _manifest_script(manifest):
     return decode_compressed_bash_args(container["args"])
 
 
+def test_rollout_frames_download_concurrently_without_changing_paths(tmp_path):
+    from threading import Barrier
+
+    rendezvous = Barrier(2)
+
+    class Storage:
+        def download_file(self, bucket, key, target):
+            rendezvous.wait(timeout=5)
+            Path(target).write_bytes(f"{bucket}/{key}".encode())
+
+    names = ["camera-0000.png", "side/camera-0000.png"]
+    pr._download_rollout_frames(Storage(), "unit", "rollout-0000", tmp_path, names)
+    for name in names:
+        assert (tmp_path / name).read_bytes() == f"unit/rollout-0000/{name}".encode()
+
+
+def test_rollout_frame_storage_failure_prevents_materialization(tmp_path):
+    from botocore.exceptions import ClientError
+
+    class Storage:
+        def download_file(self, *_args):
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")
+
+    with pytest.raises(ClientError, match="AccessDenied"):
+        pr._download_rollout_frames(
+            Storage(), "unit", "rollout-0000", tmp_path, ["camera-0000.png"]
+        )
+    assert not list(tmp_path.rglob("*.png"))
+
+
 def test_build_rollout_manifest_matches_action_rollout_schema():
     m = pr.build_rollout_manifest(
         rollout_id="rollout-0001",

@@ -300,6 +300,10 @@ also includes the bootstrap script, so matching wheel versions alone are not
 enough. Warm a missing version alongside existing trees before resuming a run
 that uses read-only/offline cache access.
 
+The shipped Isaac functional smoke uses the same exact stock-Franka asset remap
+as the workflow. It redirects the retired Panda USD path to NVIDIA's relocated
+`Legacy` asset and preserves explicitly supplied robot assets.
+
 Before evaluating rollouts, inspect the first and last frames from primary,
 side, and overhead cameras. Confirm that all views render the actual scene, then
 inspect the primary frames selected for hosted evaluation: the manipulation
@@ -540,11 +544,16 @@ finish. Keep the runtime driver on an always-on operator VM.
 The production training default is 2,000 PPO updates per inner pass. The
 canonical workflow resumes the newest checkpoint from the same run, so its
 three-pass inner loop can cover 6,000 cumulative updates. Validation ranks the
-completed checkpoints and selects one for gold evaluation; the selected
+final checkpoint from each completed pass and selects one for gold evaluation; the selected
 checkpoint can differ from the latest training checkpoint. The validation and
 gold predicates remain fixed. Reduced plumbing proofs may override the update
 count explicitly; effectiveness runs should retain the convergence-capable
 default.
+
+Stage 7 downloads its declared raw camera frames concurrently and fails before
+manifest publication when any transfer fails. Stage 14 reads every earlier
+outer-loop evidence document to retain all completed PPO curves, while limiting
+camera downloads to the final outer loop and its selected Gold footage.
 
 For Isaac PPO runs, Rerun plots measured optimizer losses from
 `training/ppo/value_loss` and `training/ppo/surrogate_loss`. It omits the

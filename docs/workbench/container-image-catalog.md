@@ -366,6 +366,9 @@ Cosmos Transfer's hash-pinned security overlay select PyJWT 2.15.1, which includ
 and the subsequent supported [2.15 security updates](https://github.com/jpadilla/pyjwt/releases).
 These source changes require new exact-image scans and runtime qualification;
 they do not retroactively qualify older image digests.
+The shipped Isaac functional smoke also applies the canonical exact stock-Franka
+asset remap before creating its environment. A rebuilt image must pass this
+unmodified smoke on the target RTX GPU; source inspection does not qualify it.
 Historical image digests retain their original dependency bytes. This source
 update does not change the accepted release pins above.
 
