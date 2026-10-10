@@ -221,6 +221,66 @@ def test_conflicting_final_attempt_ids_are_exposed_as_ambiguous() -> None:
     assert info["attribution"] == "ambiguous"
 
 
+@pytest.mark.parametrize("prior_attempt", [1, 3])
+def test_rebatched_wave_uses_its_own_attempt_counter(prior_attempt) -> None:
+    manifest = RunManifest(
+        workflow="collection",
+        run_id="resume-batch",
+        api_version="npa.workflow/v0.0.1",
+        steps=[
+            {"state": name, "status": "submitted"}
+            for name in ("collect-a", "collect-b")
+        ],
+    )
+    previous = {
+        "key": "002|collect|collect:collect-a:-,collect:collect-b:-",
+        "states": ["collect-a", "collect-b"],
+        "attempt": prior_attempt,
+        "job_id": "20",
+        "status": "cancelled",
+    }
+    resumed = {
+        "key": "003|collect|collect:collect-a:-",
+        "states": ["collect-a"],
+        "attempt": 1,
+        "job_id": "21",
+        "status": "running",
+    }
+
+    stages = reconstruct_stage_job_attribution(
+        manifest, runtime_waves=[previous, resumed]
+    )
+
+    assert stages["collect-a"]["managed_job_id"] == "21"
+    assert stages["collect-a"]["active_attempt"] == 1
+    assert stages["collect-a"]["attribution"] == "runtime_wave"
+    assert {item["job_id"] for item in stages["collect-a"]["attempts"]} == {"20", "21"}
+    assert stages["collect-b"]["managed_job_id"] == "20"
+
+
+@pytest.mark.parametrize("prior_attempt", [1, 3])
+@pytest.mark.parametrize("prior_status", ["running", "pending", "starting"])
+def test_different_wave_keys_do_not_hide_an_unfinished_conflicting_attempt(
+    prior_attempt,
+    prior_status,
+) -> None:
+    manifest = RunManifest(
+        workflow="collection",
+        run_id="conflicting-waves",
+        api_version="npa.workflow/v0.0.1",
+        steps=[{"state": "collect", "status": "submitted"}],
+    )
+    waves = [
+        _wave(1, "collect", "20", attempt=prior_attempt, status=prior_status),
+        _wave(2, "collect", "21"),
+    ]
+
+    [stage] = reconstruct_stage_job_attribution(manifest, runtime_waves=waves).values()
+
+    assert stage["attribution"] == "ambiguous"
+    assert stage["managed_job_id"] == ""
+
+
 @pytest.mark.parametrize("earlier_attempt", [1, 2])
 def test_refinement_stage_uses_latest_wave_and_retains_prior_attempts(earlier_attempt):
     manifest = _manifest(root_job="")
@@ -274,6 +334,31 @@ def test_missing_or_conflicting_wave_order_remains_ambiguous(keys):
     waves = [
         {**_wave(index, "augment", job), "key": key}
         for index, job, key in zip((4, 7), ("40", "70"), keys, strict=True)
+    ]
+    info = reconstruct_stage_job_attribution(_manifest(), runtime_waves=waves)[
+        "augment"
+    ]
+    assert info["managed_job_id"] == ""
+    assert info["attribution"] == "ambiguous"
+
+
+@pytest.mark.parametrize("earlier_attempt", [1, 3])
+def test_numbered_wave_order_survives_reordered_runtime_history(earlier_attempt):
+    waves = [
+        _wave(7, "augment", "70", status="running"),
+        _wave(4, "augment", "40", attempt=earlier_attempt, status="succeeded"),
+    ]
+    info = reconstruct_stage_job_attribution(_manifest(), runtime_waves=waves)[
+        "augment"
+    ]
+    assert info["managed_job_id"] == "70"
+    assert info["attempts"][-1]["job_id"] == "70"
+
+
+def test_uncertain_wave_order_cannot_choose_a_higher_attempt_from_another_wave():
+    waves = [
+        {**_wave(4, "augment", "40", attempt=3), "key": "004|serial|:augment:-"},
+        {**_wave(7, "augment", "70"), "key": "004|other|:augment:-"},
     ]
     info = reconstruct_stage_job_attribution(_manifest(), runtime_waves=waves)[
         "augment"
