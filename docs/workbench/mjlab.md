@@ -6,13 +6,21 @@ authenticated HTTP service, and declarative workflows.
 
 Use a Nebius GPU workflow for training. The image recipe is
 `npa/docker/workbench/mjlab/Dockerfile`; its pinned dependency closure includes
-PyTorch 2.13.0's CUDA 13.0 wheels. **The MJLab image is not a published release.** Build
-an operator image and supply its complete reference in the workflow GPU resource
-profile (`image_id: docker:<your-image>`). The current private CUDA 13.0 image
-has executed G1 training, checkpoint resume and rendered evaluation on RTX PRO
-6000. Earlier B200 and RTX acceptance uses a separate CUDA 12.8 image; its results
-remain bound to those bytes. Public promotion remains quarantined until the
-exact-image security, licensing and bootstrap gates pass.
+PyTorch 2.13.0's CUDA 13.0 wheels. A **public development candidate** is available
+with [digest-bound image and RTX GPU evidence](validation/mjlab-public-gpu-20261010.json).
+Use its exact digest in the workflow GPU resource profile:
+
+```yaml
+image_id: docker:ghcr.io/nebius/nebius-physical-ai/npa-mjlab@sha256:a3d70cf5147253431c349696eaaf0bf37fbc0bb325e0a25afb3962b57da6681f
+```
+
+This image passed trusted publication gates and one-GPU RTX PRO 6000 native
+Cartpole/G1/Go1/YAM train/eval/ONNX checks, authenticated service resume and
+isolation checks, and G1 video rendering/decoding. The task checks used two
+training updates each and establish functional capability. Supported-release
+promotion remains quarantined; defaults still require an explicit image.
+Earlier B200, multi-GPU and trained G1 evidence remains bound to its separate
+recorded image bytes.
 
 ```bash
 npa workbench workflow validate-spec workflows/testing/mjlab-train-eval.yaml
@@ -116,7 +124,9 @@ that the MP4 decodes before publishing it. The result manifest lists both
 and byte count.
 
 `rollout.html` embeds the unchanged MP4 bytes, measured evaluation results and
-the input checkpoint hash. Download and open it directly, or create an
+the input checkpoint hash. It also records the evaluated device, measured GPU
+model and compute capability, Torch/CUDA versions, and baked source revision.
+Download and open it directly, or create an
 authenticated S3 GET URL with response content type `text/html` and content
 disposition `inline`. The page needs no separate viewer server, JavaScript,
 external media request or bucket CORS change. Keep signed links out of Git and

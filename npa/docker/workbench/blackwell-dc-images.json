@@ -81,7 +81,7 @@
       "verdict": "ready",
       "validation": "pending-hardware",
       "smoke": "npa.smoke.test_mjlab_functional: native CUDA Cartpole PPO update, checkpoint-backed complete episodes and checked ONNX policy export.",
-      "notes": "Current CUDA 13.0 operator image dev-0202f396fb23f7d066fd452b469578e67151d382 has run G1 checkpoint resume, independent-seed evaluation, MP4/HTML rendering and ONNX export on RTX PRO 6000. Torch 2.13.0+cu130 reports sm_100 and sm_120, but these current bytes have not run on B200/B300. The older CUDA 12.8 image has separate B200 one/eight-GPU and RTX acceptance in docs/workbench/validation/mjlab-gpu-20260924.json. Current trained rollout: docs/workbench/validation/mjlab-trained-g1-20260925.json. Public publication remains quarantined.",
+      "notes": "The public CUDA 13.0 development image dev-06764a544844f93324bdf75a378c1a7139802c9a passed native Cartpole/G1/Go1/YAM train/eval/ONNX cycles, service resume/auth/scope/concurrency and decoded G1 rendering on one RTX PRO 6000. These two-update cycles establish functionality, not policy quality. Torch 2.13.0+cu130 reports sm_100 and sm_120; this digest has not run on B200/B300 or multiple GPUs. Earlier CUDA 12.8 acceptance and the 2026-09-25 trained G1 rollout apply only to their recorded bytes. Supported release promotion remains quarantined.",
       "measured_arch_list": [
         "sm_75",
         "sm_80",
@@ -89,7 +89,10 @@
         "sm_90",
         "sm_100",
         "sm_120"
-      ]
+      ],
+      "candidate_digest": "sha256:a3d70cf5147253431c349696eaaf0bf37fbc0bb325e0a25afb3962b57da6681f",
+      "candidate_tag": "dev-06764a544844f93324bdf75a378c1a7139802c9a",
+      "qualification": "docs/workbench/validation/mjlab-public-gpu-20261010.json"
     },
     {
       "name": "npa-sam3",

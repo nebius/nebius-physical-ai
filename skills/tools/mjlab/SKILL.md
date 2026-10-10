@@ -62,9 +62,12 @@ fall back to unsafe pickle.
   different image bytes. The current CUDA 13.0 candidate has a separate trained
   G1 RTX rollout record in `docs/workbench/validation/mjlab-trained-g1-20260925.json`.
   See the guide for exact artifacts and measured scope.
-  The image remains publication-quarantined.
-  Require an explicit operator-built image override until exact-image security,
-  license and bootstrap gates pass. Do not route to SONIC's image.
+  The public development digest in `docs/workbench/validation/mjlab-public-gpu-20261010.json`
+  passed trusted image gates, native Cartpole/G1/Go1/YAM cycles, service checks
+  and decoded G1 rendering on one RTX PRO 6000. Those two-update task smokes do
+  not establish policy quality or current B200/multi-GPU acceptance.
+  Supported-release promotion remains quarantined. Use that explicit digest
+  override or an independently qualified operator image. Do not route to SONIC's image.
 - Keep orchestration in declarative workflow YAML, not a SONIC Python runner.
 
 ## Validation

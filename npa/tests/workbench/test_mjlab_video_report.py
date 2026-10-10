@@ -36,6 +36,12 @@ def test_page_embeds_exact_video_and_measured_provenance(tmp_path):
         "mean_episode_length": 1000,
         "score": 0.0,
         "episodes": [{"return": 52.25, "survived": False}],
+        "runtime": {
+            "device": "cuda:0",
+            "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+            "compute_capability": [12, 0],
+            "image_source_sha": "b" * 40,
+        },
     }
     write_video_report(tmp_path, request, report, "a" * 64)
     html = (tmp_path / "rollout.html").read_text()
@@ -50,6 +56,7 @@ def test_page_embeds_exact_video_and_measured_provenance(tmp_path):
     assert provenance["video_sha256"] == hashlib.sha256(video).hexdigest()
     assert provenance["survival_fraction"] == 0.0
     assert provenance["episodes"] == report["episodes"]
+    assert provenance["runtime"] == report["runtime"]
     assert provenance["task"] == request.task
     policy = next(
         attrs["content"]

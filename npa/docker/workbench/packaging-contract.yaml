@@ -585,6 +585,7 @@ images:
     ports: [8080]
     passwordless_root_exemption: "SkyPilot bootstrap only; service deployment disables privilege escalation, no default SSH daemon or credentials."
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
     notes: >-
       Apache-2.0 MJLab 1.6.0 and MuJoCo with a hash-locked CUDA wheel closure.
       No checkpoints, motion datasets, credentials or populated runtime caches.
@@ -592,8 +593,14 @@ images:
       train/eval/export and service qualification. The CUDA 13.0 candidate has
       separate RTX PRO 6000 G1 training/resume, evaluation, MP4/HTML and ONNX
       evidence in docs/workbench/validation/mjlab-trained-g1-20260925.json.
-      Public promotion still requires built-layer license/security and bootstrap
-      gates; see mjlab/REDISTRIBUTION.md and docs/workbench/mjlab.md.
+      Debian ancestor/runtime source and the locked PyAV native source closure
+      accompany the image and are verified before and after publication.
+      The 2026-10-10 public development digest passed the trusted built-layer
+      license/security, source, payload, bootstrap, SBOM and provenance gates,
+      plus native Cartpole/G1/Go1/YAM cycles on one RTX PRO 6000. The dated
+      record is docs/workbench/validation/mjlab-public-gpu-20261010.json.
+      Supported release promotion remains quarantined; current-digest B200 and
+      multi-GPU coverage are unverified. See docs/workbench/mjlab.md.
   curobo:
     dockerfile: curobo/Dockerfile
     tier: service
