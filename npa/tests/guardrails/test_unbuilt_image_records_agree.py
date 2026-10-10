@@ -1,18 +1,20 @@
-"""Four separate files claim whether an image has been built. They must agree.
+"""Four separate files claim whether an image has a current candidate. They must agree.
 
-"This image has not been built yet" is recorded in four places, each of which a
-different guard reads:
+"A current candidate has not been built yet" is recorded in four places, each
+of which a different guard reads:
 
 * ``images.UNVALIDATED_PUBLICATION_TOOLS`` — what ``publish_public`` refuses;
 * the supported or quarantined-candidate version inventory — normally a tag
   ending ``-unbuilt``; neutral bootstrap display sentinels stay outside the
   accepted ``SUPPORTED_TOOL_VERSIONS`` inventory;
-* ``blackwell-dc-images.json`` — ``validation: pending-build``;
+* ``blackwell-dc-images.json`` — ``validation: pending-build`` when no accepted
+  current candidate or complete current byte-scan proof exists;
 * ``golden_evals.yaml`` — a golden eval that is not ``ready``.
 
-Build day removes one of them. The other three then go stale silently, and every
-one of them is a claim about what has been *proven* — the exact class of claim
-this repository is careful about everywhere else. So the equivalence is asserted
+Build and qualification day removes one of them. The other three then go stale
+silently, and every one of them is a claim about what has been *proven* — the
+exact class of claim this repository is careful about everywhere else. Retained
+quarantined bytes are not current candidates. So the equivalence is asserted
 rather than left to whoever does the build remembering all four.
 """
 
@@ -39,6 +41,8 @@ from npa.deploy.images import (
     UNBUILT_CANDIDATE_TOOL_VERSIONS,
     UNVALIDATED_PUBLICATION_TOOLS,
     VALIDATION_CANDIDATE_TOOLS,
+    public_release_tag_for_tool,
+    publicly_publishable_tools,
     supported_tool_version,
 )
 
@@ -218,8 +222,43 @@ def test_ray_serve_catalog_does_not_overstate_layer_stale_bytes() -> None:
     # assertion restores current release or publication eligibility.
     assert historical_publication["tag"] == SUPPORTED_TOOL_VERSIONS[tool]
     assert historical_publication["digest"] == GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[tool]
+    assert "H200" in str(entry["notes"])
     assert "validated_digest" not in entry
     assert "published_digest" not in entry
+
+
+def test_agent_indexes_describe_quarantined_ray_serve_as_unavailable() -> None:
+    """Agent routing must not direct deployment of quarantined historical bytes."""
+
+    expected = "quarantined and must not be deployed or started"
+    for index in (REPO_ROOT / "AGENTS.md", REPO_ROOT / "CLAUDE.md"):
+        text = re.sub(r"\s+", " ", index.read_text(encoding="utf-8"))
+        assert "cosmos3-ray-serve" in text
+        assert expected in text
+
+
+def test_catalog_quarantines_are_excluded_from_public_selection() -> None:
+    """Every declared catalog quarantine must be excluded by release selection."""
+
+    image_to_tool = {image: tool for tool, image in CONTAINER_IMAGE_NAMES.items()}
+    publishable = set(publicly_publishable_tools())
+    quarantined = {
+        image_name
+        for image_name, entry in _blackwell_images().items()
+        if entry.get("verdict") == "quarantined"
+    }
+    assert quarantined
+
+    for image_name in quarantined:
+        tool = image_to_tool.get(image_name)
+        assert tool is not None, image_name
+        assert tool in PUBLICATION_QUARANTINE_TOOLS, tool
+        assert tool not in publishable, tool
+        try:
+            public_release_tag_for_tool(tool)
+        except ValueError:
+            continue
+        raise AssertionError(f"{tool} must not have a public release tag")
 
 
 def test_stale_publication_quarantine_propagates_to_derived_images() -> None:

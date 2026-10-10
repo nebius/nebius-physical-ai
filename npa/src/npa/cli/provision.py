@@ -10,6 +10,7 @@ import typer
 
 from npa.cluster.gpu_health import (
     DEFAULT_CUDA_SMOKE_IMAGE,
+    DEFAULT_GRAPHICS_SMOKE_IMAGE,
     DEFAULT_STABILIZATION_SECONDS,
 )
 from npa.provisioning import provision_if_absent
@@ -116,6 +117,11 @@ def provision_if_absent_cmd(
         "--gpu-cuda-smoke-image",
         help="Container image for CUDA vectorAdd validation.",
     ),
+    gpu_graphics_smoke_image: str = typer.Option(
+        DEFAULT_GRAPHICS_SMOKE_IMAGE,
+        "--gpu-graphics-smoke-image",
+        help="Operator-controlled image for RTX GLX/EGL/Vulkan validation; the default follows public-image policy.",
+    ),
     mig_enabled: bool = typer.Option(
         False,
         "--mig/--no-mig",
@@ -198,6 +204,7 @@ def provision_if_absent_cmd(
         gpu_health_timeout_minutes=gpu_health_timeout_minutes,
         gpu_cuda_smoke=gpu_cuda_smoke,
         gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+        gpu_graphics_smoke_image=gpu_graphics_smoke_image,
         mig_enabled=mig_enabled,
         mig_strategy=mig_strategy,
         mig_config=mig_config,

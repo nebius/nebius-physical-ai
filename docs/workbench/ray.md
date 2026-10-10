@@ -122,9 +122,12 @@ do not apply Ray Train V1 restore APIs.
 
 Cosmos3-Nano has the only first-class Workbench Ray Serve source path, but no
 current accepted deployment image. The historical Ray Serve digest is quarantined
-and must not be started or used for batch submission. After a rebuilt candidate
-passes its exact-image security and capability gates, verify credentials, model
-access, and that accepted candidate definition before starting GPU work:
+and excluded from public/default selection; do not start it or use it for batch
+submission. Its explicit development-tag resolver form is for a separately
+rebuilt validation candidate, not an authorization for the retained digest.
+After a rebuilt candidate passes its exact-image security and capability gates,
+verify credentials, model access, and that accepted candidate definition before
+starting GPU work:
 
 ```bash
 npa workbench health preflight --checks hf,ngc,s3 --json

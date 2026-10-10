@@ -24,7 +24,7 @@ RUN /opt/npa/model_source.sh \
       2b90b9f5ceec907a1c18123530e92e794ad901a4 \
       sam2 setup.py pyproject.toml MANIFEST.in LICENSE LICENSE_cctorch README.md \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps \
-      protobuf==6.33.6 hydra-core==1.3.2 omegaconf==2.3.0 antlr4-python3-runtime==4.9.3 iopath==0.1.10 portalocker==3.2.0 \
+      protobuf==6.33.6 hydra-core==1.3.7 omegaconf==2.3.0 antlr4-python3-runtime==4.9.3 iopath==0.1.10 portalocker==3.2.0 \
     && /opt/wan-base/bin/python -m pip freeze --all > /opt/byof/npa_baked_python_inventory.txt \
     && ! grep -Eiq '^(torch|torchvision|torchaudio|nvidia-)' /opt/byof/npa_baked_python_inventory.txt \
     && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \

@@ -12,12 +12,12 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from packaging.utils import canonicalize_name
 from security_dependencies import scan_dependencies
 from security_source import scan_source
 
-# Application and CI inputs must stay clean even when an advisory is newly
-# published for a version already on main. Vendor/runtime inventories retain
-# differential checks until their separately validated images can be rebuilt.
+# Application and CI inputs, plus remediated workbench dependency families,
+# must stay clean when an advisory is newly published for a version on main.
 _STRICT_DEPENDENCY_PATHS = {
     "npa/requirements-lock.txt",
     "npa/ci/requirements.txt",
@@ -26,6 +26,36 @@ _STRICT_DEPENDENCY_PATHS = {
     "npa/tests/browser/package-lock.json",
     "scripts/security-requirements.txt",
 }
+_STRICT_WORKBENCH_PACKAGES = {
+    "fsspec",
+    "gitpython",
+    "hydra-core",
+    "multidict",
+    "oauthlib",
+    "urllib3",
+    "virtualenv",
+    "werkzeug",
+}
+_STRICT_WORKBENCH_PATH_PREFIXES = (
+    "npa/docker/workbench/",
+    "npa/workflows/workbench/",
+)
+# This immutable source evidence is not copied into the candidate image.
+_DIFFERENTIAL_DEPENDENCY_PATHS = {
+    "npa/docker/workbench/robomimic/baked-requirements.lock",
+}
+
+
+def _strict_dependency_finding(finding: dict) -> bool:
+    """Return whether a dependency vulnerability must block without subtraction."""
+    path = finding["path"]
+    if path in _DIFFERENTIAL_DEPENDENCY_PATHS:
+        return False
+    package = canonicalize_name(finding["identity"].partition("==")[0])
+    return path in _STRICT_DEPENDENCY_PATHS or (
+        path.startswith(_STRICT_WORKBENCH_PATH_PREFIXES)
+        and package in _STRICT_WORKBENCH_PACKAGES
+    )
 
 
 def _git(root: Path, *arguments: str) -> bytes:
@@ -150,23 +180,20 @@ def _scan(root: Path, output: Path, cache: Path) -> list[dict]:
 
 
 def blocking_findings(base: list[dict], candidate: list[dict]) -> list[dict]:
-    """Reject current application vulnerabilities as well as new occurrences.
+    """Reject current production dependency vulnerabilities and new occurrences.
 
     Args:
         base: Findings from the target revision under the same scanner policy.
         candidate: Findings from the proposed merge.
     Returns:
-        All application/CI dependency findings and new findings elsewhere.
+        All strict dependency findings and new findings elsewhere.
     Raises:
         KeyError: A scanner omitted a required identity field.
     """
     tolerated = [
         finding
         for finding in base
-        if not (
-            finding["scanner"] == "trivy"
-            and finding["path"] in _STRICT_DEPENDENCY_PATHS
-        )
+        if not (finding["scanner"] == "trivy" and _strict_dependency_finding(finding))
     ]
     return regressions(tolerated, candidate)
 

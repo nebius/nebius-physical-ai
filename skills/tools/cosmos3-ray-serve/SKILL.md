@@ -11,10 +11,12 @@ per sample. Do not substitute `npa-cosmos3-serving`: that image serves
 Cosmos3-Super through vLLM-Omni and has a different model/API/runtime contract.
 
 > **Current release status:** Cosmos3 Ray Serve has no currently qualified image.
-> The retained historical bytes are quarantined and must not be selected, started,
-> or described as a release. Historical tags, digests, and B200/RTX observations
-> do not qualify a replacement; wait for a separately rebuilt and qualified
-> candidate.
+> The retained historical bytes are quarantined, excluded from public/default
+> selection, and must not be started or described as a release. The explicit
+> development-tag resolver form is for a separately rebuilt validation candidate,
+> not an authorization for the retained tag. Historical tags, digests, and
+> B200/RTX/H200 observations do not qualify a replacement; wait for a separately
+> rebuilt and qualified candidate.
 
 ## Non-negotiable contract
 

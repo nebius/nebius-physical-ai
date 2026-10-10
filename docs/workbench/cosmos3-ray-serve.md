@@ -176,7 +176,10 @@ There is no currently supported public Ray Serve release. The retained
 development tag `dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` as resolving to
 `sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d`.
 That retained digest is quarantined after the current archive scan found
-inherited credential material. Its B200 and RTX PRO 6000 two-sample observations
-remain historical evidence only and do not qualify the retained bytes or any
-rebuilt candidate. A replacement must independently satisfy the current security
-and capability gates on each claimed device.
+inherited credential material. Its B200, RTX PRO 6000, and H200 two-sample
+observations remain historical evidence only and do not qualify the retained
+bytes or any rebuilt candidate. The explicit `dev-<full-source-sha>` resolver
+form is reserved for separately rebuilt candidate validation; it does not make
+this retained tag eligible or authorize service start. A replacement must
+independently satisfy the current security and capability gates on each claimed
+device.

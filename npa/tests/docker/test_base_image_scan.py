@@ -21,6 +21,49 @@ def _entries() -> list[dict[str, object]]:
     return scanner.load_inventory(INVENTORY)
 
 
+@pytest.mark.parametrize(
+    ("image", "expected"),
+    [
+        (
+            "python:3.12-slim@sha256:digest",
+            "mirror.gcr.io/library/python:3.12-slim@sha256:digest",
+        ),
+        (
+            "nvidia/cuda:12.6.3-runtime@sha256:digest",
+            "mirror.gcr.io/nvidia/cuda:12.6.3-runtime@sha256:digest",
+        ),
+        (
+            "docker.io/python:3.12-slim@sha256:digest",
+            "mirror.gcr.io/library/python:3.12-slim@sha256:digest",
+        ),
+        (
+            "registry-1.docker.io/nvidia/cuda@sha256:digest",
+            "mirror.gcr.io/nvidia/cuda@sha256:digest",
+        ),
+        (
+            "registry.docker.io/nvidia/cuda@sha256:digest",
+            "mirror.gcr.io/nvidia/cuda@sha256:digest",
+        ),
+        (
+            "registry.hub.docker.com/library/python@sha256:digest",
+            "mirror.gcr.io/library/python@sha256:digest",
+        ),
+        (
+            "ghcr.io/example/base:latest@sha256:digest",
+            "ghcr.io/example/base:latest@sha256:digest",
+        ),
+        (
+            "localhost:5000/example/base@sha256:digest",
+            "localhost:5000/example/base@sha256:digest",
+        ),
+    ],
+)
+def test_docker_hub_digests_use_the_public_mirror(image: str, expected: str) -> None:
+    """Avoid anonymous Docker Hub throttling without changing image identity."""
+
+    assert scanner._docker_hub_mirror_reference(image) == expected
+
+
 @pytest.mark.parametrize("entry", _entries(), ids=lambda entry: entry["name"])
 def test_scan_target_applies_only_declared_preparation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, entry: dict[str, object]
@@ -46,17 +89,24 @@ def test_scan_target_applies_only_declared_preparation(
     monkeypatch.setattr(scanner.subprocess, "run", record)
     target = scanner.prepare_target(entry, tmp_path)
     if not entry["purge_linux_libc_dev"] and not entry["upgrade_os"]:
-        assert target == entry["image"] and calls == []
+        assert target == scanner._docker_hub_mirror_reference(str(entry["image"]))
+        assert calls == []
         return
     assert target == tmp_path / "image.tar"
     create, build, remove = [command for command, _ in calls]
     builder = create[create.index("--name") + 1]
     assert create[create.index("--driver") + 1] == "docker-container"
+    assert create[create.index("--driver-opt") + 1] == (
+        f"image={scanner._BUILDKIT_IMAGE}"
+    )
+    assert scanner._BUILDKIT_IMAGE.startswith("mirror.gcr.io/moby/buildkit:")
     assert build == scanner.preparation_command(
         entry, builder, target, tmp_path / "context"
     )
     assert remove == ["docker", "buildx", "rm", "--force", builder]
     assert "--load" not in build and "-t" not in build
+    expected_base = scanner._docker_hub_mirror_reference(str(entry["image"]))
+    assert f"BASE_IMAGE={expected_base}" in build
     assert calls[1][1]["input"] == scanner._PATCH_DOCKERFILE
     assert "FROM ${BASE_IMAGE}" in scanner._PATCH_DOCKERFILE
 

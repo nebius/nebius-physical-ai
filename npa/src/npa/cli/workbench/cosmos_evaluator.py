@@ -14,6 +14,8 @@ from typing import Any
 
 import typer
 
+from npa.lifecycle_intent import json_stdout_contract
+
 app = typer.Typer(
     name="cosmos-evaluator",
     help=(
@@ -49,6 +51,74 @@ def _emit(payload: dict[str, Any], *, output: OutputFormat, text: str) -> None:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
         typer.echo(text)
+
+
+def _report_table(payload: dict[str, Any]) -> str:
+    gate = payload["reported_gate"]
+    threshold = gate.get("threshold", "not_evaluated")
+    lines = [
+        f"report status: {payload['report_status']}",
+        f"gate score: {gate['score']}  passed: {gate['passed']}  threshold: {threshold}",
+        f"evaluation state: {payload['evaluation_state']}  evidence complete: {payload['evidence_complete']}",
+        "score is not calibrated confidence; multi-view assessment is not evaluated.",
+        "variant\tscore\tpassed\tattributes\thallucination\ttemporal\tappearance",
+    ]
+    for variant in payload["variants"]:
+        diagnostics = variant["diagnostics"]
+        cells = [_diagnostic_cell(diagnostics[name]) for name in diagnostics]
+        lines.append(
+            f"{variant['id']}\t{variant['score']}\t{variant['passed']}\t"
+            + "\t".join(cells)
+        )
+    return "\n".join(lines)
+
+
+def _diagnostic_cell(diagnostic: dict[str, Any]) -> str:
+    enforcement = diagnostic["enforcement"]
+    if "score" not in diagnostic:
+        return f"{diagnostic['status']} ({enforcement})"
+    return (
+        f"{diagnostic['status']} ({enforcement}; score={diagnostic['score']}; "
+        f"passed={diagnostic['passed']})"
+    )
+
+
+@app.command("report")
+@json_stdout_contract
+def report_cmd(
+    input_path: str = typer.Option(
+        ...,
+        "--input-path",
+        help="Exact local evaluator-report JSON path or exact S3 object URI.",
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output-format",
+        "--output",
+        help="Render a concise table or one JSON diagnostic projection.",
+    ),
+) -> None:
+    """Inspect a Cosmos report; use insights report for the shared interface.
+
+    Args:
+        input_path: Exact local JSON path or exact S3 evaluator-report object.
+        output_format: Table output by default, or one JSON document.
+    Returns:
+        None.
+    Raises:
+        typer.Exit: The report cannot be read or fails validation.
+    """
+    from npa.workbench.cosmos_evaluator import (
+        CosmosEvaluatorReportError,
+        inspect_evaluator_report,
+    )
+
+    try:
+        payload = inspect_evaluator_report(input_path)
+    except CosmosEvaluatorReportError as exc:
+        _fail(str(exc))
+        return
+    _emit(payload, output=output_format, text=_report_table(payload))
 
 
 @app.command("evaluate")

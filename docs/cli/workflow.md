@@ -10,6 +10,7 @@ Multi-stage training workflow orchestration.
 Options
 --help  Show this message and exit.
 Commands
+schema  Print the authoritative workflow JSON Schema as one JSON document.
 prepare-run  Prepare a project/workflow-scoped fresh or explicit-resume run ID.
 submit  Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller.
 run  Run a named workflow end-to-end.
@@ -27,9 +28,11 @@ plan-spec  Expand an NPA workflow spec into an execution plan (dry-run).
 run-spec  Run or plan an NPA workflow spec.
 preflight-images  Prove every image this spec pulls through each selected execution path.
 gpus  Print advertised GPU names using an owned API for a selected context.
+check-input  Check PAIDF MP4 or LeRobot selection and decoding without uploading.
 reconcile-controller  Reconcile an orphaned workflow against its original exclusive controller.
 reconcile-absent  Verify original native absence without inferring historical job success.
 trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
+batch  Submit dataset episodes as independent durable workflow runs.
 demo  Run complete public sample workflows and view their results.
 challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 ```
@@ -44,6 +47,7 @@ challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 
 | Command | Description |
 | --- | --- |
+| `schema` | Print the authoritative workflow JSON Schema as one JSON document. |
 | `prepare-run` | Prepare a project/workflow-scoped fresh or explicit-resume run ID. |
 | `submit` | Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller. |
 | `run` | Run a named workflow end-to-end. |
@@ -61,9 +65,11 @@ challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 | `run-spec` | Run or plan an NPA workflow spec. |
 | `preflight-images` | Prove every image this spec pulls through each selected execution path. |
 | `gpus` | Print advertised GPU names using an owned API for a selected context. |
+| `check-input` | Check PAIDF MP4 or LeRobot selection and decoding without uploading. |
 | `reconcile-controller` | Reconcile an orphaned workflow against its original exclusive controller. |
 | `reconcile-absent` | Verify original native absence without inferring historical job success. |
 | `trigger` | Watch S3-compatible data prefixes and retrigger Workbench workflows. |
+| `batch` | Submit dataset episodes as independent durable workflow runs. |
 | `demo` | Run complete public sample workflows and view their results. |
 | `challenge` | Prepare a BEHAVIOR DEV evaluation from one setup file. |
 
@@ -71,7 +77,7 @@ challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 
 ```bash
 npa workbench workflow --help
-npa workbench workflow prepare-run --help
+npa workbench workflow schema --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `workflow`.

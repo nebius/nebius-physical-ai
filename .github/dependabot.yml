@@ -9,6 +9,14 @@ updates:
     directories:
       - /npa
       - /scripts
+    # /npa includes nested manifests; CI pins must use ci_requirements.py.
+    exclude-paths:
+      - ci/**
+    ignore:
+      # Upgrades need the CPU runtime assertion and wheel checks updated together.
+      - dependency-name: torch
+      # Gymnasium Robotics requires the tested engine pinned in pyproject.toml.
+      - dependency-name: mujoco
     patterns: ["*"]
     multi-ecosystem-group: dependencies
   - package-ecosystem: npm

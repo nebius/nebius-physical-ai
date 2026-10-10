@@ -38,6 +38,12 @@ nvcr.io**, which `npa/tests/docker/test_packaging_contract.py::
 test_no_image_builds_from_an_nvcr_base` now enforces — so no build depends on an NGC
 login, and every base digest is resolvable anonymously.
 
+CI fetches those Docker Hub references through `mirror.gcr.io`, including the
+isolated BuildKit driver image. The original repository, tag, and SHA256 digest
+remain intact, so the mirror cannot substitute different image content. This
+avoids coupling required security checks to Docker Hub's anonymous pull-rate
+window; scans never fall back to a tag-only or otherwise unpinned reference.
+
 ### OSS source-built images (Lichtblick)
 
 Some workbench images build a third-party OSS project from source rather than
@@ -114,7 +120,8 @@ fast path. Each runner downloads the Trivy database for its private entry cache.
 archive, mutable Trivy cache, and temporary layer files on completion or failure.
 Patched targets export directly from an isolated Buildx `docker-container`
 builder, which is removed before the archive scan begins. Unmodified digest
-references use Trivy's remote source, avoiding the shared Docker image store.
+references use Trivy's remote source through the same digest-preserving public
+mirror, avoiding the shared Docker image store and anonymous Docker Hub limits.
 No global image, builder, or volume pruning occurs. A builder-removal failure
 fails validation and retains its private `builder.json` and Buildx configuration
 for recovery; it is never reported as successful cleanup.

@@ -2069,7 +2069,13 @@ def render_novel_views(
             command=tuple(command),
         )
 
-    result = _run(command, env=_nre_env(config, env), run=run, timeout=timeout)
+    from npa.workbench.nurec.render_evidence import (
+        RenderTelemetry,
+        write_render_evidence,
+    )
+
+    with RenderTelemetry() as telemetry:
+        result = _run(command, env=_nre_env(config, env), run=run, timeout=timeout)
     if result.returncode != 0:
         return NurecRenderResult(
             ok=False,
@@ -2089,6 +2095,14 @@ def render_novel_views(
     frames = count_render_frames(output_dir)
     videos = len(list(Path(output_dir).rglob("*.mp4")))
     errors = [] if frames else ["render produced no frames"]
+    if not errors:
+        write_render_evidence(
+            Path(output_dir),
+            Path(artifact_path),
+            telemetry,
+            renderer=renderer,
+            novel_view=not replicate_training_views,
+        )
     return NurecRenderResult(
         ok=not errors,
         artifact_path=artifact_path,
