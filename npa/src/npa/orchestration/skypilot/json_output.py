@@ -17,8 +17,8 @@ _EMPTY_QUEUE_MESSAGES = {
     "sky.exceptions.clusternotuperror: no in-progress managed jobs.",
 }
 
-# SkyPilot 0.12.2 emits this client/server configuration notice before queue JSON.
-# Its embedded key list is not a second queue document. Only the exact allowed_clouds
+# SkyPilot 0.12.2 emits this client/server notice before queue and status JSON.
+# Its embedded key list is not a second document. Only the exact allowed_clouds
 # notice is admitted; other configuration differences remain unverified.
 _ALLOWED_CLOUDS_CONFIG_WARNING = (
     'The following keys (["allowed_clouds"]) have different values in the client '
@@ -35,6 +35,11 @@ def _without_allowed_clouds_warning(output: str) -> str:
         for line in str(output or "").splitlines()
         if line.strip() != _ALLOWED_CLOUDS_CONFIG_WARNING
     )
+
+
+def parse_cli_json_output(output: str) -> Any:
+    """Parse one complete CLI JSON document after the exact pinned notice."""
+    return json.loads(_without_allowed_clouds_warning(output))
 
 
 def queue_rows_from_output(output: str) -> list[dict[str, Any]] | None:

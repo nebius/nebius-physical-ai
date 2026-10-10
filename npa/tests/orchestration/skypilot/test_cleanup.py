@@ -27,6 +27,14 @@ from npa.orchestration.skypilot import controller as controller_module
 from npa.orchestration.skypilot import resources as resources_module
 
 
+_PINNED_CONFIG_NOTICE = (
+    'The following keys (["allowed_clouds"]) have different values in the client '
+    "SkyPilot config with the server and will be ignored. Remove these keys to "
+    "disable this warning. If you want to specify it, please modify it on server "
+    "side or contact your administrator."
+)
+
+
 def _fake_sky(tmp_path: Path) -> Path:
     sky = tmp_path / "sky"
     sky.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -792,6 +800,64 @@ def test_jobs_controller_inventory_discovers_exact_name_without_refresh(
     assert calls[0][1] is None
     assert [item["name"] for item in clusters] == ["sky-jobs-controller-abc123"]
     assert error == ""
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_jobs_controller_inventory_accepts_pinned_config_notice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, wrapped: bool
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    rows = [{"name": "sky-jobs-controller-example", "status": "UP"}]
+    payload = {"clusters": rows} if wrapped else rows
+    stdout = _PINNED_CONFIG_NOTICE + "\n" + json.dumps(payload)
+    monkeypatch.setattr(
+        cleanup_module,
+        "_run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout, ""),
+    )
+
+    clusters, error = cleanup_module._jobs_controller_clusters(
+        isolated_config_dir=tmp_path,
+        config_path=None,
+        sky_bin=sky_bin,
+        refresh=False,
+    )
+
+    assert clusters == rows
+    assert error == ""
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "",
+        _PINNED_CONFIG_NOTICE,
+        _PINNED_CONFIG_NOTICE + "\n[]\n[]",
+        _PINNED_CONFIG_NOTICE + "\n[",
+        _PINNED_CONFIG_NOTICE.replace("allowed_clouds", "region") + "\n[]",
+        _PINNED_CONFIG_NOTICE[:-1] + "\n[]",
+        'Warning: unrecognized diagnostic ["allowed_clouds"]\n[]',
+    ],
+)
+def test_jobs_controller_inventory_rejects_unverified_status_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stdout: str
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        cleanup_module,
+        "_run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout, ""),
+    )
+
+    clusters, error = cleanup_module._jobs_controller_clusters(
+        isolated_config_dir=tmp_path,
+        config_path=None,
+        sky_bin=sky_bin,
+        refresh=False,
+    )
+
+    assert clusters == []
+    assert "non-json output" in error
 
 
 def test_controller_pod_scope_excludes_unrelated_shared_controller() -> None:
