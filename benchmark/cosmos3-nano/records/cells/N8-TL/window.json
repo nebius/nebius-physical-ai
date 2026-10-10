@@ -1,0 +1,111 @@
+{
+  "boundary": "first production dispatch to final response persisted; validation excluded",
+  "comparison_basis": "nano_h200_p2_cell",
+  "concurrency": 1,
+  "derived": {
+    "attempts": 24,
+    "clip_video_seconds": 8.0,
+    "clips_per_node_hour": 75.5,
+    "max_client_wall_s": 383.0,
+    "median_client_wall_s": 376.248,
+    "p95_client_wall_s": 382.994,
+    "valid_attempts": 24,
+    "video_seconds_per_node_hour": 603.9,
+    "window_seconds": 1144.577
+  },
+  "dispatch_schedule": "synchronized_rounds",
+  "expected": {
+    "fps": 24.0,
+    "frames": 192,
+    "height": 480,
+    "max_seconds": 8.08,
+    "min_seconds": 7.92,
+    "width": 832
+  },
+  "expected_adopted_from_warmup": true,
+  "node_gpu_count": 8,
+  "prompt_hashes": {
+    "negative_prompt": "a5a4a056c865eb1ae9b6f1c5ca65a1f7d6f99eb6dcbc0cea22d7c4f58d11b089",
+    "prompt": "f8423e3ea12c27f5781fdd0cdb2de4fe2ed0c7f9817615e194b420f0d197d578"
+  },
+  "protocol_version": "v1-p2-runlocal",
+  "replica_ports": [
+    8100,
+    8101,
+    8102,
+    8103,
+    8104,
+    8105,
+    8106,
+    8107
+  ],
+  "replicas": 8,
+  "rounds": [
+    {
+      "attempt_index_start": 0,
+      "attempt_index_stop": 1,
+      "finished_utc": "2026-10-05T23:03:11.160846Z",
+      "requests": 8,
+      "round": 0,
+      "started_utc": "2026-10-05T22:56:48.144088Z"
+    },
+    {
+      "attempt_index_start": 1,
+      "attempt_index_stop": 2,
+      "finished_utc": "2026-10-05T23:09:29.709530Z",
+      "requests": 8,
+      "round": 1,
+      "started_utc": "2026-10-05T23:03:11.160872Z"
+    },
+    {
+      "attempt_index_start": 2,
+      "attempt_index_stop": 3,
+      "finished_utc": "2026-10-05T23:15:52.720614Z",
+      "requests": 8,
+      "round": 2,
+      "started_utc": "2026-10-05T23:09:29.709547Z"
+    }
+  ],
+  "spec": {
+    "extra_params": {
+      "control_guidance": 1.5,
+      "edge": {
+        "preset_edge_threshold": "medium"
+      },
+      "guardrails": false,
+      "max_frames": 192,
+      "num_video_frames_per_chunk": 297,
+      "resolution": "480"
+    },
+    "files": {
+      "input_reference": "inputs/lerobot/episode0-832x480-24fps.mp4"
+    },
+    "negative_compact_json": true,
+    "negative_file": "inputs/transfer/negative_prompt.json",
+    "note": "Edge transfer at the Workbench augmentation contract (832x480, 24 fps, 35 steps, guidance 3, control guidance 1.5, medium Canny) on lerobot/aloha_static_cups_open episode 0 cam_high, 8 s letterboxed; edge derived server-side from input_reference; expected output adopted from warmup",
+    "prompt_file": "prompts/lerobot-cups-open.txt",
+    "shape": {
+      "flow_shift": "10.0",
+      "fps": 24,
+      "guidance_scale": "3.0",
+      "max_sequence_length": "4096",
+      "num_frames": 192,
+      "num_inference_steps": 35,
+      "size": "832x480"
+    }
+  },
+  "validation_run_id": "validation-2026-10-05T23:15:52.720727Z",
+  "warmup_rounds": [
+    {
+      "attempt_index_start": 0,
+      "attempt_index_stop": 1,
+      "finished_utc": "2026-10-05T22:56:45.108822Z",
+      "requests": 8,
+      "round": 0,
+      "started_utc": "2026-10-05T22:50:21.237413Z"
+    }
+  ],
+  "window_end_utc": "2026-10-05T23:15:52.720719Z",
+  "window_seconds": 1144.576655,
+  "window_start_utc": "2026-10-05T22:56:48.144058Z"
+}

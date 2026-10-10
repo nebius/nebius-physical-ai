@@ -1,0 +1,28 @@
+{
+  "prompt_file": "inputs/transfer/depth/prompt.json",
+  "prompt_compact_json": true,
+  "negative_file": "inputs/transfer/negative_prompt.json",
+  "negative_compact_json": true,
+  "shape": {
+    "size": "1280x720",
+    "num_frames": 121,
+    "fps": 30,
+    "num_inference_steps": 50,
+    "guidance_scale": "3.0",
+    "flow_shift": "10.0",
+    "max_sequence_length": "4096"
+  },
+  "extra_params": {
+    "use_resolution_template": false,
+    "use_duration_template": false,
+    "guardrails": false,
+    "depth": {
+      "control_path": "inputs/transfer/depth/control_depth.mp4"
+    },
+    "resolution": "720",
+    "control_guidance": 1.5,
+    "num_video_frames_per_chunk": 121,
+    "max_frames": 121
+  },
+  "note": "NVIDIA transfer cookbook depth asset and vLLM-Omni request settings; expected output adopted from warmup"
+}
