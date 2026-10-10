@@ -226,23 +226,22 @@ def test_vendor_setup_installs_npa_there_and_records_it() -> None:
     no_deps = setup.index("-m pip install -q --no-deps -e")
     # ... and a with-deps attempt only AFTER it, for vendor environments that carry none of
     # npa's dependencies (live job 268: Isaac's kit python, where --no-deps alone left
-    # npa.workbench unimportable). Order is the whole safety property.
+    # npa.cli.main unimportable). Order is the whole safety property.
     with_deps = setup.index('-m pip install -q -e "$npa_vendor_src"')
     assert no_deps < with_deps
     # The second attempt is guarded by the probe, so it never runs when the first sufficed.
-    assert setup.count("if ! \"$npa_vendor_python\" -c 'import npa.workbench'") == 2
+    assert setup.count("if ! \"$npa_vendor_python\" -c 'import npa.cli.main'") == 2
     # Records it as THE stage interpreter, which is what the run shim reads.
     assert 'echo "$npa_vendor_python" > /tmp/npa-python' in setup
-    # Probes a real subpackage: a vendor image may bake a PARTIAL npa on PYTHONPATH that makes
-    # `import npa` pass while `import npa.workbench` fails (live job 250).
-    assert "-c 'import npa.workbench'" in setup
+    # Probes the stage's real CLI surface: a shallow overlay can make a subpackage importable
+    # while dependencies required by `npa.cli.main` are absent.
+    assert "-c 'import npa.cli.main'" in setup
+    assert "-c 'import npa.workbench'" not in setup
     # Skips a candidate that is not present, rather than failing the stage.
     assert '[ -x "$npa_vendor_python" ] || continue' in setup
     # And when it gives up on a candidate it says why: job 268's bare warning blamed a
     # shadowing partial npa when the cause was missing dependencies.
-    assert (
-        "\"$npa_vendor_python\" -c 'import npa.workbench' 2>&1 | tail -3 >&2" in setup
-    )
+    assert "\"$npa_vendor_python\" -c 'import npa.cli.main' 2>&1 | tail -3 >&2" in setup
     assert "${" not in setup
 
 
