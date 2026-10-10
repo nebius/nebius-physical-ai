@@ -465,6 +465,12 @@ def test_vendor_setup_repairs_a_shallow_overlay_before_a_stage_runs(
     setup = render_vendor_interpreter_setup((str(vendor),))
     source_root_probe = "if [ -s /tmp/npa-src-root ]; then"
     assert source_root_probe in setup
+    assert "warning: npa.cli.main is not importable from $npa_vendor_python:" in setup
+    assert (
+        "\"$npa_vendor_python\" -c 'import npa.cli.main' 2>&1 | tail -3 >&2 || true"
+        in setup
+    )
+    assert "npa.workbench is not importable" not in setup
     # Source-root selection is covered separately.  Force this generated branch
     # locally so this shell-level test stays hermetic rather than claiming the
     # shared /tmp path while other test workers may be active.

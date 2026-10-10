@@ -391,8 +391,8 @@ def render_vendor_interpreter_setup(candidates: Sequence[str]) -> str:
         "  fi\n"
         # Print WHY. A bare warning sent job 268's debugging down the wrong path: the message
         # blamed a shadowing partial npa when the real cause was missing dependencies.
-        '  echo "warning: npa.workbench is not importable from $npa_vendor_python:" >&2\n'
-        "  \"$npa_vendor_python\" -c 'import npa.workbench' 2>&1 | tail -3 >&2 || true\n"
+        '  echo "warning: npa.cli.main is not importable from $npa_vendor_python:" >&2\n'
+        "  \"$npa_vendor_python\" -c 'import npa.cli.main' 2>&1 | tail -3 >&2 || true\n"
         "done\n"
     )
 
