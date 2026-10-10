@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import importlib
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -458,7 +460,7 @@ def test_native_libero_x_task_contract_is_hash_bound_and_source_scoped(
     (source / "libero/libero_x/bddl").mkdir(parents=True)
     monkeypatch.setattr(native.sys, "path", list(native.sys.path))
     assert native._configure_libero_x_source({"libero_x_source": str(source)}) == source
-    assert str(source / "libero") == native.sys.path[0]
+    assert str(source) == native.sys.path[0]
 
 
 def test_native_rollout_uses_fixed_seeded_episode_waves(tmp_path: Path) -> None:
@@ -549,6 +551,45 @@ def test_native_evaluator_writes_worker_registration_manifest(
         }
     ]
     assert captured["config"]["libero_x_source"] == str(source)
+
+
+def test_native_evaluator_exposes_libero_x_namespace_at_checkout_root(
+    tmp_path: Path,
+) -> None:
+    """The selected evaluator must preserve its ``libero.libero`` layout."""
+
+    source = tmp_path / "LIBERO-X"
+    (source / "libero/libero/utils").mkdir(parents=True)
+    (source / "libero/libero_x/bddl").mkdir(parents=True)
+    (source / "libero/libero/__init__.py").write_text("")
+    (source / "libero/libero/utils/__init__.py").write_text("")
+    parser = source / "libero/libero/utils/parse_bddl.py"
+    parser.write_text(
+        "def parse_bddl_file(_path: str) -> dict[str, str]:\n    return {}\n"
+    )
+
+    original_path = list(sys.path)
+    saved_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "libero" or name.startswith("libero.")
+    }
+    for name in saved_modules:
+        del sys.modules[name]
+    try:
+        assert (
+            native._configure_libero_x_source({"libero_x_source": str(source)})
+            == source
+        )
+        assert sys.path[0] == str(source)
+        module = importlib.import_module("libero.libero.utils.parse_bddl")
+        assert Path(str(module.__file__)).resolve() == parser.resolve()
+    finally:
+        sys.path[:] = original_path
+        for name in list(sys.modules):
+            if name == "libero" or name.startswith("libero."):
+                del sys.modules[name]
+        sys.modules.update(saved_modules)
 
 
 def test_runtime_overlay_and_git_fetch_contract_avoid_broad_lfs_smudging(

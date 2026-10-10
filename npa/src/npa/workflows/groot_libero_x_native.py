@@ -84,10 +84,14 @@ def _configure_libero_x_source(config: dict[str, Any]) -> Path | None:
     if not raw:
         return None
     source = Path(raw).resolve()
-    package_root = source / "libero"
     if not (source / "libero/libero_x/bddl").is_dir():
         raise RuntimeError("pinned LIBERO-X evaluator source lacks BDDL assets")
-    package_text = str(package_root)
+    # LIBERO-X keeps the importable ``libero`` package one level below its
+    # checkout root.  Adding that inner directory makes ``libero`` resolve to
+    # ``libero/libero`` and breaks the upstream ``libero.libero`` imports used
+    # by GR00T's registration bridge.  Keep the evaluator root first instead,
+    # so its namespace package retains the expected two-level layout.
+    package_text = str(source)
     if package_text not in sys.path:
         sys.path.insert(0, package_text)
     return source
