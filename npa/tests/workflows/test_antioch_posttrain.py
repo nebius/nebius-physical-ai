@@ -57,6 +57,7 @@ def test_entire_carton_cycles_are_disjoint_including_post_placement_retract():
         {"frame": 7},
         {"sim_s": float("nan")},
         {"sim_s": -1},
+        {"placed": True},
         {"phase": "INVENTED"},
         {"placed": 9},
         {"phase": "BATCH_COMPLETE"},

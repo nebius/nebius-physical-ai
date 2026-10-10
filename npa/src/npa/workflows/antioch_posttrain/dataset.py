@@ -26,6 +26,33 @@ PHASE_LABELS = {
 SPLIT_CYCLES = {"train": (0, 1, 2, 3), "validation": (4,), "test": (5,)}
 
 
+def _telemetry_values(frame: object) -> tuple[int, str, float, int]:
+    """Validate one JSON telemetry record before deriving a training label.
+
+    Args:
+        frame: Untrusted decoded JSON frame record.
+    Returns:
+        Sequential frame number, phase, simulation time, and placement count.
+    Raises:
+        ValueError: A required field has the wrong JSON type.
+    """
+    if not isinstance(frame, dict):
+        raise ValueError("Frame telemetry must contain JSON objects")
+    frame_number = frame.get("frame")
+    phase = frame.get("phase")
+    timestamp = frame.get("sim_s")
+    placed = frame.get("placed")
+    if (
+        type(frame_number) is not int
+        or not isinstance(phase, str)
+        or isinstance(timestamp, bool)
+        or not isinstance(timestamp, (int, float))
+        or type(placed) is not int
+    ):
+        raise ValueError("Frame telemetry has invalid field types")
+    return frame_number, phase, float(timestamp), placed
+
+
 def frame_records(frames: list[dict], stride: int) -> list[dict]:
     """Derive labels from recorded states and keep complete cycles in each split.
 
@@ -42,9 +69,9 @@ def frame_records(frames: list[dict], stride: int) -> list[dict]:
     records = []
     previous_time = -1.0
     for index, frame in enumerate(frames):
-        phase, timestamp = frame["phase"], frame["sim_s"]
+        frame_number, phase, timestamp, placed = _telemetry_values(frame)
         if (
-            frame["frame"] != index
+            frame_number != index
             or not math.isfinite(timestamp)
             or timestamp < 0
             or timestamp <= previous_time
@@ -54,13 +81,13 @@ def frame_records(frames: list[dict], stride: int) -> list[dict]:
             )
         previous_time = timestamp
         if phase == "BATCH_COMPLETE":
-            if index != len(frames) - 1 or frame["placed"] != 6:
+            if index != len(frames) - 1 or placed != 6:
                 raise ValueError("Batch completion must follow all six placements")
             continue
         if phase not in PHASE_LABELS:
             raise ValueError("Unknown warehouse phase")
-        cycle = frame["placed"] - int(phase == "RETRACT")
-        if type(cycle) is not int or not 0 <= cycle < 6:
+        cycle = placed - int(phase == "RETRACT")
+        if not 0 <= cycle < 6:
             raise ValueError("Invalid carton cycle")
         if index % stride == 0:
             split = next(
