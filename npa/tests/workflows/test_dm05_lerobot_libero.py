@@ -586,6 +586,25 @@ def test_opendm_private_runtime_entrypoint_forwards_orchestrator_argv():
     assert completed.stdout == "dm05-entrypoint-ready"
 
 
+def test_opendm_private_runtime_entrypoint_has_a_bare_container_default():
+    entrypoint = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/common/workflow_runtime_entrypoint.sh"
+    )
+
+    completed = subprocess.run(
+        ["bash", str(entrypoint)],
+        check=False,
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == ""
+
+
 def test_opendm_flattened_final_stage_restores_nonroot_runtime_user():
     dockerfile = (
         Path(__file__).resolve().parents[2]
