@@ -10,6 +10,12 @@ Keep CDF-specific work in this directory. Leave
 IAA/EVG reference implementation to the existing NPA CLI and SkyPilot runtime;
 the [README](README.md) records the pinned source and orchestration mapping.
 
+For robotics requests, use the README's [task-fit and reuse map](README.md#robotics-fit-and-reuse).
+Reuse the existing main PAIDF/VDA path for robot-video augmentation and existing
+LeRobot/Sim2Real tools for training/evaluation. IAA supports human-appearance
+perception; EVG supports generated-event perception. Do not duplicate those
+existing graphs or treat a physical-AI label as proof of robot-policy usefulness.
+
 Load [shared setup](../../skills/cosmos-data-factory/cosmos-data-factory-setup/SKILL.md),
 then the matching workflow skill:
 

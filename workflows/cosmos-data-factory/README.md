@@ -31,6 +31,36 @@ and installed packages. Update direct references to the old testing paths.
 Video-to-video augmentation remains a separate
 [PAIDF + Cosmos 3 workflow](../guides/paidf-cosmos3.md).
 
+## Robotics fit and reuse
+
+The announcement highlights IAA and EVG. NVIDIA's broader
+[PAIDF catalog](https://github.com/NVIDIA/physical-ai-data-factory#paidf-workflows)
+lists four workflow families: DIG, VDA, IAA, and EVG; families can have multiple
+execution modes. The two specs here extend that ecosystem using existing NPA
+adapters. Robotics usefulness depends on the target task, not the workflow name.
+
+| Target task | Existing path to reuse | Evidence needed for that use |
+| --- | --- | --- |
+| Robot-demonstration appearance augmentation | [Main PAIDF](../main/paidf-cosmos3.yaml), with its input-derived structural controls and quality gate | Selected ALOHA/other robot episodes retain motion timing, robot/object geometry, contacts, and padding; accepted data improves a held-out policy evaluation |
+| Human/workcell safety perception | [EVG](paidf-event-video-generation.yaml) | Generated events visibly occur in representative workcell scenes, and labels support the intended safety detector |
+| Human-appearance robustness near robots | [IAA](paidf-image-attribute-augmentation.yaml) | Person identity and useful labels survive the requested clothing edits; the target perception evaluation improves |
+| Industrial visual inspection | [Existing DIG manual-ROI workflow](../testing/paidf-defect-image-generation.yaml) | Defect/clean images and native labels improve the intended inspection detector; the NPA spec covers the manual-ROI branch |
+
+This is a task-fit assessment, not evidence of downstream performance. Current
+`main` also contains `workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml`
+for the NVIDIA-derived Transfer 2.5 path. Reuse its existing implementation when
+that backend is required; keep both VDA references in their current locations.
+Do not create another robot augmentation graph inside this package.
+
+Reuse the existing [LeRobot skill](../../skills/tools/lerobot/SKILL.md) and
+[Sim2Real workflow](../main/sim2real.yaml) for relevant training/evaluation
+operations. Generated MP4s alone are not a LeRobot training dataset. Preserve
+source episode/camera/frame identity and explicitly verify action/timestamp
+alignment before attaching demonstration labels. For a policy-training claim,
+compare the same held-out task evaluation with original-only and augmented-data
+training after the data-quality gate passes. Keep IAA/EVG's perception uses
+distinct from that policy-training claim.
+
 ## YAML consumption decision
 
 **Convert the orchestration to NPA YAML; reuse pinned component configuration.**

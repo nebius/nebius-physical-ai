@@ -27,6 +27,13 @@ episode, camera, and frame identity, and assess the requested generated event.
 The IAA/EVG graphs do not consume robot actions or evaluate a policy; results
 cannot establish action alignment, contact fidelity, or robot-policy improvement.
 
+For robotics utility, identify the consumer: safety perception, person tracking,
+inspection, or manipulation-policy training. Show its task-specific evaluation
+when claiming an improvement. For robot demonstrations, reuse the existing
+[main PAIDF](../main/paidf-cosmos3.yaml) and LeRobot/Sim2Real paths; validate source
+action/timestamp alignment and visual fidelity before comparing original-only
+and augmented-data policy training on the same held-out evaluation.
+
 ## Show the evidence together
 
 For IAA, display the original and prepared person image, sampled attribute
