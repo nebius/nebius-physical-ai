@@ -234,7 +234,14 @@ class Accounts:
             raise TeamError("issuer and immutable external subject are required")
         try:
             with self._transaction() as db:
+                db.execute("BEGIN IMMEDIATE")
                 self._user(db, user_id)
+                if db.execute(
+                    "SELECT 1 FROM external_identities WHERE user_id=?", (user_id,)
+                ).fetchone():
+                    raise ConflictError(
+                        "local account already has an external identity link"
+                    )
                 db.execute(
                     "INSERT INTO external_identities VALUES (?,?,?)",
                     (issuer, subject, user_id),

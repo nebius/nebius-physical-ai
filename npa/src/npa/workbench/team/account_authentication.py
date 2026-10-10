@@ -3,6 +3,7 @@
 from .accounts import KEY_PREFIX, Accounts
 from .authentication import TokenVerifier
 from .errors import AuthenticationError
+from .nebius_authentication import NebiusProfileVerifier
 
 
 class AccountAuthentication:
@@ -28,9 +29,11 @@ class AccountAuthentication:
             TeamError: Local state cannot be initialized.
         """
         self.accounts = Accounts(config)
-        self.external = external or (
-            TokenVerifier(config.identity) if config.identity else None
-        )
+        self.external = external
+        if self.external is None and config.identity is not None:
+            self.external = TokenVerifier(config.identity)
+        if self.external is None and config.nebius_identity is not None:
+            self.external = NebiusProfileVerifier(config.nebius_identity)
 
     def verify(self, authorization):
         """Authenticate a key or explicitly linked signed external bearer token.

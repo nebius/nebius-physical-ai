@@ -64,6 +64,7 @@ class TeamService:
         config = self.configuration()
         fields = (
             "identity",
+            "nebius_identity",
             "account_namespace",
             "state_dir",
             "sky_endpoint",

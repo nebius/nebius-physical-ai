@@ -15,7 +15,9 @@ personal access keys](team-identity.md). External identities can be explicitly
 linked later without changing local ownership; there is no standalone portal or
 browser-login flow. The [offline team example](../demos/team-access.html)
 illustrates synthetic policy outcomes and recorded local checks, not a deployed
-service.
+service. Optional native Nebius human identity verification uses the same
+linked-local-account model and private token-file path; it does not make tenant
+access, cloud groups, or cloud roles into Workbench authorization.
 
 PAIDF workflows select repaired public Cosmos3, Evaluator, and Curator
 candidates by immutable digest while the historical releases remain

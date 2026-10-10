@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .accounts import Accounts
 from .errors import TeamError
+from .nebius_authentication import NEBIUS_ISSUER
 
 
 def issue_key_file(config, user_id: str, output: Path):
@@ -48,7 +49,16 @@ def link_identity(config, user_id, issuer, subject):
     Raises:
         TeamError: Issuer is unconfigured or identity cannot be linked.
     """
-    if config.identity is None or issuer != config.identity.issuer:
+    configured_issuer = _configured_identity_issuer(config)
+    if configured_issuer is None or issuer != configured_issuer:
         raise TeamError("link issuer must match the configured external provider")
     Accounts(config).link(user_id, issuer, subject)
     return {"user_id": user_id, "linked": True}
+
+
+def _configured_identity_issuer(config):
+    if config.identity is not None:
+        return config.identity.issuer
+    if config.nebius_identity is not None:
+        return NEBIUS_ISSUER
+    return None

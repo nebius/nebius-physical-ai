@@ -23,6 +23,10 @@ External JWT identities can be explicitly linked later without changing local
 ownership or allocations. Team mode has no standalone portal or browser-login
 flow. `npa workbench team whoami` and `TeamClient.whoami()` report the same
 personal permissions; see the [local account and key guide](../docs/workbench/team-identity.md).
+An installation can instead use native Nebius human identity verification for a
+linked local account, using a short-lived IAM token through the same private
+token-file path. It is mutually exclusive with generic JWT identity mode and
+does not import Nebius roles or tenant access as Workbench grants.
 
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
