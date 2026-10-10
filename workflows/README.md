@@ -2,7 +2,7 @@
 
 The [video variant sweep](guides/video-variant-sweep.md) combines timed VLM source descriptions and user hints into structured LLM-enhanced prompts, then pairs each shared prompt with every configured parameter combination. Cosmos3 full-source edge transfer (or the compatible Transfer 2.5 reference), paired visual review and Postgres/MLflow lineage complete the dataset path. Its operator kit previews the prompt-augmentation flow, prompt reuse, every parameter combination and worker assignment before submission. Direct prompts explicitly bypass augmentation. Completed candidates have verified recovery receipts; native runs export actual controls, a matrix of recorded outcomes, an offline HTML comparison viewer and an MP4 walkthrough.
 
-[Docs](../docs/README.md) · [Authoring guide](../docs/workbench/npa-workflow-guide.md)
+[Docs](../docs/README.md) · [Authoring guide](../docs/workbench/npa-workflow-guide.md) · [Manual operations](../docs/workbench/guides/manual-workflow-operations.md)
 
 These `npa.workflow/v0.0.1` YAML files compose Workbench operations into a state
 graph. NPA validates the graph, renders SkyPilot tasks, and manages run-scoped
@@ -55,9 +55,10 @@ npa workbench workflow plan-spec workflows/testing/cosmos3-generate.yaml --run-i
 Expect a valid spec and one `generate` stage. Its bucket is a placeholder;
 validation and planning do not verify model access, stage data, or reserve GPUs.
 
-For execution, follow the selected runbook in order:
+For execution, follow the [manual run sequence](../docs/workbench/guides/manual-workflow-operations.md).
+For multiple episodes, use [dataset batches and capacity planning](../docs/workbench/guides/paidf-dataset-batches.md).
 
-1. Configure the project and prepare its input, storage, credentials, and compute.
+1. Configure the project and prepare its input, run-scoped storage, credentials, and compute.
 2. Validate and plan with the configuration overrides you will submit.
 3. Use `prepare-run` to persist a run ID, then check image pullability.
 4. Submit through `submit --runtime` using the same project, context, and values.
