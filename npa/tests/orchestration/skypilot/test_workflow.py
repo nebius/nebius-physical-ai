@@ -4337,6 +4337,65 @@ def test_workflow_status_treats_successful_empty_queue_as_verified_absence(
 
 
 @pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    [
+        ('The following keys (["allowed_clouds"]) are ignored.\n'
+         '[{"job_id": 42, "status": "RUNNING"}]', ""),
+        ('[{"job_id": 42, "status": "RUNNING"}]\n[]', ""),
+        ("diagnostic only", ""),
+        ("", ""),
+        ('{"unexpected": []}', ""),
+        ('[{"job_id": 7, "status": "SUCCEEDED"}]', "Permission denied"),
+        ('[{"job_id": 42, "status": "SUCCEEDED"}]', "Traceback: query failed"),
+        ('[{"status": "RUNNING"}]', ""),
+        ('[{"job_id": true, "status": "RUNNING"}]', ""),
+        ('[{"job_id": 42.0, "status": "RUNNING"}]', ""),
+        ('[{"job_id": "042", "status": "RUNNING"}]', ""),
+        ('[{"job_id": 42}]', ""),
+        ('[{"job_id": 42, "status": "SUCCEEDED"}, {"job_id": 42}]', ""),
+    ],
+)
+def test_workflow_status_preserves_unverified_queue_as_unknown(
+    monkeypatch, tmp_path, stdout, stderr
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "UNKNOWN"
+    assert result.job_id == "42"
+    assert result.stdout == stdout
+    assert result.stderr == stderr
+
+
+@pytest.mark.parametrize("row", [{"job_id": 7}, {"job_id": "7"}, {"id": 7}])
+def test_workflow_status_detects_job_missing_from_verified_nonempty_queue(
+    monkeypatch, tmp_path, row
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    stdout = json.dumps([dict(row, status="RUNNING")])
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=stdout, stderr=""
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "FAILED_CONTROLLER"
+    assert "absent from the successful queue response" in result.error
+
+
+@pytest.mark.parametrize(
     "operation",
     [
         workflow_module.workflow_status,

@@ -2707,9 +2707,20 @@ def workflow_status(
             error=result.stderr.strip() or result.stdout.strip(),
         )
 
+    rows = verified_structured_queue_rows(result)
+    if rows is None or any(not _queue_row_job_id(row) for row in rows):
+        return WorkflowResult(
+            status="UNKNOWN",
+            job_id=job_id,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error="SkyPilot queue response does not verify managed-job state",
+        )
+
     status = _status_from_queue_payload(result.stdout, job_id)
     if not status:
-        # A successful queue response is authoritative: if the recorded id is
+        # A verified queue response is authoritative: if the recorded id is
         # absent, the managed-jobs controller has lost (or garbage-collected) its
         # execution record.  Treating this as UNKNOWN makes an unbounded runtime
         # poll forever and prevents the durable NPA ledger from resubmitting the
@@ -5339,17 +5350,26 @@ def _looks_like_auth_error(detail: str) -> bool:
     )
 
 
+def _queue_row_job_id(row: Mapping[str, Any]) -> str:
+    """Read a positive managed-job identifier without coercing malformed values."""
+
+    value = row.get("job_id", row.get("id"))
+    if type(value) is int and value > 0:
+        return str(value)
+    if isinstance(value, str) and re.fullmatch(r"[1-9][0-9]*", value):
+        return value
+    return ""
+
+
 def _status_from_queue_payload(output: str, job_id: str) -> str:
     jobs = queue_rows_from_output(output)
     if jobs is None:
         return ""
     statuses = []
     for job in jobs or []:
-        current_id = str(job.get("job_id") or job.get("id") or "")
+        current_id = _queue_row_job_id(job)
         if current_id == str(job_id):
-            status = str(job.get("status", "")).upper()
-            if status:
-                statuses.append(status)
+            statuses.append(str(job.get("status") or "").upper())
     if not statuses:
         return ""
     active_statuses = ("RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING")
