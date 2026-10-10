@@ -37,6 +37,16 @@ licenses:
     applies_to:
       - neural-reconstruction
 skills:
+  - name: physical-prompt-comparison
+    category: workflows
+    when_to_use: "Compare baseline prompts, physical descriptions, and negative guidance with full Wan 2.1 videos, matched seeds, and blinded video judgments."
+    path: skills/workflows/physical-prompt-comparison/SKILL.md
+    smoke:
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/physical-prompt-comparison.yaml
+      - type: file_exists
+        path: docs/workbench/physical-prompt-comparison.md
   - name: ray-workbench
     category: tools
     when_to_use: "Choose or operate a supported Ray path: native Jobs/Core, guarded Train V2, Cosmos3 native Serve, or fixed CPU KubeRay; identify unsupported Ray libraries."

@@ -12,12 +12,14 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
+import re
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from npa.cli.cluster.capacity import gpu_quota_name
 
 
 INSTANCE_QUOTA = "compute.instance.count"
+CPU_VCPU_QUOTA = "compute.instance.non-gpu.vcpu"
 DISK_QUOTA = "compute.disk.count"
 NETWORK_SSD_BYTES_QUOTA = "compute.disk.size.network-ssd"
 PUBLIC_IP_QUOTA = "vpc.ipv4-address.public.count"
@@ -119,9 +121,31 @@ class ResolvedTopology:
     def required_gpus(self) -> int:
         return self.new_gpu_nodes * _gpus_per_node(self.gpu_preset)
 
+    @property
+    def required_cpu_vcpus(self) -> int:
+        """Count only missing CPU workers; GPU vCPUs use the GPU allowance.
+
+        Args:
+            None.
+        Returns:
+            Incremental non-GPU worker vCPU demand.
+        Raises:
+            ValueError: A missing worker's preset does not declare vCPUs.
+        """
+
+        if not self.new_cpu_nodes:
+            return 0
+        match = re.search(r"(?:^|-)(\d+)vcpu(?:-|$)", self.cpu_preset.lower())
+        if match is None or int(match.group(1)) <= 0:
+            raise ValueError(
+                f"Cannot determine CPU vCPU demand from {self.cpu_preset!r}"
+            )
+        return self.new_cpu_nodes * int(match.group(1))
+
     def quota_requirements(self) -> dict[str, int]:
         requirements = {
             INSTANCE_QUOTA: self.required_instances,
+            CPU_VCPU_QUOTA: self.required_cpu_vcpus,
             DISK_QUOTA: self.required_disks,
             NETWORK_SSD_BYTES_QUOTA: self.required_network_ssd_bytes,
             PUBLIC_IP_QUOTA: self.required_public_ips,
@@ -161,6 +185,7 @@ class ResolvedTopology:
                 ),
                 "required_public_ips": self.required_public_ips,
                 "required_gpus": self.required_gpus,
+                "required_cpu_vcpus": self.required_cpu_vcpus,
             }
         )
         return payload
@@ -204,7 +229,7 @@ class QuotaDecision:
                 }
             )
         else:
-            payload["unit"] = "count"
+            payload["unit"] = "vcpu" if self.name == CPU_VCPU_QUOTA else "count"
         return payload
 
 
@@ -798,6 +823,7 @@ __all__ = [
     "DEFAULT_GPU_PLATFORM",
     "DEFAULT_GPU_PRESET",
     "DISK_QUOTA",
+    "CPU_VCPU_QUOTA",
     "GIB",
     "ExistingCapacity",
     "INSTANCE_QUOTA",

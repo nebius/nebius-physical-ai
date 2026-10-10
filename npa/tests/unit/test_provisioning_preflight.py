@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from npa.provisioning_preflight import (
+    CPU_VCPU_QUOTA,
     DISK_QUOTA,
     GIB,
     INSTANCE_QUOTA,
@@ -89,16 +90,46 @@ def test_multiple_simultaneous_deficits_are_reported() -> None:
         }
     )
     blocked = {item.name for item in plan.quotas if item.status == "blocked"}
-    assert blocked == {
-        INSTANCE_QUOTA,
-        DISK_QUOTA,
-        "compute.instance.gpu.rtx6000",
-    }
+    assert blocked == {INSTANCE_QUOTA, DISK_QUOTA, "compute.instance.gpu.rtx6000"}
     assert all(
         "required new limit=" in item.reason
         for item in plan.quotas
         if item.status == "blocked"
     )
+
+
+def test_cpu_vcpu_shortfall_blocks_before_cluster_mutation() -> None:
+    plan = _plan(values={CPU_VCPU_QUOTA: (498, 500)})
+    decision = next(item for item in plan.quotas if item.name == CPU_VCPU_QUOTA)
+    assert (decision.required, decision.available, decision.shortfall) == (8, 2, 6)
+    assert plan.decision == "blocked"
+    with pytest.raises(PreflightBlockedError, match="no resources were created"):
+        plan.assert_mutation_ready()
+
+
+@pytest.mark.parametrize("preemptible", [False, True])
+def test_cpu_vcpu_demand_counts_only_missing_cpu_workers(preemptible: bool) -> None:
+    topology = resolve_topology(
+        cpu_nodes=3,
+        existing_cpu_nodes=1,
+        cpu_preset="16vcpu-64gb",
+        gpu_nodes=4,
+        preemptible=preemptible,
+    )
+    assert topology.quota_requirements()[CPU_VCPU_QUOTA] == 32
+    assert topology.to_dict()["required_cpu_vcpus"] == 32
+
+
+def test_gpu_only_topology_needs_no_non_gpu_vcpu_quota() -> None:
+    plan = _plan(
+        topology=resolve_topology(cpu_nodes=0), values={CPU_VCPU_QUOTA: (500, 500)}
+    )
+    assert plan.decision == "ready"
+
+
+def test_unrecognized_cpu_preset_cannot_hide_quota_demand() -> None:
+    with pytest.raises(ValueError, match="Cannot determine CPU vCPU demand"):
+        resolve_topology(cpu_preset="unknown").quota_requirements()
 
 
 def test_resume_counts_only_missing_resources() -> None:
