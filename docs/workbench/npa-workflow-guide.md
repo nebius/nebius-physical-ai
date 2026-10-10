@@ -39,7 +39,8 @@ npa workbench workflow preflight-images "$workflow_spec" \
 Review the resolved GPU shape, image, and output prefix. Image preflight may
 create and delete a temporary probe pod. In a fresh namespace it also creates
 SkyPilot's `skypilot-service-account` if that is the selected account and it is
-absent. The account remains for the subsequent SkyPilot launch; preflight does
+absent. The account remains for the subsequent SkyPilot launch, even if later
+readback or preflight fails or is interrupted; preflight does
 not grant RBAC permissions or change an existing account or its pull-secret
 defaults. Custom ServiceAccounts must already exist. An unavailable account
 read or unverifiable creation fails with `service_account_unverified`.

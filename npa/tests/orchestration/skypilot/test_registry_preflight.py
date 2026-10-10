@@ -1002,6 +1002,41 @@ def test_target_pull_and_cleanup_failures_are_both_reported(
     assert "cleanup was not verified" in checks[0].detail
 
 
+def test_account_preparation_failure_reports_actionable_remedy_without_cleanup_alarm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_private_registry(monkeypatch)
+    calls = []
+
+    def denied_account(command, **kwargs):  # noqa: ANN001
+        calls.append(command)
+        assert "get" in command and "serviceaccount" in command
+        return subprocess.CompletedProcess(command, 1, "", "synthetic-private-error")
+
+    checks = check_image_pulls_with_credentials(
+        [IMAGE],
+        fetcher=FakeRegistry(manifest_status=200),
+        pull_secret_names=("pull-secret",),
+        context="target-context",
+        namespace="target-namespace",
+        secret_runner=lambda *args, **kwargs: _docker_secret_result(REGISTRY),
+        target_pull_verifier=lambda **kwargs: verify_kubernetes_image_pull(
+            **kwargs, runner=denied_account
+        ),
+    )
+
+    assert len(calls) == 1
+    assert checks[0].status == "target_pull_unverified"
+    assert checks[0].target_status == "service_account_unverified"
+    assert "preparation or default pull Secrets" in checks[0].detail
+    assert "cleanup" not in checks[0].detail
+    assert "ServiceAccount read permission" in checks[0].remedy
+    assert "allow creation if SkyPilot's native account is absent" in checks[0].remedy
+    assert "target-namespace" in checks[0].remedy
+    assert "target-context" in checks[0].remedy
+    assert "synthetic-private-error" not in checks[0].render()
+
+
 def test_target_verifier_exception_never_claims_cleanup_verified(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1872,7 +1907,7 @@ def test_native_account_preparation_fails_closed_before_any_pod(failure: str) ->
         nonce_factory=lambda: "abc123",
     )
     assert check.status == "service_account_unverified"
-    assert check.cleanup_status == "not_applicable"
+    assert check.cleanup_status == "verified"  # No probe Pod needs cleanup.
     assert "synthetic-private-error" not in repr(check)
     assert not any("delete" in command for command in calls)
     if failure in {"forbidden", "malformed", "wrong-kind", "wrong-namespace"}:

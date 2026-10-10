@@ -1196,6 +1196,14 @@ def check_image_pulls_with_credentials(
                     f"declare an operator-managed imagePullSecret for {host} in "
                     f"namespace {target_namespace!r}"
                 )
+            if target_status == "service_account_unverified":
+                target_remedy = (
+                    f"verify ServiceAccount read permission in namespace "
+                    f"{target_namespace!r} and context {context or '<missing>'!r}; "
+                    "allow creation if SkyPilot's native account is absent; "
+                    "custom accounts must already exist; preserve configured "
+                    "pull-secret defaults and retry"
+                )
         remedy = operator_check.remedy if requires_operator else ""
         checks.append(
             ImagePullCheck(
@@ -1241,7 +1249,8 @@ def _target_pull_status_detail(status: str) -> str:
         "placement_mismatch": "admitted pull probe placement differs from the request",
         "authority_mismatch": "admitted pull probe authority differs from the request",
         "service_account_unverified": (
-            "the exact ServiceAccount's default pull Secrets could not be verified"
+            "the exact ServiceAccount's preparation or default pull Secrets "
+            "could not be verified"
         ),
         "target_probe_failed": "target probe could not start after pulling the image",
         "pull_secret_required": "private Kubernetes path requires an imagePullSecret",
@@ -2012,9 +2021,7 @@ def verify_kubernetes_image_pull(
         service_account_name == SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
         and not _prepare_native_service_account(run, namespace=namespace)
     ):
-        return KubernetesPullCheck(
-            status="service_account_unverified", cleanup_status="not_applicable"
-        )
+        return KubernetesPullCheck(status="service_account_unverified")
     expected_pull_secrets = manifest["spec"]["imagePullSecrets"]
     if not expected_pull_secrets:
         expected_pull_secrets = _service_account_pull_secrets(
