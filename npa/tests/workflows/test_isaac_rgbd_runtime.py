@@ -287,7 +287,7 @@ def test_render_stages_branch_source_in_gpu_and_cpu_tasks(monkeypatch, workflow)
         assert capture["envs"]["NPA_SRC_OVERLAY"] == "1"
         assert capture["envs"]["NPA_SRC_S3_URI"] == source
         assert "/isaac-sim/python.sh" in capture["setup"]
-        assert 'if [ "$NPA_SRC_OVERLAY" = "1" ]' in capture["setup"]
+        assert 'if [ "${NPA_SRC_OVERLAY:-}" = "1" ]' in capture["setup"]
         assert validation["envs"]["NPA_SRC_S3_URI"] == source
         assert "image_id" not in validation["resources"]
         assert "npa-src" in validation["setup"]

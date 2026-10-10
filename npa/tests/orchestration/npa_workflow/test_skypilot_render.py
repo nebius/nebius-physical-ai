@@ -2758,7 +2758,12 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
 
 @pytest.mark.parametrize(
     ("overlay", "source_uri", "expected_exit"),
-    ((None, None, 0), ("1", None, 0), ("1", "s3://fixture/source", 42)),
+    (
+        (None, None, 0),
+        ("0", "s3://fixture/source", 0),
+        ("1", None, 0),
+        ("1", "s3://fixture/source", 42),
+    ),
 )
 def test_default_npa_setup_source_overlay_guard_is_nounset_safe(
     overlay: str | None, source_uri: str | None, expected_exit: int
