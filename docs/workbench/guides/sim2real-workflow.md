@@ -445,6 +445,36 @@ readable in S3. Follow [customer assets](sim2real-customer-assets.md) and
 [RobotSpec](sim2real-robot-spec.md) for robot/scene inputs. Use those same
 arguments for all later commands; do not change inputs during resume.
 
+### Save the settings before submitting
+
+Save the variables and Bash arrays from this shell in a private file. The
+credential-name array contains names only; credential values stay in NPA's
+private store or the process environment.
+
+```bash
+(
+  umask 077
+  declare -p NPA_CONFIG_DIR NPA_PROJECT NPA_CLUSTER NPA_BUCKET \
+    NPA_NAMESPACE NPA_CLIENT_DIR KUBECONFIG SKYPILOT_GLOBAL_CONFIG \
+    NPA_SKYPILOT_ISOLATED_CONFIG_DIR NPA_SKYPILOT_BIN \
+    SPEC RUN_ID SOURCE_SHA CONTROLLER_IMAGE TRANSFER_IMAGE ENVGEN_IMAGE \
+    ISAAC_IMAGE VIEWER_IMAGE NPA_GPU_CONCURRENCY \
+    CONFIG_ARGS WORKFLOW_ARGS TARGET_ARGS SECRET_ARGS \
+    > "$NPA_CONFIG_DIR/$RUN_ID-settings.sh"
+)
+```
+
+In another Bash shell on the same operator machine, return to the same checkout
+root and load that exact file before status, logs, resume, or cleanup:
+
+```bash
+source "$HOME/.npa/sim2real-operator/<original-run-id>-settings.sh"
+```
+
+Use your actual private configuration directory if it differs from the example.
+Restore any credentials supplied only through the environment from their secure
+source. Keep this file outside Git, including after the run finishes.
+
 ## 7. Submit and follow the run
 
 Keep the driver on the always-on operator machine. Laptop sleep or closing the
