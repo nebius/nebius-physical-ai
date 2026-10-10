@@ -58,9 +58,13 @@ def source_guards(directory, sha):
     Raises:
         ValueError, OSError: Any existing guard fails.
     """
-    snapshot, digest = guard_snapshot(directory, sha)
+    # Source exports and pytest fixtures can contain symlinks. Retain them in a
+    # separate private scratch tree; only the archive and reports are evidence.
+    scratch = directory.with_name(directory.name + "-guard-scratch")
+    scratch.mkdir(mode=0o700)
+    snapshot, digest = guard_snapshot(directory, sha, scratch)
     env = public_environment()
-    env["TMPDIR"] = str(directory)
+    env["TMPDIR"] = str(scratch)
     run(
         guard_command(snapshot, directory),
         directory / "source-guards.log",

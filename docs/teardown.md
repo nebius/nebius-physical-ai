@@ -190,8 +190,10 @@ replaced clusters. Cross-project use is refused. `--rebind` is allowed only afte
 the managed-job queue is proven terminal; changing an alias for the same
 project/cluster ids is not a rebind. Only `SUCCEEDED`, `CANCELLED`, and the
 pinned `FAILED`, `FAILED_SETUP`, `FAILED_PRECHECKS`, `FAILED_NO_RESOURCE`, and
-`FAILED_CONTROLLER` states prove terminality; missing, `UNKNOWN`, or future
-status values block both rebind and global SkyPilot-state cleanup.
+`FAILED_CONTROLLER` states are scheduler-terminal. `FAILED_CONTROLLER` does
+not prove workload drain: controller failure loses authoritative workload state.
+Destructive managed-job cleanup preserves recovery handles in that state;
+missing, `UNKNOWN`, or future status values also block drain and state cleanup.
 
 ### Owned local workflow API
 
@@ -215,6 +217,23 @@ delete cloud resources, or remove run state and artifacts. Verify its retained
 daemon record reports `state: stopped` with null `pid` and `start_ticks`.
 Preserve records on any failure. Never substitute `sky api stop`, which is not
 scoped to the owned API, or remove state while processes are still alive.
+
+The additive [task-local reconciliation module](../npa/src/npa/orchestration/skypilot/cleanup_reconciliation.py)
+can bind read-only observations when the task database no longer contains its
+controller but the global owner record belongs to a different cluster. Its v1
+contract requires externally authenticated original scope and receipt hashes,
+complete task-database observations, a stable foreign owner, and separate
+closed-world client/job quiescence bound to the original API process lifetime.
+The producer and validator perform no filesystem, process or cloud operations;
+they cannot establish observation authenticity from self-consistent hashes alone.
+Keep the supplied observations and their actual timestamps. Unreadable or unknown
+clients, jobs or ownership evidence refuse reconciliation.
+
+This new receipt preserves the original false cleanup flags. It grants no stop
+authority and does not replace the three required controller booleans above or
+the PAIDF R7 caller checks. It also cannot supply NCore cleanup-v2 image, builder,
+storage, registry or orphan evidence. A passing reconciliation is neither an API
+stop receipt nor a passing qualification cleanup.
 
 ### Cluster teardown
 
@@ -268,6 +287,32 @@ those remain hard dependency blockers before controller or cluster teardown.
 Managed-job drain uses a closed terminal contract: `SUBMITTED`,
 `WINDING_DOWN`, and unrecognized future states remain non-terminal until the
 exact queue reports a terminal state or verified absence.
+
+### Controller state lost
+
+When per-run cleanup observes `FAILED_CONTROLLER` and cannot verify drain, its
+`CleanupResult.outcome` is `controller_state_lost`, with exact affected job IDs
+in `controller_state_lost_job_ids` and a structured `recovery` action. No run
+cluster or shared controller is destroyed, and a successful cancellation request
+is not proof of workload absence. Restore authoritative controller/workload
+observation and retry cancellation before teardown. Repeated cancellation alone
+does not repair a lost controller's state.
+
+If the owned native resources are already independently absent, use the existing
+`npa workbench workflow reconcile-absent --evidence-file <private-manifest>`
+route for an original journal-backed failed submit. It validates pinned original
+producer evidence, fresh complete provider reads and the exclusive recovery
+lease. Only after its dry verification succeeds, `--apply` can release that
+original local lease. This command neither deletes live resources nor changes
+the historical workload result from unknown. It is not a general recovery
+command for arbitrary SkyPilot jobs: without the original supported evidence,
+or while any workload/resource still exists, preserve state and obtain scoped
+operator recovery. No operator flag or hand-written attestation bypasses the
+cancellation, ownership or absence checks.
+
+Cancel/down receipts distinguish `down_disposition` values `not_requested`,
+`refused_nonterminal`, and `attempted`. An unattempted down has a null
+`down_returncode`, never a synthetic successful process result.
 
 ## Audit receipts
 

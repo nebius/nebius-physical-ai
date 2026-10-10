@@ -128,7 +128,71 @@ def test_rrd_decodes_actual_lineage_documents_and_image_rows(colmap_run, tmp_pat
         if str(c.entity_path) == "/novel_view/camera2"
     ]
     assert sum(len(b.column("EncodedImage:blob")) for b in images) == 1
-    assert images[0].column("frame").to_pylist() == [1]
+    assert images[0].column("nurec_image:novel_view/camera2").to_pylist() == [1]
+    assert "frame" not in images[0].schema.names
+
+
+def test_reconstruction_conversion_binding_prevents_missing_lineage_downgrade(tmp_path):
+    receipt = tmp_path / "reconstruction/reconstruction.json"
+    receipt.parent.mkdir()
+    receipt.write_text(json.dumps({"input": {"conversion_report_sha256": "a" * 64}}))
+    with pytest.raises(viz.DataFactoryVizError, match="lineage artifact is missing"):
+        viz._load_nurec_docs(tmp_path, [])
+
+
+def test_reconstruction_rejects_substituted_conversion_sidecar(colmap_run):
+    receipt = colmap_run / "reconstruction/reconstruction.json"
+    receipt.parent.mkdir()
+    receipt.write_text(json.dumps({"input": {"conversion_report_sha256": "a" * 64}}))
+    with pytest.raises(viz.DataFactoryVizError, match="conversion hash differs"):
+        viz._load_nurec_docs(colmap_run, [])
+
+
+@pytest.mark.parametrize("value", [None, False, 0, [], {}, "not-a-sha"])
+def test_malformed_conversion_claim_does_not_downgrade_to_legacy(tmp_path, value):
+    receipt = tmp_path / "reconstruction/reconstruction.json"
+    receipt.parent.mkdir()
+    receipt.write_text(json.dumps({"input": {"conversion_report_sha256": value}}))
+    with pytest.raises(viz.DataFactoryVizError, match="hash is invalid"):
+        viz._load_nurec_docs(tmp_path, [])
+
+
+@pytest.mark.parametrize(
+    "defect", ["schema", "rig_hash", "conversion_size", "missing_rig"]
+)
+def test_declared_lineage_rejects_changed_native_input_members(colmap_run, defect):
+    from npa.workbench.nurec.evidence import RECONSTRUCTION_RECEIPT_FORMAT
+
+    members = []
+    for name in ("conversion.json", "npa-rig.json"):
+        path = colmap_run / "ncore/sequence" / name
+        members.append(
+            {
+                "path": name,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "bytes": path.stat().st_size,
+            }
+        )
+    payload = {
+        "format": RECONSTRUCTION_RECEIPT_FORMAT,
+        "input": {
+            "conversion_report_sha256": members[0]["sha256"],
+            "sequence_members": members,
+        },
+    }
+    if defect == "schema":
+        payload["format"] = "unknown"
+    elif defect == "rig_hash":
+        members[1]["sha256"] = "a" * 64
+    elif defect == "conversion_size":
+        members[0]["bytes"] += 1
+    else:
+        members.pop()
+    receipt = colmap_run / "reconstruction/reconstruction.json"
+    receipt.parent.mkdir()
+    receipt.write_text(json.dumps(payload))
+    with pytest.raises(viz.DataFactoryVizError, match="differs"):
+        viz._load_nurec_docs(colmap_run, [])
 
 
 def test_lineage_omits_private_locations_and_unrelated_source_members(colmap_run):
@@ -253,3 +317,44 @@ def test_source_materialization_fetches_only_attribution(tmp_path):
     viz._materialize_run("s3://unit-bucket/run", tmp_path, storage_client=Storage())
     assert "s3://unit-bucket/run/source/attribution.json" in downloads
     assert "s3://unit-bucket/run/source/" not in downloads
+
+
+def test_required_reconstruction_receipt_cannot_be_silently_skipped(tmp_path):
+    class Storage:
+        def download_path(self, uri, destination):
+            raise StorageError("synthetic subtree failure")
+
+        def download_file(self, uri, destination):
+            raise StorageError("synthetic required receipt missing")
+
+    with pytest.raises(StorageError, match="required receipt missing"):
+        viz._materialize_run(
+            "s3://unit-bucket/run",
+            tmp_path,
+            storage_client=Storage(),
+            require_reconstruction_receipt=True,
+        )
+
+
+def test_remote_receipt_conversion_claim_requires_absent_canonical_lineage(tmp_path):
+    class Storage:
+        def download_path(self, uri, destination):
+            pass
+
+        def download_file(self, uri, destination):
+            if uri.endswith("reconstruction/reconstruction.json"):
+                target = Path(destination)
+                target.parent.mkdir(parents=True)
+                target.write_text(
+                    json.dumps({"input": {"conversion_report_sha256": "a" * 64}})
+                )
+                return
+            raise StorageError("synthetic missing claimed lineage")
+
+    with pytest.raises(StorageError, match="missing claimed lineage"):
+        viz._materialize_run(
+            "s3://unit-bucket/run",
+            tmp_path,
+            storage_client=Storage(),
+            require_reconstruction_receipt=True,
+        )

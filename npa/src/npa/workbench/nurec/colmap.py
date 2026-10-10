@@ -34,6 +34,7 @@ from npa.workbench.ncore_staging import (
     private_staging_directory,
 )
 from npa.workbench.nurec.nurec import NurecError
+from npa.workbench.nurec.colmap_timeline import camera_timestamps, source_time_mapping
 
 NCORE_REVISION = "59c698d206da92b406a4f72619fce3b3a2c64bfd"
 DEFAULT_CONVERTER = "/opt/ncore/bin/colmap-convert"
@@ -43,6 +44,10 @@ PUBLICATION_CLAIM = ".npa-colmap-claim.json"
 
 class NcoreConversionError(NurecError, NpaError):
     """The source, runtime, output verification, or publication failed."""
+
+    def __init__(self, message: str, *, phase: str = "") -> None:
+        super().__init__(message)
+        self.phase = phase
 
 
 def _relative(value: str, *, allow_dot: bool = False) -> Path:
@@ -74,6 +79,7 @@ class ColmapConversionRequest(BaseModel):
     colmap_dir: str = "sparse/0"
     images_dir: str = "images"
     masks_dir: str = ""
+    expected_archive_sha256: str = ""
     rig_mode: Literal["derive", "preserve"] = "derive"
     reference_camera: str = ""
     include_downsampled_images: bool = True
@@ -103,6 +109,16 @@ class ColmapConversionRequest(BaseModel):
         if info.field_name == "masks_dir" and not value:
             return value
         _relative(value, allow_dot=info.field_name in {"dataset_root", "colmap_dir"})
+        return value
+
+    @field_validator("expected_archive_sha256")
+    @classmethod
+    def expected_archive(cls, value: str) -> str:
+        if value and (
+            len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise ValueError("expected lowercase SHA-256")
         return value
 
 
@@ -577,7 +593,12 @@ def _validate_rig_sidecar(
         "sequence_id": sequence_id,
         "reference_camera": reference,
         "poses_component_group": "npa_rig",
-        "pose_count": len(source["cameras"][reference]["frames"]),
+        "frame_pose_mode": "independent-camera-virtual-time-v2",
+        "pose_count": sum(
+            len(camera["frames"])
+            for camera in source["cameras"].values()
+            if camera["target"] == "world"
+        ),
         "cameras": sorted(
             name
             for name, camera in source["cameras"].items()
@@ -595,6 +616,20 @@ def _validate_rig_sidecar(
         raise NcoreConversionError("derived rig sidecar differs from source selection")
 
 
+def _validate_frame_pose_contract(reader: Any) -> None:
+    from npa.workbench.nurec.ncore_frame_poses import (
+        _camera_frame_poses,
+        _validate_static_calibrations,
+    )
+
+    try:
+        _validate_static_calibrations(reader, _camera_frame_poses(reader))
+    except (KeyError, ValueError, NurecError) as exc:
+        raise NcoreConversionError(
+            "derived rig camera frame pose contract differs"
+        ) from exc
+
+
 def _validate_derived_rig(
     meta_path: Path,
     source: dict[str, Any],
@@ -604,7 +639,13 @@ def _validate_derived_rig(
 ) -> None:
     reference = _rig_reference(source, reference_camera)
     _validate_rig_sidecar(meta_path, source, str(reader.sequence_id), reference)
-    frames = source["cameras"][reference]["frames"]
+    _validate_frame_pose_contract(reader)
+    frames = [
+        frame
+        for name, camera in sorted(source["cameras"].items())
+        if camera["target"] == "world"
+        for frame in camera["frames"]
+    ]
     expected_ts = np.arange(len(frames), dtype=np.uint64) * 1_000_000
     edge = ("rig", "world")
     if edge not in trajectories["npa_rig"]:
@@ -783,16 +824,18 @@ def validate_ncore_sequence(
         n_frames = len(expected["frames"])
         if timestamps.shape != (n_frames, 2) or camera.frames_count != n_frames:
             raise NcoreConversionError("source and NCore image counts differ")
-        expected_ts = np.arange(n_frames, dtype=np.uint64) * 1_000_000
+        expected_ts = camera_timestamps(source["cameras"])[camera_id]
         if not np.array_equal(timestamps[:, 0], expected_ts) or not np.array_equal(
             timestamps[:, 1], expected_ts
         ):
             raise NcoreConversionError(
-                "NCore image timeline differs from upstream's 1 FPS mapping"
+                "NCore image timeline differs from the independent virtual mapping"
             )
         edge = (camera_id, expected["target"])
         # Check original AND copied derived trajectories; neither may hide bad geometry.
-        for poses_group in trajectories.values():
+        for group_name, poses_group in trajectories.items():
+            if group_name == "npa_rig":
+                continue  # Its virtual calibrations and frame world poses are checked below.
             if edge not in poses_group:
                 raise NcoreConversionError("camera pose edge is absent")
             poses, pose_ts = poses_group[edge]
@@ -999,6 +1042,7 @@ def _derive_in_place(meta: Path, reference_camera: str) -> None:
         output_dir=meta.parent,
         reference_camera=reference_camera,
         sequence_meta_name=meta.name,
+        frame_pose_overwrite=True,
     )
     if not result.ok:
         raise NcoreConversionError("NCore rig derivation failed")
@@ -1024,9 +1068,21 @@ def convert_colmap(
             if urlparse(request.input_path).path.lower().endswith(".zip"):
                 archive = Path(cache) / "input.zip"
                 client.download_file(request.input_path, str(archive))
-                extract_colmap_zip(archive, staged)
                 archive_hash = _hash_file(archive)
+                if (
+                    request.expected_archive_sha256
+                    and archive_hash != request.expected_archive_sha256
+                ):
+                    raise NcoreConversionError(
+                        "source archive SHA-256 differs from the required digest",
+                        phase="source_digest_pre_extract",
+                    )
+                extract_colmap_zip(archive, staged)
             else:
+                if request.expected_archive_sha256:
+                    raise NcoreConversionError(
+                        "source archive SHA-256 requires an exact ZIP object"
+                    )
                 client.download_directory(
                     request.input_path.rstrip("/") + "/", str(staged)
                 )
@@ -1121,7 +1177,13 @@ def convert_colmap(
                 },
                 "options": request.model_dump(
                     mode="json",
-                    exclude={"input_path", "output_path", "cache_dir", "scratch_dir"},
+                    exclude={
+                        "input_path",
+                        "output_path",
+                        "cache_dir",
+                        "scratch_dir",
+                        "expected_archive_sha256",
+                    },
                 ),
                 "counts": counts,
                 "members": inventory,
@@ -1133,7 +1195,8 @@ def convert_colmap(
                 "poses_component_group": "npa_rig"
                 if request.rig_mode == "derive"
                 else "default",
-                "time_mapping": "upstream assigns per-camera image order timestamps at 1 FPS",
+                "time_mapping": "disjoint virtual photographic camera intervals, 1 FPS within each; not capture time",
+                "source_frame_mapping": source_time_mapping(source["cameras"]),
                 "point_filter": "upstream excludes float32 SfM points whose norm is <= 1e-6",
             }
             report_path = meta.parent / CONVERSION_REPORT

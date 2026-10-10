@@ -13,7 +13,6 @@ import time
 
 EVIDENCE_FILENAME = "render-evidence.json"
 EVIDENCE_SCHEMA = "npa.nurec.render-evidence.v1"
-_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
 
 
 def _sha256(path: Path) -> str:
@@ -25,10 +24,12 @@ def _sha256(path: Path) -> str:
 
 
 def _media(root: Path) -> list[Path]:
+    from npa.workbench.nurec.nurec import IMAGE_SUFFIXES
+
     return sorted(
         path
         for path in root.rglob("*")
-        if path.suffix.lower() in _IMAGE_SUFFIXES and path.is_file()
+        if path.suffix.lower() in IMAGE_SUFFIXES and path.is_file()
     )
 
 

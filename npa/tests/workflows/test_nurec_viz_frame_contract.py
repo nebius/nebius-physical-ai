@@ -58,9 +58,11 @@ def _decoded_images(recording: Path) -> dict:
         if not entity.startswith(("/reconstruction/", "/novel_view/")):
             continue
         batch = chunk.to_record_batch()
-        assert {"frame", "EncodedImage:blob"} <= set(batch.schema.names)
+        timeline = "nurec_image:" + entity.lstrip("/")
+        assert {timeline, "EncodedImage:blob"} <= set(batch.schema.names)
+        assert set(chunk.timeline_names) <= {timeline, "log_tick", "log_time"}
         for frame, blobs in zip(
-            batch.column("frame").to_pylist(),
+            batch.column(timeline).to_pylist(),
             batch.column("EncodedImage:blob").to_pylist(),
             strict=True,
         ):
@@ -73,6 +75,37 @@ def _decoded_images(recording: Path) -> dict:
                 assert image.size == (32, 24)
                 observed[key] = image.convert("RGB").tobytes()
     return observed
+
+
+def test_unrelated_source_and_output_labels_never_share_a_timeline(tmp_path):
+    from PIL import Image
+
+    root = tmp_path / "different-labels"
+    records = {
+        "input/camera_images/camera1/100000000.jpg": "source/camera1",
+        "novel_views/camera1/000100.png": "novel_view/camera1",
+        "novel_views/camera2/000000.png": "novel_view/camera2",
+        "reconstruction/val/pred_rgb/camera2/000267.png": "reconstruction/val/pred_rgb/camera2",
+    }
+    for relative in records:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (8, 8), (20, 40, 60)).save(path)
+    output = tmp_path / "independent.rrd"
+    viz.build_run_rrd(str(root), str(output), app_id="neural-reconstruction")
+    observed = {}
+    for chunk in load_recording(output).chunks():
+        batch = chunk.to_record_batch()
+        if "EncodedImage:blob" not in batch.schema.names:
+            continue
+        entity = str(chunk.entity_path).lstrip("/")
+        timeline = "nurec_image:" + entity
+        assert set(chunk.timeline_names) <= {timeline, "log_tick", "log_time"}
+        assert "frame" not in batch.schema.names
+        observed[entity] = batch.column(timeline).to_pylist()
+    assert observed == {
+        entity: [int(Path(relative).stem)] for relative, entity in records.items()
+    }
 
 
 def _assert_selection(sources: dict, observed: dict, cap: int) -> None:

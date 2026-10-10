@@ -288,17 +288,40 @@ def test_invalid_head_cannot_be_used_as_a_git_option(repository):
         ("push", "", ["sam3"]),
         ("schedule", "", _PUBLIC),
         ("workflow_dispatch", "sam2", ["sam2"]),
+        ("workflow_dispatch", "ncore", None),
     ],
 )
 def test_workflow_resolver_uses_scope_and_preserves_schedule_and_dispatch(
     repository, event, explicit, expected
 ):
+    root, before = repository
+    contract = yaml.safe_load((root / _CONTRACT).read_text())
+    contract["images"]["ncore"] = {
+        "dockerfile": "ncore/Dockerfile",
+        "redistribution": "public",
+    }
+    _write(root, _CONTRACT, yaml.safe_dump(contract))
+    _write(root, "npa/docker/workbench/ncore/Dockerfile", "FROM scratch\n")
+    before = _commit(root)
+    _write(root, "npa/docker/workbench/sam3/runtime.py", "# Updated\n")
+    head = _commit(root)
+    result = _resolve_workflow_plan(root, before, head, event, explicit)
+    if expected is None:
+        assert result.returncode != 0
+        assert "NCore Actions publication is quarantined" in result.stderr
+        assert "build_matrix=" not in result.stdout
+        return
+    assert result.returncode == 0, result.stderr
+    outputs = dict(line.split("=", 1) for line in result.stdout.splitlines())
+    assert int(outputs["build_count"]) == len(expected)
+    assert [entry["tool"] for entry in json.loads(outputs["build_matrix"])] == expected
+    assert outputs["cleanup_count"] == "0"
+
+
+def _resolve_workflow_plan(root, before, head, event, explicit):
     import os
     import sys
 
-    root, before = repository
-    _write(root, "npa/docker/workbench/sam3/runtime.py", "# Updated\n")
-    head = _commit(root)
     workflow = (
         Path(__file__).resolve().parents[3]
         / ".github/workflows/publish-public-images.yml"
@@ -310,10 +333,12 @@ def test_workflow_resolver_uses_scope_and_preserves_schedule_and_dispatch(
     script = (
         step["run"].split("<<'PY' >> \"$GITHUB_OUTPUT\"\n", 1)[1].rsplit("\nPY", 1)[0]
     )
-    result = subprocess.check_output(
+    return subprocess.run(
         [sys.executable, "-c", script],
         cwd=root,
         text=True,
+        capture_output=True,
+        check=False,
         env={
             **os.environ,
             "TARGET": "ghcr.io/nebius/nebius-physical-ai",
@@ -325,10 +350,6 @@ def test_workflow_resolver_uses_scope_and_preserves_schedule_and_dispatch(
             "LEROBOT_VERSION": "",
         },
     )
-    outputs = dict(line.split("=", 1) for line in result.splitlines())
-    assert int(outputs["build_count"]) == len(expected)
-    assert [entry["tool"] for entry in json.loads(outputs["build_matrix"])] == expected
-    assert outputs["cleanup_count"] == "0"
 
 
 def test_ncore_custom_assembly_inputs_select_ncore(repository):

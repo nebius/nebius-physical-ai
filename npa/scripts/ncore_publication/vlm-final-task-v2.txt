@@ -1,0 +1,2 @@
+Determine whether these images form a visually coherent and reviewable
+novel-view sequence of one reconstructed static scene.

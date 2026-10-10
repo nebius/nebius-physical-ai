@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -100,7 +101,86 @@ def test_failed_renderer_cannot_publish_success_evidence(tmp_path, monkeypatch):
         ),
     )
     assert not result.ok
-    assert not (tmp_path / "renders" / evidence.EVIDENCE_FILENAME).exists()
+    generation = Path(result.output_dir)
+    assert not (generation / evidence.EVIDENCE_FILENAME).exists()
+    receipt = json.loads((generation / "nre-render.json").read_text())
+    assert receipt["status"] == "failed"
+
+
+@pytest.mark.parametrize("suffix", ["png", "webp"])
+def test_native_render_retains_decoded_receipt_and_portable_media_evidence(
+    tmp_path, monkeypatch, suffix
+):
+    import imageio_ffmpeg
+
+    monkeypatch.setattr(evidence, "_gpu_snapshot", lambda: [])
+    artifact = tmp_path / "scene.usdz"
+    artifact.write_bytes(b"scene fixture")
+
+    def native(command, **kwargs):
+        generation = Path(command[command.index("--output-dir") + 1])
+        frames = []
+        for index in range(2):
+            frame = Image.new("RGB", (16, 16))
+            frame.putdata(
+                [(x * 16, y * 16, index * 100) for y in range(16) for x in range(16)]
+            )
+            frame.save(generation / f"{index:06d}.{suffix}")
+            frames.append(frame.tobytes())
+        writer = imageio_ffmpeg.write_frames(
+            str(generation / "novel.mp4"), (16, 16), fps=2, codec="libx264"
+        )
+        writer.send(None)
+        for frame in frames:
+            writer.send(frame)
+        writer.close()
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = render_novel_views(
+        NurecConfig.from_env(environ={}),
+        artifact_path=str(artifact),
+        output_dir=str(tmp_path / "renders"),
+        image_format=suffix,
+        runner=native,
+    )
+    assert result.ok
+    generation = Path(result.output_dir)
+    receipt = json.loads(Path(result.evidence_path).read_text())
+    portable = json.loads((generation / evidence.EVIDENCE_FILENAME).read_text())
+    assert receipt["output"]["all_frames_decoded"] is True
+    assert receipt["output"]["decoded_video_frames"] == 2
+    assert portable["frame_count"] == result.frame_count == 2
+    assert (
+        portable["artifact_sha256"] == hashlib.sha256(artifact.read_bytes()).hexdigest()
+    )
+    assert portable["telemetry"]["sample_count"] == 0
+    assert result.gpu_names == ()
+
+
+def test_portable_evidence_write_failure_preserves_decoded_receipt(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(evidence, "_gpu_snapshot", lambda: [])
+    artifact, output = _run_tree(tmp_path)
+
+    def native(command, **kwargs):
+        generation = Path(command[command.index("--output-dir") + 1])
+        Image.new("RGB", (48, 32), "red").save(generation / "new.png")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def failed_write(root, *args, **kwargs):
+        receipt = json.loads((root / "nre-render.json").read_text())
+        assert receipt["output"]["all_frames_decoded"] is True
+        raise OSError("evidence write refused")
+
+    monkeypatch.setattr(evidence, "write_render_evidence", failed_write)
+    with pytest.raises(OSError, match="evidence write refused"):
+        render_novel_views(
+            NurecConfig.from_env(environ={}),
+            artifact_path=str(artifact),
+            output_dir=str(output),
+            runner=native,
+        )
 
 
 def test_new_generation_evidence_excludes_and_preserves_stale_frames(tmp_path):

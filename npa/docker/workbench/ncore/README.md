@@ -31,9 +31,49 @@ and bootstrap evidence is required before this replacement can be accepted.
 The [OCI publication procedure](../../../../docs/workbench/ncore-oci-publication.md)
 prepares the exact locked public Debian keyring before scanner preparation or
 building. Its `--keyring` option defaults to
-`<analysis-root>/keyring/debian-archive-keyring.gpg`; CI supplies the prepared
-path explicitly. Packaging guards execute the complete committed snapshot and
-require successful test execution, including setup and teardown.
+`<analysis-root>/keyring/debian-archive-keyring.gpg`. Packaging guards execute the
+complete committed snapshot and require successful test execution, including
+setup and teardown.
+
+The shared Actions image publisher excludes NCore on automatic runs and rejects
+explicit NCore requests: it has no authorized private acceptance-bundle transport.
+Private `prepare`, `build`, `check`, and qualification remain available. A separately
+authorized private CLI publication requires the exact reviewed `--acceptance`
+bundle; neither a passing local check nor an in-tree manifest is a substitute.
+
+Receipt-derived acceptance records `byte_scan.resolution` as `raw-clean` or
+`public-attribution`, preserving `raw_valid`, `raw_findings` and
+`dispositioned_findings`. A clean scan has no attribution receipt; the separate
+CPython-notice adjudication keeps raw `valid=false`, re-verifies the exact two
+occurrences and pinned public provenance, and requires its receipt and replay
+hashes. Both paths freshly replay the complete authorized scanner and compare
+the retained report and ledger byte-for-byte. Original reports are never edited.
+`policy_kind` distinguishes `regex-v1` from `exact-literals-v1`; the latter proves
+only the operator-provided exact inventory, not equivalent coverage to a private
+CI denylist. Publication acceptance requires `regex-v1` in both disposition
+branches; exact-literal scans remain diagnostic evidence only. This distinction
+does not authorize image publication or waive any runtime, quality,
+independent-review or release gate.
+
+## Independent COLMAP camera poses
+
+For COLMAP conversion, NPA preserves each frame's actual camera-to-world poses
+in `T_sensor_worlds`, including composition through downsampled camera parents.
+The derived `npa_rig` group uses explicitly virtual identity camera-to-rig
+calibrations and a merged world trajectory over disjoint photographic intervals.
+The converter assigns disjoint virtual photographic intervals to independent
+cameras (downsampled aliases share their parent's interval), and the derived rig
+matches every camera pose at its exact timestamp knot. These are not capture
+times or physical rig motion. The report retains image hashes and original/new
+indices. This corrects the earlier overlapping-timeline contract: native training
+interpolates the shared rig even when per-frame world poses are exported. The
+native per-frame pose field alone does not restore each camera's independent world
+trajectory. This does not assert a measured physical multi-camera rig. Original
+poses, image bytes, calibration, masks and point records remain independently
+audited; malformed or contradictory pose contracts fail before reconstruction.
+
+This source repair requires new exact-image and conversion qualification. The
+retained earlier NRE timestamp failure is not a successful reconstruction.
 
 ## Runtime setup
 

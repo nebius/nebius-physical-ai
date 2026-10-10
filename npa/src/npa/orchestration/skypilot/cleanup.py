@@ -54,6 +54,8 @@ class CleanupResult:
     cluster_id: str = ""
     context: str = ""
     remote_absence_verified: bool = False
+    controller_state_lost_job_ids: list[str] = field(default_factory=list)
+    recovery: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -63,6 +65,12 @@ class CleanupResult:
         self.resources_removed.extend(other.resources_removed)
         self.errors.extend(other.errors)
         self.commands.extend(other.commands)
+        if other.outcome == "controller_state_lost":
+            self.outcome = other.outcome
+            self.controller_state_lost_job_ids.extend(
+                other.controller_state_lost_job_ids
+            )
+            self.recovery = dict(other.recovery)
 
 
 _TERMINAL_MANAGED_JOB_STATUSES = frozenset(
@@ -91,6 +99,14 @@ def is_terminal_managed_job_status(value: object) -> bool:
 
     status = str(value or "").strip().upper()
     return status in _TERMINAL_MANAGED_JOB_STATUSES
+
+
+def _managed_job_is_drained(value: object) -> bool:
+    """Require authoritative workload terminality before destructive cleanup."""
+    status = str(value or "").strip().upper()
+    # SkyPilot's controller-failed status is terminal for scheduling, but the
+    # controller has lost authoritative workload state. Preserve recovery state.
+    return status != "FAILED_CONTROLLER" and is_terminal_managed_job_status(status)
 
 
 JOBS_CONTROLLER_PATTERN = "sky-jobs-controller-*"
@@ -785,6 +801,7 @@ def cleanup_launched_workflow(
                 f"managed job {cleaned_job_id} could not be re-verified after the "
                 f"cancel failure: {convergence.removeprefix('unavailable:')}"
             )
+    observed_jobs: list[dict[str, Any]] = []
     try:
         drained, still_running = wait_for_jobs_terminal(
             [cleaned_job_id],
@@ -792,6 +809,7 @@ def cleanup_launched_workflow(
             config_path=config_path,
             sky_bin=sky_bin,
             timeout=job_drain_timeout,
+            observed_jobs=observed_jobs,
         )
     except JobQueueUnreadableError as exc:
         cleanup.errors.append(
@@ -800,6 +818,7 @@ def cleanup_launched_workflow(
         )
         return cleanup
     if not drained:
+        _record_controller_state_lost(cleanup, observed_jobs, still_running)
         cleanup.errors.append(
             "managed job(s) "
             + ", ".join(still_running)
@@ -916,7 +935,7 @@ def _verify_managed_job_convergence(
     if evidence.outcome == "unavailable":
         return f"unavailable:{evidence.error or 'provider unavailable'}"
     status = str(evidence.status or "").strip().upper()
-    if is_terminal_managed_job_status(status):
+    if _managed_job_is_drained(status):
         return "terminal"
     return status or "UNKNOWN"
 
@@ -954,7 +973,7 @@ def cleanup_all_for_run(
         )
         return cleanup
     for job in matching_jobs:
-        if not is_terminal_managed_job_status(job.get("status")):
+        if not _managed_job_is_drained(job.get("status")):
             job_id = str(job.get("job_id") or job.get("id"))
             cleanup.extend(
                 _cancel_job(
@@ -969,6 +988,7 @@ def cleanup_all_for_run(
     # `sky jobs cancel` returns as soon as cancellation is scheduled, so tearing
     # down immediately races the controller.
     if cancelled:
+        observed_jobs: list[dict[str, Any]] = []
         try:
             drained, still_running = wait_for_jobs_terminal(
                 cancelled,
@@ -976,6 +996,7 @@ def cleanup_all_for_run(
                 config_path=config_path,
                 sky_bin=sky_bin,
                 timeout=job_drain_timeout,
+                observed_jobs=observed_jobs,
             )
         except JobQueueUnreadableError as exc:
             cleanup.errors.append(
@@ -984,6 +1005,7 @@ def cleanup_all_for_run(
             )
             return cleanup
         if not drained:
+            _record_controller_state_lost(cleanup, observed_jobs, still_running)
             cleanup.errors.append(
                 "managed job(s) "
                 + ", ".join(still_running)
@@ -1011,6 +1033,39 @@ def cleanup_all_for_run(
             )
         )
     return cleanup
+
+
+def _record_controller_state_lost(cleanup, matching_jobs, still_running):
+    lost = sorted(
+        {
+            str(job.get("job_id") or job.get("id"))
+            for job in matching_jobs
+            if str(job.get("status") or "").strip().upper() == "FAILED_CONTROLLER"
+        }
+        & set(still_running)
+    )
+    if not lost:
+        return
+    cleanup.outcome = "controller_state_lost"
+    cleanup.controller_state_lost_job_ids = lost
+    cleanup.recovery = {
+        "required": "restore_authoritative_workload_state_or_verify_owned_resource_absence",
+        "destructive_cleanup_allowed": False,
+        "absence_only_command": "npa workbench workflow reconcile-absent",
+        "absence_only_scope": "supported_original_failed_submit_evidence_only",
+        "unsupported_case": "operator_recovery_required_no_automatic_teardown",
+        "evidence_required": "private pinned original operation evidence; fresh provider reads and exclusive recovery lease",
+        "guide": "docs/teardown.md#controller-state-lost",
+    }
+    cleanup.errors.append(
+        "controller_state_lost: managed job(s) "
+        + ", ".join(lost)
+        + " have no authoritative workload state. Preserve handles; restore the "
+        "controller and cancel again. For supported original failed-submit evidence "
+        "only, workflow reconcile-absent can verify fresh owned-resource absence; "
+        "other cases require operator recovery without automatic teardown. "
+        "See docs/teardown.md#controller-state-lost."
+    )
 
 
 def cluster_name_patterns_for_run(run_id: str) -> list[str]:
@@ -1107,11 +1162,14 @@ def wait_for_jobs_terminal(
     timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
     interval: float = DEFAULT_JOB_DRAIN_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
+    observed_jobs: list[dict[str, Any]] | None = None,
 ) -> tuple[bool, list[str]]:
     """Block until the given managed jobs are terminal.
 
     Returns ``(drained, still_running)``. An unreadable queue raises
     :class:`JobQueueUnreadableError`; callers must preserve recoverable state.
+    ``observed_jobs``, when supplied, receives the last authoritative queue rows
+    so callers can distinguish controller state loss from a still-live job.
     """
 
     wanted = {str(job_id).strip() for job_id in job_ids if str(job_id).strip()}
@@ -1125,10 +1183,12 @@ def wait_for_jobs_terminal(
             config_path=config_path,
             sky_bin=sky_bin,
         )
+        if observed_jobs is not None:
+            observed_jobs[:] = snapshot.jobs
         still_running = [
             job_id
             for job_id, status in _job_statuses(snapshot.jobs).items()
-            if job_id in wanted and not is_terminal_managed_job_status(status)
+            if job_id in wanted and not _managed_job_is_drained(status)
         ]
         if not still_running:
             return True, []
@@ -1148,7 +1208,7 @@ def _job_statuses(jobs: Sequence[dict[str, Any]]) -> dict[str, str]:
         status = str(job.get("status") or "").upper()
         # A job group reports one row per task; the job is only terminal once
         # every one of its rows is.
-        if job_id in statuses and not is_terminal_managed_job_status(statuses[job_id]):
+        if job_id in statuses and not _managed_job_is_drained(statuses[job_id]):
             continue
         statuses[job_id] = status
     return statuses
@@ -1168,7 +1228,7 @@ def _nonterminal_job_ids(
     return sorted(
         job_id
         for job_id, status in _job_statuses(snapshot.jobs).items()
-        if not is_terminal_managed_job_status(status)
+        if not _managed_job_is_drained(status)
     )
 
 

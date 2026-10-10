@@ -3479,6 +3479,119 @@ def _patch_paidf_cancel_storage(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.mark.parametrize("persisted_status", ["running", "FAILED_CONTROLLER"])
+@pytest.mark.parametrize("receipt_error", [None, OSError, RuntimeError, ValueError])
+def test_controller_state_lost_survives_real_cancellation_cli(
+    monkeypatch, tmp_path, persisted_status, receipt_error
+):
+    from npa.orchestration.skypilot import cleanup as cleanup_module
+    from npa.teardown_receipts import list_teardown_receipts
+
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    receipt_attempts = []
+    if receipt_error is not None:
+
+        def fail_receipt_write(**event):
+            receipt_attempts.append(event)
+            raise receipt_error("synthetic receipt persistence failure")
+
+        monkeypatch.setattr(
+            "npa.teardown_receipts.record_teardown_event", fail_receipt_write
+        )
+
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    _patch_paidf_cancel_storage(monkeypatch)
+    run_id = "synthetic-controller-loss"
+    _put_paidf_cancel_runtime(
+        fake_s3,
+        run_id=run_id,
+        waves=[
+            {
+                "key": "train",
+                "job_id": "803",
+                "job_name": run_id,
+                "status": persisted_status,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.cancellation.lookup_managed_job",
+        lambda *args, **kwargs: ManagedJobEvidence(
+            "found", job_id="803", status="FAILED_CONTROLLER"
+        ),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "_all_jobs",
+        lambda **_: cleanup_module.JobQueueSnapshot(
+            "verified_jobs",
+            jobs=(
+                {"job_id": "803", "job_name": run_id, "status": "FAILED_CONTROLLER"},
+            ),
+        ),
+    )
+    cancelled = []
+    monkeypatch.setattr(
+        cleanup_module,
+        "_cancel_job",
+        lambda job_id, **_: cancelled.append(job_id) or cleanup_module.CleanupResult(),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "sky_down",
+        lambda *a, **k: pytest.fail("lost controller state is not drain proof"),
+    )
+    # Advance only this module's clock: actual wait/identity/drain logic executes.
+    ticks = iter((0, 100000))
+    monkeypatch.setattr(
+        cleanup_module, "time", SimpleNamespace(monotonic=lambda: next(ticks))
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "cancel",
+            run_id,
+            "--project",
+            "paidf",
+            "--sky-bin",
+            "/opt/pinned-sky",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.output)
+    assert payload["outcome"] == "controller_state_lost"
+    assert payload["controller_state_lost_job_ids"] == ["803"]
+    assert payload["recovery"]["absence_only_scope"] == (
+        "supported_original_failed_submit_evidence_only"
+    )
+    assert payload["owned_teardown_allowed"] is False
+    assert cancelled == ["803"]
+    receipts = list_teardown_receipts(project_alias="paidf")
+    if receipt_error is not None:
+        assert receipts == []
+        assert len(receipt_attempts) == 1
+        attempted = receipt_attempts[0]
+        assert attempted["terminal_state"] == "verification_failed"
+        assert attempted["verification"]["outcome"] == "controller_state_lost"
+        assert attempted["verification"]["recovery"] == payload["recovery"]
+        assert payload["errors"] == [
+            *attempted["errors"],
+            "durable teardown receipt could not be written: "
+            "synthetic receipt persistence failure",
+        ]
+        return
+    assert len(receipts) == 1
+    retained = json.loads(Path(receipts[0]["path"]).read_text())["events"][-1]
+    assert retained["terminal_state"] == "verification_failed"
+    assert retained["verification"]["outcome"] == "controller_state_lost"
+    assert retained["verification"]["recovery"] == payload["recovery"]
+    assert retained["errors"] == payload["errors"]
+
+
 def test_cancel_absence_conflict_exposes_only_explicit_destroy_allowance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

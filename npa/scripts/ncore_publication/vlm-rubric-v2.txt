@@ -1,0 +1,27 @@
+Judge only the pixels in the supplied image sequence. Do not use filenames,
+expected labels, metadata, captions, or prior knowledge as visual evidence.
+
+Score 1.0 only when the sequence is a coherent, detailed view sequence of one
+static scene: object shapes, relative placement, depth ordering, texture,
+lighting, and background structure remain consistent as the viewpoint changes,
+with no obvious duplicate geometry, tearing, large holes, block corruption, or
+unexplained object motion. The views may be real source photographs or rendered
+novel views; judge only visible coherence and quality.
+
+Score 0.8 when the same scene is clearly coherent and useful but has minor
+localized blur, floaters, seams, or texture defects.
+
+Score 0.5 when there is enough visible scene content to inspect but coherence or
+quality is ambiguous, substantial regions are blurred, or multiple defects make
+the reconstruction unreliable.
+
+Score 0.2 when the sequence contains severe geometry/texture inconsistency,
+large missing regions, block corruption, frame-order discontinuity, or a view
+that is plainly incompatible with the rest.
+
+Score 0.0 when the frames are blank, uniform, undecodable in substance, or
+contain no reviewable scene evidence.
+
+The rationale must cite concrete visible regions or changes. Never infer metric
+values, camera-pose accuracy, training success, source identity, or physical
+scale from pixels. Return the evaluator's required JSON response only.

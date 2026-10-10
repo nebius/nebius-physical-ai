@@ -384,7 +384,6 @@ def test_npa_workflow_submit_live_reaches_terminal(
             and last_status not in TERMINAL_OK
             and not _is_terminal_fail(last_status)
         ):
-            # Best-effort cancel via sky jobs cancel through workflow helper.
             try:
                 from npa.orchestration.skypilot._bin import resolve_config
                 from npa.orchestration.skypilot.workflow_state import (
@@ -392,14 +391,27 @@ def test_npa_workflow_submit_live_reaches_terminal(
                 )
 
                 runtime = resolve_config()
-                cancel_workflow_job(
+                cancellation = cancel_workflow_job(
                     sky_bin=str(runtime.sky_bin),
                     job_id=str(job_id),
                     run_id=run_id,
                     cluster=run_id,
                 )
+                if (
+                    cancellation.get("cancel_returncode") != 0
+                    or cancellation.get("terminal_confirmed") is not True
+                    or cancellation.get("down_attempted") is not True
+                    or cancellation.get("down_returncode") != 0
+                ):
+                    pytest.fail(
+                        "timed-out workflow cancellation did not converge before "
+                        "cluster teardown; inspect private runtime evidence"
+                    )
             except Exception:
-                pass
+                pytest.fail(
+                    "timed-out workflow cancellation failed; retained job state "
+                    "must be inspected before deleting compute"
+                )
 
 
 # Provisioning failures that say "this cluster/image cannot host the task", as
