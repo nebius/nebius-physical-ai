@@ -27,8 +27,8 @@ def test_render_only_external_spec_keeps_optional_image_default(tmp_path, image)
 
     config = {
         "reconstruction_uri": "s3://synthetic/reconstruction/",
-        "out_dir": "/tmp/nurec",
-        "render_dir": "/tmp/nurec/render",
+        "out_dir": str(tmp_path / "nurec"),
+        "render_dir": str(tmp_path / "nurec" / "render"),
         "render_image_scale": "0.5",
         "renderer": "default",
         "rig_translation_offset": "0,0.25,0",
