@@ -11,6 +11,7 @@ from ncore_acceptance_fixture import synthetic_statement_inputs, _module
 from test_ncore_acceptance import ROOT, W, acceptance, _write
 from test_ncore_vlm_evidence import _calibrated_schedule
 from ncore_publication import vlm_evidence as V
+from npa.workbench.nurec.source_acquisition import SOURCE_SHA256
 
 
 def _foreign_cleanup(manifest, evidence, dimension):
@@ -161,7 +162,10 @@ def _visual_fixture(monkeypatch, root, *, camera, color_offset, source_sha):
         "raw_transport_manifest_sha256": "transport-manifest.json",
         "freeze_review_receipt_sha256": "freeze-review.json",
     }
-    visual = {key: V._sha_file(visual_root / name) for key, name in fields.items()}
+    visual = {
+        **manifest["rtx_proof"]["visual_review"],
+        **{key: V._sha_file(visual_root / name) for key, name in fields.items()},
+    }
     visual.update(
         external_attempt_prefix_sha256=V._sha_bytes(
             args.external_attempt_prefix.encode()
@@ -201,18 +205,23 @@ def test_valid_foreign_visual_schedule_cannot_certify_another_run(
         tmp_path / "a",
         camera="camera-1",
         color_offset=0,
-        source_sha="a" * 64,
+        source_sha=SOURCE_SHA256,
     )
     manifest_b, evidence_b = _visual_fixture(
         monkeypatch,
         tmp_path / "b",
         camera="camera-2" if dimension == "camera" else "camera-1",
         color_offset=10 if dimension == "pixels" else 0,
-        source_sha="b" * 64 if dimension == "source" else "a" * 64,
+        source_sha="b" * 64 if dimension == "source" else SOURCE_SHA256,
     )
     with W.authorized_roots(tmp_path, ROOT):
         for manifest, evidence in ((manifest_a, evidence_a), (manifest_b, evidence_b)):
-            acceptance.images.validate_ncore_accepted_image_manifest(manifest)
+            # Source controls also exercise generic VLM evidence for another
+            # dataset; only the publication's pinned dataset can pass its schema.
+            # Both foreign-camera/pixel runs use that dataset and must pass all
+            # qualification/schema checks independently before transplantation.
+            if manifest["conversion"]["source_archive_sha256"] == SOURCE_SHA256:
+                acceptance.images.validate_ncore_accepted_image_manifest(manifest)
             assert acceptance._qualification(manifest, evidence, evidence.parent)
         assert acceptance._visual(manifest_a, evidence_a)
         assert acceptance._visual(manifest_b, evidence_b)
