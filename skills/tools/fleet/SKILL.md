@@ -110,10 +110,20 @@ device plugin/GFD `v0.19.3`, MIG Manager `v0.14.2`, exact per-node resources,
 and zero whole-GPU capacity/allocatable. See
 `docs/fleet-rtx-pro-6000-mig.md` and `npa/examples/fleet/rtxpro-mig.yaml`.
 
-RTX rendering without MIG uses the separate explicit cluster setting
-`gpu_workload_profile: rtx-rendering`. It selects RTX PRO 6000 (including an
-explicitly resolved zonal platform such as `gpu-rtx6000-a`), the supported
-single-GPU preset by default or accepts the explicit
+RTX rendering without MIG uses the separate explicit cluster settings:
+
+```yaml
+gpu_workload_profile: rtx-rendering
+gpu_graphics_smoke_image: '<reviewed-registry>/graphics@sha256:<64-hex-digest>'
+```
+
+The graphics image is a reviewed operator-supplied immutable digest. The
+governed `tool://sonic` default is quarantined, so omitting this field makes the
+graphics gate refuse before deployment rather than selecting an implicit image.
+See `docs/workbench/mk8s-gpu-driver-strategy.md` for the direct CLI, SDK, and
+standalone-RTX forms. The profile selects RTX PRO 6000 (including an explicitly
+resolved zonal platform such as `gpu-rtx6000-a`), the supported single-GPU preset
+by default or accepts the explicit
 `8gpu-192vcpu-1744gb` RTX PCIe preset, uses GPU Operator mounted drivers, and
 requires per-node GLX/EGL/Vulkan readiness. The 8-GPU RTX shape remains
 non-fabric and does not opt into the NVSwitch unsafe-operator path. The profile
@@ -259,8 +269,9 @@ region: us-central1
 profile: ""                  # ~/.nebius profile to authenticate as; "" = active
 project_prefix: "fleet1-test-"
 defaults:
-  # Replace the next two driver lines with
-  # gpu_workload_profile: rtx-rendering for RTX/Isaac rendering clusters.
+  # For RTX/Isaac rendering clusters, replace the next two driver lines with
+  # gpu_workload_profile: rtx-rendering and an explicit reviewed digest:
+  # gpu_graphics_smoke_image: '<reviewed-registry>/graphics@sha256:<64-hex-digest>'
   gpu_driver_mode: auto
   managed_driver_preset: cuda13.0
   allow_unsafe_nvswitch_operator: false
